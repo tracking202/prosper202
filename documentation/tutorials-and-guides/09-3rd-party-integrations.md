@@ -89,9 +89,9 @@ What each IPN does, and what PayKickstart's IPN log shows for it:
 | IPN | Prosper202 | Status |
 | --- | ---------- | ------ |
 | `sales` (a first payment or a rebill) | a conversion on the click, source `paykickstart`, under its `transaction_id`, worth its `amount` | `200 recorded` |
-| the same `sales` again | nothing; a retry stating another amount is refused | `200 duplicate` / `409` |
+| the same `sales` again | nothing; a retry stating another amount is refused, and so is a sale whose refund is on file, naming the reversal to delete if the refund was undone | `200 duplicate` / `409` |
 | `refund` | a reversal of the sale its `transaction_id` names, by its `amount` (the whole sale when it carries none or 0); a sale is reversed once | `200 reversed`, `404` when no such sale is on the click |
-| a `refund` of a sale already reversed | nothing; a refund that takes back another amount than the one on file is refused, naming both: a full refund after a partial one says how much is still credited | `200 duplicate` / `409` |
+| a `refund` of a sale already reversed | nothing; a refund that takes back another amount than the one on file is refused, naming both: a full refund after a partial one says how much is still credited. Once that reversal is deleted, a later refund reverses the sale again; the deleted one's own refund, sent again unchanged, changes nothing | `200 duplicate` / `409` |
 | test mode (`mode=test`) | nothing | `200 test` |
 | `subscription-payment` and every other event | nothing (`sales` already counts every payment) | `200 ignored` |
 | a sale whose checkout carried no subid | nothing: no click to credit | `200 no_click` |

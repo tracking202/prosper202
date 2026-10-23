@@ -24,6 +24,9 @@ interface ProviderAdapter
     /** The ledger source its conversions are recorded under. */
     public function source(): ConversionSource;
 
+    /** The field its notifications carry their signature in ("hash"), for the answers. */
+    public function signatureField(): string;
+
     /**
      * Every account's stored secrets for this provider. An entry that cannot
      * be read is left out, so it verifies nothing.

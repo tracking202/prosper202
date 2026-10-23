@@ -309,8 +309,8 @@ final class ClickBankInsIntegrationTest extends TestCase
     {
         $stranger = $this->post([], 'NOBODYSTORESTHIS');
         self::assertOutcome(OutcomeKind::UNVERIFIED, 403, $stranger);
-        self::assertSame('The notification does not verify with any ClickBank secret key stored in Prosper202'
-            . ' (Account > API integrations > ClickBank); nothing was recorded.', $stranger->message);
+        self::assertSame('The notification\'s encryption does not verify with any ClickBank secret key stored in'
+            . ' Prosper202 (Account > API integrations > ClickBank); nothing was recorded.', $stranger->message);
 
         // The key a sharing account would hold, before it holds it.
         self::assertOutcome(OutcomeKind::UNVERIFIED, 403, $this->post(

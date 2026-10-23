@@ -7,6 +7,7 @@ namespace Tests\PaymentNotification;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickRecord;
 use Prosper202\Click\MysqlClickRepository;
+use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
@@ -176,6 +177,11 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         return (new Receiver(new PayKickstartAdapter(), self::requireScratch()))->receive($request);
     }
 
+    private static function conversionRepository(): MysqlConversionRepository
+    {
+        return new MysqlConversionRepository(new Connection(self::requireScratch()));
+    }
+
     /** @return list<array<string, string|null>> */
     private static function conversions(): array
     {
@@ -329,6 +335,58 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         self::assertSame(['47.00000', '-47.00000'], array_column(self::conversions(), 'click_payout'));
     }
 
+    /** A sale on file that a refund took back is not counted, so stating it again is no duplicate. */
+    public function testASaleSentAgainAfterItsRefundIsRefusedNamingTheReversalToDelete(): void
+    {
+        $this->post(self::fields(), self::KEY_1);
+        $this->post(self::fields(['event' => 'refund', 'amount' => '']), self::KEY_1);
+        $reversal = (int) self::conversionIds()[1];
+
+        $again = $this->post(self::fields(), self::KEY_1);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $again);
+        self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is recorded and reversed by conversion '
+            . $reversal . '; this sales states the sale again. Nothing was changed: if the refund was undone, delete'
+            . ' conversion ' . $reversal . ' to count the sale.', $again->message);
+        self::assertCount(2, self::conversions());
+
+        self::conversionRepository()->softDelete($reversal, self::ACCOUNT);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post(self::fields(), self::KEY_1));
+    }
+
+    /**
+     * The reversal of a refund is deleted (the refund was undone): a later
+     * refund of the sale reverses it again, while the deleted one's own
+     * refund, sent again unchanged, still changes nothing.
+     */
+    public function testARefundAfterItsReversalWasDeletedReversesTheSaleAgain(): void
+    {
+        $this->post(self::fields(), self::KEY_1);
+        $first = self::fields(['event' => 'refund', 'amount' => '', 'transaction_time' => '1792000000']);
+        $this->post($first, self::KEY_1);
+        $deleted = (int) self::conversionIds()[1];
+        self::conversionRepository()->softDelete($deleted, self::ACCOUNT);
+
+        $retry = $this->post($first, self::KEY_1);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $retry);
+        self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' was reversed by conversion ' . $deleted
+            . ', since deleted; this refund is that refund sent again, so nothing was changed.', $retry->message);
+
+        $second = self::fields(['event' => 'refund', 'amount' => '', 'transaction_time' => '1792086400']);
+        $refund = $this->post($second, self::KEY_1);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+        self::assertSame(
+            [['47.00000', '0'], ['-47.00000', '1'], ['-47.00000', '0']],
+            array_map(static fn (array $r): array => [$r['click_payout'], $r['deleted']], self::conversions())
+        );
+
+        // Each of the two, sent again, is a duplicate; another refund meets the one that stands.
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($second, self::KEY_1));
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($first, self::KEY_1));
+        $partial = $this->post(self::fields(['event' => 'refund', 'amount' => '5']), self::KEY_1);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $partial);
+        self::assertCount(3, self::conversions());
+    }
+
     public function testARefundOfASaleNotOnFileIsA404SayingSo(): void
     {
         $refund = $this->post(self::fields(['event' => 'refund', 'transaction_id' => 'PK-TX-NEVER']), self::KEY_1);
@@ -464,6 +522,48 @@ final class PayKickstartIpnIntegrationTest extends TestCase
     }
 
     /** No adapter sends a currency yet; the processor refuses one it would have to convert. */
+    /** A refund with an id of its own (no PayKickstart refund has one) is told from another by that id. */
+    public function testARefundWithAnIdOfItsOwnIsToldApartByIt(): void
+    {
+        $processor = new Processor(self::requireScratch());
+        $verified = new Verification([self::ACCOUNT => 0]);
+        $send = fn (Notification $n): Outcome => $processor->process(
+            $n,
+            $verified,
+            new PayKickstartAdapter(),
+            new InboundRequest('POST', '', ['sent' => (string) microtime(true)], '203.0.113.9', '203.0.113.9', 'test')
+        );
+        $refund = static fn (string $id, ?string $amount = null): Notification => new Notification(
+            NotificationKind::REFUND,
+            'refund',
+            $id,
+            'PK-OWN-1',
+            $amount,
+            null,
+            self::CLICK
+        );
+
+        $send(new Notification(NotificationKind::SALE, 'sales', 'PK-OWN-1', null, '47', null, self::CLICK));
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $send($refund('RF-1')));
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $send($refund('RF-1')));
+        $other = $send($refund('RF-2'));
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $other);
+        self::assertStringContainsString('a sale can be reversed once', $other->message);
+
+        $deleted = (int) self::conversionIds()[1];
+        self::conversionRepository()->softDelete($deleted, self::ACCOUNT);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $send($refund('RF-1')));
+        $changed = $send($refund('RF-1', '5'));
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $changed);
+        self::assertSame(
+            'Transaction PK-OWN-1 on click ' . self::CLICK . ' was reversed by 47 in conversion ' . $deleted
+            . ', since deleted, under this refund\'s id; this refund states 5. Nothing was changed.',
+            $changed->message
+        );
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $send($refund('RF-2')));
+        self::assertSame(['47.00000', '-47.00000', '-47.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
     public function testAnAmountInAnotherCurrencyIsRefused(): void
     {
         $processor = new Processor(self::requireScratch());

@@ -61,6 +61,12 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
         return ConversionSource::CLICKBANK;
     }
 
+    /** ClickBank encrypts the order rather than signing it: what does not verify is the encryption. */
+    public function signatureField(): string
+    {
+        return 'encryption';
+    }
+
     public function storedSecrets(Connection $conn): array
     {
         $stmt = $conn->prepareRead(
