@@ -57,6 +57,7 @@ final class AccountPixelsIntegrationTest extends TestCase
     {
         foreach ([self::USER, self::OTHER] as $u) {
             self::$db->query("DELETE p FROM 202_ppc_account_pixels p JOIN 202_ppc_accounts a ON a.ppc_account_id = p.ppc_account_id WHERE a.user_id = $u");
+            self::$db->query("DELETE FROM 202_notification_correction_urls WHERE user_id = $u");
             self::$db->query("DELETE FROM 202_ppc_accounts WHERE user_id = $u");
             self::$db->query("DELETE FROM 202_ppc_networks WHERE user_id = $u");
         }
@@ -194,6 +195,67 @@ final class AccountPixelsIntegrationTest extends TestCase
         self::assertCount(1, $minePixels);
         self::assertNotSame($theirPixel['pixel_id'], $minePixels[0]['pixel_id']);
         self::assertSame('https://mine.example/p.gif', $minePixels[0]['pixel_code']);
+    }
+
+    /**
+     * The form refuses a Postback URL the sender would never call, as the
+     * API does, and takes what the account's own Postback pixels hold now
+     * as it is; a pixel id of another account holds nothing here.
+     */
+    public function testAPostbackTheSenderWouldRefuseIsRefusedUnlessThePixelHoldsIt(): void
+    {
+        $mine = $this->ids['mine'];
+        $theirs = $this->ids['theirs'];
+        $pixel = static fn (int $account, int $type, string $code): int => self::exec(
+            "INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = $type,
+             pixel_code = '$code'"
+        );
+        $held = $pixel($mine, 4, 'http://127.0.0.1:9/mine');
+        self::exec("INSERT INTO 202_notification_correction_urls SET pixel_id = $held, user_id = " . self::USER
+            . ", correction_url = 'http://127.0.0.1:9/fix', created_at = 0, updated_at = 0");
+        $image = $pixel($mine, 1, 'http://10.0.0.1/p.gif');
+        $their = $pixel($theirs, 4, 'http://127.0.0.1:9/theirs');
+
+        $stored = $this->pixels()->storedPostbacks(self::USER, $mine);
+        $expected = [$held => ['code' => 'http://127.0.0.1:9/mine', 'correction' => 'http://127.0.0.1:9/fix']];
+        self::assertSame($expected, $stored);
+        $none = $this->pixels()->storedPostbacks(self::USER, $theirs);
+        self::assertSame([], $none, "another user's account holds nothing");
+
+        $refused = static function (array $post) use ($stored): array {
+            $errors = [];
+            AccountPixels::refusePostbacks(AccountPixels::fromForm($post, $errors), $stored, $errors);
+
+            return $errors;
+        };
+        $row = static fn (string $type, string $code, int $id = 0, string $correction = ''): array => [
+            'pixel_type_id' => [$type],
+            'pixel_code' => [$code],
+            'pixel_id' => [$id === 0 ? '' : (string) $id],
+            'pixel_correction_url' => [$correction],
+        ];
+        $public = ' Postbacks are only sent to public addresses.';
+
+        $asItIs = $refused($row('4', 'http://127.0.0.1:9/mine', $held, 'http://127.0.0.1:9/fix'));
+        self::assertSame([], $asItIs, 'sent back as it is');
+        self::assertSame([], $refused($row('1', 'http://10.0.0.1/p.gif', $image)), 'a browser loads an image pixel');
+        self::assertSame([], $refused($row('4', 'http://net.example:8080/pb?s=[[subid]]')));
+        self::assertSame(
+            ['pixel_code' => 'Pixel code (Postback URL): 10.0.0.1, which is a private address.' . $public],
+            $refused($row('4', 'http://10.0.0.1/pb'))
+        );
+        $second = $refused($row('4', 'http://127.0.0.1:9/mine http://169.254.169.254/x', $held));
+        self::assertStringContainsString('URL 2: 169.254.169.254', $second['pixel_code'] ?? '');
+        $gopher = $refused($row('4', 'gopher://net.example/pb'));
+        self::assertStringContainsString('must start with http', $gopher['pixel_code'] ?? '');
+        $forged = $refused($row('4', 'http://127.0.0.1:9/theirs', $their));
+        self::assertStringContainsString('loopback', $forged['pixel_code'] ?? '', "another account's id holds nothing");
+        $new = $refused($row('4', 'http://127.0.0.1:9/mine'));
+        self::assertStringContainsString('loopback', $new['pixel_code'] ?? '', 'a new row holds nothing');
+        self::assertSame(
+            ['pixel_correction_url' => 'Correction URL: 10.2.2.2, which is a private address.' . $public],
+            $refused($row('4', 'http://127.0.0.1:9/mine', $held, 'http://10.2.2.2/fix'))
+        );
     }
 
     public function testAnUpdatedPixelSaysWhatItWas(): void

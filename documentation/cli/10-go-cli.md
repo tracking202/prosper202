@@ -473,9 +473,12 @@ p202 ppc-account pixel create 4 --type-id 4 --code 'https://network.example/pb?c
   variable is retired, so recorded clicks keep its values.
 - **`ppc-account pixel`** edits what the account fires on a conversion:
   `--type-id` 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server,
-  http(s) URLs only), 5 Raw, 6 Bot202 Facebook Pixel Assistant; `--code` the
-  URL(s) or markup; `--correction-url` (Postback only, one per code URL;
-  `--correction-url ''` removes it).
+  http(s) URLs to public addresses only), 5 Raw, 6 Bot202 Facebook Pixel
+  Assistant; `--code` the URL(s) or markup; `--correction-url` (Postback only,
+  one per code URL; `--correction-url ''` removes it). A Postback aimed at a
+  private, loopback or metadata address, a local name, or with a password in
+  it is refused (exit 1, the field named, and a hint naming
+  `P202_WEBHOOK_ALLOW_NETWORKS` for a receiver on the operator's own network).
 
 The writes take `--idempotency-key` (create) and `--staged`; the deletes take
 `--dry-run`, `--force` and `--ids`. Under `--json` each command prints the

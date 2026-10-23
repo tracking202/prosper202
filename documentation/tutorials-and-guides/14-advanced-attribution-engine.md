@@ -100,6 +100,9 @@ on your own network, allow that network in `202-config.php`:
 define('P202_WEBHOOK_ALLOW_NETWORKS', '10.20.0.0/16');
 ```
 
+The same line admits a traffic source's postback receiver on that network:
+server-to-server postbacks are held to the same address rules.
+
 Export files are kept under `202-config/temp/attribution-exports/` (set
 `P202_EXPORT_DIR` to keep them outside the web root) until you delete the
 export. Inside the web root, make sure the web server denies

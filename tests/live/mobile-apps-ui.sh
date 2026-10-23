@@ -52,6 +52,8 @@ if [ -z "$P202_PASS" ] || [ -z "$P202_API_KEY" ]; then
 fi
 # shellcheck source=tests/live/guard.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
+# shellcheck source=tests/live/loopback-postbacks.sh
+. "$(dirname "${BASH_SOURCE[0]}")/loopback-postbacks.sh"
 p202_require_scratch_db "$DB" || exit 2
 
 MYSQL_ARGS=(-u "$DB_USER")
@@ -110,6 +112,7 @@ OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 
 STORE_PID=
 cleanup() {
+  p202_restore_postbacks
     [ -n "$STORE_PID" ] && kill "$STORE_PID" 2> /dev/null
     mysql_q "$DB" <<SQL
 SET SESSION sql_mode='';
@@ -133,6 +136,8 @@ SQL
 }
 cleanup
 trap cleanup EXIT
+# The traffic source posts back to this machine (loopback-postbacks.sh).
+p202_allow_loopback_postbacks || exit 2
 
 # A previous pass may have spent this peer's intake bucket: wait it out
 # rather than read 429s as defects.

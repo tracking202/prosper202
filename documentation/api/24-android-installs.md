@@ -188,7 +188,10 @@ click's tokens plus `[[payout]]` (this conversion's amount),
 
 `202-cronjobs/app-installs.php` sends what is due (the request path makes no
 external calls), retrying with backoff from a minute to six hours and
-marking a row `failed` after 8 attempts. A traffic source hears about an
+marking a row `failed` after 8 attempts; a URL the sender refuses (an
+address that is not public, at the URL or at a redirect,
+[27-setup.md](27-setup.md#an-accounts-pixels--ppc-accountsidpixels)) is
+`failed` at once, with the reason. A traffic source hears about an
 outcome **once**, decided per URL: if a late event moves an outcome to
 another event and its postback to a URL has not been attempted, it is
 cancelled and the replacement's goes to that URL instead; if it has been
