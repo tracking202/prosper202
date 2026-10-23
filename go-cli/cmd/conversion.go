@@ -187,7 +187,7 @@ func renderConversionMatchMethods(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("encoding the match method totals: %w", err)
 	}
-	fmt.Println("\nEvery campaign, by match method:")
+	fmt.Println("\nTotals by match method:")
 	render(encoded)
 	return nil
 }

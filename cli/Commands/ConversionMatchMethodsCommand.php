@@ -63,7 +63,7 @@ class ConversionMatchMethodsCommand extends BaseCommand
         }
         $this->render($output, ['data' => self::rows($result['data'] ?? [])], $input);
         if (($result['data'] ?? []) !== []) {
-            $output->writeln(['', 'Every campaign, by match method:']);
+            $output->writeln(['', 'Totals by match method:']);
             $this->render($output, ['data' => self::rows($result['totals'] ?? [])], $input);
         }
 

@@ -30,7 +30,7 @@ func TestConversionMatchMethodsSendsTheFiltersAndShowsEveryMethodsTotals(t *test
 			t.Errorf("query %q should carry %s", (*seen)[0].Query, want)
 		}
 	}
-	for _, want := range []string{"same_ip", "click_id", "Every campaign, by match method:", "visitor_id", "unknown"} {
+	for _, want := range []string{"same_ip", "click_id", "Totals by match method:", "visitor_id", "unknown"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output should contain %q:\n%s", want, out)
 		}

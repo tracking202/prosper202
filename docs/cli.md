@@ -764,7 +764,7 @@ click from the visitor's address: a guess) or `unknown` (recorded before
 1.9.79). `conversions` leaves out reversals, `counted` is how many count
 toward their click's value and `income` what those add up to. The window is
 the conversions' time (`--period`, `--time-from`, `--time-to`). The table ends
-with every method's totals over all campaigns; `--json` is
+with every method's totals over the campaigns it lists; `--json` is
 `GET /conversions/match-methods`. The PHP CLI's `conversion:match-methods`
 prints the same.
 

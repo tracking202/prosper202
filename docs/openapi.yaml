@@ -1991,7 +1991,8 @@ paths:
         are not reversals, `counted` those that count toward their click's
         value, and `income` what the counting rows add up to, reversals
         netted; a reversal is under the method of its own request. `totals`
-        is the same per method over every campaign, every method listed.
+        is the same per method over the campaigns `data` covers (every
+        campaign, or the one `campaign_id` names), every method listed.
         The window is the conversion time's, as `GET /conversions` reads
         it. A role without access to campaign data gets the counts and the
         income as null (`masked: true`). Group Overview's Match method level

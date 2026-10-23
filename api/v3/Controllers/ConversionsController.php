@@ -207,7 +207,8 @@ class ConversionsController
      * reversals netted; a reversal is under the method of its own request.
      * The window is conv_time's, as GET /conversions reads it: a period, or
      * time_from and time_to, or both, each narrowing. `totals` is the same
-     * per method over every campaign, every method listed.
+     * per method over the campaigns `data` covers (every campaign, or the one
+     * campaign_id names), every method listed.
      *
      * @param array<string, mixed> $params
      * @return array<string, mixed>

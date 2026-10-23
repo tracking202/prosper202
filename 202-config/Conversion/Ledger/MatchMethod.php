@@ -94,7 +94,7 @@ enum MatchMethod: string
             }
         }
         error_log('p202 conversions: the 1.9.79 upgrade has not added match_method yet, so this row is written'
-            . ' without how its click was found, and reads as unknown. Run the upgrade. (' . strtok(trim($sql), '(') . ')');
+            . ' without how its click was found, and reads as unknown. Run the upgrade. (' . trim((string) strtok(trim($sql), '(')) . ')');
 
         return [$conn->prepareWrite($withoutColumn), false];
     }

@@ -94,7 +94,8 @@ label. `GET /conversions/match-methods` counts them per campaign:
 ```
 
 One row per campaign and method that has conversions; `totals` lists every
-method over every campaign (shortened above). `conversions` counts the live
+method over the campaigns `data` covers (every campaign, or the one
+`campaign_id` names; shortened above). `conversions` counts the live
 conversions that are not reversals, `counted` those that count toward their
 click's value, and `income` what the counting rows add up to, reversals
 netted (a reversal is under its own request's method). A role without access
