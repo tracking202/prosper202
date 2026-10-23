@@ -20,8 +20,9 @@ use Prosper202\Database\Connection;
  * a click of another account reads as no click at all, so the answers do
  * not tell one key holder which click ids another account has. A retry of
  * a payment or refund already on file is a duplicate only when it states
- * the same amount; one that states another is refused, never answered as
- * the first (CLAUDE.md #15).
+ * the same amount (a refund that states none takes back the whole sale);
+ * one that states another is refused, never answered as the first
+ * (CLAUDE.md #15).
  */
 final class Processor
 {
@@ -202,12 +203,22 @@ final class Processor
             );
         }
         if ($result['reason'] === 'duplicate') {
-            $stored = $this->storedAmount($result['conv_id'], $owner);
-            if ($n->amount !== null && abs(Amount::toUnits($stored)) !== Amount::toUnits($n->amount)) {
+            // A refund that states no amount takes back the whole sale, so it
+            // repeats the reversal on file only when that one took it all too.
+            $stored = $this->storedReversal($result['conv_id'], $owner);
+            $stated = $n->amount !== null ? Amount::toUnits($n->amount) : $stored['sale'];
+            if ($stated !== $stored['reversed']) {
+                $rest = $stored['sale'] - $stored['reversed'];
+                $credited = $rest > 0
+                    ? ', and ' . self::units($rest) . ' of its ' . self::units($stored['sale']) . ' is still credited'
+                    : '';
+
                 return new Outcome(
                     OutcomeKind::CONFLICT,
-                    $on . ' is already reversed by ' . self::plain(ltrim($stored, '-')) . '; this ' . $n->event
-                    . ' states ' . $n->amount . ', and a sale is reversed once. Nothing was changed.',
+                    $on . ' is already reversed by ' . self::units($stored['reversed']) . $credited
+                    . '; this ' . $n->event . ' states '
+                    . ($n->amount ?? 'its full amount, ' . self::units($stored['sale']))
+                    . ', and a sale is reversed once. Nothing was changed.',
                     $result['conv_id'],
                     $owner
                 );
@@ -310,6 +321,39 @@ final class Processor
         }
 
         return (string) $row['click_payout'];
+    }
+
+    /**
+     * How much a reversal on file took back and how much the sale it
+     * reverses holds, both as positive units.
+     *
+     * @return array{reversed: int, sale: int}
+     */
+    private function storedReversal(int $conversionId, int $owner): array
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead(
+            'SELECT r.click_payout AS reversed, s.click_payout AS sale FROM 202_conversion_logs r'
+            . ' JOIN 202_conversion_logs s ON s.conv_id = r.reverses_conv_id AND s.user_id = r.user_id'
+            . ' WHERE r.conv_id = ? AND r.user_id = ? LIMIT 1'
+        );
+        $conn->bind($stmt, 'ii', [$conversionId, $owner]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new \RuntimeException(
+                'conversion ' . $conversionId . ', which the writer named, is not a reversal of a sale on file'
+            );
+        }
+
+        return [
+            'reversed' => abs(Amount::toUnits((string) $row['reversed'])),
+            'sale' => abs(Amount::toUnits((string) $row['sale'])),
+        ];
+    }
+
+    private static function units(int $units): string
+    {
+        return self::plain(Amount::fromUnits($units));
     }
 
     private static function unknownClick(int $clickId): Outcome

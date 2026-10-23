@@ -285,6 +285,48 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         $partial = $this->post(self::fields(['event' => 'refund', 'amount' => '-10.5']), self::KEY_1);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $partial);
         self::assertSame(['47.00000', '-10.50000'], array_column(self::conversions(), 'click_payout'));
+
+        // The same partial refund again, however its amount is spelled.
+        foreach (['-10.5', '10.50', '10.50000'] as $amount) {
+            $again = $this->post(self::fields(['event' => 'refund', 'amount' => $amount]), self::KEY_1);
+            self::assertOutcome(OutcomeKind::DUPLICATE, 200, $again);
+        }
+        self::assertCount(2, self::conversions());
+    }
+
+    public function testAFullRefundAfterAPartialOneIsRefusedNamingWhatIsStillCredited(): void
+    {
+        $this->post(self::fields(), self::KEY_1);
+        $this->post(self::fields(['event' => 'refund', 'amount' => '10.50']), self::KEY_1);
+
+        // No amount, and 0, each state a full refund: not the reversal on file.
+        foreach (['', '0', '0.00'] as $amount) {
+            $full = $this->post(self::fields(['event' => 'refund', 'amount' => $amount]), self::KEY_1);
+            self::assertOutcome(OutcomeKind::CONFLICT, 409, $full);
+            self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is already reversed by 10.5, and'
+                . ' 36.5 of its 47 is still credited; this refund states its full amount, 47, and a sale is reversed'
+                . ' once. Nothing was changed.', $full->message);
+        }
+        $fields = self::fields(['event' => 'refund']);
+        unset($fields['amount']);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $this->post($fields, self::KEY_1));
+        self::assertSame(['47.00000', '-10.50000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testARefundOfTheWholeSaleIsAFullRefundHoweverItIsStated(): void
+    {
+        $this->post(self::fields(), self::KEY_1);
+        $this->post(self::fields(['event' => 'refund', 'amount' => '47']), self::KEY_1);
+
+        foreach (['', '0', '47.00'] as $amount) {
+            $full = $this->post(self::fields(['event' => 'refund', 'amount' => $amount]), self::KEY_1);
+            self::assertOutcome(OutcomeKind::DUPLICATE, 200, $full);
+        }
+        $partial = $this->post(self::fields(['event' => 'refund', 'amount' => '5']), self::KEY_1);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $partial);
+        self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is already reversed by 47; this refund'
+            . ' states 5, and a sale is reversed once. Nothing was changed.', $partial->message);
+        self::assertSame(['47.00000', '-47.00000'], array_column(self::conversions(), 'click_payout'));
     }
 
     public function testARefundOfASaleNotOnFileIsA404SayingSo(): void
