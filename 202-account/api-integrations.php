@@ -135,8 +135,6 @@ function apiint_cb_pill(bool $verified): string
 		: '<span class="p202-pill p202-pill--warn">Unverified</span>';
 }
 
-$strProtocol = getSecureStatus() ? 'https://' : 'http://'; // SERVER_PROTOCOL is "HTTP/1.1" even over TLS (review finding)
-
 /**
  * rtr.php caches the Landing Page Optimizer t202ctx prefs (lpo_status, lpo_bridge_config,
  * lpo_ctx_kw) for 3 minutes under md5(<exact SELECT> . systemHash()). Any
@@ -632,7 +630,8 @@ $endpoint = static function (string $label, string $url) use ($e): string {
 		. '<div class="p202-code mb-3"><pre class="p202-code__value">' . $e($url) . '</pre>'
 		. '<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="' . $e($url) . '">Copy</button></div>';
 };
-$trackingBase = $strProtocol . getTrackingDomain() . get_absolute_url();
+// On the base the tracking links use, the saved scheme included.
+$trackingBase = p202TrackingBaseForResponse();
 
 $flashExtra = [];
 if (!empty($dniProgressUnavailable)) {

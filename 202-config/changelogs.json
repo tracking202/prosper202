@@ -3,7 +3,8 @@
     "version": "1.9.79",
     "logs": [
       "Changed: A visitor who comes back through a redirector link (a re-click) is counted once in every report, under the visit they made last, with the traffic source and cost of their first visit, and a conversion is credited to that last visit. Update CPC chooses such a click by its first visit and sets the cost of every visit",
-      "Changed: After the upgrade, the cron job brings the clicks re-clicked before 1.9.79 to one visit each, a little every minute; until it reaches one, the reports count it at each of its visits. Keep the cron job running"
+      "Changed: After the upgrade, the cron job brings the clicks re-clicked before 1.9.79 to one visit each, a little every minute; until it reaches one, the reports count it at each of its visits. Keep the cron job running",
+      "Fixed: Get Links hands out https:// links when you use Prosper202 over HTTPS or save your tracking domain with https://, the same links the API and p202 tracker get-url give; it wrote http:// always. The Postback / Pixel and API integrations pages follow a tracking domain saved with https:// or http:// too"
     ]
   },
   "1.9.78": {

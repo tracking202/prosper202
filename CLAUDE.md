@@ -594,6 +594,19 @@ on takes the stored domain or the server's own name
 (`p202TrackingBaseUrl()`). `RequestHostSourceTest` lists every
 `getTrackingDomain()` caller with why its URL goes back to the requester.
 
+The scheme is part of the same address, and Get Links chose it alone: every
+direct and redirector link was `'http://' . getTrackingDomain() . …`, so an
+install served over HTTPS handed Safari and the ad platforms a plain-http hop
+while `p202 tracker get-url` gave the same tracker an https:// link, and the
+Postback and API integrations pages took the scheme from the request alone,
+never from a domain saved as `https://…`. A link the operator pastes is built
+on `p202TrackingBaseForResponse()`, the API's rule (`TrackingBaseLookup`): the
+scheme the domain is saved with, else the request's. `HandBuiltLinkSchemeTest`
+refuses a URL built on a hard-coded `http://` and lists every scheme chosen by
+hand (a ternary between http and https, or one as a default); it cannot see a
+scheme assembled from parts or set by an `if`. When two surfaces hand out one
+URL, they call one builder, and a test compares their answers to one request.
+
 A path in a directory anyone can write is a claim of the same kind: the
 name says whose it is, and anyone could have made it. The API state store's
 default directory is a hash of the database host and name in the system temp

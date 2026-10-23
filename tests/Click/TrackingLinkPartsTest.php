@@ -70,6 +70,102 @@ final class TrackingLinkPartsTest extends TestCase
         self::assertSame('http://127.0.0.1:8098/', TrackingBaseUrl::build('http://127.0.0.1:8098/', $server, self::root()));
     }
 
+    /** @return iterable<string, array{string, ?string, ?string}> stored => storedScheme(), storedSchemeForResponse() */
+    public static function storedDomains(): iterable
+    {
+        yield 'nothing' => ['', null, null];
+        yield 'a host' => ['track.example.com', null, null];
+        yield 'https' => ['https://track.example.com/', 'https', 'https'];
+        yield 'http, any case, after a space' => [' HTTP://track.example.com', 'http', 'http'];
+        yield 'scheme-relative' => ['//track.example.com', null, null];
+        yield 'another scheme' => ['ftp://track.example.com', null, null];
+        yield 'a scheme with no host' => ['https://', 'https', null];
+    }
+
+    /** @dataProvider storedDomains */
+    public function testTheSchemeADomainIsSavedWith(string $stored, ?string $scheme, ?string $forResponse): void
+    {
+        self::assertSame($scheme, TrackingBaseUrl::storedScheme($stored));
+        self::assertSame($forResponse, TrackingBaseUrl::storedSchemeForResponse($stored));
+    }
+
+    /**
+     * storedSchemeForResponse() names the scheme buildForResponse() takes:
+     * the saved one whatever the request came over, and the request's
+     * when none is saved with the domain.
+     *
+     * @dataProvider storedDomains
+     */
+    public function testTheSavedSchemeIsTheOneTheLinksTake(string $stored): void
+    {
+        $plain = ['HTTP_HOST' => 'p202.example', 'SERVER_PORT' => '80', 'DOCUMENT_ROOT' => self::root()];
+        foreach ([$plain, ['HTTP_X_FORWARDED_PROTO' => 'https'] + $plain] as $server) {
+            $base = TrackingBaseUrl::buildForResponse($stored, $server, self::root());
+            $request = isset($server['HTTP_X_FORWARDED_PROTO']) ? 'https' : 'http';
+            $expected = TrackingBaseUrl::storedSchemeForResponse($stored) ?? $request;
+            self::assertStringStartsWith($expected . '://', $base, $stored . ' over ' . $request);
+        }
+    }
+
+    /**
+     * The pages' link base (p202TrackingBaseForResponse(), functions-shared.php)
+     * is the API's (TrackingBaseLookup), install directory included, so Get
+     * Links and GET /trackers/{id}/url give one URL. Both run in a child PHP,
+     * the page's from its own file, the API's through the trait with the
+     * domain read stubbed.
+     */
+    public function testThePagesLinkBaseIsTheApis(): void
+    {
+        $code = 'require ' . var_export(self::root() . '/vendor/autoload.php', true) . ';'
+            . ' require ' . var_export(self::root() . '/202-config/functions-shared.php', true) . ';'
+            . <<<'PHP'
+            $api = new class {
+                use \Api\V3\Support\TrackingBaseLookup;
+                public string $domain = '';
+                protected function trackingDomain(): string { return $this->domain; }
+                public function base(array $server): string { return $this->trackingBaseUrl($server); }
+            };
+            $out = [];
+            foreach (json_decode($argv[1], true) as $name => [$stored, $server]) {
+                $_SERVER = $server;
+                $api->domain = $stored;
+                $out[$name] = [p202TrackingBaseForResponse($stored), $api->base($server)];
+            }
+            echo json_encode($out);
+            PHP;
+        $docRoot = dirname(self::root());
+        $plain = [
+            'HTTP_HOST' => 'proxy.example:9443', 'SERVER_NAME' => 'internal', 'SERVER_PORT' => '8080',
+            'DOCUMENT_ROOT' => $docRoot,
+        ];
+        $cases = [
+            'nothing saved, plain' => ['', $plain],
+            'nothing saved, TLS proxy' => ['', ['HTTP_X_FORWARDED_PROTO' => 'https'] + $plain],
+            'a host, HTTPS' => ['track.example.com', ['HTTPS' => 'on'] + $plain],
+            'saved https, plain' => ['https://track.example.com/', $plain],
+            'saved http, TLS proxy' => ['http://track.example.com', ['HTTP_X_FORWARDED_PROTO' => 'https'] + $plain],
+        ];
+        $command = [PHP_BINARY, '-r', $code, '--', (string) json_encode($cases)];
+        $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        self::assertIsResource($process);
+        $out = (string) stream_get_contents($pipes[1]);
+        $err = (string) stream_get_contents($pipes[2]);
+        proc_close($process);
+        $seen = json_decode($out, true);
+        self::assertIsArray($seen, "the child answered: $out $err");
+        $dir = '/' . basename(self::root()) . '/';
+        self::assertSame([
+            'nothing saved, plain' => 'http://proxy.example:9443' . $dir,
+            'nothing saved, TLS proxy' => 'https://proxy.example:9443' . $dir,
+            'a host, HTTPS' => 'https://track.example.com' . $dir,
+            'saved https, plain' => 'https://track.example.com' . $dir,
+            'saved http, TLS proxy' => 'http://track.example.com' . $dir,
+        ], array_map(static fn (array $pair): string => $pair[0], $seen), 'the pages');
+        foreach ($seen as $name => [$page, $api]) {
+            self::assertSame($page, $api, $name . ': the API');
+        }
+    }
+
     public function testAnInstallInASubdirectoryKeepsTheDirectory(): void
     {
         $server = ['SERVER_NAME' => 'x', 'DOCUMENT_ROOT' => dirname(self::root())];

@@ -158,6 +158,40 @@ function p202_setup_code_box(string $value, array $options = []): string
 }
 
 /**
+ * Which scheme a page's links use, and why (UI standard, rule 4): the one
+ * the tracking domain is saved with, or else the one this page was served
+ * over (TrackingBaseUrl::buildForResponse()).
+ *
+ * @param string $linkBase the links' base, `scheme://host/…`
+ * @param string|null $storedScheme TrackingBaseUrl::storedSchemeForResponse() of the stored domain
+ * @param string $lead what uses the scheme, with its verb
+ */
+function p202_setup_link_scheme_sentence(string $linkBase, ?string $storedScheme, string $lead = 'Links use'): string
+{
+    $scheme = strtolower((string) strstr($linkBase, '://', true));
+    if ($storedScheme !== null) {
+        return $lead . ' ' . $scheme . '://, because your tracking domain is saved with it.';
+    }
+
+    return $lead . ' ' . $scheme . '://, because this page was served over ' . strtoupper($scheme) . '.';
+}
+
+/**
+ * p202_setup_link_scheme_sentence() as the kit's decided line, with the way
+ * to change it: the tracking domain, on Personal settings.
+ */
+function p202_setup_link_scheme_note(
+    string $linkBase,
+    ?string $storedScheme,
+    string $settingsUrl,
+    string $lead = 'Links use'
+): string {
+    return '<p class="p202-decided mb-0"><i class="bi bi-check2-circle"></i> '
+        . p202_setup_e(p202_setup_link_scheme_sentence($linkBase, $storedScheme, $lead))
+        . ' <a href="' . p202_setup_e($settingsUrl) . '">change</a></p>';
+}
+
+/**
  * The tracking placeholders a campaign or landing-page URL may carry, as
  * buttons that insert the token at the caret of $targetId (p202-setup.js).
  *

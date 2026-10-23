@@ -4,7 +4,7 @@ If you've been using Prosper, this step may look slightly different. This is the
 
 ## Selecting An Option
 
-Select secure link for whether you're running http or https. Please note that if you are on https, your entire setup should be on https such as your Prosper install, your LPs, and the offer itself if you're running your own offer. Otherwise this may cause issues with tracking.
+The page chooses http:// or https:// for you, as Get Links does: the scheme your tracking domain is saved with in **My Account › Personal Settings**, or, saved without one, the scheme you reached the page on. The line under the form says which; **change** opens the choice under Advanced. Please note that if you are on https, your entire setup should be on https such as your Prosper install, your LPs, and the offer itself if you're running your own offer. Otherwise this may cause issues with tracking.
 
 Select the appropriate options for Category and Campaign.
 ![Screen Shot 2016-04-12 at 4.14.53 PM.png](../images/step-9-1.png)
