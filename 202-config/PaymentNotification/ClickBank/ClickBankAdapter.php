@@ -31,11 +31,53 @@ use Prosper202\PaymentNotification\Verification;
  * the transaction in USD"), so they are stated as USD and an account that
  * counts in another currency is refused (Processor).
  *
+ * What each transactionType does is TYPES. A refund, chargeback or returned
+ * eCheck reverses the conversion under its receipt by what its
+ * totalAccountAmount says the account lost, since ClickBank refunds part of
+ * a payment too (a subscription's product change refunds "a portion of the
+ * old product's last recurring payment"), and the whole of it when it states
+ * none or 0.
+ *
  * The legacy versions (4.0 and earlier: a form signed with an 8-digit
  * `cverify`) are answered 415, saying which version to set.
  */
 final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotifications
 {
+    /**
+     * Every transactionType ClickBank's INS article lists, and what each asks
+     * of the ledger. One it does not list is refused by name rather than
+     * acknowledged, since a type that moves money would be lost unseen.
+     */
+    private const TYPES = [
+        // A purchase, or a subscription's first payment.
+        'SALE' => NotificationKind::SALE,
+        // A subscription's rebill, under its own receipt (the first one's, with -0001 after it).
+        'BILL' => NotificationKind::REBILL,
+        // A refund, of the payment its receipt names.
+        'RFND' => NotificationKind::REFUND,
+        // A chargeback, and an eCheck the buyer's bank returned unpaid.
+        'CGBK' => NotificationKind::CHARGEBACK,
+        'INSF' => NotificationKind::CHARGEBACK,
+        // A subscription cancelled, and a cancellation undone: no money moves.
+        'CANCEL-REBILL' => NotificationKind::IGNORED,
+        'UNCANCEL-REBILL' => NotificationKind::IGNORED,
+        // A subscription's product changed (the article describes it by its old and new products).
+        'SUBSCRIPTION-CHG' => NotificationKind::IGNORED,
+        // A cart left, a rebill's card declined, the buyer's details changed or the receipt resent.
+        'ABANDONED_ORDER' => NotificationKind::IGNORED,
+        'CUSTOMER_AUTH_FAILURE' => NotificationKind::IGNORED,
+        'CUSTOMER_EMAIL_UPDATE' => NotificationKind::IGNORED,
+        'CUSTOMER_UPDATE_CC_NOTIFICATION' => NotificationKind::IGNORED,
+        'PURCHASE_DETAILS_EMAIL_RESPONSE' => NotificationKind::IGNORED,
+        // The Test URL button's, and the test versions of the others.
+        'TEST' => NotificationKind::TEST,
+        'TEST_SALE' => NotificationKind::TEST,
+        'TEST_BILL' => NotificationKind::TEST,
+        'TEST_RFND' => NotificationKind::TEST,
+        'CANCEL-TEST-REBILL' => NotificationKind::TEST,
+        'UNCANCEL-TEST-REBILL' => NotificationKind::TEST,
+    ];
+
     /** decimal(11,5): at most six whole digits and five decimals, read exactly. */
     private const AMOUNT = '/^(-?)(\d{1,6}(?:\.\d{1,5})?)$/D';
 
@@ -136,22 +178,47 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
         $order = $this->order;
         $type = (string) $order['transactionType'];
         $shown = self::shown($type);
-        $kind = match ($type) {
-            'TEST' => NotificationKind::TEST,
-            'SALE' => NotificationKind::SALE,
-            default => NotificationKind::IGNORED,
-        };
-        if ($kind !== NotificationKind::SALE) {
+        $kind = self::TYPES[$type] ?? null;
+        if ($kind === null) {
+            throw self::malformed(
+                'transactionType is "' . $shown . '", which ClickBank\'s Instant Notification Service article does'
+                . ' not list; nothing was recorded.'
+            );
+        }
+        if (!$kind->records() && !$kind->reverses()) {
             return new Notification($kind, $shown);
         }
 
         $receipt = self::receipt($order, $type);
-        $amount = self::amount($order, false);
-        if ($amount === null) {
-            throw self::malformed('The ' . $shown . ' carries no totalAccountAmount.');
+        if ($kind->records()) {
+            $amount = self::amount($order, false);
+            if ($amount === null) {
+                throw self::malformed('The ' . $shown . ' carries no totalAccountAmount.');
+            }
+
+            return new Notification(
+                $kind,
+                $shown,
+                $receipt,
+                null,
+                $amount,
+                'USD',
+                self::clickId($order, $shown, $receipt)
+            );
         }
 
-        return new Notification($kind, $shown, $receipt, null, $amount, 'USD', self::clickId($order, $shown, $receipt));
+        // What the account lost by it is taken back; none, or 0, takes back the whole payment.
+        $amount = self::amount($order, true);
+
+        return new Notification(
+            $kind,
+            $shown,
+            $receipt,
+            $receipt,
+            $amount === null || preg_match('/^0+(?:\.0+)?$/D', $amount) === 1 ? null : $amount,
+            'USD',
+            self::clickId($order, $shown, $receipt)
+        );
     }
 
     public function confirmTest(Connection $conn, int $accountId): void

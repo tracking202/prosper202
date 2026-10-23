@@ -13,8 +13,8 @@ Clickbank doesn't support Postback or custom conversion pixels, so to get real-t
 **Video:** [Setting Up Prosper202 and Clickbank Instant Notification](https://www.youtube.com/watch?v=M6zo3XuExL0&feature=youtu.be)
 
 Prosper202 takes ClickBank's Instant Notification Service (INS), version 6.0
-or later (8.0 is current), and records each sale on the click that sent the
-buyer. Every Prosper202 account that sells or promotes through ClickBank sets
+or later (8.0 is current), and records each sale and rebill on the click that
+sent the buyer; a refund or chargeback takes it back. Every Prosper202 account that sells or promotes through ClickBank sets
 it up for itself, under **Account › API integrations › ClickBank**:
 
 1. Make the campaign's offer URL your HopLink with `tid=[[subid]]` added, such
@@ -22,7 +22,9 @@ it up for itself, under **Account › API integrations › ClickBank**:
    fills `[[subid]]` with the click id, and ClickBank sends it back as the
    order's first tracking code. An affiliate on version 8.0 can use
    `extclid=[[subid]]` instead: it is read when the order has no tracking
-   code.
+   code. For a subscription, set the campaign's **When a click converts more
+   than once** (under Advanced) to **Add them up**: with **Keep the latest**,
+   each rebill replaces the click's value rather than adding to it.
 2. Save your ClickBank account's **secret key** on the page (ClickBank: up to
    16 capital letters and digits, under Vendor Settings › My Site › Advanced
    Tools). Each notification is encrypted with it, and the account whose key
@@ -42,8 +44,12 @@ is answered with a 2xx):
 | ------------ | ---------- | ------ |
 | `SALE` | a conversion on the click, source `clickbank`, under its `receipt`, worth its `totalAccountAmount` (USD) | `200 recorded` |
 | the same `SALE` again | nothing; a retry stating another amount is refused | `200 duplicate` / `409` |
-| `TEST` | the key is marked Verified | `200 test` |
-| every other type | nothing | `200 ignored` |
+| `BILL` (a subscription's rebill) | another conversion on the click, under its own `receipt` (the first payment's with `-0001`, `-0002` after it), worth its `totalAccountAmount` | `200 recorded` |
+| `RFND`, `CGBK`, `INSF` (a refund, a chargeback, an eCheck the buyer's bank returned) | a reversal of the conversion under its `receipt`, by what its `totalAccountAmount` says the account lost (the whole of it when it states none or 0); a payment is reversed once | `200 reversed`, `404` when no such conversion is on the click |
+| the same reversal again (a refund sent again, or a chargeback of a refunded payment for the same amount) | nothing; one that takes back another amount is refused, saying how much is still credited | `200 duplicate` / `409` |
+| `TEST`, and `TEST_SALE`, `TEST_BILL`, `TEST_RFND`, `CANCEL-TEST-REBILL`, `UNCANCEL-TEST-REBILL` | the key is marked Verified; nothing is recorded | `200 test` |
+| `CANCEL-REBILL` and `UNCANCEL-REBILL` (a subscription cancelled, a cancellation undone), `SUBSCRIPTION-CHG`, `ABANDONED_ORDER`, `CUSTOMER_AUTH_FAILURE`, `CUSTOMER_EMAIL_UPDATE`, `CUSTOMER_UPDATE_CC_NOTIFICATION`, `PURCHASE_DETAILS_EMAIL_RESPONSE` | nothing: no money moves | `200 ignored` |
+| a type ClickBank's INS article does not list | nothing | `400`, naming it |
 | a sale with no tracking code | nothing: no click to credit | `200 no_click` |
 | a tracking code that is not a click of the account | nothing | `404` |
 | a notification no stored key decrypts | nothing | `403` |

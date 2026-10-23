@@ -153,11 +153,54 @@ eq "$(rows "$CLICK_A")" 1 "and recorded nothing"
 api "$KEY_B" PUT "/users/$USER_B/preferences" "{\"cb_key\":\"$CB_B\"}" > /dev/null
 eq "$(cb "$CB_A" SALE "RS$RUN" "$CLICK_A" 5.00)" 200 "once the key is one account's again, the same notification records"
 
+# --- 851K: rebills, refunds, chargebacks and the other types --------------
+say "a rebill is another conversion under its own receipt"
+eq "$(cb "$CB_B" BILL "RB$RUN-0001" "$CLICK_B" 9.95)" 200 "account $USER_B's BILL answers 200"
+has "$OUT/r" '"outcome":"recorded"' "as recorded"
+eq "$(row "$CLICK_B" "RB$RUN-0001")" "$USER_B RB$RUN-0001 9.95000 clickbank 2 - 0" "a row under the rebill's receipt, at its amount"
+eq "$(cb "$CB_B" BILL "RB$RUN-0001" "$CLICK_B" 9.95)" 200 "the same rebill again answers 200"
+has "$OUT/r" '"outcome":"duplicate"' "as a duplicate"
+eq "$(rows "$CLICK_B")" 2 "the sale and one rebill"
+
+say "a refund, a chargeback and a returned eCheck take a payment back"
+SALE_B=$(Q "SELECT conv_id FROM 202_conversion_logs WHERE click_id=$CLICK_B AND transaction_id='RB$RUN' AND reverses_conv_id IS NULL")
+eq "$(cb "$CB_B" RFND "RB$RUN" "$CLICK_B" -12.50)" 200 "account $USER_B's RFND of its sale answers 200"
+has "$OUT/r" '"outcome":"reversed"' "as reversed"
+eq "$(row "$CLICK_B" "RB$RUN" | tail -1)" "$USER_B RB$RUN -12.50000 clickbank 2 $SALE_B 0" "a reversal of the sale, by what the refund states"
+eq "$(cb "$CB_B" RFND "RB$RUN" "$CLICK_B" -12.50)" 200 "the same refund again answers 200"
+has "$OUT/r" '"outcome":"duplicate"' "as a duplicate"
+eq "$(cb "$CB_B" CGBK "RB$RUN" "$CLICK_B" -5.00)" 409 "a chargeback of the refunded sale stating another amount is a 409"
+eq "$(cb "$CB_A" RFND "RB$RUN-0001" "$CLICK_B" -9.95)" 404 "account 1's key cannot refund account $USER_B's rebill"
+eq "$(cb "$CB_B" CGBK "RB$RUN-0001" "$CLICK_B" 0)" 200 "a chargeback of the rebill stating 0 answers 200"
+eq "$(row "$CLICK_B" "RB$RUN-0001" | tail -1 | cut -d' ' -f3)" "-9.95000" "and takes the whole rebill back"
+eq "$(cb "$CB_A" SALE "RI$RUN" "$CLICK_A" 20.00)" 200 "another sale of account 1"
+eq "$(cb "$CB_A" INSF "RI$RUN" "$CLICK_A" -20.00)" 200 "its INSF (a returned eCheck) answers 200"
+eq "$(row "$CLICK_A" "RI$RUN" | tail -1 | cut -d' ' -f3)" "-20.00000" "and takes it back"
+eq "$(cb "$CB_A" RFND "RNEVER$RUN" "$CLICK_A" -1.00)" 404 "a refund of a receipt not on the click is a 404"
+eq "$(Q "SELECT SUM(click_payout) FROM 202_conversion_logs WHERE click_id=$CLICK_B AND deleted=0")" "0.00000" "account $USER_B's click nets to nothing"
+
+say "the types that move no money, and the tests"
+for type in CANCEL-REBILL UNCANCEL-REBILL SUBSCRIPTION-CHG; do
+    eq "$(cb "$CB_B" "$type" "RB$RUN" "$CLICK_B" 0)" 200 "$type answers 200"
+    has "$OUT/r" '"outcome":"ignored"' "as ignored"
+done
+eq "$(cb "$CB_A" TEST_SALE "RT$RUN" "$CLICK_A" 5.00)" 200 "TEST_SALE answers 200"
+has "$OUT/r" '"outcome":"test"' "as a test"
+eq "$(cb "$CB_A" RFND-RB "RB$RUN" "$CLICK_A" -1.00)" 400 "a type ClickBank does not list is a 400"
+has "$OUT/r" 'does not list' "naming it"
+eq "$(rows "$CLICK_B")" 4 "account $USER_B's click holds the sale, the rebill and a reversal of each, nothing else"
+api "$KEY_B" GET "/conversions?source=clickbank&limit=50" > "$OUT/conv"
+eq "$(jq -r "[.data[] | select(.click_id == $CLICK_B) | \"\(.transaction_id) \(.click_payout)\"] | sort | join(\",\")" "$OUT/conv")" \
+    "RB$RUN -12.5,RB$RUN 12.5,RB$RUN-0001 -9.95,RB$RUN-0001 9.95" "GET /conversions lists them to account $USER_B"
+eq "$(api "$ADMIN_KEY" GET "/conversions?source=clickbank&limit=200" | jq "[.data[] | select(.click_id == $CLICK_B)] | length")" 0 "and not to account 1"
+
 say "server log"
 if [ -n "${P202_SERVER_LOG:-}" ] && [ -f "$P202_SERVER_LOG" ]; then
     grep 'ClickBank notification' "$P202_SERVER_LOG" > "$OUT/log" || true
     has "$OUT/log" "recorded (200), SALE (sale), click $CLICK_B, transaction RB$RUN, account $USER_B" "the sale is one line naming its account"
     has "$OUT/log" "accounts 1, $USER_B store the secret key it decrypts with" "the ambiguous key names both accounts"
+    has "$OUT/log" "reversed (200), RFND (refund), click $CLICK_B, transaction RB$RUN, account $USER_B" "a refund is one line naming its account"
+    has "$OUT/log" "ignored (200), CANCEL-REBILL (ignored), account $USER_B" "a cancellation is logged with its account"
     if grep -qF -e "$CB_A" -e "$CB_B" -e 'buyer-7pjv@example.com' -e 'Test Buyer' "$OUT/log"; then
         bad "the log holds a key or the buyer's details"
     else
