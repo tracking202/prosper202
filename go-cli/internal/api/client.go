@@ -809,8 +809,9 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 		return nil, apiErr
 	}
 	if tooMany != nil {
-		if method != http.MethodGet && method != http.MethodHead {
+		if method != http.MethodGet && method != http.MethodHead && !readsAsPost && params["dry_run"] == "" {
 			// It was sent and accepted: whatever it changed stands (CLAUDE.md #13).
+			noteWriteRefused()
 			return nil, &RequestError{Kind: tooMany.Kind, Op: tooMany.Op, Err: fmt.Errorf(
 				"%w; the install accepted the %s (HTTP %d) before its answer was refused, so it may have changed data", tooMany.Err, method, resp.StatusCode)}
 		}

@@ -133,22 +133,32 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 		// to ask for less and what the tool takes.
 		return &CLIError{Category: "validation", Message: err.Error(), ExitCode: ExitValidation, Hint: mcpAskForLess(spec), Cause: err}
 	}
-	if err != nil && mcpHostedRun && api.AnswerBoundPassed() {
-		// A command that carried on past the refusal (a delete of several
-		// ids) answers with its own error, which keeps its category; the
-		// next step is still the refusal's.
-		return withHint(err, "%s", mcpAskForLess(spec))
+	if mcpHostedRun && api.AnswerBoundPassed() {
+		if err != nil {
+			// A command that carried on past the refusal (a delete of several
+			// ids) answers with its own error, which keeps its category; the
+			// next step is still the refusal's.
+			return withHint(err, "%s", mcpAskForLess(spec))
+		}
+		// A command that answers without a read it could do without
+		// (whoami's user record) says so in its answer; this says why.
+		fmt.Fprintf(cmd.ErrOrStderr(), "Note: part of this answer is missing: the install's answers to %s held more than %d JSON values, more than a hosted call decodes, and the rest were not read. %s\n", spec.Name, hostedAnswerValues, mcpAskForLess(spec))
 	}
 	return err
 }
 
 // mcpAskForLess is the hint on a hosted call whose answers held more values
-// than it decodes: the refusal's own hint (a command's hint on what it
-// wrapped is about something else), and what the tool takes. A write may
-// have been made before its answer was refused.
+// than it decodes. A change the install accepted before its answer was
+// refused is looked for before it is made again; a write tool that sent no
+// change has nothing smaller to ask for; a read gets the refusal's own hint
+// (a command's hint on what it wrapped is about something else) and what
+// the tool takes.
 func mcpAskForLess(s mcpToolSpec) string {
-	if !s.readOnly() {
-		return "Look with the matching get or list tool before calling " + s.Name + " again: the install may have made the change before its answer was refused."
+	switch {
+	case api.AnswerRefusedAfterWrite():
+		return "Look with the matching get or list tool before calling " + s.Name + " again: the install made the change before its answer was refused."
+	case !s.readOnly():
+		return "Nothing that changes data was sent. The install's answers to what " + s.Name + " reads first are more than a hosted call decodes; `p202 mcp` on your own computer has no such bound."
 	}
 	hint := api.HintFor(&api.RequestError{Kind: "validation", Op: api.OpAnswerTooManyValues})
 	c, err := s.command(rootCmd)

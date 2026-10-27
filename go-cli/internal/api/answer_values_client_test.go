@@ -119,6 +119,25 @@ func TestBoundSaysAWriteWasAcceptedBeforeItsAnswerWasRefused(t *testing.T) {
 	if fmt.Sprint(*asked) != "[/api/v3/campaigns]" {
 		t.Fatalf("asked %v", *asked)
 	}
+	if !AnswerRefusedAfterWrite() {
+		t.Fatal("the refused write is not recorded as one")
+	}
+
+	// A preview and a read sent as POST change nothing.
+	for _, send := range []func(c *Client) error{
+		func(c *Client) error {
+			_, err := c.do("DELETE", "campaigns", map[string]string{"dry_run": "1"}, nil)
+			return err
+		},
+		func(c *Client) error { _, err := c.Post("goals/validate", map[string]string{"a": "b"}); return err },
+	} {
+		base, _ := valueInstall(t, map[string][]byte{"/api/v3/campaigns": tinyAnswer(3000), "/api/v3/goals/validate": tinyAnswer(3000)}, nil)
+		boundFor(t, 1000)
+		err := send(newClient(base, "key"))
+		if !AnswerTooManyValues(err) || strings.Contains(err.Error(), "may have changed data") || AnswerRefusedAfterWrite() {
+			t.Fatalf("a request that changes nothing reads as a write: %v", err)
+		}
+	}
 }
 
 // An error answer past the bound keeps its status, which says what failed,

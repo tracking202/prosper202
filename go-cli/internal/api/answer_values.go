@@ -23,6 +23,9 @@ var answerBound struct {
 	limit int  // 0: no bound
 	seen  int  // values in the answers read so far
 	over  bool // an answer passed the bound
+	// wrote: the answer refused was to a request that changes data, which
+	// the install had accepted.
+	wrote bool
 }
 
 // LimitAnswerValues bounds the JSON values in all the answers read from now
@@ -31,7 +34,7 @@ var answerBound struct {
 func LimitAnswerValues(n int) {
 	answerBound.mu.Lock()
 	defer answerBound.mu.Unlock()
-	answerBound.limit, answerBound.seen, answerBound.over = n, 0, false
+	answerBound.limit, answerBound.seen, answerBound.over, answerBound.wrote = n, 0, false, false
 }
 
 // AnswerTooManyValues reports whether err holds, anywhere in its chain, the
@@ -58,6 +61,21 @@ func AnswerBoundPassed() bool {
 	answerBound.mu.Lock()
 	defer answerBound.mu.Unlock()
 	return answerBound.limit > 0 && answerBound.over
+}
+
+// AnswerRefusedAfterWrite reports whether an answer the bound refused was to
+// a request that changes data: the install made the change before its
+// answer was refused, so it is looked for before it is made again.
+func AnswerRefusedAfterWrite() bool {
+	answerBound.mu.Lock()
+	defer answerBound.mu.Unlock()
+	return answerBound.wrote
+}
+
+func noteWriteRefused() {
+	answerBound.mu.Lock()
+	defer answerBound.mu.Unlock()
+	answerBound.wrote = true
 }
 
 // readAnswer reads an answer's body, at most limit bytes, and counts its

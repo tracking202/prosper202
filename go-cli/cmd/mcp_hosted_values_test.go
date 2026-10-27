@@ -200,7 +200,7 @@ func TestHostedReadToolsRefuseAnswersPastTheValueBound(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		stdout, _, err := mcpExecute(t, "mcp", "call", s.Name, "--input", string(body), "--read-only")
+		stdout, stderr, err := mcpExecute(t, "mcp", "call", s.Name, "--input", string(body), "--read-only")
 		if len(f.requests()) == 0 {
 			t.Errorf("%s asked the install for nothing (err %v); give it the arguments it needs in mcpReadToolRequired", s.Name, err)
 			continue
@@ -208,9 +208,13 @@ func TestHostedReadToolsRefuseAnswersPastTheValueBound(t *testing.T) {
 		checked++
 		if s.Name == "whoami" {
 			// Its one data read, the user record, is optional: the answer
-			// says it is unavailable, and why.
+			// says it is unavailable, and why, and the call notes that part
+			// of the answer is missing.
 			if err != nil || !strings.Contains(stdout, `"user_name_unavailable"`) || !strings.Contains(stdout, "JSON values") {
 				t.Errorf("whoami: %v, printed %s", err, stdout)
+			}
+			if !strings.Contains(stderr, "Note: part of this answer is missing") || !strings.Contains(stderr, "whoami takes: ") {
+				t.Errorf("whoami: no note that part of the answer is missing: %q", stderr)
 			}
 			continue
 		}
@@ -333,8 +337,8 @@ func TestHostedRefusalWrappedByTheCommandIsStillTheRefusal(t *testing.T) {
 	if code, category := exitCodeForError(err), api.ErrorCategory(err); code != ExitValidation || category != "validation" {
 		t.Fatalf("staged campaign_create: exit %d, category %q; want the refusal's validation, not the wrapper's", code, category)
 	}
-	if !strings.Contains(hintFor(err), "campaign_create") {
-		t.Fatalf("hint %q", hintFor(err))
+	if !strings.Contains(hintFor(err), "Nothing that changes data was sent") {
+		t.Fatalf("hint %q does not say the write was not sent", hintFor(err))
 	}
 	if hits := f.requests(); len(hits) != 0 {
 		t.Fatalf("sent %q after the capabilities answer was refused", hits)
