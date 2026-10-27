@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 
 	"p202/internal/api"
 
@@ -100,6 +102,12 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 		return validationError("the arguments for %s are over %d bytes", spec.Name, mcpMaxInputBytes).
 			WithHint("Send less: a tool's arguments are ids, filters and short values.")
 	}
+	if mcpHostedRun {
+		if _, over := api.JSONValuesOver(input, hostedArgumentValues); over {
+			return validationError("the arguments for %s hold more than %d JSON values, more than a hosted call takes", spec.Name, hostedArgumentValues).
+				WithHint("Send less: a tool's arguments are ids, filters and short values.")
+		}
+	}
 	argv, err := mcpToolArgv(rootCmd, spec, input)
 	if err != nil {
 		return err
@@ -108,12 +116,49 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 	// nothing that changes data, whatever the tool's command does.
 	api.SetReadOnlyMode(mcpReadOnly)
 	defer api.SetReadOnlyMode(false)
+	if mcpHostedRun {
+		// Before the tool reads anything: the engine's memory follows the
+		// values it decodes, not the bytes the relay lets it read.
+		api.LimitAnswerValues(hostedAnswerValues)
+		defer api.LimitAnswerValues(0)
+	}
 	// The tool's command runs in this process, on the same command tree.
 	// Root's persistent flags keep what this invocation parsed (nothing
 	// resets them between the two runs), so --profile and --staged carry
 	// over; TestMCPCallCarriesProfileAndStaged holds that.
 	rootCmd.SetArgs(argv)
-	return rootCmd.Execute()
+	err = rootCmd.Execute()
+	if api.AnswerTooManyValues(err) {
+		// Whatever the command wrapped it in, it is this refusal, with how
+		// to ask for less and what the tool takes.
+		return &CLIError{Category: "validation", Message: err.Error(), ExitCode: ExitValidation, Hint: mcpAskForLess(spec), Cause: err}
+	}
+	return err
+}
+
+// mcpAskForLess is the hint on a hosted call whose answers held more values
+// than it decodes: the refusal's own hint (a command's hint on what it
+// wrapped is about something else), and what the tool takes. A write may
+// have been made before its answer was refused.
+func mcpAskForLess(s mcpToolSpec) string {
+	if !s.readOnly() {
+		return "Look with the matching get or list tool before calling " + s.Name + " again: the install may have made the change before its answer was refused."
+	}
+	hint := api.HintFor(&api.RequestError{Kind: "validation", Op: api.OpAnswerTooManyValues})
+	c, err := s.command(rootCmd)
+	if err != nil {
+		return hint
+	}
+	params, _, err := s.params(c)
+	if err != nil {
+		return hint
+	}
+	names := make([]string, 0, len(params))
+	for _, p := range params {
+		names = append(names, p.property)
+	}
+	sort.Strings(names)
+	return fmt.Sprintf("%s %s takes: %s.", hint, s.Name, strings.Join(names, ", "))
 }
 
 func init() {

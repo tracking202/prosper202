@@ -226,6 +226,9 @@ func HintFor(err error) string {
 			return h
 		}
 	}
+	if AnswerTooManyValues(err) {
+		return "Ask for less in one call: a smaller limit (with offset for the next page), a shorter period, or a narrower filter. `p202 mcp` on your own computer has no such bound."
+	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		switch {
@@ -459,9 +462,13 @@ func (c *Client) ensureCapabilities() {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, tooMany, err := readAnswer(resp.Body, maxResponseSize)
 	if err != nil {
 		c.capabilitiesErr = fmt.Errorf("reading capabilities response: %w", err)
+		return
+	}
+	if tooMany != nil {
+		c.capabilitiesErr = tooMany
 		return
 	}
 	var decoded map[string]interface{}
@@ -500,8 +507,11 @@ func (c *Client) negotiateVersionLocked() {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-	if err != nil {
+	// An answer past the value bound keeps the compiled-in version, as an
+	// unreadable one does; the bound, once passed, refuses the call's next
+	// answer.
+	body, tooMany, err := readAnswer(resp.Body, maxResponseSize)
+	if err != nil || tooMany != nil {
 		return
 	}
 	var decoded map[string]interface{}
@@ -775,13 +785,26 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 	if strict {
 		readLimit = limit + 1
 	}
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, readLimit))
+	respBody, tooMany, err := readAnswer(resp.Body, readLimit)
 	if err != nil {
 		return nil, &RequestError{Kind: "network", Op: "read_response", Err: err}
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, parseAPIError(resp.StatusCode, respBody)
+		// The status still says what failed; only the message is not read.
+		apiErr := parseAPIError(resp.StatusCode, respBody)
+		if tooMany != nil {
+			apiErr.Message = fmt.Sprintf("HTTP %d, with a message that was not read: %v", resp.StatusCode, tooMany.Err)
+		}
+		return nil, apiErr
+	}
+	if tooMany != nil {
+		if method != http.MethodGet && method != http.MethodHead {
+			// It was sent and accepted: whatever it changed stands (CLAUDE.md #13).
+			return nil, &RequestError{Kind: tooMany.Kind, Op: tooMany.Op, Err: fmt.Errorf(
+				"%w; the install accepted the %s (HTTP %d) before its answer was refused, so it may have changed data", tooMany.Err, method, resp.StatusCode)}
+		}
+		return nil, tooMany
 	}
 	if strict && int64(len(respBody)) > limit {
 		// Not a network failure: the server answered in full and the file

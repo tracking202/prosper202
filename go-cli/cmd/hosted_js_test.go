@@ -5,6 +5,9 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -169,5 +172,67 @@ func TestHostedEngineOmitsEveryPage(t *testing.T) {
 		if exitCodeForError(err) != 1 || !strings.Contains(err.Error(), name+" does not take all on the hosted server") || !strings.Contains(hintFor(err), "limit and offset") {
 			t.Errorf("the hosted engine's %s all: true: %v (hint %q)", name, err, hintFor(err))
 		}
+	}
+}
+
+// fetchFunc answers the engine's requests in place of the host's fetch.
+type fetchFunc func(*http.Request) (*http.Response, error)
+
+func (f fetchFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// The engine itself bounds what a call decodes, through the whole entry the
+// relay runs: an answer past hostedAnswerValues, and arguments past
+// hostedArgumentValues, are refused as validation errors that say how to ask
+// for less, and refused arguments reach no install.
+func TestHostedEngineBoundsWhatACallDecodes(t *testing.T) {
+	t.Setenv("P202_HOSTED_URL", "https://install.example")
+	t.Setenv("P202_HOSTED_API_KEY", "probe-key-0123456789abcdef")
+	t.Cleanup(resetHostedOutput)
+	over := tinyRows(hostedAnswerValues/2 + 100)
+	requests := 0
+	saved := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = saved })
+	http.DefaultTransport = fetchFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		body := over
+		switch r.URL.Path {
+		case "/api/versions":
+			body = []byte(`{"data":{"preferred":"v3","supported":["v3"]}}`)
+		case "/api/v3/capabilities":
+			body = []byte(`{"data":{"features":{}}}`)
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
+	})
+	envelope := func(stderr []byte) (category, message, hint string) {
+		t.Helper()
+		var e struct {
+			Error struct{ Category, Message, Hint string } `json:"error"`
+		}
+		if err := json.Unmarshal(stderr, &e); err != nil {
+			t.Fatalf("stderr is not the JSON envelope: %q (%v)", stderr, err)
+		}
+		return e.Error.Category, e.Error.Message, e.Error.Hint
+	}
+
+	var stderr bytes.Buffer
+	if code := run([]string{"mcp", "call", "campaign_list", "--input", "{}", "--read-only"}, &stderr); code != ExitValidation {
+		t.Fatalf("an answer past the bound: exit %d, %s", code, stderr.String())
+	}
+	category, message, hint := envelope(stderr.Bytes())
+	if category != "validation" || !strings.Contains(message, fmt.Sprintf("more than %d JSON values", hostedAnswerValues)) || !strings.Contains(hint, "campaign_list takes: ") {
+		t.Fatalf("an answer past the bound: %s", stderr.String())
+	}
+	if requests == 0 {
+		t.Fatal("the call reached no install")
+	}
+
+	requests = 0
+	stderr.Reset()
+	offers := `{"id":"1","offer":[` + strings.TrimSuffix(strings.Repeat(`"campaign:1",`, hostedArgumentValues), ",") + `]}`
+	if code := run([]string{"mcp", "call", "landing_page_code", "--input", offers, "--read-only"}, &stderr); code != ExitValidation {
+		t.Fatalf("arguments past the bound: exit %d, %s", code, stderr.String())
+	}
+	if _, message, _ := envelope(stderr.Bytes()); !strings.Contains(message, fmt.Sprintf("more than %d JSON values", hostedArgumentValues)) || requests != 0 {
+		t.Fatalf("arguments past the bound: %s after %d requests", stderr.String(), requests)
 	}
 }

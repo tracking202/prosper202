@@ -1239,7 +1239,10 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   their own install, signed in as their own user, and chooses read only,
   propose changes, or read and change. It needs Prosper202 1.9.78 on https.
   One call there reads at most 1 MB of the install's answers, so its list
-  tools take no `all`: page with `limit` and `offset`.
+  tools take no `all`: page with `limit` and `offset`. It decodes at most
+  80,000 JSON values from them and takes at most 1,000 in a call's
+  arguments; past either, the call is refused (`validation`) with how to ask
+  for less.
 
 If you are defining this CLI as a tool for an LLM some other way, here are
 recommendations:
