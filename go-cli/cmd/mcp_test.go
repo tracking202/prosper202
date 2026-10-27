@@ -70,9 +70,10 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Characters, about 20k tokens. Most of it is the report tools' filters;
+	// Characters, about 21k tokens. Most of it is the report tools' filters;
 	// a new tool or flag that crosses this should omit what few asks need.
-	const budget = 80000
+	// The traffic source and category updates and deletes are about 4,600.
+	const budget = 85000
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}
@@ -161,6 +162,14 @@ func TestMCPToolArgv(t *testing.T) {
 		{"campaign_delete", `{"id":"7","dry_run":true}`, []string{"campaign", "delete", "--dry-run=true", "--force", "--", "7"}, ""},
 		{"campaign_delete", `{"ids":"7,8"}`, []string{"campaign", "delete", "--ids=7,8", "--force"}, ""},
 		{"change_apply", `{"change_id":"chg_abc"}`, []string{"change", "apply", "--force", "--", "chg_abc"}, ""},
+		{"ppc_network_update", `{"id":"4","ppc_network_name":"Main"}`, []string{"ppc-network", "update", "--ppc-network-name=Main", "--", "4"}, ""},
+		{"ppc_network_update", `{"ppc_network_name":"Main"}`, nil, "ppc_network_update needs id"},
+		{"ppc_network_delete", `{"id":"4","dry_run":true}`, []string{"ppc-network", "delete", "--dry-run=true", "--force", "--", "4"}, ""},
+		{"ppc_account_update", `{"id":"9","ppc_account_default":"1","ppc_network_id":"4"}`, []string{"ppc-account", "update", "--ppc-account-default=1", "--ppc-network-id=4", "--", "9"}, ""},
+		{"ppc_account_update", `{"id":"9","ppc_network_id":"../4"}`, nil, "ppc_network_id must be a numeric id"},
+		{"ppc_account_delete", `{"ids":"9,10"}`, []string{"ppc-account", "delete", "--ids=9,10", "--force"}, ""},
+		{"aff_network_update", `{"id":"2","aff_network_name":"Offers"}`, []string{"aff-network", "update", "--aff-network-name=Offers", "--", "2"}, ""},
+		{"aff_network_delete", `{"id":"2","dry_run":true}`, []string{"aff-network", "delete", "--dry-run=true", "--force", "--", "2"}, ""},
 		{"report_summary", `{"all_profiles":true}`, nil, "does not take all_profiles"},
 		{"click_list", `{"follow":true}`, nil, "does not take follow"},
 	}

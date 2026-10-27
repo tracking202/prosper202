@@ -152,6 +152,12 @@ var rareFilters = []string{"browser-id", "device-type", "ip", "isp-id", "method-
 // model is told to show the user the preview first.
 const deleteNote = "It deletes as soon as the call is approved: call it with dry_run: true first and show the user what it would remove."
 
+// setupParentDeleteNote: a traffic source or a category is removed alone, as
+// its Setup page removes it; what it holds stays, under a removed parent.
+func setupParentDeleteNote(parent, children, tool string) string {
+	return "It removes the " + parent + " alone: its " + children + " stay, so delete them first (" + tool + ") if they are to go too. " + deleteNote
+}
+
 const reportFilterNote = "Filter with the *_id arguments (ids from the list tools) and choose the window with period, or time_from and time_to."
 
 var mcpToolSpecs = []mcpToolSpec{
@@ -199,9 +205,15 @@ var mcpToolSpecs = []mcpToolSpec{
 	// Traffic sources and categories
 	{Name: "ppc_network_list", Command: []string{"ppc-network", "list"}, Title: "List traffic sources", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "ppc_network_create", Command: []string{"ppc-network", "create"}, Title: "Create a traffic source", Kind: mcpCreate},
+	{Name: "ppc_network_update", Command: []string{"ppc-network", "update"}, Title: "Update a traffic source", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Traffic source id (from ppc_network_list).", true)}},
+	{Name: "ppc_network_delete", Command: []string{"ppc-network", "delete"}, Title: "Delete a traffic source", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Traffic source id (from ppc_network_list); or give ids for several.", false)}, Note: setupParentDeleteNote("traffic source", "accounts", "ppc_account_delete")},
 	{Name: "ppc_account_list", Command: []string{"ppc-account", "list"}, Title: "List traffic source accounts", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "ppc_account_create", Command: []string{"ppc-account", "create"}, Title: "Create a traffic source account", Kind: mcpCreate},
+	{Name: "ppc_account_update", Command: []string{"ppc-account", "update"}, Title: "Update a traffic source account", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Traffic source account id (from ppc_account_list).", true)}},
+	{Name: "ppc_account_delete", Command: []string{"ppc-account", "delete"}, Title: "Delete a traffic source account", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Traffic source account id (from ppc_account_list); or give ids for several.", false)}, Note: "Trackers that use it are not changed. " + deleteNote},
 	{Name: "aff_network_list", Command: []string{"aff-network", "list"}, Title: "List categories", Kind: mcpRead, HostedOmit: mcpEveryPage},
+	{Name: "aff_network_update", Command: []string{"aff-network", "update"}, Title: "Update a category", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Category id (from aff_network_list).", true)}},
+	{Name: "aff_network_delete", Command: []string{"aff-network", "delete"}, Title: "Delete a category", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Category id (from aff_network_list); or give ids for several.", false)}, Note: setupParentDeleteNote("category", "campaigns", "campaign_delete")},
 	{Name: "aff_network_create", Command: []string{"aff-network", "create"}, Title: "Create a category", Kind: mcpCreate},
 	{Name: "text_ad_list", Command: []string{"text-ad", "list"}, Title: "List text ads", Kind: mcpRead, HostedOmit: mcpEveryPage},
 
