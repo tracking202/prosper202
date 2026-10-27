@@ -57,7 +57,7 @@ func boundFor(t *testing.T, n int) {
 
 func TestBoundRefusesAnAnswerBeforeItIsDecoded(t *testing.T) {
 	small, big := tinyAnswer(200), tinyAnswer(3000)
-	srv, _ := valueInstall(t, map[string][]byte{"/api/v3/small": small, "/api/v3/big": big}, nil)
+	srv, asked := valueInstall(t, map[string][]byte{"/api/v3/small": small, "/api/v3/big": big}, nil)
 	c := newClient(srv.URL, "key")
 
 	// No bound: every answer is handed over as it came (a native run).
@@ -80,9 +80,16 @@ func TestBoundRefusesAnAnswerBeforeItIsDecoded(t *testing.T) {
 	if !strings.Contains(err.Error(), "more than 1000 JSON values") || !strings.Contains(HintFor(err), "smaller limit (with offset for the next page)") {
 		t.Fatalf("refusal %q, hint %q", err, HintFor(err))
 	}
-	// The call is over its bound: a later answer is refused too.
-	if _, err := c.Get("small", nil); !AnswerTooManyValues(err) {
-		t.Fatalf("an answer after the refusal: %v", err)
+	// The call is over its bound: it sends nothing more, read or write.
+	sent := len(*asked)
+	if _, err := c.Get("small", nil); !AnswerTooManyValues(err) || !strings.Contains(err.Error(), "GET small was not sent") {
+		t.Fatalf("a read after the refusal: %v", err)
+	}
+	if _, err := c.Post("small", map[string]string{"a": "b"}); !AnswerTooManyValues(err) || !strings.Contains(err.Error(), "POST small was not sent") {
+		t.Fatalf("a write after the refusal: %v", err)
+	}
+	if len(*asked) != sent {
+		t.Fatalf("requests after the refusal reached the install: %v", (*asked)[sent:])
 	}
 }
 
@@ -155,11 +162,14 @@ func TestBoundCoversTheCapabilitiesAndVersionAnswers(t *testing.T) {
 	if c.currentBaseURL() != srv.URL+"/api/v3" {
 		t.Fatalf("base URL %s after a refused version answer", c.currentBaseURL())
 	}
+	if !AnswerTooManyValues(c.CapabilitiesError()) {
+		t.Fatalf("capabilities after a refused version answer: %v", c.CapabilitiesError())
+	}
 	if _, err := c.Get("small", nil); !AnswerTooManyValues(err) {
 		t.Fatalf("the answer after a refused version answer: %v", err)
 	}
-	if fmt.Sprint(*asked) != "[/api/versions /api/v3/capabilities /api/v3/small]" {
-		t.Fatalf("asked %v", *asked)
+	if fmt.Sprint(*asked) != "[/api/versions]" {
+		t.Fatalf("asked %v after a refused version answer, want nothing more", *asked)
 	}
 }
 

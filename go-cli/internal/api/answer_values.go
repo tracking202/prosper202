@@ -56,7 +56,8 @@ func AnswerTooManyValues(err error) bool {
 // reader of an answer's body in this package
 // (TestAnswerBodiesAreReadOnlyByReadAnswer). When the answers pass the bound,
 // tooMany is the refusal and body is nil, so there is nothing to decode;
-// after that, every later answer that holds a value is refused too.
+// after that, every later answer that holds a value is refused too, and
+// sendRefusal stops the call sending anything more.
 func readAnswer(r io.Reader, limit int64) (body []byte, tooMany *RequestError, err error) {
 	body, err = io.ReadAll(io.LimitReader(r, limit))
 	if err != nil {
@@ -66,6 +67,20 @@ func readAnswer(r io.Reader, limit int64) (body []byte, tooMany *RequestError, e
 		return nil, tooMany, nil
 	}
 	return body, nil, nil
+}
+
+// sendRefusal is the refusal of a request a call would send after its
+// answers passed the bound, or nil: the call sends nothing more, so a
+// command that carries on past the refusal (a loop over ids, a fallback)
+// changes nothing further on the install.
+func sendRefusal(method, path string) *RequestError {
+	answerBound.mu.Lock()
+	defer answerBound.mu.Unlock()
+	if answerBound.limit <= 0 || !answerBound.over {
+		return nil
+	}
+	return &RequestError{Kind: "validation", Op: OpAnswerTooManyValues, Err: fmt.Errorf(
+		"the install's answers to this call hold more than %d JSON values, more than a hosted call decodes; %s %s was not sent", answerBound.limit, method, path)}
 }
 
 func countAnswer(body []byte) *RequestError {

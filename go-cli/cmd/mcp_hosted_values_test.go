@@ -45,6 +45,9 @@ func (f *valuesInstall) server(t *testing.T) *httptest.Server {
 		_, _ = w.Write(f.answer(r.URL.Path))
 	}))
 	t.Cleanup(srv.Close)
+	// A call leaves the flags it parsed set until the next one resets them;
+	// a test that reads a command directly (its Args) must not see them.
+	t.Cleanup(func() { resetAllFlags(rootCmd) })
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key-123456")
@@ -272,5 +275,26 @@ func TestHostedWriteToolRefusedAfterTheWriteSaysToLookFirst(t *testing.T) {
 	}
 	if hits := f.requests(); len(hits) != 1 || !strings.HasPrefix(hits[0], "POST ") {
 		t.Fatalf("asked %q", hits)
+	}
+}
+
+// Once a call's answers pass the bound it sends nothing more: a delete of
+// several ids that carries on past a failed one makes no further change.
+func TestHostedCallSendsNothingAfterTheBound(t *testing.T) {
+	f := &valuesInstall{answer: func(string) []byte { return tinyRows(hostedAnswerValues/2 + 100) }}
+	f.server(t)
+	withHostedRun(t, true)
+	_, stderr, err := mcpExecute(t, "mcp", "call", "campaign_delete", "--input", `{"ids":"1,2,3"}`)
+	if err == nil {
+		t.Fatal("a delete whose answer passed the bound succeeded")
+	}
+	hits := f.requests()
+	if len(hits) != 1 || !strings.HasPrefix(hits[0], "DELETE ") {
+		t.Fatalf("sent %q after the first answer passed the bound, want the first delete only", hits)
+	}
+	for _, want := range []string{"accepted the DELETE", "DELETE campaigns/2 was not sent", "DELETE campaigns/3 was not sent"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr does not say %q:\n%s", want, stderr)
+		}
 	}
 }

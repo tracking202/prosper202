@@ -440,6 +440,10 @@ func (c *Client) ensureCapabilities() {
 
 	c.negotiateVersionLocked()
 
+	if refused := sendRefusal("GET", "capabilities"); refused != nil {
+		c.capabilitiesErr = refused
+		return
+	}
 	req, err := http.NewRequest("GET", c.baseURL+"/capabilities", nil)
 	if err != nil {
 		c.capabilitiesErr = err
@@ -491,6 +495,9 @@ var apiVersionPattern = regexp.MustCompile(`^[0-9]{1,4}$`)
 
 // negotiateVersionLocked must be called with c.mu held.
 func (c *Client) negotiateVersionLocked() {
+	if sendRefusal("GET", "versions") != nil {
+		return
+	}
 	req, err := http.NewRequest("GET", c.rootURL+"/api/versions", nil)
 	if err != nil {
 		return
@@ -704,6 +711,9 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 	if readOnlyMode && method != http.MethodGet && method != http.MethodHead && !readsAsPost {
 		return nil, &RequestError{Kind: "validation", Op: "read_only", Err: fmt.Errorf(
 			"%s %s would change data, and this connection is read-only; nothing was sent", method, path)}
+	}
+	if refused := sendRefusal(method, path); refused != nil {
+		return nil, refused
 	}
 	// Read once under the lock: version negotiation can rewrite baseURL from
 	// another goroutine, and the URL and the version header below must agree.
