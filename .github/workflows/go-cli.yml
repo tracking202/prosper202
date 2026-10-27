@@ -89,7 +89,7 @@ jobs:
             -run 'TestHostedRunTakesToolCallsOnly|TestHostedEngineOmitsEveryPage|TestHostedEngineBoundsWhatACallDecodes|TestHostedSearchAnswersCompactJSON|TestHostedSearchErrorsReachTheRelayAsJSON|TestMCPToolArgv|TestMCPCatalogBuilds|TestMCPToolPositionalsMatchCommands' ./cmd/
           GOOS=js GOARCH=wasm go test -count=1 \
             -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
-            -run 'TestHostedRequestsRefuseRedirectsAndWaitLess|TestJSONValuesOver|FuzzJSONValuesOverBoundsEveryDecoder|TestAnswerBound|TestAnswerTooManyValuesReadsTheWholeChain' ./internal/api/
+            -run 'TestHostedRequestsRefuseRedirectsAndWaitLess|TestJSONValuesOver|FuzzJSONValuesOverBoundsEveryDecoder|TestAnswerBound|TestAnswerTooManyValuesReadsTheWholeChain|TestBound|TestAnswerBodiesAreReadOnlyByReadAnswer' ./internal/api/
           GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/p202.wasm" .
           ls -l "$RUNNER_TEMP/p202.wasm"
 

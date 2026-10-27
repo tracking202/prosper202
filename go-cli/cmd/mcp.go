@@ -133,6 +133,12 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 		// to ask for less and what the tool takes.
 		return &CLIError{Category: "validation", Message: err.Error(), ExitCode: ExitValidation, Hint: mcpAskForLess(spec), Cause: err}
 	}
+	if err != nil && mcpHostedRun && api.AnswerBoundPassed() {
+		// A command that carried on past the refusal (a delete of several
+		// ids) answers with its own error, which keeps its category; the
+		// next step is still the refusal's.
+		return withHint(err, "%s", mcpAskForLess(spec))
+	}
 	return err
 }
 

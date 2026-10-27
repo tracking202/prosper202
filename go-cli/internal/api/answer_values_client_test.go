@@ -1,13 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,13 +22,24 @@ func tinyAnswer(n int) []byte {
 	return []byte(`{"data":[` + strings.TrimSuffix(rows, ",") + `]}`)
 }
 
+// installFetch answers a request in place of the network, so these tests
+// run in the js/wasm build too, where nothing can listen.
+type installFetch func(*http.Request) (*http.Response, error)
+
+func (f installFetch) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 // valueInstall answers each path with what answers maps it to (200 unless
-// status names another status), and records the paths asked for.
-func valueInstall(t *testing.T, answers map[string][]byte, status map[string]int) (*httptest.Server, *[]string) {
+// status names another status), through http.DefaultTransport, which the
+// client's transport sends through on every platform; it records the paths
+// asked for and returns the install's address.
+func valueInstall(t *testing.T, answers map[string][]byte, status map[string]int) (string, *[]string) {
 	t.Helper()
 	var asked []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	saved := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = saved })
+	http.DefaultTransport = installFetch(func(r *http.Request) (*http.Response, error) {
 		asked = append(asked, r.URL.Path)
+		code := http.StatusOK
 		body, ok := answers[r.URL.Path]
 		if !ok {
 			switch r.URL.Path {
@@ -36,17 +48,15 @@ func valueInstall(t *testing.T, answers map[string][]byte, status map[string]int
 			case "/api/v3/capabilities":
 				body = []byte(`{"data":{"features":{"staged_writes":true}}}`)
 			default:
-				w.WriteHeader(http.StatusNotFound)
-				return
+				code = http.StatusNotFound
 			}
 		}
-		if code, ok := status[r.URL.Path]; ok {
-			w.WriteHeader(code)
+		if c, ok := status[r.URL.Path]; ok {
+			code = c
 		}
-		_, _ = w.Write(body)
-	}))
-	t.Cleanup(srv.Close)
-	return srv, &asked
+		return &http.Response{StatusCode: code, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
+	})
+	return "https://install.example", &asked
 }
 
 func boundFor(t *testing.T, n int) {
@@ -57,8 +67,8 @@ func boundFor(t *testing.T, n int) {
 
 func TestBoundRefusesAnAnswerBeforeItIsDecoded(t *testing.T) {
 	small, big := tinyAnswer(200), tinyAnswer(3000)
-	srv, asked := valueInstall(t, map[string][]byte{"/api/v3/small": small, "/api/v3/big": big}, nil)
-	c := newClient(srv.URL, "key")
+	base, asked := valueInstall(t, map[string][]byte{"/api/v3/small": small, "/api/v3/big": big}, nil)
+	c := newClient(base, "key")
 
 	// No bound: every answer is handed over as it came (a native run).
 	if got, err := c.Get("big", nil); err != nil || string(got) != string(big) {
@@ -96,8 +106,8 @@ func TestBoundRefusesAnAnswerBeforeItIsDecoded(t *testing.T) {
 // A write's answer past the bound is refused too, saying the write was sent
 // and accepted, so it is looked for before it is sent again (CLAUDE.md #13).
 func TestBoundSaysAWriteWasAcceptedBeforeItsAnswerWasRefused(t *testing.T) {
-	srv, asked := valueInstall(t, map[string][]byte{"/api/v3/campaigns": tinyAnswer(3000)}, map[string]int{"/api/v3/campaigns": 201})
-	c := newClient(srv.URL, "key")
+	base, asked := valueInstall(t, map[string][]byte{"/api/v3/campaigns": tinyAnswer(3000)}, map[string]int{"/api/v3/campaigns": 201})
+	c := newClient(base, "key")
 	boundFor(t, 1000)
 	got, err := c.Post("campaigns", map[string]string{"aff_campaign_name": "x"})
 	if got != nil || !AnswerTooManyValues(err) {
@@ -118,8 +128,8 @@ func TestBoundKeepsTheStatusOfAnErrorAnswer(t *testing.T) {
 		"/api/v3/broken":  tinyAnswer(3000),
 		"/api/v3/refused": []byte(`{"message":"Validation failed","field_errors":{"limit":"Must be 1 to 500"}}`),
 	}
-	srv, _ := valueInstall(t, answers, map[string]int{"/api/v3/broken": 500, "/api/v3/refused": 422})
-	c := newClient(srv.URL, "key")
+	base, _ := valueInstall(t, answers, map[string]int{"/api/v3/broken": 500, "/api/v3/refused": 422})
+	c := newClient(base, "key")
 
 	boundFor(t, 1000)
 	_, err := c.Get("refused", nil)
@@ -145,9 +155,9 @@ func TestBoundKeepsTheStatusOfAnErrorAnswer(t *testing.T) {
 func TestBoundCoversTheCapabilitiesAndVersionAnswers(t *testing.T) {
 	big := tinyAnswer(3000)
 
-	srv, _ := valueInstall(t, map[string][]byte{"/api/v3/capabilities": big}, nil)
+	base, _ := valueInstall(t, map[string][]byte{"/api/v3/capabilities": big}, nil)
 	boundFor(t, 1000)
-	c := newClient(srv.URL, "key")
+	c := newClient(base, "key")
 	if c.SupportsCapability("features", "staged_writes") || !AnswerTooManyValues(c.CapabilitiesError()) {
 		t.Fatalf("capabilities past the bound: %v", c.CapabilitiesError())
 	}
@@ -155,11 +165,11 @@ func TestBoundCoversTheCapabilitiesAndVersionAnswers(t *testing.T) {
 		t.Fatalf("a feature check on refused capabilities: %v", err)
 	}
 
-	srv, asked := valueInstall(t, map[string][]byte{"/api/versions": big, "/api/v3/small": tinyAnswer(10)}, nil)
+	base, asked := valueInstall(t, map[string][]byte{"/api/versions": big, "/api/v3/small": tinyAnswer(10)}, nil)
 	boundFor(t, 1000)
-	c = newClient(srv.URL, "key")
+	c = newClient(base, "key")
 	c.ensureCapabilities()
-	if c.currentBaseURL() != srv.URL+"/api/v3" {
+	if c.currentBaseURL() != base+"/api/v3" {
 		t.Fatalf("base URL %s after a refused version answer", c.currentBaseURL())
 	}
 	if !AnswerTooManyValues(c.CapabilitiesError()) {

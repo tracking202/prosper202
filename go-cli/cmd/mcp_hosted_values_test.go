@@ -26,6 +26,8 @@ type valuesInstall struct {
 	mu     sync.Mutex
 	data   []string
 	answer func(path string) []byte
+	// capabilities, when set, is the capabilities answer.
+	capabilities []byte
 }
 
 func (f *valuesInstall) server(t *testing.T) *httptest.Server {
@@ -36,6 +38,10 @@ func (f *valuesInstall) server(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte(`{"data":{"preferred":"v3","supported":["v3"]}}`))
 			return
 		case "/api/v3/capabilities":
+			if f.capabilities != nil {
+				_, _ = w.Write(f.capabilities)
+				return
+			}
 			_, _ = w.Write([]byte(`{"data":{"features":{"staged_writes":true,"delete_dry_run":true},"cli":true,"principal":{"user_id":1,"roles":["Super user"],"scopes":["*"]}}}`))
 			return
 		}
@@ -296,5 +302,41 @@ func TestHostedCallSendsNothingAfterTheBound(t *testing.T) {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr does not say %q:\n%s", want, stderr)
 		}
+	}
+	// The loop answers with its own partial failure; the next step is still
+	// to look before deleting again.
+	if code := exitCodeForError(err); code != ExitPartialFailure {
+		t.Errorf("exit %d, want %d (the delete loop's partial failure)", code, ExitPartialFailure)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "Look with the matching get or list tool before calling campaign_delete again") {
+		t.Errorf("hint %q does not say to look before deleting again", hint)
+	}
+}
+
+// A refusal the command wraps in an error of another category (a staged
+// write's feature check reads capabilities, and calls a failure to read them
+// a network error) is still the refusal: validation, with its hint, and the
+// write is not sent.
+func TestHostedRefusalWrappedByTheCommandIsStillTheRefusal(t *testing.T) {
+	f := &valuesInstall{answer: func(string) []byte { return []byte(`{"data":{}}`) }, capabilities: tinyRows(hostedAnswerValues/2 + 100)}
+	f.server(t)
+	withHostedRun(t, true)
+	t.Cleanup(func() { api.SetStagedMode(false) })
+	body, err := json.Marshal(mcpWriteToolInput["campaign_create"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := mcpExecute(t, "--staged", "mcp", "call", "campaign_create", "--input", string(body))
+	if !api.AnswerTooManyValues(err) || stdout != "" {
+		t.Fatalf("staged campaign_create: %v, printed %d bytes", err, len(stdout))
+	}
+	if code, category := exitCodeForError(err), api.ErrorCategory(err); code != ExitValidation || category != "validation" {
+		t.Fatalf("staged campaign_create: exit %d, category %q; want the refusal's validation, not the wrapper's", code, category)
+	}
+	if !strings.Contains(hintFor(err), "campaign_create") {
+		t.Fatalf("hint %q", hintFor(err))
+	}
+	if hits := f.requests(); len(hits) != 0 {
+		t.Fatalf("sent %q after the capabilities answer was refused", hits)
 	}
 }

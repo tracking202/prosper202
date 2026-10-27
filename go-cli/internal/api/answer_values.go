@@ -51,6 +51,15 @@ func AnswerTooManyValues(err error) bool {
 	return false
 }
 
+// AnswerBoundPassed reports whether the call's answers have passed the bound
+// LimitAnswerValues set: true even when a command carried on past the
+// refusal and answers with an error of its own.
+func AnswerBoundPassed() bool {
+	answerBound.mu.Lock()
+	defer answerBound.mu.Unlock()
+	return answerBound.limit > 0 && answerBound.over
+}
+
 // readAnswer reads an answer's body, at most limit bytes, and counts its
 // values toward the bound before anything can decode it. It is the only
 // reader of an answer's body in this package
