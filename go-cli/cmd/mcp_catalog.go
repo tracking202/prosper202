@@ -57,9 +57,10 @@ var (
 
 // mcpIDFlagPattern is what an *_id flag takes. An id goes into a filter or
 // a request path (report_breakeven's into campaigns/<id>), so a model can
-// send nothing else there.
-func mcpIDFlagPattern(property string) (*regexp.Regexp, string) {
-	if property == "ppc_network_id" {
+// send nothing else there. none is a read's filter only: a write stores the
+// id, and the API refuses none there.
+func mcpIDFlagPattern(property string, kind mcpKind) (*regexp.Regexp, string) {
+	if property == "ppc_network_id" && kind == mcpRead {
 		return mcpNumericOrNone, "a numeric id, or none"
 	}
 	return mcpNumericID, "a numeric id"
@@ -405,7 +406,7 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 		flags[prop] = f
 		p := mcpParam{property: prop, flag: f.Name, kind: kind, required: required[f.Name]}
 		if kind == "string" && strings.HasSuffix(prop, "_id") {
-			p.pattern, p.form = mcpIDFlagPattern(prop)
+			p.pattern, p.form = mcpIDFlagPattern(prop, s.Kind)
 		}
 		params = append(params, p)
 	})
