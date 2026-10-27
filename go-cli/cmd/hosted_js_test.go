@@ -5,6 +5,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"p202/internal/api"
@@ -127,4 +128,32 @@ func TestHostedSearchAnswersCompactJSON(t *testing.T) {
 		t.Fatalf("root's PersistentPreRunE: %v", err)
 	}
 	compact("after root's PersistentPreRunE")
+}
+
+// The engine itself is the hosted run: without a test setting it, a list
+// that reads every page with all lists no all and refuses it, as a
+// validation error that says how to page.
+func TestHostedEngineOmitsEveryPage(t *testing.T) {
+	if !mcpHostedRun {
+		t.Fatal("the js/wasm build does not run as the hosted engine")
+	}
+	cat, err := buildMCPCatalog(rootCmd, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range cat.Tools {
+		if tool.Name == "campaign_list" {
+			if _, ok := tool.InputSchema.Properties["all"]; ok {
+				t.Error("the hosted engine lists campaign_list with all")
+			}
+			if _, ok := tool.InputSchema.Properties["limit"]; !ok {
+				t.Error("the hosted engine lists campaign_list without limit")
+			}
+		}
+	}
+	spec, _ := findMCPSpec("campaign_list")
+	_, err = mcpToolArgv(rootCmd, spec, []byte(`{"all":true}`))
+	if err == nil || exitCodeForError(err) != 1 || !strings.Contains(err.Error(), "on the hosted server") || !strings.Contains(hintFor(err), "limit and offset") {
+		t.Fatalf("the hosted engine's campaign_list all: true: %v (hint %q)", err, hintFor(err))
+	}
 }

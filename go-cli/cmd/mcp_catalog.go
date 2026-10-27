@@ -108,7 +108,20 @@ type mcpToolSpec struct {
 	// server do not cover (AiConnect::READ_AREAS in api/v3), so that server
 	// does not offer it (mcpCatalog.HostedExcludes).
 	NotHosted bool
+	// HostedOmit lists flags the hosted server leaves out of the tool, beyond
+	// Omit: a hosted call reads a bounded amount of the install's answers,
+	// so a flag that reads every page can only be refused there. The
+	// catalogue names them (mcpCatalog.HostedOmits) for the relay, which
+	// lists the tools from a native build, and a hosted run refuses them.
+	HostedOmit []string
 }
+
+// mcpHostedRun is true in the hosted relay's engine (the js/wasm build,
+// hostedBuild); a variable so the native tests can run as the engine does.
+var mcpHostedRun = hostedBuild
+
+// mcpEveryPage is HostedOmit for a list whose --all reads every page.
+var mcpEveryPage = []string{"all"}
 
 // mcpOmittedFlags are never tool arguments: --force is the tool approval's
 // to give (mcpToolArgv adds it to writes); the rest need a terminal, a
@@ -152,7 +165,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "attribution_breakdown", Command: []string{"attribution", "breakdown"}, Title: "Attributed conversions by dimension", Kind: mcpRead},
 
 	// Campaigns
-	{Name: "campaign_list", Command: []string{"campaign", "list"}, Title: "List campaigns", Kind: mcpRead},
+	{Name: "campaign_list", Command: []string{"campaign", "list"}, Title: "List campaigns", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "campaign_get", Command: []string{"campaign", "get"}, Title: "Get a campaign", Kind: mcpRead, Args: []mcpArg{idArg("id", "Campaign id (from campaign_list).", true)}},
 	// Its campaign is the positional; --aff-campaign-id would narrow the
 	// offers it compares against to that one campaign, silently.
@@ -163,7 +176,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "campaign_delete", Command: []string{"campaign", "delete"}, Title: "Delete a campaign", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Campaign id (from campaign_list); or give ids for several.", false)}, Note: deleteNote},
 
 	// Trackers
-	{Name: "tracker_list", Command: []string{"tracker", "list"}, Title: "List trackers", Kind: mcpRead},
+	{Name: "tracker_list", Command: []string{"tracker", "list"}, Title: "List trackers", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "tracker_get", Command: []string{"tracker", "get"}, Title: "Get a tracker", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
 	{Name: "tracker_get_url", Command: []string{"tracker", "get-url"}, Title: "Get a tracking link", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
 	{Name: "tracker_create_with_url", Command: []string{"tracker", "create-with-url"}, Title: "Create a tracking link", Kind: mcpCreate},
@@ -171,7 +184,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "tracker_delete", Command: []string{"tracker", "delete"}, Title: "Delete a tracker", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list); or give ids for several.", false)}, Note: "Its tracking links stop working, including any running in ads. " + deleteNote},
 
 	// Landing pages
-	{Name: "landing_page_list", Command: []string{"landing-page", "list"}, Title: "List landing pages", Kind: mcpRead},
+	{Name: "landing_page_list", Command: []string{"landing-page", "list"}, Title: "List landing pages", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "landing_page_get", Command: []string{"landing-page", "get"}, Title: "Get a landing page", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
 	{Name: "landing_page_code", Command: []string{"landing-page", "code"}, Title: "Get landing page tracking code", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
 	{Name: "landing_page_create", Command: []string{"landing-page", "create"}, Title: "Create a landing page", Kind: mcpCreate},
@@ -179,24 +192,24 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "landing_page_delete", Command: []string{"landing-page", "delete"}, Title: "Delete a landing page", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list); or give ids for several.", false)}, Note: deleteNote},
 
 	// Traffic sources and categories
-	{Name: "ppc_network_list", Command: []string{"ppc-network", "list"}, Title: "List traffic sources", Kind: mcpRead},
+	{Name: "ppc_network_list", Command: []string{"ppc-network", "list"}, Title: "List traffic sources", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "ppc_network_create", Command: []string{"ppc-network", "create"}, Title: "Create a traffic source", Kind: mcpCreate},
-	{Name: "ppc_account_list", Command: []string{"ppc-account", "list"}, Title: "List traffic source accounts", Kind: mcpRead},
+	{Name: "ppc_account_list", Command: []string{"ppc-account", "list"}, Title: "List traffic source accounts", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "ppc_account_create", Command: []string{"ppc-account", "create"}, Title: "Create a traffic source account", Kind: mcpCreate},
-	{Name: "aff_network_list", Command: []string{"aff-network", "list"}, Title: "List categories", Kind: mcpRead},
+	{Name: "aff_network_list", Command: []string{"aff-network", "list"}, Title: "List categories", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "aff_network_create", Command: []string{"aff-network", "create"}, Title: "Create a category", Kind: mcpCreate},
-	{Name: "text_ad_list", Command: []string{"text-ad", "list"}, Title: "List text ads", Kind: mcpRead},
+	{Name: "text_ad_list", Command: []string{"text-ad", "list"}, Title: "List text ads", Kind: mcpRead, HostedOmit: mcpEveryPage},
 
 	// Rotators
-	{Name: "rotator_list", Command: []string{"rotator", "list"}, Title: "List rotators", Kind: mcpRead},
+	{Name: "rotator_list", Command: []string{"rotator", "list"}, Title: "List rotators", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "rotator_get", Command: []string{"rotator", "get"}, Title: "Get a rotator and its rules", Kind: mcpRead, Args: []mcpArg{idArg("id", "Rotator id (from rotator_list).", true)}},
 	{Name: "rotator_stats", Command: []string{"rotator", "stats"}, Title: "Rotator performance", Kind: mcpRead, Args: []mcpArg{idArg("id", "Rotator id (from rotator_list).", true)}, Omit: rareFilters},
 
 	// Clicks and conversions
-	{Name: "click_list", Command: []string{"click", "list"}, Title: "List clicks", Kind: mcpRead},
+	{Name: "click_list", Command: []string{"click", "list"}, Title: "List clicks", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "click_get", Command: []string{"click", "get"}, Title: "Get a click", Kind: mcpRead, Args: []mcpArg{idArg("id", "Click id (from click_list).", true)}},
 	{Name: "click_conversions", Command: []string{"click", "conversions"}, Title: "Explain a click's conversions", Kind: mcpRead, Args: []mcpArg{idArg("click_id", "Click id (from click_list).", true)}},
-	{Name: "conversion_list", Command: []string{"conversion", "list"}, Title: "List conversions", Kind: mcpRead},
+	{Name: "conversion_list", Command: []string{"conversion", "list"}, Title: "List conversions", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "conversion_get", Command: []string{"conversion", "get"}, Title: "Get a conversion", Kind: mcpRead, Args: []mcpArg{idArg("id", "Conversion id (from conversion_list).", true)}},
 	{Name: "conversion_postback_url", Command: []string{"conversion", "postback-url"}, Title: "Get the postback URL", Kind: mcpRead},
 
@@ -283,6 +296,9 @@ type mcpCatalog struct {
 	// HostedExcludes are the tools the hosted relay never offers
 	// (mcpToolSpec.NotHosted): its keys cannot reach what they read.
 	HostedExcludes []string `json:"hosted_excludes"`
+	// HostedOmits are the arguments, by tool, that the hosted relay leaves
+	// out of the tools it lists (mcpToolSpec.HostedOmit).
+	HostedOmits map[string][]string `json:"hosted_omits"`
 }
 
 // mcpFlagKinds maps pflag value types to JSON types. A curated command with
@@ -346,9 +362,16 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 	for _, f := range s.Required {
 		required[f] = true
 	}
+	hostedOmit := map[string]bool{}
+	for _, f := range s.HostedOmit {
+		if fl := c.LocalFlags().Lookup(f); fl == nil || !keepFlag(fl) || mcpOmittedFlags[f] || omit[f] || mcpIsAlias(fl) || required[f] {
+			return nil, nil, fmt.Errorf("tool %s: HostedOmit names --%s, which is not an optional flag the tool takes", s.Name, f)
+		}
+		hostedOmit[f] = mcpHostedRun
+	}
 	var err error
 	c.LocalFlags().VisitAll(func(f *pflag.Flag) {
-		if err != nil || !keepFlag(f) || mcpOmittedFlags[f.Name] || omit[f.Name] || mcpIsAlias(f) {
+		if err != nil || !keepFlag(f) || mcpOmittedFlags[f.Name] || omit[f.Name] || mcpIsAlias(f) || hostedOmit[f.Name] {
 			return
 		}
 		kind, ok := mcpFlagKinds[f.Value.Type()]
@@ -493,6 +516,7 @@ func buildMCPCatalog(root *cobra.Command, readOnly, staged bool) (mcpCatalog, er
 		Tools:              []mcpTool{},
 		StagedExcludes:     []string{},
 		HostedExcludes:     []string{},
+		HostedOmits:        map[string][]string{},
 	}
 	if staged {
 		cat.Instructions += mcpStagedInstructions
@@ -503,6 +527,19 @@ func buildMCPCatalog(root *cobra.Command, readOnly, staged bool) (mcpCatalog, er
 		}
 		if s.NotHosted {
 			cat.HostedExcludes = append(cat.HostedExcludes, s.Name)
+		}
+		if len(s.HostedOmit) > 0 {
+			c, err := s.command(root)
+			if err != nil {
+				return mcpCatalog{}, err
+			}
+			// Checks each name is an optional flag the tool takes.
+			if _, _, err := s.params(c); err != nil {
+				return mcpCatalog{}, err
+			}
+			for _, f := range s.HostedOmit {
+				cat.HostedOmits[s.Name] = append(cat.HostedOmits[s.Name], strings.ReplaceAll(f, "-", "_"))
+			}
 		}
 		if !s.offered(readOnly, staged) {
 			continue
@@ -588,6 +625,15 @@ func mcpToolArgv(root *cobra.Command, s mcpToolSpec, input []byte) ([]string, er
 	args, err := mcpDecodeObject(input)
 	if err != nil {
 		return nil, mcpArgError(s, names, "the arguments for %s %s", s.Name, err.Error())
+	}
+	if mcpHostedRun {
+		for _, f := range s.HostedOmit {
+			prop := strings.ReplaceAll(f, "-", "_")
+			if _, given := args[prop]; given {
+				return nil, validationError("%s does not take %s on the hosted server, which limits what one call reads from the install", s.Name, prop).
+					WithHint("%s", fmt.Sprintf("Page with limit and offset instead (offset for the next page); `p202 mcp` on your own computer takes %s. %s takes: %s.", prop, s.Name, strings.Join(names, ", ")))
+			}
+		}
 	}
 	var unknown []string
 	for k := range args {
