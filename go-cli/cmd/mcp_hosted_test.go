@@ -364,11 +364,15 @@ func withHostedRun(t *testing.T, hosted bool) {
 	t.Cleanup(func() { mcpHostedRun = was })
 }
 
-// HostedOmit holds `all` exactly where it reads every page: each tool that
+// mcpHostedOmitAll are the tools whose all reads every page.
+var mcpHostedOmitAll = []string{"campaign_list", "tracker_list", "landing_page_list", "ppc_network_list", "ppc_account_list", "aff_network_list", "text_ad_list", "rotator_list", "click_list", "conversion_list"}
+
+// HostedOmit holds all exactly where all reads every page: each tool that
 // takes all, run natively with all: true against an install with more than
 // one page, asks for a second page if and only if its spec omits all on the
 // hosted server (change_list's all is every user's changes, one request).
-func TestHostedOmitIsWhatReadsEveryPage(t *testing.T) {
+// Only all: the other flags that read every page stay (mcpEveryPage).
+func TestHostedOmitsAllWhereAllReadsEveryPage(t *testing.T) {
 	withHostedRun(t, false)
 	taking := 0
 	for _, s := range mcpToolSpecs {
@@ -427,7 +431,7 @@ func TestHostedOmitIsWhatReadsEveryPage(t *testing.T) {
 }
 
 // A hosted run refuses an omitted argument, naming it and how to page, before
-// anything is sent; a native run takes it (TestHostedOmitIsWhatReadsEveryPage).
+// anything is sent; a native run takes it (TestHostedOmitsAllWhereAllReadsEveryPage).
 func TestHostedRunRefusesWhatItOmits(t *testing.T) {
 	withHostedRun(t, true)
 	checked := 0
@@ -546,7 +550,7 @@ func TestMCPCatalogListsHostedOmits(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string][]string{}
-	for _, name := range []string{"campaign_list", "tracker_list", "landing_page_list", "ppc_network_list", "ppc_account_list", "aff_network_list", "text_ad_list", "rotator_list", "click_list", "conversion_list"} {
+	for _, name := range mcpHostedOmitAll {
 		want[name] = []string{"all"}
 	}
 	if !reflect.DeepEqual(got, want) {

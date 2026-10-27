@@ -120,7 +120,12 @@ type mcpToolSpec struct {
 // hostedBuild); a variable so the native tests can run as the engine does.
 var mcpHostedRun = hostedBuild
 
-// mcpEveryPage is HostedOmit for a list whose --all reads every page.
+// mcpEveryPage is HostedOmit for a list whose --all reads every page: the
+// rows it could return under mcpMaxResultChars are a page or two of --limit
+// and --offset, and more is refused. The flags that read every page to
+// answer what one page cannot (--url-contains, --min-clicks: a filter;
+// --with-stats, --resolve-names: a join) stay, and answer where the
+// install's answers fit the hosted read limit.
 var mcpEveryPage = []string{"all"}
 
 // mcpOmittedFlags are never tool arguments: --force is the tool approval's
