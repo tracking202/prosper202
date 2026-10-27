@@ -5,6 +5,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"p202/internal/api"
@@ -127,4 +128,46 @@ func TestHostedSearchAnswersCompactJSON(t *testing.T) {
 		t.Fatalf("root's PersistentPreRunE: %v", err)
 	}
 	compact("after root's PersistentPreRunE")
+}
+
+// The engine itself is the hosted run: without a test setting it, each list
+// that reads every page with all lists no all and refuses it, as a
+// validation error that says how to page; change_list keeps its all.
+func TestHostedEngineOmitsEveryPage(t *testing.T) {
+	if !mcpHostedRun {
+		t.Fatal("the js/wasm build does not run as the hosted engine")
+	}
+	cat, err := buildMCPCatalog(rootCmd, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]mcpTool{}
+	for _, tool := range cat.Tools {
+		listed[tool.Name] = tool
+	}
+	if _, ok := listed["change_list"].InputSchema.Properties["all"]; !ok {
+		t.Error("the hosted engine lists change_list without all (every user's changes)")
+	}
+	for _, name := range mcpHostedOmitAll {
+		tool, ok := listed[name]
+		if !ok {
+			t.Errorf("the hosted engine does not list %s", name)
+			continue
+		}
+		if _, ok := tool.InputSchema.Properties["all"]; ok {
+			t.Errorf("the hosted engine lists %s with all", name)
+		}
+		if _, ok := tool.InputSchema.Properties["limit"]; !ok {
+			t.Errorf("the hosted engine lists %s without limit", name)
+		}
+		spec, _ := findMCPSpec(name)
+		argv, err := mcpToolArgv(rootCmd, spec, []byte(`{"all":true}`))
+		if err == nil {
+			t.Errorf("the hosted engine ran %s with all: true as %q", name, argv)
+			continue
+		}
+		if exitCodeForError(err) != 1 || !strings.Contains(err.Error(), name+" does not take all on the hosted server") || !strings.Contains(hintFor(err), "limit and offset") {
+			t.Errorf("the hosted engine's %s all: true: %v (hint %q)", name, err, hintFor(err))
+		}
+	}
 }

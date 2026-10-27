@@ -1238,6 +1238,8 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   (`https://mcp.tracking202.com/mcp`): the person approves the connection on
   their own install, signed in as their own user, and chooses read only,
   propose changes, or read and change. It needs Prosper202 1.9.78 on https.
+  One call there reads at most 1 MB of the install's answers, so its list
+  tools take no `all`: page with `limit` and `offset`.
 
 If you are defining this CLI as a tool for an LLM some other way, here are
 recommendations:
