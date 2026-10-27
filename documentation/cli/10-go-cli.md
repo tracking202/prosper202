@@ -516,6 +516,12 @@ Claude Desktop and Cursor take the same command in their MCP settings:
 - A write tool runs with `--force` once the app's approval prompt is answered,
   so do not set the app to always allow the delete tools; deleting a tracker
   stops its links. Each delete tool takes `dry_run: true` for a preview.
+- Traffic sources, their accounts and categories have update and delete
+  tools too (`ppc_network_update`, `ppc_account_update`, `aff_network_update`
+  and their `_delete`s), so "rename Google Ads - Main to Main" renames the
+  source rather than making a second one. A delete removes that one record,
+  as its Setup page does: a traffic source's accounts and a category's
+  campaigns stay, and the tool's description says so.
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.
