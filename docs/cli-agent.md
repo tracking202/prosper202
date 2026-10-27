@@ -719,6 +719,10 @@ p202 <resource> delete  --ids N1,N2,... [--force] [--dry-run] [--json]
 |------|--------|------|
 | `--ppc-network-name` | (R) | string |
 
+`update` renames a source in place (its accounts keep it); `delete` removes
+the source alone, not its accounts (`ppc-account delete` them first if they
+are to go). The same holds for an `aff-network` and its campaigns.
+
 Custom variables (Setup > Traffic Sources > variables):
 
 ```
