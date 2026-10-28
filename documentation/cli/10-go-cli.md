@@ -530,6 +530,12 @@ Claude Desktop and Cursor take the same command in their MCP settings:
 - A write tool runs with `--force` once the app's approval prompt is answered,
   so do not set the app to always allow the delete tools; deleting a tracker
   stops its links. Each delete tool takes `dry_run: true` for a preview.
+- Traffic sources, their accounts and categories have update and delete
+  tools too (`ppc_network_update`, `ppc_account_update`, `aff_network_update`
+  and their `_delete`s), so "rename Google Ads - Main to Main" renames the
+  source rather than making a second one. A delete removes that one record,
+  as its Setup page does: a traffic source's accounts and a category's
+  campaigns stay, and the tool's description says so.
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.
@@ -544,7 +550,11 @@ sign in and approve the connection on your own install (Prosper202 1.9.78 or
 later, on https), choosing read only, propose changes, or read and change. The
 connection is an API key labelled `AI: <app> via mcp.tracking202.com` in
 My Account › Personal Settings › API keys; remove it there to disconnect. It needs a ClickServer Pro
-licence.
+licence. One call there reads at most 1 MB of the install's answers, so its list
+tools take no `all`: page with `limit` and `offset`. It also decodes at most
+80,000 JSON values from them (a megabyte of real rows holds fewer), and takes at
+most 1,000 in a call's arguments; past either, the call is refused with how to
+ask for less.
 
 To improve the connector, the hosted server records which tools the app calls, the names (not the
 values) of their arguments, whether they work, with the error when one fails (quoted values taken
