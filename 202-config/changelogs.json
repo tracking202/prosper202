@@ -15,7 +15,7 @@
       "New: A redirector's whole rule set can be saved in one step through the API (PUT /rotators/{id}/rules), p202 rotator set-rules and the MCP tool rotator_set_rules, as the Redirector page saves it: all of it or nothing, and a dry run shows what would change. The MCP tools also create, update and delete redirectors",
       "Changed: A redirector's rules are tried in the order you set, so a new rule can go ahead of the others; the upgrade keeps each redirector's order as it was",
       "Fixed: Rule values written through the API are stored as the Redirector page stores them (\"United States(US), Canada(CA)\" no longer misses Canada), and a device written with a capital, which never matches, is refused",
-      "Fixed: A redirector rule saved as \"all\" sends every visitor to the rule from a landing page's offer link too, as it did from the redirector link; it sent them to the default. ALL is read the same way in any case and beside other values, by both links, the Redirector page and the Rotator Breakdown"
+      "Fixed: A redirector rule saved as \"all\" sends every visitor to the rule from a landing page's offer link too, as it did from the redirector link; it sent them to the default. ALL is read the same way in any case and beside other values, by both links, the Redirector page and the Rotator Breakdown, and is accepted on an IP rule, which was refused as not an IP address"
     ]
   },
   "1.9.78": {

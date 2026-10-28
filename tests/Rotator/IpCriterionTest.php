@@ -100,17 +100,17 @@ final class IpCriterionTest extends TestCase
     /**
      * The Redirectors page's save (a script, so pinned by its source; the
      * live pass posts to it): a posted criterion value is read in two
-     * statements, the check that refuses what refusal() names and the write
-     * that stores the canonical list, and nowhere else; and the page's
-     * refusal answers "ERROR: <reason>", which p202-setup.js shows.
+     * statements, the check that refuses what Criterion::refusal() names
+     * (refusal() here, for an IP list without ALL) and the write that stores
+     * Criterion::stored() (the canonical list), and nowhere else; and the
+     * page's refusal answers "ERROR: <reason>", which p202-setup.js shows.
      */
-    public function testThePageSaveChecksAndStoresAnIpCriterionThroughIpCriterion(): void
+    public function testThePageSaveChecksAndStoresAnIpCriterionThroughCriterion(): void
     {
         $source = (string) file_get_contents(dirname(__DIR__, 2) . '/tracking202/ajax/rotator.php');
-        self::assertSame(3, substr_count($source, "\$criteria['value']"), 'a new read of the posted value');
-        $check = "\t\t\tif ((\$criteria['type'] ?? '') === 'ip'"
-            . " && (\$reason = \\Prosper202\\Rotator\\IpCriterion::refusal("
-            . "(string) (\$criteria['value'] ?? ''))) !== null) {\n"
+        self::assertSame(2, substr_count($source, "\$criteria['value']"), 'a new read of the posted value');
+        $check = "\t\t\tif ((\$reason = \\Prosper202\\Rotator\\Criterion::refusal("
+            . "(string) (\$criteria['type'] ?? ''), (string) (\$criteria['value'] ?? ''))) !== null) {\n"
             . "\t\t\t\t\$refuse(\$reason);\n"
             . "\t\t\t}\n";
         self::assertSame(1, substr_count($source, $check), 'the check');
@@ -119,10 +119,10 @@ final class IpCriterionTest extends TestCase
             . "\t\tdie(\$reason === null ? \"ERROR\" : 'ERROR: ' . \$reason);\n"
             . "\t};\n";
         self::assertSame(1, substr_count($source, $refuse), 'the refusal answers ERROR: <reason>');
-        // Any other type's value as the API stores it too (Criterion).
-        $write = "\$value = \$db->real_escape_string(\$criteria['type'] === 'ip'\n"
-            . "                ? \\Prosper202\\Rotator\\IpCriterion::normalize((string) \$criteria['value'])['value']\n"
-            . "                : \\Prosper202\\Rotator\\Criterion::normalize((string) \$criteria['value']));";
+        $write = "\$value = \$db->real_escape_string(\n"
+            . "                \\Prosper202\\Rotator\\Criterion::stored("
+            . "(string) \$criteria['type'], (string) \$criteria['value'])\n"
+            . "            );\n";
         self::assertSame(1, substr_count($source, $write), 'the write');
         $script = (string) file_get_contents(dirname(__DIR__, 2) . '/202-js/p202-setup.js');
         self::assertStringContainsString("result.indexOf('ERROR: ') === 0 ? result.slice(7) : ''", $script);

@@ -6,6 +6,7 @@ namespace Tests\Rotator;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Rotator\Criterion;
+use Prosper202\Rotator\IpCriterion;
 use Tests\Support\SourceScan;
 
 /**
@@ -67,6 +68,39 @@ final class CriterionTest extends TestCase
         self::assertSame($normalized, Criterion::normalize($stored));
         self::assertSame($normalized, Criterion::normalize($normalized), 'a stored value is stored again unchanged');
         self::assertSame($everyone, Criterion::matchesEveryone(Criterion::values($normalized)), 'and reads as it did');
+    }
+
+    /** @return iterable<string, array{string, string, ?string, string}> type, typed value, refusal, stored */
+    public static function typedValues(): iterable
+    {
+        yield 'an IP criterion of ALL' => ['ip', 'ALL', null, 'ALL'];
+        yield 'an IP criterion of all, padded' => ['ip', ' all ', null, 'ALL'];
+        yield 'an IP criterion of All' => ['ip', 'All', null, 'ALL'];
+        yield 'an address beside ALL' => ['ip', '203.0.113.7, ALL', null, '203.0.113.7,ALL'];
+        yield 'addresses, canonical' => ['ip', '2001:DB8::77, 198.51.100.88', null, '2001:db8::77,198.51.100.88'];
+        yield 'not an address' => ['ip', '203.0.113.500', IpCriterion::refusal('203.0.113.500'), ''];
+        yield 'a country beside ALL' => ['country', 'US, ALL', null, 'US,ALL'];
+        yield 'a country list' => ['country', 'United States(US), Canada(CA)', null, 'United States(US),Canada(CA)'];
+    }
+
+    /**
+     * What the Redirectors page's save refuses and stores for a typed value.
+     * ALL matches every visitor whatever the type, so an IP criterion
+     * holding it is not refused as no address (the API's check takes it the
+     * same way, RotatorRuleSetIntegrationTest).
+     *
+     * @dataProvider typedValues
+     */
+    public function testATypedValueIsRefusedAndStoredAsItIsRead(
+        string $type,
+        string $typed,
+        ?string $refusal,
+        string $stored
+    ): void {
+        self::assertSame($refusal, Criterion::refusal($type, $typed));
+        if ($refusal === null) {
+            self::assertSame($stored, Criterion::stored($type, $typed));
+        }
     }
 
     public function testACriterionIsDescribedAsTheRedirectsReadIt(): void

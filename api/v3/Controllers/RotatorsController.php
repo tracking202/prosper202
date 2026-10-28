@@ -691,6 +691,12 @@ class RotatorsController
         if (!$typed) {
             return null;
         }
+        // ALL matches every visitor whatever the type, so the type's own form
+        // is not asked of a value holding it: an IP criterion of ALL, which
+        // the redirects read as every visitor, was refused as no address.
+        if (Criterion::matchesEveryone($values)) {
+            return $stated ? ['type' => $type, 'statement' => $statement, 'value' => implode(',', $values)] : null;
+        }
         // The redirects compare a country as "Name(CC)". A bare code — the
         // form these docs once showed — never matches, so the rule would sit
         // there matching nothing.
@@ -705,7 +711,7 @@ class RotatorsController
         // The redirects compare the visitor's device in lower case.
         if ($type === 'device') {
             foreach ($values as $device) {
-                if (!Criterion::isEveryone($device) && $device !== strtolower($device)) {
+                if ($device !== strtolower($device)) {
                     $refuse('A device is written in lower case', ["$at.value" => '"' . $device . '" never matches: the redirects compare a device in lower case, e.g. "' . strtolower($device) . '" (desktop, mobile, tablet, bot)']);
                     return null;
                 }

@@ -83,6 +83,32 @@ final class Criterion
     }
 
     /**
+     * Why a typed value cannot be stored as a criterion of this type, in
+     * words for the person who typed it, or null. Only an IP criterion has a
+     * form of its own (IpCriterion::refusal()), and a value holding ALL is
+     * held to none: it matches every visitor whatever the type, and the IP
+     * check refused it as no address.
+     */
+    public static function refusal(string $type, string $value): ?string
+    {
+        if ($type !== 'ip' || self::matchesEveryone(self::values($value))) {
+            return null;
+        }
+
+        return IpCriterion::refusal($value);
+    }
+
+    /** A value as the writers store it for its type: an IP list as canonical addresses, unless it holds ALL. */
+    public static function stored(string $type, string $value): string
+    {
+        if ($type === 'ip' && !self::matchesEveryone(self::values($value))) {
+            return IpCriterion::normalize($value)['value'];
+        }
+
+        return self::normalize($value);
+    }
+
+    /**
      * A criterion in words, as the Redirectors page and the Rotator
      * Breakdown list it: "any visitor" when it matches every visitor,
      * else its type, statement and values.

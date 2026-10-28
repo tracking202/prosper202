@@ -12332,6 +12332,8 @@ components:
                   lower case (a capital never matches, so it is a 422).
                   For type ip, single IPv4 or IPv6 addresses, stored in canonical
                   form; a value that is not an address (a range included) is a 422.
+                  A value holding ALL is taken for any type, ip included, without
+                  the type's own checks.
         redirects:
           type: array
           items:

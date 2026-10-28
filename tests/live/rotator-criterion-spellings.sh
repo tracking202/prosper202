@@ -86,15 +86,15 @@ offrtr() {
       -b "tracking202subid=$subid" "$BASE/tracking202/redirect/offrtr.php?rpi=$1" | sed 's/[?].*//; s#.*/##'
 }
 
-# spelling NAME STATEMENT VALUE WANT — a redirector whose one rule (to $U/rule,
-# default $U/default) has a criterion stored as VALUE; a click through each
-# entry point goes to WANT.
+# spelling NAME STATEMENT VALUE WANT [TYPE] — a redirector whose one rule (to
+# $U/rule, default $U/default) has a TYPE (country) criterion stored as VALUE;
+# a click through each entry point goes to WANT.
 spelling() {
     must "$(api POST /rotators "{\"name\":\"$TAG $1\",\"default_url\":\"$U/default\"}")" "rotator $1"
     local rt rpi url stored
     rt=$(field "d['data']['id']")
     must "$(api POST "/rotators/$rt/rules" "{\"rule_name\":\"$1\",\"criteria\":[{\"type\":\"country\",\"statement\":\"is\",\"value\":\"ALL\"}],\"redirects\":[{\"redirect_url\":\"$U/rule\"}]}")" "rule $1"
-    Q "UPDATE 202_rotator_rules_criteria SET statement='$2', value='$3' WHERE rotator_id=$rt"
+    Q "UPDATE 202_rotator_rules_criteria SET type='${5:-country}', statement='$2', value='$3' WHERE rotator_id=$rt"
     stored=$(Q "SELECT CONCAT(statement, ' \"', value, '\"') FROM 202_rotator_rules_criteria WHERE rotator_id=$rt")
     eq "$stored" "$2 \"$3\"" "the criterion is stored as an older writer left it: $stored"
     rpi=$(Q "SELECT public_id FROM 202_rotators WHERE id=$rt")
@@ -112,6 +112,8 @@ spelling capital is 'All' rule
 spelling spaced is ' all ' rule
 spelling listed is 'United States(US), all' rule
 spelling negated is_not 'all' rule
+# ALL matches every visitor whatever the type, an IP criterion's included.
+spelling ip is ' All ' rule ip
 
 say "a value that only resembles ALL matches nobody"
 spelling resembling is 'Mall' default

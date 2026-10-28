@@ -131,7 +131,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					$refuse();
 				}
 			}
-			if (($criteria['type'] ?? '') === 'ip' && ($reason = \Prosper202\Rotator\IpCriterion::refusal((string) ($criteria['value'] ?? ''))) !== null) {
+			if (($reason = \Prosper202\Rotator\Criterion::refusal((string) ($criteria['type'] ?? ''), (string) ($criteria['value'] ?? ''))) !== null) {
 				$refuse($reason);
 			}
 		}
@@ -560,9 +560,9 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
             $type = $db->real_escape_string($criteria['type']);
             $statement = $db->real_escape_string($criteria['statement']);
             // Stored as the API stores it, every visitor as ALL (Criterion).
-            $value = $db->real_escape_string($criteria['type'] === 'ip'
-                ? \Prosper202\Rotator\IpCriterion::normalize((string) $criteria['value'])['value']
-                : \Prosper202\Rotator\Criterion::normalize((string) $criteria['value']));
+            $value = $db->real_escape_string(
+                \Prosper202\Rotator\Criterion::stored((string) $criteria['type'], (string) $criteria['value'])
+            );
 
             if ($criteria['criteria_id'] != 'none') {
                 $criteria_sql = "UPDATE 202_rotator_rules_criteria SET rotator_id='".$rotator_id."', rule_id='".$rule_id."', type='".$type."', statement='".$statement."', value='".$value."' WHERE id='".(int)$criteria['criteria_id']."'";

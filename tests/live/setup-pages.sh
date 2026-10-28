@@ -519,6 +519,16 @@ has "$OUT/r-all.txt" "DONE" "a rule whose criterion is all is accepted"
 eq "$(Q "SELECT value FROM 202_rotator_rules_criteria WHERE rotator_id=$ROT")" "ALL" "and its criterion is stored as ALL"
 get "$SETUP/rotator.php" "$OUT/r-all-list.html"
 has "$OUT/r-all-list.html" "If any visitor" "the list says the rule matches any visitor"
+# ALL matches every visitor whatever the type: an IP criterion of ALL was
+# refused as "not an IP address".
+IP_ALL_ARGS=()
+for arg in "${ALL_ARGS[@]}"; do
+  [ "$arg" = "data[0][criteria][0][type]=country" ] && arg="data[0][criteria][0][type]=ip"
+  IP_ALL_ARGS+=("$arg")
+done
+ajax "$AJAX/rotator.php" "$OUT/r-ip-all.txt" --data-urlencode "token=$T" "${IP_ALL_ARGS[@]}"
+has "$OUT/r-ip-all.txt" "DONE" "an IP criterion of all is accepted"
+eq "$(Q "SELECT CONCAT(type,'|',value) FROM 202_rotator_rules_criteria WHERE rotator_id=$ROT")" "ip|ALL" "and stored as ALL"
 
 # ─── Trackers ───────────────────────────────────────────────────────────
 say "trackers: generate, list, delete"
