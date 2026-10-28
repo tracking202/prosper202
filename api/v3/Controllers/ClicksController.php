@@ -21,9 +21,10 @@ class ClicksController
      * (tracking202/ajax/click_history.php) shows for them — the campaign,
      * traffic source, landing page and text ad by name, the visitor's IP,
      * keyword, device and location, and the referrer, landing and outbound
-     * URLs. The list and the single click share it, so the two cannot drift.
-     * A name is joined only when the record is the click's own account's.
-     * An IPv6 address is decoded from its 202_ips_v6 row, as
+     * URLs; and the ad platforms' click ids the click arrived with, as the
+     * Visitors download lists them (detailColumns()). The list and the
+     * single click share it, so the two cannot drift. A name is joined only
+     * when the record is the click's own account's. An IPv6 address is decoded from its 202_ips_v6 row, as
      * Prosper202\DataEngine\IpAddressSql reads it for the Visitors page:
      * served raw it was that row's id ("1").
      */
@@ -170,7 +171,7 @@ class ClicksController
         $total = (int)$this->resultOf($stmt, 'Count query failed')->fetch_assoc()['total'];
         $stmt->close();
 
-        $sql = 'SELECT ' . self::DETAIL_COLUMNS . '
+        $sql = 'SELECT ' . self::detailColumns() . '
             FROM 202_clicks c ' . self::DETAIL_JOINS . "
             $whereClause
             ORDER BY c.click_time DESC, c.click_id DESC
@@ -190,7 +191,9 @@ class ClicksController
         while ($row = $result->fetch_assoc()) {
             // Resolved names derive from the visitor (user agent, IP): strip
             // control/bidi characters and cap length before serving them.
-            $rows[] = self::numbers(\Api\V3\Support\ResponseSanitizer::cleanRowFields($row, self::VISITOR_FIELDS));
+            $rows[] = self::adClickIds(
+                self::numbers(\Api\V3\Support\ResponseSanitizer::cleanRowFields($row, self::VISITOR_FIELDS))
+            );
         }
         $stmt->close();
 
@@ -198,6 +201,22 @@ class ClicksController
             'data' => $rows,
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
         ];
+    }
+
+    /**
+     * DETAIL_COLUMNS and each ad click id, one value per click
+     * (AdClickIdColumns::sql()), never a join to 202_google: that repeats a
+     * click once for each of its rows there, past the list's count and
+     * through its page.
+     */
+    private static function detailColumns(): string
+    {
+        $ids = [];
+        foreach (array_keys(\Prosper202\Click\ClickRecord::AD_CLICK_IDS) as $id) {
+            $ids[] = \Prosper202\Click\AdClickIdColumns::sql($id, 'c.click_id') . ' AS ' . $id;
+        }
+
+        return self::DETAIL_COLUMNS . ', ' . implode(', ', $ids);
     }
 
     /**
@@ -257,7 +276,7 @@ class ClicksController
      */
     public function get(int $id): array
     {
-        $sql = 'SELECT ' . self::DETAIL_COLUMNS . ',
+        $sql = 'SELECT ' . self::detailColumns() . ',
                 c.user_id, cr.click_reviewed, ct.c1_id, ct.c2_id, ct.c3_id, ct.c4_id,
                 t1.c1, t2.c2, t3.c3, t4.c4
             FROM 202_clicks c ' . self::DETAIL_JOINS . '
@@ -284,7 +303,35 @@ class ClicksController
         // control/bidi characters and cap length before serving them.
         $row = \Api\V3\Support\ResponseSanitizer::cleanRowFields($row, [...self::VISITOR_FIELDS, 'c1', 'c2', 'c3', 'c4']);
 
-        return ['data' => self::numbers($row)];
+        return ['data' => self::adClickIds(self::numbers($row))];
+    }
+
+    /**
+     * The ad platforms' click ids (ClickRecord::AD_CLICK_IDS), null for
+     * none: a click stored without one has '', and a redirector's click no
+     * 202_google row at all. The visitor wrote them, so they are cleaned as
+     * the other visitor fields are, but capped at the widest column's width
+     * rather than 512 characters, so no id the click kept is cut on the way
+     * out.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function adClickIds(array $row): array
+    {
+        $names = array_keys(\Prosper202\Click\ClickRecord::AD_CLICK_IDS);
+        $row = \Api\V3\Support\ResponseSanitizer::cleanRowFields(
+            $row,
+            $names,
+            max(\Prosper202\Click\ClickRecord::AD_CLICK_IDS)
+        );
+        foreach ($names as $name) {
+            if (array_key_exists($name, $row) && ($row[$name] === null || $row[$name] === '')) {
+                $row[$name] = null;
+            }
+        }
+
+        return $row;
     }
 
     /**

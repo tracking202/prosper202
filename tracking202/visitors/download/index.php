@@ -27,7 +27,7 @@ $reportView = p202_report_view_begin();
 2co.site_url_address AS outbound,2cod.site_domain_host AS outbound_host,
 2cc.site_url_address AS cloaking,2ccd.site_domain_host AS cloaking_host,
 2credir.site_url_address AS redirect,2credird.site_domain_host AS redirect_host,
-gclid,
+gclid, 2g.gbraid, 2g.wbraid, 2g.ttclid,
 2uca.utm_campaign,2uco.utm_content,2um.utm_medium,2us.utm_source,2ut.utm_term
 FROM 202_dataengine AS 2c
 LEFT JOIN 202_clicks_record USING (click_id) 
@@ -101,14 +101,21 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 			"Redirect" . "\t" . 
 			"Keyword" . "\t" .
 	        "gclid" . "\t" .
+            "gbraid" . "\t" .
+            "wbraid" . "\t" .
+            "ttclid" . "\t" .
 	        "utm_campaign" . "\t" .
 	        "utm_content" . "\t" .
 	        "utm_medium" . "\t" .
 	        "utm_source" . "\t" .
 	        "utm_term" . "\n";
 	
+// A value as the visitor sent it, on one line and in one column: a tab or a
+// line break in it moved every column after it.
+$cell = static fn (mixed $value): string => str_replace(["\t", "\r", "\n"], ' ', (string) $value);
+
 //now display all the clicks
-	while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {   
+	while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
 								
 		$mysql['click_id'] = $db->real_escape_string($click_row['click_id']);
 		
@@ -210,11 +217,14 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 			$html['cloaking'] . "\t" . 
 			$html['redirect'] . "\t" . 
 			$html['keyword'] . "\t" .
-			($click_row['gclid'] ?? '') . "\t" .
-			($click_row['utm_campaign'] ?? '') . "\t" .
-			($click_row['utm_content'] ?? '') . "\t" .
-			($click_row['utm_medium'] ?? '') . "\t" .
-			($click_row['utm_source'] ?? '') . "\t" .
-			($click_row['utm_term'] ?? '') . "\n";
+			$cell($click_row['gclid'] ?? '') . "\t" .
+            $cell($click_row['gbraid'] ?? '') . "\t" .
+            $cell($click_row['wbraid'] ?? '') . "\t" .
+            $cell($click_row['ttclid'] ?? '') . "\t" .
+			$cell($click_row['utm_campaign'] ?? '') . "\t" .
+			$cell($click_row['utm_content'] ?? '') . "\t" .
+			$cell($click_row['utm_medium'] ?? '') . "\t" .
+			$cell($click_row['utm_source'] ?? '') . "\t" .
+			$cell($click_row['utm_term'] ?? '') . "\n";
 			
 	}
