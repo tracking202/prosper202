@@ -52,6 +52,19 @@ System health checks, diagnostics, and administration.
 
 `GET /system/cron` — returns last run times for each cron job and recent log entries.
 
+`202-cronjobs/index.php` runs one at a time, however long a run takes: each
+run holds a lock (`flock()` on `202-cronjobs/cron-run.lock`) until it ends,
+and the lock goes with the run's process if it dies. A run that finds it held
+(a signed-in page's ping, a cron job's, AutoCron's) does nothing, records no
+run, answers "Cron job already running" and writes
+`Cron job already running: another run holds …` to the server's error log. The
+web server's user and the user a crontab's `php` line runs as must both be
+able to open that file: the run that makes it leaves it readable by every
+user, and a run that cannot make, open or lock it stops with the reason (exit
+1 on the command line, 500 over HTTP, and `202-config/cronjob.log`) rather
+than running without the lock. `202-cronjobs/health.php`'s `isLocked` is
+whether a run holds the lock now (`null` when it cannot be read).
+
 ## Errors
 
 `GET /system/errors` — returns recent MySQL errors.

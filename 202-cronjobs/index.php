@@ -6,33 +6,25 @@ ini_set('display_errors', '1');
 ob_start();
 
 // Initialize variables
-$lockFile = __DIR__ . '/cron.lock';
 $logFile = __DIR__ . '/../202-config/cronjob.log';
 
 try {
     // Bootstrap before taking the lock: a run that cannot start (the
     // database needs an upgrade, 202-config.php is missing) stops inside
     // connect.php — on the command line with the reason and exit status 1 —
-    // and must not leave a lock that makes the next runs report "already
-    // running" instead.
+    // and the lock's class comes with its autoloader.
     require_once __DIR__ . '/../202-config/connect.php';
     require_once __DIR__ . '/../202-config/class-dataengine.php';
 
-    // Check for lock file to prevent concurrent runs
-    if (file_exists($lockFile)) {
-        $lockTime = filemtime($lockFile);
-        // If lock is older than 10 minutes, remove it (stale lock)
-        if (time() - $lockTime > 600) {
-            unlink($lockFile);
-        } else {
-            error_log("Cron job already running. Lock file exists: " . $lockFile);
-            exit("Cron job already running\n");
-        }
+    // One run at a time, for as long as it runs (Prosper202\Cron\CronLock):
+    // every way in (a page's ping, a scheduler, AutoCron) comes through here.
+    // A run that finds it held does nothing and records nothing.
+    $cronLock = \Prosper202\Cron\CronLock::take(\Prosper202\Cron\CronLock::path());
+    if ($cronLock === null) {
+        error_log('Cron job already running: another run holds ' . \Prosper202\Cron\CronLock::path()
+            . '; this run did nothing.');
+        exit("Cron job already running\n");
     }
-
-    // Create lock file
-    touch($lockFile);
-
 
     // Cron does not need to hold the user's session lock while it runs.
     if (session_status() === PHP_SESSION_ACTIVE) {
@@ -93,18 +85,11 @@ function getDatabaseConnection(): mysqli
             'the record of this run'
         );
     }
-
-    // Remove lock file on successful completion
-    unlink($lockFile);
 } catch (Exception $e) {
     $errorMsg = date('Y-m-d H:i:s') . " - Cronjob Error: " . $e->getMessage() . "\n";
     echo "Error: " . $e->getMessage();
     error_log($errorMsg, 3, $logFile);
 
-    // Remove lock file on error
-    if (file_exists($lockFile)) {
-        unlink($lockFile);
-    }
     // A run that stopped says so where it is read: exit 1 on the command
     // line, 500 over HTTP while nothing has been sent.
     if (PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg') {

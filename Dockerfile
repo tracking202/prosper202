@@ -72,7 +72,7 @@ CMD ["apache2-foreground"]
 
 # Default stage: self-contained image with the app baked in. www-data owns the
 # tree because the app writes inside the docroot at runtime (202-config.php,
-# 202-cronjobs/cron.lock, attribution exports, auto-upgrade). vendor/ is
+# 202-cronjobs/cron-run.lock, attribution exports, auto-upgrade). vendor/ is
 # installed afterwards as root on purpose — the web user only needs to read it.
 # The entrypoint sees vendor/autoload.php and skips its runtime composer
 # install, so container start stays fast.

@@ -26,6 +26,8 @@ parameters:
         - 202-config/Click/PublicId.php
         - 202-config/Click/RotatorRoute.php
         - 202-config/Click/StoredAddressIds.php
+        - 202-config/Cron/CronLock.php
+        - 202-config/Cron/CronLockFailed.php
         - 202-config/Database/Connection.php
         - 202-config/User/InstallAccount.php
         - 202-config/User/SignInRecord.php
