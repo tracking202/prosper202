@@ -257,7 +257,8 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
             $get_tracker_row
         ): array {
             if (isset($get_tracker_result) && $get_tracker_result->num_rows > 0) {
-                $drop_tracker = "DELETE FROM 202_trackers WHERE tracker_id = '".$get_tracker_row['tracker_id']."'";
+                $drop_tracker = "DELETE FROM 202_trackers WHERE tracker_id = '".$get_tracker_row['tracker_id']."'"
+                    . " AND user_id = '" . $mysql['user_id'] . "'";
                 if (!$db->query($drop_tracker)) {
                     record_mysql_error($db, $drop_tracker);
                 }
@@ -304,7 +305,8 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 
             $tracker_sql = "UPDATE 		`202_trackers`
                             SET			`tracker_id_public`='".$mysql['tracker_id_public']."'
-                            WHERE		`tracker_id`='".$mysql['tracker_id']."'";
+                            WHERE		`tracker_id`='".$mysql['tracker_id']."'"
+                            . " AND `user_id`='" . $mysql['user_id'] . "'";
             $tracker_result = $db->query($tracker_sql);
             if (!$tracker_result) {
                 record_mysql_error($db, $tracker_sql);

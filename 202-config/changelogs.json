@@ -21,7 +21,8 @@
       "New: Your AI assistant can create, change and delete text ads, and put one on a tracking link. A connection approved before this version that may make changes needs connecting again to change text ads",
       "New: A redirector's whole rule set can be saved in one step through the API (PUT /rotators/{id}/rules), p202 rotator set-rules and the MCP tool rotator_set_rules, as the Redirector page saves it: all of it or nothing, and a dry run shows what would change. The MCP tools also create, update and delete redirectors",
       "Changed: A redirector's rules are tried in the order you set, so a new rule can go ahead of the others; the upgrade keeps each redirector's order as it was",
-      "Fixed: Rule values written through the API are stored as the Redirector page stores them (\"United States(US), Canada(CA)\" no longer misses Canada), and a device written with a capital, which never matches, is refused"
+      "Fixed: Rule values written through the API are stored as the Redirector page stores them (\"United States(US), Canada(CA)\" no longer misses Canada), and a device written with a capital, which never matches, is refused",
+      "Fixed: Security. A user who could open Setup could rename a traffic source of another user and take it into their own account. A traffic source is now renamed only by its own user. Update as soon as you can, then check each user's Setup › Traffic Sources for a source that is missing"
     ]
   },
   "1.9.78": {
