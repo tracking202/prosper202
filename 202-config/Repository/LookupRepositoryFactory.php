@@ -108,7 +108,9 @@ final class LookupRepositoryFactory
      * the cache fills. Entries cached between deploying the files and
      * running the upgrade are this version's, so a step that removes lookup
      * rows still changes the key subjects (MemcacheIdCache), and a restored
-     * database still needs memcached flushed.
+     * database still needs memcached flushed. The click path's user-agent
+     * parse and bot-range verdict, kept 30 days, take it too; every key on
+     * the bare install hash is listed with why (CacheKeyNamespaceTest).
      */
     public static function cacheNamespace(): string
     {
