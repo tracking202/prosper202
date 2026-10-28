@@ -29,7 +29,8 @@ class LtvWebhookReviveCommand extends BaseCommand
                 'requeue',
                 null,
                 InputOption::VALUE_NEGATABLE,
-                'Send again what it did not deliver in the last 7 days (the default; --no-requeue: new events only)'
+                'Send what it did not deliver in the last 7 days (the default; --no-requeue: new events only, and'
+                    . ' the deliveries still pending are held)'
             );
     }
 

@@ -12,6 +12,7 @@ use Prosper202\Bridge\EventBridge;
 use Prosper202\Database\Connection;
 use Prosper202\Database\SchemaInstaller;
 use Prosper202\Lpo\CtxToken;
+use Prosper202\Ltv\LtvConflictException;
 use Prosper202\Ltv\MysqlWebhookRepository;
 use Prosper202\Ltv\RecordNotFoundException;
 use Prosper202\Ltv\WebhookDispatcher;
@@ -20,8 +21,10 @@ use Prosper202\Ltv\WebhookDispatcher;
  * Reviving a dead LTV webhook, on a real server with a receiver on loopback
  * (LocalWebhookReceiver): what a dead webhook's deliveries become (held,
  * never tried), what a revival sends (what it missed in the last 7 days,
- * once, and nothing it delivered), the failure count it resets, a revival
- * landing between the dispatcher's read and its hold, PUT /ltv/webhooks/{id}
+ * once, and nothing it delivered), what it does with the deliveries still
+ * pending (held without requeue, sent with it), the failure count it resets,
+ * a revival waiting for a run that has claimed a delivery, a revival landing
+ * between the dispatcher's read and its hold, PUT /ltv/webhooks/{id}
  * through the controller, and the Landing Page Optimizer's pairing webhook
  * going on without pairing again.
  *
@@ -125,6 +128,27 @@ final class WebhookReviveIntegrationTest extends TestCase
         self::assertNotNull(self::$db);
 
         return new Connection(self::$db);
+    }
+
+    /** Another session on the test database, as a web request beside a cron run has. */
+    private static function otherSession(): \mysqli
+    {
+        $db = mysqli_connect(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        self::assertInstanceOf(\mysqli::class, $db);
+
+        return $db;
+    }
+
+    /** @return list<string> the ids of the last $count deliveries, oldest first */
+    private static function lastIds(int $count): array
+    {
+        return array_map(strval(...), array_slice(array_keys(self::deliveries()), -$count));
     }
 
     private static function repo(): MysqlWebhookRepository
@@ -239,7 +263,7 @@ final class WebhookReviveIntegrationTest extends TestCase
         self::assertSame([$hook['webhookId'] => 3], self::repo()->missedCounts(self::USER, time()));
 
         $revival = self::repo()->revive(self::USER, $hook['webhookId'], true, time());
-        self::assertSame(['revived' => true, 'requeued' => 3, 'attempts_reset' => 0], $revival);
+        self::assertSame(['revived' => true, 'requeued' => 3, 'attempts_reset' => 0, 'held' => 0], $revival);
         self::assertSame('active', self::status($hook['webhookId']));
         foreach ([$killer, ...$held] as $id) {
             $row = self::deliveries()[$id];
@@ -260,7 +284,7 @@ final class WebhookReviveIntegrationTest extends TestCase
         $killer = self::kill($hook['webhookId']);
 
         self::assertSame(
-            ['revived' => true, 'requeued' => 0, 'attempts_reset' => 0],
+            ['revived' => true, 'requeued' => 0, 'attempts_reset' => 0, 'held' => 0],
             self::repo()->revive(self::USER, $hook['webhookId'], false, time())
         );
         self::queue();
@@ -270,6 +294,137 @@ final class WebhookReviveIntegrationTest extends TestCase
         self::assertSame('failed', self::deliveries()[$killer]['status'], 'the missed one stays failed');
     }
 
+    /**
+     * Without requeue, a delivery queued before the revival and still pending
+     * (one no run had held yet, one waiting out a retry's backoff when the
+     * webhook died) is set aside as the dead webhook's are: failed, with the
+     * attempts it had, a `held:` reason, never sent.
+     */
+    public function testWithoutRequeueTheDeliveriesStillPendingAreHeld(): void
+    {
+        $hook = self::hook();
+        self::kill($hook['webhookId']);
+        self::queue(2);
+        [$unseen, $backingOff] = self::lastIds(2);
+        self::q('UPDATE 202_ltv_webhook_deliveries SET attempts = 2, next_attempt_at = ' . (time() + 240)
+            . ' WHERE delivery_id = ' . $backingOff);
+
+        self::assertSame(
+            ['revived' => true, 'requeued' => 0, 'attempts_reset' => 0, 'held' => 2],
+            self::repo()->revive(self::USER, $hook['webhookId'], false, time())
+        );
+        foreach ([$unseen => '0', $backingOff => '2'] as $id => $attempts) {
+            $row = self::deliveries()[$id];
+            self::assertSame(
+                ['failed', $attempts, null, MysqlWebhookRepository::REVIVED_HELD_REASON],
+                [$row['status'], $row['attempts'], $row['last_status_code'], $row['last_response_body']]
+            );
+        }
+        self::assertStringStartsWith('held: ', MysqlWebhookRepository::REVIVED_HELD_REASON);
+
+        self::queue();
+        [$new] = self::lastIds(1);
+        self::q('UPDATE 202_ltv_webhook_deliveries SET next_attempt_at = ' . time()
+            . ' WHERE delivery_id = ' . $backingOff);
+        self::assertSame(1, self::dispatch()['delivered']);
+        self::assertSame([$new], self::received(), 'only the event queued after the revival is sent');
+        self::assertFalse(WebhookDispatcher::didWork(self::dispatch()));
+    }
+
+    /**
+     * With requeue, the deliveries still pending are sent too, each once:
+     * one no run had held yet in its place among the ones sent again (oldest
+     * first), and one waiting out a retry's backoff at its time, its attempts
+     * from 0. That time is left as it is because a claim (claimDelivery())
+     * reads the same as a backoff.
+     */
+    public function testWithRequeueTheDeliveriesStillPendingAreSentOnce(): void
+    {
+        $hook = self::hook();
+        $killer = self::kill($hook['webhookId']);
+        self::queue(2);
+        [$unseen, $backingOff] = self::lastIds(2);
+        $now = time();
+        self::q('UPDATE 202_ltv_webhook_deliveries SET created_at = ' . ($now - 300)
+            . ' WHERE delivery_id = ' . $killer);
+        self::q('UPDATE 202_ltv_webhook_deliveries SET created_at = ' . ($now - 120) . ', next_attempt_at = '
+            . ($now - 120) . ' WHERE delivery_id = ' . $unseen);
+        self::q('UPDATE 202_ltv_webhook_deliveries SET created_at = ' . ($now - 60) . ', attempts = 3,'
+            . ' next_attempt_at = ' . ($now + 240) . ' WHERE delivery_id = ' . $backingOff);
+
+        self::assertSame(
+            ['revived' => true, 'requeued' => 1, 'attempts_reset' => 1, 'held' => 0],
+            self::repo()->revive(self::USER, $hook['webhookId'], true, $now)
+        );
+        self::assertSame(2, self::dispatch()['delivered']);
+        self::assertSame([$killer, $unseen], self::received(), 'what it missed, oldest first');
+        $row = self::deliveries()[$backingOff];
+        self::assertSame(
+            ['pending', '0', (string) ($now + 240)],
+            [$row['status'], $row['attempts'], $row['next_attempt_at']],
+            'a delivery waiting out a backoff keeps its time'
+        );
+
+        self::q('UPDATE 202_ltv_webhook_deliveries SET next_attempt_at = ' . time()
+            . ' WHERE delivery_id = ' . $backingOff);
+        self::assertSame(1, self::dispatch()['delivered']);
+        self::assertSame([$killer, $unseen, $backingOff], self::received());
+        self::assertFalse(WebhookDispatcher::didWork(self::dispatch()));
+    }
+
+    /**
+     * A run has claimed a delivery and is sending it when the webhook is
+     * revived from another session (a web request beside the cron job). The
+     * revival waits for the run's lock; while the run goes on it is refused
+     * (409 through the API) and changes nothing, so the claimed delivery is
+     * recorded once, by the run. Once the run ends, the revival goes through.
+     */
+    public function testARevivalWaitsForARunThatHasClaimedADelivery(): void
+    {
+        $hook = self::hook();
+        self::queue();
+        [$sending] = self::lastIds(1);
+        $web = self::otherSession();
+        $webRepo = new MysqlWebhookRepository(new Connection($web));
+
+        $refused = null;
+        $clock = function () use (&$refused, $hook, $webRepo, $sending): int {
+            // Asked as the send starts: claimed, not yet recorded. The
+            // webhook has died meanwhile, as another delivery's last failure
+            // in the same run would make it.
+            if ($refused === null) {
+                $row = self::deliveries()[$sending];
+                self::assertSame('pending', $row['status']);
+                self::assertGreaterThan(time(), (int) $row['next_attempt_at'], 'claimed');
+                self::q("UPDATE 202_ltv_webhooks SET status = 'dead' WHERE webhook_id = " . $hook['webhookId']);
+                try {
+                    $webRepo->revive(self::USER, $hook['webhookId'], false, time(), 1);
+                    $refused = false;
+                } catch (LtvConflictException $e) {
+                    $refused = $e->getMessage();
+                }
+                self::assertSame('pending', self::deliveries()[$sending]['status'], 'not held under the run');
+                self::assertSame('dead', self::status($hook['webhookId']), 'not revived under the run');
+            }
+
+            return time();
+        };
+        $report = self::dispatch($clock);
+
+        self::assertIsString($refused, 'the revival did not wait for the run');
+        self::assertStringContainsString('being sent right now', $refused);
+        self::assertSame(1, $report['delivered'], WebhookDispatcher::summary($report));
+        self::assertSame('delivered', self::deliveries()[$sending]['status']);
+        self::assertSame(
+            ['revived' => true, 'requeued' => 0, 'attempts_reset' => 0, 'held' => 0],
+            $webRepo->revive(self::USER, $hook['webhookId'], false, time(), 1)
+        );
+        self::assertSame('delivered', self::deliveries()[$sending]['status']);
+        self::assertFalse(WebhookDispatcher::didWork(self::dispatch()));
+        self::assertSame([$sending], self::received(), 'sent once');
+        $web->close();
+    }
+
     public function testARevivalStartsTheFailureCountAgain(): void
     {
         $hook = self::hook();
@@ -277,7 +432,7 @@ final class WebhookReviveIntegrationTest extends TestCase
         self::q('UPDATE 202_ltv_webhook_deliveries SET attempts = ' . (MysqlWebhookRepository::MAX_ATTEMPTS - 1));
         self::q("UPDATE 202_ltv_webhooks SET status = 'dead' WHERE webhook_id = " . $hook['webhookId']);
 
-        self::assertSame(2, self::repo()->revive(self::USER, $hook['webhookId'], false, time())['attempts_reset']);
+        self::assertSame(2, self::repo()->revive(self::USER, $hook['webhookId'], true, time())['attempts_reset']);
         self::receiver()->down(true);
         $report = self::dispatch();
         self::assertSame(2, $report['failed'], WebhookDispatcher::summary($report));
@@ -309,7 +464,7 @@ final class WebhookReviveIntegrationTest extends TestCase
         self::q("UPDATE 202_ltv_webhooks SET status = 'active' WHERE webhook_id = " . $hook['webhookId']);
 
         self::assertSame(
-            ['revived' => false, 'requeued' => 0, 'attempts_reset' => 0],
+            ['revived' => false, 'requeued' => 0, 'attempts_reset' => 0, 'held' => 0],
             self::repo()->revive(self::USER, $hook['webhookId'], true, time())
         );
         self::assertSame('failed', self::deliveries()[$killer]['status']);
@@ -327,7 +482,9 @@ final class WebhookReviveIntegrationTest extends TestCase
     /**
      * The dispatcher read the delivery while its webhook was dead, and the
      * webhook was revived before the hold: the hold asks again, finds it
-     * active, and the delivery is sent.
+     * active, and the delivery is sent. The revival is made on the run's own
+     * session, which holds the lock already and takes it again, as a run
+     * the lock does not see would meet it.
      */
     public function testARevivalBetweenTheDispatchersReadAndItsHoldIsSent(): void
     {

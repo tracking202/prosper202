@@ -327,20 +327,29 @@ revive <id>`; `bin/p202 ltv:webhook:revive <id>`):
 - It keeps its id, URL and secret, so a receiver checks the signature as
   before, and the Landing Page Optimizer's pairing webhook goes on with no
   pairing again.
-- The attempts of its pending deliveries start again from 0, so the next
-  failure does not mark it dead at once.
 - By default every delivery of it that was not delivered and was queued in
-  the last 7 days is sent again: the one that failed 6 times, and the ones
-  held while it was dead. They go oldest first on the next cron run, each
-  with its own `X-P202-Delivery`, so a receiver that took one without
-  answering 2xx sees the same delivery again. A delivered one is never sent
-  again, and older ones stay `failed`, the 7 days of
-  [How deliveries are sent](#how-deliveries-are-sent).
-- `"requeue": false` revives it for new events only.
+  the last 7 days is sent: the one that failed 6 times and the ones held
+  while it was dead are sent again, and the ones still pending (queued
+  since the last cron run, or waiting out a retry's backoff when it died)
+  are sent too. They go oldest first on the next cron run, each with its
+  own `X-P202-Delivery`, so a receiver that took one without answering 2xx
+  sees the same delivery again; a pending one that was waiting out a
+  backoff keeps its time, at most 32 minutes. The attempts of the pending
+  ones start again from 0, so the next failure does not mark it dead at
+  once. A delivered one is never sent again, and older ones stay `failed`,
+  the 7 days of [How deliveries are sent](#how-deliveries-are-sent).
+- `"requeue": false` revives it for new events only: the deliveries still
+  pending are held too, `failed` with the attempts they had and `held: its
+  webhook was revived for new events only, …` as their last response, and
+  only events queued after the revival are sent.
+- A revival waits for a cron run that is sending (up to 20 seconds), so it
+  never changes a delivery a run is in the middle of; one that has not
+  ended by then is a `409`, and nothing changed.
 - The answer is the webhook (never its secret) with `revived`, `requeued`
-  (how many are sent again) and `attempts_reset`. An active webhook is left
-  as it is (`revived: false`). Any other `status` is a `422`: the server
-  alone marks a webhook dead, and `DELETE` removes one.
+  (how many are sent again), `attempts_reset` and `held` (how many pending
+  ones `"requeue": false` set aside). An active webhook is left as it is
+  (`revived: false`). Any other `status` is a `422`: the server alone marks
+  a webhook dead, and `DELETE` removes one.
 
 Fix the receiver before reviving: a webhook whose next delivery fails 6
 times dies again.
@@ -378,4 +387,4 @@ own settings, a JSON object stored as sent (a list is a `422`).
 | `422` `idempotency_key` | A reserved prefix (`void:`, `sub:`, …) | Your own id for the event |
 | `422` `idempotency_key` (or `transaction_id` on a subscription event): "Already used for … with a different amount" | The key recorded a different request; the message lists what differs. Nothing was written | A retry sends exactly the first request; a different event gets its own key |
 | `404` | A customer, subscription, product, field, webhook or company of another account, or none | List them first (`p202 ltv customers`, `subscriptions`, `products`, …) |
-| `409` | A product an order line item names; a company name or domain in use; a company with customers attached (it was a `422`); a merge another request changed first | Leave the product; merge the companies, or pick another name; retry the merge |
+| `409` | A product an order line item names; a company name or domain in use; a company with customers attached (it was a `422`); a merge another request changed first; a revival while a cron run was still sending webhook deliveries | Leave the product; merge the companies, or pick another name; retry the merge or the revival |

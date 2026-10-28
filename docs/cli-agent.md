@@ -1079,14 +1079,17 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
   delivery whose `next_attempt_at` is past waits for the next cron run. An
   unknown webhook id is a 404 whose hint names `p202 ltv webhooks list`.
 - `ltv webhooks revive` makes a dead webhook (one delivery failed 6 times)
-  active again with its id, URL and secret, its pending deliveries' attempts
-  back at 0, and sends again every delivery it did not deliver from the last
-  7 days (the one that failed, and the ones held while it was dead: `failed`,
-  `held: …` in `deliveries`), oldest first on the next cron run; never a
-  delivered one. `--requeue=false` revives it for new events only. The answer
-  says `revived` (false when it was already active), `requeued` and
-  `attempts_reset`. The Landing Page Optimizer's pairing webhook needs no
-  pairing again.
+  active again with its id, URL and secret, and sends every delivery it did
+  not deliver from the last 7 days: again for the one that failed and the
+  ones held while it was dead (`failed`, `held: …` in `deliveries`), and the
+  ones still pending, their attempts back at 0; oldest first on the next
+  cron run (a pending one waiting out a retry's backoff keeps its time, at
+  most 32 minutes); never a delivered one. `--requeue=false` revives it for
+  new events only, and holds the ones still pending too. The answer says
+  `revived` (false when it was already active), `requeued`, `attempts_reset`
+  and `held`. A 409 means a cron run was still sending after 20 seconds and
+  nothing changed: run it again in a minute. The Landing Page Optimizer's
+  pairing webhook needs no pairing again.
 - `ltv webhooks create` prints the signing secret once (`X-P202-Signature:
   sha256=HMAC(body, secret)`); `webhooks list` never shows it. `--events`
   takes the known names or `*` (every event, including future ones), and is

@@ -1173,11 +1173,13 @@ class LtvController
     /**
      * Revive a webhook: `status` "active" (the one state a caller sets; the
      * server marks a webhook dead) makes a dead one active again with its
-     * id, URL and secret, and its failure count back at 0. `requeue` (a
-     * flag, default true) also sends again every delivery it did not
-     * deliver from the last 7 days: the one that killed it and those held
-     * while it was dead (MysqlWebhookRepository::revive()). An active
-     * webhook is left as it is (`revived` false).
+     * id, URL and secret. `requeue` (a flag, default true) sends every
+     * delivery it did not deliver from the last 7 days: again for the one
+     * that killed it and those held while it was dead, and those still
+     * pending with their failure count back at 0; false holds the pending
+     * ones too (MysqlWebhookRepository::revive()). A cron run still sending
+     * after the revival's wait is a 409. An active webhook is left as it is
+     * (`revived` false).
      *
      * @param array<string, mixed> $payload
      */
