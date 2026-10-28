@@ -73,7 +73,10 @@ final class ConversionNames
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $platform = StoredRow::text($row, 'platform');
             if (!isset($names[$platform])) {
-                throw new \UnexpectedValueException('202_offline_conversion_names holds platform ' . var_export($platform, true) . ' for account ' . $userId);
+                throw new \UnexpectedValueException(
+                    '202_offline_conversion_names holds platform ' . var_export($platform, true)
+                    . ' for account ' . $userId
+                );
             }
             $campaignId = StoredRow::int($row, 'aff_campaign_id');
             if ($campaignId === 0) {
@@ -102,7 +105,9 @@ final class ConversionNames
             }
             foreach ($byCampaign as $campaignId => $name) {
                 if ($campaignId < 0 || ($name !== '' && self::problem($name) !== null)) {
-                    throw new \InvalidArgumentException('campaign ' . $campaignId . ' has a name that cannot be stored');
+                    throw new \InvalidArgumentException(
+                        'campaign ' . $campaignId . ' has a name that cannot be stored'
+                    );
                 }
             }
         }
@@ -111,13 +116,16 @@ final class ConversionNames
                 foreach ($byCampaign as $campaignId => $name) {
                     if ($name === '') {
                         $stmt = $this->conn->prepareWrite(
-                            'DELETE FROM 202_offline_conversion_names WHERE user_id = ? AND platform = ? AND aff_campaign_id = ?'
+                            'DELETE FROM 202_offline_conversion_names'
+                            . ' WHERE user_id = ? AND platform = ? AND aff_campaign_id = ?'
                         );
                         $this->conn->bind($stmt, 'isi', [$userId, $platform, $campaignId]);
                     } else {
                         $stmt = $this->conn->prepareWrite(
-                            'INSERT INTO 202_offline_conversion_names (user_id, platform, aff_campaign_id, conversion_name, updated_at)'
-                            . ' VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE conversion_name = VALUES(conversion_name),'
+                            'INSERT INTO 202_offline_conversion_names'
+                            . ' (user_id, platform, aff_campaign_id, conversion_name, updated_at)'
+                            . ' VALUES (?, ?, ?, ?, ?)'
+                            . ' ON DUPLICATE KEY UPDATE conversion_name = VALUES(conversion_name),'
                             . ' updated_at = VALUES(updated_at)'
                         );
                         $this->conn->bind($stmt, 'isisi', [$userId, $platform, $campaignId, $name, $now]);

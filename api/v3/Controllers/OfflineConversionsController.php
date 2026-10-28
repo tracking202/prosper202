@@ -116,7 +116,10 @@ final class OfflineConversionsController
         $unknown = array_values(array_diff(array_map('strval', array_keys($query)), ['file']));
         if ($unknown !== [] || (array_key_exists('file', $query) && !is_string($query['file']))) {
             Bootstrap::errorResponse('A fetch URL takes no parameter but file', 422, [
-                'field_errors' => array_fill_keys($unknown !== [] ? $unknown : ['file'], 'Not a parameter of a fetch URL; its settings are on Setup › Offline Conversions.'),
+                'field_errors' => array_fill_keys(
+                    $unknown !== [] ? $unknown : ['file'],
+                    'Not a parameter of a fetch URL; its settings are on Setup › Offline Conversions.'
+                ),
             ]);
             return;
         }
@@ -146,7 +149,10 @@ final class OfflineConversionsController
             try {
                 $feeds->recordFetch($feed->feedId, $summary->rows, $now);
             } catch (\Throwable $e) {
-                error_log(p202UncaughtLogLine('Offline conversion fetch URL ' . $feed->feedId . ' was served, and its fetch not noted', $e));
+                error_log(p202UncaughtLogLine(
+                    'Offline conversion fetch URL ' . $feed->feedId . ' was served, and its fetch not noted',
+                    $e
+                ));
             }
         }
         try {

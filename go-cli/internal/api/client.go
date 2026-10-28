@@ -694,6 +694,11 @@ func (c *Client) Download(path string) ([]byte, error) {
 	return c.doLimited("GET", path, nil, nil, nil, maxDownloadSize, true)
 }
 
+// DownloadWith is Download with query parameters.
+func (c *Client) DownloadWith(path string, params map[string]string) ([]byte, error) {
+	return c.doLimited("GET", path, params, nil, nil, maxDownloadSize, true)
+}
+
 func (c *Client) doWithHeaders(method, path string, params map[string]string, body interface{}, headers map[string]string) ([]byte, error) {
 	return c.doLimited(method, path, params, body, headers, maxResponseSize, false)
 }

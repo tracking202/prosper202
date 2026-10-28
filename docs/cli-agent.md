@@ -845,6 +845,11 @@ p202 conversion list   [--limit 50] [--offset 0] [--campaign-id N] [--all]
                        [--goal N] [--json]
 p202 conversion match-methods [--aff-campaign-id N] [--period P] [--time-from T] [--time-to T] [--json]
                        # each campaign's conversions, counted ones and income by how their click was found
+p202 conversion offline-export --format google|google_uploads|microsoft [--days 1-90] [--aff-campaign-id N]
+                       [--conversion-name S] [--ad-user-data granted|denied] [--ad-personalization granted|denied]
+                       [--output FILE] [--summary] [--json]
+                       # Setup › Offline Conversions: the Google Ads / Microsoft Advertising import CSV;
+                       # --summary says how many conversions it holds and why each other one is left out
 p202 conversion get    <id> [--json]
 p202 conversion create --click-id N [--payout F] [--transaction-id S] [--conv-time T] [--idempotency-key S]
                        [--status reversed [--reversal-id S]]      # a reversal of the sale with --transaction-id

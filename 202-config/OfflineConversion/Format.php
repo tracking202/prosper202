@@ -111,7 +111,9 @@ enum Format: string
     public function value(int $units): string
     {
         if ($units < 0) {
-            throw new \InvalidArgumentException('a conversion value is never negative here, got ' . Amount::fromUnits($units));
+            throw new \InvalidArgumentException(
+                'a conversion value is never negative here, got ' . Amount::fromUnits($units)
+            );
         }
         if ($this === self::MICROSOFT) {
             $thousandths = intdiv($units + 50, 100);

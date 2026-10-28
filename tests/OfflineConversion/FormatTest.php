@@ -30,8 +30,16 @@ final class FormatTest extends TestCase
         self::assertSame(['Google Click ID', 'GBRAID', 'WBRAID'], array_slice(Format::GOOGLE->header(), 0, 3));
         foreach (Format::cases() as $format) {
             $header = $format->header();
-            self::assertCount(count($header), $format->cells(['gclid' => 'g', 'gbraid' => 'b', 'wbraid' => 'w', 'msclkid' => 'm'],
-                'Name', 'time', '1', 'USD', 7, null, null), $format->value . ': a line has a cell for each header');
+            self::assertCount(count($header), $format->cells(
+                ['gclid' => 'g', 'gbraid' => 'b', 'wbraid' => 'w', 'msclkid' => 'm'],
+                'Name',
+                'time',
+                '1',
+                'USD',
+                7,
+                null,
+                null
+            ), $format->value . ': a line has a cell for each header');
         }
     }
 
@@ -39,8 +47,11 @@ final class FormatTest extends TestCase
     {
         self::assertNull(Format::GOOGLE->preamble('America/New_York'), 'Data Manager reads the headers on line 1');
         self::assertSame(['Parameters:TimeZone=America/New_York', '', '', '', '', '', '', ''], Format::GOOGLE_UPLOADS->preamble('America/New_York'));
-        self::assertSame(['Parameters:TimeZone=+0000', '', '', '', '', '', ''], Format::MICROSOFT->preamble('America/New_York'),
-            'Microsoft\'s zones are its own names, so its file is UTC whatever the account\'s');
+        self::assertSame(
+            ['Parameters:TimeZone=+0000', '', '', '', '', '', ''],
+            Format::MICROSOFT->preamble('America/New_York'),
+            'Microsoft\'s zones are its own names, so its file is UTC whatever the account\'s'
+        );
         self::assertSame('UTC', Format::MICROSOFT->zone('Asia/Kolkata'));
         self::assertSame('Asia/Kolkata', Format::GOOGLE->zone('Asia/Kolkata'));
     }

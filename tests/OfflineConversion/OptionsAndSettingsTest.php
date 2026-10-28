@@ -92,12 +92,13 @@ final class OptionsAndSettingsTest extends TestCase
         self::assertSame(Format::GOOGLE, $settings['format'] ?? null);
         self::assertSame([7, null, Consent::GRANTED, null], [$settings['days'], $settings['conversion_name'], $settings['ad_user_data'], $settings['ad_personalization']]);
 
-        foreach ([
+        $refused = [
             'format' => ['format' => 'bing'],
             'days' => ['days' => '1'],
             'conversion_name' => ['conversion_name' => '@x'],
             'ad_personalization' => ['ad_personalization' => 'maybe'],
-        ] as $field => $bad) {
+        ];
+        foreach ($refused as $field => $bad) {
             [$settings, $errors] = FeedStore::settings($bad + $good);
             self::assertNull($settings, $field);
             self::assertArrayHasKey($field, $errors);

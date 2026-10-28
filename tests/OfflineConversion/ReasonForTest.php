@@ -64,11 +64,21 @@ final class ReasonForTest extends TestCase
         self::assertSame(LeftOut::GBRAID_WBRAID_ONLY, self::reason(['gclid' => '', 'wbraid' => 'CkIK', 'owned' => null], Format::GOOGLE_UPLOADS));
         self::assertNull(self::reason(['gclid' => '', 'wbraid' => 'CkIK']), 'the Data Manager file takes a wbraid alone');
         self::assertSame(LeftOut::MALFORMED_CLICK_ID, self::reason(['gbraid' => '=cmd|x']));
-        self::assertSame(LeftOut::NOT_ACCOUNTS_CLICK, self::reason(['owned' => 0]));
-        self::assertSame(LeftOut::NOT_ACCOUNTS_CLICK, self::reason(['owned' => null]), 'not asked is not a yes');
         self::assertSame(LeftOut::CLICK_TOO_OLD, self::reason(['click_time' => self::NOW - OfflineExport::CLICK_MAX_AGE - 1, 'conv_time' => self::NOW - 60]));
+        self::assertSame(
+            LeftOut::CLICK_TOO_OLD,
+            self::reason(['click_time' => 1, 'owned' => null]),
+            'query() asks nothing of a click older than the file takes'
+        );
         self::assertNull(self::reason(['click_time' => self::NOW - OfflineExport::CLICK_MAX_AGE, 'conv_time' => self::NOW - 60]));
         self::assertSame(LeftOut::BEFORE_CLICK, self::reason(['conv_time' => self::NOW - 86401]));
+        self::assertSame(
+            LeftOut::BEFORE_CLICK,
+            self::reason(['click_time' => self::NOW + 60, 'conv_time' => self::NOW, 'owned' => null]),
+            'nor of a click after now'
+        );
+        self::assertSame(LeftOut::NOT_ACCOUNTS_CLICK, self::reason(['owned' => 0]));
+        self::assertSame(LeftOut::NOT_ACCOUNTS_CLICK, self::reason(['owned' => null]), 'not asked is not a yes');
         self::assertSame(LeftOut::CLICK_TOO_RECENT, self::reason(['click_time' => self::NOW - OfflineExport::HOLD + 1, 'conv_time' => self::NOW]));
         self::assertNull(self::reason(['click_time' => self::NOW - OfflineExport::HOLD, 'conv_time' => self::NOW]));
         self::assertSame(LeftOut::NEGATIVE_VALUE, self::reason(['counted_amount' => '-0.00001']));
@@ -78,13 +88,14 @@ final class ReasonForTest extends TestCase
     public function testEveryReasonIsReachedAndExplained(): void
     {
         $reached = [];
-        foreach ([
+        $cases = [
             [['counted_amount' => null]], [['match_method' => 'visitor_id']], [['match_method' => 'same_ip']],
             [['match_method' => 'unknown']], [['gclid' => '']], [['gclid' => '', 'gbraid' => 'b'], Format::GOOGLE_UPLOADS],
-            [['gclid' => 'a b']], [['owned' => 0]], [['click_time' => 1, 'conv_time' => self::NOW]],
-            [['conv_time' => 1]], [['click_time' => self::NOW, 'conv_time' => self::NOW]],
+            [['gclid' => 'a b']], [['click_time' => 1, 'conv_time' => self::NOW]], [['conv_time' => 1]],
+            [['owned' => 0]], [['click_time' => self::NOW, 'conv_time' => self::NOW]],
             [['counted_amount' => '-1']], [[], Format::GOOGLE, null],
-        ] as $case) {
+        ];
+        foreach ($cases as $case) {
             $reached[] = self::reason($case[0], $case[1] ?? Format::GOOGLE, array_key_exists(2, $case) ? $case[2] : 'Lead')?->value;
         }
         $reached[] = LeftOut::OVER_ROW_LIMIT->value; // OfflineExportIntegrationTest reaches it
@@ -111,8 +122,14 @@ final class ReasonForTest extends TestCase
         self::assertStringContainsString('dn.user_id = cl.user_id', $sql);
         self::assertStringContainsString('WHERE cl.user_id = ?', $sql);
         self::assertStringContainsString("(g.gclid <> '' OR g.gbraid <> '' OR g.wbraid <> '')", $sql);
-        self::assertSame('ssiiii', $types);
-        self::assertSame(['google', 'google', 5, self::NOW - 7 * 86400, self::NOW, 12], $values);
+        $oldest = self::NOW - OfflineExport::CLICK_MAX_AGE;
+        self::assertStringContainsString('AND cl.click_time BETWEEN ? AND ? THEN EXISTS', $sql);
+        self::assertStringContainsString('oc.user_id = cl.user_id AND oc.click_time BETWEEN ? AND ?)', $sql);
+        self::assertSame('iiiissiiii', $types);
+        self::assertSame(
+            [$oldest, self::NOW, $oldest, self::NOW, 'google', 'google', 5, self::NOW - 7 * 86400, self::NOW, 12],
+            $values
+        );
         [$sql] = OfflineExport::query(new ExportOptions(Format::MICROSOFT, 7, self::NOW), 5);
         self::assertStringContainsString("(g.msclkid <> '')", $sql);
     }

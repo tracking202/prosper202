@@ -91,7 +91,11 @@ final class ExportOptions
         $daysText = $text('days');
         $days = $defaultDays;
         if ($daysText !== null) {
-            if (preg_match('/\A[0-9]{1,3}\z/D', $daysText) !== 1 || (int) $daysText < 1 || (int) $daysText > self::MAX_DAYS) {
+            if (
+                preg_match('/\A[0-9]{1,3}\z/D', $daysText) !== 1
+                || (int) $daysText < 1
+                || (int) $daysText > self::MAX_DAYS
+            ) {
                 $errors['days'] = 'A whole number, 1 to ' . self::MAX_DAYS . ': days of conversions, back from now.';
             } else {
                 $days = (int) $daysText;
@@ -124,6 +128,17 @@ final class ExportOptions
             return [null, $errors];
         }
 
-        return [new self($format, $days, $now, $campaignId, $name, null, $consent['ad_user_data'], $consent['ad_personalization']), []];
+        $options = new self(
+            $format,
+            $days,
+            $now,
+            $campaignId,
+            $name,
+            null,
+            $consent['ad_user_data'],
+            $consent['ad_personalization']
+        );
+
+        return [$options, []];
     }
 }

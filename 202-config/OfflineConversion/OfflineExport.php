@@ -165,17 +165,14 @@ final class OfflineExport
         if ($ids === []) {
             $braid = StoredRow::text($row, 'gbraid') !== '' || StoredRow::text($row, 'wbraid') !== '';
 
-            return $options->format === Format::GOOGLE_UPLOADS && $braid ? LeftOut::GBRAID_WBRAID_ONLY : LeftOut::NO_CLICK_ID;
+            return $options->format === Format::GOOGLE_UPLOADS && $braid
+                ? LeftOut::GBRAID_WBRAID_ONLY
+                : LeftOut::NO_CLICK_ID;
         }
         foreach ($ids as $id) {
             if (!Format::wellFormedId($id)) {
                 return LeftOut::MALFORMED_CLICK_ID;
             }
-        }
-        // query() asks only of a named conversion with an id; anything but a
-        // yes is no.
-        if (StoredRow::nullableInt($row, 'owned') !== 1) {
-            return LeftOut::NOT_ACCOUNTS_CLICK;
         }
         $clickTime = StoredRow::int($row, 'click_time');
         if ($clickTime < $options->now - self::CLICK_MAX_AGE) {
@@ -183,6 +180,11 @@ final class OfflineExport
         }
         if (StoredRow::int($row, 'conv_time') < $clickTime) {
             return LeftOut::BEFORE_CLICK;
+        }
+        // query() asks only of a named conversion with an id whose click is
+        // in the file's range; anything but a yes is no.
+        if (StoredRow::nullableInt($row, 'owned') !== 1) {
+            return LeftOut::NOT_ACCOUNTS_CLICK;
         }
         if ($clickTime > $options->now - self::HOLD) {
             return LeftOut::CLICK_TOO_RECENT;
@@ -234,13 +236,21 @@ final class OfflineExport
             $options->format->idColumns()
         )) . ')';
         $named = "'" . MatchMethod::CLICK_ID->value . "', '" . MatchMethod::COOKIE->value . "'";
+        // Whose click: any visit's row answers (a click's visits share its
+        // user_id). 202_clicks is partitioned by click_time, and a probe by
+        // click_id alone reads every partition, the future weeks' too (19 s
+        // for 150,000 rows, measured). It is asked only of a click in the
+        // file's range, where the visit the conversion names is, so it is
+        // bounded by that range and reads only those days' partitions.
+        $oldest = $options->now - self::CLICK_MAX_AGE;
         $sql = 'SELECT cl.conv_id, cl.click_time, cl.conv_time, cl.match_method, '
             . CountedAmount::sqlOrNull('cl') . ' AS counted_amount,'
             . " COALESCE(g.gclid, '') AS gclid, COALESCE(g.gbraid, '') AS gbraid,"
             . " COALESCE(g.wbraid, '') AS wbraid, COALESCE(g.msclkid, '') AS msclkid,"
             . ' COALESCE(cn.conversion_name, dn.conversion_name) AS conversion_name,'
-            . " CASE WHEN cl.match_method IN ($named) AND $present THEN EXISTS (SELECT 1 FROM 202_clicks AS oc"
-            . ' WHERE oc.click_id = cl.click_id AND oc.user_id = cl.user_id) END AS owned'
+            . " CASE WHEN cl.match_method IN ($named) AND $present AND cl.click_time BETWEEN ? AND ?"
+            . ' THEN EXISTS (SELECT 1 FROM 202_clicks AS oc WHERE oc.click_id = cl.click_id AND oc.user_id = cl.user_id'
+            . ' AND oc.click_time BETWEEN ? AND ?) END AS owned'
             . ' FROM 202_conversion_logs AS cl'
             . ' LEFT JOIN 202_google AS g ON g.click_id = cl.click_id'
             . ' LEFT JOIN 202_offline_conversion_names AS cn ON cn.user_id = cl.user_id AND cn.platform = ?'
@@ -249,8 +259,11 @@ final class OfflineExport
             . ' AND dn.aff_campaign_id = 0'
             . ' WHERE cl.user_id = ? AND cl.reverses_conv_id IS NULL AND cl.conv_time >= ? AND cl.conv_time <= ?';
         $platform = $options->format->platform();
-        $types = 'ssiii';
-        $values = [$platform, $platform, $userId, $options->from(), $options->now];
+        $types = 'iiiissiii';
+        $values = [
+            $oldest, $options->now, $oldest, $options->now,
+            $platform, $platform, $userId, $options->from(), $options->now,
+        ];
         if ($options->campaignId !== null) {
             $sql .= ' AND cl.campaign_id = ?';
             $types .= 'i';

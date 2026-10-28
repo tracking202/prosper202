@@ -20,6 +20,9 @@ use Prosper202\Database\Connection;
  * ends the old one. A fetch finds its feed by that hash and compares the
  * stored hash with hash_equals(). Every refusal (a key of the wrong shape,
  * no such key, a key replaced or deleted) answers the same 404.
+ *
+ * @phpstan-type FeedSettings array{format: Format, days: int, conversion_name: ?string,
+ *     ad_user_data: ?Consent, ad_personalization: ?Consent}
  */
 final class FeedStore
 {
@@ -47,7 +50,7 @@ final class FeedStore
      * that is not one of these is refused naming it.
      *
      * @param array<array-key, mixed> $input
-     * @return array{0: array{format: Format, days: int, conversion_name: ?string, ad_user_data: ?Consent, ad_personalization: ?Consent}|null, 1: array<string, string>}
+     * @return array{0: FeedSettings|null, 1: array<string, string>}
      */
     public static function settings(array $input): array
     {
@@ -69,8 +72,13 @@ final class FeedStore
         $daysText = $text('days');
         $days = null;
         if ($daysText !== null) {
-            if (preg_match('/\A[0-9]{1,3}\z/D', $daysText) !== 1 || (int) $daysText < self::MIN_DAYS || (int) $daysText > ExportOptions::MAX_DAYS) {
-                $errors['days'] = 'days must be a whole number from ' . self::MIN_DAYS . ' to ' . ExportOptions::MAX_DAYS . '.';
+            if (
+                preg_match('/\A[0-9]{1,3}\z/D', $daysText) !== 1
+                || (int) $daysText < self::MIN_DAYS
+                || (int) $daysText > ExportOptions::MAX_DAYS
+            ) {
+                $errors['days'] = 'days must be a whole number from ' . self::MIN_DAYS
+                    . ' to ' . ExportOptions::MAX_DAYS . '.';
             } else {
                 $days = (int) $daysText;
             }
@@ -109,7 +117,9 @@ final class FeedStore
     /** @return list<Feed> the account's feeds, oldest first */
     public function list(int $userId): array
     {
-        $stmt = $this->conn->prepareRead('SELECT ' . self::COLUMNS . ' FROM 202_offline_conversion_feeds WHERE user_id = ? ORDER BY feed_id');
+        $stmt = $this->conn->prepareRead(
+            'SELECT ' . self::COLUMNS . ' FROM 202_offline_conversion_feeds WHERE user_id = ? ORDER BY feed_id'
+        );
         $this->conn->bind($stmt, 'i', [$userId]);
 
         return array_map(self::feed(...), $this->conn->fetchAll($stmt));
@@ -118,7 +128,7 @@ final class FeedStore
     /**
      * Make a feed. Its URL is the one time the key is known.
      *
-     * @param array{format: Format, days: int, conversion_name: ?string, ad_user_data: ?Consent, ad_personalization: ?Consent} $settings
+     * @param FeedSettings $settings
      * @return array{0: Feed, 1: string} the feed and its key
      * @throws \OverflowException when the account has MAX_FEEDS already
      */
@@ -127,13 +137,18 @@ final class FeedStore
         $key = self::newKey();
 
         return $this->conn->transaction(function () use ($userId, $settings, $now, $key): array {
-            $count = $this->conn->prepareWrite('SELECT COUNT(*) AS feeds FROM 202_offline_conversion_feeds WHERE user_id = ? FOR UPDATE');
+            $count = $this->conn->prepareWrite(
+                'SELECT COUNT(*) AS feeds FROM 202_offline_conversion_feeds WHERE user_id = ? FOR UPDATE'
+            );
             $this->conn->bind($count, 'i', [$userId]);
             if (StoredRow::int($this->conn->fetchOne($count) ?? [], 'feeds') >= self::MAX_FEEDS) {
-                throw new \OverflowException('An account can have ' . self::MAX_FEEDS . ' fetch URLs. Delete one first.');
+                throw new \OverflowException(
+                    'An account can have ' . self::MAX_FEEDS . ' fetch URLs. Delete one first.'
+                );
             }
             $stmt = $this->conn->prepareWrite(
-                'INSERT INTO 202_offline_conversion_feeds (user_id, format, key_hash, days, conversion_name, ad_user_data,'
+                'INSERT INTO 202_offline_conversion_feeds'
+                . ' (user_id, format, key_hash, days, conversion_name, ad_user_data,'
                 . ' ad_personalization, created_at, key_created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
             $this->conn->bind($stmt, 'ississsii', [
@@ -184,7 +199,8 @@ final class FeedStore
 
     public function find(int $userId, int $feedId, bool $primary = false): ?Feed
     {
-        $sql = 'SELECT ' . self::COLUMNS . ' FROM 202_offline_conversion_feeds WHERE feed_id = ? AND user_id = ? LIMIT 1';
+        $sql = 'SELECT ' . self::COLUMNS
+            . ' FROM 202_offline_conversion_feeds WHERE feed_id = ? AND user_id = ? LIMIT 1';
         $stmt = $primary ? $this->conn->prepareWrite($sql) : $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, 'ii', [$feedId, $userId]);
         $row = $this->conn->fetchOne($stmt);
@@ -205,7 +221,10 @@ final class FeedStore
             return null;
         }
         $hash = self::hash($key);
-        $columns = implode(', ', array_map(static fn (string $c): string => 'f.' . trim($c), explode(',', self::COLUMNS)));
+        $columns = implode(', ', array_map(
+            static fn (string $c): string => 'f.' . trim($c),
+            explode(',', self::COLUMNS)
+        ));
         $stmt = $this->conn->prepareWrite(
             'SELECT ' . $columns . ', f.key_hash FROM 202_offline_conversion_feeds AS f'
             . ' INNER JOIN 202_users AS u ON u.user_id = f.user_id AND u.user_active = 1 AND u.user_deleted = 0'
@@ -265,7 +284,9 @@ final class FeedStore
     {
         $format = Format::tryFrom(StoredRow::text($row, 'format'));
         if ($format === null) {
-            throw new \UnexpectedValueException('fetch URL ' . StoredRow::int($row, 'feed_id') . ' has a format that is not one');
+            throw new \UnexpectedValueException(
+                'fetch URL ' . StoredRow::int($row, 'feed_id') . ' has a format that is not one'
+            );
         }
         $consent = static function (string $column) use ($row): ?Consent {
             $stored = StoredRow::text($row, $column);
@@ -274,7 +295,9 @@ final class FeedStore
             }
 
             return Consent::tryFrom($stored)
-                ?? throw new \UnexpectedValueException('fetch URL ' . StoredRow::int($row, 'feed_id') . ' has ' . $column . ' ' . var_export($stored, true));
+                ?? throw new \UnexpectedValueException(
+                    'fetch URL ' . StoredRow::int($row, 'feed_id') . ' has ' . $column . ' ' . var_export($stored, true)
+                );
         };
 
         return new Feed(

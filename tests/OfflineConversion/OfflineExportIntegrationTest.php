@@ -85,9 +85,10 @@ final class OfflineExportIntegrationTest extends TestCase
         if (!self::$db) {
             self::markTestSkipped('No test database configured (set P202_TEST_DB_HOST).');
         }
-        foreach (['202_conversion_logs', '202_clicks', '202_clicks_spy', '202_click_latest_visits', '202_aff_campaigns',
+        $tables = ['202_conversion_logs', '202_clicks', '202_clicks_spy', '202_click_latest_visits', '202_aff_campaigns',
             '202_attribution_pending', '202_dataengine', '202_google', '202_offline_conversion_names',
-            '202_offline_conversion_feeds', '202_notification_pending'] as $t) {
+            '202_offline_conversion_feeds', '202_notification_pending'];
+        foreach ($tables as $t) {
             self::assertTrue(self::$db->query('TRUNCATE TABLE ' . $t), $t . ': ' . self::$db->error);
         }
         // 202_users is referenced by a foreign key, which TRUNCATE refuses.
@@ -233,8 +234,9 @@ final class OfflineExportIntegrationTest extends TestCase
         self::assertSame(5, $summary->rows);
         self::assertSame([
             'not_counted' => 3, 'visitor_id' => 1, 'same_ip' => 1, 'match_unknown' => 0, 'no_click_id' => 1,
-            'gbraid_wbraid_only' => 0, 'malformed_click_id' => 1, 'not_accounts_click' => 1, 'click_too_old' => 1,
-            'before_click' => 0, 'click_too_recent' => 1, 'negative_value' => 0, 'no_conversion_name' => 0, 'over_row_limit' => 0,
+            'gbraid_wbraid_only' => 0, 'malformed_click_id' => 1, 'click_too_old' => 1, 'before_click' => 0,
+            'not_accounts_click' => 1, 'click_too_recent' => 1, 'negative_value' => 0, 'no_conversion_name' => 0,
+            'over_row_limit' => 0,
         ], $summary->leftOut);
         self::assertSame(['EUR', 'America/New_York'], [$summary->currency, $summary->zone]);
 
@@ -287,6 +289,39 @@ final class OfflineExportIntegrationTest extends TestCase
 
         [, $summary] = $this->file(new ExportOptions(Format::GOOGLE, 30, $this->now), self::OTHER);
         self::assertSame(0, $summary->conversions, 'another account reads none of them');
+    }
+
+    /**
+     * Whose click is asked only of the visits in the file's range: a click
+     * re-clicked within it is the account's whatever its first visit, and
+     * another account's re-clicked click is still another account's.
+     */
+    public function testAReClickIsReadByTheVisitInTheFilesRange(): void
+    {
+        $recent = $this->now - 2 * 86400;
+        foreach ([[120, self::USER, 'EAIaIQ_120'], [121, self::OTHER, 'EAIaIQ_121']] as [$id, $user, $gclid]) {
+            $this->click($id, 7, ['gclid' => $gclid], 120 * 86400, $user);
+            self::fixture("INSERT INTO 202_clicks SET click_id=$id, user_id=$user, aff_campaign_id=7,"
+                . " click_payout=0, click_cpc=0, click_lead=0, click_time=$recent");
+            self::fixture("INSERT INTO 202_click_latest_visits SET click_id=$id, click_time=$recent");
+        }
+        $this->record(120, MatchMethod::CLICK_ID, ['payout' => '4', 'conv_time' => $this->now - 86400]);
+        // A row written before writes checked the click's owner (CLAUDE.md #27).
+        self::fixture('INSERT INTO 202_conversion_logs (click_id, campaign_id, click_payout, user_id, click_time,'
+            . ' conv_time, time_difference, ip, pixel_type, user_agent, deleted, source, payable, dedupe_key,'
+            . ' match_method) VALUES (121, 7, 4, ' . self::USER . ", $recent, " . ($this->now - 86400)
+            . ", '', '', 0, '', 0, 'postback', 1, 'foreign:121', 'click_id')");
+        $named = self::$db->query('SELECT click_time FROM 202_conversion_logs WHERE click_id = 120');
+        self::assertInstanceOf(\mysqli_result::class, $named, self::$db->error);
+        self::assertSame([(string) $recent], $named->fetch_row(), 'the conversion names the re-click\'s visit');
+        $this->names();
+
+        [$lines, $summary] = $this->file(new ExportOptions(Format::GOOGLE, 30, $this->now));
+        self::assertSame(
+            [2, 1, 1],
+            [$summary->conversions, $summary->rows, $summary->leftOut['not_accounts_click']]
+        );
+        self::assertStringStartsWith('EAIaIQ_120,', $lines[1]);
     }
 
     /**

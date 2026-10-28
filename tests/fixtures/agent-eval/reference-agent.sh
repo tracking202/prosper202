@@ -346,6 +346,14 @@ case "$ask" in
                 "$tx" "$click" "$value" "$click" "$rows"
         fi
         ;;
+    *"offline conversion import"*)
+        # The file decides what it sends; read its own count and reasons
+        # rather than filtering the conversion list by hand.
+        summary=$(p202 conversion offline-export --format google --days 30 --summary --json)
+        printf 'The Google Ads offline conversion file (`p202 conversion offline-export --format google --days 30 --summary`) would hold %s of your %s conversions from the last 30 days. The others are left out:\n' \
+            "$(printf '%s' "$summary" | jq -r '.data.rows')" "$(printf '%s' "$summary" | jq -r '.data.conversions')"
+        printf '%s' "$summary" | jq -r '.data as $d | $d.left_out | to_entries[] | select(.value > 0) | "- \(.value): \($d.reasons[.key])"'
+        ;;
     *"guess from the visitor's IP address"*)
         # How each conversion's click was found is stored on it (match
         # method); same_ip is a pixel's address fallback, a guess. Read the

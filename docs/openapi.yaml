@@ -11871,9 +11871,9 @@ components:
             no_click_id: {type: integer}
             gbraid_wbraid_only: {type: integer}
             malformed_click_id: {type: integer}
-            not_accounts_click: {type: integer}
             click_too_old: {type: integer}
             before_click: {type: integer}
+            not_accounts_click: {type: integer}
             click_too_recent: {type: integer}
             negative_value: {type: integer}
             no_conversion_name: {type: integer}
