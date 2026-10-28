@@ -181,6 +181,10 @@ SQL
 }
 cleanup
 trap cleanup EXIT
+# The intake stores the device's address, and the clicks set their cookies.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" "$OWNER" || exit 2
 
 # A previous run may have spent this peer's intake bucket (its last step
 # trips it on purpose): wait the window out rather than read 429s as defects.

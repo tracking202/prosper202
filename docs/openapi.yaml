@@ -2262,7 +2262,9 @@ paths:
         parameter the endpoint does not take, a list where one value goes, or
         a value outside a filter's form is a 422 whose `field_errors` names
         the parameter (they used to be ignored, and the answer covered
-        everything).
+        everything). The ratios are MySQL's DECIMAL division of the sums,
+        truncated where it stops (9 decimals, 18 for roi) and rounded half
+        away from zero to 4 decimals for conv_rate and 9 for the others.
       operationId: reportSummary
       parameters:
         - $ref: "#/components/parameters/period"
@@ -2294,7 +2296,18 @@ paths:
                 type: object
                 properties:
                   data:
-                    $ref: "#/components/schemas/ReportMetrics"
+                    allOf:
+                      - $ref: "#/components/schemas/ReportMetrics"
+                      - type: object
+                        properties:
+                          currency:
+                            type: string
+                            example: USD
+                            description: >-
+                              The account currency the money is in (USD when
+                              the account has none set). Servers before 1.9.79
+                              do not answer it; a client adding two servers'
+                              money adds it only when both state the same one.
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -11361,6 +11374,51 @@ components:
         outbound:
           type: string
           nullable: true
+        gclid:
+          type: string
+          nullable: true
+          maxLength: 150
+          description: >-
+            The Google Ads click id the click arrived with (`?gclid=`), as
+            stored; null when it came with none. Recorded by direct links and
+            landing pages; a redirector click records none of these six.
+        gbraid:
+          type: string
+          nullable: true
+          maxLength: 150
+          description: >-
+            Google Ads' click id for iOS traffic measured in an app
+            (`?gbraid=`), as stored, cut to 150 characters; null for none.
+        wbraid:
+          type: string
+          nullable: true
+          maxLength: 150
+          description: >-
+            Google Ads' click id for iOS traffic measured on the web
+            (`?wbraid=`), as stored, cut to 150 characters; null for none.
+        ttclid:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: >-
+            TikTok's click id (`?ttclid=`), as stored, cut to 1,000 characters
+            (real ones run to about 340); null for none.
+        msclkid:
+          type: string
+          nullable: true
+          maxLength: 150
+          description: >-
+            Microsoft Advertising's click id (`?msclkid=`), as stored, cut to
+            150 characters (Microsoft documents a 32-character GUID); null for
+            none. Recorded since 1.9.79: clicks before it have none.
+        fbclid:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: >-
+            Meta's click id (`?fbclid=`), as stored, cut to 1,000 characters
+            (real ones run to about 200); null for none. Recorded since 1.9.79:
+            clicks before it have none.
 
     ClickDetail:
       allOf:
@@ -12034,19 +12092,22 @@ components:
           type: number
         epc:
           type: number
-          description: Earnings per click
+          description: >-
+            Earnings per click, total_income / total_clicks (0 with no clicks).
+            Every ratio is computed from the summed figures, never from other
+            ratios
         avg_cpc:
           type: number
-          description: Average cost per click
+          description: Average cost per click, total_cost / total_clicks (0 with no clicks)
         conv_rate:
           type: number
-          description: Conversion rate (percentage)
+          description: Conversion rate (percentage), total_leads / total_click_throughs × 100 (0 with no click-throughs)
         roi:
           type: number
-          description: Return on investment (percentage)
+          description: Return on investment (percentage), total_net / total_cost × 100 (0 with no cost)
         cpa:
           type: number
-          description: Cost per acquisition
+          description: Cost per acquisition, total_cost / total_leads (0 with no leads)
 
     # ── Rotators ───────────────────────────────────────────────────────
 
@@ -12949,7 +13010,14 @@ components:
         user_keyword_searched_or_bidded: {type: string, enum: [searched, bidded]}
         user_pref_referer_data: {type: string, enum: [browser, t202ref]}
         user_pref_dynamic_bid: {type: integer, enum: [0, 1]}
-        user_pref_privacy: {type: string, enum: [disabled, eu, all]}
+        user_pref_privacy:
+          type: string
+          enum: [disabled, eu, all]
+          description: >-
+            Which visitors get no tracking cookies and a masked address
+            (disabled nobody, eu those GeoIP does not place outside Europe,
+            all everyone). An account made from 1.9.79 on starts at eu; one
+            made before keeps what it had.
         user_pref_cloak_referer: {type: string, enum: [origin, never]}
         user_pref_ad_settings: {type: string, enum: [show_all, hide_login, hide_all]}
         user_account_currency:
