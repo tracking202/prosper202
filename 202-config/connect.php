@@ -499,6 +499,11 @@ switch ($navigation[1]) {
 
 // Skip user initialization during installation
 if (!str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php')) {
+    // A browser holding only its remember-me cookie is signed in by it here,
+    // before the user is read: read first, the User was nobody's, and the
+    // first page after the cookie ran with no roles. Nothing is read for a
+    // session that is signed in already, or a request with no cookie.
+    AUTH::remember_me_on_logged_out();
     $userObj = new User($_SESSION['user_own_id'] ?? null);
 } else {
     $userObj = null;

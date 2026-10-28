@@ -140,6 +140,15 @@ Never reference DB columns, tables, or config keys without verifying they exist 
 ### 3. Ordering dependencies — using values before they're initialized
 Config constants, DB connections, and other resources must be initialized before use. Example: checking `defined('SOME_CONSTANT')` before the file that defines it is loaded guarantees false. Trace the initialization order when adding code that depends on global state.
 
+A sign-in is initialization too. connect.php read the session's user, the
+roles every page asks, before the page tried the remember-me cookie that
+signs a closed browser back in, so on the cookie's first request the User
+was nobody's and the Super user was refused Account › Users (found in a live
+pass). Whatever builds an object from the session has to run after
+everything that can still change who the session is: the cookie is tried
+in connect.php before the read now, and `SessionSignInPathsTest` holds the
+order.
+
 ### 4. Silent data loss on malformed input
 Never use `json_decode(...) ?? []` or similar fallbacks that silently discard bad input. Malformed JSON, invalid formats, and parse failures must produce explicit errors. The user needs to know their input was rejected, not silently ignored.
 
