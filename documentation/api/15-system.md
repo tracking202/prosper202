@@ -362,7 +362,7 @@ told; it is null, and `ambiguous` lists why, when:
 - `owner_has_accounts`: the user it is in has accounts on it too;
 - `several_users`: accounts of more than one other user name it;
 - `saved_after_rename`: an account of another user was saved after the source
-  was last saved. The rename stamped `ppc_network_time`, so the accounts of the
+  was last saved, or in the same second (the times are whole seconds). The rename stamped `ppc_network_time`, so the accounts of the
   user a source was taken from were all saved before it, while an account the
   API put on another user's source was saved after that source. (A source
   renamed by its own user after that reads as taken.)

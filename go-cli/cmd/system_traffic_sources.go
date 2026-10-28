@@ -156,8 +156,9 @@ var systemTrafficSourceOwnersShowCmd = &cobra.Command{
 	Long: "One row per source: the user it is in now, each user whose traffic source accounts name it (with\n" +
 		"their accounts, clicks and conversions), repair_to (the user `repair` moves it to without\n" +
 		"--to-user-id; blank when ambiguous) and why it is ambiguous: owner_has_accounts (its own user has\n" +
-		"accounts on it too), several_users, saved_after_rename (an account was saved after the source:\n" +
-		"the shape the API made before 1.9.77), no_such_user. --json carries the account ids too.\n\n" +
+		"accounts on it too), several_users, saved_after_rename (an account was saved after the source,\n" +
+		"or in its second: the shape the API made before 1.9.77), no_such_user. --json carries the\n" +
+		"account ids too.\n\n" +
 		tsoNeeds + ", and system:read.",
 	Example: "  p202 system traffic-source-owners show\n  p202 system traffic-source-owners show --json",
 	Args:    cobra.NoArgs,

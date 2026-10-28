@@ -854,7 +854,8 @@ paths:
         `ambiguous` says why, when the source's own user has accounts on it
         too (`owner_has_accounts`), accounts of several other users name it
         (`several_users`), an account of the other user was saved after the
-        source was last saved (`saved_after_rename`: the rename stamped
+        source was last saved or in the same second (`saved_after_rename`:
+        times are whole seconds, and the rename stamped
         `ppc_network_time`, so the accounts a source was taken from were all
         saved before it, while an account the API put on another user's
         source was saved after that source), or the other user has no user

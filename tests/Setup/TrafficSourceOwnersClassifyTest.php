@@ -53,7 +53,7 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
     {
         $entry = TrafficSourceOwners::classify(self::source(self::TAKER), [
             self::account(3, self::OWNER, self::RENAMED - 50, 1),
-            self::account(2, self::OWNER, self::RENAMED),
+            self::account(2, self::OWNER, self::RENAMED - 1),
         ], self::USERS);
 
         self::assertNotNull($entry);
@@ -79,7 +79,7 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
             'ppc_accounts' => 1,
             'removed_ppc_accounts' => 1,
             'ppc_account_ids' => [2, 3],
-            'last_ppc_account_time' => self::RENAMED,
+            'last_ppc_account_time' => self::RENAMED - 1,
         ]], $entry['named_by']);
     }
 
@@ -124,6 +124,21 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
         $entry = TrafficSourceOwners::classify(self::source(self::TAKER), [
             self::account(2, self::OWNER, self::RENAMED - 10),
             self::account(3, self::OWNER, self::RENAMED + 1),
+        ], self::USERS);
+
+        self::assertSame([TrafficSourceOwners::SAVED_AFTER_RENAME], $entry['ambiguous']);
+        self::assertNull($entry['repair_to_user_id']);
+    }
+
+    /**
+     * The times are whole seconds: an account the API put on another user's
+     * source in the second the source was created is not shown to predate it.
+     */
+    public function testAnAccountSavedInTheSourcesSecondMakesItAmbiguous(): void
+    {
+        $entry = TrafficSourceOwners::classify(self::source(self::TAKER), [
+            self::account(2, self::OWNER, self::RENAMED - 10),
+            self::account(3, self::OWNER, self::RENAMED),
         ], self::USERS);
 
         self::assertSame([TrafficSourceOwners::SAVED_AFTER_RENAME], $entry['ambiguous']);

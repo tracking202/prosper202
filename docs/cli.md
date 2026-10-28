@@ -1700,8 +1700,9 @@ other origins: before 1.9.77 the API put a traffic source account under
 whatever source it was sent, and an admin may have moved a source on purpose.
 `show` marks a source `ambiguous` when its own user has accounts on it too
 (`owner_has_accounts`), accounts of several users name it (`several_users`),
-an account was saved after the source was (`saved_after_rename`, the shape the
-API made), or a user has no record (`no_such_user`); such a source moves only
+an account was saved after the source was, or in its second
+(`saved_after_rename`, the shape the API made), or a user has no record
+(`no_such_user`); such a source moves only
 with `--to-user-id`, naming one of the users whose accounts name it, and
 `--all` leaves it. A repair changes only the source's user: the name stays as
 the rename left it and a removed source stays removed. Its accounts' clicks are

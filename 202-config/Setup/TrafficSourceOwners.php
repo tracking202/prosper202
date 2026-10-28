@@ -37,10 +37,11 @@ use Prosper202\Lpo\DimensionSync;
  * - owner_has_accounts: the user it is in has accounts on it too;
  * - several_users: accounts of more than one other user name it;
  * - saved_after_rename: an account of another user was saved after the
- *   source was last saved. The rename stamped ppc_network_time, so every
- *   account of the user a source was taken from was saved before it; an
- *   account the API put on another user's source was saved after that
- *   source. A source renamed by its own user after that reads as taken;
+ *   source was last saved, or in the same second. The rename stamped
+ *   ppc_network_time, so every account of the user a source was taken from
+ *   was saved before it; an account the API put on another user's source was
+ *   saved after that source. A source renamed by its own user after that
+ *   reads as taken;
  * - no_such_user: another user it names has no 202_users row.
  *
  * An unmarked source has one user to go back to (repair_to_user_id), and the
@@ -219,8 +220,10 @@ final class TrafficSourceOwners
         if (count($others) > 1) {
             $ambiguous[] = self::SEVERAL_USERS;
         }
+        // Whole seconds: an account saved in the source's own second is not
+        // shown to predate it.
         foreach ($others as $user) {
-            if ($byUser[$user]['last'] > $sourceTime) {
+            if ($byUser[$user]['last'] >= $sourceTime) {
                 $ambiguous[] = self::SAVED_AFTER_RENAME;
                 break;
             }
