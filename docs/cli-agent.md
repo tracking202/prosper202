@@ -926,9 +926,11 @@ Report filter flags (all optional, all combine): `--aff-campaign-id`, `--ppc-acc
 `dashboard` defaults `period=today` if omitted.
 
 Multi-profile report output includes:
-- per-profile result objects
-- aggregated numeric totals
-- partial error list (`errors`) if one or more profiles fail
+- one row per profile (`profile`, the summary's fields, `currency` from 1.9.79 servers), then a `TOTAL` row, also under `aggregated`
+- the TOTAL is what `reports/summary` would answer for all the profiles' traffic at once: counts and money summed, `epc`, `avg_cpc`, `conv_rate`, `roi` and `cpa` computed again from those sums (never added), 0 where a denominator sums to 0
+- money is added only when every profile states the same `currency`; otherwise the TOTAL leaves out `total_income`, `total_cost`, `total_net`, `epc`, `avg_cpc`, `roi`, `cpa`. A field the CLI does not know is left out too
+- `meta.not_totalled` (field: why), `meta.warnings` and `meta.currencies` (profile: currency, `null` when not stated); without `--json` the warnings are `Warning:` lines on stderr
+- partial error list (`errors`) if one or more profiles fail; a failed profile is not in the TOTAL
 
 ### Rotators
 

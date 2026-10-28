@@ -229,6 +229,20 @@ p202 report summary --profiles prod,staging --period last7
 p202 report summary --group env:production --period today
 ```
 
+Each profile gets a row, then a `TOTAL` row: what `reports/summary` would
+answer for all the profiles' traffic at once. The counts and the money are
+summed, and `epc`, `avg_cpc`, `conv_rate`, `roi` and `cpa` are computed again
+from those sums, with the server's formula and decimals (profiles at ROI 200%
+and 0% on equal cost total 100%; a ratio whose denominator sums to 0 is 0).
+Money in different currencies is never added: each row carries its server's
+`currency` (from 1.9.79), and when the profiles' currencies differ or a server
+does not state one, the TOTAL leaves out the amounts and the ratios that need
+them (`epc`, `avg_cpc`, `roi`, `cpa`) and keeps the counts and `conv_rate`. A
+field the CLI does not know is left out of the TOTAL too. What is left out, and
+why, is in `meta.not_totalled` and `meta.warnings` under `--json` and on stderr
+as `Warning:` lines otherwise; a profile that failed is in `errors` and on
+stderr, and is not in the TOTAL.
+
 ## Parallel Command Execution
 
 Run any command across multiple profiles simultaneously.
