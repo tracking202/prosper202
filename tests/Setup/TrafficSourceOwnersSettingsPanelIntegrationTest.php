@@ -192,6 +192,32 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
      */
     private static function settings(int $user, array $get = [], array $post = []): array
     {
+        $run = self::runSettings($user, $get, $post);
+        self::assertNotSame(2, $run['code'], "the runner could not set up: {$run['err']}");
+        $out = $run['out'];
+        $err = $run['err'];
+        self::assertStringNotContainsString('Fatal error', $out . $err, $err);
+        $ended = preg_match('/\nP202-RUNNER-END (\{.*\})\n\z/', $out, $end);
+        self::assertSame(1, $ended, "the page ran to its end: $err");
+        $answer = json_decode($end[1], true, 8, JSON_THROW_ON_ERROR);
+
+        return [
+            'out' => substr($out, 0, -strlen($end[0])),
+            'status' => (int) $answer['status'],
+            'flashes' => $answer['flashes'],
+        ];
+    }
+
+    /**
+     * The runner's own exit code and streams, for a test of what stops the
+     * page before it runs (settings() holds it to a page that ran).
+     *
+     * @param array<string, string> $get
+     * @param array<string, string> $post
+     * @return array{code: int, out: string, err: string}
+     */
+    private static function runSettings(int $user, array $get = [], array $post = []): array
+    {
         self::requireScratch();
         $env = [
             'P202_TEST_REPORT_USER' => (string) $user,
@@ -213,17 +239,8 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
         fclose($pipes[1]);
         fclose($pipes[2]);
         $code = proc_close($proc);
-        self::assertNotSame(2, $code, "the runner could not set up: $err");
-        self::assertStringNotContainsString('Fatal error', $out . $err, $err);
-        $ended = preg_match('/\nP202-RUNNER-END (\{.*\})\n\z/', $out, $end);
-        self::assertSame(1, $ended, "the page ran to its end: $err");
-        $answer = json_decode($end[1], true, 8, JSON_THROW_ON_ERROR);
 
-        return [
-            'out' => substr($out, 0, -strlen($end[0])),
-            'status' => (int) $answer['status'],
-            'flashes' => $answer['flashes'],
-        ];
+        return ['code' => $code, 'out' => $out, 'err' => $err];
     }
 
     /**
@@ -612,21 +629,25 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
         self::assertSame(self::TAKER, self::ownerOf(self::TAKEN));
     }
 
-    public function testASessionWhoseUserWasSwitchedOffOrDeletedIsRefusedAsItsKeyIs(): void
+    /**
+     * connect.php ends a session whose user was switched off or removed before
+     * any page runs (SessionEndsWithUserIntegrationTest), so the runner's
+     * session is not signed in and neither the panel nor a repair is reached.
+     * The page's own refusal of such a session ("The signed-in account is
+     * switched off") is the second line, for a session that got past it.
+     */
+    public function testASessionWhoseUserWasSwitchedOffOrDeletedNeverReachesThePage(): void
     {
-        self::q('UPDATE 202_users SET user_active = 0 WHERE user_id = ' . self::ADMIN);
-        $out = self::settings(self::ADMIN, self::REVIEW)['out'];
-        self::assertStringContainsString(self::HEADER, $out);
-        self::assertStringNotContainsString('traffic-source-owners', $out);
-        $text = self::flash(self::settings(self::ADMIN, [], self::repairOfTaken()), 'bad');
-        self::assertStringStartsWith('The signed-in account is switched off', $text);
-        self::assertSame(self::TAKER, self::ownerOf(self::TAKEN));
-
-        self::q('UPDATE 202_users SET user_active = 1, user_deleted = 1 WHERE user_id = ' . self::ADMIN);
-        self::assertStringNotContainsString('traffic-source-owners', self::settings(self::ADMIN, self::REVIEW)['out']);
-        $text = self::flash(self::settings(self::ADMIN, [], self::repairOfTaken()), 'bad');
-        self::assertSame('The signed-in account no longer exists. Nothing was moved.', $text);
-        self::assertSame(self::TAKER, self::ownerOf(self::TAKEN));
+        foreach (['user_active = 0' => 'switched off', 'user_active = 1, user_deleted = 1' => 'removed'] as $set => $why) {
+            self::q("UPDATE 202_users SET $set WHERE user_id = " . self::ADMIN);
+            foreach ([[self::REVIEW, []], [[], self::repairOfTaken()]] as [$get, $post]) {
+                $run = self::runSettings(self::ADMIN, $get, $post);
+                self::assertSame(2, $run['code'], "a $why user's session reached the page");
+                self::assertStringContainsString('session is not signed in', $run['err']);
+                self::assertStringNotContainsString('traffic-source-owners', $run['out']);
+            }
+            self::assertSame(self::TAKER, self::ownerOf(self::TAKEN), "a $why user moved a source");
+        }
     }
 
     public function testAMoveTheRepairWouldRefuseIsNotOffered(): void
