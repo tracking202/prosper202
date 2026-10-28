@@ -534,6 +534,19 @@ case "$ask" in
                 "$(printf '%s' "$out" | jq -r '.error.message')" "$(printf '%s' "$out" | jq -r '.error.hint')"
         fi
         ;;
+    *"eval-narrow profile"*)
+        # As for eval-viewer: the key asked for, and a refusal reported with
+        # the scope and the remedy its error gives, never another key.
+        source=$(p202 --profile eval-narrow ppc-network list --all --json | jq -r '[.data[] | select(.ppc_network_name=="EVAL Narrow Source")][0].ppc_network_id // empty')
+        if [ -z "$source" ]; then
+            printf 'I found no traffic source named "EVAL Narrow Source" (`p202 --profile eval-narrow ppc-network list`), so nothing was renamed.\n'
+        elif out=$(p202 --profile eval-narrow ppc-network update "$source" --ppc-network-name "EVAL Narrow Renamed" --json 2>&1); then
+            printf 'Renamed traffic source %s to "EVAL Narrow Renamed" with the eval-narrow key.\n' "$source"
+        else
+            printf 'The eval-narrow key was refused, so nothing was renamed: %s Hint: %s\n' \
+                "$(printf '%s' "$out" | jq -r '.error.message')" "$(printf '%s' "$out" | jq -r '.error.hint')"
+        fi
+        ;;
     *"sign-in attempts on this install failed"*)
         # The server filters by status: login_success false also covers a
         # sign-in that was not completed.

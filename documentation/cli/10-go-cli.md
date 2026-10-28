@@ -536,7 +536,9 @@ sign in and approve the connection on your own install (Prosper202 1.9.78 or
 later, on https), choosing read only, propose changes, or read and change. The
 connection is an API key labelled `AI: <app> via mcp.tracking202.com` in
 My Account › Personal Settings › API keys; remove it there to disconnect. It needs a ClickServer Pro
-licence. One call there reads at most 1 MB of the install's answers, so its list
+licence. The key keeps the access it was approved with: when a later version lets a connection do
+more (a new write tool), a call that needs it is refused (exit 2) with a hint to connect the app again
+and choose the access the install names, which approves a new key that has it. One call there reads at most 1 MB of the install's answers, so its list
 tools take no `all`: page with `limit` and `offset`. It also decodes at most
 80,000 JSON values from them (a megabyte of real rows holds fewer), and takes at
 most 1,000 in a call's arguments; past either, the call is refused with how to
@@ -613,7 +615,11 @@ in order of precedence: a hint attached by the command itself (for example,
 which flag to change when the requested metric is missing, or the dependency
 order to sync first when a foreign key cannot be resolved); a generic hint
 for the failure class (401/403 key check — or, when the 403 names a required
-scope, minting a key with `--scope`, and when it names a role permission
+scope, that scope and what grants it: a new key with `p202 user apikey create
+--scope` holding this key's scope and the missing one, or, for a key an AI app's
+connection made (and on the hosted MCP server, whose key always is one),
+connecting the app again with the access the install names, since a key
+keeps the scope it was made with; and when it names a role permission
 such as `access_to_update_section` or `access_to_setup_section`, granting a
 role with `p202 user role assign`, and when it says `Admin access required.`, that the key's user needs
 the Admin or Super user role, with `p202 whoami` to see its roles; 404 use

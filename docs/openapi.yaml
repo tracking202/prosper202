@@ -31,7 +31,10 @@ info:
     requires `<area>:read`, everything else `<area>:write`; `/capabilities`
     and `/versions` stay readable by any valid key. A scoped key cannot
     create a key broader than itself. Denials are `403` naming the required
-    scope. Advertised via `features.api_key_scopes`.
+    scope in the message and in `required_scope`, with what grants it
+    (`remedy`): a new key with that scope, or for an AI app's connection
+    (`key_source: ai_connection`) approving the connection again, since a key
+    keeps the scope it was made with. Advertised via `features.api_key_scopes`.
 
     ## Role Permissions
     A key also acts within its user's role, as the web pages limit that
@@ -10149,11 +10152,15 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Forbidden:
-      description: Insufficient permissions
+      description: >-
+        Insufficient permissions: the user's role, or the key's scope. A refusal
+        for the key's scope carries `code: insufficient_scope` and names the
+        scope and what grants it (ScopeRefusal); a refusal for the role does
+        not.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Error"
+            $ref: "#/components/schemas/ScopeRefusal"
     NotFound:
       description: Resource not found
       content:
@@ -10459,6 +10466,58 @@ components:
           type: string
         status:
           type: integer
+
+    ScopeRefusal:
+      description: >-
+        A 403. For a scope the key lacks, the message names it and ends with
+        `remedy`, and the fields below say the same for a program; a key keeps
+        the scope it was made with, so an AI connection approved before a
+        release added to what connections may do is refused there until it is
+        approved again. A refusal for the user's role has `error`, `message`
+        and `status` only.
+      type: object
+      properties:
+        error:
+          type: boolean
+        message:
+          type: string
+          example: >-
+            Insufficient API key scope for this operation: requires
+            'text-ads:write' (key has: reports:read,text-ads:read). This key is
+            an AI app's connection through Tracking202's MCP server. A
+            connection keeps the access it was approved with, and that did not
+            include 'text-ads:write'. Connect the AI app again and choose "Read
+            and change" on the approval page.
+        status:
+          type: integer
+          example: 403
+        code:
+          type: string
+          enum: [insufficient_scope]
+        required_scope:
+          type: string
+          description: The scope token the request needed, e.g. `text-ads:write`; `write` for a staged change whose area cannot be told
+        key_scope:
+          type: string
+          description: The key's own scope, comma-separated
+        key_source:
+          type: string
+          enum: [ai_connection, api_key, unknown]
+          description: >-
+            `ai_connection` for a key an AI app's connection made (labelled
+            `AI: <app> via <MCP server>`), `api_key` for any other, `unknown`
+            when the key's row could not be read (the remedy then gives both)
+        connect_access:
+          type: string
+          nullable: true
+          enum: [read, propose, write, null]
+          description: >-
+            Present unless `key_source` is `api_key`: the approval page's access
+            to choose when connecting the AI app again (never less than the key
+            holds now), or null when no connection's key can hold the scope
+        remedy:
+          type: string
+          description: What grants the scope, as the message ends with it
 
     ValidationError:
       type: object

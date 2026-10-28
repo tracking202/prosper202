@@ -6,6 +6,7 @@ namespace Tests\Api\V3;
 
 use Api\V3\Auth;
 use Api\V3\AuthException;
+use Api\V3\InsufficientScopeException;
 use Api\V3\Controllers\StagedChangesController;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
@@ -180,6 +181,10 @@ final class StagedChangesControllerTest extends TestCase
                     $this->fail("a $scope key could $act a change whose area cannot be told");
                 } catch (AuthException $e) {
                     $this->assertStringContainsString('cannot be told', $e->getMessage(), "$scope $act");
+                    // A scope refusal, answered naming the scope (ScopeRefusal).
+                    $this->assertInstanceOf(InsufficientScopeException::class, $e, "$scope $act");
+                    $this->assertSame('write', $e->requiredScope, "$scope $act");
+                    $this->assertSame(403, $e->getCode(), "$scope $act");
                 }
             }
         }

@@ -248,11 +248,23 @@ final readonly class Auth
      */
     public function hasScope(string $scope): bool
     {
+        return self::scopesSatisfy($this->scopes, $scope);
+    }
+
+    /**
+     * Whether a key holding $scopes passes a check for $scope: hasScope()'s
+     * rule, for a scope list that is not a key's (what an AI connection's
+     * access would mint, AiConnect::accessCovering()).
+     *
+     * @param string[] $scopes lower-cased tokens, as parseScopes() gives them
+     */
+    public static function scopesSatisfy(array $scopes, string $scope): bool
+    {
         $scope = strtolower(trim($scope));
         if ($scope === '') {
             return true;
         }
-        if (in_array('*', $this->scopes, true) || in_array($scope, $this->scopes, true)) {
+        if (in_array('*', $scopes, true) || in_array($scope, $scopes, true)) {
             return true;
         }
 
@@ -262,17 +274,17 @@ final readonly class Auth
         }
         [$area, $action] = $parts;
         if ($action === 'read') {
-            return in_array('read', $this->scopes, true)
-                || in_array('write', $this->scopes, true)
-                || in_array($area . ':write', $this->scopes, true);
+            return in_array('read', $scopes, true)
+                || in_array('write', $scopes, true)
+                || in_array($area . ':write', $scopes, true);
         }
         if ($action === 'write') {
-            return in_array('write', $this->scopes, true);
+            return in_array('write', $scopes, true);
         }
         if ($action === 'stage') {
-            return in_array('stage', $this->scopes, true)
-                || in_array('write', $this->scopes, true)
-                || in_array($area . ':write', $this->scopes, true);
+            return in_array('stage', $scopes, true)
+                || in_array('write', $scopes, true)
+                || in_array($area . ':write', $scopes, true);
         }
         return false;
     }
@@ -280,13 +292,15 @@ final readonly class Auth
     public function requireScope(string $scope): void
     {
         if (!$this->hasScope($scope)) {
-            throw new AuthException(
+            $scope = strtolower(trim($scope));
+            throw new InsufficientScopeException(
+                $scope,
+                $this->scopes,
                 sprintf(
                     "Insufficient API key scope for this operation: requires '%s' (key has: %s).",
-                    strtolower(trim($scope)),
+                    $scope,
                     implode(',', $this->scopes)
-                ),
-                403
+                )
             );
         }
     }

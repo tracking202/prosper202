@@ -1782,7 +1782,7 @@ Errors go to stderr; stdout stays empty on failure. In human mode:
 
 ```
 Error [auth]: fetching historical data: API error (401): invalid api key
-Hint: Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.
+Hint: Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong.
 ```
 
 With `--json` or `--ndjson` the same failure is one JSON envelope:
@@ -1792,6 +1792,15 @@ With `--json` or `--ndjson` the same failure is one JSON envelope:
 ```
 
 `field_errors` is added for 422 responses. Exit codes hold through error wrapping, and nearly every error carries a `hint` naming the next step (the command that yields the right value, the flag to change, or the order to follow); validation errors without a specific hint point at `<command> --help`. See the agent guide's [Error handling](cli-agent.md#error-handling) for the decision procedure.
+
+A key refused for a scope it lacks exits 2, and the hint names the scope and what grants it. A key's scope cannot be changed, so for a REST API key the hint is a new key with this key's scope plus the missing one, made with a key that may (a full-access key from My Account › Personal Settings › API keys):
+
+```
+Error [auth]: API error (403): Insufficient API key scope for this operation: requires 'ppc-networks:write' (key has: campaigns:read). A key's scope cannot be changed: …
+Hint: A key's scope cannot be changed. Make one whose scope includes 'ppc-networks:write' with a key that may (a full-access key from My Account › Personal Settings › API keys): `p202 user apikey create <user_id> --scope campaigns:read,ppc-networks:write` (`p202 whoami` shows the user id), then use it: `p202 config set-key <new key>`.
+```
+
+For a key an AI app's connection made (the install says so from 1.9.79 on, and on Tracking202's hosted MCP server every key is one), the hint is to connect the AI app again and choose the access the install names on its approval page ("Read and change", or "Read, and propose changes"): a connection keeps the access it was approved with, so one approved before a release added to what connections may do is refused there until it is approved again. When no connection's key can hold the scope (users, system, sync), the hint says so instead. An install older than 1.9.79 names the scope only in its message; the hint reads it from there.
 
 ## Telemetry
 

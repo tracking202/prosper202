@@ -16,12 +16,14 @@ use Api\V3\Auth;
 use Api\V3\AuthException;
 use Api\V3\Bootstrap;
 use Api\V3\HttpException;
+use Api\V3\InsufficientScopeException;
 use Api\V3\RequestContext;
 use Api\V3\Router;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PathId;
+use Api\V3\Support\ScopeRefusal;
 use Api\V3\Support\ServerStateStore;
 
 // ─── Security headers ────────────────────────────────────────────────
@@ -1624,6 +1626,11 @@ try {
 } catch (AuthException $e) {
     $code = $e->getCode() ?: 401;
     $message = $e->getMessage();
+    $extra = [];
+    if ($e instanceof InsufficientScopeException) {
+        $keySource = ScopeRefusal::keySource($db, Auth::bearerKey($headers), RequestContext::actorUserId());
+        [$message, $extra] = ScopeRefusal::answer($e, $keySource);
+    }
     if ($code >= 500) {
         error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
         $pending = Bootstrap::pendingUpgrade($db);
@@ -1631,7 +1638,7 @@ try {
             [$message, $code] = [$pending, 503];
         }
     }
-    Bootstrap::errorResponse($message, $code);
+    Bootstrap::errorResponse($message, $code, $extra);
 } catch (ValidationException $e) {
     Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
 } catch (ConflictException $e) {

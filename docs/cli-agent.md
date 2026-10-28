@@ -222,7 +222,7 @@ In table mode (including `--table`, `--csv` and `-q`) the same information is tw
 |-----------|----------|---------|--------------|
 | 0 | | Success | |
 | 1 | validation | Bad input, missing flags, invalid arguments, or a 4xx other than auth and 402 | Lists valid values, or `Run <command> --help` |
-| 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config get` / `p202 config set-key` |
+| 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config show` / `p202 config set-key`. A 403 for a scope the key lacks names the scope and what grants it: a new key with that scope (`p202 user apikey create <user_id> --scope ...`; a key's scope cannot be changed), or for an AI app's connection, connecting the app again with the access the install names |
 | 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
 | 4 | server | API returned a 5xx error, or a 402 that is not the install's licence refusal (a proxy, WAF or host in front of the install answered it) | Retry after a wait; `p202 system health` (for that 402, check what serves the URL in `p202 config show`) |
 | 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `system cron`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |

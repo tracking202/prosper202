@@ -86,7 +86,7 @@ jobs:
           GOOS=js GOARCH=wasm go vet ./...
           GOOS=js GOARCH=wasm go test -count=1 \
             -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
-            -run 'TestHostedRunTakesToolCallsOnly|TestHostedEngineOmitsEveryPage|TestHostedEngineBoundsWhatACallDecodes|TestHostedSearchAnswersCompactJSON|TestHostedSearchErrorsReachTheRelayAsJSON|TestMCPToolArgv|TestMCPCatalogBuilds|TestMCPToolPositionalsMatchCommands' ./cmd/
+            -run 'TestHostedRunTakesToolCallsOnly|TestHostedEngineOmitsEveryPage|TestHostedEngineBoundsWhatACallDecodes|TestHostedSearchAnswersCompactJSON|TestHostedSearchErrorsReachTheRelayAsJSON|TestHostedScopeRefusalSaysConnectAgain|TestMCPToolArgv|TestMCPCatalogBuilds|TestMCPToolPositionalsMatchCommands' ./cmd/
           GOOS=js GOARCH=wasm go test -count=1 \
             -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
             -run 'TestHostedRequestsRefuseRedirectsAndWaitLess|TestJSONValuesOver|FuzzJSONValuesOverBoundsEveryDecoder|TestAnswerBound|TestAnswerTooManyValuesReadsTheWholeChain|TestBound|TestAnswerBodiesAreReadOnlyByReadAnswer' ./internal/api/
