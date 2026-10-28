@@ -252,11 +252,12 @@ function p202Lpid() {
 	return p202Store('get', P202_LPID_KEY) === id ? id : '';
 }
 
-// A query name as PHP's $_GET files it: leading spaces dropped, a space or a
-// dot before the first [ made _, an unmatched [ made _, and a [...] making the
-// value a list ({name, list}; null for a name PHP drops).
+// A query name as PHP's $_GET files it: cut at a NUL, leading spaces dropped,
+// a space or a dot before the first [ made _, an unmatched [ made _, and a
+// [...] making the value a list ({name, list}; null for a name PHP drops).
 function p202PhpName(name) {
-    var n = name.replace(/^ +/, '');
+    var nul = name.indexOf('\0');
+    var n = (nul < 0 ? name : name.slice(0, nul)).replace(/^ +/, '');
     var open = n.indexOf('[');
     if (open === 0) { return null; }
     var list = open > 0 && n.indexOf(']', open) > open;

@@ -218,6 +218,8 @@ module.exports = {
           'p202_consent=false', 'p202_consent=off', 'p202_consent=00', 'p202_consent=',
           'p202_consent%5B%5D=0', 'p202_consent%5B%5D=1', 'p202.consent=0', 'p202%20consent=0', 'p202%5Bconsent=0',
           'p202_consent=%C2%A01', 'p202_consent=1&p202_consent%5Bx%5D=1',
+          // PHP cuts a name at a NUL before it reads brackets.
+          'p202_consent%00x=0', 'p202_consent%00%5B%5D=0',
         ];
         for (const query of refusals) {
           const beacon = await openLanding(ctx, '?' + query);
@@ -225,7 +227,7 @@ module.exports = {
           await page.evaluate(() => window.p202.consent(true));
         }
         for (const query of ['p202_consent=1', 'p202.consent=1', 'p202_consent=%0B1', 'p202_consent=0&p202.consent=1',
-          'p202_consent%5B%5D=0&p202_consent=1', 'p202_consentx=0']) {
+          'p202_consent%5B%5D=0&p202_consent=1', 'p202_consentx=0', 'p202_consent%5B%00%5D=0']) {
           const given = await openLanding(ctx, '?' + query);
           expect.eq(given.searchParams.get('p202_consent'), null, query + ' is consent');
         }
