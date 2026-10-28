@@ -16,8 +16,8 @@ use Tests\Support\SourceScan;
  * away resolved, refused and pinned: nothing listed where this server makes
  * a request, so nothing asked each site whose URL it is. A request this
  * server makes to a URL a user or a remote party chose goes through
- * WebhookGuard (checkPostback() or check()) or OutboundUrlGuard and is
- * pinned; one to a fixed host, or to an operator's own constant, says so
+ * WebhookGuard (checkPostback() or check()) and is pinned; one to a fixed
+ * host, or to an operator's own constant, says so
  * here. The entries marked UNGUARDED are the sweep's findings, left for the
  * "one outbound guard" item; the list only shrinks.
  *
@@ -36,9 +36,8 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         ],
         '202-config/Attribution/WebhookSender.php' => [
             1,
-            'an export webhook: WebhookGuard::check(), pinned, no proxy, no redirects',
+            'an export webhook or an LTV webhook delivery: WebhookGuard::check(), pinned, no proxy, no redirects',
         ],
-        '202-cronjobs/ltv_webhooks.php' => [1, 'an LTV webhook: OutboundUrlGuard::assertAllowed() and curlOptions()'],
         '202-cronjobs/process_dataengine_job.php' => [2, "this server's own listener: DataEngine\\SelfCall's pin"],
         'tracking202/Apps/StoreListing.php' => [
             1,
@@ -98,8 +97,8 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         self::assertArrayHasKey('202-config/Notifications/PostbackSender.php', $found, 'the scan read the tree');
 
         self::assertSame([], array_diff_key($found, self::LISTED), 'curl_init() here is not listed: say whose URL'
-            . ' it calls and what keeps it safe (a URL someone else chose goes through WebhookGuard or'
-            . ' OutboundUrlGuard, pinned)');
+            . ' it calls and what keeps it safe (a URL someone else chose goes through WebhookGuard,'
+            . ' pinned)');
         $listed = array_map(static fn (array $entry): int => $entry[0], self::LISTED);
         ksort($listed);
         ksort($found);

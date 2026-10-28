@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Prosper202\Ltv;
 
+use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
-use Prosper202\Validation\OutboundUrlGuard;
 use RuntimeException;
 
 /**
@@ -40,22 +41,32 @@ final class MysqlWebhookRepository
     /** Max delivery attempts before a delivery is failed and the hook may die. */
     public const MAX_ATTEMPTS = 6;
 
+    /** The ports a webhook URL may name, held at saving and at sending. */
+    public const PORTS = [443, 8443];
+
     public function __construct(private Connection $conn)
     {
     }
 
     /**
-     * Dispatch-time SSRF guard: delegates to the one implementation in
-     * OutboundUrlGuard. Kept as a named entry point for the cron and the tests;
-     * the body it used to carry was a line-for-line copy that could (and did)
-     * drift from the attribution crons' checks.
+     * Why a webhook URL is refused where one is saved (create(), the
+     * Landing Page Optimizer's bridge config), or null: the export
+     * webhooks' rules (WebhookGuard) on one of PORTS, all but the lookup,
+     * so a resolver that stalls cannot hold a request. DeliverySender runs
+     * the whole check, lookup included, when each delivery is sent. An
+     * allowlist that does not parse admits nothing here.
      *
-     * @return list<string> the validated IPs for the URL's host, for curlOptions()
-     * @throws \Prosper202\Validation\OutboundUrlException
+     * @param string|null $allowNetworks the operator's allowlist; null reads P202_WEBHOOK_ALLOW_NETWORKS
      */
-    public static function assertUrlAllowed(string $url): array
+    public static function urlRefusal(string $url, ?string $allowNetworks = null): ?string
     {
-        return OutboundUrlGuard::assertAllowed($url, 'webhook_url');
+        try {
+            $guard = new WebhookGuard(null, $allowNetworks);
+        } catch (\UnexpectedValueException) {
+            $guard = new WebhookGuard(null, '');
+        }
+
+        return $guard->webhookRefusal($url, self::PORTS);
     }
 
     /**
@@ -159,12 +170,14 @@ final class MysqlWebhookRepository
      *        which enqueue() already treats as subscribe-all. [] defaults to
      *        KNOWN_EVENTS. Any other name is refused, nothing written.
      * @return array{webhookId: int, secret: string}
+     * @throws WebhookRefused naming why the URL is refused (urlRefusal())
      */
     public function create(int $userId, string $url, array $events): array
     {
-        // Write boundary: syntactic check only, no DNS (see OutboundUrlGuard).
-        // The cron re-runs the full check and pins the connection at delivery.
-        OutboundUrlGuard::assertWellFormed($url, 'webhook_url');
+        $refused = self::urlRefusal($url);
+        if ($refused !== null) {
+            throw new WebhookRefused($refused);
+        }
 
         $events = array_values(array_unique(array_map(strval(...), $events)));
         if ($events === []) {

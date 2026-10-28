@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
-use Prosper202\Validation\OutboundUrlGuard;
 
 /**
  * Sends the LTV webhook deliveries the LTV writes queue
@@ -22,7 +21,7 @@ use Prosper202\Validation\OutboundUrlGuard;
  *
  * A run is bounded by its deadline, asked before each delivery (at least one
  * is sent), so a run ends at most one delivery past it: the guard's lookup
- * and the request's timeout (OutboundUrlGuard::curlOptions(), 15 s). A
+ * and the request's timeout (WebhookSender::TIMEOUT, 15 s). A
  * webhook whose delivery failed after SLOW_FAILURE_SECONDS or more is not
  * sent to again in that run: its other deliveries stay due, untouched, for
  * the next one, so a receiver that times out spends one timeout per run and
@@ -207,66 +206,18 @@ final class WebhookDispatcher
     }
 
     /**
-     * One delivery's POST: the guard's full check at the moment of sending,
-     * then the request pinned to an address it approved, with no redirects,
-     * https only and TLS verified (OutboundUrlGuard::curlOptions()). A refusal
-     * or a failure is the answer, never a throw: the run records it on the
-     * delivery's own row.
+     * One delivery's POST, made by DeliverySender: the export webhooks'
+     * sender and guard, which checks the URL when it is sent, pins the
+     * request to an address it approved, follows no redirect and verifies
+     * TLS. A refusal or a failure is the answer, never a throw: the run
+     * records it on the delivery's own row.
      *
      * @param array<string, mixed> $delivery a duePending() row
      * @return array{0: bool, 1: ?int, 2: string} 2xx, the HTTP status (null without one), the body or the error
      */
     public static function post(array $delivery): array
     {
-        $url = (string) $delivery['webhook_url'];
-        try {
-            $options = self::requestOptions($delivery, MysqlWebhookRepository::assertUrlAllowed($url));
-        } catch (\Throwable $guard) {
-            return [false, null, 'blocked: ' . $guard->getMessage()];
-        }
-
-        $ch = curl_init($url);
-        if ($ch === false) {
-            return [false, null, 'curl init failed'];
-        }
-        // curl_setopt_array() stops at an option curl refuses: the request
-        // would go without the rest, the pin among them.
-        if (!curl_setopt_array($ch, $options)) {
-            curl_close($ch);
-
-            return [false, null, 'blocked: curl refused an option of the pinned request'];
-        }
-
-        $responseBody = curl_exec($ch);
-        $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        return [
-            is_string($responseBody) && $statusCode >= 200 && $statusCode < 300,
-            $statusCode > 0 ? $statusCode : null,
-            is_string($responseBody) ? $responseBody : 'curl: ' . $curlError,
-        ];
-    }
-
-    /**
-     * Every option post() sends a delivery with: the guard's set for the
-     * addresses it approved, which wins over anything beside it, and the
-     * POST of the body with its headers.
-     *
-     * @param array<string, mixed> $delivery a duePending() row
-     * @param list<string> $validatedIps what MysqlWebhookRepository::assertUrlAllowed() answered
-     * @return array<int, mixed>
-     * @throws \Prosper202\Validation\OutboundUrlException when there is no address to pin to
-     */
-    public static function requestOptions(array $delivery, array $validatedIps): array
-    {
-        return OutboundUrlGuard::curlOptions((string) $delivery['webhook_url'], $validatedIps) + [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => (string) $delivery['payload'],
-            CURLOPT_HTTPHEADER => self::headers($delivery),
-            CURLOPT_RETURNTRANSFER => true,
-        ];
+        return (new DeliverySender())->post($delivery);
     }
 
     /**
@@ -280,18 +231,7 @@ final class WebhookDispatcher
      */
     public static function headers(array $delivery): array
     {
-        $signature = MysqlWebhookRepository::signature(
-            (string) $delivery['payload'],
-            (string) $delivery['webhook_secret']
-        );
-
-        return [
-            'Content-Type: application/json',
-            'X-P202-Signature: ' . $signature,
-            'X-P202-Event: ' . (string) $delivery['event_name'],
-            'X-P202-Delivery: ' . (int) $delivery['delivery_id'],
-            'User-Agent: Prosper202-LTV-Webhook/1.0',
-        ];
+        return DeliverySender::headers($delivery);
     }
 
     /**

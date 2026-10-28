@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace Prosper202\Attribution;
 
 /**
- * Decides whether an export webhook may be sent to a URL (plan §6.3
- * "Exports", §7.1 "SSRF through MTA export webhooks").
+ * Decides whether a webhook may be sent to a URL: an export's (plan §6.3
+ * "Exports", §7.1 "SSRF through MTA export webhooks") and an LTV webhook's
+ * (Ltv\DeliverySender), through the one sender both use (WebhookSender).
  *
- * A webhook URL is typed by anyone who can create an export, and the server
- * then makes the request from inside the operator's network. So:
+ * A webhook URL is typed by anyone who can create an export or an LTV
+ * webhook, and the server then makes the request from inside the
+ * operator's network. So:
  *
  * - The URL must be `https://host[:port][/path]`, spelled plainly: no user
  *   info, no fragment, no whitespace or control characters, no backslash.
@@ -31,12 +33,16 @@ namespace Prosper202\Attribution;
  *   benchmarking blocks, 6to4 and Teredo, multicast, reserved, and IPv6
  *   outside global unicast (unique-local, link-local, site-local, the
  *   discard prefix) — the IANA special-purpose registries' "not globally
- *   reachable" set.
+ *   reachable" set. An IPv6 address that carries a link-local or metadata
+ *   IPv4 address any other way (IPv4-compatible, IPv4-translated, local-use
+ *   NAT64, 6to4, Teredo) is refused as that address, which the allowlist
+ *   below cannot admit either.
  * - The sender re-runs this check at send time and connects to the address
  *   it approved, with the host pinned (WebhookTarget::resolveEntry), so a
  *   DNS answer that changes between the check and the connection (DNS
  *   rebinding) changes nothing. The check at save time exists so the person
- *   saving the export is told.
+ *   saving the export is told; an LTV webhook's save asks webhookRefusal(),
+ *   the same check without the lookup.
  *
  * Traffic-source postbacks are held to the same rules (checkPostback()),
  * with http:// and any port allowed, since that is what networks' postback
@@ -46,8 +52,8 @@ namespace Prosper202\Attribution;
  * The one relaxation is the operator's, never a request's: a constant
  * `P202_WEBHOOK_ALLOW_NETWORKS` in 202-config.php (comma- or
  * space-separated CIDRs) admits addresses in those networks, for an
- * operator whose receiver lives on their own network — export webhooks and
- * postbacks alike. It cannot admit the
+ * operator whose receiver lives on their own network — export webhooks, LTV
+ * webhooks and postbacks alike. It cannot admit the
  * addresses no receiver lives at — link-local and the named metadata
  * endpoints, this-network, multicast and reserved — and an entry that does
  * not parse refuses every URL rather than being skipped (CLAUDE.md error
@@ -137,17 +143,51 @@ final class WebhookGuard
     }
 
     /**
-     * Check a URL, resolve its host, and check every address.
+     * Check a URL, resolve its host, and check every address. With $ports,
+     * the URL's port (443 when it names none) must be one of them: an LTV
+     * webhook's is 443 or 8443 (MysqlWebhookRepository::PORTS).
      *
+     * @param list<int> $ports
      * @throws WebhookRefused with the sentence for the person who typed it
      */
-    public function check(string $url): WebhookTarget
+    public function check(string $url, array $ports = []): WebhookTarget
+    {
+        $target = $this->target($url, self::webhookParts($url), 443, 'webhook', true, $ports);
+        assert($target !== null);
+
+        return $target;
+    }
+
+    /**
+     * What check() refuses without asking a resolver, for a save that must
+     * not wait on one (an LTV webhook's, which has always been saved
+     * without a lookup): null when nothing is, else why. A host name passes
+     * once it is spelled as one; the sender's check() resolves it.
+     *
+     * @param list<int> $ports as check()'s
+     */
+    public function webhookRefusal(string $url, array $ports = []): ?string
+    {
+        try {
+            $this->target($url, self::webhookParts($url), 443, 'webhook', false, $ports);
+        } catch (WebhookRefused $e) {
+            return $e->getMessage();
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string, string>
+     * @throws WebhookRefused
+     */
+    private static function webhookParts(string $url): array
     {
         if (strlen($url) > self::MAX_URL_LENGTH) {
             throw new WebhookRefused('The webhook URL is longer than ' . self::MAX_URL_LENGTH . ' characters.');
         }
         if (preg_match('/^https:\/\//i', $url) !== 1) {
-            throw new WebhookRefused('The webhook URL must start with https:// — exports are only sent over TLS.');
+            throw new WebhookRefused('The webhook URL must start with https:// — webhooks are only sent over TLS.');
         }
         // host: a bracketed IPv6 literal or [A-Za-z0-9.-]; then an optional
         // port; then a path/query of printable ASCII without # or \.
@@ -159,10 +199,7 @@ final class WebhookGuard
             );
         }
 
-        $target = $this->target($url, $m, 443, 'webhook', true);
-        assert($target !== null);
-
-        return $target;
+        return $m;
     }
 
     /**
@@ -256,10 +293,17 @@ final class WebhookGuard
      * Without $resolve a host name passes once its spelling does (null).
      *
      * @param array<string, string> $m
+     * @param list<int> $ports the ports allowed, every one when empty
      * @throws WebhookRefused
      */
-    private function target(string $url, array $m, int $port, string $kind, bool $resolve): ?WebhookTarget
-    {
+    private function target(
+        string $url,
+        array $m,
+        int $port,
+        string $kind,
+        bool $resolve,
+        array $ports = []
+    ): ?WebhookTarget {
         if (($m['port'] ?? '') !== '') {
             if ($m['port'][0] === '0' || (int) $m['port'] < 1 || (int) $m['port'] > 65535) {
                 throw new WebhookRefused(
@@ -267,6 +311,10 @@ final class WebhookGuard
                 );
             }
             $port = (int) $m['port'];
+        }
+        if ($ports !== [] && !in_array($port, $ports, true)) {
+            throw new WebhookRefused('The ' . $kind . ' URL has port ' . $port
+                . '; this webhook is only sent to port ' . implode(' or ', $ports) . '.');
         }
 
         if (($m['v6'] ?? '') !== '') {
@@ -334,11 +382,33 @@ final class WebhookGuard
 
                 return $why === null ? null : $why . ' (carried inside an IPv6 address)';
             }
+            foreach (self::carriedV4($binary) as $carried) {
+                $why = self::metadataRefusal($carried);
+                if ($why !== null) {
+                    return 'which carries ' . inet_ntop($carried) . ', ' . $why;
+                }
+            }
 
             return $this->v6Refusal($binary);
         }
 
         return $this->v4Refusal($binary);
+    }
+
+    /**
+     * Why an IPv4 address is one cloud metadata answers at, which nothing
+     * admits: 'a …' or null.
+     */
+    private static function metadataRefusal(string $binary): ?string
+    {
+        if (in_array((string) inet_ntop($binary), self::V4_METADATA, true)) {
+            return 'a cloud metadata endpoint';
+        }
+        if (self::inBlock($binary, (string) inet_pton('169.254.0.0'), 16)) {
+            return 'a link-local address, where cloud metadata services answer';
+        }
+
+        return null;
     }
 
     private function assertAllowed(string $address, string $named, string $kind): void
@@ -422,6 +492,43 @@ final class WebhookGuard
         }
 
         return null;
+    }
+
+    /**
+     * The IPv4 addresses an IPv6 address carries in the other ways IPv6
+     * carries one, as 4 bytes each: IPv4-compatible (::a.b.c.d, not :: or
+     * ::1) and IPv4-translated (::ffff:0:a.b.c.d) in the last 32 bits, 6to4
+     * (2002::/16) in bits 16-47, Teredo (2001::/32) its server in bits 32-63
+     * and its client inverted in the last 32, and local-use NAT64
+     * (64:ff9b:1::/48) at each prefix length RFC 6052 §2.2 allows inside
+     * it, which skip bits 64-71. Each of these is refused by default anyway;
+     * what they carry decides what the allowlist may admit.
+     *
+     * @return list<string>
+     */
+    private static function carriedV4(string $binary): array
+    {
+        $in = static fn (string $network, int $prefix): bool
+            => self::inBlock($binary, (string) inet_pton($network), $prefix);
+        if (($in('::', 96) && !$in('::', 127)) || $in('::ffff:0:0:0', 96)) {
+            return [substr($binary, 12, 4)];
+        }
+        if ($in('2002::', 16)) {
+            return [substr($binary, 2, 4)];
+        }
+        if ($in('2001::', 32)) {
+            return [substr($binary, 4, 4), substr($binary, 12, 4) ^ "\xFF\xFF\xFF\xFF"];
+        }
+        if ($in('64:ff9b:1::', 48)) {
+            return [
+                substr($binary, 6, 2) . substr($binary, 9, 2),
+                substr($binary, 7, 1) . substr($binary, 9, 3),
+                substr($binary, 9, 4),
+                substr($binary, 12, 4),
+            ];
+        }
+
+        return [];
     }
 
     private static function inBlock(string $address, string $network, int $prefix): bool

@@ -238,9 +238,9 @@ var ltvWebhooksCreateCmd = &cobra.Command{
 			return validationError("required flag --url is missing").
 				WithHint("The https endpoint to deliver to, e.g. --url https://hooks.example.com/p202.")
 		}
-		// The server delivers over https only (OutboundUrlGuard), and also
-		// refuses private, loopback and metadata hosts, which it alone
-		// can judge.
+		// The server delivers over https only (WebhookGuard, the export
+		// webhooks' guard), and also refuses private, loopback and
+		// metadata hosts, which it alone can judge.
 		if u, err := url.Parse(raw); err != nil || u.Host == "" || u.Scheme != "https" {
 			return validationError("--url %q is not an absolute https URL", raw).
 				WithHint("Deliveries go over https only, e.g. --url https://hooks.example.com/p202.")

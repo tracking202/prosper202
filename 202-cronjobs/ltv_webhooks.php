@@ -13,6 +13,13 @@ declare(strict_types=1);
  * Both take the dispatcher's MySQL named lock: a copy started while another
  * runs exits at once and says so.
  *
+ * Each delivery is sent by WebhookDispatcher::post(), which hands it to
+ * Ltv\DeliverySender: the export webhooks' sender and guard
+ * (Attribution\WebhookSender, WebhookGuard::check()), re-checked at dispatch
+ * time (DNS may have changed since registration): https only, no private,
+ * loopback, link-local or metadata address in any spelling, pinned to the
+ * address checked, no proxy, redirects never followed.
+ *
  * Options:
  *   --budget=N    seconds to keep sending (default 50, 1-3600); a delivery
  *                 begun before the end may take its timeout past it

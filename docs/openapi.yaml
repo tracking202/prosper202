@@ -8830,7 +8830,13 @@ paths:
               properties:
                 url:
                   type: string
-                  description: The https endpoint (alias `webhook_url`)
+                  description: >-
+                    The https endpoint (alias `webhook_url`), on port 443 or 8443, held to the export webhooks'
+                    address rules: no private, loopback, link-local or metadata address in any spelling (an IPv4
+                    address carried in IPv6, such as `::ffff:169.254.169.254`, is judged as that address), a 422
+                    naming the field otherwise. Each delivery is checked again when it is sent, with the host
+                    resolved, and a refused one is logged "blocked: …" unsent. `P202_WEBHOOK_ALLOW_NETWORKS` in
+                    `202-config.php` admits a receiver on the operator's own network.
                 events:
                   type: array
                   items:

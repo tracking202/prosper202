@@ -7,7 +7,6 @@ namespace Tests\Ltv;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Ltv\MysqlWebhookRepository;
 use Prosper202\Ltv\WebhookDispatcher;
-use Prosper202\Validation\OutboundUrlGuard;
 
 /**
  * The dispatcher's parts that need no database: its POST refuses what the
@@ -31,49 +30,30 @@ final class WebhookDispatcherTest extends TestCase
         ];
     }
 
-    /** @return iterable<string, array{0: string, 1: string}> */
+    /** @return iterable<string, array{0: string}> */
     public static function refusedUrls(): iterable
     {
-        yield 'plain http' => ['http://hooks.example.com/p202', 'blocked: webhook_url must be a valid https:// URL'];
-        $private = 'blocked: webhook_url resolves to a private or reserved address';
-        yield 'loopback' => ['https://127.0.0.1/p202', $private];
-        yield 'metadata' => ['https://169.254.169.254/latest', $private];
-        yield 'private' => ['https://10.0.0.8/p202', $private];
-        yield 'port' => ['https://8.8.8.8:8080/p202', 'blocked: webhook_url port must be one of: 443, 8443'];
-    }
-
-    /** @dataProvider refusedUrls */
-    public function testThePostRefusesWhatTheGuardRefuses(string $url, string $answer): void
-    {
-        self::assertSame([false, null, $answer], WebhookDispatcher::post(self::delivery($url)));
+        yield 'plain http' => ['http://hooks.example.com/p202'];
+        yield 'loopback' => ['https://127.0.0.1/p202'];
+        yield 'metadata' => ['https://169.254.169.254/latest'];
+        yield 'private' => ['https://10.0.0.8/p202'];
+        yield 'port' => ['https://8.8.8.8:8080/p202'];
     }
 
     /**
-     * The request carries the guard's whole set, as the guard gives it
-     * (pinned to the approved address, no proxy, no redirects, https, TLS
-     * verified, timeouts), beside the POST itself and nothing else.
+     * What the sender's guard says about each refusal is DeliverySenderTest's;
+     * here: the dispatcher hands it back as an answer with no status, since
+     * no request was made.
+     *
+     * @dataProvider refusedUrls
      */
-    public function testTheRequestCarriesTheGuardsWholeSet(): void
+    public function testThePostRefusesWhatTheGuardRefuses(string $url): void
     {
-        $delivery = self::delivery('https://hooks.example.com/p202');
-        $guard = OutboundUrlGuard::curlOptions('https://hooks.example.com/p202', ['93.184.216.34']);
+        $answer = WebhookDispatcher::post(self::delivery($url));
 
-        $options = WebhookDispatcher::requestOptions($delivery, ['93.184.216.34']);
-
-        foreach ($guard as $option => $value) {
-            self::assertArrayHasKey($option, $options);
-            self::assertSame($value, $options[$option], 'option ' . $option);
-        }
-        self::assertSame(['hooks.example.com:443:93.184.216.34'], $options[CURLOPT_RESOLVE]);
-        self::assertSame([
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $delivery['payload'],
-            CURLOPT_HTTPHEADER => WebhookDispatcher::headers($delivery),
-            CURLOPT_RETURNTRANSFER => true,
-        ], array_diff_key($options, $guard));
-
-        $this->expectException(\Prosper202\Validation\OutboundUrlException::class);
-        WebhookDispatcher::requestOptions($delivery, []);
+        self::assertFalse($answer[0]);
+        self::assertNull($answer[1]);
+        self::assertStringStartsWith('blocked: ', $answer[2]);
     }
 
     public function testTheHeadersSignTheExactBody(): void
