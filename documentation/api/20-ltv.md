@@ -250,6 +250,12 @@ p202 ltv customer alias add 42 --type merchant_id --value M-77
 | `POST` | `/ltv/companies` | `name` (required, unique), `domain` (customers with that email domain join automatically); a duplicate is a `409` |
 | `PATCH` | `/ltv/companies/{id}`, `POST /ltv/companies/{id}/merge`, `DELETE /ltv/companies/{id}` | Rename or change the domain; merge `source_company_id` in; delete one with no customers (one with customers is merged instead) |
 
+A customer whose `company` was stored before that company existed is attached
+to it by the LTV maintenance job (`202-cronjobs/ltv_maintenance.php`), which
+creates the company if it has to. A `company` of nothing but spaces (tabs,
+no-break or ideographic spaces) names no company: the job stores it as `""`,
+as clearing it would, and the customer's email domain does not attach it.
+
 ```bash
 p202 ltv product upsert --sku PRO-1 --name "Pro plan" --price 49
 p202 ltv fields create --key plan --type select --option free --option pro
