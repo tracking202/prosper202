@@ -1102,7 +1102,8 @@ paths:
         - $ref: "#/components/parameters/dryRun"
       tags: [Affiliate Networks]
       summary: Delete an affiliate network
-      description: Soft delete.
+      description: >-
+        Soft delete of the category alone, as Setup › Categories does: its campaigns are not deleted and keep naming it (delete them first with DELETE /campaigns/{id} if they are to go). The dry run's cascade is empty.
       operationId: deleteAffNetwork
       responses:
         "200":
@@ -1191,7 +1192,8 @@ paths:
         - $ref: "#/components/parameters/dryRun"
       tags: [PPC Networks]
       summary: Delete a PPC network
-      description: Soft delete.
+      description: >-
+        Soft delete of the traffic source alone, as Setup › Traffic Sources does: its accounts are not deleted and keep naming it (delete them first with DELETE /ppc-accounts/{id} if they are to go). The dry run's cascade is empty.
       operationId: deletePpcNetwork
       responses:
         "200":
@@ -1280,7 +1282,8 @@ paths:
         - $ref: "#/components/parameters/dryRun"
       tags: [PPC Accounts]
       summary: Delete a PPC account
-      description: Soft delete.
+      description: >-
+        Soft delete of the account alone, as Setup › Traffic Sources does: trackers that name it are not changed. The dry run's cascade is empty.
       operationId: deletePpcAccount
       responses:
         "200":
