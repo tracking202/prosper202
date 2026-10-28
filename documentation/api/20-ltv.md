@@ -207,6 +207,40 @@ p202 ltv subscription event sub_123 --type renewal --transaction-id ch_889
 p202 ltv subscription event sub_123 --type cancel
 ```
 
+### When a subscription stops renewing
+
+A subscription no renewal reaches lapses on its own: once its
+`current_period_end` and `grace_days` (3 by default) are over it is
+`past_due`, and 30 days after that `canceled`. A renewal before then makes it
+`active` again. The cron job's hourly run (`202-cronjobs/index.php`, which
+every default install schedules) makes the change, so a status is at most an
+hour late, and the customer's cached `mrr` and `active_subscription_count`
+change with it. A `trialing` or `paused` subscription is left as it is.
+
+- `GET /ltv/mrr` counts only `active` subscriptions, so a lapsed one leaves
+  MRR at `past_due`. Monthly churn is the subscriptions canceled in the last
+  90 days over those active plus those canceled: a lapsed subscription's
+  `canceled_at` is the time the rule canceled it (period end + grace + 30
+  days), not the time the cron got to it.
+- Before 1.9.79 no default install ran this, so a subscription that stopped
+  renewing stayed `active` and counted in MRR. The first runs after the
+  upgrade move them, oldest first, in batches of 500 for up to 20 seconds an
+  hour (30,000 took 3 seconds on a test install, so only a very large
+  backlog takes more than one run). One that lapsed long ago goes straight to `canceled`, dated when it
+  would have been canceled, so it counts in churn only if that falls in the
+  last 90 days.
+- The customer rollups (`order_count`, `total_revenue`, `refunded_amount`,
+  `mrr`, `active_subscription_count`) are also recomputed from the ledger
+  once a day, for the customers active in the last 48 hours, in case a write
+  left one out of step; the same daily run rebuilds the next-offer
+  transitions, attaches customers to companies by their company name and
+  removes expired personalization tokens.
+- `202-cronjobs/ltv_maintenance.php` runs all of it at once: `--full`
+  recomputes every customer's rollups, `--budget=N` sets how many seconds it
+  keeps going (300 by default), `--batch-size=N` how many rows a statement
+  takes (500). It and the cron take one database lock, so they never run at
+  once; a copy started while the other runs says so and exits.
+
 ## Customers
 
 | Method | Path | |
@@ -279,7 +313,38 @@ subscribed the hook to every event).
 `GET /ltv/webhooks/{id}/deliveries` is the delivery log, newest first:
 `limit` 1–100 (default 25), `status` `pending`, `delivered` or `failed`,
 each with its attempts, next retry, last HTTP status and the last response
-or error. An unknown webhook is a `404`, never an empty log.
+or error (`curl: …` when the request failed, `blocked: …` when the address
+was refused at sending, `expired: …` below). An unknown webhook is a `404`,
+never an empty log.
+
+### How deliveries are sent
+
+A write only queues its event; the cron job sends it. The minutely
+`202-cronjobs/index.php` — the one job the installer's cron line,
+`install.sh`, both Docker cron services and AutoCron run — sends what is
+due after its other work, oldest first, for up to 15 seconds a run (one
+request begun before the end may take its 15-second timeout past it).
+Nothing else needs scheduling. `202-cronjobs/ltv_webhooks.php` is the same
+run on its own (`--budget=N` seconds, 50 by default), for a deployment that
+runs workers separately (`docker-compose.coolify.yaml`'s worker service
+does); the two take one database lock, and each delivery is claimed before
+it is sent, so a delivery is never sent by two runs.
+
+- A failure is retried 2, 4, 8, 16 and 32 minutes after each attempt; the
+  6th failed attempt fails the delivery and marks the webhook dead. Every
+  attempt is in the log.
+- A receiver that takes 2 seconds or more to fail is tried once a run; the
+  webhook's other deliveries wait, untried, for the next run, so a receiver
+  that times out does not hold up every other webhook on the install.
+- A delivery still unsent 7 days after it was queued is not sent: it is
+  `failed` with 0 attempts and `expired: still unsent 7 days after it was
+  queued, so it was not sent` as its last response. Before 1.9.79 no
+  default install ran the sender, so every delivery stayed queued: after the
+  upgrade a webhook is sent the events of the last 7 days that were waiting,
+  oldest first, and the older ones expire unsent.
+- A delivery is sent at least once: one whose outcome could not be recorded
+  (the database went away mid-run) is sent again 5 minutes later.
+  `X-P202-Delivery` is the same each time; de-duplicate by it.
 
 ```bash
 p202 ltv webhooks create --url https://hooks.example.com/p202 --events revenue.recorded,subscription.changed

@@ -54,8 +54,8 @@ Everything else is hands-off:
 - **Cron** — the `cron` service polls `202-cronjobs/index.php` once a minute,
   and the `attribution-cron` service runs the standalone CLI workers that
   `index.php` does not cover on its own schedule: the multi-touch attribution
-  worker and the API v3 sync worker every minute, and the attribution postback
-  retention prune hourly. No host crontab needed.
+  worker, the API v3 sync worker and the LTV webhook dispatcher every minute,
+  and the attribution postback retention prune hourly. No host crontab needed.
 - **HTTPS detection** — Coolify's proxy terminates TLS; the image maps
   `X-Forwarded-Proto` back to `HTTPS=on` so secure cookies and generated URLs
   are correct.
