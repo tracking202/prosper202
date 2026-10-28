@@ -79,6 +79,13 @@ if [ -z "$CURRENT_DOMAIN" ] || [ "$CURRENT_DOMAIN" = "null" ]; then
     "$P202_BIN" user prefs update "$EVAL_USER_ID" --user-tracking-domain="$CONFIG_URL" --json >/dev/null
 fi
 
+# The clicks below come from the runner itself (127.0.0.1), an address GeoIP
+# cannot place, and a new account's privacy setting ('eu' since 1.9.79) holds
+# such a visitor back: the address stored masked (127.0.0.0) and no p202vid
+# cookie to link a browser's clicks. The fixture tracks every visitor in full.
+echo "Setting privacy to disabled..." >&2
+"$P202_BIN" user prefs update "$EVAL_USER_ID" --user-pref-privacy=disabled --json >/dev/null
+
 echo "Seeding trackers..." >&2
 TRACKER_A_ID=$(create tracker-a tracker create --aff-campaign-id="$CAMPAIGN_A_ID" --ppc-account-id="$PPC_ACCOUNT_ID" --landing-page-id="$LANDING_PAGE_ID" | jq -r '.data.tracker_id')
 TRACKER_B_ID=$(create tracker-b tracker create --aff-campaign-id="$CAMPAIGN_B_ID" --ppc-account-id="$PPC_ACCOUNT_ID" | jq -r '.data.tracker_id')

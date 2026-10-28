@@ -350,6 +350,7 @@ NEWUSER=$(Q "SELECT user_id FROM 202_users WHERE user_name='u6_live_user' AND us
 eq "$(Q "SELECT CONCAT_WS('|', user_fname, user_lname, user_email, user_active) FROM 202_users WHERE user_id=${NEWUSER:-0}")" "Live|User|u6-live@example.test|1" "the row carries every field"
 eq "$(Q "SELECT role_id FROM 202_user_role WHERE user_id=${NEWUSER:-0}")" "4" "role 4 stored"
 eq "$(Q "SELECT COUNT(*) FROM 202_users_pref WHERE user_id=${NEWUSER:-0}")" "1" "a preferences row was created"
+eq "$(Q "SELECT user_pref_privacy FROM 202_users_pref WHERE user_id=${NEWUSER:-0}")" "eu" "the new user starts at privacy eu"
 eq "$(Q "SELECT COUNT(*) FROM 202_attribution_models WHERE user_id=${NEWUSER:-0} AND is_default=1")" "1" "and its default attribution model, in the same save"
 HASH_NEW=$(Q "SELECT user_pass FROM 202_users WHERE user_id=${NEWUSER:-0}")
 if [[ "$HASH_NEW" == \$2y\$* ]]; then ok "the password is stored as a bcrypt hash"; else bad "password hash shape: ${HASH_NEW:0:7}"; fi
@@ -458,13 +459,13 @@ has "$OUT/ai-ok.html" 'Your IPQualityScore API key was saved.' "a key saves"
 eq "$(Q "SELECT ipqs_api_key FROM 202_users_pref WHERE user_id=$OWNER")" "u6-ipqs-key" "stored"
 
 say "API integrations: a DNI network is removed by POST only"
-mysql_q "$DB" -e "INSERT INTO 202_dni_networks (user_id, networkId, name, type, apiKey, affiliateId, time, processed, shortDescription, favIcon) VALUES (1, 'u6net', 'U6 Live Network', 'HasOffers', 'u6-dni-secret-key-0001', NULL, UNIX_TIMESTAMP(), 1, 'probe', '')"
+mysql_q "$DB" -e "INSERT INTO 202_dni_networks (user_id, networkId, name, type, apiKey, affiliateId, time, processed, shortDescription, favIcon) VALUES ($OWNER, 'u6net', 'U6 Live Network', 'HasOffers', 'u6-dni-secret-key-0001', NULL, UNIX_TIMESTAMP(), 1, 'probe', '')"
 DNI=$(Q "SELECT id FROM 202_dni_networks WHERE networkId='u6net'")
 curl -sS -b "$JAR" -c "$JAR" -L "$BASE/202-account/api-integrations.php?delete_dni_network=$DNI" -o "$OUT/dni-get.html"
 has "$OUT/dni-get.html" 'Removing a network now asks first.' "the old GET link is answered, not obeyed"
 eq "$(Q "SELECT COUNT(*) FROM 202_dni_networks WHERE id=$DNI")" "1" "the network is still there"
-has "$OUT/dni-get.html" 'data-p202-value="u6-dni-secret-key-0001"' "its API key is behind Reveal"
-hasnt "$OUT/dni-get.html" '>u6-dni-secret-key-0001<' "and not printed in the clear"
+hasnt "$OUT/dni-get.html" 'u6-dni-secret-key-0001' "its API key is not on the page"
+has "$OUT/dni-get.html" 'Saved, ends in 0001' "it shows as saved, by its last four"
 submit "$OUT/dni-get.html" "delete_dni_network=$DNI" "202-account/api-integrations.php" "$OUT/dni-bad.html" token=forged
 has "$OUT/dni-bad.html" "$REFUSED" "a bad token removes nothing"
 eq "$(Q "SELECT COUNT(*) FROM 202_dni_networks WHERE id=$DNI")" "1" "still there"

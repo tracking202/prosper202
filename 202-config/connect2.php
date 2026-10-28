@@ -211,7 +211,8 @@ if (!isset($_SESSION['privacy'])) {
             ? $privacy['user_pref_privacy']
             : 'all';
     } else {
-        // No preferences row: nothing was set, the column's own default.
+        // No preferences row: nothing was set, 'disabled' as before 1.9.79,
+        // though a new account's row now starts at 'eu' (PrivacySetting).
         $_SESSION['privacy'] = 'disabled';
     }
 }
@@ -677,9 +678,9 @@ function rotateTrackerUrl($db, $tracker_row)
  * record_simple.php). Values are raw; replaceTokens() URL-encodes them.
  *
  * @param array<string, scalar|null> $click keyword, t202pubid, c1-c4, gclid,
- *     msclkid, fbclid, utm_source, utm_medium, utm_campaign, utm_term,
- *     utm_content, country, country_code, region, city, cpc, cpa, payout,
- *     ppc_account_id
+ *     gbraid, wbraid, ttclid, msclkid, fbclid, utm_source, utm_medium,
+ *     utm_campaign, utm_term, utm_content, country, country_code, region,
+ *     city, cpc, cpa, payout, ppc_account_id
  * @return array<string, scalar|null>
  */
 function p202ClickUrlTokens(string $clickId, array $click): array
@@ -706,6 +707,9 @@ function p202ClickUrlTokens(string $clickId, array $click): array
         'c3' => $text('c3'),
         'c4' => $text('c4'),
         'gclid' => $text('gclid'),
+        'gbraid' => $text('gbraid'),
+        'wbraid' => $text('wbraid'),
+        'ttclid' => $text('ttclid'),
         'msclkid' => $text('msclkid'),
         'fbclid' => $text('fbclid'),
         'utm_source' => $text('utm_source'),
@@ -784,8 +788,6 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
             	2trk.click_cpa,
                 2c.ppc_account_id,
             	2g.gclid,
-                2b.msclkid,
-                2f.fbclid,
             	2us.utm_source,
             	2um.utm_medium,
             	2uca.utm_campaign,
@@ -806,8 +808,6 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
                 LEFT OUTER JOIN 202_trackers AS 2trk
                     ON (2trk.tracker_id_public = 2cpa.tracker_id_public AND 2trk.user_id = 2c.user_id)
             	LEFT JOIN `202_google` AS 2g on (2g.click_id=2c.click_id)
-                LEFT JOIN `202_bing` AS 2b on (2b.click_id=2c.click_id)
-                LEFT JOIN `202_facebook` AS 2f on (2f.click_id=2c.click_id) 
                 LEFT JOIN `202_utm_source` AS 2us ON (2g.utm_source_id = 2us.utm_source_id)
                 LEFT JOIN `202_utm_medium` AS 2um ON (2g.utm_medium_id = 2um.utm_medium_id)
                 LEFT JOIN `202_utm_campaign` AS 2uca ON (2g.utm_campaign_id = 2uca.utm_campaign_id) 
@@ -836,6 +836,16 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
     // No such click (a page reading an earlier one by a subid it was sent):
     // its tokens are blank, as they always were.
     $click_row ??= [];
+    // The ids 1.9.79 added, read apart (AdClickIdColumns::of()) and only for
+    // a URL that asks for one, from a click the read above found the owner's.
+    // The msclkid and fbclid among them: 202_bing and 202_facebook, read here
+    // before, were written by no version in this repository's history.
+    if ($click_row !== [] && \Prosper202\Click\AdClickIdColumns::namedIn((string) $url)) {
+        $click_row += \Prosper202\Click\AdClickIdColumns::of(
+            \Prosper202\Repository\LookupRepositoryFactory::connection($db),
+            (int) $tokenClickId
+        );
+    }
 
     return replaceClickPlaceholders($url, (string) $click_id, [
         'keyword' => $click_row['keyword'] ?? null,
@@ -845,6 +855,9 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
         'c3' => $click_row['c3'] ?? null,
         'c4' => $click_row['c4'] ?? null,
         'gclid' => $click_row['gclid'] ?? null,
+        'gbraid' => $click_row['gbraid'] ?? null,
+        'wbraid' => $click_row['wbraid'] ?? null,
+        'ttclid' => $click_row['ttclid'] ?? null,
         'msclkid' => $click_row['msclkid'] ?? null,
         'fbclid' => $click_row['fbclid'] ?? null,
         'utm_source' => $click_row['utm_source'] ?? null,
