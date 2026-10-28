@@ -944,13 +944,15 @@ final class RotatorRuleSetIntegrationTest extends TestCase
             'criteria' => [
                 ['type' => 'country', 'value' => ' United States(US), Canada(CA),, '],
                 ['type' => 'city', 'statement' => 'is_not', 'value' => 'all'],
+                ['type' => 'region', 'value' => ' All '],
+                ['type' => 'browser', 'value' => 'Chrome, aLL'],
             ],
             'redirects' => [['redirect_url' => 'https://v.example/']],
         ]]);
         self::assertSame(
-            ['United States(US),Canada(CA)', 'ALL'],
+            ['United States(US),Canada(CA)', 'ALL', 'ALL', 'Chrome,ALL'],
             array_column($this->rotators()->listRules($id)['data'][0]['criteria'], 'value'),
-            'split on commas and trimmed, as the page\'s editor sends them, and ALL as both redirects read it'
+            'split on commas and trimmed, as the page\'s editor sends them, and ALL in any case as ALL (Criterion)'
         );
     }
 

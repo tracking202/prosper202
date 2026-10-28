@@ -119,9 +119,10 @@ final class IpCriterionTest extends TestCase
             . "\t\tdie(\$reason === null ? \"ERROR\" : 'ERROR: ' . \$reason);\n"
             . "\t};\n";
         self::assertSame(1, substr_count($source, $refuse), 'the refusal answers ERROR: <reason>');
-        $write = "\$value = \$db->real_escape_string(\$criteria['type'] === 'ip'"
-            . " ? \\Prosper202\\Rotator\\IpCriterion::normalize((string) \$criteria['value'])['value']"
-            . " : \$criteria['value']);";
+        // Any other type's value as the API stores it too (Criterion).
+        $write = "\$value = \$db->real_escape_string(\$criteria['type'] === 'ip'\n"
+            . "                ? \\Prosper202\\Rotator\\IpCriterion::normalize((string) \$criteria['value'])['value']\n"
+            . "                : \\Prosper202\\Rotator\\Criterion::normalize((string) \$criteria['value']));";
         self::assertSame(1, substr_count($source, $write), 'the write');
         $script = (string) file_get_contents(dirname(__DIR__, 2) . '/202-js/p202-setup.js');
         self::assertStringContainsString("result.indexOf('ERROR: ') === 0 ? result.slice(7) : ''", $script);

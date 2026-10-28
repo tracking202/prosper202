@@ -508,6 +508,18 @@ selected_lp "$P" 'name="default_lp"' "the default's select shows the advanced la
 selected_lp "$P" 'data-rule-field="redirect_lp"' "the rule's redirect select shows it chosen"
 has "$P" "(advanced)" "and names it as an advanced page"
 
+# A criterion typed as "all" is stored as ALL, the spelling every reader
+# shares (Prosper202\Rotator\Criterion): offrtr.php read only ALL as every
+# visitor, so a rule saved as "all" sent offer-link clicks to the default.
+say "rotators: a criterion typed as all is stored as ALL and listed as any visitor"
+ALL_ARGS=("${ADV_ARGS[@]/%value]=US,GB/value]=all}")
+get "$SETUP/rotator.php?rotator_id=$ROT" "$P"; T=$(token_of "$P")
+ajax "$AJAX/rotator.php" "$OUT/r-all.txt" --data-urlencode "token=$T" "${ALL_ARGS[@]}"
+has "$OUT/r-all.txt" "DONE" "a rule whose criterion is all is accepted"
+eq "$(Q "SELECT value FROM 202_rotator_rules_criteria WHERE rotator_id=$ROT")" "ALL" "and its criterion is stored as ALL"
+get "$SETUP/rotator.php" "$OUT/r-all-list.html"
+has "$OUT/r-all-list.html" "If any visitor" "the list says the rule matches any visitor"
+
 # ─── Trackers ───────────────────────────────────────────────────────────
 say "trackers: generate, list, delete"
 P="$OUT/get_trackers.html"

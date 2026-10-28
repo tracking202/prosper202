@@ -128,8 +128,8 @@ func rotatorDestination(data map[string]interface{}, geo string) (rule, dest str
 			val, _ := cr["value"].(string)
 			ok := true
 			switch {
-			case strings.EqualFold(strings.TrimSpace(val), "ALL"):
-				ok = true // catch-all criterion matches any visitor
+			case criterionMatchesEveryone(criterionValues(val)):
+				ok = true // ALL, in any case and among other values, matches any visitor
 				explain = append(explain, fmt.Sprintf("rule %q: %s ALL -> true", r["rule_name"], stmt))
 			case ctype == "country":
 				codes := countryCodesFromValue(val)

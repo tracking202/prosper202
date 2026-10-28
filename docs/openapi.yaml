@@ -2936,7 +2936,7 @@ paths:
         needs a `weight`, and at least one weight above 0. Every campaign and
         landing page a redirect names must be one of your live ones. Each
         criterion's value is stored as the page stores it: split on commas
-        and trimmed (`all` as `ALL`); a device is lower case. Every key is
+        and trimmed (`all`, in any case, as `ALL`); a device is lower case. Every key is
         checked, at every level; a problem is a `422` naming its place
         (`rules.1.redirects.0.redirect_campaign`), with every problem in the
         set reported at once and nothing written. A set has at least one
@@ -12324,7 +12324,10 @@ components:
                 type: string
                 description: >-
                   Comma-separated, stored with each value trimmed and the empty
-                  ones dropped (`all` as `ALL`, which matches every visitor);
+                  ones dropped. `ALL` among the values, in any case, matches
+                  every visitor whatever the statement, from every entry point
+                  (stored as `ALL`; a value stored before as `all`, `All` or
+                  with a space beside it is read the same way);
                   countries as Name(CC), e.g. "United States(US)"; devices in
                   lower case (a capital never matches, so it is a 422).
                   For type ip, single IPv4 or IPv6 addresses, stored in canonical

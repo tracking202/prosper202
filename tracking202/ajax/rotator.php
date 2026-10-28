@@ -559,7 +559,10 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
         foreach ($rule['criteria'] as $criteria) {
             $type = $db->real_escape_string($criteria['type']);
             $statement = $db->real_escape_string($criteria['statement']);
-            $value = $db->real_escape_string($criteria['type'] === 'ip' ? \Prosper202\Rotator\IpCriterion::normalize((string) $criteria['value'])['value'] : $criteria['value']);
+            // Stored as the API stores it, every visitor as ALL (Criterion).
+            $value = $db->real_escape_string($criteria['type'] === 'ip'
+                ? \Prosper202\Rotator\IpCriterion::normalize((string) $criteria['value'])['value']
+                : \Prosper202\Rotator\Criterion::normalize((string) $criteria['value']));
 
             if ($criteria['criteria_id'] != 'none') {
                 $criteria_sql = "UPDATE 202_rotator_rules_criteria SET rotator_id='".$rotator_id."', rule_id='".$rule_id."', type='".$type."', statement='".$statement."', value='".$value."' WHERE id='".(int)$criteria['criteria_id']."'";

@@ -446,7 +446,8 @@ func normalizeCriteria(raw interface{}) []interface{} {
 		result = append(result, map[string]interface{}{
 			"type":      scalarString(criterion["type"]),
 			"statement": scalarString(criterion["statement"]),
-			"value":     scalarString(criterion["value"]),
+			// As the redirects read it: "all" on one install is "ALL" on the other.
+			"value": criterionNormalize(scalarString(criterion["value"])),
 		})
 	}
 
