@@ -257,6 +257,7 @@ class UsersController
             $switchesOff = $switchesOff || ($f === 'user_active' && !\Prosper202\User\UserStanding::isActive($value));
         }
 
+        $changesPassword = false;
         if (array_key_exists('user_pass', $payload) && $payload['user_pass'] !== '') {
             $password = $payload['user_pass'];
             if (!is_string($password)) {
@@ -269,6 +270,7 @@ class UsersController
             $sets[] = 'user_pass = ?';
             $binds[] = \hash_user_pass($password);
             $types .= 's';
+            $changesPassword = true;
         }
 
         if (empty($sets)) {
@@ -278,15 +280,17 @@ class UsersController
         $binds[] = $id;
         $types .= 'i';
 
-        // Switched off, the user's remember-me keys go in the same
-        // transaction: a browser kept signed in must not sign back in when
-        // the user is switched on again (RememberMeKeys).
-        $this->transaction(function () use ($sets, $types, $binds, $id, $switchesOff): void {
+        // Switched off, or given a new password, the user's remember-me keys
+        // go in the same transaction: a browser kept signed in must not sign
+        // back in when the user is switched on again, nor a stolen cookie
+        // outlive the password (RememberMeKeys).
+        $revokes = $switchesOff || $changesPassword;
+        $this->transaction(function () use ($sets, $types, $binds, $id, $revokes): void {
             $stmt = $this->prepare('UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?');
             $this->bind($stmt, $types, ...$binds);
             $this->execute($stmt, 'Update failed');
             $stmt->close();
-            if ($switchesOff) {
+            if ($revokes) {
                 \Prosper202\User\RememberMeKeys::revokeAll(new Connection($this->db), $id);
             }
         });

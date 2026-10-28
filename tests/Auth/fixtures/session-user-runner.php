@@ -17,8 +17,10 @@
  *       | call:sign_out             AUTH::signOut()
  *       | call:authenticate         AUTH::authenticate(P202_SU_NAME, P202_SU_PASS)
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_SU_USER, P202_SU_SESSION_DIR,
- *       P202_SU_SESSION (none: no session), P202_SU_OWN (user_own_id, when not
- *       P202_SU_USER), P202_SU_REMEMBER (the remember_me cookie),
+ *       P202_SU_SESSION (none: no session; anonymous: a session holding only
+ *       its token, as a browser that has not signed in has), P202_SU_OWN
+ *       (user_own_id, when not P202_SU_USER), P202_SU_REMEMBER (the
+ *       remember_me cookie), P202_SU_GET (a JSON object: the query string),
  *       P202_SU_POST (a JSON object: a POST; "token": "SESSION" sends the
  *       session's), P202_SU_AJAX=1 (X-Requested-With, as jQuery sends it) or
  *       fetch (Sec-Fetch-Dest: empty, as a browser marks fetch()),
@@ -72,15 +74,20 @@ if (getenv('P202_SU_AJAX') === 'fetch') {
     $_SERVER['HTTP_SEC_FETCH_DEST'] = 'empty';
     $_SERVER['HTTP_SEC_FETCH_MODE'] = 'cors';
 }
-$_GET = [];
+$_GET = json_decode((string) (getenv('P202_SU_GET') ?: '{}'), true, 8, JSON_THROW_ON_ERROR);
 $_POST = $post;
-$_REQUEST = $post;
+$_REQUEST = array_merge($_GET, $post);
 $remember = (string) getenv('P202_SU_REMEMBER');
 $_COOKIE = $remember === '' ? [] : ['remember_me' => $remember];
 
 $runnerToken = 'p202sessionuserrunnertoken000000';
 session_save_path($sessionDir);
-if (getenv('P202_SU_SESSION') !== 'none') {
+if (getenv('P202_SU_SESSION') === 'anonymous') {
+    session_id('p202su' . bin2hex(random_bytes(8)));
+    session_start();
+    $_SESSION = ['token' => $runnerToken];
+    session_write_close();
+} elseif (getenv('P202_SU_SESSION') !== 'none') {
     session_id('p202su' . bin2hex(random_bytes(8)));
     session_start();
     $_SESSION = [
