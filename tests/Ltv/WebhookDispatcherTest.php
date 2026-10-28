@@ -95,18 +95,24 @@ final class WebhookDispatcherTest extends TestCase
 
     public function testTheSummarySaysWhatTheRunDid(): void
     {
-        $idle = ['delivered' => 0, 'failed' => 0, 'expired' => 0, 'deferred' => 0, 'taken' => 0, 'more' => false];
+        $idle = [
+            'delivered' => 0, 'failed' => 0, 'held' => 0, 'expired' => 0, 'deferred' => 0, 'taken' => 0,
+            'more' => false,
+        ];
         self::assertFalse(WebhookDispatcher::didWork($idle));
         self::assertSame('0 delivered, 0 failed or retrying', WebhookDispatcher::summary($idle));
 
-        $busy = ['delivered' => 3, 'failed' => 1, 'expired' => 1000, 'deferred' => 2, 'taken' => 1, 'more' => true];
+        $busy = [
+            'delivered' => 3, 'failed' => 1, 'held' => 4, 'expired' => 1000, 'deferred' => 2, 'taken' => 1,
+            'more' => true,
+        ];
         self::assertTrue(WebhookDispatcher::didWork($busy));
         self::assertSame(
-            '3 delivered, 1 failed or retrying, 1000 expired unsent, 2 left for the next run (their webhook was slow'
-            . ' to fail), 1 sent by another run; more due, next run',
+            '3 delivered, 1 failed or retrying, 4 held for a dead webhook, 1000 expired unsent, 2 left for the next'
+            . ' run (their webhook was slow to fail), 1 sent by another run; more due, next run',
             WebhookDispatcher::summary($busy)
         );
-        foreach (['failed', 'expired', 'deferred', 'taken'] as $key) {
+        foreach (['failed', 'held', 'expired', 'deferred', 'taken'] as $key) {
             self::assertTrue(WebhookDispatcher::didWork([$key => 1] + $idle), $key);
         }
     }

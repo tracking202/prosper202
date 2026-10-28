@@ -622,6 +622,7 @@ try {
             $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField(PathId::of($ctx), $payload));
             $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField(PathId::of($ctx))));
             $r->post('/webhooks',                 fn() => ['_status' => 201] + $crud($cls)->createWebhook($payload));
+            $r->put('/webhooks/{id}', fn($ctx) => $crud($cls)->updateWebhook(PathId::of($ctx), $payload));
             $r->delete('/webhooks/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteWebhook(PathId::of($ctx))));
             $r->post('/integrations',             fn() => ['_status' => 201] + $crud($cls)->createIntegration($payload));
             $r->delete('/integrations/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->deleteIntegration(PathId::of($ctx))));

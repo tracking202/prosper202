@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 // The Administration commands (system_admin.go) and the LTV product
-// update/delete and webhook delivery log, against a recording server
+// update/delete, webhook delivery log and revival, against a recording server
 // (updateServer, newLtvServer). The contract asserted is the CLI's: what each
 // command sends, what it refuses before sending anything, and the exit code
 // and hint of each failure.
@@ -465,6 +466,46 @@ func TestLtvProductDeletePreviewsAndExplainsARefusal(t *testing.T) {
 	_, _, err := executeCommand("ltv", "product", "delete", "12", "--force")
 	if code := exitCodeForError(err); code != ExitValidation || !strings.Contains(hintFor(err), "ltv product update") {
 		t.Errorf("exit %d, hint %q", code, hintFor(err))
+	}
+}
+
+func TestLtvWebhookReviveSendsTheRevival(t *testing.T) {
+	cases := []struct {
+		args []string
+		body string
+	}{
+		{[]string{"3"}, `{"requeue":true,"status":"active"}`},
+		{[]string{"3", "--requeue=false"}, `{"requeue":false,"status":"active"}`},
+	}
+	for _, c := range cases {
+		srv := newLtvServer(t, func(ltvRequest) (int, string) {
+			return 200, `{"data":{"webhook_id":3,"status":"active","revived":true,"requeued":2,"attempts_reset":0}}`
+		})
+		out, _, err := executeCommand(append([]string{"ltv", "webhooks", "revive"}, c.args...)...)
+		if err != nil {
+			t.Fatalf("%v: %v", c.args, err)
+		}
+		req := srv.only(t)
+		if req.Method != "PUT" || req.Path != "/ltv/webhooks/3" || req.Body != c.body {
+			t.Errorf("%v: request = %+v", c.args, req)
+		}
+		if !regexp.MustCompile(`requeued:\s+2\b`).MatchString(out) {
+			t.Errorf("%v: output = %s", c.args, out)
+		}
+	}
+	for _, args := range [][]string{{"x"}, {"0"}, {"3", "--requeue=maybe"}} {
+		srv := newLtvServer(t, nil)
+		_, _, err := executeCommand(append([]string{"ltv", "webhooks", "revive"}, args...)...)
+		if exitCodeForError(err) != ExitValidation || len(srv.seen()) != 0 {
+			t.Errorf("%v: exit %d, sent %d", args, exitCodeForError(err), len(srv.seen()))
+		}
+	}
+	newLtvServer(t, func(ltvRequest) (int, string) {
+		return 404, `{"error":true,"status":404,"message":"Webhook not found"}`
+	})
+	_, _, err := executeCommand("ltv", "webhooks", "revive", "9")
+	if exitCodeForError(err) != ExitValidation || !strings.Contains(hintFor(err), "`p202 ltv webhooks list`") {
+		t.Errorf("404: exit %d, hint %q", exitCodeForError(err), hintFor(err))
 	}
 }
 

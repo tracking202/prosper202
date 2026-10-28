@@ -12,7 +12,8 @@
       "Changed: After an upgrade, tracking links look up their ids afresh instead of reading what the previous version cached, so the first clicks after an upgrade each make one more database read; so do the bot-range and browser checks",
       "Changed: When a cron run was recorded in the last five minutes, turning AutoCron on in Settings no longer simply refuses: it says why AutoCron may not be needed and offers to turn it on anyway, since anyone can open the cron address",
       "Fixed: Security. Reading a user's preferences through the API or the CLI showed the account's integration secrets (the ClickBank, JVZoo, Zaxaa and IPQS keys, the Slack webhook, RevContent and the Landing Page Optimizer's keys). It says only whether each one is stored. If anyone who should not see them held an API key, replace those secrets at each network",
-      "Fixed: LTV webhooks, the Landing Page Optimizer's among them, are sent: the cron job sends what is due every minute, where nothing a default install ran sent them. After the upgrade, the events of the last 7 days that were waiting are sent, oldest first; older ones are not sent, and the webhook's delivery log shows them as expired"
+      "Fixed: LTV webhooks, the Landing Page Optimizer's among them, are sent: the cron job sends what is due every minute, where nothing a default install ran sent them. After the upgrade, the events of the last 7 days that were waiting are sent, oldest first; older ones are not sent, and the webhook's delivery log shows them as expired",
+      "New: A dead LTV webhook can be revived (LTV Settings, PUT /ltv/webhooks/{id}, p202 ltv webhooks revive): it keeps its id, URL and secret, so the Landing Page Optimizer needs no pairing again, and it is sent the events of the last 7 days it did not get, which are held while it is dead"
     ]
   },
   "1.9.78": {

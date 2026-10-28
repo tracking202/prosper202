@@ -36,7 +36,9 @@ use Prosper202\Validation\OutboundUrlGuard;
  * before 1.9.79) sends the last week of it, oldest first, not a year of stale
  * events. Retries (MysqlWebhookRepository::recordAttempt()) are 2^attempts
  * minutes apart and stop at MAX_ATTEMPTS, which marks the webhook dead:
- * about an hour, far inside the limit.
+ * about an hour, far inside the limit. A dead webhook's deliveries are held,
+ * not tried (MysqlWebhookRepository::holdDelivery()); reviving it within
+ * MAX_AGE_SECONDS of a delivery's queueing sends that delivery (revive()).
  */
 final class WebhookDispatcher
 {
@@ -85,7 +87,7 @@ final class WebhookDispatcher
      *
      * @param (callable(array<string, mixed>): array{0: bool, 1: ?int, 2: string})|null $send
      * @param (callable(): int)|null $clock
-     * @return array{delivered: int, failed: int, expired: int, deferred: int, taken: int, more: bool}|null
+     * @return array{delivered: int, failed: int, held: int, expired: int, deferred: int, taken: int, more: bool}|null
      */
     public static function runExclusive(
         Connection $conn,
@@ -124,12 +126,15 @@ final class WebhookDispatcher
      * row and the run goes on; a database failure throws, and a delivery it
      * had claimed is due again once the claim lapses.
      *
-     * @return array{delivered: int, failed: int, expired: int, deferred: int, taken: int, more: bool}
+     * @return array{delivered: int, failed: int, held: int, expired: int, deferred: int, taken: int, more: bool}
      */
     public function run(int $deadline): array
     {
         $repo = new MysqlWebhookRepository($this->conn);
-        $report = ['delivered' => 0, 'failed' => 0, 'expired' => 0, 'deferred' => 0, 'taken' => 0, 'more' => false];
+        $report = [
+            'delivered' => 0, 'failed' => 0, 'held' => 0, 'expired' => 0, 'deferred' => 0, 'taken' => 0,
+            'more' => false,
+        ];
 
         do {
             $now = time();
@@ -175,8 +180,13 @@ final class WebhookDispatcher
                 }
                 $claimed++;
 
-                if ((string) $delivery['webhook_status'] !== 'active') {
-                    // Disabled or dead after this delivery was queued.
+                $webhookStatus = (string) $delivery['webhook_status'];
+                if ($webhookStatus === 'dead' && $repo->holdDelivery($deliveryId, time())) {
+                    // Kept for a revival (MysqlWebhookRepository::revive()), not tried.
+                    $report['held']++;
+                    continue;
+                }
+                if ($webhookStatus !== 'active' && $webhookStatus !== 'dead') {
                     $repo->recordAttempt($deliveryId, $webhookId, false, null, 'endpoint not active');
                     $report['failed']++;
                     continue;
@@ -297,11 +307,16 @@ final class WebhookDispatcher
     /**
      * One line, as both entry points print it.
      *
-     * @param array{delivered: int, failed: int, expired: int, deferred: int, taken: int, more: bool} $report
+     * @param array{
+     *     delivered: int, failed: int, held: int, expired: int, deferred: int, taken: int, more: bool
+     * } $report
      */
     public static function summary(array $report): string
     {
         $parts = [$report['delivered'] . ' delivered', $report['failed'] . ' failed or retrying'];
+        if ($report['held'] > 0) {
+            $parts[] = $report['held'] . ' held for a dead webhook';
+        }
         if ($report['expired'] > 0) {
             $parts[] = $report['expired'] . ' expired unsent';
         }
@@ -318,11 +333,13 @@ final class WebhookDispatcher
     /**
      * Whether a report has anything to say.
      *
-     * @param array{delivered: int, failed: int, expired: int, deferred: int, taken: int, more: bool} $report
+     * @param array{
+     *     delivered: int, failed: int, held: int, expired: int, deferred: int, taken: int, more: bool
+     * } $report
      */
     public static function didWork(array $report): bool
     {
-        return $report['delivered'] + $report['failed'] + $report['expired']
+        return $report['delivered'] + $report['failed'] + $report['held'] + $report['expired']
             + $report['deferred'] + $report['taken'] > 0;
     }
 

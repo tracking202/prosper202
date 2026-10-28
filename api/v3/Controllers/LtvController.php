@@ -1170,6 +1170,48 @@ class LtvController
         });
     }
 
+    /**
+     * Revive a webhook: `status` "active" (the one state a caller sets; the
+     * server marks a webhook dead) makes a dead one active again with its
+     * id, URL and secret, and its failure count back at 0. `requeue` (a
+     * flag, default true) also sends again every delivery it did not
+     * deliver from the last 7 days: the one that killed it and those held
+     * while it was dead (MysqlWebhookRepository::revive()). An active
+     * webhook is left as it is (`revived` false).
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function updateWebhook(int $webhookId, array $payload): array
+    {
+        PayloadKeys::refuseUnknown($payload, ['status', 'requeue'], 'a webhook update');
+        if (!array_key_exists('status', $payload)) {
+            throw new ValidationException('status is required', [
+                'status' => 'Send "active" to revive a dead webhook',
+            ]);
+        }
+        if ($payload['status'] !== 'active') {
+            throw new ValidationException('Invalid status', [
+                'status' => 'must be "active", which revives a dead webhook: the server alone marks one dead,'
+                    . ' and DELETE /ltv/webhooks/{id} removes one',
+            ]);
+        }
+        $requeue = RequestFlag::param($payload, 'requeue', true);
+
+        return $this->wrap(function () use ($webhookId, $requeue): array {
+            try {
+                $revival = $this->webhooks->revive($this->userId, $webhookId, $requeue, time());
+            } catch (RecordNotFoundException) {
+                throw new NotFoundException('Webhook not found');
+            }
+            $webhook = $this->webhooks->get($this->userId, $webhookId);
+            if ($webhook === null) {
+                throw new NotFoundException('Webhook not found');
+            }
+
+            return ['data' => $webhook + $revival + ['requeue' => $requeue]];
+        });
+    }
+
     public function deleteWebhook(int $webhookId): void
     {
         $this->wrap(function () use ($webhookId): void {
