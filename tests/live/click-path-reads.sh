@@ -143,6 +143,10 @@ if [ -z "$FCA" ] || [ -z "$FRT" ] || [ -z "$FTA" ] || [ -z "$FPA" ] || [ -z "$PX
     echo "the other account's records were not stored" >&2
     exit 2
 fi
+# Both accounts' links are clicked (off.php names the other's campaign).
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" "$ME" "$OTHER" || exit 2
 
 say "a direct link (dl.php)"
 before=$(since)
