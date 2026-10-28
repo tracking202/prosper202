@@ -15,8 +15,9 @@
 #      scheduler's curl and AutoCron do: each says the cron is already
 #      running and does nothing, the command line exits 0 and logs why, and
 #      no run is recorded; health.php says a run holds the lock
-#   2. sets the lock file's time eleven minutes back (what the old lock read
-#      as stale) and runs the job again: still already running
+#   2. sets the lock file's time eleven minutes back (and a cron.lock's, the
+#      file the old lock deleted as stale at that age) and runs the job
+#      again: still already running (the old lock ran it beside the first)
 #   3. lets the held run go: it finishes its tiers, the one minute run, and is
 #      the one recorded; health.php says nobody holds the lock
 #   4. kills a held run with SIGKILL: the next run takes the lock at once
@@ -148,10 +149,13 @@ curl -sS "$BASE/202-cronjobs/index.php" -o "$OUT/scheduler.out"
 has "$OUT/scheduler.out" "Cron job already running" "a scheduler's curl, and AutoCron's request, are turned away"
 eq "$(health during)" "true" "health.php says a run holds the lock"
 eq "$(recorded)" "0" "no run is recorded"
-eq "$(minute_runs)" "0" "no minute tier has run"
+# Not 202_cronjobs itself: a read of it waits for the other session's lock.
+hasnt "$OUT/held.out" "Processing" "and the held run has not got past its first tier's check"
 
 say "2. a run older than ten minutes is not stale"
 touch -d '11 minutes ago' "$LOCK"
+# And the file the earlier lock read, should it be the one taken.
+if [ -e "$ROOT/202-cronjobs/cron.lock" ]; then touch -d '11 minutes ago' "$ROOT/202-cronjobs/cron.lock"; fi
 eq "$(( $(date +%s) - $(stat -c %Y "$LOCK") >= 600 ))" "1" "the lock file reads eleven minutes old"
 going "$HELD" "the held run is still going"
 eq "$(cron eleven)" "0" "a run eleven minutes into the held one exits 0"
