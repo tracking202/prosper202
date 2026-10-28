@@ -23,11 +23,16 @@ namespace Tests\Support;
  * for the call. A call inside a parenthesised operand, or a call that
  * starts the expression, is not one of the string's operands.
  *
+ * Each UNREAD in a string's text has its source in `holes`, in order: the
+ * operand's tokens without whitespace (`$mysql['user_id']`, `(int)$id`), an
+ * interpolation's (`{$mysql['user_id']}`), and '' for what follows the
+ * string unjoined.
+ *
  * The reading RollupWritersAreMarkedTest does for table names, as a helper
  * other scans can share.
  *
  * @phpstan-type Call array{class: string, method: string, args: list<string|null>, offset: int}
- * @phpstan-type Assembled array{line: int, text: string, calls: list<Call>}
+ * @phpstan-type Assembled array{line: int, text: string, calls: list<Call>, holes: list<string>}
  */
 final class AssembledStrings
 {
@@ -81,6 +86,7 @@ final class AssembledStrings
                 continue;
             }
             [$text, $next, $line] = $operand;
+            $holes = $operand[3] ?? [];
             $chainCalls = [];
             while ($next < $to && ($tokens[$next] ?? null) === '.') {
                 $partCalls = [];
@@ -91,7 +97,13 @@ final class AssembledStrings
                 foreach ($partCalls as $call) {
                     $chainCalls[] = $call + ['offset' => strlen($text)];
                 }
-                $text .= $more[0] ?? self::UNREAD;
+                if ($more[0] === null) {
+                    $text .= self::UNREAD;
+                    $holes[] = self::source($tokens, $next + 1, $more[1]);
+                } else {
+                    $text .= $more[0];
+                    array_push($holes, ...($more[3] ?? []));
+                }
                 $next = $more[1];
             }
             // Whatever follows the string — an operand the loop could not
@@ -103,8 +115,9 @@ final class AssembledStrings
                 && self::is($tokens[$next + 2] ?? null, [T_CONCAT_EQUAL]);
             if ($after === '.' || self::is($after, [T_CONCAT_EQUAL]) || $continued) {
                 $text .= self::UNREAD;
+                $holes[] = '';
             }
-            $out[] = ['line' => $line, 'text' => $text, 'calls' => $chainCalls];
+            $out[] = ['line' => $line, 'text' => $text, 'calls' => $chainCalls, 'holes' => $holes];
             $i = max($i + 1, $next);
         }
     }
@@ -120,7 +133,7 @@ final class AssembledStrings
      * @param array{ns: string, uses: array<string, string>, classes: array<int, string>} $scope
      * @param list<Assembled> $out
      * @param list<array{class: string, method: string, args: list<string|null>}> $calls
-     * @return array{0: string|null, 1: int, 2?: int}|null
+     * @return array{0: string|null, 1: int, 2?: int, 3?: list<string>}|null
      */
     private static function operand(array $tokens, int $i, int $to, array $scope, array &$out, array &$calls): ?array
     {
@@ -135,6 +148,7 @@ final class AssembledStrings
             $end = $t === '"' ? '"' : T_END_HEREDOC;
             $line = self::lineAt($tokens, $i);
             $text = '';
+            $holes = [];
             $unread = false;
             for ($j = $i + 1; $j < $to; $j++) {
                 $u = $tokens[$j];
@@ -144,13 +158,17 @@ final class AssembledStrings
                 if (is_array($u) && $u[0] === T_ENCAPSED_AND_WHITESPACE) {
                     $text .= $u[1];
                     $unread = false;
-                } elseif (!$unread) {
-                    $text .= self::UNREAD;
-                    $unread = true;
+                } else {
+                    if (!$unread) {
+                        $text .= self::UNREAD;
+                        $holes[] = '';
+                        $unread = true;
+                    }
+                    $holes[count($holes) - 1] .= is_array($u) ? $u[1] : $u;
                 }
             }
 
-            return [$text, $j + 1, $line];
+            return [$text, $j + 1, $line, $holes];
         }
         $constant = self::is($t, [...self::NAMES, T_STATIC])
             && self::is($tokens[$i + 1] ?? null, [T_DOUBLE_COLON])
@@ -164,7 +182,7 @@ final class AssembledStrings
             if (is_array($value)) {
                 array_walk_recursive($value, static function ($v) use (&$out, $t): void {
                     if (is_string($v)) {
-                        $out[] = ['line' => $t[2], 'text' => $v, 'calls' => []];
+                        $out[] = ['line' => $t[2], 'text' => $v, 'calls' => [], 'holes' => []];
                     }
                 });
             }
@@ -254,6 +272,21 @@ final class AssembledStrings
     private static function is(mixed $token, array $ids): bool
     {
         return is_array($token) && in_array($token[0], $ids, true);
+    }
+
+    /**
+     * The tokens in [$from, $to) as written, less whitespace and comments.
+     *
+     * @param list<mixed> $tokens
+     */
+    private static function source(array $tokens, int $from, int $to): string
+    {
+        $text = '';
+        for ($j = $from; $j < $to; $j++) {
+            $text .= is_array($tokens[$j]) ? $tokens[$j][1] : $tokens[$j];
+        }
+
+        return $text;
     }
 
     /** @param list<mixed> $tokens */
