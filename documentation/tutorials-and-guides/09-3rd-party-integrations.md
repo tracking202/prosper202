@@ -117,7 +117,7 @@ is sent again every hour for 72 hours):
 | `SALE`, `BILL` (a rebill, under its own receipt) | a conversion on the click, source `jvzoo`, under its `ctransreceipt`, worth its `ctransamount` (what JVZoo pays you: an affiliate's commission, a vendor's share) | `200 recorded` |
 | the same `SALE` again | nothing; one stating another amount is refused | `200 duplicate` / `409` |
 | `RFND`, `CGBK`, `INSF` (an eCheck chargeback) | a reversal of the whole sale its `ctransreceipt` names (JVZoo refunds a payment whole); a sale is reversed once, so a chargeback after a refund changes nothing | `200 reversed` / `200 duplicate`, `404` when no such sale is on the click |
-| a `SALE` again after its refund (JVZoo's way of undoing a refund) | nothing: the answer names the reversal; delete it (`p202 conversion delete <id>`) to count the sale again | `409` |
+| a `SALE` again after its refund (JVZoo's way of undoing a refund) | nothing: the answer names the reversal; delete it (`p202 conversion delete <id>`) to count the sale again. A refund sent after that reverses the sale again; the first refund sent again unchanged is a retry and changes nothing | `409` |
 | `CANCEL-REBILL`, `UNCANCEL-REBILL` | nothing | `200 ignored` |
 | `TEST` | nothing | `200 test` |
 | a notification with no click (no tid, a tid that is not a click id, no `subid` in `cvendthru`) | nothing | `200 no_click` |

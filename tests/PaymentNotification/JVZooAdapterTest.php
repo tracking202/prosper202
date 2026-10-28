@@ -393,6 +393,8 @@ final class JVZooAdapterTest extends TestCase
         sort($documented);
         sort($known);
         self::assertSame($documented, $known);
+        // The answers name the field the signature arrives in.
+        self::assertSame('cverify', (new JVZooAdapter(null))->signatureField());
         // caffitid, the field shaped like a click id, is first in name order.
         $order = JVZooAdapter::FIELDS;
         sort($order, SORT_STRING);

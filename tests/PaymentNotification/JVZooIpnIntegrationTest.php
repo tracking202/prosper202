@@ -310,11 +310,17 @@ final class JVZooIpnIntegrationTest extends TestCase
         self::assertSame([], self::conversions());
     }
 
-    /** JVZoo sends RFND, then SALE again under the receipt, when a refund is undone. */
+    /**
+     * JVZoo sends RFND, then SALE again under the receipt, when a refund is
+     * undone. Once the reversal is deleted the sale counts, the first refund
+     * sent again unchanged is that refund, and a refund sent later reverses
+     * the sale again.
+     */
     public function testASaleSentAgainAfterItsRefundIsNotAnsweredAsADuplicate(): void
     {
         $this->post(self::fields(), self::KEY);
-        $this->post(self::fields(['ctransaction' => 'RFND']), self::KEY);
+        $refund = self::fields(['ctransaction' => 'RFND', 'ctranstime' => '1792790000']);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($refund, self::KEY));
         $reversal = (int) self::conversions()[1]['conv_id'];
 
         $again = $this->post(self::fields(), self::KEY);
@@ -326,12 +332,27 @@ final class JVZooIpnIntegrationTest extends TestCase
 
         (new MysqlConversionRepository(new Connection(self::requireScratch())))->softDelete($reversal, self::ACCOUNT);
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post(self::fields(), self::KEY));
+
+        $resent = $this->post($refund, self::KEY);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $resent);
+        self::assertStringContainsString('since deleted; this RFND is that refund sent again', $resent->message);
+        $later = $this->post(['ctranstime' => '1792799999'] + $refund, self::KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $later);
+        self::assertSame(
+            [['47.00000', '0'], ['-47.00000', '1'], ['-47.00000', '0']],
+            array_map(static fn (array $r): array => [$r['click_payout'], $r['deleted']], self::conversions())
+        );
     }
 
     public function testNothingIsWrittenForANotificationTheStoredKeyDoesNotVerify(): void
     {
         $forged = $this->post(self::fields(), 'a-key-nobody-stored');
         self::assertOutcome(OutcomeKind::UNVERIFIED, 403, $forged);
+        self::assertStringStartsWith(
+            'The notification\'s cverify does not verify with any JVZoo secret key',
+            $forged->message,
+            'the 403 names the field JVZoo signs with'
+        );
 
         $signed = JVZooAdapterTest::signed(self::fields(), self::KEY);
         $tampered = $this->deliver(['ctransamount' => '4700.00'] + $signed);
