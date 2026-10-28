@@ -155,6 +155,12 @@ read for (see [Visitor identity](../features/visitor-identity.md)).
   have laws of the same shape, and masking more costs a report precision,
   never a visitor privacy.
 
+A new account starts at `eu`: every account made from 1.9.79 on, on a new
+install and on an upgraded one, whichever way it is made (the installer,
+Settings › Users, `POST /users`, `p202 user create`). An account made before
+keeps the setting it had, which is `disabled` unless someone changed it: an
+account started there until 1.9.79.
+
 Which setting applies: the stricter of the install's (the first account's,
 user 1) and the setting of the account the visitor's click belongs to — the
 account that owns the tracker, landing page, campaign or click the request
@@ -162,7 +168,11 @@ names, and for the app intakes the account that owns the app (an
 unregistered app's postback answers to the install's alone). A value that
 cannot be read counts as `all`. Tracking links read the install's alone
 before this release, so an account's own setting held back nobody unless the
-install's did too.
+install's did too. So an account added to an upgraded install holds back its
+own visitors from Europe even while the first account is `disabled`; set it
+to `disabled` to track them in full. And on a new install the first account's
+`eu` holds back every account's: under it, no account's setting can track a
+European visitor in full.
 
 What the mask changes downstream. The duplicate-click filter remembers
 addresses for a day, and under privacy it can only remember the masked one,
