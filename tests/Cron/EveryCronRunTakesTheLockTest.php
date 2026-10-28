@@ -25,10 +25,18 @@ use Tests\Support\SourceScan;
  * - nothing else includes index.php, so its tiers run nowhere else, and
  *   nothing else names the lock without being listed here: a second taker or
  *   anything that removes the file is a decision (removed while a run holds
- *   it, the next run would lock a new file beside it).
+ *   it, the next run would lock a new file beside it);
+ * - the analytics delivery, which index.php's hourly tier and
+ *   sync-messaging.php both make, is made only under its own lock
+ *   (ANALYTICS_DELIVERY_FILE), by both, through
+ *   MessagingService::deliverPendingExclusive(); a run that finds it held
+ *   delivers nothing;
+ * - and no job anywhere keeps its runs apart by touch()ing a file.
  *
  * CronLockTest runs the lock itself in child processes; tests/live/cron-lock.sh
- * runs index.php.
+ * runs index.php. OneAnalyticsDeliveryAtATimeIntegrationTest runs
+ * sync-messaging.php in child processes, and tests/live/sync-messaging-lock.sh
+ * runs it beside index.php.
  */
 final class EveryCronRunTakesTheLockTest extends TestCase
 {
@@ -40,21 +48,25 @@ final class EveryCronRunTakesTheLockTest extends TestCase
     private const TIERS = ['RunSecondsCronjob(', 'RunHourlyCronJob(', 'RunDailyCronjob(', 'AutoOptimizeDatabase(',
         'ClearOldClicks(', '\Prosper202\Cron\CronRun::isScheduled('];
 
-    /** Every file outside tests/ that names the lock, and why. */
+    /** Every file outside tests/ that names a cron lock, and why. */
     private const NAMED_BY = [
         '202-config/Cron/CronLock.php' => 'the lock',
-        '202-cronjobs/index.php' => 'takes it, once, for the whole run',
+        '202-cronjobs/index.php' => 'takes it, once, for the whole run; names the analytics delivery\'s for its'
+            . ' hourly tier',
         '202-cronjobs/health.php' => 'asks whether a run holds it (isHeld(), an instant\'s shared lock)',
+        '202-config/Messaging/MessagingService.class.php' => 'takes the analytics delivery\'s for each delivery'
+            . ' (deliverPendingExclusive())',
+        '202-cronjobs/sync-messaging.php' => 'names the analytics delivery\'s for deliverPendingExclusive()',
     ];
 
-    /**
-     * Files that still keep two runs apart by a file's presence, made with
-     * touch() and deleted once old, as index.php did, and why each remains.
-     */
-    private const PRESENCE_LOCKS = [
-        '202-cronjobs/sync-messaging.php' => 'the same lock (file_exists(), touch(), stale after 600 s); no default'
-            . ' scheduler runs this file, index.php delivers analytics hourly, so it is a backlog item',
+    /** The files that deliver the analytics backlog, which is done only under its lock. */
+    private const DELIVERS = [
+        '202-config/Messaging/MessagingService.class.php',
+        '202-cronjobs/index.php',
+        '202-cronjobs/sync-messaging.php',
     ];
+    private const DELIVERY_PATH = '\\Prosper202\\Cron\\CronLock::path('
+        . '\\Prosper202\\Cron\\CronLock::ANALYTICS_DELIVERY_FILE)';
 
     /** @return list<string> the file's tokens' text, without whitespace or comments */
     private static function tokens(string $source): array
@@ -72,7 +84,12 @@ final class EveryCronRunTakesTheLockTest extends TestCase
 
     private static function index(): string
     {
-        return implode('', self::tokens((string) file_get_contents(SourceScan::repoRoot() . '/' . self::INDEX)));
+        return self::code(self::INDEX);
+    }
+
+    private static function code(string $path): string
+    {
+        return implode('', self::tokens((string) file_get_contents(SourceScan::repoRoot() . '/' . $path)));
     }
 
     public function testTheRunTakesTheLockFirstAfterItsBootstrap(): void
@@ -153,9 +170,11 @@ final class EveryCronRunTakesTheLockTest extends TestCase
 
     /**
      * A lock that is a file's presence lets two runs both find it absent, and
-     * one that goes stale with age starts a run beside a long one. The scan
-     * looks for the call that made it, touch(): a presence lock made another
-     * way (fopen() with 'x', file_put_contents()) is not seen.
+     * one that goes stale with age starts a run beside a long one; a run that
+     * dies leaves it, and keeps every run out until it is old. The scan looks
+     * for the call that made it, touch(), anywhere outside tests/: a presence
+     * lock made another way (fopen() with 'x', file_put_contents()) is not
+     * seen.
      */
     public function testNoOtherJobIsKeptApartByAFilesPresence(): void
     {
@@ -176,19 +195,74 @@ final class EveryCronRunTakesTheLockTest extends TestCase
                 }
             }
         }
-        $found = array_values(array_unique($found));
-        $listed = array_keys(self::PRESENCE_LOCKS);
-        sort($found);
-        sort($listed);
-        self::assertSame($listed, $found, 'a job kept apart from its next run by touch()ing a file: take a CronLock'
-            . ' (an flock() held for the run) instead, or list it in PRESENCE_LOCKS with why');
+        self::assertSame([], array_values(array_unique($found)), 'a job kept apart from its next run by touch()ing'
+            . ' a file: take a CronLock (an flock() held for the run) instead');
+    }
+
+    public function testTheAnalyticsDeliveryIsMadeOnlyUnderItsLock(): void
+    {
+        require_once SourceScan::repoRoot() . '/202-config/Messaging/MessagingService.class.php';
+        self::assertTrue(
+            (new \ReflectionMethod(\MessagingService::class, 'deliverPending'))->isPrivate(),
+            'the delivery without its lock is MessagingService\'s own'
+        );
+        self::assertStringContainsString(
+            '{$lock=CronLock::take($lockPath);if($lock===null){returnnull;}'
+                . 'returnself::deliverPending($db,$maxBatchesPerUser,$maxConsecutiveFailures);}',
+            self::code(self::DELIVERS[0]),
+            'deliverPendingExclusive() takes the lock it is handed, delivers nothing while another run holds it,'
+                . ' and holds it until the delivery returns'
+        );
+
+        $callers = [];
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            if (str_contains(implode('', self::tokens($source)), 'deliverPending')) {
+                $callers[] = $path;
+            }
+        }
+        sort($callers);
+        self::assertSame(
+            self::DELIVERS,
+            $callers,
+            'every delivery of the backlog goes through deliverPendingExclusive()'
+        );
+
+        $hourly = self::index();
+        self::assertSame(
+            1,
+            substr_count($hourly, 'deliverPendingExclusive('),
+            'index.php delivers once, in its hourly tier'
+        );
+        self::assertStringContainsString(
+            '$analytics=MessagingService::deliverPendingExclusive(getDatabaseConnection(),' . self::DELIVERY_PATH . ');'
+                . 'if($analytics===null){echo\'Analytics delivery: another run holds the lock; skipped<br>\';}',
+            $hourly,
+            'index.php\'s hourly tier delivers under the analytics delivery\'s lock, and only says so while another'
+                . ' run holds it'
+        );
+
+        $own = self::code('202-cronjobs/sync-messaging.php');
+        self::assertSame(1, substr_count($own, 'deliverPendingExclusive('), 'sync-messaging.php delivers once');
+        self::assertStringContainsString(
+            '$lockPath=' . self::DELIVERY_PATH . ';'
+                . '$counts=MessagingService::deliverPendingExclusive(DB::getInstance()->getConnection(),$lockPath);'
+                . 'if($counts===null){error_log(\'Analytics delivery already running: another run holds \'.$lockPath'
+                . '.\'; this run did nothing.\');exit("Analytics delivery already running\n");}',
+            $own,
+            'sync-messaging.php delivers under the same lock, and a run that finds it held logs why and ends'
+        );
+        self::assertSame(3, substr_count($own, '$lockPath'), 'the path is assigned, locked and logged, nothing else');
+        self::assertSame(3, substr_count($own, 'lockPath'), 'nor named another way ($GLOBALS, compact())');
+        foreach (['unlink(', 'extract(', '$$', '$GLOBALS', 'unset('] as $construct) {
+            self::assertStringNotContainsString($construct, $own, "sync-messaging.php calls no $construct");
+        }
     }
 
     public function testEveryFileThatNamesTheLockIsListed(): void
     {
         $named = [];
         foreach (SourceScan::phpFiles() as $path => $source) {
-            if (preg_match('/\bCronLock\b|cron-run\.lock/', $source) === 1) {
+            if (preg_match('/\bCronLock\b|cron-run\.lock|analytics-delivery\.lock/', $source) === 1) {
                 $named[] = $path;
             }
         }
@@ -205,7 +279,7 @@ final class EveryCronRunTakesTheLockTest extends TestCase
         // The scripts that used to clear cron.lock: a removal by name only (a path in a variable is not seen).
         foreach (glob(SourceScan::repoRoot() . '/{tests/live,build,scripts}/*.sh', GLOB_BRACE) ?: [] as $script) {
             self::assertDoesNotMatchRegularExpression(
-                '/\b(?:rm|unlink)\b[^\n]*cron-run\.lock/',
+                '/\b(?:rm|unlink)\b[^\n]*(?:cron-run|analytics-delivery)\.lock/',
                 (string) file_get_contents($script),
                 basename($script) . ' removes the cron lock\'s file, which lets a run lock a new one beside a run'
                     . ' that holds it'

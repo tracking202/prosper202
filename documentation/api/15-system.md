@@ -77,6 +77,18 @@ user, and a run that cannot make, open or lock it stops with the reason (exit
 than running without the lock. `202-cronjobs/health.php`'s `isLocked` is
 whether a run holds the lock now (`null` when it cannot be read).
 
+The product-analytics delivery, which `index.php`'s hourly run makes and
+`202-cronjobs/sync-messaging.php` makes on its own, holds a lock of its own
+the same way (`flock()` on `202-cronjobs/analytics-delivery.lock`), so the two
+never deliver at once. While one holds it the other delivers nothing:
+`sync-messaging.php` answers "Analytics delivery already running", exits 0 and
+writes `Analytics delivery already running: another run holds …` to the
+server's error log, and the hourly run skips its delivery and goes on. A run
+that cannot make, open or lock the file delivers nothing and says why
+(`sync-messaging.php` exits 1; the hourly run writes `Analytics delivery
+failed: …` to the error log), so the users who can open `cron-run.lock` must
+be able to open this one too.
+
 ## Errors
 
 `GET /system/errors` — returns recent MySQL errors.

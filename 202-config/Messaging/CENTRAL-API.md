@@ -19,9 +19,9 @@ The client side (this repository) is implemented in:
 - `202-config/Messaging/MessagingService.class.php` — the local queue and delivery
 - `202-account/ajax/messaging/track.php` — the browser endpoint
 - `202-js/p202-chat.js` — the `Prosper202Messenger` command queue
-- `MessagingService::deliverPending()` — background delivery, run hourly by
-  `202-cronjobs/index.php` on every default deployment and by
-  `202-cronjobs/sync-messaging.php` on its own
+- `MessagingService::deliverPendingExclusive()` — background delivery, run
+  hourly by `202-cronjobs/index.php` on every default deployment and by
+  `202-cronjobs/sync-messaging.php` on its own, one at a time
 
 Each install is self-hosted and can only make **outbound** HTTPS requests, so
 all communication is client-initiated. The portal never connects to an
@@ -170,7 +170,7 @@ The client never shows transport errors to users.
 
 ## Operational note: the cron delivers users one by one
 
-`MessagingService::deliverPending()` lists the active users with an event
+`MessagingService::deliverPendingExclusive()` lists the active users with an event
 still pending or a changed attribute snapshot, and delivers each one's rows in
 batches of 100 events, one `/track` call per batch, up to 10 batches a user a
 run. Users with nothing pending are not visited. After three failed
@@ -181,7 +181,14 @@ five attempts.
 `202-cronjobs/index.php` runs it hourly, so a portal outage of a few hours
 does not use up those attempts. `202-cronjobs/sync-messaging.php` is the same
 run on its own, for an operator who wants a tighter cadence; not more often
-than every 5 minutes.
+than every 5 minutes. The two never deliver at once: each run holds a lock
+(`flock()` on `202-cronjobs/analytics-delivery.lock`) until it ends, with no
+age, and the kernel releases it if the run's process dies. While one holds it,
+the other delivers nothing: `index.php`'s hourly run skips its delivery, and
+`sync-messaging.php` says "Analytics delivery already running" and exits 0.
+Two deliveries at once read the same pending rows, so each event was sent
+twice, and while the portal was down each spent two of its five attempts on
+one outage.
 
 The page's own delivery (`track.php`) sends one batch a request. It answers
 `delivery: "more"` with `retry_after_s` when rows are left, as it does for

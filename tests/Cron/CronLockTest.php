@@ -265,5 +265,9 @@ final class CronLockTest extends TestCase
     public function testTheLockIsTheOneBesideTheCronJob(): void
     {
         self::assertSame(dirname(__DIR__, 2) . '/202-cronjobs/cron-run.lock', CronLock::path());
+        self::assertSame(
+            dirname(__DIR__, 2) . '/202-cronjobs/analytics-delivery.lock',
+            CronLock::path(CronLock::ANALYTICS_DELIVERY_FILE)
+        );
     }
 }
