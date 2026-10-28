@@ -22,6 +22,8 @@ enum OutcomeKind: string
     /** A body this endpoint does not take at all (another product's notification). */
     case UNSUPPORTED_BODY = 'unsupported_body';
     case UNVERIFIED = 'unverified';
+    /** Verified by a secret more than one account stores, where the provider's secret is one account's. */
+    case AMBIGUOUS_ACCOUNT = 'ambiguous_account';
     /** No such click in the accounts whose secret verified (another account's reads the same). */
     case UNKNOWN_CLICK = 'unknown_click';
     case NOTHING_TO_REVERSE = 'nothing_to_reverse';
