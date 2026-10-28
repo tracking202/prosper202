@@ -38,6 +38,7 @@ var friendlyHeaders = map[string]string{
 	"cpa":                  "CPA",
 	"avg_cpc":              "Avg CPC",
 	"conv_rate":            "Conv %",
+	"click_conv_rate":      "Conv % of clicks",
 	"breakeven_cpc":        "Breakeven CPC",
 	"margin":               "Margin",
 }
@@ -46,7 +47,7 @@ var friendlyHeaders = map[string]string{
 // label stays left and numbers read in a consistent order across commands.
 var metricOrder = []string{
 	"geo", "device", "name", "keyword",
-	"total_clicks", "total_click_throughs", "total_leads", "conv_rate",
+	"total_clicks", "total_click_throughs", "total_leads", "conv_rate", "click_conv_rate",
 	"total_income", "total_cost", "total_net", "roi", "epc", "cpa", "avg_cpc",
 	"breakeven_cpc", "margin", "verdict", "bucket", "reason",
 	"matched_rule", "status", "destination", "criteria",

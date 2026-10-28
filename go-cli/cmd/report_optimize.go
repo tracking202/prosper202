@@ -95,29 +95,29 @@ func fetchBreakdownRows(c *api.Client, params map[string]string) ([]map[string]i
 	return resp.Data, nil
 }
 
-// enrichBreakeven adds breakeven_cpc, margin, and a verdict to each row.
-// breakeven_cpc = payout * (leads/clicks); margin = breakeven_cpc - avg_cpc.
-// When targetCPC > 0 it overrides the payout-derived breakeven.
+// enrichBreakeven adds click_conv_rate, breakeven_cpc, margin and a verdict to each row, and changes none of the
+// server's figures, so a row reads as `report breakdown`'s row for the same traffic does. It wrote leads ÷ clicks over
+// conv_rate, which the server computes as leads ÷ click-throughs: a landing page's keyword at 50% there read 25% here.
+// A click is what the traffic costs, so break-even prices one: breakeven_cpc = payout × leads ÷ clicks (the
+// click_conv_rate, as a percentage), margin = breakeven_cpc − cost ÷ clicks. When targetCPC > 0 it overrides the
+// payout-derived breakeven.
 func enrichBreakeven(rows []map[string]interface{}, payout, targetCPC float64) {
 	for _, r := range rows {
 		clicks := toFloat(r["total_clicks"])
 		leads := toFloat(r["total_leads"])
 		cost := toFloat(r["total_cost"])
-		cvr := 0.0
-		if clicks > 0 {
-			cvr = leads / clicks
-		}
+		leadsPerClick := 0.0
 		avgCPC := 0.0
 		if clicks > 0 {
+			leadsPerClick = leads / clicks
 			avgCPC = cost / clicks
 		}
-		be := payout * cvr
+		be := payout * leadsPerClick
 		if targetCPC > 0 {
 			be = targetCPC
 		}
 		margin := be - avgCPC
-		r["conv_rate"] = round(cvr*100, 2)
-		r["avg_cpc"] = round(avgCPC, 4)
+		r["click_conv_rate"] = round(leadsPerClick*100, 4)
 		r["breakeven_cpc"] = round(be, 4)
 		r["margin"] = round(margin, 4)
 		r["verdict"] = breakevenVerdict(leads, cost, margin)
@@ -165,6 +165,8 @@ var reportBreakevenCmd = &cobra.Command{
 	Short: "Break-even CPC per row: max biddable click price (payout × conversion rate)",
 	Long: "Computes the maximum profitable cost-per-click for each breakdown row.\n" +
 		"breakeven_cpc = campaign payout × (conversions / clicks); margin = breakeven_cpc − avg_cpc.\n" +
+		"click_conv_rate is conversions / clicks × 100, the rate breakeven_cpc uses; every other figure is the\n" +
+		"breakdown's, unchanged (conv_rate is conversions / click-throughs, which differs on landing-page traffic).\n" +
 		"Requires --aff-campaign-id (the INTERNAL id from `campaign list`) to read the payout.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
