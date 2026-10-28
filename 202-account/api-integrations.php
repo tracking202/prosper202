@@ -826,13 +826,35 @@ template_top('API Integrations');
 	$lpo_sub_retry = !empty($lpo_sub_retry); // the failed attempt came from the "I've subscribed" retry
 	$lpo_saas_base = \Prosper202\Lpo\PairingClient::saasBaseUrl();
 	$lpo_capabilities = \Prosper202\Lpo\PairingClient::CAPABILITIES;
+	// Connected is lpo_status; whether the optimizer gets events is its
+	// webhook's status. A read that fails is said as such, never "Connected".
+	$lpo_webhook = null;
+	if ($lpo_connected) {
+		try {
+			$lpo_webhook = \Prosper202\Lpo\PairingWebhook::state(
+				new \Prosper202\Ltv\MysqlWebhookRepository(new \Prosper202\Database\Connection($db)),
+				(int) $_SESSION['user_id'],
+				(string) ($user_row['lpo_bridge_config'] ?? '')
+			);
+		} catch (Throwable $lpo_status_error) {
+			error_log('lpo card: the pairing webhook could not be read: ' . $lpo_status_error->getMessage());
+		}
+	}
+	[$lpo_problem_kind, $lpo_problem] = $lpo_connected
+		? \Prosper202\Lpo\PairingWebhook::notice($lpo_webhook)
+		: ['', ''];
+	$lpo_revive = ($lpo_webhook['state'] ?? null) === \Prosper202\Lpo\PairingWebhook::DEAD;
 	?>
 	<div class="col-12 col-lg-6">
 		<section class="p202-panel h-100" id="lpo">
 			<div class="p202-panel__head">
 				<h2 class="p202-panel__title">Landing Page Optimizer</h2>
-				<?php if ($lpo_connected) { ?>
+				<?php if ($lpo_connected && $lpo_problem === '') { ?>
 					<span class="p202-pill p202-pill--good">Connected</span>
+				<?php } elseif ($lpo_connected && $lpo_problem_kind === 'bad') { ?>
+					<span class="p202-pill p202-pill--bad">Not receiving events</span>
+				<?php } elseif ($lpo_connected) { ?>
+					<span class="p202-pill p202-pill--warn">Status unknown</span>
 				<?php } elseif (!$lpo_schema_ready) { ?>
 					<span class="p202-pill p202-pill--warn">Upgrade needed</span>
 				<?php } elseif ($lpo_needs_subscription) { ?>
@@ -849,8 +871,15 @@ template_top('API Integrations');
 					echo p202_flash('bad', $error['lpo']);
 				} ?>
 				<?php if ($lpo_connected) { ?>
+					<?php if ($lpo_problem !== '') {
+						echo p202_flash($lpo_problem_kind, $lpo_problem);
+					} ?>
 					<?php echo $endpoint('Site key', $lpo_site_key); ?>
 					<div class="p202-toolbar">
+						<?php if ($lpo_revive) { ?>
+							<a href="<?php echo $e($base . 'tracking202/analyze/ltv.php?view=settings'); ?>"
+								class="btn btn-primary">LTV Settings</a>
+						<?php } ?>
 						<a href="<?php echo $e($lpo_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener" class="btn btn-secondary">Manage experiments <i class="bi bi-box-arrow-up-right"></i></a>
 						<form method="post" action="<?php echo $e($self . '#lpo'); ?>" data-p202-confirm="Disconnect the Landing Page Optimizer? The pairing webhook will be removed.">
 							<?php echo p202_account_token_field(); ?>
