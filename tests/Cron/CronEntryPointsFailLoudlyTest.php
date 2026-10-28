@@ -29,8 +29,8 @@ use PHPUnit\Framework\TestCase;
  * - every die/exit and _die() in connect.php is preceded, in its own block,
  *   by an unconditional p202_cli_fail() call;
  * - the minutely cron takes its lock only after it has bootstrapped, so a
- *   run that could not start leaves no lock behind to make the next ones
- *   report "already running";
+ *   run that could not start stops before it could keep another out
+ *   (EveryCronRunTakesTheLockTest holds the rest of the lock);
  * - and, executed: where this checkout has no 202-config.php, every entry
  *   point run from another directory exits non-zero naming the missing file.
  *
@@ -180,7 +180,7 @@ final class CronEntryPointsFailLoudlyTest extends TestCase
     {
         $src = (string) file_get_contents(self::ROOT . '202-cronjobs/index.php');
         $bootstrap = strpos($src, "require_once __DIR__ . '/../202-config/connect.php';");
-        $lock = strpos($src, 'touch($lockFile)');
+        $lock = strpos($src, '\Prosper202\Cron\CronLock::take(');
         self::assertIsInt($bootstrap);
         self::assertIsInt($lock);
         self::assertLessThan($lock, $bootstrap);

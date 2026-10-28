@@ -15,11 +15,11 @@ use Throwable;
  *
  * One run does four things, in this order:
  *
- * 1. Identity merges. Every merge with requeued_at NULL re-queues the
- *    conversions on the merged person's clicks (reason `identity_merge`),
- *    then sets requeued_at, in one transaction per merge. The request that
- *    merged did only the merge; the fan-out happens here so a merge of two
- *    busy keys never slows a click.
+ * 1. Identity merges. Every merge with requeued_at NULL whose turn has come
+ *    re-queues the conversions on the merged person's clicks (reason
+ *    `identity_merge`), then sets requeued_at, in one transaction per merge
+ *    (requeueMerges()). The request that merged did only the merge; the
+ *    fan-out happens here so a merge of two busy keys never slows a click.
  * 2. Model changes. A model whose recompute_requested_at is set re-queues
  *    the account's attributed conversions from its cursor in batches:
  *    `rebuild_journey` for a journey built narrower than the account's
@@ -43,6 +43,11 @@ use Throwable;
  * ends the run with every row left as it was; the next run retries them
  * immediately rather than after a backoff they did not earn.
  *
+ * A merge is handled apart: one whose re-queue fails is recorded on its row
+ * with a backoff and the run moves on to the next merge and then the
+ * outbox, and only a failure its own data determines ends its retries (see
+ * requeueMerges()).
+ *
  * Overlap protection is the caller's (runExclusive takes a MySQL named
  * lock): one worker at a time per database. Named locks are server-wide,
  * so the name carries the database (see lockName()): two installs sharing
@@ -61,6 +66,18 @@ final class AttributionWorker
     public const REASON_MODEL_CHANGED = 'model_changed';
     private const MAX_BACKOFF = 86400;
     private const FAN_OUT_BATCH = 1000;
+    /**
+     * The most visitor keys conversionsOnKeys() can name: a prepared
+     * statement carries at most 65,535 values (the protocol counts them in
+     * two bytes; 65,536 is refused, measured on MariaDB 10.11), and it names
+     * the account twice besides.
+     */
+    public const MAX_PERSON_KEYS = 65533;
+    /** A merge's wait after its second failure in a row, doubling with each one after it, up to MERGE_MAX_BACKOFF. */
+    public const MERGE_FIRST_BACKOFF = 60;
+    public const MERGE_MAX_BACKOFF = 3600;
+    /** 202_identity_merges.requeue_failures is a smallint unsigned; the count stops there rather than overflow. */
+    private const MERGE_FAILURES_CEILING = 65535;
 
     private ModelRepository $models;
     private JourneyBuilder $journeys;
@@ -163,7 +180,10 @@ final class AttributionWorker
         // Both fan-outs stop at the deadline too (after at least one unit,
         // so a backlog still drains): the budget bounds how long a run
         // holds the lock, not only how long it spends on the queue.
-        $report->mergesRequeued = $this->requeueMerges(100, $deadline);
+        $merges = $this->requeueMerges(100, $deadline);
+        $report->mergesRequeued = $merges['requeued'];
+        $report->mergesFailed = $merges['failed'];
+        $report->mergesRetired = $merges['retired'];
         $report->modelsFannedOut = $this->fanOutModelRecomputes(10, $deadline);
 
         while (($this->clock)() < $deadline) {
@@ -200,36 +220,139 @@ final class AttributionWorker
      * change rewrites the same rows (the worker is idempotent), and the
      * person's conversion count is bounded by the quarantine cap on how many
      * keys one signal can join, so the superset is cheap and cannot miss.
+     *
+     * Each merge is one transaction and takes its turn (requeue_retry_at):
+     * a run takes the merges whose turn has come, those never tried first.
+     * A merge that fails is recorded on its row and passed, so the merges
+     * after it still run, and is taken again after mergeBackoff(). Taken in
+     * merge_id order with nothing recorded, one failing merge was the head
+     * of every run, and its throw ended the run before the outbox.
+     *
+     * Only a failure the merge's own data determines ends its retries: a
+     * person with more visitor keys than one statement can name, which
+     * every run would meet again (requeue_retired_at, with why). Everything
+     * else is the server's — a lock wait or deadlock with the ledger's
+     * writes, a lost connection, a missing table — and is retried for as
+     * long as it lasts. The catch is outside the transaction, which
+     * transaction() has rolled back whole (CLAUDE.md #34).
+     *
+     * @return array{requeued: int, failed: int, retired: int}
      */
-    public function requeueMerges(int $limit = 100, ?int $deadline = null): int
+    public function requeueMerges(int $limit = 100, ?int $deadline = null): array
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT merge_id, user_id, into_key FROM 202_identity_merges WHERE requeued_at IS NULL ORDER BY merge_id LIMIT ?'
+            'SELECT merge_id, user_id, into_key, requeue_failures FROM 202_identity_merges
+             WHERE requeued_at IS NULL AND requeue_retired_at IS NULL AND requeue_retry_at <= ?
+             ORDER BY requeue_retry_at, merge_id LIMIT ?'
         );
-        $this->conn->bind($stmt, 'i', [$limit]);
+        $this->conn->bind($stmt, 'ii', [($this->clock)(), $limit]);
         $merges = $this->conn->fetchAll($stmt);
 
-        $done = 0;
+        $out = ['requeued' => 0, 'failed' => 0, 'retired' => 0];
         foreach ($merges as $merge) {
-            $this->conn->transaction(function () use ($merge): void {
-                $userId = (int) $merge['user_id'];
-                $keys = $this->journeys->keysOfPerson($userId, (int) $merge['into_key']);
-                $convIds = $keys === [] ? [] : $this->conversionsOnKeys($userId, $keys);
-                $this->enqueue($convIds, self::REASON_IDENTITY_MERGE, true);
-
-                $upd = $this->conn->prepareWrite(
-                    'UPDATE 202_identity_merges SET requeued_at = ? WHERE merge_id = ? AND requeued_at IS NULL'
-                );
-                $this->conn->bind($upd, 'ii', [($this->clock)(), (int) $merge['merge_id']]);
-                $this->conn->executeUpdate($upd);
-            });
-            $done++;
+            $mergeId = (int) $merge['merge_id'];
+            $outcome = 'failed';
+            $refused = null;
+            try {
+                $refused = $this->conn->transaction(fn (): ?string => $this->requeueMerge($merge));
+                $outcome = $refused === null ? 'requeued' : 'retired';
+            } catch (Throwable $e) {
+                if ($this->conn->rollbackFailed()) {
+                    // Its writes may still be pending on the handle, so nothing more runs on it.
+                    throw new WorkerHalted(
+                        'attribution worker stopped at identity merge ' . $mergeId . ': ' . $e->getMessage(),
+                        0,
+                        $e
+                    );
+                }
+                $this->recordMergeFailure($merge, $e);
+            }
+            if ($refused !== null) {
+                error_log('p202 attribution: identity merge ' . $mergeId . ' is not re-queued, and is not tried again: '
+                    . $refused);
+            }
+            $out[$outcome]++;
             if ($deadline !== null && ($this->clock)() >= $deadline) {
                 break;
             }
         }
 
-        return $done;
+        return $out;
+    }
+
+    /**
+     * One merge, in the caller's transaction: null once its conversions are
+     * queued, or why its own data refuses that, written on its row.
+     *
+     * @param array<string, mixed> $merge
+     */
+    private function requeueMerge(array $merge): ?string
+    {
+        $mergeId = (int) $merge['merge_id'];
+        $userId = (int) $merge['user_id'];
+        $keys = $this->journeys->keysOfPerson($userId, (int) $merge['into_key']);
+        if (count($keys) > self::MAX_PERSON_KEYS) {
+            // A person's keys are never removed, so every run would refuse it again.
+            $why = 'the merged person has ' . count($keys) . ' visitor keys, and one statement can name at most '
+                . self::MAX_PERSON_KEYS . ', so the conversions on them cannot be read';
+            $upd = $this->conn->prepareWrite(
+                'UPDATE 202_identity_merges SET requeue_retired_at = ?, requeue_error = ?
+                 WHERE merge_id = ? AND requeued_at IS NULL'
+            );
+            $this->conn->bind($upd, 'isi', [($this->clock)(), $why, $mergeId]);
+            $this->conn->executeUpdate($upd);
+
+            return $why;
+        }
+        $convIds = $keys === [] ? [] : $this->conversionsOnKeys($userId, $keys);
+        $this->enqueue($convIds, self::REASON_IDENTITY_MERGE, true);
+
+        $upd = $this->conn->prepareWrite(
+            'UPDATE 202_identity_merges SET requeued_at = ? WHERE merge_id = ? AND requeued_at IS NULL'
+        );
+        $this->conn->bind($upd, 'ii', [($this->clock)(), $mergeId]);
+        $this->conn->executeUpdate($upd);
+
+        return null;
+    }
+
+    /** The wait for a merge's next turn after its $failures-th failure in a row: the next run, then doubling. */
+    public static function mergeBackoff(int $failures): int
+    {
+        if ($failures <= 1) {
+            return 0;
+        }
+
+        return min(self::MERGE_MAX_BACKOFF, self::MERGE_FIRST_BACKOFF * (2 ** min(20, $failures - 2)));
+    }
+
+    /**
+     * Count a merge's failed re-queue (its transaction rolled back) and give
+     * it its next turn after mergeBackoff(). A failure to record it is
+     * logged: the merge then keeps the turn it had.
+     *
+     * @param array<string, mixed> $merge
+     */
+    private function recordMergeFailure(array $merge, Throwable $e): void
+    {
+        $mergeId = (int) $merge['merge_id'];
+        $failures = min((int) $merge['requeue_failures'] + 1, self::MERGE_FAILURES_CEILING);
+        $wait = self::mergeBackoff($failures);
+        $message = mb_substr(get_class($e) . ': ' . $e->getMessage(), 0, 255);
+        error_log('p202 attribution: identity merge ' . $mergeId . ' failed (' . $failures . ' in a row; tried again '
+            . ($wait === 0 ? 'on the next run' : 'in ' . $wait . 's') . '): ' . $message);
+
+        try {
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_identity_merges SET requeue_failures = ?, requeue_retry_at = ?, requeue_error = ?
+                 WHERE merge_id = ? AND requeued_at IS NULL'
+            );
+            $this->conn->bind($stmt, 'iisi', [$failures, ($this->clock)() + $wait, $message, $mergeId]);
+            $this->conn->executeUpdate($stmt);
+        } catch (Throwable $recordError) {
+            error_log('p202 attribution: identity merge ' . $mergeId . '\'s failure could not be recorded, so it keeps its turn: '
+                . $recordError->getMessage());
+        }
     }
 
     /**

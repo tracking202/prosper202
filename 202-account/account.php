@@ -229,6 +229,10 @@ $refererChoices = ['browser' => 'Pickup Referer from browser', 't202ref' => 'Pic
 $privacyChoices = ['disabled' => 'Disabled', 'eu' => 'Enabled for European Traffic', 'all' => 'Enabled for All Traffic'];
 $privacyHelp = 'Which visitors get no tracking cookies and a masked address. European traffic is anyone'
     . ' the location lookup does not place outside Europe.';
+$sameIpChoices = ['0' => 'Off: only a subid or a cookie finds the click', '1' => 'On: guess the click from the IP address'];
+$sameIpHelp = 'When a pixel names no click, credit your latest click from the visitor\'s IP address in the last 30'
+    . ' days. A guess: on iPhones (iCloud Private Relay) and mobile networks many visitors share an address. Never'
+    . ' for a visitor your privacy setting holds back. Conversions it finds read Same IP.';
 $cloakChoices = ['origin' => 'Show Prosper202 Domain', 'never' => 'Show Blank Referer'];
 $adChoices = ['show_all' => 'Show All Ads', 'hide_login' => 'Hide Ads On Login Screen', 'hide_all' => 'Hide All Ads'];
 
@@ -288,6 +292,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			if (!array_key_exists((string)($_POST['user_pref_privacy'] ?? ''), $privacyChoices)) {
 				$error['user_pref_privacy'] = 'You must select your privacy setting.';
 			}
+			if (!array_key_exists((string)($_POST['user_pref_same_ip_fallback'] ?? ''), $sameIpChoices)) {
+				$error['user_pref_same_ip_fallback'] = 'Choose whether a pixel may guess the click from the IP address.';
+			}
 			if (!array_key_exists((string)($_POST['cloak_referer'] ?? ''), $cloakChoices)) {
 				$error['cloak_referer'] = 'You must select how cloaked links show the referer.';
 			}
@@ -325,6 +332,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					'user_pref_dynamic_bid' => (int)$_POST['user_bid'],
 					'user_pref_ad_settings' => (string)$_POST['user_pref_ad_settings'],
 					'user_pref_privacy' => (string)$_POST['user_pref_privacy'],
+					'user_pref_same_ip_fallback' => (int)$_POST['user_pref_same_ip_fallback'],
 					'user_daily_email' => (string)$_POST['user_daily_email'],
 				];
 
@@ -465,7 +473,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		// Refused: say it under the field, and keep what was typed.
 		$profileErrors = $error;
-		foreach (['user_email', 'user_timezone', 'user_daily_email', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
+		foreach (['user_email', 'user_timezone', 'user_daily_email', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
 			if (isset($_POST[$profileField])) {
 				$profileForm[$profileField] = (string)$_POST[$profileField];
 			}
@@ -819,7 +827,7 @@ if (!\Prosper202\Report\AccountZone::isZone($currentTimezone)) {
 	array_unshift($timezoneOptions, $currentTimezone);
 }
 
-$profileAdvancedErrors = array_intersect_key($profileErrors, array_flip(['user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']));
+$profileAdvancedErrors = array_intersect_key($profileErrors, array_flip(['user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']));
 
 template_top('Personal Settings');
 ?>
@@ -907,7 +915,7 @@ echo p202_account_render_flashes($extraFlashes);
 						</div>
 
 						<details class="p202-disclosure mb-3" data-p202-remember="account-profile-advanced"<?php echo $profileAdvancedErrors ? ' open' : ''; ?>>
-							<summary>Advanced <span class="p202-disclosure__hint">keyword, cost, referer, privacy, ads, tracking domain</span></summary>
+							<summary>Advanced <span class="p202-disclosure__hint">keyword, cost, referer, privacy, IP matching, ads, tracking domain</span></summary>
 							<div class="p202-disclosure__body">
 								<div class="row g-3">
 									<div class="col-md-6">
@@ -943,6 +951,14 @@ echo p202_account_render_flashes($extraFlashes);
 										<?php echo p202_account_field_error($profileErrors, 'user_pref_privacy'); ?>
 									</div>
 									<div class="col-md-6">
+										<label class="form-label" for="user_pref_same_ip_fallback">Match conversions by IP address</label>
+										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_pref_same_ip_fallback'); ?>" name="user_pref_same_ip_fallback" id="user_pref_same_ip_fallback">
+											<?php echo $renderOptions($sameIpChoices, $profileValue('user_pref_same_ip_fallback', 'user_pref_same_ip_fallback')); ?>
+										</select>
+										<div class="form-text"><?php echo $e($sameIpHelp); ?></div>
+										<?php echo p202_account_field_error($profileErrors, 'user_pref_same_ip_fallback'); ?>
+									</div>
+									<div class="col-md-6">
 										<label class="form-label" for="cloak_referer">Cloaked referer</label>
 										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'cloak_referer'); ?>" name="cloak_referer" id="cloak_referer">
 											<?php echo $renderOptions($cloakChoices, $profileValue('cloak_referer', 'user_pref_cloak_referer')); ?>
@@ -961,7 +977,7 @@ echo p202_account_render_flashes($extraFlashes);
 									<div class="col-12">
 										<label class="form-label" for="user_tracking_domain">Tracking domain</label>
 										<input type="text" class="form-control<?php echo p202_account_invalid($profileErrors, 'user_tracking_domain'); ?>" id="user_tracking_domain" name="user_tracking_domain" placeholder="<?php echo $e(\Prosper202\Http\RequestHost::fromServer($_SERVER) ?? ''); ?>" value="<?php echo $e($profileValue('user_tracking_domain', 'user_tracking_domain')); ?>">
-										<div class="form-text">Leave empty to build tracking links on this install's own domain.</div>
+										<div class="form-text">Leave empty to build tracking links on this install's own domain. Start it with https:// or http:// to choose the links' scheme; without one they use the scheme you reach Prosper202 on.</div>
 										<?php echo p202_account_field_error($profileErrors, 'user_tracking_domain'); ?>
 									</div>
 								</div>

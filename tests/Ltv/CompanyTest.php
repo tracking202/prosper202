@@ -6,6 +6,7 @@ namespace Tests\Ltv;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Ltv\MysqlCompanyRepository;
 use Prosper202\Ltv\MysqlCustomerCrmRepository;
 use Prosper202\Ltv\MysqlCustomerFieldRepository;
@@ -233,31 +234,91 @@ final class CompanyTest extends TestCase
         $repo->delete(7, 2);
     }
 
-    public function testLinkSweepAttachesPendingCustomersAndSkipsBlankNames(): void
+    public function testLinkSweepStampsTheEntityAndStoresBlankNamesAsNone(): void
     {
         $write = new FakeMysqliConnection();
-        $write->whenQueryContainsReturnRows('company_id IS NULL AND merged_into_customer_id IS NULL', [
-            ['customer_id' => 11, 'company' => 'Acme'],
-            ['customer_id' => 12, 'company' => '   '],
+        $write->whenQueryContainsReturnRows('FROM 202_customers FORCE INDEX', [
+            ['customer_id' => 11, 'company' => 'acme  corp'],
+            ['customer_id' => 12, 'company' => "\t"],
+            ['customer_id' => 13, 'company' => "\u{00A0}\u{3000}"],
+        ]);
+        $write->whenQueryContainsReturnRows('normalized_name = ? LIMIT 1', [
+            ['company_id' => 4, 'name' => 'Acme Corp', 'normalized_name' => 'acme corp', 'domain' => null],
         ]);
         $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
 
+        $before = time();
         $repo->linkUnlinkedCustomers(7, 100);
+        $after = time();
 
-        $inserts = $write->statementsContaining('INSERT INTO 202_companies');
-        self::assertCount(1, $inserts, 'only the customer with a real name resolves a company');
-        self::assertContains('Acme', $inserts[0]->boundValues);
+        $selects = $write->statementsContaining('FROM 202_customers FORCE INDEX');
+        self::assertCount(1, $selects, 'a batch shorter than the limit is the last');
+        self::assertSame([7, 0, 100], $selects[0]->boundValues, 'account, cursor from the start, batch');
+        self::assertStringContainsString('ORDER BY customer_id', $selects[0]->sql);
 
-        // The stamp UPDATE only runs once resolveOrCreate yields a real id;
-        // the fake cannot expose insert_id (readonly mysqli internals), so
-        // here the guard correctly suppresses a company_id=0 stamp.
+        self::assertCount(0, $write->statementsContaining('INSERT INTO 202_companies'), 'an existing entity is reused');
+        $stamps = $write->statementsContaining('UPDATE 202_customers SET company_id = ?');
+        self::assertCount(1, $stamps, 'only the customer with a real name is stamped');
+        self::assertStringContainsString('updated_at = ?', $stamps[0]->sql, 'a link is a change to the customer');
+        self::assertSame('isiii', $stamps[0]->boundTypes);
+        [$companyId, $name, $stampedAt, $customerId, $userId] = $stamps[0]->boundValues;
+        self::assertSame([4, 'Acme Corp', 11, 7], [$companyId, $name, $customerId, $userId]);
+        self::assertGreaterThanOrEqual($before, $stampedAt);
+        self::assertLessThanOrEqual($after, $stampedAt);
+
+        $cleared = $write->statementsContaining("UPDATE 202_customers SET company = ''");
+        self::assertCount(1, $cleared, 'the names that say nothing are stored as none in one statement');
+        self::assertSame('iiiiss', $cleared[0]->boundTypes);
+        self::assertGreaterThanOrEqual($before, $cleared[0]->boundValues[0]);
+        self::assertLessThanOrEqual($after, $cleared[0]->boundValues[0]);
+        self::assertSame([7, 12, 13, "\t", "\u{00A0}\u{3000}"], array_slice($cleared[0]->boundValues, 1));
+    }
+
+    public function testLinkSweepRefusesAnInsertThatAnswersNoCompanyId(): void
+    {
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('FROM 202_customers FORCE INDEX', [
+            ['customer_id' => 11, 'company' => 'Acme'],
+        ]);
+        // The fake reports no insert id, which is what a driver that lost it
+        // answers: the customer cannot be stamped, and skipping it would read
+        // as nothing to do and take it again on every pass.
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        try {
+            $repo->linkUnlinkedCustomers(7, 100);
+            self::fail('a company with no id must be refused');
+        } catch (QueryException $e) {
+            self::assertStringContainsString('Company "Acme" of account 7 resolved to no company id', $e->getMessage());
+        }
+        self::assertCount(1, $write->statementsContaining('INSERT INTO 202_companies'));
+        self::assertCount(0, $write->statementsContaining('UPDATE 202_customers SET company_id = ?'));
+    }
+
+    public function testLinkSweepRefusesAnEntityRowWithNoCompanyId(): void
+    {
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('FROM 202_customers FORCE INDEX', [
+            ['customer_id' => 11, 'company' => 'Acme'],
+        ]);
+        $write->whenQueryContainsReturnRows('normalized_name = ? LIMIT 1', [
+            ['company_id' => 0, 'name' => 'Acme', 'normalized_name' => 'acme', 'domain' => null],
+        ]);
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        try {
+            $repo->linkUnlinkedCustomers(7, 100);
+            self::fail('a company with no id must be refused');
+        } catch (QueryException $e) {
+            self::assertStringContainsString('resolved to no company id (0)', $e->getMessage());
+        }
         self::assertCount(0, $write->statementsContaining('UPDATE 202_customers SET company_id = ?'));
     }
 
     public function testLinkSweepDoesNotSwallowDatabaseFailures(): void
     {
         $write = new FakeMysqliConnection();
-        $write->whenQueryContainsReturnRows('company_id IS NULL AND merged_into_customer_id IS NULL', [
+        $write->whenQueryContainsReturnRows('FROM 202_customers FORCE INDEX', [
             ['customer_id' => 11, 'company' => 'Acme'],
         ]);
         // A real DB failure (missing table, broken insert) must propagate to
@@ -281,13 +342,41 @@ final class CompanyTest extends TestCase
         $conn = new Connection($write, new FakeMysqliConnection());
         $crm = new MysqlCustomerCrmRepository($conn, new MysqlCustomerRepository($conn), new MysqlCustomerFieldRepository($conn));
 
-        $crm->upsert(7, ['customer_id' => 501, 'company' => 'Acme Corp']);
+        // The fake reports no insert id, so the save is refused rather than
+        // answered as saved with the company left unattached.
+        try {
+            $crm->upsert(7, ['customer_id' => 501, 'company' => 'Acme Corp']);
+            self::fail('a company with no id must refuse the save');
+        } catch (QueryException $e) {
+            self::assertStringContainsString(
+                'Company "Acme Corp" of account 7 resolved to no company id',
+                $e->getMessage()
+            );
+        }
 
         self::assertCount(
             1,
             $write->statementsContaining('INSERT INTO 202_companies'),
             'a CRM save with a company name must resolve/create the entity'
         );
+        self::assertCount(0, $write->statementsContaining('UPDATE 202_customers SET company_id = ?'));
+    }
+
+    public function testAttachCustomerRefusesAnEntityRowWithNoCompanyId(): void
+    {
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('normalized_name = ? LIMIT 1', [
+            ['company_id' => 0, 'name' => 'Acme Corp', 'normalized_name' => 'acme corp', 'domain' => null],
+        ]);
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        try {
+            $repo->attachCustomer(7, 501, 'Acme Corp', '', 1700000000);
+            self::fail('a company with no id must be refused');
+        } catch (QueryException $e) {
+            self::assertStringContainsString('resolved to no company id (0)', $e->getMessage());
+        }
+        self::assertCount(0, $write->statementsContaining('UPDATE 202_customers SET company_id = ?'));
     }
 
     public function testCrmUpsertAutoAttachesByEmailDomain(): void

@@ -10,6 +10,7 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Support\LtvBody;
 use Api\V3\Support\RequestFlag;
 use Api\V3\Support\ServerStateStore;
+use Api\V3\Support\SyncProfileKeys;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\FakeMysqliConnection;
 
@@ -31,6 +32,12 @@ final class StrictBodyFlagsTest extends TestCase
 
     /** @var list<string> */
     private array $scratch = [];
+
+    /** The key a job's profile keys are sealed with, in place of the database's. */
+    private static function syncKeys(): SyncProfileKeys
+    {
+        return SyncProfileKeys::withKey(str_repeat('k', 32));
+    }
 
     protected function tearDown(): void
     {
@@ -104,7 +111,7 @@ final class StrictBodyFlagsTest extends TestCase
     public function testASyncJobIsQueuedWithTheFlagsAsSent(): void
     {
         $store = $this->store();
-        $sync = new SyncController(new FakeMysqliConnection(), 7, $store);
+        $sync = new SyncController(new FakeMysqliConnection(), 7, $store, null, self::syncKeys());
         $sent = ['dry_run' => 'false', 'skip_errors' => 0, 'force_update' => 'false', 'incremental' => 'true'];
         $answer = $sync->createJob($this->job() + $sent);
         $job = $store->getJob((string) $answer['data']['job_id']);
@@ -202,7 +209,8 @@ final class StrictBodyFlagsTest extends TestCase
     private function send(string $handler, FakeMysqliConnection $conn, array $payload): void
     {
         match ($handler) {
-            'syncJob' => (new SyncController($conn, 7, $this->store()))->createJob($this->job() + $payload),
+            'syncJob' => (new SyncController($conn, 7, $this->store(), null, self::syncKeys()))
+                ->createJob($this->job() + $payload),
             'syncPlan' => (new SyncController($conn, 7, $this->store()))->plan($this->job() + $payload),
             'field' => (new LtvController($conn, 7))->createField(['field_key' => 'tier'] + $payload),
             'fieldUpdate' => (new LtvController($conn, 7))->updateField(3, $payload),
@@ -224,6 +232,6 @@ final class StrictBodyFlagsTest extends TestCase
         $dir = sys_get_temp_dir() . '/p202-flag-body-' . bin2hex(random_bytes(6));
         $this->scratch[] = $dir;
 
-        return new ServerStateStore($dir, 'strict-flag-body-test');
+        return new ServerStateStore($dir);
     }
 }

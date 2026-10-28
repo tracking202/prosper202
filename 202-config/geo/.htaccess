@@ -1,0 +1,10 @@
+# The GeoIP databases are read by this install, never served: a GeoLite2
+# database the refresh downloads is licensed for this install's use (the
+# GeoLite EULA, section 6.1, forbids disclosing it to third parties), and an
+# ISP database is a paid one. A rewrite, as tracking202/update/reports/ does,
+# because it needs only the AllowOverride the README asks for; the README's
+# vhosts and the Docker image also deny the directory where nginx, or
+# AllowOverride None, never reads this file.
+Options +FollowSymLinks
+RewriteEngine on
+RewriteRule .* - [F]

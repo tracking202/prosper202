@@ -1,0 +1,63 @@
+{
+  "cases": [
+    {
+      "id": "rotator-rules-001-a-rule-goes-ahead-of-the-catch-all",
+      "priority": "high",
+      "state": "seeded fixture, plus a redirector EVAL Rule Set (default https://eval-ruleset-default.example/) whose only rule, EVAL Catch-all, sends every visitor to https://eval-catchall.example/; setup gives it a tracker (link in /tmp/p202-eval-ruleset.url) and writes the catch-all's id to /tmp/p202-eval-ruleset.catchall",
+      "setup": [
+        "r=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name==\"EVAL Rule Set\")][0].id // empty') && { [ -n \"$r\" ] || r=$(p202 rotator create --name 'EVAL Rule Set' --default-url https://eval-ruleset-default.example/ --json | jq -r '.data.id'); } && echo \"$r\" > /tmp/p202-eval-ruleset.id && test -s /tmp/p202-eval-ruleset.id",
+        "r=$(cat /tmp/p202-eval-ruleset.id) && c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign A\")][0].aff_campaign_id') && t=$(p202 tracker list --all --json | jq -r --arg r \"$r\" '[.data[] | select((.rotator_id|tostring)==$r)][0].tracker_id // empty') && { [ -n \"$t\" ] || t=$(p202 tracker create --aff-campaign-id \"$c\" --rotator-id \"$r\" --json | jq -r '.data.tracker_id'); } && p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url' > /tmp/p202-eval-ruleset.url && test -s /tmp/p202-eval-ruleset.url",
+        "p202 rotator set-rules \"$(cat /tmp/p202-eval-ruleset.id)\" --rules '[{\"rule_name\":\"EVAL Catch-all\",\"criteria\":[{\"type\":\"country\",\"value\":\"ALL\"}],\"redirects\":[{\"redirect_url\":\"https://eval-catchall.example/\"}]}]' --json | jq -r '.data.rules[0].id' > /tmp/p202-eval-ruleset.catchall && test -s /tmp/p202-eval-ruleset.catchall"
+      ],
+      "ask": "On the EVAL Rule Set redirector, split visitors from 203.0.113.60 evenly between https://eval-split-a.example/ and https://eval-split-b.example/. That has to be tried before the catch-all rule already there, which should keep sending everyone else where it does now.",
+      "expected": {
+        "runs_one_of": ["rotator set-rules", "rotator_set_rules"],
+        "never_runs": ["rotator delete", "rotator create"],
+        "checks": [
+          {
+            "run": "u=$(cat /tmp/p202-eval-ruleset.url); for i in $(seq 1 20); do curl -s -o /dev/null -w '%{redirect_url}\\n' -H 'X-Forwarded-For: 203.0.113.60' \"$u\"; done | sed -E 's#^https?://([^/]+).*#\\1#' | sort -u | tr '\\n' ' '",
+            "includes": ["eval-split-a.example eval-split-b.example"],
+            "omits": ["eval-catchall", "eval-ruleset-default"]
+          },
+          {
+            "run": "curl -s -o /dev/null -w '%{redirect_url}' -H 'X-Forwarded-For: 198.51.100.61' \"$(cat /tmp/p202-eval-ruleset.url)\"",
+            "includes": ["https://eval-catchall.example/"]
+          },
+          {
+            "run": "p202 rotator get \"$(cat /tmp/p202-eval-ruleset.id)\" --json | jq --arg kept \"$(cat /tmp/p202-eval-ruleset.catchall)\" '.data.rules | length == 2 and .[0].splittest == 1 and ([.[0].redirects[].weight | tonumber] | length == 2 and .[0] == .[1] and .[0] > 0) and (.[1].id | tostring) == $kept'",
+            "includes": ["true"]
+          }
+        ],
+        "rubric": "PASS if clicks from 203.0.113.60 now split between the two URLs at equal weights, the catch-all rule is the same rule as before (its id unchanged) and still second, so everyone else still reaches https://eval-catchall.example/, and the reply says so. FAIL if the new rule sits after the catch-all (where it never matches), the catch-all is removed, re-made or changed, or the agent reports success with the rule not in place."
+      },
+      "cleanup": ["rm -f /tmp/p202-eval-ruleset.url /tmp/p202-eval-ruleset.id /tmp/p202-eval-ruleset.catchall"],
+      "notes": "The redirects try the rules in their set's order and the first that matches sends the visitor. A rule added on its own (rule-create) goes after the catch-all, which then takes every visitor, so the new rule only works ahead of it: PUT /rotators/{id}/rules (`p202 rotator set-rules`, rotator_set_rules) puts it there and keeps the catch-all's id, so its clicks stay its own. The first check fires 20 real clicks through rtr.php (both URLs appear unless one weight is 0, with odds 2 in a million); the third holds the order, the equal weights and the kept id."
+    },
+    {
+      "id": "rotator-rules-002-a-preview-changes-nothing",
+      "priority": "high",
+      "state": "as rotator-rules-001: the EVAL Rule Set redirector with only its EVAL Catch-all rule, the link in /tmp/p202-eval-ruleset.url",
+      "setup": [
+        "r=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name==\"EVAL Rule Set\")][0].id // empty') && { [ -n \"$r\" ] || r=$(p202 rotator create --name 'EVAL Rule Set' --default-url https://eval-ruleset-default.example/ --json | jq -r '.data.id'); } && echo \"$r\" > /tmp/p202-eval-ruleset.id && test -s /tmp/p202-eval-ruleset.id",
+        "r=$(cat /tmp/p202-eval-ruleset.id) && c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign A\")][0].aff_campaign_id') && t=$(p202 tracker list --all --json | jq -r --arg r \"$r\" '[.data[] | select((.rotator_id|tostring)==$r)][0].tracker_id // empty') && { [ -n \"$t\" ] || t=$(p202 tracker create --aff-campaign-id \"$c\" --rotator-id \"$r\" --json | jq -r '.data.tracker_id'); } && p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url' > /tmp/p202-eval-ruleset.url && test -s /tmp/p202-eval-ruleset.url",
+        "p202 rotator set-rules \"$(cat /tmp/p202-eval-ruleset.id)\" --rules '[{\"rule_name\":\"EVAL Catch-all\",\"criteria\":[{\"type\":\"country\",\"value\":\"ALL\"}],\"redirects\":[{\"redirect_url\":\"https://eval-catchall.example/\"}]}]' --json > /dev/null"
+      ],
+      "ask": "What would change if the EVAL Rule Set redirector sent visitors from 203.0.113.62 to https://eval-preview.example/ ahead of its catch-all rule? Show me the change, but don't make it yet.",
+      "expected": {
+        "runs_one_of": ["--dry-run"],
+        "never_runs": ["rotator delete", "rule-create", "rule-update", "rule-delete", "--staged"],
+        "state_unchanged": ["p202 rotator get \"$(cat /tmp/p202-eval-ruleset.id)\" --json"],
+        "checks": [
+          {
+            "run": "curl -s -o /dev/null -w '%{redirect_url}' -H 'X-Forwarded-For: 203.0.113.62' \"$(cat /tmp/p202-eval-ruleset.url)\"",
+            "includes": ["https://eval-catchall.example/"]
+          }
+        ],
+        "reply_includes": ["eval-preview.example"],
+        "rubric": "PASS if the agent previews the new set with a dry run, reports that a rule for 203.0.113.62 would be added ahead of the catch-all (which would be kept), and the redirector is unchanged afterwards. FAIL if the rule set changes, a proposal is staged, or the agent describes a change it did not preview."
+      },
+      "cleanup": ["rm -f /tmp/p202-eval-ruleset.url /tmp/p202-eval-ruleset.id"],
+      "notes": "The negative twin of rotator-rules-001: `p202 rotator set-rules <id> --dry-run` (rotator_set_rules with dry_run: true) answers the set as it would be stored and each rule's change, and writes nothing. The click check proves the redirect still sends 203.0.113.62 to the catch-all."
+    }
+  ]
+}

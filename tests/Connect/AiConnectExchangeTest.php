@@ -45,7 +45,7 @@ final class AiConnectExchangeTest extends TestCase
         }
         $verifier = str_repeat('v', 50);
         $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
-        $code = AiConnect::approve(new ServerStateStore(), 7, $storedScope, $challenge, 'Claude');
+        $code = AiConnect::approve(new ServerStateStore($this->stateDir), 7, $storedScope, $challenge, 'Claude');
 
         $db = new FakeMysqliConnection();
         $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'label'", [['Field' => 'label']]);
@@ -55,7 +55,7 @@ final class AiConnectExchangeTest extends TestCase
         $db->whenQueryContainsReturnRows('SELECT p202_customer_api_key FROM 202_users', $key);
         $db->whenQueryContainsInsertId('INSERT INTO 202_api_keys', 41);
         $payload = ['code' => $code, 'code_verifier' => $verifier];
-        [$status, $body] = AiConnect::exchange($db, new ServerStateStore(), $payload);
+        [$status, $body] = AiConnect::exchange($db, new ServerStateStore($this->stateDir), $payload);
         return [$status, $body, $db];
     }
 

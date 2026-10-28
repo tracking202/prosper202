@@ -106,10 +106,13 @@ final class TableRegistry
     public const string CONVERSION_UPLOADS = '202_conversion_uploads';
     public const string NOTIFICATION_PENDING = '202_notification_pending';
     public const string NOTIFICATION_CORRECTION_URLS = '202_notification_correction_urls';
+    public const string OFFLINE_CONVERSION_FEEDS = '202_offline_conversion_feeds';
+    public const string OFFLINE_CONVERSION_NAMES = '202_offline_conversion_names';
 
     // Deployment-wide secrets (SecretTables): owned by the installation, not
     // by any user
     public const string DEPLOYMENT_SECRETS = '202_deployment_secrets';
+    public const string GEOIP_REFRESH = '202_geoip_refresh';
 
     // Identity graph (IdentityTables)
     public const string IDENTITY_KEYS = '202_identity_keys';

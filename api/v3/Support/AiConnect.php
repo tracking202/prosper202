@@ -44,7 +44,7 @@ final class AiConnect
         'aff-networks', 'text-ads', 'rotators', 'clicks', 'conversions', 'staged-changes',
     ];
     public const WRITE_AREAS = [
-        'campaigns', 'trackers', 'landing-pages', 'ppc-networks', 'ppc-accounts', 'aff-networks',
+        'campaigns', 'trackers', 'landing-pages', 'ppc-networks', 'ppc-accounts', 'aff-networks', 'text-ads', 'rotators',
     ];
 
     /**
@@ -195,6 +195,58 @@ final class AiConnect
         return implode(',', $tokens);
     }
 
+    /** Each access as the approval page names it. */
+    public const ACCESS_LABELS = [
+        'read' => 'Read only',
+        'propose' => 'Read, and propose changes',
+        'write' => 'Read and change',
+    ];
+
+    /**
+     * The least access whose key passes a check for $scope, or null when no
+     * connection's key can (users, system, sync, or an area the tools do not
+     * change). A connection keeps the scope it was minted with, so one
+     * approved before an area joined these lists is refused there until it
+     * is approved again.
+     */
+    public static function accessCovering(string $scope): ?string
+    {
+        foreach (self::ACCESSES as $access) {
+            if (Auth::scopesSatisfy(explode(',', (string) self::scopeFor($access)), $scope)) {
+                return $access;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The access to choose when approving a connection again so that its new
+     * key passes a check for $scope and keeps what its key ($keyScopes) may
+     * do now: accessCovering(), or the key's own access when that is more.
+     * Null when no connection's key can pass.
+     *
+     * @param string[] $keyScopes
+     */
+    public static function accessToApprove(string $scope, array $keyScopes): ?string
+    {
+        $covering = self::accessCovering($scope);
+        if ($covering === null) {
+            return null;
+        }
+        $held = 'read';
+        foreach ($keyScopes as $token) {
+            if ($token === 'write' || str_ends_with($token, ':write')) {
+                $held = 'write';
+                break;
+            }
+            if ($token === 'stage' || str_ends_with($token, ':stage')) {
+                $held = 'propose';
+            }
+        }
+        $rank = array_flip(self::ACCESSES);
+        return $rank[$held] > $rank[$covering] ? $held : $covering;
+    }
+
     /** The access a stored scope was minted for, or null when it is none of the three. */
     public static function accessFor(string $scope): ?string
     {
@@ -233,11 +285,20 @@ final class AiConnect
         return hash('sha256', strtolower(trim($key)));
     }
 
+    /** How every connection's label begins; nothing else writes a key's label. */
+    public const LABEL_PREFIX = 'AI: ';
+
     /** The key's label in Account › API keys. */
     public static function label(string $clientName): string
     {
         $host = (string) parse_url(self::relayOrigin(), PHP_URL_HOST);
-        return mb_substr('AI: ' . $clientName . ' via ' . $host, 0, 100);
+        return mb_substr(self::LABEL_PREFIX . $clientName . ' via ' . $host, 0, 100);
+    }
+
+    /** Whether a key's stored label is one label() wrote: the key is a connection's. */
+    public static function isConnectionLabel(?string $label): bool
+    {
+        return $label !== null && str_starts_with($label, self::LABEL_PREFIX);
     }
 
     /** Records an approval and returns its one-time code. */

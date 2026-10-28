@@ -133,7 +133,12 @@ final class MysqlEngagementRepository
         );
         $this->conn->bind($stmt, 'iiii', [$userId, $customerId, $since, $limit]);
 
-        return $this->conn->fetchAll($stmt);
+        // A number, not the DECIMAL string mysqli hands back ("75.000").
+        return array_map(static function (array $row): array {
+            $row['event_value'] = $row['event_value'] === null ? null : (float) $row['event_value'];
+
+            return $row;
+        }, $this->conn->fetchAll($stmt));
     }
 
     /**
@@ -164,7 +169,12 @@ final class MysqlEngagementRepository
         );
         $this->conn->bind($stmt, 'iiii', [$userId, $customerId, $since, $limit]);
 
-        return $this->conn->fetchAll($stmt);
+        // A count, not the DECIMAL string SUM() answers ("1").
+        return array_map(static function (array $row): array {
+            $row['conversions'] = (int) $row['conversions'];
+
+            return $row;
+        }, $this->conn->fetchAll($stmt));
     }
 
     /**
@@ -230,11 +240,26 @@ final class MysqlEngagementRepository
         $now = time();
         $weights = $this->scoreWeights($userId);
         foreach ($rows as &$row) {
+            $row = self::abmNumbers($row);
             $row['engagement_score'] = self::engagementScore($row, $now, $weights);
         }
         unset($row);
 
         return $rows;
+    }
+
+    /**
+     * An ABM row's money, averages, counts and times as numbers (LtvNumbers).
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function abmNumbers(array $row): array
+    {
+        return LtvNumbers::integers(
+            LtvNumbers::decimals($row, ['total_revenue', 'mrr', 'avg_time_on_page', 'avg_scroll_depth', 'avg_video_pct']),
+            ['contacts', 'order_count', 'engagements', 'custom_events', 'last_activity', 'last_activity_time']
+        );
     }
 
     /**
@@ -477,6 +502,7 @@ final class MysqlEngagementRepository
 
         $weights = $this->scoreWeights($userId);
         foreach ($rows as &$row) {
+            $row = self::abmNumbers($row);
             $row['engagement_score'] = self::engagementScore($row, $now, $weights);
         }
         unset($row);

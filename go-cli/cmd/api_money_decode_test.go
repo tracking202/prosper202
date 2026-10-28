@@ -19,7 +19,8 @@ var apiMoneyFields = map[string]bool{
 	"aff_campaign_payout": true, "aff_campaign_foreign_payout": true, "payout": true, "recorded_payout": true,
 	"revenue": true, "revenue_override": true, "cost": true, "income": true, "net": true, "cpc": true,
 	"cpa": true, "epc": true, "price": true, "total_revenue": true, "total_cost": true, "total_income": true,
-	"total_net": true,
+	"total_net": true, "refunded_amount": true, "mrr": true, "unit_price": true, "customer_ltv": true,
+	"avg_ltv": true, "aov": true, "spend": true, "cac": true, "avg_revenue_per_customer": true,
 }
 
 // notAPIMoney are struct fields with a money name that no API answer is decoded into, keyed

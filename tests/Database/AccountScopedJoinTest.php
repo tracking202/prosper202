@@ -85,6 +85,9 @@ final class AccountScopedJoinTest extends TestCase
     private const DIRTY_MARKS = 'marks the hours a changed click or conversion sits in, for whichever account owns them: the account read is the row\'s own (its journey meta row by conv_id, the credit\'s model by model_id), and it is the one marked';
     private const RUNTIME_CHECKED = 'built per dimension at runtime; testRuntimeBuiltSqlIsTied() runs the builder for every dimension and scans what it returns';
     private const JOIN_REWRITE = 'str_replace() arguments that turn dimensionJoin()\'s INNER JOIN into a LEFT JOIN for the group report; the join itself is testRuntimeBuiltSqlIsTied()\'s';
+    private const GROUP_LEAVES = 'the group report\'s innermost groups, a derived table: its WHERE is'
+        . ' filtered()\'s, which begins `de.user_id = ?` with the account, and its joins are dimensionJoin()\'s,'
+        . ' which testRuntimeBuiltSqlIsTied() runs';
     private const NOT_SQL = 'an exception message ("has no name join"), not SQL';
     private const CALLER_SCOPE = 'the caller\'s click scope over 202_dataengine (the report\'s own user filter); the rows it selects are one click\'s conversions';
     private const INSTALL_REGISTRATION = 'an install\'s registration: InstallIntake::insert() writes registration_id and user_id together from one registration, and no statement updates either';
@@ -110,6 +113,10 @@ final class AccountScopedJoinTest extends TestCase
     private const DATA_SCOPE = 'ranks an install-wide region or ISP by the clicks the report reads: `2st.user_id = ` the integer DataScope::userId() returns, or every account\'s for the session that sees every campaign (DataScope); it names nothing an account owns';
     private const INSTALL_LICENCE_KEY = 'the install\'s licence key, read across the users of one install on purpose: the lowest active user on the requesting user\'s install_hash that holds a key, as AUTH::determineAccountOwnerId() resolves it for the web app; the key only asks my.tracking202.com whether the install is licensed for the Go CLI, and nothing of that row is answered to the caller';
     private const UPGRADE = 'an upgrade or migration step over every account\'s rows: it serves nothing on one account\'s behalf';
+    private const OWNERSHIP_REPORT = 'finds, on purpose, the traffic sources whose accounts are another user\'s'
+        . ' (`pa.user_id <> pn.user_id`): the install-wide report GET /system/traffic-source-owners serves only to an'
+        . ' Admin with access_to_settings (TrafficSourceOwnersRoutesTest), and the repair moves a source only to a user'
+        . ' its accounts name';
     private const FIRST_VISIT = 'one click\'s own rows by its id (`?` or its digits, checked), ordered to its'
         . ' first visit, standing where the statement read `202_clicks` as its driving row; each caller ties it to'
         . ' an account: `fv.user_id = ?` (LastClickFromAddress::find()), `c.user_id = ?`'
@@ -245,6 +252,9 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/ReportSummaryForm.class.php' => [
             'table built at runtime | \\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope) | LEFT OUTER JOIN {\\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope)} AS lcp ON ( `2c`.click_id = lcp.' => self::LEDGER_PARTS,
         ],
+        '202-config/Setup/TrafficSourceOwners.php' => [
+            'no user_id tie | 202_ppc_networks | pn.ppc_network_id = pa.ppc_network_id' => self::OWNERSHIP_REPORT,
+        ],
         '202-config/Update/SubidBatch.php' => [
             'no user_id tie | 202_conversion_logs | cl.click_id = c.click_id AND cl.deleted = 0' => self::SAME_CLICK_CONVERSIONS,
             'no user_id tie | 202_conversion_logs | cl.click_id = c.click_id AND cl.deleted = 0 #2' => self::SAME_CLICK_CONVERSIONS,
@@ -262,11 +272,6 @@ final class AccountScopedJoinTest extends TestCase
         ],
         '202-config/migrations/run_ltv_backfill.php' => [
             'no user_id tie | 202_revenue_events | re.conv_id = cl.conv_id' => self::UPGRADE,
-        ],
-        '202-cronjobs/ltv_maintenance.php' => [
-            'no user_id tie | 202_subscriptions | customer_id IN ( {{$in}} )' => self::CUSTOMER_ROWS,
-            'no user_id tie | 202_revenue_events | customer_id BETWEEN {{$start}} AND {{$end}}' => self::CUSTOMER_ROWS,
-            'no user_id tie | 202_subscriptions | customer_id BETWEEN {{$start}} AND {{$end}}' => self::CUSTOMER_ROWS,
         ],
         'api/v3/Apps/Android/InstallIntake.php' => [
             'no user_id tie | 202_app_registrations | r.registration_id = i.registration_id' => self::INSTALL_REGISTRATION,
@@ -301,6 +306,8 @@ final class AccountScopedJoinTest extends TestCase
         ],
         'api/v3/Controllers/ReportsController.php' => [
             'no table after JOIN | ? | INNER JOIN' => self::JOIN_REWRITE,
+            'subquery with runtime text before its WHERE | 202_dataengine'
+                . ' | implode("\n ", $joins)' => self::GROUP_LEAVES,
             'no table after JOIN | ? | LEFT JOIN' => self::JOIN_REWRITE,
             'table built at runtime | {$bd[\'table\']} | INNER JOIN {{$bd[\'table\']}} ref ON {$on}' => self::RUNTIME_CHECKED,
         ],

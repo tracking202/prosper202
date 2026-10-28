@@ -27,7 +27,7 @@ way around a read the role does not allow.
 | `GET` | `/attribution/reports/breakdown` | Attributed conversions, revenue, cost, ROI and assists by a click dimension |
 | `GET` | `/attribution/reports/journeys` | Journey length, time to convert, one-touch share by browser |
 | `GET` | `/attribution/conversions/{id}/journey` | One conversion's touches, the signals that linked them, every model's credit |
-| `GET` | `/attribution/queue` | The worker's backlog: waiting, failing (with the error), and why each row was queued |
+| `GET` | `/attribution/queue` | The worker's backlog: waiting, failing (with the error), and why each row was queued; identity merges awaiting their re-queue, failing (`merges_failing`) and retired (`merges_retired`), each listed in `merge_rows` with its `last_error` |
 | `GET` | `/attribution/exports` | Export jobs, newest first (`?status=`, `?limit=`) |
 | `GET` | `/attribution/exports/{id}` | One export job |
 | `POST` | `/attribution/exports` | Queue an export: a breakdown written to CSV, now or at `run_at`, optionally to a webhook (honors `Idempotency-Key`; supports `?staged=1`) |
@@ -200,7 +200,10 @@ TLS verified against the host name, no proxy and no redirects. An operator
 whose receiver is on their own network can allow that network with
 `define('P202_WEBHOOK_ALLOW_NETWORKS', '10.20.0.0/16');` in `202-config.php`;
 link-local and the metadata endpoints can never be allowed, and an entry that
-does not parse stops every webhook until it is fixed.
+does not parse stops every webhook until it is fixed. The same setting, and
+the same address rules, govern the LTV webhooks ([20-ltv.md](20-ltv.md#webhooks))
+and, with http:// allowed, the traffic sources' server-to-server postbacks
+([27-setup.md](27-setup.md#an-accounts-pixels--ppc-accountsidpixels)).
 
 Each delivery carries `X-P202-Export-Id`, `X-P202-Delivery-Attempt`,
 `X-P202-Timestamp` and `X-P202-Signature: sha256=<hex>`, the HMAC-SHA256 of

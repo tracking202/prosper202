@@ -1,6 +1,6 @@
 # 3rd Party Integrations
 
-Currently inside your Prosper202 Install, we support a number of 3rd party integrations available to you. Below are the three integrations you will find:
+Currently inside your Prosper202 Install, we support a number of 3rd party integrations available to you. Below are some of the integrations you will find:
 
 ## Direct Network Integration
 
@@ -13,6 +13,213 @@ Each user's networks are their own: My Account › 3rd Party API Integrations li
 Clickbank doesn't support Postback or custom conversion pixels, so to get real-time reporting of sales you can setup our Clickbank Sales Notification integration.
 
 **Video:** [Setting Up Prosper202 and Clickbank Instant Notification](https://www.youtube.com/watch?v=M6zo3XuExL0&feature=youtu.be)
+
+Prosper202 takes ClickBank's Instant Notification Service (INS), version 6.0
+or later (8.0 is current), and records each sale and rebill on the click that
+sent the buyer; a refund or chargeback takes it back. Every Prosper202 account that sells or promotes through ClickBank sets
+it up for itself, under **Account › API integrations › ClickBank**:
+
+1. Make the campaign's offer URL your HopLink with `tid=[[subid]]` added, such
+   as `https://affiliate.vendor.hop.clickbank.net/?tid=[[subid]]`. A tracker
+   fills `[[subid]]` with the click id, and ClickBank sends it back as the
+   order's first tracking code. An affiliate on version 8.0 can use
+   `extclid=[[subid]]` instead: it is read when the order has no tracking
+   code. For a subscription, set the campaign's **When a click converts more
+   than once** (under Advanced) to **Add them up**: with **Keep the latest**,
+   each rebill replaces the click's value rather than adding to it.
+2. Save your ClickBank account's **secret key** on the page (ClickBank: up to
+   16 capital letters and digits, under Vendor Settings › My Site › Advanced
+   Tools). Each notification is encrypted with it, and the account whose key
+   decrypts it is the one it records for. A key that two Prosper202 accounts
+   store is refused (`409`), since it cannot say whose sale it is: keep it in
+   the account it belongs to. A deleted account's key decrypts nothing, so it
+   is no second account.
+3. In ClickBank, paste the page's INS URL
+   (`https://<your tracking domain>/tracking202/static/cb202.php`), choose
+   version 8.0, and press **Test URL**: the test marks the key Verified on the
+   page and posts to your Slack webhook, if you have one.
+
+What each notification does, and the status ClickBank's INS log shows for it
+(ClickBank sends a notification again every four hours, five times, until it
+is answered with a 2xx):
+
+| Notification | Prosper202 | Status |
+| ------------ | ---------- | ------ |
+| `SALE` | a conversion on the click, source `clickbank`, under its `receipt`, worth its `totalAccountAmount` (USD) | `200 recorded` |
+| the same `SALE` again | nothing; a retry stating another amount is refused | `200 duplicate` / `409` |
+| `BILL` (a subscription's rebill) | another conversion on the click, under its own `receipt` (the first payment's with `-0001`, `-0002` after it), worth its `totalAccountAmount` | `200 recorded` |
+| `RFND`, `CGBK`, `INSF` (a refund, a chargeback, an eCheck the buyer's bank returned) | a reversal of the conversion under its `receipt`, by what its `totalAccountAmount` says the account lost (the whole of it when it states none or 0); a payment is reversed once | `200 reversed`, `404` when no such conversion is on the click |
+| the same reversal again (ClickBank's retry of it) | nothing | `200 duplicate` |
+| another reversal of a payment already reversed (a second refund, or a chargeback of a refunded payment), whatever amount it states | nothing: a payment is reversed once; the answer names the reversal on file and how much of the payment is still credited | `409` |
+| `TEST`, and `TEST_SALE`, `TEST_BILL`, `TEST_RFND`, `CANCEL-TEST-REBILL`, `UNCANCEL-TEST-REBILL` | the key is marked Verified; nothing is recorded | `200 test` |
+| `CANCEL-REBILL` and `UNCANCEL-REBILL` (a subscription cancelled, a cancellation undone), `SUBSCRIPTION-CHG`, `ABANDONED_ORDER`, `CUSTOMER_AUTH_FAILURE`, `CUSTOMER_EMAIL_UPDATE`, `CUSTOMER_UPDATE_CC_NOTIFICATION`, `PURCHASE_DETAILS_EMAIL_RESPONSE` | nothing: no money moves | `200 ignored` |
+| a type ClickBank's INS article does not list | nothing | `400`, naming it |
+| a sale, rebill or reversal with no tracking code and no `extclid` | nothing: no click to credit; the answer says the HopLink had no `tid=[[subid]]` or `extclid=[[subid]]` | `200 no_click` |
+| a tracking code (or `extclid`) that is not a click of the account | nothing; the answer names the field, and the HopLink's `tid=[[subid]]` or `extclid=[[subid]]` that fills it | `404` |
+| a notification no stored key decrypts | nothing | `403` |
+| a key more than one account stores | nothing | `409` |
+| an account that counts in a currency other than USD | nothing: ClickBank's amounts are USD, and Prosper202 does not convert them | `422` |
+| a malformed field (a tracking code such as `42.9`, an amount such as `1,000.00`, a `transactionTime` without its offset) | nothing | `400`, naming the field |
+| a legacy notification (version 4.0 or earlier, signed with `cverify`) | nothing | `415`, saying to choose version 8.0 |
+| a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
+| a notification that could not be recorded just now | nothing that a retry would double: a receipt is recorded once | `500` |
+
+A sale is dated by its `transactionTime`, read with the offset it carries
+(`2023-10-05T13:47:51-06:00`, or 7.0's `20231005T134751-0600`), so one
+ClickBank sends again hours later still falls on the day it happened; without
+one, it is dated when it arrives. A time before the click is dated at the
+click, and one ahead of this server's clock at its arrival; the answer says
+so.
+
+Each notification is logged in the server's error log in one line: the
+outcome, the type, the click, the receipt and the account, never a key or the
+buyer's details.
+
+## PayKickstart
+
+For a **vendor** selling through PayKickstart: Prosper202 records each sale and
+rebill of your product on the click that sent the buyer, and a refund reverses
+the sale, from PayKickstart's product IPN. Under **Account › API integrations ›
+PayKickstart**:
+
+1. Make each campaign's offer URL its PayKickstart checkout link with
+   `subid=[[subid]]` added, such as
+   `https://app.paykickstart.com/checkout/123?subid=[[subid]]`. A tracker fills
+   `[[subid]]` with the click id, and PayKickstart sends it back in the IPN as
+   `custom_subid`. For a subscription, set the campaign's **When a click
+   converts more than once** (under Advanced) to **Add them up**: with **Keep
+   the latest**, each rebill replaces the click's value rather than adding to
+   it.
+2. In PayKickstart, paste the page's IPN URL
+   (`https://<your tracking domain>/tracking202/static/paykickstart.php`) into
+   the **IPN Integration** tab of each product.
+3. Store the **IPN secret key** of each PayKickstart campaign on the page (every
+   campaign has its own, in its settings). Prosper202 verifies each IPN's
+   `hash` with the stored keys, and the account whose key verifies it is the
+   one it records for (a deleted account's keys verify nothing); an IPN no
+   stored key verifies is refused. The keys are
+   never shown back: the page lists their last four characters, and the API
+   (`PUT /users/{id}/preferences`, `p202 user prefs update
+   --paykickstart-ipn-secret-keys`) how many are stored.
+
+What each IPN does, and what PayKickstart's IPN log shows for it:
+
+| IPN | Prosper202 | Status |
+| --- | ---------- | ------ |
+| `sales` (a first payment or a rebill) | a conversion on the click, source `paykickstart`, under its `transaction_id`, worth its `amount` | `200 recorded` |
+| the same `sales` again | nothing; a retry stating another amount is refused, and so is a sale whose refund is on file, naming the reversal to delete if the refund was undone | `200 duplicate` / `409` |
+| `refund` | a reversal of the sale its `transaction_id` names, by its `amount` (the whole sale when it carries none or 0); a sale is reversed once | `200 reversed`, `404` when no such sale is on the click |
+| a `refund` of a sale already reversed | nothing; a refund that takes back another amount than the one on file is refused, naming both: a full refund after a partial one says how much is still credited. Once that reversal is deleted, a later refund reverses the sale again; the deleted one's own refund, sent again unchanged, changes nothing | `200 duplicate` / `409` |
+| test mode (`mode=test`) | nothing | `200 test` |
+| `subscription-payment` and every other event | nothing (`sales` already counts every payment) | `200 ignored` |
+| a sale or refund with no `custom_subid` (the checkout link carried no `subid=[[subid]]`) | nothing: no click to credit; the answer names both | `200 no_click` |
+| a `custom_subid` that is not a click of the account | nothing; the answer names `custom_subid`, and the checkout link's `subid=[[subid]]` that fills it | `404` |
+| a hash no stored key verifies | nothing | `403` |
+| a malformed field (an amount such as `1,000`, `custom_subid=[[subid]]`, a `transaction_time` that is not a Unix time) | nothing | `400`, naming the field |
+| an IPN that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
+| an IPN that could not be recorded just now | nothing that a retry would double: a transaction id is recorded once | `500` |
+
+A sale or refund is dated by its `transaction_time`, so one PayKickstart sends
+again days later still falls on the day it happened; without one, it is
+dated when it arrives. A time before the click (for a refund, before its
+sale) is dated at the click (the sale), and one ahead of this server's
+clock at its arrival; the answer says so. Reports by click day (`p202
+report`) are unchanged by this: they count a conversion on its click's day.
+
+Each IPN is logged in the server's error log in one line: the outcome, the
+event, the click, the transaction and the account, never a key or the
+buyer's details. Use an `https://` IPN URL: PayKickstart's signature covers the
+values of an IPN but not which field each one is in, so whoever holds a signed
+IPN can move its values between fields.
+
+For an **affiliate** promoting PayKickstart products: PayKickstart's Affiliate
+IPN cannot update conversions. It carries no click (PayKickstart allows no
+custom variables in it, and the `tid` on your affiliate link shows only in
+your PayKickstart account) and it is not signed. Leave the IPN URL out of the
+Affiliate IPN setting; if you have it there, Prosper202 answers it `415`,
+saying so.
+
+## JVZoo
+
+Prosper202 records each JVZoo sale and rebill on the click that sent the
+buyer, and a refund or chargeback takes it back, from JVZoo's JVZIPN. It works
+for an affiliate promoting a JVZoo product and for a vendor selling one; the
+two have their own URL under **Account › API integrations › JVZoo**, because
+the click comes from a different field for each.
+
+For an **affiliate**:
+
+1. Make the campaign's offer URL your JVZoo affiliate link with
+   `?tid=[[subid]]` added, such as
+   `https://www.jvzoo.com/c/12345/67890/?tid=[[subid]]`. A tracker fills
+   `[[subid]]` with the click id, and JVZoo sends the tid back in the
+   notification as `caffitid`.
+2. In JVZoo, under **Affiliates › Approved Products**, open the product's
+   **Integrations** and paste the page's **Affiliate IPN URL**
+   (`https://<your tracking domain>/tracking202/static/jvzoo.php?role=affiliate`)
+   into **Affiliate IPN**.
+
+For a **vendor**:
+
+1. Make the campaign's offer URL your product's JVZoo buy link with
+   `?subid=[[subid]]` added at its end, and send buyers to it through the
+   tracker (or a landing page's outbound link). JVZoo sends the buy link's
+   variables back in the notification as `cvendthru`, and `subid` is the click.
+2. In JVZoo, edit the product and, under **Advanced Settings**, choose
+   **JVZIPN v1** and paste the page's **Vendor JVZIPN URL**
+   (`https://<your tracking domain>/tracking202/static/jvzoo.php?role=vendor`)
+   as its JVZIPN URL. Not the v2 URL: JVZIPN v2's `cverify` covers five fields
+   and neither the amount nor the tid, so Prosper202 answers it `415`.
+
+Either way, store your **JVZIPN secret key** on the page (JVZoo shows it under
+**My Account › Account Details › Seller Settings**; one JVZoo account has one,
+for both roles). Prosper202 checks each notification's `cverify` with the
+stored keys, and the account whose key verifies it is the one it records for
+(a deleted account's key verifies nothing). The vendor URL never reads `caffitid`, which is whatever tid an affiliate
+chose, and the affiliate URL never reads `cvendthru`, which is the vendor's.
+For a subscription, set the campaign's **When a click converts more than
+once** (under Advanced) to **Add them up**, so each rebill adds to the sale.
+
+What each notification does, and the status JVZoo sees (anything but `200`
+is sent again every hour for 72 hours):
+
+| `ctransaction` | Prosper202 | Status |
+| -------------- | ---------- | ------ |
+| `SALE`, `BILL` (a rebill, under its own receipt) | a conversion on the click, source `jvzoo`, under its `ctransreceipt`, worth its `ctransamount` (what JVZoo pays you: an affiliate's commission, a vendor's share) | `200 recorded` |
+| the same `SALE` again | nothing; one stating another amount is refused | `200 duplicate` / `409` |
+| `RFND`, `CGBK`, `INSF` (an eCheck chargeback) | a reversal of the whole sale its `ctransreceipt` names (JVZoo refunds a payment whole); a sale is reversed once, so a chargeback after a refund changes nothing | `200 reversed` / `200 duplicate`, `404` when no such sale is on the click |
+| a `SALE` again after its refund (JVZoo's way of undoing a refund) | nothing: the answer names the reversal; delete it (`p202 conversion delete <id>`) to count the sale again. A refund sent after that reverses the sale again; the first refund sent again unchanged is a retry and changes nothing | `409` |
+| `CANCEL-REBILL`, `UNCANCEL-REBILL` | nothing | `200 ignored` |
+| `TEST` | nothing | `200 test` |
+| a notification with no click (no `caffitid` on the affiliate URL, a tid that is not a click id, no `subid` in `cvendthru` on the vendor URL) | nothing; the answer names the field the URL reads and the link's `?tid=[[subid]]` or `?subid=[[subid]]` that fills it | `200 no_click` |
+| a click that is not one of the account's | nothing; the answer names the field it came in | `404` |
+| a `cverify` no stored key verifies | nothing | `403` |
+| a malformed field (a `ctranstime` that is not a Unix time among them), a field JVZIPN v1 does not post, a URL with no `?role=` | nothing | `400`, naming it |
+| a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
+
+A few things JVZoo's documentation leaves to the receiver:
+
+- **Amounts.** JVZoo's field table calls `ctransamount` pennies
+  (`1000` = $10.00) while its sample and its notifications state dollars
+  (`10.00`). Prosper202 reads a decimal such as `47.00` as dollars and refuses
+  a whole number such as `1000`, rather than guess which it is. JVZIPN states
+  no currency: the amount is recorded in the account's.
+- **Dates.** JVZoo resends an unanswered notification every hour for 72 hours,
+  so a conversion or reversal is dated by `ctranstime`, when the payment or
+  refund happened, not when the notification arrived. A time before the click
+  is held to the click, one before the sale a refund takes back to the sale,
+  and one ahead of this server's clock to its arrival; the answer says so.
+- **Tests.** JVZoo marks no notification as a test. A test purchase (Test
+  Purchase Mode) is a real sale at a test price and is recorded; refund it in
+  JVZoo and the refund reverses it.
+- **The signature.** `cverify` is 8 hex digits (32 bits) and covers the values
+  but not the field names, so Prosper202 takes only the fields JVZIPN v1
+  documents. Use an `https://` URL, so that no one between JVZoo and the
+  install can read a signed notification.
+
+Each notification is logged in the server's error log in one line: the
+outcome, the type, the click, the receipt and the account, never the key or
+the buyer's details.
 
 ## Slack Integration
 

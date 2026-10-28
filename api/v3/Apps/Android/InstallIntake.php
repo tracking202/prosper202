@@ -285,7 +285,7 @@ final class InstallIntake
 
     private function quotaStore(): QuotaStore
     {
-        return $this->quota ?? new ServerStateStore();
+        return $this->quota ?? ServerStateStore::forInstall($this->db);
     }
 
     /**

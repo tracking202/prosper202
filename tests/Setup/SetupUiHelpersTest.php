@@ -116,6 +116,33 @@ final class SetupUiHelpersTest extends TestCase
         self::assertStringContainsString('<div class="form-label">Pixel</div>', $html);
     }
 
+    public function testTheLinksSchemeIsSaidWithWhy(): void
+    {
+        self::assertSame(
+            'Links use https://, because this page was served over HTTPS.',
+            p202_setup_link_scheme_sentence('https://t.example/', null)
+        );
+        self::assertSame(
+            'Links use http://, because this page was served over HTTP.',
+            p202_setup_link_scheme_sentence('http://t.example/', null)
+        );
+        self::assertSame(
+            'This link uses https://, because your tracking domain is saved with it.',
+            p202_setup_link_scheme_sentence('https://t.example/', 'https', 'This link uses')
+        );
+        self::assertSame(
+            'Links use http://, because your tracking domain is saved with it.',
+            p202_setup_link_scheme_sentence('http://t.example/', 'http')
+        );
+
+        $html = p202_setup_link_scheme_note('https://t.example/', null, '/account.php?a=1&b=2#p', 'Direct links use');
+        self::assertSame(
+            '<p class="p202-decided mb-0"><i class="bi bi-check2-circle"></i> Direct links use https://,'
+                . ' because this page was served over HTTPS. <a href="/account.php?a=1&amp;b=2#p">change</a></p>',
+            $html
+        );
+    }
+
     public function testQueryFlashesOnlyForTheirOwnKey(): void
     {
         $html = p202_setup_query_flashes(['added' => 'Added.', 'deleted' => 'Removed.'], ['added' => '1', 'deleted' => 'yes']);

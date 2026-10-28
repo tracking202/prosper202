@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Prosper202\Cron\CronLock;
 use Prosper202\Database\Connection;
 
 include_once(__DIR__ . '/MessagingClient.class.php');
@@ -13,9 +14,9 @@ include_once(__DIR__ . '/MessagingClient.class.php');
  * and behavioural events are recorded locally (202_messaging_attributes,
  * 202_messaging_events) and delivered to the portal's POST /track by sync(),
  * which 202-account/ajax/messaging/track.php runs after every record, and
- * deliverPending() runs for every user with something pending from the
- * hourly tier of 202-cronjobs/index.php (and 202-cronjobs/sync-messaging.php,
- * for an operator who wants a tighter cadence).
+ * deliverPendingExclusive() runs for every user with something pending from
+ * the hourly tier of 202-cronjobs/index.php (and 202-cronjobs/sync-messaging.php,
+ * for an operator who wants a tighter cadence), one run at a time.
  *
  * Chat is not here. The install no longer stores or syncs messages: the
  * browser talks to the chat service directly with a pass that
@@ -292,11 +293,37 @@ class MessagingService
     }
 
     /**
-     * The cron's delivery: every user usersWithPendingDelivery() names, up
-     * to $maxBatchesPerUser batches each, past the per-request throttle (the
-     * cron's cadence is the throttle). 202-cronjobs/index.php runs it hourly
+     * The cron's delivery, while holding the lock at $lockPath (a CronLock,
+     * CronLock::path(CronLock::ANALYTICS_DELIVERY_FILE) outside tests), or
+     * null while another run holds it. 202-cronjobs/index.php runs it hourly
      * on every default deployment; 202-cronjobs/sync-messaging.php is the
-     * same run on its own.
+     * same run on its own. Two at once read the same pending rows: each
+     * event went out twice, and while the portal was down each spent two of
+     * its attempts on one outage.
+     *
+     * @return array{sent: int, more: int, idle: int, failed: int, stopped: int}|null
+     * @throws \Prosper202\Cron\CronLockFailed when the lock cannot be taken for any other reason
+     * @throws \Prosper202\Database\Exceptions\QueryException when the users cannot be listed
+     */
+    public static function deliverPendingExclusive(
+        mysqli $db,
+        string $lockPath,
+        int $maxBatchesPerUser = 10,
+        int $maxConsecutiveFailures = 3
+    ): ?array {
+        // Held until this returns.
+        $lock = CronLock::take($lockPath);
+        if ($lock === null) {
+            return null;
+        }
+
+        return self::deliverPending($db, $maxBatchesPerUser, $maxConsecutiveFailures);
+    }
+
+    /**
+     * Every user usersWithPendingDelivery() names, up to $maxBatchesPerUser
+     * batches each, past the per-request throttle (the cron's cadence is the
+     * throttle).
      *
      * A user who cannot be read is that user's failure, not the run's. After
      * $maxConsecutiveFailures failed deliveries in a row the run stops: the
@@ -307,7 +334,7 @@ class MessagingService
      * @return array{sent: int, more: int, idle: int, failed: int, stopped: int}
      * @throws \Prosper202\Database\Exceptions\QueryException when the users cannot be listed
      */
-    public static function deliverPending(mysqli $db, int $maxBatchesPerUser = 10, int $maxConsecutiveFailures = 3): array
+    private static function deliverPending(mysqli $db, int $maxBatchesPerUser, int $maxConsecutiveFailures): array
     {
         $counts = ['sent' => 0, 'more' => 0, 'idle' => 0, 'failed' => 0, 'stopped' => 0];
         $users = self::usersWithPendingDelivery($db);

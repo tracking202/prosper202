@@ -244,6 +244,44 @@ final class OwnedReferencesIntegrationTest extends TestCase
         $trackers->update((int) $redirector['tracker_id'], ['rotator_id' => 0, 'aff_campaign_id' => $m['aff_campaign_id']]);
     }
 
+    /**
+     * An advanced landing page's ad (text_ad_type 1) names an advanced page,
+     * as Setup › Text Ads offers only those: Get Links offers an ad on the
+     * advanced page it names, so one naming a simple page was stored with a
+     * 201 and never offered. A campaign's ad may name a simple page.
+     */
+    public function testAnAdvancedLandingPagesAdNamesAnAdvancedPage(): void
+    {
+        $m = $this->ids['mine'];
+        $ads = new TextAdsController(self::$db, self::USER);
+        $advanced = (int) (new LandingPagesController(self::$db, self::USER))->create(['landing_page_url' => 'https://adv.example', 'landing_page_nickname' => 'adv', 'landing_page_type' => 1, 'aff_campaign_id' => 0])['data']['landing_page_id'];
+        $body = ['text_ad_name' => 'x', 'text_ad_headline' => 'h', 'text_ad_description' => 'd', 'text_ad_display_url' => 'x', 'text_ad_type' => 1, 'aff_campaign_id' => 0];
+
+        $before = $this->rowCount('202_text_ads');
+        $this->assertRefused(fn () => $ads->create(['landing_page_id' => $m['landing_page_id']] + $body), 'landing_page_id', 'an advanced ad on a simple page');
+        self::assertSame($before, $this->rowCount('202_text_ads'), 'a refused create wrote a row');
+
+        $ad = (int) $ads->create(['landing_page_id' => $advanced] + $body)['data']['text_ad_id'];
+        $this->assertRefused(fn () => $ads->update($ad, ['landing_page_id' => $m['landing_page_id']]), 'landing_page_id', 'an advanced ad moved to a simple page');
+        $campaignAd = (int) $ads->create(['text_ad_type' => 0, 'aff_campaign_id' => $m['aff_campaign_id'], 'landing_page_id' => $m['landing_page_id']] + $body)['data']['text_ad_id'];
+        $this->assertRefused(fn () => $ads->update($campaignAd, ['text_ad_type' => 1]), 'landing_page_id', "a campaign's ad on a simple page made an advanced one");
+        $stored = static function (int $id) use ($ads): array {
+            $data = (array) $ads->get($id)['data'];
+
+            return ['landing_page_id' => (int) $data['landing_page_id'], 'text_ad_type' => (int) $data['text_ad_type']];
+        };
+        self::assertSame(['landing_page_id' => $advanced, 'text_ad_type' => 1], $stored($ad), 'the refused update changed the ad');
+        self::assertSame(['landing_page_id' => $m['landing_page_id'], 'text_ad_type' => 0], $stored($campaignAd), 'the refused update changed the ad');
+
+        // The page a type change leaves the ad on is read too, whosever it is.
+        self::q("UPDATE 202_text_ads SET landing_page_id = {$this->ids['theirs']['landing_page_id']} WHERE text_ad_id = $campaignAd");
+        $this->assertRefused(fn () => $ads->update($campaignAd, ['text_ad_type' => 1]), 'landing_page_id', "a campaign's ad on another account's page made an advanced one");
+
+        // An ad stored on a simple page before this was checked saves as it is.
+        self::q("UPDATE 202_text_ads SET landing_page_id = {$m['landing_page_id']} WHERE text_ad_id = $ad");
+        $ads->update($ad, ['text_ad_type' => 1, 'landing_page_id' => $m['landing_page_id'], 'text_ad_name' => 'y']);
+    }
+
     public function testBulkUpsertRefusesTheRowNotTheBatch(): void
     {
         $m = $this->ids['mine'];

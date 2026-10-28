@@ -8,6 +8,7 @@ use Prosper202\Click\ClickId;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Database\Connection;
 use RuntimeException;
 
@@ -109,7 +110,7 @@ final class RevenueUploadImporter
                     // exactly as the upload never did.
                     'skip_ltv' => true,
                     'skip_bridge' => true,
-                ]);
+                ], MatchMethod::CLICK_ID); // the line's subid named the click
             } catch (\Throwable $e) {
                 // Every line before this one is a committed row of the batch:
                 // say so, and leave the batch's counts saying what was read so

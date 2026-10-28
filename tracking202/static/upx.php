@@ -8,7 +8,6 @@ include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php')
 include_once(substr(__DIR__, 0,-19) . '/202-config/functions-tracking202api.php');
 
 //get the aff_camapaign_id
-$mysql['user_id'] = 1;
 $mysql['click_id'] = 0;
 $mysql['cid'] = 0;
 $mysql['use_pixel_payout'] = 0;
@@ -26,21 +25,24 @@ if ($requestedClick['malformed'] !== null) {
     error_log('upx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
     exit;
 }
+// How the click was found, kept on the conversion (MatchMethod): the
+// parameter or the cookie that named it, or the address it was guessed from.
+$matchedBy = $requestedClick['method'] ?? \Prosper202\Conversion\Ledger\MatchMethod::SAME_IP;
 if ($requestedClick['click_id'] !== null) {
     $mysql['click_id'] = (string) $requestedClick['click_id'];
-} else { // nothing named a click: fall back to this address's last click
-            // The visitor's last click by the address the click path stored
-            // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR: among the
-            // first account's clicks, stored under its setting, which is the
-            // install's (p202ApplyOwnerPrivacy()).
-            p202ApplyOwnerPrivacy($mysql['user_id']);
-            $daysago = time() - 2592000; // 30 days ago
-            $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
-                new \Prosper202\Database\Connection($db),
-                p202StoredVisitorIp(),
-                (int) $mysql['user_id'],
-                $daysago,
-                !trackingEnabled()
+} else {
+            // Nothing named a click: the latest click from this address of
+            // the account whose pixel this is (pixelAccount()), when
+            // that account has the fallback on and may recognise this
+            // visitor (p202SameIpFallbackClick()). A guess.
+            $click_row1 = p202SameIpFallbackClick(
+                $db,
+                \Prosper202\Conversion\SameIpFallback::pixelAccount(
+                    new \Prosper202\Database\Connection($db),
+                    $_GET['cid'] ?? null,
+                    'upx'
+                ),
+                $_GET
             );
 
             if ($click_row1 !== null) {
@@ -157,7 +159,7 @@ if (is_numeric($mysql['click_id'])) {
 	// browser pixels of that notification are this response. A campaign
 	// without goals records its plain conversion below, as always.
 	try {
-		$webEvent = p202RecordWebEvent($db, $clickId, $_GET, ['browser' => true]);
+		$webEvent = p202RecordWebEvent($db, $clickId, $_GET, $matchedBy, ['browser' => true]);
 	} catch (\Throwable $webEventError) {
 		error_log('upx: event recording failed for click ' . $clickId . ': ' . $webEventError->getMessage());
 		p202RespondJsonError(500, 'Failed to record event');
@@ -190,6 +192,7 @@ if (is_numeric($mysql['click_id'])) {
             // Server postbacks queued with the row, sent below (as gpb.php).
             'notify_traffic_source' => true,
 		],
+		$matchedBy,
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,
 		($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',

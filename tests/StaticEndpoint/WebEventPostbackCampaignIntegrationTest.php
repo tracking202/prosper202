@@ -76,6 +76,7 @@ final class WebEventPostbackCampaignIntegrationTest extends TestCase
             self::$db,
             self::CLICK,
             ['event' => 'purchase', 'event_id' => $eventId],
+            \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
             ['campaign_id' => $campaign, 'browser' => false]
         );
     }
@@ -97,6 +98,19 @@ final class WebEventPostbackCampaignIntegrationTest extends TestCase
 
         self::assertSame('recorded', $outcome['status'] ?? null, (string) json_encode($outcome));
         self::assertSame(['12'], self::convertedCampaigns(), 'the latest visit\'s campaign');
+    }
+
+    /** The goal's conversion says how the endpoint found the click: here, a pixel that guessed it from the address. */
+    public function testAnEventsConversionCarriesHowTheEndpointFoundTheClick(): void
+    {
+        $this->reClicked(11, 12);
+
+        $outcome = p202RecordWebEvent(self::$db, self::CLICK, ['event' => 'purchase', 'event_id' => 'guessed'],
+            \Prosper202\Conversion\Ledger\MatchMethod::SAME_IP, ['browser' => false]);
+
+        self::assertSame('recorded', $outcome['status'] ?? null, (string) json_encode($outcome));
+        self::assertSame([['same_ip']], self::$db->query('SELECT match_method FROM 202_conversion_logs WHERE click_id = ' . self::CLICK)
+            ->fetch_all(MYSQLI_NUM));
     }
 
     public function testAnEventForTheLatestVisitsCampaignIsRecorded(): void

@@ -51,6 +51,9 @@ final class ServerFailureAnswersAreListedTest extends TestCase
         "api/v3/Apps/PublicIntake.php | errorresponse | 'Failed to read request body' | 500"
             => [1, 'reading the request body failed; no statement ran'],
         'api/v3/Bootstrap.php | http_response_code |  | $status' => [1, 'jsonResponse() itself'],
+        'api/v3/Controllers/OfflineConversionsController.php | errorresponse | $pending | 503' => [1, self::UPGRADE],
+        "api/v3/Controllers/OfflineConversionsController.php | errorresponse | 'The file could not be written; try again later' | 500"
+            => [2, 'the fetch URL\'s catches, after a pending upgrade was answered (the line above) before anything was read'],
         'api/v3/Bootstrap.php | http_response_code |  | 500'
             => [1, 'the answer could not be encoded; no statement failed'],
         'api/v3/Bootstrap.php | jsonresponse | $body | $status' => [1, 'errorResponse() itself'],

@@ -131,7 +131,7 @@ final class InstallReportIntegrationTest extends TestCase
         $l3Conv = (int) $l3['conversion_id'];
         // A network's reversal of that sale names it by transaction id.
         self::fixture("UPDATE 202_conversion_logs SET transaction_id = 'L3-TX' WHERE conv_id = $l3Conv");
-        $rev = $repo->record(1, ['click_id' => 100, 'transaction_id' => 'L3-TX', 'reversal' => true, 'source' => 'postback']);
+        $rev = $repo->record(1, ['click_id' => 100, 'transaction_id' => 'L3-TX', 'reversal' => true, 'source' => 'postback'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertSame($l3Conv, (int) $rev['reversesConvId']);
 
         $u2 = self::$db->query("SELECT o.conversion_id FROM 202_goal_outcomes o WHERE o.goal_id = {$this->installGoal} AND o.superseded_at IS NULL

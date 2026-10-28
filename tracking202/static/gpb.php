@@ -122,7 +122,7 @@ $mysql['conv_time'] = $conv_time;
 // campaign without goals records its plain conversion below, as it always
 // has, with the event's name kept on the row.
 try {
-	$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, ['browser' => false]);
+	$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['browser' => false]);
 } catch (\Throwable $webEventError) {
 	error_log('gpb: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
 	p202RespondJsonError(500, 'Failed to record event');
@@ -158,6 +158,8 @@ try {
             // in its transaction, and sent below; see after the record.
             'notify_traffic_source' => true,
 		],
+		// The subid named the click.
+		\Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,
 		($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',

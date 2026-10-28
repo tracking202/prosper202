@@ -36,6 +36,7 @@ if ($p202Nav2 === 'setup') {
         ['Get LP Code', 'tracking202/setup/get_landing_code.php', ['get_landing_code.php', 'get_simple_landing_code.php', 'get_adv_landing_code.php']],
         ['Get Links', 'tracking202/setup/get_trackers.php', ['get_trackers.php']],
         ['Postback/Pixel', 'tracking202/setup/get_postback.php', ['get_postback.php']],
+        ['Offline Conversions', 'tracking202/setup/offline_conversions.php', ['offline_conversions.php']],
     ];
 } elseif (($p202Nav1 === 'account' && $p202Nav2 === '') || $p202Nav2 === 'overview') {
     $p202StripLabel = 'Overview reports';

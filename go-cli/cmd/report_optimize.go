@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"p202/internal/api"
+	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -76,48 +77,138 @@ func fetchCampaignPayout(c *api.Client, campaignID string) (float64, error) {
 	return toFloat(resp.Data["aff_campaign_payout"]), nil
 }
 
-// fetchBreakdownRows runs a breakdown report and returns its rows.
-func fetchBreakdownRows(c *api.Client, params map[string]string) ([]map[string]interface{}, error) {
-	data, err := c.Get("reports/breakdown", params)
-	if err != nil {
-		return nil, err
-	}
-	// Every caller ranks or sums these rows.
-	if err := refuseMaskedFigures(data, "This command"); err != nil {
-		return nil, err
-	}
-	var resp struct {
-		Data []map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Data, nil
+// breakdownReadRows bounds what a command that ranks, sums or picks breakdown rows reads: ten pages, each a full
+// aggregation on the server. Past it the command says its answer covers these rows.
+const breakdownReadRows = 5000
+
+// breakdownAnswer is what the rankings read of a reports/breakdown answer.
+type breakdownAnswer struct {
+	Data      *[]map[string]interface{} `json:"data"`
+	Truncated *bool                     `json:"truncated"`
+	Limit     *int                      `json:"limit"`
+	Offset    *int                      `json:"offset"`
 }
 
-// enrichBreakeven adds breakeven_cpc, margin, and a verdict to each row.
-// breakeven_cpc = payout * (leads/clicks); margin = breakeven_cpc - avg_cpc.
-// When targetCPC > 0 it overrides the payout-derived breakeven.
+// decodeBreakdown reads a reports/breakdown answer. No data list is not an empty breakdown: read as one, a
+// proxy's answer ranked nothing and said nothing.
+func decodeBreakdown(data []byte) (breakdownAnswer, error) {
+	var resp breakdownAnswer
+	if err := json.Unmarshal(data, &resp); err != nil || resp.Data == nil {
+		why := "it has no data list"
+		if err != nil {
+			why = err.Error()
+		}
+		return resp, &CLIError{Category: "server", ExitCode: ExitServer, Cause: err,
+			Message: fmt.Sprintf("the server's answer to GET reports/breakdown is not a breakdown (%s)", why),
+			Hint:    "Check the server with `p202 system health`; `p202 report breakdown --json` shows what it sent."}
+	}
+	return resp, nil
+}
+
+// fetchBreakdownRows reads a breakdown's rows in the server's order, page after page, until it has want of them or
+// none remain; truncated says rows remain after those returned. A request asks for one row more than it still needs,
+// which answers that on a server from before `truncated` too.
+func fetchBreakdownRows(c *api.Client, params map[string]string, want int) ([]map[string]interface{}, bool, error) {
+	var all []map[string]interface{}
+	seen := map[string]bool{}
+	for offset := 0; ; {
+		limit := min(breakdownPageSize, want-len(all)+1)
+		page := make(map[string]string, len(params)+2)
+		for k, v := range params {
+			page[k] = v
+		}
+		page["limit"], page["offset"] = strconv.Itoa(limit), strconv.Itoa(offset)
+		data, err := c.Get("reports/breakdown", page)
+		if err != nil {
+			return nil, false, err
+		}
+		// Every caller ranks or sums these rows.
+		if err := refuseMaskedFigures(data, "This command"); err != nil {
+			return nil, false, err
+		}
+		resp, err := decodeBreakdown(data)
+		if err != nil {
+			return nil, false, err
+		}
+		got := *resp.Data
+		added := 0
+		for _, r := range got {
+			// New traffic can move a row onto the next page; read twice, it counts once.
+			if id := scalarString(r["id"]); id != "" {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+			}
+			all = append(all, r)
+			added++
+		}
+		more := len(got) == limit
+		if resp.Truncated != nil {
+			more = *resp.Truncated
+		}
+		switch {
+		case len(all) > want:
+			return all[:want], true, nil
+		case !more:
+			return all, false, nil
+		case len(all) == want && resp.Truncated != nil:
+			return all, true, nil
+		case added == 0:
+			return nil, false, withHint(fmt.Errorf("reading reports/breakdown: the page at offset %d held only rows already read", offset),
+				"The server keeps returning the same rows; retry, and if it persists check the API version with `p202 system version` and the server logs.")
+		}
+		offset += len(got)
+	}
+}
+
+// coversFirstRowsNote is the note of a command whose answer was computed from the first breakdownReadRows rows
+// (fetchBreakdownRows said rows remain): which rows it covers and how to read them all.
+func coversFirstRowsNote(dimension, order string) string {
+	return fmt.Sprintf("Note: this answer covers the first %d %s rows (%s); the breakdown has more. "+
+		"Narrow the window (--period, --time-from/--time-to) or add a filter to cover every row.",
+		breakdownReadRows, dimension, order)
+}
+
+// pageJSON is rows as a command's answer, with what the breakdown said about the rows after them.
+func pageJSON(rows []map[string]interface{}, page map[string]interface{}) []byte {
+	out := map[string]interface{}{"data": rows}
+	for k, v := range page {
+		out[k] = v
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		// Returning nil here would render as no output at all; render() reports
+		// the empty payload, so add the cause.
+		fmt.Fprintf(os.Stderr, "Error encoding rows for output: %v\n", err)
+		return nil
+	}
+	return b
+}
+
+// enrichBreakeven adds click_conv_rate, breakeven_cpc, margin and a verdict to each row, and changes none of the
+// server's figures, so a row reads as `report breakdown`'s row for the same traffic does. It wrote leads ÷ clicks over
+// conv_rate, which the server computes as leads ÷ click-throughs: a landing page's keyword at 50% there read 25% here.
+// A click is what the traffic costs, so break-even prices one: breakeven_cpc = payout × leads ÷ clicks (the
+// click_conv_rate, as a percentage), margin = breakeven_cpc − cost ÷ clicks. When targetCPC > 0 it overrides the
+// payout-derived breakeven.
 func enrichBreakeven(rows []map[string]interface{}, payout, targetCPC float64) {
 	for _, r := range rows {
 		clicks := toFloat(r["total_clicks"])
 		leads := toFloat(r["total_leads"])
 		cost := toFloat(r["total_cost"])
-		cvr := 0.0
-		if clicks > 0 {
-			cvr = leads / clicks
-		}
+		leadsPerClick := 0.0
 		avgCPC := 0.0
 		if clicks > 0 {
+			leadsPerClick = leads / clicks
 			avgCPC = cost / clicks
 		}
-		be := payout * cvr
+		be := payout * leadsPerClick
 		if targetCPC > 0 {
 			be = targetCPC
 		}
 		margin := be - avgCPC
-		r["conv_rate"] = round(cvr*100, 2)
-		r["avg_cpc"] = round(avgCPC, 4)
+		r["click_conv_rate"] = round(leadsPerClick*100, 4)
 		r["breakeven_cpc"] = round(be, 4)
 		r["margin"] = round(margin, 4)
 		r["verdict"] = breakevenVerdict(leads, cost, margin)
@@ -150,14 +241,7 @@ func round(f float64, places int) float64 {
 }
 
 func rowsToJSON(rows []map[string]interface{}) []byte {
-	out, err := json.Marshal(map[string]interface{}{"data": rows})
-	if err != nil {
-		// Returning nil here would render as no output at all; render() reports
-		// the empty payload, so add the cause.
-		fmt.Fprintf(os.Stderr, "Error encoding rows for output: %v\n", err)
-		return nil
-	}
-	return out
+	return pageJSON(rows, nil)
 }
 
 var reportBreakevenCmd = &cobra.Command{
@@ -165,7 +249,10 @@ var reportBreakevenCmd = &cobra.Command{
 	Short: "Break-even CPC per row: max biddable click price (payout × conversion rate)",
 	Long: "Computes the maximum profitable cost-per-click for each breakdown row.\n" +
 		"breakeven_cpc = campaign payout × (conversions / clicks); margin = breakeven_cpc − avg_cpc.\n" +
-		"Requires --aff-campaign-id (the INTERNAL id from `campaign list`) to read the payout.",
+		"click_conv_rate is conversions / clicks × 100, the rate breakeven_cpc uses; every other figure is the\n" +
+		"breakdown's, unchanged (conv_rate is conversions / click-throughs, which differs on landing-page traffic).\n" +
+		"Requires --aff-campaign-id (the INTERNAL id from `campaign list`) to read the payout.\n\n" +
+		"One page, as in `report breakdown` (--limit, --offset), ranked by margin; truncated: true says rows remain.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
 		if campaignID == "" {
@@ -194,14 +281,39 @@ var reportBreakevenCmd = &cobra.Command{
 			breakdown = "keyword"
 		}
 		params["breakdown"] = resolveDimension(breakdown)
+		for _, f := range []string{"limit", "offset"} {
+			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
+				params[f] = v
+			}
+		}
 
-		rows, err := fetchBreakdownRows(c, params)
+		// One page, as `report breakdown` reads it: the answer is a row per row, so it pages like one.
+		data, err := c.Get("reports/breakdown", params)
 		if err != nil {
 			return err
 		}
+		if err := refuseMaskedFigures(data, "This command"); err != nil {
+			return err
+		}
+		resp, err := decodeBreakdown(data)
+		if err != nil {
+			return err
+		}
+		rows := *resp.Data
 		enrichBreakeven(rows, payout, maxCPC)
 		sortRowsBy(rows, "margin", true) // worst margin first
-		render(rowsToJSON(rows))
+		page := map[string]interface{}{}
+		if resp.Truncated != nil {
+			page["truncated"] = *resp.Truncated
+		}
+		if resp.Limit != nil {
+			page["limit"] = *resp.Limit
+		}
+		if resp.Offset != nil {
+			page["offset"] = *resp.Offset
+		}
+		render(pageJSON(rows, page))
+		noteForPeople(cmd, breakdownMoreRowsNote(data, params, ", most clicks first (each page ranked by margin)"))
 		return nil
 	},
 }
@@ -734,7 +846,7 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				payout, _ = fetchCampaignPayout(client, campaignID)
 			}
 
-			rows, err := fetchBreakdownRows(client, params)
+			rows, truncated, err := fetchBreakdownRows(client, params, breakdownReadRows)
 			if err != nil {
 				return err
 			}
@@ -757,21 +869,17 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				}
 				t := &triageRow{clicks: clicks, leads: leads, cost: cost}
 				bucket, reason := t.classify(net, payout, maxCPC)
-				t.row = map[string]interface{}{
-					"name":         r["name"],
-					"total_clicks": clicks,
-					"total_leads":  leads,
-					"total_cost":   round(cost, 2),
-					"total_net":    round(net, 2),
-					"avg_cpc":      round(t.avgCPC(), 4),
-					"bucket":       bucket,
-					"reason":       reason,
-				}
-				if id, ok := r["id"]; ok {
-					t.row["id"] = id
+				t.row = map[string]interface{}{"name": r["name"], "bucket": bucket, "reason": reason}
+				for _, f := range append([]string{"id"}, triageFigures...) {
+					if v, ok := r[f]; ok {
+						t.row[f] = v
+					}
 				}
 				if payoutFlag > 0 {
-					t.row["payout"] = payoutFlag // total_net is sales × payout − total_cost (sales: total_leads unless counted)
+					// The command's own figure, under its own name: total_net stays the breakdown's. payout_net is
+					// sales × payout − total_cost (sales: total_leads unless counted), to the 5 decimals money is stored at.
+					t.row["payout"] = payoutFlag
+					t.row["payout_net"] = round(net, 5)
 				}
 				switch {
 				case wantWinners && bucket == "SCALE", !wantWinners && bucket == "CUT":
@@ -820,24 +928,36 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			for _, n := range notes {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
 			}
+			if truncated {
+				noteForPeople(cmd, coversFirstRowsNote(params["breakdown"], "most clicks first"))
+			}
 			listed := make([]map[string]interface{}, 0, len(picked))
 			for _, t := range picked {
 				listed = append(listed, t.row)
 			}
 			out := listed
-			sortRowsBy(out, "total_net", !wantWinners) // losers: worst first; winners: best first
+			netField := "total_net"
+			if payoutFlag > 0 {
+				netField = "payout_net"
+			}
+			sortRowsBy(out, netField, !wantWinners) // losers: worst first; winners: best first
 			// The classic bucket first (CUT / SCALE), then the rows the attribution check held back (TEST / CLOSER).
 			first := "CUT"
 			if wantWinners {
 				first = "SCALE"
 			}
 			sort.SliceStable(out, func(i, j int) bool { return out[i]["bucket"] == first && out[j]["bucket"] != first })
-			render(rowsToJSON(out))
+			render(pageJSON(out, map[string]interface{}{"truncated": truncated}))
 			return nil
 		},
 	}
 	return c
 }
+
+// triageFigures are the breakdown's figures a triage row lists, as the server sent them: they read as `report
+// breakdown`'s for the same traffic. Rounding them here made a $0.00375 cost 0 and a $0.00125 CPC 0.0013; the table
+// view rounds for display, for every report alike.
+var triageFigures = []string{"total_clicks", "total_leads", "total_cost", "total_net", "avg_cpc"}
 
 // triageRow is one classic row being triaged: its output row and the raw figures it is classified on.
 type triageRow struct {
@@ -878,7 +998,7 @@ func (c *starterCheck) revalueBySales(out, maybe []*triageRow, wantWinners bool,
 		net := sales*payoutFlag - t.cost
 		bucket, reason := classify(t.clicks, sales, t.cost, net, t.avgCPC(), payout, maxCPC)
 		t.row["sales"] = sales
-		t.row["total_net"] = round(net, 2)
+		t.row["payout_net"] = round(net, 5)
 		t.row["bucket"], t.row["reason"] = bucket, reason
 		switch {
 		case wantWinners && bucket == "SCALE", !wantWinners && bucket == "CUT":
@@ -907,18 +1027,27 @@ func classify(clicks, leads, cost, net, avgCPC, payout, maxCPC float64) (string,
 		target = payout * (leads / clicks)
 	}
 	if leads == 0 && cost > 0 {
-		return "CUT", fmt.Sprintf("spent $%.2f, 0 conversions", cost)
+		return "CUT", "spent $" + reasonDollars(cost) + ", 0 conversions"
 	}
 	if target > 0 && avgCPC > target {
-		return "CUT", fmt.Sprintf("CPC $%.2f > breakeven $%.2f", avgCPC, target)
+		return "CUT", "CPC $" + reasonDollars(avgCPC) + " > breakeven $" + reasonDollars(target)
 	}
 	if net > 0 && leads > 0 {
-		return "SCALE", fmt.Sprintf("profit +$%.2f, %d conv", net, int64(leads))
+		return "SCALE", fmt.Sprintf("profit +$%s, %d conv", reasonDollars(net), int64(leads))
 	}
 	if net < 0 {
-		return "WATCH", fmt.Sprintf("loss $%.2f", net)
+		return "WATCH", "loss $" + reasonDollars(net)
 	}
 	return "WATCH", "break-even"
+}
+
+// reasonDollars is an amount in a reason: to the cent, and below a cent as the table shows it, so a $0.00375 spend
+// doesn't read "spent $0.00".
+func reasonDollars(v float64) string {
+	if v == 0 || math.Abs(v) >= 0.01 {
+		return fmt.Sprintf("%.2f", v)
+	}
+	return output.FormatNumber(v)
 }
 
 // sortRowsBy sorts rows by a numeric field; asc=true sorts ascending.
@@ -932,19 +1061,24 @@ func sortRowsBy(rows []map[string]interface{}, field string, asc bool) {
 	})
 }
 
+// triageReadNote ends `report losers` and `report winners`' help: what they read.
+var triageReadNote = fmt.Sprintf("It reads up to the %d rows with the most clicks; truncated: true says there were more.", breakdownReadRows)
+
 func init() {
 	addReportFilters(reportBreakevenCmd)
 	reportBreakevenCmd.Flags().StringP("breakdown", "b", "keyword", "Dimension")
 	enumFlag(reportBreakevenCmd, "breakdown", dimensionEnum(breakdownDimensions))
 	reportBreakevenCmd.Flags().Float64("max-cpc", 0, "Override the payout-derived break-even CPC target")
+	reportBreakevenCmd.Flags().StringP("limit", "l", "", "Rows per page (default 50, max 500)")
+	reportBreakevenCmd.Flags().StringP("offset", "o", "", "Rows to skip")
 	reportCmd.AddCommand(reportBreakevenCmd)
 
 	losers := triageCmd("losers", "Rows to CUT: over-bid keywords/geos and zero-conversion spend; rows that start sales come back as TEST", false)
 	losers.Long = "Rows to CUT from the classic (last-click) report: zero conversions with spend, or CPC above break-even.\n" +
-		"Break-even is --max-cpc, or a payout × the row's own conversion rate: --payout (your revenue per conversion) or\n" +
+		"Break-even is --max-cpc, or a payout × the row's own conversions per click: --payout (your revenue per conversion) or\n" +
 		"the payout of --aff-campaign-id. Without one, only zero-conversion spend is CUT: a row that sells at a loss is\n" +
 		"WATCH and isn't listed. --payout doesn't filter the report, so the attribution check below still runs, and it\n" +
-		"values every sale the command reports at that payout: total_net, and the first-touch ROI below. The classic report\n" +
+		"values every sale the command reports at that payout: payout_net, and the first-touch ROI below. The classic report\n" +
 		"counts a converted click once however many sales it had, so the check also reads the Last touch model, whose\n" +
 		"credits count each row's sales, and values the rows it reads per sale (a stderr note says when it can't).\n\n" +
 		"Each CUT row is then checked against the attribution report for the same dimension and range. A row that\n" +
@@ -957,12 +1091,17 @@ func init() {
 		"A filter other than the breakdown itself (an entity id, --keyword, --show, --ip, ...) turns the check off: the\n" +
 		"attribution report is account-wide.\n" +
 		"On a server that can't page the attribution report, rows past the first page are marked attribution_checked:\n" +
-		"false. --no-attribution-check turns it off."
+		"false. --no-attribution-check turns it off.\n\n" +
+		"total_clicks, total_leads, total_cost, total_net and avg_cpc are the breakdown's, as `report breakdown` shows them;\n" +
+		"payout_net (sales × payout − total_cost, with --payout) is the command's own.\n\n" +
+		triageReadNote
 	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos; closers come back as CLOSER", true)
 	winners.Long = "Rows to SCALE from the classic (last-click) report: profitable and converting. Profit is the campaign's\n" +
-		"recorded income less cost, or with --payout (your revenue per conversion) sales × payout less cost, the value the\n" +
-		"first-touch ROI below then uses too. Sales are counted with the Last touch model where the check can read it\n" +
-		"(a converted click can have several), so a source profitable only through repeat sales is listed too.\n\n" +
+		"recorded income less cost (total_net), or with --payout (your revenue per conversion) sales × payout less cost\n" +
+		"(payout_net), the value the first-touch ROI below then uses too. Sales are counted with the Last touch model where\n" +
+		"the check can read it (a converted click can have several), so a source profitable only through repeat sales is\n" +
+		"listed too. total_clicks, total_leads, total_cost, total_net and avg_cpc are the breakdown's, as `report breakdown`\n" +
+		"shows them.\n\n" +
 		"Each SCALE row is then checked against the attribution report under a first-touch model, for the same dimension\n" +
 		"and range. A row that loses money under first touch comes back as CLOSER, with its first-touch ROI and assists:\n" +
 		"last-click credits it with sales other rows started (retargeting, brand search and email often look like this),\n" +
@@ -970,14 +1109,15 @@ func init() {
 		"The check runs for campaign, ppc_account (traffic source), landing_page, keyword and country, and needs a First\n" +
 		"touch model (the first active one, or --first-touch-model) and an attribution:read key. When it can't run, the\n" +
 		"classic winners are still listed with the reason on stderr. A filter other than the breakdown itself (an entity\n" +
-		"id, --keyword, --show, ...) turns it off; --no-attribution-check does too."
+		"id, --keyword, --show, ...) turns it off; --no-attribution-check does too.\n\n" +
+		triageReadNote
 	for _, c := range []*cobra.Command{losers, winners} {
 		addReportFilters(c)
 		c.Flags().StringP("breakdown", "b", "keyword", "Dimension to triage")
 		enumFlag(c, "breakdown", dimensionEnum(breakdownDimensions))
 		c.Flags().Float64("min-clicks", 1, "Ignore rows with fewer than N clicks (significance floor)")
-		c.Flags().Float64("max-cpc", 0, "Break-even CPC target (else payout × each row's CVR, from --payout or the campaign)")
-		c.Flags().Float64("payout", 0, "Revenue per conversion, e.g. your average order value: each row's break-even CPC is this × its conversion rate, and its profit (total_net) and first-touch ROI value each sale at this. Unlike --aff-campaign-id it doesn't filter the report, so the attribution check still runs")
+		c.Flags().Float64("max-cpc", 0, "Break-even CPC target (else payout × each row's conversions per click, from --payout or the campaign)")
+		c.Flags().Float64("payout", 0, "Revenue per conversion, e.g. your average order value: each row's break-even CPC is this × its conversions per click, and its profit at this payout (payout_net; total_net stays the breakdown's) and first-touch ROI value each sale at this. Unlike --aff-campaign-id it doesn't filter the report, so the attribution check still runs")
 		reportCmd.AddCommand(c)
 	}
 	losers.Flags().String("first-touch-model", "", "Attribution model id for the starter check (default: the first active First touch model)")

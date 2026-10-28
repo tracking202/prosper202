@@ -8,6 +8,7 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Database\Connection;
 use Prosper202\Goals\GoalEngine;
 use Prosper202\Goals\GoalEngineException;
@@ -114,7 +115,9 @@ final class EventsController
             $subject = $engine->clickSubject($this->userId, $clickId);
             $evaluates = (new WebEvents($this->conn))->campaignEvaluatesGoals($this->userId, (int) $subject->campaignId, $now);
 
-            return ['evaluates' => $evaluates, 'campaign_id' => (int) $subject->campaignId] + $engine->ingest($this->userId, $subject, $events);
+            // The body named the click.
+            return ['evaluates' => $evaluates, 'campaign_id' => (int) $subject->campaignId]
+                + $engine->ingest($this->userId, $subject, $events, MatchMethod::CLICK_ID);
         });
 
         $data = [

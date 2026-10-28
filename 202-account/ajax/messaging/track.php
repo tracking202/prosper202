@@ -16,7 +16,7 @@ require __DIR__ . '/_auth.php';
  * flush=1 and nothing to record asks for the delivery alone: the answer's
  * delivery says what happened, and when it is "throttled" or "more" (one
  * batch went out, more is pending), retry_after_s says when the page may ask
- * again. The hourly cron (MessagingService::deliverPending()) delivers what
+ * again. The hourly cron (MessagingService::deliverPendingExclusive()) delivers what
  * a page closed before then leaves behind.
  */
 

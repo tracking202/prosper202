@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Prosper202\Setup;
 
 use Prosper202\Database\Connection;
+use Prosper202\Notifications\CorrectionUrls;
+use Prosper202\Notifications\PostbackSender;
 
 /**
  * The pixels a traffic-source account fires on a conversion, as Setup ›
@@ -75,6 +77,66 @@ final class AccountPixels
         }
 
         return $rows;
+    }
+
+    /**
+     * Refuse, in $errors, a Postback (server-to-server) row whose code or
+     * correction URLs the postback sender would refuse to call, where that
+     * shows without a lookup (PostbackSender::refusalAtSave(), the API's own
+     * check): a scheme other than http(s), a user name or password, a
+     * private, loopback or metadata address, a local name. A URL the pixel
+     * holds now ($stored, by pixel id) is taken as it is.
+     *
+     * @param list<array{pixel_id: int, pixel_type_id: int, pixel_code: string, correction_url: string}> $rows
+     *        fromForm()'s
+     * @param array<int, array{code: string, correction: string}> $stored storedPostbacks()'s
+     * @param array<string, string> $errors
+     */
+    public static function refusePostbacks(array $rows, array $stored, array &$errors): void
+    {
+        foreach ($rows as $row) {
+            if ($row['pixel_type_id'] !== CorrectionUrls::SERVER_PIXEL_TYPE) {
+                continue;
+            }
+            $held = $stored[$row['pixel_id']] ?? ['code' => '', 'correction' => ''];
+            $why = PostbackSender::refusalAtSave($row['pixel_code'], $held['code']);
+            if ($why !== null && !isset($errors['pixel_code'])) {
+                $errors['pixel_code'] = 'Pixel code (Postback URL): ' . $why;
+            }
+            $why = $row['correction_url'] === ''
+                ? null
+                : PostbackSender::refusalAtSave($row['correction_url'], $held['correction']);
+            if ($why !== null && !isset($errors['pixel_correction_url'])) {
+                $errors['pixel_correction_url'] = 'Correction URL: ' . $why;
+            }
+        }
+    }
+
+    /**
+     * The account's Postback pixels as stored, with their correction URLs,
+     * by pixel id: what refusePostbacks() takes as it is. Only the user's
+     * own account's, so a forged pixel id holds nothing.
+     *
+     * @return array<int, array{code: string, correction: string}>
+     */
+    public function storedPostbacks(int $userId, int $accountId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT p.pixel_id, p.pixel_code, c.correction_url FROM 202_ppc_account_pixels p
+             JOIN 202_ppc_accounts a ON a.ppc_account_id = p.ppc_account_id AND a.user_id = ?
+             LEFT JOIN 202_notification_correction_urls c ON c.pixel_id = p.pixel_id AND c.user_id = a.user_id
+             WHERE p.ppc_account_id = ? AND p.pixel_type_id = ?'
+        );
+        $this->conn->bind($stmt, 'iii', [$userId, $accountId, CorrectionUrls::SERVER_PIXEL_TYPE]);
+        $out = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $out[(int) $row['pixel_id']] = [
+                'code' => (string) $row['pixel_code'],
+                'correction' => (string) ($row['correction_url'] ?? ''),
+            ];
+        }
+
+        return $out;
     }
 
     /** A pixel code as stored: CRLF and CR as \n, then trimmed. */

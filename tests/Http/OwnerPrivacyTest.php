@@ -30,7 +30,7 @@ final class OwnerPrivacyTest extends TestCase
 
     private const FUNCTIONS = [
         'p202StoredVisitorIp', 'p202ApplyOwnerPrivacy', 'p202PrivacyInForce', 'trackingEnabled',
-        'p202ClickIdentity', 'p202ClickCookieJs', 'p202VisitorMayBeInEu',
+        'p202MayRecogniseVisitor', 'p202ClickIdentity', 'p202ClickCookieJs', 'p202VisitorMayBeInEu',
     ];
 
     private const VISITOR = '203.0.113.77';

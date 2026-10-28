@@ -6,6 +6,7 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Auth;
 use Api\V3\AuthException;
+use Api\V3\InsufficientScopeException;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
@@ -300,11 +301,11 @@ final class StagedChangesController
             return;
         }
         if (!$this->auth->hasFullScope() && !in_array('write', $this->auth->scopes(), true)) {
-            throw new AuthException(sprintf(
+            throw new InsufficientScopeException('write', $this->auth->scopes(), sprintf(
                 "Insufficient API key scope for this operation: the change's area cannot be told, so it requires "
                 . "'write' for every area (key has: %s).",
                 implode(',', $this->auth->scopes())
-            ), 403);
+            ));
         }
     }
 

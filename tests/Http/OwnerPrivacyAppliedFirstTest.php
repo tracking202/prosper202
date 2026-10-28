@@ -45,7 +45,8 @@ final class OwnerPrivacyAppliedFirstTest extends TestCase
     /** Calls the privacy setting governs (lower case). */
     private const GOVERNED = [
         'p202storedvisitorip', 'trackingenabled', 'setclickidcookie', 'setclickidcookieforlp', 'setpcidcookie',
-        'setoutboundcookie', 'p202clickcookiejs', 'p202clickidentity', 'p202mintpersonalizationcookiejs',
+        'setoutboundcookie', 'p202clickcookiejs', 'p202clickidentity', 'p202mayrecognisevisitor',
+        'p202mintpersonalizationcookiejs',
         'setcookie', 'setrawcookie', 'sendcookie',
     ];
 

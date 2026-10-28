@@ -20,8 +20,10 @@ AUTH::set_timezone($_SESSION['user_timezone']);
  */
 
 $userId = (int) $_SESSION['user_id'];
-$action = (string) ($_POST['action'] ?? '');
-$offset = max(0, (int) ($_POST['offset'] ?? 0));
+$action = $_POST['action'] ?? '';
+if (!is_string($action)) {
+    $action = '?'; // a list names no action: the switch below says "Unknown action."
+}
 $limit = 50;
 
 require_once __DIR__ . '/ltv_ui.php';
@@ -34,39 +36,65 @@ $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_companies.php';
 $notice = null;
 $error = null;
 
+// What to show is read first: a request naming a page or a row nobody can
+// name runs no action either.
+$offset = p202_ltv_posted_or(fn (): int => p202_ltv_posted_offset($_POST['offset'] ?? null), 0, $error);
+$editId = p202_ltv_posted_or(fn (): int => p202_ltv_posted_id_or_none(
+    $_POST['edit'] ?? null,
+    'Pick the company to edit from the list.'
+), 0, $error);
+
 try {
     $conn = new \Prosper202\Database\Connection($db);
     $companiesRepo = new \Prosper202\Ltv\MysqlCompanyRepository($conn);
 
-    if ($action !== '') {
+    if ($action !== '' && $error === null) {
         if (!AUTH::check_csrf_token()) {
             $error = 'Your session token was invalid — please try again.';
         } else {
             try {
                 switch ($action) {
                     case 'add_company':
-                        $companiesRepo->resolveOrCreate($userId, (string) ($_POST['company_name'] ?? ''));
+                        $companiesRepo->resolveOrCreate(
+                            $userId,
+                            p202_ltv_posted_text($_POST['company_name'] ?? null, 'company_name')
+                        );
                         $notice = 'Company saved.';
                         break;
 
                     case 'update_company':
+                        $companyId = p202_ltv_posted_id(
+                            $_POST['company_id'] ?? null,
+                            'Pick the company to edit from the list.'
+                        );
                         // One atomic update: name and domain are validated
                         // together before anything commits, so a rejected
                         // domain can never leave a half-applied rename.
-                        $companiesRepo->update($userId, (int) ($_POST['company_id'] ?? 0), [
-                            'name' => (string) ($_POST['company_name'] ?? ''),
-                            'domain' => (string) ($_POST['company_domain'] ?? ''),
+                        $companiesRepo->update($userId, $companyId, [
+                            'name' => p202_ltv_posted_text($_POST['company_name'] ?? null, 'company_name'),
+                            'domain' => p202_ltv_posted_text($_POST['company_domain'] ?? null, 'company_domain'),
                         ]);
                         $notice = 'Company updated. Customers with matching email domains will auto-attach.';
                         break;
 
                     case 'merge_company':
-                        $companiesRepo->merge($userId, (int) ($_POST['source_company_id'] ?? 0), (int) ($_POST['company_id'] ?? 0));
+                        $keptId = p202_ltv_posted_id(
+                            $_POST['company_id'] ?? null,
+                            'Pick the company to keep from the list.'
+                        );
+                        $goneId = p202_ltv_posted_id(
+                            $_POST['source_company_id'] ?? null,
+                            'Pick the company to merge away from the list.'
+                        );
+                        $companiesRepo->merge($userId, $goneId, $keptId);
                         $notice = 'Companies merged.';
                         break;
 
                     case 'delete_company':
-                        $companiesRepo->delete($userId, (int) ($_POST['company_id'] ?? 0));
+                        $companiesRepo->delete(
+                            $userId,
+                            p202_ltv_posted_id($_POST['company_id'] ?? null, 'Pick the company to delete from the list.')
+                        );
                         $notice = 'Company deleted.';
                         break;
 
@@ -88,9 +116,9 @@ try {
 }
 
 $csrfToken = (string) ($_SESSION['token'] ?? '');
-$editId = (int) ($_POST['edit'] ?? 0);
 if ($error !== null && $action === 'update_company') {
-    $editId = (int) ($_POST['company_id'] ?? 0);
+    // The row a refused save named stays open, when it names one exactly.
+    $editId = \Prosper202\Http\PostedId::read($_POST['company_id'] ?? null) ?? 0;
 }
 ?>
 

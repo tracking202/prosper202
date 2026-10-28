@@ -11,6 +11,11 @@
  */
 
 declare(strict_types=1);
+
+use Prosper202\PaymentNotification\JVZoo\JVZooKey;
+use Prosper202\PaymentNotification\JVZoo\JVZooRole;
+use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
+
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 include_once(str_repeat("../", 1) . '202-config/clickserver_api_management.php');
 require_once __DIR__ . '/../202-config/functions-account-ui.php';
@@ -29,7 +34,6 @@ $mysql = [];
 
 // Initialize change status variables
 $change_cb_key = false;
-$change_jvzoo_secret_key = false;
 $change_zaxaa_api_signature = false;
 $change_user_slack_incoming_webhook = false;
 $change_ipqs_api_key = false;
@@ -57,9 +61,9 @@ function validateRequired($field_value, $error_key, $error_message, &$error)
 function updateUserPreference($field_name, $value, $user_id, $db): void
 {
 	$escaped_value = $db->real_escape_string((string)$value);
-	$escaped_user_id = $db->real_escape_string((string)$user_id);
 
-	$sql = "UPDATE `202_users_pref` SET `{$field_name}` = '{$escaped_value}' WHERE `user_id` = '{$escaped_user_id}'";
+	$sql = "UPDATE `202_users_pref` SET `{$field_name}` = '{$escaped_value}'"
+        . " WHERE `user_id` = '" . (int) $user_id . "'";
 	if (_mysqli_query($db, $sql) === false) {
 		throw new RuntimeException('The ' . $field_name . ' setting could not be saved.');
 	}
@@ -140,8 +144,6 @@ function apiint_dni_id(mixed $value): ?int
 {
 	return is_string($value) && preg_match('/^[1-9][0-9]{0,9}$/D', $value) === 1 && (int)$value <= 4294967295 ? (int)$value : null;
 }
-
-$strProtocol = getSecureStatus() ? 'https://' : 'http://'; // SERVER_PROTOCOL is "HTTP/1.1" even over TLS (review finding)
 
 /**
  * rtr.php caches the Landing Page Optimizer t202ctx prefs (lpo_status, lpo_bridge_config,
@@ -225,6 +227,16 @@ if (isset($_GET['delete_dni_network']) && !empty($_GET['delete_dni_network'])) {
 	p202_account_redirect('202-account/api-integrations.php#dni');
 }
 
+// A PayKickstart key's Remove form names the key by an HMAC of the whole key
+// under this session's secret, which never leaves the server
+// (PayKickstartKeys::removalToken()).
+if (!is_string($_SESSION['paykickstart_key_secret'] ?? null) || strlen($_SESSION['paykickstart_key_secret']) !== 64) {
+	withWritableSession(static function (): void {
+		$_SESSION['paykickstart_key_secret'] = bin2hex(random_bytes(32));
+	});
+}
+$pkSecret = $_SESSION['paykickstart_key_secret'];
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	// validate token
@@ -278,16 +290,32 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
-	// JVZoo Secret Key Update
+	// JVZoo's JVZIPN secret key, held to the rule its endpoint reads it by
+	// (JVZooKey), so a key saved here is one a notification verifies with.
 	if (isset($_POST['change_jvzoo_secret_key']) && $_POST['change_jvzoo_secret_key'] == '1') {
-		$config = [
-			'post_key' => 'jvzoo_ipn_secret_key',
-			'field_name' => 'jvzoo_ipn_secret_key',
-			'error_key' => 'jvzoo_secret_key_error',
-			'error_message' => 'JVZoo secret key can\'t be empty!',
-			'slack_event' => 'jvzoo_secret_key_updated'
-		];
-		if (processApiKeyUpdate($config, $error, $change_jvzoo_secret_key, $user_row, $slack, $username, $db)) {
+		$jvzooPosted = is_string($_POST['jvzoo_ipn_secret_key'] ?? null) ? $_POST['jvzoo_ipn_secret_key'] : '';
+		$jvzooOld = (string) ($user_row[JVZooKey::COLUMN] ?? '');
+		$jvzooKey = null;
+		try {
+			$jvzooKey = JVZooKey::parse($jvzooPosted);
+			if ($jvzooKey === '') {
+				throw new InvalidArgumentException('Paste your JVZIPN secret key: JVZoo shows it under My Account ›'
+					. ' Account Details › Seller Settings.');
+			}
+			if ($jvzooKey !== $jvzooOld) {
+				updateUserPreference(JVZooKey::COLUMN, $jvzooKey, $_SESSION['user_id'], $db);
+			}
+		} catch (InvalidArgumentException $jvzooRefused) {
+			$error['jvzoo_secret_key_error'] = $jvzooRefused->getMessage();
+			$jvzooKey = null;
+		} catch (RuntimeException $e) {
+			error_log('api-integrations.php: ' . $e->getMessage());
+			$error['jvzoo_secret_key_error'] = 'This could not be saved just now; the old value is still in place.'
+				. ' Try again.';
+			$jvzooKey = null;
+		}
+		if ($jvzooKey !== null) {
+			sendSlackNotification($slack, 'jvzoo_secret_key_updated', $username, $jvzooOld, $jvzooKey);
 			p202_account_flash('ok', 'Your JVZoo secret key was saved.');
 			p202_account_redirect('202-account/api-integrations.php#jvzoo');
 		}
@@ -305,6 +333,44 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if (processApiKeyUpdate($config, $error, $change_ipqs_api_key, $user_row, $slack, $username, $db)) {
 			p202_account_flash('ok', 'Your IPQualityScore API key was saved.');
 			p202_account_redirect('202-account/api-integrations.php#ipqs');
+		}
+	}
+
+	// PayKickstart IPN secret keys: one for each PayKickstart campaign, added
+	// and removed one at a time, and never shown back (PayKickstartKeys).
+	$pkAction = $_POST['paykickstart_key_action'] ?? null;
+	if ($pkAction === 'add' || $pkAction === 'remove') {
+		$pkColumn = $user_row[PayKickstartKeys::COLUMN] ?? null;
+		$pkOld = PayKickstartKeys::stored(is_string($pkColumn) ? $pkColumn : null)['keys'];
+		$pkErrorKey = $pkAction === 'add' ? 'paykickstart' : 'paykickstart_remove';
+		$pkPosted = static fn (string $name): string => is_string($_POST[$name] ?? null) ? $_POST[$name] : '';
+		$pkKeys = null;
+		try {
+			$pkKeys = $pkAction === 'add'
+				? PayKickstartKeys::added($pkOld, $pkPosted('paykickstart_ipn_secret_key'))
+				: PayKickstartKeys::removed(
+					$pkOld,
+					$pkPosted('paykickstart_key_place'),
+					$pkPosted('paykickstart_key_token'),
+					$pkSecret
+				);
+			updateUserPreference(PayKickstartKeys::COLUMN, PayKickstartKeys::serialize($pkKeys), $_SESSION['user_id'], $db);
+		} catch (InvalidArgumentException $pkRefused) {
+			$error[$pkErrorKey] = $pkRefused->getMessage();
+			$pkKeys = null;
+		} catch (RuntimeException $e) {
+			error_log('api-integrations.php: ' . $e->getMessage());
+			$error[$pkErrorKey] = 'This could not be saved just now; the stored keys are as they were. Try again.';
+			$pkKeys = null;
+		}
+		if ($pkKeys !== null) {
+			$pkBefore = PayKickstartKeys::serialize($pkOld);
+			$pkAfter = PayKickstartKeys::serialize($pkKeys);
+			sendSlackNotification($slack, 'paykickstart_ipn_keys_updated', $username, $pkBefore, $pkAfter);
+			$pkCount = count($pkKeys) === 1 ? '1 key is stored' : count($pkKeys) . ' keys are stored';
+			$pkDone = $pkAction === 'add' ? 'Your PayKickstart IPN secret key was saved' : 'The key was removed';
+			p202_account_flash('ok', $pkDone . '; ' . $pkCount . '.');
+			p202_account_redirect('202-account/api-integrations.php#paykickstart');
 		}
 	}
 
@@ -625,7 +691,8 @@ $endpoint = static function (string $label, string $url) use ($e): string {
 		. '<div class="p202-code mb-3"><pre class="p202-code__value">' . $e($url) . '</pre>'
 		. '<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="' . $e($url) . '">Copy</button></div>';
 };
-$trackingBase = $strProtocol . getTrackingDomain() . get_absolute_url();
+// On the base the tracking links use, the saved scheme included.
+$trackingBase = p202TrackingBaseForResponse();
 
 $flashExtra = [];
 if ($dniEditMissing) {
@@ -649,17 +716,10 @@ $keyIntegrations = [
 	],
 	'clickbank' => [
 		'title' => 'ClickBank', 'icon' => 'clickbank.png', 'help' => 'clickbank',
-		'desc' => 'Update conversions automatically from ClickBank’s Instant Notification Service.',
+		'desc' => 'Update conversions from ClickBank’s Instant Notifications: put tid=[[subid]] on your HopLink.',
 		'extra' => '',
 		'flag' => 'change_cb_key', 'field' => 'cb_key', 'label' => 'ClickBank secret key', 'error' => 'cb_key',
 		'endpoint' => ['INS URL', $trackingBase . 'tracking202/static/cb202.php'],
-	],
-	'jvzoo' => [
-		'title' => 'JVZoo', 'icon' => 'jvzoo.png', 'help' => 'jvzoo',
-		'desc' => 'Update conversions from JVZoo’s Instant Payment Notification (JVZIPN).',
-		'extra' => '',
-		'flag' => 'change_jvzoo_secret_key', 'field' => 'jvzoo_ipn_secret_key', 'label' => 'JVZoo secret key', 'error' => 'jvzoo_secret_key_error',
-		'endpoint' => ['IPN URL', $trackingBase . 'tracking202/static/jvzoo.php'],
 	],
 	'zaxaa' => [
 		'title' => 'Zaxaa', 'icon' => 'zaxaa.png', 'help' => 'zaxaa',
@@ -676,7 +736,7 @@ $keyIntegrations = [
 		'endpoint' => ['Prosper202 webhook', $trackingBase . 'tracking202/static/slack.php'],
 	],
 ];
-$cb_crypto_ok = extension_loaded('mcrypt') || function_exists("openssl_decrypt");
+$cb_crypto_ok = function_exists('openssl_decrypt');
 
 template_top('API Integrations');
 ?>
@@ -811,13 +871,35 @@ template_top('API Integrations');
 	$lpo_sub_retry = !empty($lpo_sub_retry); // the failed attempt came from the "I've subscribed" retry
 	$lpo_saas_base = \Prosper202\Lpo\PairingClient::saasBaseUrl();
 	$lpo_capabilities = \Prosper202\Lpo\PairingClient::CAPABILITIES;
+	// Connected is lpo_status; whether the optimizer gets events is its
+	// webhook's status. A read that fails is said as such, never "Connected".
+	$lpo_webhook = null;
+	if ($lpo_connected) {
+		try {
+			$lpo_webhook = \Prosper202\Lpo\PairingWebhook::state(
+				new \Prosper202\Ltv\MysqlWebhookRepository(new \Prosper202\Database\Connection($db)),
+				(int) $_SESSION['user_id'],
+				(string) ($user_row['lpo_bridge_config'] ?? '')
+			);
+		} catch (Throwable $lpo_status_error) {
+			error_log('lpo card: the pairing webhook could not be read: ' . $lpo_status_error->getMessage());
+		}
+	}
+	[$lpo_problem_kind, $lpo_problem] = $lpo_connected
+		? \Prosper202\Lpo\PairingWebhook::notice($lpo_webhook)
+		: ['', ''];
+	$lpo_revive = ($lpo_webhook['state'] ?? null) === \Prosper202\Lpo\PairingWebhook::DEAD;
 	?>
 	<div class="col-12 col-lg-6">
 		<section class="p202-panel h-100" id="lpo">
 			<div class="p202-panel__head">
 				<h2 class="p202-panel__title">Landing Page Optimizer</h2>
-				<?php if ($lpo_connected) { ?>
+				<?php if ($lpo_connected && $lpo_problem === '') { ?>
 					<span class="p202-pill p202-pill--good">Connected</span>
+				<?php } elseif ($lpo_connected && $lpo_problem_kind === 'bad') { ?>
+					<span class="p202-pill p202-pill--bad">Not receiving events</span>
+				<?php } elseif ($lpo_connected) { ?>
+					<span class="p202-pill p202-pill--warn">Status unknown</span>
 				<?php } elseif (!$lpo_schema_ready) { ?>
 					<span class="p202-pill p202-pill--warn">Upgrade needed</span>
 				<?php } elseif ($lpo_needs_subscription) { ?>
@@ -834,8 +916,15 @@ template_top('API Integrations');
 					echo p202_flash('bad', $error['lpo']);
 				} ?>
 				<?php if ($lpo_connected) { ?>
+					<?php if ($lpo_problem !== '') {
+						echo p202_flash($lpo_problem_kind, $lpo_problem);
+					} ?>
 					<?php echo $endpoint('Site key', $lpo_site_key); ?>
 					<div class="p202-toolbar">
+						<?php if ($lpo_revive) { ?>
+							<a href="<?php echo $e($base . 'tracking202/analyze/ltv.php?view=settings'); ?>"
+								class="btn btn-primary">LTV Settings</a>
+						<?php } ?>
 						<a href="<?php echo $e($lpo_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener" class="btn btn-secondary">Manage experiments <i class="bi bi-box-arrow-up-right"></i></a>
 						<form method="post" action="<?php echo $e($self . '#lpo'); ?>" data-p202-confirm="Disconnect the Landing Page Optimizer? The pairing webhook will be removed.">
 							<?php echo p202_account_token_field(); ?>
@@ -919,7 +1008,7 @@ template_top('API Integrations');
 				<div class="p202-panel__body">
 					<p class="text-secondary"><?php echo $e($integration['desc']); ?><?php echo $integration['extra'] !== '' ? ' ' . $integration['extra'] . '.' : ''; ?></p>
 					<?php if ($isClickbank && !$cb_crypto_ok) { ?>
-						<?php echo p202_flash('bad', 'The mcrypt (or OpenSSL) PHP extension is required for this integration. Install it, or ask your hosting provider for assistance.'); ?>
+						<?php echo p202_flash('bad', 'The OpenSSL PHP extension, which decrypts ClickBank’s notifications, is required for this integration. Install it, or ask your hosting provider for assistance.'); ?>
 					<?php } else { ?>
 						<?php if ($integration['endpoint'] !== null) {
 							echo $endpoint($integration['endpoint'][0], $integration['endpoint'][1]);
@@ -950,16 +1039,156 @@ template_top('API Integrations');
 		</div>
 	<?php } ?>
 
+	<?php
+	$jvzooColumn = $user_row[JVZooKey::COLUMN] ?? null;
+	$jvzooColumn = is_string($jvzooColumn) ? $jvzooColumn : null;
+	$jvzooErrors = isset($error['jvzoo_secret_key_error'])
+		? [JVZooKey::COLUMN => (string) $error['jvzoo_secret_key_error']] : [];
+	?>
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel h-100" id="jvzoo">
+			<div class="p202-panel__head">
+				<img src="<?php echo $e($base . '202-img/icons/integrations/jvzoo.png'); ?>" width="22" height="22"
+					alt="" class="rounded-1">
+				<h2 class="p202-panel__title">JVZoo</h2>
+				<?php echo $helpLink('jvzoo'); ?>
+				<?php if (JVZooKey::stored($jvzooColumn) !== null) { ?>
+					<span class="p202-pill p202-pill--good">Connected</span>
+				<?php } elseif (JVZooKey::unreadable($jvzooColumn)) { ?>
+					<span class="p202-pill p202-pill--warn">Key unreadable</span>
+				<?php } else { ?>
+					<span class="p202-pill">Not connected</span>
+				<?php } ?>
+			</div>
+			<div class="p202-panel__body">
+				<p class="text-secondary">Record each JVZoo sale and rebill on the click that sent the buyer, and take
+					it back on a refund or chargeback, from JVZoo’s JVZIPN.</p>
+				<p class="mb-1"><strong>Promoting a JVZoo product as an affiliate</strong></p>
+				<ol class="ps-3">
+					<li>Make the campaign’s offer URL your JVZoo affiliate link with
+						<code class="text-nowrap">?tid=[[subid]]</code> added, such as
+						<code>https://www.jvzoo.com/c/12345/67890/?tid=[[subid]]</code>. JVZoo sends the tid back in the
+						notification, and the sale is recorded on that click at your commission.</li>
+					<li>In JVZoo, under Affiliates › Approved Products, open the product’s Integrations and
+						paste this URL into Affiliate IPN.</li>
+				</ol>
+				<?php echo $endpoint('Affiliate IPN URL', JVZooRole::AFFILIATE->url($trackingBase)); ?>
+				<p class="mb-1"><strong>Selling your own product on JVZoo</strong></p>
+				<ol class="ps-3">
+					<li>Make the campaign’s offer URL your product’s JVZoo buy link with
+						<code class="text-nowrap">?subid=[[subid]]</code> added at its end, and send buyers
+						to it through the tracker (or a landing page’s outbound link), which fills it with the
+						click id. JVZoo sends the buy link’s variables back in the notification.</li>
+					<li>In JVZoo, edit the product and, under Advanced Settings, choose JVZIPN v1 and paste this URL as
+						its JVZIPN URL. (Not the v2 URL: v2 does not sign the amount or the click.)</li>
+				</ol>
+				<?php echo $endpoint('Vendor JVZIPN URL', JVZooRole::VENDOR->url($trackingBase)); ?>
+				<p>Both are verified with your JVZIPN secret key, which JVZoo shows under My Account ›
+					Account Details › Seller Settings; store it below. A notification it does not verify is
+					refused. For a subscription, set the campaign’s “When a click converts more than once”
+					(under Advanced) to “Add them up”, so each rebill adds to the sale.</p>
+				<details class="p202-disclosure"<?php echo $jvzooErrors ? ' open' : ''; ?>>
+					<summary><?php echo JVZooKey::stored($jvzooColumn) === null ? 'Connect' : 'Update'; ?>
+						<span class="p202-disclosure__hint">your JVZIPN secret key</span></summary>
+					<div class="p202-disclosure__body">
+						<form method="post" action="<?php echo $e($self . '#jvzoo'); ?>">
+							<input type="hidden" name="change_jvzoo_secret_key" value="1">
+							<?php echo p202_account_token_field(); ?>
+							<label class="form-label" for="jvzoo_ipn_secret_key">JVZIPN secret key</label>
+							<div class="input-group">
+								<input type="text"
+									class="form-control<?php
+										echo p202_account_invalid($jvzooErrors, JVZooKey::COLUMN); ?>"
+									id="jvzoo_ipn_secret_key" name="jvzoo_ipn_secret_key" required autocomplete="off"
+									spellcheck="false" value="<?php echo $e($fieldValue(JVZooKey::COLUMN)); ?>">
+								<button class="btn btn-secondary" type="submit">Save</button>
+							</div>
+							<?php echo p202_account_field_error($jvzooErrors, JVZooKey::COLUMN); ?>
+						</form>
+					</div>
+				</details>
+			</div>
+		</section>
+	</div>
+
+	<?php
+	$pkColumn = $user_row[PayKickstartKeys::COLUMN] ?? null;
+	$pkStored = PayKickstartKeys::stored(is_string($pkColumn) ? $pkColumn : null)['keys'];
+	$pkErrors = isset($error['paykickstart']) ? ['paykickstart_ipn_secret_key' => (string) $error['paykickstart']] : [];
+	?>
 	<div class="col-12 col-lg-6">
 		<section class="p202-panel h-100" id="paykickstart">
 			<div class="p202-panel__head">
 				<img src="<?php echo $e($base . '202-img/icons/integrations/paykickstart.png'); ?>" width="22" height="22" alt="" class="rounded-1">
 				<h2 class="p202-panel__title">PayKickstart</h2>
-				<span class="p202-pill">No setup needed</span>
+				<?php if ($pkStored) { ?>
+					<span class="p202-pill p202-pill--good"><?php
+						echo count($pkStored) === 1 ? '1 key stored' : count($pkStored) . ' keys stored';
+					?></span>
+				<?php } else { ?>
+					<span class="p202-pill">Not connected</span>
+				<?php } ?>
 			</div>
 			<div class="p202-panel__body">
-				<p class="text-secondary">Update conversions from PayKickstart’s Affiliate IPN: paste this URL as your IPN URL in PayKickstart.</p>
+				<p class="text-secondary">Record each sale, rebill and refund of a product you sell through
+					PayKickstart on the click that sent the buyer, from PayKickstart’s product IPN.</p>
+				<?php if (isset($error['paykickstart_remove'])) {
+					echo p202_flash('bad', (string) $error['paykickstart_remove']);
+				} ?>
+				<ol class="ps-3">
+					<li>Make each campaign’s offer URL its PayKickstart checkout link with
+						<code class="text-nowrap">subid=[[subid]]</code> added, such as
+						<code>https://app.paykickstart.com/checkout/123?subid=[[subid]]</code>. PayKickstart sends the
+						subid back in the IPN, and the sale is recorded on that click. For a subscription, set the
+						campaign’s “When a click converts more than once” (under Advanced) to “Add them up”, so each
+						rebill adds to the sale instead of replacing it.</li>
+					<li>In PayKickstart, paste this URL into the IPN Integration tab of each product.</li>
+					<li>Store the IPN secret key of each PayKickstart campaign here (every campaign has its own, in
+						its settings). An IPN that no stored key verifies is refused.</li>
+				</ol>
 				<?php echo $endpoint('IPN URL', $trackingBase . 'tracking202/static/paykickstart.php'); ?>
+				<?php if ($pkStored) { ?>
+					<ul class="p202-list mb-3">
+						<?php foreach ($pkStored as $pkPlace => $pkKey) { ?>
+							<li class="p202-list__item">
+								<span class="p202-list__name">Key ending <?php echo $e(PayKickstartKeys::hint($pkKey)); ?></span>
+								<span class="p202-list__actions"><form method="post"
+									action="<?php echo $e($self . '#paykickstart'); ?>" class="d-inline"
+									data-p202-confirm="Remove this key? PayKickstart IPNs signed with it are refused until it is stored again.">
+									<?php echo p202_account_token_field(); ?>
+									<input type="hidden" name="paykickstart_key_action" value="remove">
+									<input type="hidden" name="paykickstart_key_place" value="<?php echo (int) $pkPlace + 1; ?>">
+									<input type="hidden" name="paykickstart_key_token"
+										value="<?php echo $e(PayKickstartKeys::removalToken($pkKey, $pkSecret)); ?>">
+									<button type="submit" class="p202-list__action p202-list__action--danger">remove</button>
+								</form></span>
+							</li>
+						<?php } ?>
+					</ul>
+				<?php } ?>
+				<details class="p202-disclosure"<?php echo $pkErrors ? ' open' : ''; ?>>
+					<summary><?php echo $pkStored ? 'Add a key' : 'Connect'; ?>
+						<span class="p202-disclosure__hint">one for each campaign</span></summary>
+					<div class="p202-disclosure__body">
+						<form method="post" action="<?php echo $e($self . '#paykickstart'); ?>">
+							<input type="hidden" name="paykickstart_key_action" value="add">
+							<?php echo p202_account_token_field(); ?>
+							<label class="form-label" for="paykickstart_ipn_secret_key">IPN secret key</label>
+							<div class="input-group">
+								<input type="text"
+									class="form-control<?php echo p202_account_invalid($pkErrors, 'paykickstart_ipn_secret_key'); ?>"
+									id="paykickstart_ipn_secret_key" name="paykickstart_ipn_secret_key"
+									required autocomplete="off" spellcheck="false" value="">
+								<button class="btn btn-secondary" type="submit">Save</button>
+							</div>
+							<?php echo p202_account_field_error($pkErrors, 'paykickstart_ipn_secret_key'); ?>
+						</form>
+					</div>
+				</details>
+				<p class="form-text mb-0 mt-3">Promoting PayKickstart products as an affiliate? PayKickstart’s
+					Affiliate IPN cannot update conversions: it carries no click (PayKickstart allows no custom
+					variables in it, and the tid on your affiliate link shows only in your PayKickstart account), and it
+					is not signed. Leave this URL out of the Affiliate IPN setting.</p>
 			</div>
 		</section>
 	</div>

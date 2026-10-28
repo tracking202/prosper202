@@ -106,7 +106,7 @@ $ruleDetails = static function (int $ruleId) use ($fetchAll, $e, $userId): strin
 
 	$items = [];
 	foreach ($criteria as $c) {
-		$items[] = 'If ' . $e(ucfirst((string) $c['type'])) . ' ' . ($c['statement'] === 'is' ? 'is' : 'is not') . ' <strong>' . $e($c['value']) . '</strong>';
+		$items[] = 'If ' . $e(\Prosper202\Rotator\Criterion::describe(ucfirst((string) $c['type']), (string) $c['statement'], $c['value']));
 	}
 	foreach ($redirects as $r) {
 		$weight = (string) ($r['weight'] ?? '') !== '' ? ' (weight ' . $e($r['weight']) . ')' : '';

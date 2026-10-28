@@ -6,6 +6,7 @@ namespace Api\V3\Support;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ConflictException;
+use Prosper202\Database\InstallId;
 
 class ServerStateStore implements QuotaStore
 {
@@ -42,29 +43,43 @@ class ServerStateStore implements QuotaStore
      */
     private const int DEFAULT_MAX_PENDING_CHANGES = 1000;
 
+    /** The directories a store keeps its records in, inside its base directory. */
+    private const array STATE_DIRS = [
+        'idempotency', 'changes', 'jobs', 'audit', 'locks', 'tokens', 'manifests', 'metrics', 'rate_limits',
+        'traces', 'staged_changes',
+    ];
+
+    /** What an install's directory inside P202_SERVER_STATE_DIR is called, before the hash of its id. */
+    private const string INSTALL_DIR_PREFIX = 'install-';
+
     private readonly string $baseDir;
 
     /**
-     * @param ?string $instanceIdentity Overrides the ambient $dbname/$dbhost
-     *        globals used to scope the default directory. Pass it from any
-     *        context that loads configuration inside a function rather than
-     *        at file scope — otherwise the globals are unset and this process
-     *        silently reads and writes a different store than the web tier.
+     * @param (\Closure(): string)|null $installId The install's id
+     *        (Prosper202\Database\InstallId), which names the directory used:
+     *        the default one, or the install's own inside
+     *        P202_SERVER_STATE_DIR. Not called for $baseDir. The served tree
+     *        builds stores with forInstall().
      */
-    public function __construct(?string $baseDir = null, ?string $instanceIdentity = null)
+    public function __construct(?string $baseDir = null, ?\Closure $installId = null)
     {
-        $this->baseDir = rtrim($baseDir ?? $this->resolveDefaultBaseDir($instanceIdentity), '/');
+        $this->baseDir = rtrim($baseDir ?? $this->resolveDefaultBaseDir($installId), '/');
         $this->ensureDir($this->baseDir);
-        $this->ensureDir($this->dir('idempotency'));
-        $this->ensureDir($this->dir('changes'));
-        $this->ensureDir($this->dir('jobs'));
-        $this->ensureDir($this->dir('audit'));
-        $this->ensureDir($this->dir('locks'));
-        $this->ensureDir($this->dir('tokens'));
-        $this->ensureDir($this->dir('manifests'));
-        $this->ensureDir($this->dir('metrics'));
-        $this->ensureDir($this->dir('rate_limits'));
-        $this->ensureDir($this->dir('traces'));
+        foreach (self::STATE_DIRS as $name) {
+            $this->ensureDir($this->dir($name));
+        }
+    }
+
+    /**
+     * The store of the install whose database $db is. Its directory is named
+     * by the install's id -- the default one with the database's host and
+     * name, the one inside P202_SERVER_STATE_DIR alone -- so a database
+     * dropped and installed again under the same name does not read the
+     * state its predecessor left (StateStoresNameTheInstallTest).
+     */
+    public static function forInstall(\mysqli $db): self
+    {
+        return new self(null, static fn (): string => InstallId::of($db));
     }
 
     public function baseDir(): string
@@ -1408,59 +1423,70 @@ class ServerStateStore implements QuotaStore
         ];
     }
 
-    private function resolveDefaultBaseDir(?string $instanceIdentity = null): string
+    /**
+     * @param (\Closure(): string)|null $installId
+     */
+    private function resolveDefaultBaseDir(?\Closure $installId): string
     {
         $env = getenv('P202_SERVER_STATE_DIR');
         if (is_string($env) && trim($env) !== '') {
-            return trim($env);
+            $operatorDir = rtrim(trim($env), '/');
+
+            return self::installDirectoryIn($operatorDir === '' ? '/' : $operatorDir, $installId);
         }
 
         // The temp dir is machine-wide, so the default is scoped by instance
-        // identity (DB host + name): without this, two instances served on
-        // one host would share idempotency replays, staged changes, sync
-        // jobs, and rate-limit buckets across databases. Deployments that
-        // want a specific location (e.g. a persistent volume) set
-        // P202_SERVER_STATE_DIR explicitly, which wins above.
-        $legacy = rtrim((string)sys_get_temp_dir(), '/') . '/p202-api-v3-state';
+        // identity: without this, two instances served on one host would
+        // share idempotency replays, staged changes, sync jobs, and
+        // rate-limit buckets. Deployments that want a specific location
+        // (e.g. a persistent volume) set P202_SERVER_STATE_DIR explicitly,
+        // which wins above.
+        $tmp = rtrim((string)sys_get_temp_dir(), '/');
+        $legacy = $tmp . '/p202-api-v3-state';
 
-        $identity = $instanceIdentity !== null ? trim($instanceIdentity) : null;
-        if ($identity === null || $identity === '') {
-            // Falling back to the globals keeps the six existing call sites
-            // working, but nothing enforces that they loaded configuration at
-            // file scope. A caller that did not gets the unscoped path and
-            // then reads and writes a completely different staged-change,
-            // idempotency and rate-limit store than the web tier — with no
-            // error at all. Say so once per process rather than diverging in
-            // silence (error pattern #3).
-            //
-            // The unscoped path is NOT $legacy. It was, and $legacy is what a
-            // new instance with no directory of its own used to adopt (it no
-            // longer adopts anything, below): every process without an
-            // identity (a test run, a script that loads the configuration
-            // inside a function) kept writing the directory the next instance
-            // installed on the host took as its own — its idempotency records
-            // replayed to that instance's users, its staged changes listed for
-            // them to apply. Measured: an identity-less store's create
-            // replayed, and its staged DELETE listed, in a brand-new instance
-            // on another database.
-            global $dbname, $dbhost;
-            if (!is_string($dbname) || trim($dbname) === '') {
-                $unscoped = $legacy . '-unscoped';
-                static $warned = false;
-                if (!$warned) {
-                    $warned = true;
-                    error_log(
-                        'p202: no database identity in scope when resolving the v3 API state directory; '
-                        . 'using the unscoped path ' . $unscoped . '. A process that reaches this reads '
-                        . 'different state than the web tier — load 202-config.php at file scope, or pass '
-                        . 'the identity to ServerStateStore, or set P202_SERVER_STATE_DIR.'
-                    );
-                }
-                return self::privateTempDirectory($unscoped);
+        // A process with no database identity in scope (a test run, a script
+        // that loads the configuration inside a function) reads and writes a
+        // different store than the web tier, with no error at all, so it
+        // says so once per process (error pattern #3).
+        //
+        // The unscoped path is NOT $legacy. It was, and $legacy is what a
+        // new instance with no directory of its own used to adopt (it no
+        // longer adopts anything, below): every process without an identity
+        // kept writing the directory the next instance installed on the host
+        // took as its own. Measured: an identity-less store's create
+        // replayed, and its staged DELETE listed, in a brand-new instance on
+        // another database.
+        global $dbname, $dbhost;
+        if (!is_string($dbname) || trim($dbname) === '') {
+            $unscoped = $legacy . '-unscoped';
+            static $warned = false;
+            if (!$warned) {
+                $warned = true;
+                error_log(
+                    'p202: no database identity in scope when resolving the v3 API state directory; '
+                    . 'using the unscoped path ' . $unscoped . '. A process that reaches this reads '
+                    . 'different state than the web tier — load 202-config.php at file scope, or '
+                    . 'set P202_SERVER_STATE_DIR.'
+                );
             }
-            $identity = (is_string($dbhost) ? $dbhost : '') . '|' . $dbname;
+            return self::privateTempDirectory($unscoped);
         }
-        $scoped = $legacy . '-' . substr(sha1($identity), 0, 12);
+        $host = is_string($dbhost) ? $dbhost : '';
+
+        // The database's host and name do not tell two installs apart: one
+        // dropped and installed again under the same name had the same
+        // directory, so every Idempotency-Key its predecessor answered
+        // replayed that answer and created nothing, and the predecessor's
+        // staged changes were listed and applied here (measured: its staged
+        // DELETE of campaign 1 deleted the new install's campaign 1). The
+        // install's id is minted with its schema, so a reinstall changes it.
+        // It is read from the database, and a store that cannot read it
+        // refuses rather than falling back to the name the database alone
+        // gives (CLAUDE.md #11: a fallback is a namespace too). Host and
+        // name are length-prefixed, so no pair runs together as another's
+        // (CLAUDE.md #17).
+        $database = $legacy . '-' . substr(sha1(strlen($host) . ':' . $host . '|' . $dbname), 0, 12);
+        $scoped = $database . '-' . substr(sha1(self::installIdFrom($installId)), 0, 12);
 
         // The pre-scoping directory is never adopted. This renamed it into
         // place for an instance with no directory of its own, so in-flight
@@ -1476,30 +1502,222 @@ class ServerStateStore implements QuotaStore
         // resolve to "ours" (CLAUDE.md #11), so it is left where it is and
         // the log says so once a process, naming the way an operator who
         // knows it is theirs carries it over.
-        if (!is_dir($scoped) && is_dir($legacy)) {
+        if (!is_dir($scoped)) {
             static $legacyNoted = [];
-            if (!isset($legacyNoted[$scoped])) {
+            if (is_dir($legacy) && !isset($legacyNoted[$scoped])) {
                 $legacyNoted[$scoped] = true;
                 error_log(sprintf(
                     'p202: the shared API state directory %s is not adopted: nothing in it says which install'
                     . ' wrote it. This instance uses %s. If it holds this install\'s own staged changes and'
-                    . ' sync jobs (an upgrade from before 1.9.75), move it there before the next request, or'
-                    . ' set P202_SERVER_STATE_DIR to it.',
+                    . ' sync jobs (an upgrade from before 1.9.75), move it there before the next request.',
                     $legacy,
                     $scoped
                 ));
             }
+            self::noteEarlierInstalls($tmp, $host . '|' . $dbname, $database, $scoped);
         }
 
-        // Not covered, by design of the key: an instance reinstalled into a
-        // database of the same name on the same host has the same identity,
-        // and so takes over the state its predecessor left (an idempotency
-        // key replays the old install's response; its staged changes list).
-        // Telling the two installs apart needs something the reinstall
-        // changes (202_users.install_hash), read from the database on every
-        // construction; until then, a reinstall should set
-        // P202_SERVER_STATE_DIR or remove the directory this resolves to.
         return self::privateTempDirectory($scoped);
+    }
+
+    /**
+     * The install's id from $installId, or a refusal: a store whose
+     * directory is named by the install has no other name to take.
+     *
+     * @param (\Closure(): string)|null $installId
+     */
+    private static function installIdFrom(?\Closure $installId): string
+    {
+        if ($installId === null) {
+            throw new DatabaseException('', new \LogicException(
+                'The default API state directory is named by the install, and this store was built without'
+                . ' it: build it with ServerStateStore::forInstall($db), or give it a directory.'
+            ));
+        }
+        try {
+            $id = $installId();
+        } catch (\Throwable $e) {
+            throw new DatabaseException('', new \RuntimeException(
+                'The API state directory is named by this install\'s id, which could not be read, so no'
+                . ' state is read or written',
+                0,
+                $e
+            ));
+        }
+        if ($id === '') {
+            throw new DatabaseException('The install\'s id is empty, and it names the API state directory');
+        }
+
+        return $id;
+    }
+
+    /**
+     * The install's own directory inside the operator's P202_SERVER_STATE_DIR,
+     * $operatorDir: install-<hash of the install's id>, made here when absent.
+     *
+     * The operator's directory held one install's state at its top level,
+     * whichever install was there, so a database dropped and installed again
+     * under it -- on the Coolify stack, any reset of the db_data volume --
+     * read its predecessor's records as its own, as the temp-dir default did
+     * before it was named by the install. A reinstall starts in a directory
+     * of its own now. When the id cannot be read the store refuses, and
+     * never falls back to the operator's directory bare (CLAUDE.md #11: a
+     * fallback is a namespace too).
+     *
+     * The operator vouches for $operatorDir; the install's directory inside
+     * it is used only when it is a real directory owned by this process's
+     * user that its group and others cannot write, as in the temp dir. There
+     * is no alternative to take: a refused one is logged and refused. A
+     * process running as root does not make it in a directory another user
+     * owns, where the web server's user could not use it.
+     *
+     * @param (\Closure(): string)|null $installId
+     */
+    private static function installDirectoryIn(string $operatorDir, ?\Closure $installId): string
+    {
+        $base = rtrim($operatorDir, '/');
+        $dir = $base . '/' . self::INSTALL_DIR_PREFIX . substr(sha1(self::installIdFrom($installId)), 0, 12);
+        if (@lstat($dir) === false) {
+            if (!is_dir($operatorDir) && !@mkdir($operatorDir, 0700, true) && !is_dir($operatorDir)) {
+                throw new DatabaseException(
+                    'The API state directory ' . $operatorDir . ' (P202_SERVER_STATE_DIR) is not a directory and'
+                    . ' could not be made'
+                );
+            }
+            // stat(), not lstat(): the operator's directory may be a link to where it really is.
+            $owner = @stat($operatorDir);
+            if (self::effectiveUid($operatorDir) === 0 && is_array($owner) && (int) $owner['uid'] !== 0) {
+                throw self::refuseInstallDirectory(
+                    $dir,
+                    'it is not there yet, and P202_SERVER_STATE_DIR is owned by uid ' . $owner['uid'],
+                    'This process runs as root, and a directory it made would be one the web server\'s user'
+                        . ' cannot use: run it as the user that owns ' . $operatorDir . '.'
+                );
+            }
+            self::noteEarlierStateIn($operatorDir, $dir);
+            @mkdir($dir, 0700);
+        }
+        $euid = self::effectiveUid($operatorDir);
+        $why = self::untrustedBecause(@lstat($dir), $euid);
+        if ($why !== null) {
+            throw self::refuseInstallDirectory($dir, $why, $euid === 0
+                ? 'This process runs as root: if the owner is the web server\'s user, run it as that user;'
+                    . ' if not, remove the directory.'
+                : 'If it holds this install\'s state, make it a directory only this server\'s user owns and can'
+                    . ' write (chown -R, chmod 0700); if not, remove it.');
+        }
+
+        return $dir;
+    }
+
+    /** Log a refused install directory and the exception that refuses it. */
+    private static function refuseInstallDirectory(string $dir, string $why, string $remedy): DatabaseException
+    {
+        $message = 'The API state directory ' . $dir . ' is not used: ' . $why . '. ' . $remedy;
+        error_log('p202: ' . $message);
+
+        return new DatabaseException($message);
+    }
+
+    /**
+     * Say once a process what in the operator's P202_SERVER_STATE_DIR,
+     * $operatorDir, holds state that is not this install's directory $dir:
+     * the store's directories at its top level, written there before 1.9.79,
+     * and other installs' directories. None is read, adopted or removed --
+     * whose it is cannot be shown (CLAUDE.md #11) -- so the log names each
+     * for the operator. Anything else in the directory is the operator's and
+     * is not mentioned.
+     */
+    private static function noteEarlierStateIn(string $operatorDir, string $dir): void
+    {
+        $names = @scandir($operatorDir);
+        if ($names === false) {
+            // Advice only: a listing that fails names nothing, and nothing depends on it.
+            return;
+        }
+        static $noted = [];
+        $topLevel = [];
+        foreach ($names as $name) {
+            $path = rtrim($operatorDir, '/') . '/' . $name;
+            if ($path === $dir || isset($noted[$path]) || !is_dir($path)) {
+                continue;
+            }
+            if (in_array($name, self::STATE_DIRS, true)) {
+                $topLevel[] = $name;
+                continue;
+            }
+            if (preg_match('/^' . self::INSTALL_DIR_PREFIX . '[0-9a-f]{12}$/D', $name) !== 1) {
+                continue;
+            }
+            $noted[$path] = true;
+            error_log(sprintf(
+                'p202: the API state directory %s is not used: it holds the state of another install, an earlier'
+                . ' install of this database (one dropped and installed again) or another database whose'
+                . ' P202_SERVER_STATE_DIR is this directory too. This install uses %s. If no install uses it any'
+                . ' more, remove it.',
+                $path,
+                $dir
+            ));
+        }
+        if ($topLevel !== [] && !isset($noted[$operatorDir])) {
+            $noted[$operatorDir] = true;
+            error_log(sprintf(
+                'p202: the API state in %s (%s) is not used: it was written before 1.9.79, when'
+                . ' P202_SERVER_STATE_DIR held one install\'s state at its top level, so it is this install\'s'
+                . ' from before its upgrade to 1.9.79 or an earlier install\'s of a database the directory'
+                . ' served. This install uses %s. If it holds this install\'s own staged changes or sync jobs,'
+                . ' copy what it holds into %s and then remove it; otherwise remove it.',
+                $operatorDir,
+                implode(', ', array_map(static fn (string $name): string => $name . '/', $topLevel)),
+                $dir,
+                $dir
+            ));
+        }
+    }
+
+    /**
+     * Say once a process which directories in the temp dir hold the state of
+     * an earlier install of this database: the one named by the database
+     * alone (before 1.9.79), and those named by the database and another
+     * install. None is read, adopted or removed -- whose it is cannot be
+     * shown (CLAUDE.md #11) -- so the log names each for the operator.
+     */
+    private static function noteEarlierInstalls(string $tmp, string $database, string $prefix, string $scoped): void
+    {
+        $names = @scandir($tmp);
+        if ($names === false) {
+            // Advice only: a listing that fails names nothing, and nothing depends on it.
+            return;
+        }
+        $byDatabase = $tmp . '/p202-api-v3-state-' . substr(sha1($database), 0, 12);
+        static $noted = [];
+        foreach ($names as $name) {
+            $dir = $tmp . '/' . $name;
+            $another = str_starts_with($dir, $prefix . '-')
+                && $dir !== $scoped
+                && !str_starts_with($dir, $scoped . '.');
+            if (($dir !== $byDatabase && !$another) || isset($noted[$dir]) || !is_dir($dir)) {
+                continue;
+            }
+            $noted[$dir] = true;
+            error_log($another
+                ? sprintf(
+                    'p202: the API state directory %s is not used: it holds the state of an earlier install of'
+                    . ' this database (one dropped and installed again under the same name). This install uses'
+                    . ' %s. Remove it.',
+                    $dir,
+                    $scoped
+                )
+                : sprintf(
+                    'p202: the API state directory %s is not used: it is named by the database alone, as before'
+                    . ' 1.9.79, so it holds the state of this install from before its upgrade to 1.9.79 or of an'
+                    . ' earlier install of this database. This install uses %s. If it holds this install\'s own'
+                    . ' staged changes or sync jobs, copy what it holds into %s; otherwise remove it.',
+                    $dir,
+                    $scoped,
+                    $scoped
+                ));
+        }
     }
 
     /**
@@ -1516,9 +1734,10 @@ class ServerStateStore implements QuotaStore
      * alternative that is, made if absent; the refusal is logged once a
      * process (a request, under a web server), naming the directory and why.
      *
-     * The path is predictable -- a hash of the database host and name -- and
-     * the temp dir is anyone's, so another local user could make it first and
-     * fill it: an idempotency record there replayed its response to this
+     * The path is a name in a temp dir anyone can write -- before 1.9.79 a
+     * hash of the database host and name alone, which anyone could work
+     * out -- so another local user could make it first and fill it: an
+     * idempotency record there replayed its response to this
      * install's caller and created nothing, and a staged change there was
      * listed for this install's users to apply against this database
      * (measured on a live instance: a POST /aff-networks answered 201 with
@@ -1531,7 +1750,8 @@ class ServerStateStore implements QuotaStore
      * never reads. It refuses instead, saying to run as the web server's
      * user. When every candidate is refused the store refuses to start;
      * P202_SERVER_STATE_DIR names a directory the operator vouches for, and
-     * is used as named.
+     * the install's directory inside it is held to the same rule
+     * (installDirectoryIn()).
      */
     private static function privateTempDirectory(string $preferred): string
     {
@@ -1626,25 +1846,26 @@ class ServerStateStore implements QuotaStore
 
     /**
      * This process's effective uid: posix_geteuid(), else the owner of a
-     * file it has just made (getmyuid() is the owner of the script, which
-     * is not the same thing).
+     * file it has just made in $probeDir, the temp dir by default
+     * (getmyuid() is the owner of the script, which is not the same thing).
      */
-    private static function effectiveUid(): int
+    private static function effectiveUid(?string $probeDir = null): int
     {
         if (function_exists('posix_geteuid')) {
             return posix_geteuid();
         }
         static $uid = null;
         if ($uid === null) {
-            $probe = @tempnam(sys_get_temp_dir(), 'p202-uid-');
+            $probe = $probeDir === null ? @tempnam(sys_get_temp_dir(), 'p202-uid-') : @tempnam($probeDir, 'p202-uid-');
             $owner = is_string($probe) ? @fileowner($probe) : false;
             if (is_string($probe)) {
                 @unlink($probe);
             }
             if ($owner === false) {
                 throw new DatabaseException(
-                    'Cannot tell which user this process runs as, so no API state directory in the temp dir'
-                    . ' can be trusted: set P202_SERVER_STATE_DIR.'
+                    'Cannot tell which user this process runs as (PHP has no posix extension, and no file could'
+                    . ' be made in ' . ($probeDir ?? 'the temp dir') . ' to ask), so no API state directory can be'
+                    . ' shown to be its own.'
                 );
             }
             $uid = $owner;

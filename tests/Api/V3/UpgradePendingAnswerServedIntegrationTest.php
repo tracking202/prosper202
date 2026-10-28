@@ -18,8 +18,9 @@ use Prosper202\Database\Tables\ClickTables;
  * 503 naming the upgrade; with the schema current the same failure claims
  * no cause, and a read that works is untouched. So does every 5xx answered
  * outside the dispatcher's last catch: the key's roles (an AuthException),
- * the Android install intake (pre-auth, its own catch) and the Apple
- * postback receiver (its own entry point).
+ * the Android install intake (pre-auth, its own catch), the Apple postback
+ * receiver (its own entry point) and an offline conversion fetch URL
+ * (pre-auth, its own catch).
  *
  * @group integration
  */
@@ -30,7 +31,7 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
     private const USER = 3962;
     private const BEHIND = '1.9.55';
     /** The tables the failures below take away, each for one request. */
-    private const BROKEN = ['202_roles', '202_app_registrations'];
+    private const BROKEN = ['202_roles', '202_app_registrations', '202_offline_conversion_feeds'];
     /** Stands for the seeded API key in a header a data provider writes. */
     private const KEY = '{key}';
 
@@ -217,6 +218,7 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
             'attribution-signature' => 'MEUCIQ==',
         ], JSON_THROW_ON_ERROR);
         $install = 'The install could not be recorded; retry later';
+        $feed = 'The file could not be written; try again later';
         $cases = [
             'the key\'s roles' => ['202_roles', 'GET', '/api/v3/campaigns', ['Authorization: Bearer ' . self::KEY], '',
                 ['strict' => 'Internal server error', 'off' => 'Authorization unavailable']],
@@ -227,6 +229,9 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
                 '202_app_registrations', 'POST', '/.well-known/skadnetwork/report-attribution/index.php',
                 ['Content-Type: application/json'], $postback,
                 ['strict' => 'Failed to store postback', 'off' => 'Failed to store postback']],
+            'an offline conversion fetch URL' => [
+                '202_offline_conversion_feeds', 'GET', '/api/v3/offline-conversions/' . str_repeat('k', 43) . '?file=conversions.csv',
+                [], '', ['strict' => $feed, 'off' => $feed]],
         ];
         $out = [];
         foreach ($cases as $name => [$table, $method, $path, $headers, $body, $messages]) {

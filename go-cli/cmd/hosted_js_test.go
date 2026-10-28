@@ -236,3 +236,53 @@ func TestHostedEngineBoundsWhatACallDecodes(t *testing.T) {
 		t.Fatalf("arguments past the bound: %s after %d requests", stderr.String(), requests)
 	}
 }
+
+// The whole entry the relay runs, on a connection's key that an install
+// refuses for a scope it was not approved with: exit 2, and a hint that says
+// to approve the connection again, whatever the install says of the key
+// (an install older than 1.9.79 says nothing); never one that makes a key.
+func TestHostedScopeRefusalSaysConnectAgain(t *testing.T) {
+	t.Setenv("P202_HOSTED_URL", "https://install.example")
+	t.Setenv("P202_HOSTED_API_KEY", "probe-key-0123456789abcdef")
+	t.Cleanup(resetHostedOutput)
+	saved := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = saved })
+	for _, tc := range []struct{ refusal, want string }{
+		{`{"error":true,"message":"Insufficient API key scope for this operation: requires 'ppc-networks:write' (key has: ppc-networks:read). This key is an AI app's connection through Tracking202's MCP server.","status":403,"code":"insufficient_scope","required_scope":"ppc-networks:write","key_scope":"ppc-networks:read","key_source":"ai_connection","remedy":"(remedy)","connect_access":"write"}`,
+			`choose "Read and change"`},
+		{`{"error":true,"message":"Insufficient API key scope for this operation: requires 'ppc-networks:write' (key has: ppc-networks:read).","status":403}`,
+			"approve it with the access that includes 'ppc-networks:write'"},
+	} {
+		http.DefaultTransport = fetchFunc(func(r *http.Request) (*http.Response, error) {
+			status, body := 200, `{"data":{"ppc_network_id":1,"ppc_network_name":"Google Ads - Main"}}`
+			switch {
+			case r.URL.Path == "/api/versions":
+				body = `{"data":{"preferred":"v3","supported":["v3"]}}`
+			case r.URL.Path == "/api/v3/capabilities":
+				body = `{"data":{"features":{}}}`
+			case r.Method != http.MethodGet:
+				status, body = 403, tc.refusal
+			}
+			return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		})
+		// A write connection's call: a test before this one may have left
+		// the flag set.
+		mcpReadOnly = false
+		var stderr bytes.Buffer
+		if code := run([]string{"mcp", "call", "ppc_network_update", "--input", `{"id":"1","ppc_network_name":"Main"}`}, &stderr); code != ExitAuth {
+			t.Fatalf("exit %d, want %d: %s", code, ExitAuth, stderr.String())
+		}
+		var e struct {
+			Error struct{ Category, Message, Hint string } `json:"error"`
+		}
+		if err := json.Unmarshal(stderr.Bytes(), &e); err != nil {
+			t.Fatalf("stderr is not the JSON envelope: %q (%v)", stderr.String(), err)
+		}
+		if e.Error.Category != "auth" || !strings.Contains(e.Error.Message, "requires 'ppc-networks:write'") ||
+			!strings.Contains(e.Error.Hint, "Connect the AI app to Prosper202 again") || !strings.Contains(e.Error.Hint, tc.want) ||
+			strings.Contains(e.Error.Hint, "apikey create") {
+			t.Fatalf("envelope %+v", e.Error)
+		}
+		resetHostedOutput()
+	}
+}

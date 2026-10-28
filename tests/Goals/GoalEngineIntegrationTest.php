@@ -79,7 +79,7 @@ final class GoalEngineIntegrationTest extends TestCase
         $this->setMode(7, 'accumulate');
         (new MysqlConversionRepository($this->conn))->record(1, [
             'click_id' => 100, 'transaction_id' => 'unrelated', 'payout' => '0', 'payable' => false, 'source' => 'postback',
-        ]);
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertSame(['lead' => 1, 'payout' => '5.00000'], $this->clickState(100));
     }
 
@@ -155,7 +155,7 @@ final class GoalEngineIntegrationTest extends TestCase
         self::assertSame('20.00000', $this->clickState(100)['payout']);
 
         $repo = new MysqlConversionRepository($this->conn);
-        $reversal = $repo->record(1, ['click_id' => 100, 'transaction_id' => 'ORD-1', 'reversal' => true, 'source' => 'postback']);
+        $reversal = $repo->record(1, ['click_id' => 100, 'transaction_id' => 'ORD-1', 'reversal' => true, 'source' => 'postback'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertNotNull($reversal['reversesConvId']);
         self::assertSame(['lead' => 1, 'payout' => '10.00000'], $this->clickState(100), 'the reversal nets against the goal row it names');
 
@@ -212,7 +212,7 @@ final class GoalEngineIntegrationTest extends TestCase
             received_at = ' . self::T);
         $subject = new \Prosper202\Goals\GoalSubject('install', 55, null, self::T, [], null, null, 9);
         $this->clock += 10;
-        $result = $this->engine->ingest(1, $subject, [new \Prosper202\Goals\GoalEvent('l', 'level', self::T + 5, $this->clock, [], null, false, null)]);
+        $result = $this->engine->ingest(1, $subject, [new \Prosper202\Goals\GoalEvent('l', 'level', self::T + 5, $this->clock, [], null, false, null)], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertSame(1, $result['outcomes_written']);
         self::assertSame('0', self::$db->query('SELECT COUNT(*) AS n FROM 202_conversion_logs')->fetch_assoc()['n']);
         $row = self::$db->query('SELECT subject_type, subject_id, conversion_id, payable, value_note, app_registration_id FROM 202_goal_outcomes')->fetch_assoc();
