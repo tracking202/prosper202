@@ -344,3 +344,22 @@ func TestHostedRefusalWrappedByTheCommandIsStillTheRefusal(t *testing.T) {
 		t.Fatalf("sent %q after the capabilities answer was refused", hits)
 	}
 }
+
+// text_ad_update reads the stored ad before its write when the type or a
+// link changes: an answer past the bound there stops the call with no PUT,
+// and the refusal says nothing was changed.
+func TestHostedTextAdUpdateRefusedAtItsReadSendsNoWrite(t *testing.T) {
+	f := &valuesInstall{answer: func(string) []byte { return tinyRows(hostedAnswerValues/2 + 100) }}
+	f.server(t)
+	withHostedRun(t, true)
+	stdout, _, err := mcpExecute(t, "mcp", "call", "text_ad_update", "--input", `{"id":"5","text_ad_type":"1"}`)
+	if !api.AnswerTooManyValues(err) || exitCodeForError(err) != ExitValidation || stdout != "" {
+		t.Fatalf("text_ad_update: %v, printed %d bytes", err, len(stdout))
+	}
+	if !strings.Contains(hintFor(err), "Nothing that changes data was sent") {
+		t.Fatalf("hint %q does not say the write was not sent", hintFor(err))
+	}
+	if hits := f.requests(); len(hits) != 1 || hits[0] != "GET /api/v3/text-ads/5" {
+		t.Fatalf("asked %q, want the one read of the ad", hits)
+	}
+}
