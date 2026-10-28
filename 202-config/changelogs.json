@@ -20,7 +20,8 @@
       "New: A redirector's whole rule set can be saved in one step through the API (PUT /rotators/{id}/rules), p202 rotator set-rules and the MCP tool rotator_set_rules, as the Redirector page saves it: all of it or nothing, and a dry run shows what would change. The MCP tools also create, update and delete redirectors",
       "Changed: A redirector's rules are tried in the order you set, so a new rule can go ahead of the others; the upgrade keeps each redirector's order as it was",
       "Fixed: Rule values written through the API are stored as the Redirector page stores them (\"United States(US), Canada(CA)\" no longer misses Canada), and a device written with a capital, which never matches, is refused",
-      "Fixed: Adding or changing one redirector rule through the API or the CLI is refused when the rule would have no criterion, as the Redirector page refuses it: such a rule matches every visitor, so one call sent all of a redirector's traffic to it. Rules already saved that way keep working as before, and the Redirector page lists them as matching any visitor"
+      "Fixed: Adding or changing one redirector rule through the API or the CLI is refused when the rule would have no criterion, as the Redirector page refuses it: such a rule matches every visitor, so one call sent all of a redirector's traffic to it. Rules already saved that way keep working as before, and the Redirector page lists them as matching any visitor",
+      "Fixed: A sync writes a redirector's rules on the other install whole or not at all. When the other install refused one (since this version, a rule with no criterion), its redirector was left with its own rules removed and only the synced rules before the refused one"
     ]
   },
   "1.9.78": {

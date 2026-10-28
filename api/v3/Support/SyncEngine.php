@@ -577,7 +577,7 @@ class SyncEngine
         array $targetLookups
     ): void {
         $rules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
-        $this->postRotatorRules($targetClient, $targetRotatorId, $rules, $sourceLookups, $targetLookups);
+        $this->writeRotatorRules($targetClient, $targetRotatorId, $rules, $sourceLookups, $targetLookups);
     }
 
     /** @return array<int, array<string, mixed>> */
@@ -588,86 +588,81 @@ class SyncEngine
         return is_array($rules) ? $rules : [];
     }
 
-    /** @param array<int, array<string, mixed>> $rules */
-    private function postRotatorRules(
+    /**
+     * The source's rules written on the target's redirector in place of its
+     * own, as one set (PUT /rotators/{id}/rules), which the target takes
+     * whole or refuses with nothing written. Removing the target's rules and
+     * posting the source's one at a time left the target with only the rules
+     * before one it refused, and since 1.9.79 it refuses a rule with no
+     * criterion, which a rule stored before then can be. An install without
+     * the set's route (before 1.9.79) answers it 404, and is written to one
+     * rule at a time; so is a source redirector with no rules, which a set
+     * cannot be.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     */
+    private function writeRotatorRules(
         RemoteApiClient $targetClient,
         string $targetRotatorId,
         array $rules,
         array $sourceLookups,
         array $targetLookups
     ): void {
+        $payloads = [];
         foreach ($rules as $rule) {
-            $rulePayload = [
-                'rule_name' => $rule['rule_name'] ?? '',
-                'splittest' => $rule['splittest'] ?? 0,
-                'status' => $rule['status'] ?? 1,
-            ];
-
-            if (!empty($rule['criteria']) && is_array($rule['criteria'])) {
-                $rulePayload['criteria'] = [];
-                foreach ($rule['criteria'] as $c) {
-                    $rulePayload['criteria'][] = [
-                        'type' => $c['type'] ?? '',
-                        'statement' => $c['statement'] ?? '',
-                        'value' => $c['value'] ?? '',
-                    ];
-                }
-            }
-
-            if (!empty($rule['redirects']) && is_array($rule['redirects'])) {
-                $rulePayload['redirects'] = [];
-                foreach ($rule['redirects'] as $r) {
-                    $redirect = [
-                        'redirect_url' => $r['redirect_url'] ?? '',
-                        'weight' => $r['weight'] ?? 100,
-                        'name' => $r['name'] ?? '',
-                        'redirect_campaign' => 0,
-                        'redirect_lp' => 0,
-                    ];
-
-                    $rawCampaign = $this->scalarString($r['redirect_campaign'] ?? null);
-                    if ($rawCampaign !== '' && $rawCampaign !== '0') {
-                        $natural = $sourceLookups['campaigns']['by_id'][$rawCampaign] ?? '';
-                        if ($natural !== '') {
-                            $targetId = $targetLookups['campaigns']['by_natural'][$natural] ?? '';
-                            if ($targetId !== '') {
-                                $redirect['redirect_campaign'] = (int)$targetId;
-                            }
-                        }
-                    }
-
-                    $rawLp = $this->scalarString($r['redirect_lp'] ?? null);
-                    if ($rawLp !== '' && $rawLp !== '0') {
-                        $natural = $sourceLookups['landing_pages']['by_id'][$rawLp] ?? '';
-                        if ($natural !== '') {
-                            $targetId = $targetLookups['landing_pages']['by_natural'][$natural] ?? '';
-                            if ($targetId !== '') {
-                                $redirect['redirect_lp'] = (int)$targetId;
-                            }
-                        }
-                    }
-
-                    $rulePayload['redirects'][] = $redirect;
-                }
-            }
-
-            $targetClient->post('rotators/' . $targetRotatorId . '/rules', $rulePayload);
+            $payloads[] = $this->rotatorRulePayload($rule, $sourceLookups, $targetLookups);
         }
+        if ($payloads !== []) {
+            try {
+                $targetClient->put('rotators/' . $targetRotatorId . '/rules', ['rules' => $payloads]);
+                return;
+            } catch (RemoteApiException $e) {
+                if ($e->remoteStatus !== 404) {
+                    throw self::namingSourceRules($e, $rules);
+                }
+            }
+        }
+        $this->replaceRotatorRulesOneByOne($targetClient, $targetRotatorId, $payloads);
     }
 
-    private function resyncRotatorRules(
-        RemoteApiClient $sourceClient,
-        RemoteApiClient $targetClient,
-        string $sourceRotatorId,
-        string $targetRotatorId,
-        array $sourceLookups,
-        array $targetLookups
-    ): void {
-        // Fetch the source rules BEFORE deleting anything on the target: if the
-        // source fetch fails we abort with the target rotator's rules intact,
-        // instead of stripping them and having nothing to recreate.
-        $sourceRules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
+    /**
+     * A refusal of the set with each field error naming the source rule it
+     * is about: `rules.1` is the source redirector's second rule, which the
+     * operator finds by its name.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     */
+    private static function namingSourceRules(RemoteApiException $e, array $rules): RemoteApiException
+    {
+        $errors = [];
+        foreach ($e->fieldErrors as $field => $error) {
+            $at = preg_match('/^rules\.(\d+)(?:\.|$)/', (string) $field, $m) === 1 ? $rules[(int) $m[1]] ?? null : null;
+            $errors[$field] = $at === null ? $error : 'the source rule "' . self::ruleName($at) . '": ' . $error;
+        }
 
+        return new RemoteApiException($e->remoteStatus, $e->remoteMessage, $errors, $e->method, $e->path);
+    }
+
+    /** @param array<string, mixed> $rule */
+    private static function ruleName(array $rule): string
+    {
+        $name = $rule['rule_name'] ?? '';
+
+        return is_scalar($name) ? (string) $name : '';
+    }
+
+    /**
+     * The target's rules removed and the source's posted one at a time, for
+     * an install without PUT /rotators/{id}/rules (before 1.9.79, which
+     * stores any rule it is sent) and for a source redirector with no rules.
+     *
+     * @param list<array<string, mixed>> $payloads
+     */
+    private function replaceRotatorRulesOneByOne(
+        RemoteApiClient $targetClient,
+        string $targetRotatorId,
+        array $payloads
+    ): void {
         $targetRotator = $targetClient->get('rotators/' . $targetRotatorId);
         $targetRules = $targetRotator['data']['rules'] ?? [];
         if (!is_array($targetRules)) {
@@ -683,8 +678,89 @@ class SyncEngine
             }
             $targetClient->delete('rotators/' . $targetRotatorId . '/rules/' . $ruleId);
         }
+        foreach ($payloads as $payload) {
+            $targetClient->post('rotators/' . $targetRotatorId . '/rules', $payload);
+        }
+    }
 
-        $this->postRotatorRules($targetClient, $targetRotatorId, $sourceRules, $sourceLookups, $targetLookups);
+    /**
+     * One source rule as the target is sent it: its destinations' campaigns
+     * and landing pages by the target's ids.
+     *
+     * @param array<string, mixed> $rule
+     * @return array<string, mixed>
+     */
+    private function rotatorRulePayload(array $rule, array $sourceLookups, array $targetLookups): array
+    {
+        $rulePayload = [
+            'rule_name' => $rule['rule_name'] ?? '',
+            'splittest' => $rule['splittest'] ?? 0,
+            'status' => $rule['status'] ?? 1,
+        ];
+
+        if (!empty($rule['criteria']) && is_array($rule['criteria'])) {
+            $rulePayload['criteria'] = [];
+            foreach ($rule['criteria'] as $c) {
+                $rulePayload['criteria'][] = [
+                    'type' => $c['type'] ?? '',
+                    'statement' => $c['statement'] ?? '',
+                    'value' => $c['value'] ?? '',
+                ];
+            }
+        }
+
+        if (!empty($rule['redirects']) && is_array($rule['redirects'])) {
+            $rulePayload['redirects'] = [];
+            foreach ($rule['redirects'] as $r) {
+                $redirect = [
+                    'redirect_url' => $r['redirect_url'] ?? '',
+                    'weight' => $r['weight'] ?? 100,
+                    'name' => $r['name'] ?? '',
+                    'redirect_campaign' => 0,
+                    'redirect_lp' => 0,
+                ];
+
+                $rawCampaign = $this->scalarString($r['redirect_campaign'] ?? null);
+                if ($rawCampaign !== '' && $rawCampaign !== '0') {
+                    $natural = $sourceLookups['campaigns']['by_id'][$rawCampaign] ?? '';
+                    if ($natural !== '') {
+                        $targetId = $targetLookups['campaigns']['by_natural'][$natural] ?? '';
+                        if ($targetId !== '') {
+                            $redirect['redirect_campaign'] = (int)$targetId;
+                        }
+                    }
+                }
+
+                $rawLp = $this->scalarString($r['redirect_lp'] ?? null);
+                if ($rawLp !== '' && $rawLp !== '0') {
+                    $natural = $sourceLookups['landing_pages']['by_id'][$rawLp] ?? '';
+                    if ($natural !== '') {
+                        $targetId = $targetLookups['landing_pages']['by_natural'][$natural] ?? '';
+                        if ($targetId !== '') {
+                            $redirect['redirect_lp'] = (int)$targetId;
+                        }
+                    }
+                }
+
+                $rulePayload['redirects'][] = $redirect;
+            }
+        }
+
+        return $rulePayload;
+    }
+
+    private function resyncRotatorRules(
+        RemoteApiClient $sourceClient,
+        RemoteApiClient $targetClient,
+        string $sourceRotatorId,
+        string $targetRotatorId,
+        array $sourceLookups,
+        array $targetLookups
+    ): void {
+        // The source's rules are read before anything on the target is
+        // written: a failed read leaves the target's rules as they are.
+        $sourceRules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
+        $this->writeRotatorRules($targetClient, $targetRotatorId, $sourceRules, $sourceLookups, $targetLookups);
     }
 
     protected function buildClients(array $sourceProfile, array $targetProfile): array
