@@ -91,7 +91,6 @@ trap cleanup EXIT
 # The minute tier runs once a minute (202_cronjobs); each run here is its own.
 cron() {
     Q "DELETE FROM 202_cronjobs WHERE cronjob_type = 'secon' AND cronjob_time > UNIX_TIMESTAMP() - 120"
-    rm -f "$ROOT/202-cronjobs/cron.lock"
     (cd "$OUT" && "$PHP" "$ROOT/202-cronjobs/index.php" >"$OUT/cron.out" 2>"$OUT/cron.err")
 }
 walk() { Q "SELECT CONCAT_WS('/', next_click_id, IFNULL(finished_at, 'open'), reclicked_clicks, IFNULL(failed_click_id, '-'),

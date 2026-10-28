@@ -91,10 +91,9 @@ try {
         }
     }
     
-    // Check for lock file
-    $lockFile = __DIR__ . '/cron.lock';
-    $isLocked = file_exists($lockFile);
-    $lockAge = $isLocked ? (time() - filemtime($lockFile)) : null;
+    // Whether a run holds the cron lock now (null: that could not be read).
+    // The file stays between runs, and the lock records no start.
+    $isLocked = \Prosper202\Cron\CronLock::isHeld(\Prosper202\Cron\CronLock::path());
     
     // The GeoIP database's build date and age, from the file's own metadata:
     // its state and date only, since any signed-in user may read this page
@@ -109,8 +108,6 @@ try {
         'timeSinceLastRun' => $timeSinceLastRun,
         'timeSinceLastRunFormatted' => $timeSinceLastRun ? formatTimeDiff($timeSinceLastRun) : null,
         'isLocked' => $isLocked,
-        'lockAge' => $lockAge,
-        'lockAgeFormatted' => $lockAge ? formatTimeDiff($lockAge) : null,
         'dataEngine' => $dataEngineStatus,
         'geoipDatabase' => $geoip->healthFields(),
         'serverTime' => date('Y-m-d H:i:s'),
@@ -124,8 +121,10 @@ try {
         $response['recommendations'][] = 'Cron jobs have not run recently. Check AutoCron or set up server cron.';
     }
     
-    if ($isLocked && $lockAge > 600) {
-        $response['recommendations'][] = 'Lock file is stale. Previous cron job may have failed.';
+    if ($isLocked === null) {
+        $response['recommendations'][] = 'The cron lock file (202-cronjobs/' . \Prosper202\Cron\CronLock::FILE
+            . ') could not be opened or locked here, so a cron run the web server makes cannot take it either:'
+            . ' 202-config/cronjob.log has what the run said.';
     }
     
     if ($dataEngineStatus['pending'] > 1000) {

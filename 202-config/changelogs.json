@@ -48,7 +48,8 @@
       "Fixed: p202 report losers, winners and crosstab, and the offers p202 campaign optimize ranks, show the cost, CPC, profit and EPC p202 report breakdown shows for the same rows; they rounded them, so a cost or CPC below a cent read 0. With --payout, the profit at your payout is its own column, payout_net, beside the recorded total_net",
       "Fixed: LTV Settings deletes only the webhook, field or integration a row names: an id sent as 12abc deleted number 12, and is refused now",
       "Fixed: p202 campaign optimize shows the conversion rate the reports show (conversions per click-through) and calls its own rate, which its break-even CPC uses, conversions per click; it called that one CVR, so on landing-page traffic it read lower than every report",
-      "Fixed: API Integrations says when the Landing Page Optimizer is not receiving events because its webhook is dead or gone, where it said Connected"
+      "Fixed: API Integrations says when the Landing Page Optimizer is not receiving events because its webhook is dead or gone, where it said Connected",
+      "Fixed: The cron job runs one at a time, however long a run takes: a run over ten minutes had a second one started beside it, and one that died kept every run for the next ten minutes from doing anything. The web server needs to be able to write 202-cronjobs/ (or read a cron-run.lock made there); a run that cannot take its lock says why instead of running without it"
     ]
   },
   "1.9.78": {
