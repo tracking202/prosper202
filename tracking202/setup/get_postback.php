@@ -18,21 +18,21 @@ require_once __DIR__ . '/_includes/setup_ui.php';
  * is complete without its script; the script only rewrites them as the
  * amount, sub id, campaign or protocol change.
  *
- * The protocol is decided, not asked (UI standard, rule 3): HTTPS when this
- * page was served over HTTPS, since the tracking domain is this install's.
- * The choice stays under Advanced for an install whose tracking domain
- * answers differently.
+ * The protocol is decided, not asked (UI standard, rule 3), as GET
+ * /conversions/postback-code decides it: the tracking domain's own when it
+ * is saved with one, otherwise HTTPS when this page was served over HTTPS
+ * (p202TrackingBaseForResponse()). The choice stays under Advanced for an
+ * install whose tracking domain answers differently.
  */
 
 $base = get_absolute_url();
-$domain = getTrackingDomain();
-$secure = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
-	|| strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
-$scheme = $secure ? 'https' : 'http';
+$storedDomain = p202StoredTrackingDomain();
+$linkBase = p202TrackingBaseForResponse($storedDomain);
+$secure = str_starts_with($linkBase, 'https://');
 $campaignOptions = p202_setup_campaign_options($db, (int) $_SESSION['user_id']);
 
 /** The snippets for the defaults: no amount, no campaign, no sub id. */
-$root = $scheme . '://' . $domain . $base . 'tracking202/static/';
+$root = $linkBase . 'tracking202/static/';
 // Prosper202\Setup\PostbackCode builds them, as it does for the REST API
 // (GET /conversions/postback-code); the script rebuilds the same strings.
 $built = \Prosper202\Setup\PostbackCode::snippets($root, '', '', '');
@@ -56,7 +56,7 @@ template_top('Pixel And Postback URLs');
 	</div>
 </div>
 
-<div class="row g-4" data-postback-builder data-root-path="<?php echo p202_setup_e($domain . $base . 'tracking202/static/'); ?>">
+<div class="row g-4" data-postback-builder data-root-path="<?php echo p202_setup_e(substr($root, (int) strpos($root, '://') + 3)); ?>">
 	<div class="col-12 col-lg-5">
 		<section class="p202-panel">
 			<div class="p202-panel__head">
@@ -118,7 +118,7 @@ template_top('Pixel And Postback URLs');
 							</fieldset>
 						</div>
 					</details>
-					<p class="p202-decided mt-2 mb-0"><i class="bi bi-check2-circle"></i> <span data-postback-decided><?php echo $secure ? 'Links use https://, because this page was served over HTTPS.' : 'Links use http://, because this page was served over HTTP.'; ?></span> <a href="#secure-pixels" data-postback-change>change</a></p>
+					<p class="p202-decided mt-2 mb-0"><i class="bi bi-check2-circle"></i> <span data-postback-decided><?php echo p202_setup_e(p202_setup_link_scheme_sentence($linkBase, \Prosper202\Click\TrackingBaseUrl::storedSchemeForResponse($storedDomain))); ?></span> <a href="#secure-pixels" data-postback-change>change</a></p>
 				</form>
 			</div>
 		</section>

@@ -25,6 +25,15 @@ final class AddressWriteScan
     /** A table where a write names one: a 202_ name, backticked or not, or a part the scan cannot read. */
     private const TABLE = '(?:`?(202_\w+)`?|`?(\x00|%(?:\d+\$)?s)`?)';
 
+    /**
+     * Columns with `ip` as a word that hold no address, and why. Each must be
+     * a tinyint(1) setting in a table definition
+     * (StoredAddressWritesTest::testTheSchemaScanFindsTheAddressColumns).
+     */
+    public const NOT_ADDRESSES = [
+        'user_pref_same_ip_fallback' => 'whether a pixel may guess a click by address: 0 or 1',
+    ];
+
     /** @var array<string, list<string>>|null table => its address columns */
     private static ?array $addressColumns = null;
 
@@ -56,7 +65,7 @@ final class AddressWriteScan
 
     public static function isAddressColumn(string $name): bool
     {
-        return in_array('ip', explode('_', strtolower($name)), true);
+        return in_array('ip', explode('_', strtolower($name)), true) && !isset(self::NOT_ADDRESSES[strtolower($name)]);
     }
 
     /**

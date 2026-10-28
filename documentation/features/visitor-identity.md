@@ -83,6 +83,11 @@ every visitor GeoIP cannot place, get none. The landing-page id
 and a signed customer id still link that visitor's clicks. `p202.track()` ([web events](../api/23-events.md)) finds
 the visitor's click by the landing-page id alone, so it sends nothing either.
 
+A visitor given no `p202vid`, held back by the privacy setting or by any
+switch above, is not matched to a click by IP address either: a conversion
+pixel that names no click guesses none for them, whatever the account's
+[same-IP fallback](../api/14-users.md#same-ip-fallback-user_pref_same_ip_fallback).
+
 ## Limits
 
 - **Browsers clear redirect-domain cookies.** Safari and Chrome's bounce

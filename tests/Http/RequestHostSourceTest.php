@@ -68,7 +68,9 @@ final class RequestHostSourceTest extends TestCase
     /**
      * getTrackingDomain() is the stored tracking domain, or — with none
      * stored — the host this request arrived at (TrackingBaseUrl::
-     * domainForResponse()). That fallback was SERVER_NAME and SERVER_PORT:
+     * domainForResponse()), and p202TrackingBaseForResponse() is the link
+     * base built on the same answer; a call of either is counted. That
+     * fallback was SERVER_NAME and SERVER_PORT:
      * behind a reverse proxy or a published container port every link a page
      * showed carried an address nobody outside could reach. The Host header
      * is right for a URL that goes back to whoever asked (a forged one
@@ -91,11 +93,11 @@ final class RequestHostSourceTest extends TestCase
             1,
             'the INS / IPN / ZPN / webhook endpoints shown to the signed-in user to paste into a network',
         ],
-        'tracking202/ajax/generate_tracking_link.php' => [2, 'the tracking link built for the signed-in user'],
+        'tracking202/ajax/generate_tracking_link.php' => [1, 'the tracking link built for the signed-in user'],
         'tracking202/ajax/get_adv_landing_code.php' => [1, 'the landing-page code shown to the signed-in user'],
         'tracking202/ajax/get_landing_code.php' => [1, 'the landing-page code shown to the signed-in user'],
         'tracking202/setup/get_postback.php' => [1, 'the pixel and postback URLs shown to the signed-in user'],
-        'tracking202/setup/get_trackers.php' => [2, 'the tracker links listed for the signed-in user'],
+        'tracking202/setup/get_trackers.php' => [1, 'the tracker links listed for the signed-in user'],
         'tracking202/static/landing.php' => [
             1,
             "the landing-page script calls back the host the visitor's browser loaded it from (no-store)",
@@ -106,8 +108,12 @@ final class RequestHostSourceTest extends TestCase
         // and a call there fails this test.
     ];
 
+    /** The functions that answer with the request's host when no domain is stored. */
+    private const HOST_FALLBACKS = ['gettrackingdomain', 'p202trackingbaseforresponse'];
+
     /**
-     * The lines that call getTrackingDomain() (not its definitions).
+     * The lines that call getTrackingDomain() or p202TrackingBaseForResponse()
+     * (not their definitions).
      *
      * @return list<int>
      */
@@ -121,7 +127,7 @@ final class RequestHostSourceTest extends TestCase
         foreach ($tokens as $i => $token) {
             $named = is_array($token)
                 && in_array($token[0], [T_STRING, T_NAME_FULLY_QUALIFIED], true)
-                && ltrim($token[1], '\\') === 'getTrackingDomain';
+                && in_array(strtolower(ltrim($token[1], '\\')), self::HOST_FALLBACKS, true);
             if (!$named || ($tokens[$i + 1] ?? null) !== '(') {
                 continue;
             }
@@ -348,6 +354,9 @@ final class RequestHostSourceTest extends TestCase
         yield 'the definition is not a call' => ['<?php function getTrackingDomain(): string { return ""; }', 0];
         yield 'a method of that name is not it' => ['<?php $o->getTrackingDomain(); X::getTrackingDomain();', 0];
         yield 'a comment is not a call' => ["<?php // getTrackingDomain()\n", 0];
+        yield 'the link base' => ['<?php $u = p202TrackingBaseForResponse($stored) . "x";', 1];
+        yield 'in another case' => ['<?php $u = \P202TrackingBaseForResponse(); $d = GETTRACKINGDOMAIN();', 2];
+        yield 'its definition is not a call' => ['<?php function p202TrackingBaseForResponse(): string {}', 0];
     }
 
     /** @dataProvider trackingDomainShapes */

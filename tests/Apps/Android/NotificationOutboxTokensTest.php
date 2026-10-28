@@ -33,7 +33,7 @@ final class NotificationOutboxTokensTest extends TestCase
     public function testTheSenderRefusesWhatIsNotAWebUrlWithoutACall(): void
     {
         foreach (['', 'file:///etc/passwd', 'gopher://x', 'ftp://example.com/', 'javascript:alert(1)'] as $url) {
-            self::assertFalse(PostbackSender::fetch($url), $url);
+            self::assertTrue((new PostbackSender())->send($url)->isRefused(), $url);
         }
         // "Without a call" is observed, not inferred from the answer (every
         // failed fetch answers false): a local listener must see no
@@ -43,7 +43,7 @@ final class NotificationOutboxTokensTest extends TestCase
         $address = (string) stream_socket_get_name($server, false);
         try {
             foreach (['gopher://' . $address . '/x', 'dict://' . $address . '/x', 'telnet://' . $address] as $url) {
-                self::assertFalse(PostbackSender::fetch($url), $url);
+                self::assertTrue((new PostbackSender())->send($url)->isRefused(), $url);
             }
             stream_set_blocking($server, false);
             self::assertFalse(@stream_socket_accept($server, 0), 'a non-web URL reached the network');

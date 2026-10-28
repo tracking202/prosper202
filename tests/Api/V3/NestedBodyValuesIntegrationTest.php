@@ -276,7 +276,7 @@ final class NestedBodyValuesIntegrationTest extends TestCase
         $result = $repo->record(self::USER, [
             'click_id' => self::CLICKS[2], 'transaction_id' => 'PX-1', 'payout' => '30', 'source' => 'pixel',
             'items' => [['sku' => 'PX-SKU', 'unit_price' => 30]],
-        ]);
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertGreaterThan(0, $result['convId'], 'the conversion stands');
         self::assertSame(['items'], $result['ltvDropped'] ?? null);
@@ -399,7 +399,7 @@ final class NestedBodyValuesIntegrationTest extends TestCase
             (new MysqlConversionRepository($conn))->record(self::USER, [
                 'click_id' => self::CLICKS[2], 'transaction_id' => 'N-FLOOR', 'payout' => 5, 'conv_time' => 1700000100,
                 'customer_ref' => 'nested-6', 'items' => 'SKU-A',
-            ]);
+            ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
             self::fail('items that are not a list were skipped');
         } catch (\RuntimeException $e) {
             self::assertSame('items must be a list of line items', $e->getMessage());

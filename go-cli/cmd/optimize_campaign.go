@@ -88,13 +88,11 @@ var campaignOptimizeCmd = &cobra.Command{
 		// A configured report.aff_campaign_id default would narrow the ranking to one campaign.
 		delete(portParams, "aff_campaign_id")
 		portParams["breakdown"] = "campaign"
-		// The backend defaults to limit=50 sorted by clicks; raise the limit and
-		// sort by revenue so a high-EPC salvage offer isn't missed on page 1.
-		portParams["limit"] = "500"
+		// Sorted by revenue, so a bound on the rows read keeps the earners.
 		portParams["sort"] = "total_income"
 		portParams["sort_dir"] = "DESC"
 		// The ranking is this command's answer: a read that fails is its error, never an empty ranking.
-		offers, err := fetchBreakdownRows(c, portParams)
+		offers, offersCut, err := fetchBreakdownRows(c, portParams, breakdownReadRows)
 		if err != nil {
 			return fmt.Errorf("ranking the other campaigns by EPC (report breakdown --breakdown campaign): %w", err)
 		}
@@ -102,6 +100,7 @@ var campaignOptimizeCmd = &cobra.Command{
 			id   int64
 			name string
 			epc  float64
+			row  map[string]interface{} // the breakdown's row, whose epc is listed as the server sent it
 		}
 		var best []cand
 		for _, o := range offers {
@@ -114,7 +113,12 @@ var campaignOptimizeCmd = &cobra.Command{
 			if oc <= 0 {
 				continue
 			}
-			best = append(best, cand{oid, fmt.Sprintf("%v", o["name"]), toFloat(o["total_income"]) / oc})
+			// The breakdown's own epc where the row has one; a server that sends none is ranked on income ÷ clicks.
+			rowEPC := toFloat(o["total_income"]) / oc
+			if v, ok := o["epc"]; ok && v != nil {
+				rowEPC = toFloat(v)
+			}
+			best = append(best, cand{oid, fmt.Sprintf("%v", o["name"]), rowEPC, o})
 		}
 		for i := 0; i < len(best); i++ {
 			for j := i + 1; j < len(best); j++ {
@@ -126,10 +130,11 @@ var campaignOptimizeCmd = &cobra.Command{
 
 		rows := make([]map[string]interface{}, 0, len(best))
 		for _, b := range best {
-			rows = append(rows, map[string]interface{}{"aff_campaign_id": b.id, "name": b.name, "epc": round(b.epc, 3)})
+			// The breakdown's own epc: rounded here, a $0.0004 EPC read 0 where `report breakdown` shows it.
+			rows = append(rows, map[string]interface{}{"aff_campaign_id": b.id, "name": b.name, "epc": b.row["epc"]})
 		}
 		// Encoded before anything is printed, so a failure leaves stdout empty and stderr the error alone.
-		out, err := json.Marshal(map[string]interface{}{"data": rows})
+		out, err := json.Marshal(map[string]interface{}{"data": rows, "truncated": offersCut})
 		if err != nil {
 			return &CLIError{Category: "server", ExitCode: ExitServer, Cause: err,
 				Message: fmt.Sprintf("the campaigns' EPC could not be encoded (%v)", err),
@@ -168,6 +173,9 @@ var campaignOptimizeCmd = &cobra.Command{
 		}
 
 		render(out)
+		if offersCut {
+			noteForPeople(cmd, coversFirstRowsNote("campaign", "most revenue first"))
+		}
 		return nil
 	},
 }

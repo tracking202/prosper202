@@ -61,6 +61,8 @@ if [ -z "$SERVER_LOG" ] || [ ! -r "$SERVER_LOG" ]; then
 fi
 # shellcheck source=tests/live/guard.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
+# shellcheck source=tests/live/loopback-postbacks.sh
+. "$(dirname "${BASH_SOURCE[0]}")/loopback-postbacks.sh"
 p202_require_scratch_db "$DB" || exit 2
 
 MYSQL_ARGS=(-u "$DB_USER")
@@ -111,6 +113,7 @@ C_LEG=960008; C_LEG2=960009; C_API=960010; C_APIN=960011; C_STAGE=960012; C_REPL
 CLICKS="$C_GPB,$C_GPX,$C_UPX,$C_PB,$C_PX,$C_BAD,$C_PLAIN,$C_LEG,$C_LEG2,$C_API,$C_APIN,$C_STAGE,$C_REPLAY,$C_OTHER,$C_CLI,$C_TWO"
 
 cleanup() {
+  p202_restore_postbacks
   mysql_q "$DB" <<SQL
 DELETE FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
 DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS) OR campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R)));
@@ -132,7 +135,13 @@ SQL
 }
 cleanup
 # P202_KEEP=1 leaves the seeded rows in place for a look afterwards.
-[ "${P202_KEEP:-}" = 1 ] || trap cleanup EXIT
+if [ "${P202_KEEP:-}" = 1 ]; then
+  trap p202_restore_postbacks EXIT
+else
+  trap cleanup EXIT
+fi
+# The traffic source posts back to this machine (loopback-postbacks.sh).
+p202_allow_loopback_postbacks || exit 2
 # The pass's clicks and events are recorded from this machine.
 # shellcheck source=tests/live/privacy.sh
 . "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
@@ -382,6 +391,10 @@ eq "$(Q "SELECT CONCAT(payable, ':', value_note) FROM 202_goal_outcomes WHERE su
    "so the purchase goal tracks it and does not pay it"
 eq "$(track "lpip=$LP_PUBLIC&p202lpid=$LPID&event_id=js-2&name=signup")" 202 "a tracked signup"
 eq "$(value "$LP_CLICK")" "1/1.00000" "pays its fixed value"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT match_method) FROM 202_goal_events WHERE subject_id=$LP_CLICK")" visitor_id \
+   "its events are stored as found by the page's visitor id"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT match_method) FROM 202_conversion_logs WHERE click_id=$LP_CLICK")" visitor_id \
+   "and so are the conversions they reached"
 eq "$(track "lpip=$LP_PUBLIC&p202lpid=$LPID&event_id=js-2&name=signup")" 202 "sent again"
 eq "$(field "d['duplicate']")" true "is a duplicate"
 eq "$(track "lpip=$LP_PUBLIC&p202lpid=0123456789abcdef0123456789abcdef&event_id=js-3&name=signup")" 204 "a visitor id never seen on a click: 204"

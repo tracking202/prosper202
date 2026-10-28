@@ -9,6 +9,7 @@ use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\LedgerIntegrityException;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\PayoutMode;
 use Prosper202\Conversion\Ledger\ReversalException;
@@ -67,7 +68,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $total = (int) ($this->conn->fetchOne($countStmt)['total'] ?? 0);
 
         $sql = "SELECT cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
-                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
+                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted, cl.match_method,
                 ac.aff_campaign_name
             FROM 202_conversion_logs cl
             LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id AND ac.user_id = cl.user_id
@@ -88,7 +89,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     public function findById(int $id, int $userId): ?array
     {
         $sql = "SELECT cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
-                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
+                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted, cl.match_method,
                 ac.aff_campaign_name
             FROM 202_conversion_logs cl
             LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id AND ac.user_id = cl.user_id
@@ -100,10 +101,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         return $this->conn->fetchOne($stmt);
     }
 
-    public function create(int $userId, array $data): int
+    public function create(int $userId, array $data, MatchMethod $matchedBy): int
     {
         $data['source'] ??= ConversionSource::API->value;
-        $result = $this->record($userId, $data);
+        $result = $this->record($userId, $data, $matchedBy);
 
         if (!$result['clickFound']) {
             throw new ClickNotFoundException('Click not found or not owned by user');
@@ -160,6 +161,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        customer_ref_type, customer_crm, items; ltv_requires_customer
      *        (true = refuse items or customer_crm when no customer resolves,
      *        rather than record the conversion without them).
+     * @param MatchMethod $matchedBy how the caller found the click (stored as
+     *        match_method). Required, with no default: a path that does not
+     *        say how it found its click would record a guess as a match.
      * @param (callable(int $clickId, float $payout): void)|null $clickSideUpdate
      *        Runs inside the transaction after the insert. It must not write
      *        click_lead or click_payout (ClickValueWritersTest enforces it):
@@ -173,9 +177,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * @throws ReversalException when a reversal names no row, or a different reversal of that row is on file
      * @throws LtvDataWithoutCustomer when ltv_requires_customer is set and items or customer_crm have no customer
      */
-    public function record(int $userId, array $data, ?callable $clickSideUpdate = null): array
+    public function record(int $userId, array $data, MatchMethod $matchedBy, ?callable $clickSideUpdate = null): array
     {
-        $prepared = $this->prepareRecord($data);
+        $prepared = $this->prepareRecord($data, $matchedBy);
         $ledger = new MysqlConversionLedger($this->conn);
         // The click's lock opens the transaction, so what is read after it
         // is current without locking it (clickTransaction()).
@@ -235,10 +239,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * @return array<string, mixed> as record(), plus '_prepared' for afterRecordCommit()
      * @throws ReversalException
      */
-    public function recordInTransaction(int $userId, array $data): array
+    public function recordInTransaction(int $userId, array $data, MatchMethod $matchedBy): array
     {
-        return $this->conn->joinTransaction(function () use ($userId, $data): array {
-            $prepared = $this->prepareRecord($data);
+        return $this->conn->joinTransaction(function () use ($userId, $data, $matchedBy): array {
+            $prepared = $this->prepareRecord($data, $matchedBy);
             $click = (new MysqlConversionLedger($this->conn))->lockClick((int) $prepared['clickId'], $userId);
             $result = $this->recordLocked($userId, $prepared, null, $click);
             $result['_prepared'] = $prepared;
@@ -270,7 +274,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * @param array<string, mixed> $data
      * @return array<string, mixed>
      */
-    private function prepareRecord(array $data): array
+    private function prepareRecord(array $data, MatchMethod $matchedBy): array
     {
         $clickId = (int) ($data['click_id'] ?? 0);
         if ($clickId <= 0) {
@@ -316,6 +320,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             'source' => $source,
             'payable' => $payable,
             'wantsReversal' => $wantsReversal,
+            'matchedBy' => $matchedBy,
         ];
     }
 
@@ -342,6 +347,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $source = $prepared['source'];
         $payable = (bool) $prepared['payable'];
         $wantsReversal = (bool) $prepared['wantsReversal'];
+        /** @var MatchMethod $matchedBy */
+        $matchedBy = $prepared['matchedBy'];
         $ledger = new MysqlConversionLedger($this->conn);
 
         if ($click === null) {
@@ -528,8 +535,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $sourceRef = SourceRef::conversion((int) $reverses['conv_id']);
         }
         $eventName = isset($data['event_name']) && $data['event_name'] !== '' ? (string) $data['event_name'] : null;
-        array_push($columns, 'source', 'source_ref', 'event_name', 'payable', 'reverses_conv_id', 'dedupe_key');
-        $types .= 'sssiis';
+        array_push($columns, 'source', 'source_ref', 'event_name', 'payable', 'reverses_conv_id', 'dedupe_key', 'match_method');
+        $types .= 'sssiiss';
         array_push(
             $values,
             $source->value,
@@ -537,13 +544,17 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $eventName,
             $payable ? 1 : 0,
             $reverses !== null ? (int) $reverses['conv_id'] : null,
-            $dedupeKey
+            $dedupeKey,
+            $matchedBy->value
         );
 
-        $placeholders = rtrim(str_repeat('?, ', count($values)), ', ');
-        $stmt = $this->conn->prepareWrite(
-            'INSERT INTO 202_conversion_logs (' . implode(', ', $columns) . ', deleted) VALUES (' . $placeholders . ', 0)'
-        );
+        $insert = static fn (array $columns): string => 'INSERT INTO 202_conversion_logs (' . implode(', ', $columns)
+            . ', deleted) VALUES (' . rtrim(str_repeat('?, ', count($columns)), ', ') . ', 0)';
+        [$stmt, $named] = MatchMethod::prepareInsert($this->conn, $insert($columns), $insert(array_slice($columns, 0, -1)));
+        if (!$named) {
+            $types = substr($types, 0, -1);
+            $values = array_slice($values, 0, -1);
+        }
         $this->conn->bind($stmt, $types, $values);
         $convId = $this->conn->executeInsert($stmt);
         if ($convId <= 0) {

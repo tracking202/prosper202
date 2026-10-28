@@ -96,6 +96,36 @@
       "notes": "Account › Settings › Last 50 sign-in attempts (GET /system/login-log?status=failed). login_success is true for a passed attempt alone, so false is not 'failed': a right password whose sign-in a database failure stopped is status not_completed, which the sign-in throttle does not count. The setup posts one wrong password through the sign-in form (a user name no account has, so no account is throttled)."
     },
     {
+      "id": "admin-005-the-geoip-database-age-is-read-not-guessed",
+      "priority": "medium",
+      "state": "seeded fixture; the key is the installer's (Super user); the install has the GeoIP database Prosper202 ships (GeoLite2 City built 2018-07-03) and no MaxMind account stored",
+      "setup": [],
+      "ask": "How old is the GeoIP database this install uses to place visitors, and is anything keeping it up to date?",
+      "expected": {
+        "runs_one_of": [
+          "system info",
+          "system health"
+        ],
+        "never_runs": [
+          "config set-key",
+          "user prefs update"
+        ],
+        "checks": [
+          {
+            "run": "p202 system info --json | jq -r '.data.geoip_database.built_on + \" \" + .data.geoip_database.state + \" \" + (.data.geoip_refresh.configured | tostring)'",
+            "includes": [
+              "2018-07-03 stale false"
+            ]
+          }
+        ],
+        "rubric": "PASS if the reply gives the build date (2018-07-03) and the age from geoip_database as `p202 system info` or `p202 system health` answers them, says the database is stale, and says nothing refreshes it because no MaxMind account is stored (geoip_refresh.configured false), naming Account › Settings › GeoIP database as where one is entered. FAIL if it gives a date it never read (a file's modification time, a guess), calls the database current, or claims a p202 command stores the MaxMind licence key.",
+        "reply_includes": [
+          "2018-07-03"
+        ]
+      },
+      "notes": "Account › Settings › GeoIP database (GET /system/info's geoip_database and geoip_refresh; GET /system/health's geoip_database and warnings). The age is the build date in the file's metadata, which only the server reads; the refresh is set up in the web UI, so the right answer to the second half names the page rather than a command."
+    },
+    {
       "id": "ltv-product-001-a-rename-keeps-the-key",
       "priority": "medium",
       "state": "seeded fixture; setup makes catalog product EVAL-PRD-1 named 'Eval Basic' with list price 9",
@@ -122,6 +152,86 @@
         "p202 ltv product upsert --external-product-id EVAL-PRD-1 --name 'Eval Basic' --price 9 --json >/dev/null"
       ],
       "notes": "The LTV Products tab's Edit (PATCH /ltv/products/{id}). Either the id-addressed update or an upsert by the key satisfies the ask; a delete-and-create loses the product's id and its line items' link, which the single-product check catches when it leaves a duplicate."
+    },
+    {
+      "id": "admin-005-a-paykickstart-key-is-stored-never-repeated",
+      "priority": "medium",
+      "state": "seeded fixture; the key is the installer's (Super user, user 1); no PayKickstart IPN key stored",
+      "setup": [
+        "p202 user prefs update 1 --paykickstart-ipn-secret-keys '' --json >/dev/null"
+      ],
+      "ask": "I sell through PayKickstart. Save my campaign's IPN secret key pk-eval-CAMPAIGN-0001 in Prosper202 and tell me the URL to paste into PayKickstart's IPN Integration tab.",
+      "expected": {
+        "runs_one_of": [
+          "user prefs update"
+        ],
+        "checks": [
+          {
+            "run": "p202 system integrations --json | jq -r '.data.integrations[] | select(.integration==\"paykickstart\") | \"\\(.keys_stored) \\(.url)\"'",
+            "includes": [
+              "1 http",
+              "tracking202/static/paykickstart.php"
+            ]
+          },
+          {
+            "run": "p202 user prefs get 1 --json | jq -c '.data.paykickstart_ipn_secret_keys'; p202 user prefs get 1 --json",
+            "includes": [
+              "{\"stored\":true}"
+            ],
+            "omits": [
+              "pk-eval-CAMPAIGN-0001"
+            ]
+          }
+        ],
+        "rubric": "PASS if the key is stored with `p202 user prefs update <user_id> --paykickstart-ipn-secret-keys` (the flag replaces the stored list, so one key is sent), and the reply gives the PayKickstart IPN URL that `p202 system integrations` answers (ending tracking202/static/paykickstart.php) and says the checkout link carries subid=[[subid]]. FAIL if the reply repeats the secret key, builds the URL by hand, or points the user at PayKickstart's Affiliate IPN.",
+        "reply_includes": [
+          "tracking202/static/paykickstart.php",
+          "subid=[[subid]]"
+        ],
+        "reply_omits": [
+          "pk-eval-CAMPAIGN-0001"
+        ]
+      },
+      "cleanup": [
+        "p202 user prefs update 1 --paykickstart-ipn-secret-keys '' --json >/dev/null"
+      ],
+      "notes": "Account › API integrations › PayKickstart (PUT /users/{id}/preferences paykickstart_ipn_secret_keys; GET /system/integrations keys_stored). The keys are never served back: GET /users/{id}/preferences answers {\"stored\": true} for them, as for every integration secret, and the reply must not repeat the key either."
+    },
+    {
+      "id": "admin-006-a-jvzoo-affiliate-gets-the-affiliate-url",
+      "priority": "medium",
+      "state": "seeded fixture; the key is the installer's (Super user, user 1); no JVZoo key stored",
+      "setup": [
+        "p202 user prefs update 1 --jvzoo-ipn-secret-key '' --json >/dev/null"
+      ],
+      "ask": "I promote JVZoo products as an affiliate. Save my JVZIPN secret key jvz-eval-AFFILIATE-01 in Prosper202, then tell me the URL to paste into JVZoo's Affiliate IPN and what to add to my JVZoo affiliate link.",
+      "expected": {
+        "runs_one_of": [
+          "user prefs update"
+        ],
+        "checks": [
+          {
+            "run": "p202 system integrations --json | jq -r '.data.integrations[] | select(.integration==\"jvzoo\") | \"\\(.secret_stored) \\(.url)\"'",
+            "includes": [
+              "true http",
+              "tracking202/static/jvzoo.php?role=affiliate"
+            ]
+          }
+        ],
+        "rubric": "PASS if the key is stored with `p202 user prefs update <user_id> --jvzoo-ipn-secret-key`, and the reply gives the affiliate URL `p202 system integrations` answers for jvzoo (ending tracking202/static/jvzoo.php?role=affiliate) and says the affiliate link carries tid=[[subid]]. FAIL if it gives the vendor URL (?role=vendor) for the Affiliate IPN, builds the URL by hand, tells the user to put subid on the affiliate link, or repeats the secret key.",
+        "reply_includes": [
+          "tracking202/static/jvzoo.php?role=affiliate",
+          "tid=[[subid]]"
+        ],
+        "reply_omits": [
+          "role=vendor",
+          "jvz-eval-AFFILIATE-01"
+        ]
+      },
+      "cleanup": [
+        "p202 user prefs update 1 --jvzoo-ipn-secret-key '' --json >/dev/null"
+      ],
+      "notes": "Account › API integrations › JVZoo (PUT /users/{id}/preferences jvzoo_ipn_secret_key; GET /system/integrations jvzoo and jvzoo_vendor). JVZoo has two URLs, verified with the one key: an affiliate's notification names the click by the tid on the affiliate link, a vendor's by the subid on the buy link, so the affiliate URL is this ask's."
     }
   ]
 }

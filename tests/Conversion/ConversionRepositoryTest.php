@@ -6,6 +6,7 @@ namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Conversion\InMemoryConversionRepository;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use RuntimeException;
 
 final class ConversionRepositoryTest extends TestCase
@@ -25,7 +26,7 @@ final class ConversionRepositoryTest extends TestCase
     {
         $repo = $this->makeRepo();
 
-        $id = $repo->create(1, ['click_id' => 1]);
+        $id = $repo->create(1, ['click_id' => 1], MatchMethod::CLICK_ID);
 
         self::assertSame(1, $id);
     }
@@ -34,7 +35,7 @@ final class ConversionRepositoryTest extends TestCase
     {
         $repo = $this->makeRepo();
 
-        $repo->create(1, ['click_id' => 1]);
+        $repo->create(1, ['click_id' => 1], MatchMethod::CLICK_ID);
 
         self::assertSame(1, $repo->clicks[1]['click_lead']);
     }
@@ -43,7 +44,7 @@ final class ConversionRepositoryTest extends TestCase
     {
         $repo = $this->makeRepo();
 
-        $repo->create(1, ['click_id' => 1]);
+        $repo->create(1, ['click_id' => 1], MatchMethod::CLICK_ID);
 
         $conv = $repo->findById(1, 1);
         self::assertEqualsWithDelta(2.5, $conv['click_payout'], 0.01);
@@ -53,7 +54,7 @@ final class ConversionRepositoryTest extends TestCase
     {
         $repo = $this->makeRepo();
 
-        $repo->create(1, ['click_id' => 1, 'payout' => 5.0]);
+        $repo->create(1, ['click_id' => 1, 'payout' => 5.0], MatchMethod::CLICK_ID);
 
         $conv = $repo->findById(1, 1);
         self::assertEqualsWithDelta(5.0, $conv['click_payout'], 0.01);
@@ -66,7 +67,7 @@ final class ConversionRepositoryTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Click not found');
-        $repo->create(1, ['click_id' => 999]);
+        $repo->create(1, ['click_id' => 999], MatchMethod::CLICK_ID);
     }
 
     public function testCreateThrowsForWrongUserClick(): void
@@ -74,7 +75,7 @@ final class ConversionRepositoryTest extends TestCase
         $repo = $this->makeRepo();
 
         $this->expectException(RuntimeException::class);
-        $repo->create(1, ['click_id' => 2]); // click 2 belongs to user 2
+        $repo->create(1, ['click_id' => 2], MatchMethod::CLICK_ID); // click 2 belongs to user 2
     }
 
     public function testCreateThrowsForZeroClickId(): void
@@ -82,13 +83,13 @@ final class ConversionRepositoryTest extends TestCase
         $repo = $this->makeRepo();
 
         $this->expectException(RuntimeException::class);
-        $repo->create(1, ['click_id' => 0]);
+        $repo->create(1, ['click_id' => 0], MatchMethod::CLICK_ID);
     }
 
     public function testFindByIdReturnsConversion(): void
     {
         $repo = $this->makeRepo();
-        $id = $repo->create(1, ['click_id' => 1, 'transaction_id' => 'TX123']);
+        $id = $repo->create(1, ['click_id' => 1, 'transaction_id' => 'TX123'], MatchMethod::CLICK_ID);
 
         $conv = $repo->findById($id, 1);
 
@@ -100,7 +101,7 @@ final class ConversionRepositoryTest extends TestCase
     public function testFindByIdReturnsNullForWrongUser(): void
     {
         $repo = $this->makeRepo();
-        $id = $repo->create(1, ['click_id' => 1]);
+        $id = $repo->create(1, ['click_id' => 1], MatchMethod::CLICK_ID);
 
         self::assertNull($repo->findById($id, 2));
     }
@@ -108,7 +109,7 @@ final class ConversionRepositoryTest extends TestCase
     public function testSoftDeleteHidesConversion(): void
     {
         $repo = $this->makeRepo();
-        $id = $repo->create(1, ['click_id' => 1]);
+        $id = $repo->create(1, ['click_id' => 1], MatchMethod::CLICK_ID);
 
         $repo->softDelete($id, 1);
 
@@ -118,9 +119,9 @@ final class ConversionRepositoryTest extends TestCase
     public function testListFiltersAndPaginates(): void
     {
         $repo = $this->makeRepo();
-        $repo->create(1, ['click_id' => 1, 'conv_time' => 1000]);
+        $repo->create(1, ['click_id' => 1, 'conv_time' => 1000], MatchMethod::CLICK_ID);
         $repo->clicks[3] = ['click_id' => 3, 'user_id' => 1, 'aff_campaign_id' => 10, 'click_payout' => 1.0, 'click_time' => 1709300000, 'click_lead' => 0];
-        $repo->create(1, ['click_id' => 3, 'conv_time' => 2000]);
+        $repo->create(1, ['click_id' => 3, 'conv_time' => 2000], MatchMethod::CLICK_ID);
 
         $result = $repo->list(1, [], 0, 10);
 
@@ -133,7 +134,7 @@ final class ConversionRepositoryTest extends TestCase
     public function testListFiltersByCampaign(): void
     {
         $repo = $this->makeRepo();
-        $repo->create(1, ['click_id' => 1]); // campaign 10
+        $repo->create(1, ['click_id' => 1], MatchMethod::CLICK_ID); // campaign 10
 
         $result = $repo->list(1, ['campaign_id' => 10], 0, 10);
         self::assertSame(1, $result['total']);
@@ -145,7 +146,7 @@ final class ConversionRepositoryTest extends TestCase
     public function testSoftDeleteRequiresCorrectUser(): void
     {
         $repo = $this->makeRepo();
-        $id = $repo->create(1, ['click_id' => 1]);
+        $id = $repo->create(1, ['click_id' => 1], MatchMethod::CLICK_ID);
 
         $repo->softDelete($id, 2); // wrong user
 

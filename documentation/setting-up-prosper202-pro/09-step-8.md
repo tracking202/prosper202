@@ -30,5 +30,14 @@ Please note tokens are based on what is available by your traffic source or netw
 ## Generate Tracking Link
 
 Once you've generated your tracking link, simply paste it into your traffic source as the destination URL and you're good to go.
+
+## http:// or https://
+
+A direct link or a redirector link uses https:// unless your install is explicitly http-only, and the line under the link says which and why:
+
+- A tracking domain saved with a scheme in **My Account › Personal Settings** (`https://track.example.com` or `http://track.example.com`) decides it, whichever way you reach Prosper202.
+- A tracking domain saved without one, or none, takes the scheme you are using Prosper202 on: https:// when you reach it over HTTPS, or through a proxy that terminates HTTPS and says so (`X-Forwarded-Proto`), and http:// otherwise.
+
+So if you sign in over plain HTTP but your tracking domain has a certificate, save it as `https://track.example.com`. `p202 tracker get-url` and the API give the same link. A landing-page link keeps the scheme of the landing page's own URL.
 ![Screen Shot 2015-12-07 at 3.09.29 PM.png](../images/step-8-2.png)
 **[Click here to proceed to Step 9](10-step-9.md)**

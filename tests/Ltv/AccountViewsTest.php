@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Ltv;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlCustomerRepository;
 use Prosper202\Ltv\MysqlSubscriptionRepository;
@@ -130,14 +131,37 @@ final class AccountViewsTest extends TestCase
         $this->addToAssertionCount(4);
     }
 
-    public function testWebhookGuardReturnsValidatedIpsForPinning(): void
+    /**
+     * A webhook is saved under the export webhooks' rules (J0F7): the old
+     * guard stored and then sent to every one of these.
+     */
+    public function testAWebhookNamingANonPublicAddressIsNotStored(): void
     {
-        // IP-literal host: no DNS involved, the guard must hand back the
-        // validated address so the dispatcher can pin its connection to it.
-        self::assertSame(['8.8.8.8'], MysqlWebhookRepository::assertUrlAllowed('https://8.8.8.8/hook'));
+        $refused = [
+            'https://168.63.129.16/hook',
+            'https://[::ffff:169.254.169.254]/hook',
+            'https://[::ffff:127.0.0.1]/hook',
+            'https://[::ffff:a9fe:a9fe]/hook',
+            'https://[64:ff9b::a9fe:a9fe]/hook',
+        ];
+        foreach ($refused as $url) {
+            $write = new FakeMysqliConnection();
+            $repo = new MysqlWebhookRepository(new Connection($write, new FakeMysqliConnection()));
+            try {
+                $repo->create(7, $url, []);
+                self::fail($url . ' was stored');
+            } catch (WebhookRefused $e) {
+                self::assertStringContainsString('Webhooks are only sent to public addresses', $e->getMessage(), $url);
+            }
+            self::assertSame([], $write->statementsContaining('202_ltv_webhooks'), $url . ': nothing written');
+        }
 
-        $this->expectException(\RuntimeException::class);
-        MysqlWebhookRepository::assertUrlAllowed('https://127.0.0.1/hook');
+        $write = new FakeMysqliConnection();
+        (new MysqlWebhookRepository(new Connection($write, new FakeMysqliConnection())))
+            ->create(7, 'https://[2606:4700:4700::1111]:8443/hook', []);
+        $inserts = $write->statementsContaining('INSERT INTO 202_ltv_webhooks');
+        self::assertCount(1, $inserts, 'a public address is stored');
+        self::assertSame('https://[2606:4700:4700::1111]:8443/hook', $inserts[0]->boundValues[1]);
     }
 
     public function testClaimDeliveryIsAtomicConditionalUpdate(): void

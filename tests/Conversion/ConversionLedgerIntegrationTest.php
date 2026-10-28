@@ -126,7 +126,7 @@ final class ConversionLedgerIntegrationTest extends TestCase
 
     private function record(int $clickId, array $data): array
     {
-        return $this->repo->record(1, ['click_id' => $clickId, 'source' => 'postback'] + $data);
+        return $this->repo->record(1, ['click_id' => $clickId, 'source' => 'postback'] + $data, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
     }
 
     public function testReplaceKeepsTheLatestAndSaysWhatItReplaced(): void
@@ -763,7 +763,7 @@ final class ConversionLedgerIntegrationTest extends TestCase
         $customer = ['customer_ref' => 'rev-ltv-4', 'customer_ref_type' => 'custom'];
         $goal = $this->repo->record(
             1,
-            ['click_id' => 100, 'source' => 'goal', 'payout' => '10', 'transaction_id' => 'G-1'] + $customer
+            ['click_id' => 100, 'source' => 'goal', 'payout' => '10', 'transaction_id' => 'G-1'] + $customer, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID
         );
         $goalId = (int) $goal['convId'];
         $this->record(100, ['transaction_id' => 'G-1', 'reversal' => true] + $customer);
@@ -822,17 +822,28 @@ final class ConversionLedgerIntegrationTest extends TestCase
         $conn = new Connection(self::$db);
         $rows = self::$db->query(
             'SELECT c.conv_id, c.click_payout, c.payable, c.deleted, c.superseded_reason, c.reverses_conv_id, '
-            . \Prosper202\Attribution\CountedAmount::sql('c') . ' AS counted_sql FROM 202_conversion_logs c ORDER BY c.conv_id'
+            . \Prosper202\Attribution\CountedAmount::sql('c') . ' AS counted_sql, '
+            . \Prosper202\Attribution\CountedAmount::sqlOrNull('c') . ' AS counted_or_null'
+            . ' FROM 202_conversion_logs c ORDER BY c.conv_id'
         )->fetch_all(MYSQLI_ASSOC);
         self::assertCount(9, $rows);
         $seen = [];
+        $counts = [];
         foreach ($rows as $row) {
             $of = \Prosper202\Attribution\CountedAmount::of($conn, $row, true);
             $expected = \Prosper202\Conversion\Ledger\Amount::fromUnits($of ?? 0);
             $actual = \Prosper202\Conversion\Ledger\Amount::fromUnits(\Prosper202\Conversion\Ledger\Amount::toUnits((string) $row['counted_sql']));
             self::assertSame($expected, $actual, 'conversion ' . $row['conv_id']);
+            // sqlOrNull() is NULL exactly where of() is null, and the amount elsewhere.
+            self::assertSame(
+                $of === null ? null : \Prosper202\Conversion\Ledger\Amount::fromUnits($of),
+                $row['counted_or_null'] === null ? null : \Prosper202\Conversion\Ledger\Amount::fromUnits(\Prosper202\Conversion\Ledger\Amount::toUnits((string) $row['counted_or_null'])),
+                'conversion ' . $row['conv_id'] . ', or null'
+            );
             $seen[] = $expected;
+            $counts[] = $of !== null;
         }
+        self::assertSame([false, true, true, false, false, false, true, false, false], $counts);
         // The shapes are real: something counts in full, in part, and not at all.
         self::assertSame(['0.00000', '7.00000', '6.00000', '0.00000', '0.00000', '0.00000', '6.00000', '0.00000', '0.00000'], $seen);
     }

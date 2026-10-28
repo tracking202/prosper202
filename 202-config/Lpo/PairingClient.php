@@ -15,7 +15,7 @@ use RuntimeException;
  * signed remote bridge config; every feature screen is hosted.
  *
  * TLS/timeout hygiene matches the LTV webhook dispatcher
- * (202-cronjobs/ltv_webhooks.php): https only, redirects never followed,
+ * (Prosper202\Ltv\WebhookDispatcher): https only, redirects never followed,
  * strict certificate verification, short timeouts.
  */
 final class PairingClient

@@ -104,13 +104,21 @@ final class MysqlUserRepository implements UserRepositoryInterface
 
         $values[] = $id;
         $types .= 'i';
+        $switchesOff = array_key_exists('user_active', $data) && !UserStanding::isActive($data['user_active']);
 
-        $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?'
-        );
-        $this->conn->bind($stmt, $types, $values);
-        $this->conn->execute($stmt);
-        $stmt->close();
+        // Switched off, the user's remember-me keys go in the same
+        // transaction (RememberMeKeys).
+        $this->conn->transaction(function () use ($sets, $types, $values, $id, $switchesOff): void {
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?'
+            );
+            $this->conn->bind($stmt, $types, $values);
+            $this->conn->execute($stmt);
+            $stmt->close();
+            if ($switchesOff) {
+                RememberMeKeys::revokeAll($this->conn, $id);
+            }
+        });
     }
 
     public function softDelete(int $id): void

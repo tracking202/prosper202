@@ -40,6 +40,7 @@ final class NoTrafficSourceTest extends TestCase
         'tracking202/Report/ReportFilterInput.php' => 'defines the sentinel for the filter form',
         'tracking202/Report/ReportPrefsStore.php' => 'offers the sentinel in the filter form\'s list',
         'api/v3/Controller.php' => 'MEDIUMINT UNSIGNED\'s range, not the sentinel',
+        'api/v3/Controllers/TrafficSourceOwnersController.php' => 'MEDIUMINT UNSIGNED\'s range, for an id',
     ];
 
     public function testTheConditionCountsBothNones(): void

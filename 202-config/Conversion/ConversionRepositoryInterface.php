@@ -21,9 +21,10 @@ interface ConversionRepositoryInterface
      * Record a conversion and update the source click (click_lead=1, click_payout).
      *
      * @param array{click_id: int, transaction_id?: string, payout?: float, conv_time?: int} $data
+     * @param \Prosper202\Conversion\Ledger\MatchMethod $matchedBy how the caller found the click
      * @return int The new conversion ID
      */
-    public function create(int $userId, array $data): int;
+    public function create(int $userId, array $data, \Prosper202\Conversion\Ledger\MatchMethod $matchedBy): int;
 
     /**
      * Soft-delete a conversion.

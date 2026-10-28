@@ -41,7 +41,14 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 	var resp struct {
 		Data []map[string]interface{} `json:"data"`
 	}
-	if err := json.Unmarshal(data, &resp); err != nil {
+	// The answer's other keys (truncated, limit, offset, masked, ...) describe the page the rows were filtered from,
+	// and go out with them.
+	var top map[string]json.RawMessage
+	err := json.Unmarshal(data, &top)
+	if err == nil {
+		err = json.Unmarshal(data, &resp)
+	}
+	if err != nil {
 		return nil, &CLIError{
 			Category: "server",
 			ExitCode: ExitServer,
@@ -100,7 +107,11 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 		}
 		out = append(out, r)
 	}
-	filtered := map[string]interface{}{"data": out}
+	filtered := map[string]interface{}{}
+	for k, v := range top {
+		filtered[k] = v
+	}
+	filtered["data"] = out
 	// The rows kept still hold nulls for hidden figures: the flag goes with
 	// them, or --ndjson rows and the table's note lose it.
 	if masked {

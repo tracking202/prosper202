@@ -46,7 +46,7 @@ final class LedgerRowPostbacksIntegrationTest extends TestCase
         $this->click(100);
         $sale = $this->repo()->record(1, [
             'click_id' => 100, 'payout' => '4', 'transaction_id' => 'T-1', 'source' => 'postback', 'notify_traffic_source' => true,
-        ]);
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertSame(
             [['kind' => 'reached', 'status' => 'pending', 'url' => 'https://ts.example/pb?sub=100&goal=&v=4.00&tx=T-1&p=4.00']],
             self::notifications((int) $sale['convId']),
@@ -55,18 +55,18 @@ final class LedgerRowPostbacksIntegrationTest extends TestCase
 
         $rev = $this->repo()->record(1, [
             'click_id' => 100, 'transaction_id' => 'T-1', 'reversal' => true, 'source' => 'postback', 'notify_traffic_source' => true,
-        ]);
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertSame([], self::notifications((int) $rev['convId']), 'a reversal is not announced as a conversion');
 
         $replay = $this->repo()->record(1, [
             'click_id' => 100, 'payout' => '4', 'transaction_id' => 'T-1', 'source' => 'postback', 'notify_traffic_source' => true,
-        ]);
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertTrue($replay['duplicate']);
         self::assertCount(1, self::notifications((int) $sale['convId']), 'a replay queues nothing more');
 
         // Without the flag (every other writer), nothing is queued.
         $this->click(101);
-        $api = $this->repo()->record(1, ['click_id' => 101, 'payout' => '3', 'transaction_id' => 'A-1', 'source' => 'api']);
+        $api = $this->repo()->record(1, ['click_id' => 101, 'payout' => '3', 'transaction_id' => 'A-1', 'source' => 'api'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertSame([], self::notifications((int) $api['convId']));
     }
 
@@ -76,10 +76,10 @@ final class LedgerRowPostbacksIntegrationTest extends TestCase
         $this->click(101);
         $unsent = (int) $this->repo()->record(1, [
             'click_id' => 100, 'payout' => '4', 'transaction_id' => 'U-1', 'source' => 'postback', 'notify_traffic_source' => true,
-        ])['convId'];
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID)['convId'];
         $sent = (int) $this->repo()->record(1, [
             'click_id' => 101, 'payout' => '4', 'transaction_id' => 'S-1', 'source' => 'postback', 'notify_traffic_source' => true,
-        ])['convId'];
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID)['convId'];
         self::$db->query("UPDATE 202_notification_pending SET status = 'sent', attempts = 1, sent_at = 1 WHERE conv_id = $sent");
 
         $this->repo()->softDelete($unsent, 1);

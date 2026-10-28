@@ -97,7 +97,17 @@ final class IdentityTables
         );
     }
 
-    /** Append-only record of every merge; requeued_at is set once MTA re-queued what it changed. */
+    /**
+     * Append-only record of every merge; requeued_at is set once MTA
+     * re-queued what it changed.
+     *
+     * The rest is the attribution worker's queue of merges
+     * (AttributionWorker::requeueMerges()): `requeue_failures` counts the
+     * re-queues in a row that failed, `requeue_retry_at` is when the merge
+     * is next taken (0 until one has failed), `requeue_error` says why the
+     * last one failed, and `requeue_retired_at` is set when the merge's own
+     * data refuses the re-queue, which then is not tried again.
+     */
     public static function identityMerges(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -112,9 +122,14 @@ final class IdentityTables
                 `signal_hash` char(64) NOT NULL,
                 `merged_at` int(10) unsigned NOT NULL,
                 `requeued_at` int(10) unsigned DEFAULT NULL,
+                `requeue_failures` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `requeue_retry_at` int(10) unsigned NOT NULL DEFAULT '0',
+                `requeue_error` varchar(255) DEFAULT NULL,
+                `requeue_retired_at` int(10) unsigned DEFAULT NULL,
                 PRIMARY KEY (`merge_id`),
                 KEY `pending` (`requeued_at`),
-                KEY `user_into` (`user_id`,`into_key`)
+                KEY `user_into` (`user_id`,`into_key`),
+                KEY `requeue_due` (`requeued_at`,`requeue_retired_at`,`requeue_retry_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

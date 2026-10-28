@@ -75,6 +75,7 @@ class Application extends ConsoleApplication
         $this->add(new Commands\ConversionCreateCommand());
         $this->add(new Commands\EventSendCommand());
         $this->add(new Commands\ConversionDeleteCommand());
+        $this->add(new Commands\ConversionMatchMethodsCommand());
 
         // --- Reports ---
         $this->add(new Commands\ReportSummaryCommand());
@@ -93,6 +94,7 @@ class Application extends ConsoleApplication
         $this->add(new Commands\LtvEngagementCommand());
         $this->add(new Commands\LtvSubscriptionsCommand());
         $this->add(new Commands\LtvCompaniesCommand());
+        $this->add(new Commands\LtvWebhookReviveCommand());
 
         // --- Rotators ---
         $this->add(new Commands\RotatorListCommand());

@@ -147,7 +147,7 @@ trait GoalDatabase
             $e->eventId, $e->name, $e->occurredAt, $this->clock, $e->properties, $e->revenue, $e->revenueTrusted, $e->transactionId
         ), $events);
 
-        return $this->engine->ingest(1, $this->engine->clickSubject(1, $clickId), $stamped);
+        return $this->engine->ingest(1, $this->engine->clickSubject(1, $clickId), $stamped, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
     }
 
     /** @return array{lead: int, payout: string} */

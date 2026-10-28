@@ -229,6 +229,9 @@ func HintFor(err error) string {
 	if AnswerTooManyValues(err) {
 		return "Ask for less in one call: a smaller limit (with offset for the next page), a shorter period, or a narrower filter. `p202 mcp` on your own computer has no such bound."
 	}
+	if refusal, ok := ScopeRefusalOf(err); ok {
+		return refusal.Hint()
+	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		switch {
@@ -613,6 +616,15 @@ func (c *Client) Put(path string, body interface{}) ([]byte, error) {
 	return c.do("PUT", path, nil, body)
 }
 
+// PutDryRun asks a PUT whose route previews (`?dry_run=1` on PUT
+// /rotators/{id}/rules) what it would write, and writes nothing. Every
+// server with that route reads the parameter, and one without it answers
+// 404, so unlike DeletePreview no capability is asked first. A dry run is a
+// read, so --staged never stamps it.
+func (c *Client) PutDryRun(path string, body interface{}) ([]byte, error) {
+	return c.do("PUT", path, map[string]string{"dry_run": "1"}, body)
+}
+
 // Patch sends a partial update: the server changes only the fields the body
 // names (the /ltv customer, company and field updates). It goes through the
 // same request path as Put, so --staged stamps it the same way and a server
@@ -692,6 +704,11 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 // complete one — so a body over maxDownloadSize is an error here.
 func (c *Client) Download(path string) ([]byte, error) {
 	return c.doLimited("GET", path, nil, nil, nil, maxDownloadSize, true)
+}
+
+// DownloadWith is Download with query parameters.
+func (c *Client) DownloadWith(path string, params map[string]string) ([]byte, error) {
+	return c.doLimited("GET", path, params, nil, nil, maxDownloadSize, true)
 }
 
 func (c *Client) doWithHeaders(method, path string, params map[string]string, body interface{}, headers map[string]string) ([]byte, error) {

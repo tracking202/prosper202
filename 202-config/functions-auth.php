@@ -72,7 +72,7 @@ class AUTH
     // cookie) guessing the password toward a full account takeover.
     public const MAX_PASSWORD_REAUTH_FAILS = 5;
 
-    private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, up.user_id AS pref_user_id, up.user_slack_incoming_webhook FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted != 1 AND u.user_active = 1 LIMIT 1';
+    private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, up.user_id AS pref_user_id, up.user_slack_incoming_webhook FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted = 0 AND u.user_active = 1 LIMIT 1';
     private static bool $passwordColumnChecked = false;
     private static bool $sessionHeartbeatRefreshed = false;
 
@@ -101,10 +101,23 @@ class AUTH
         self::updateSession([$key => $value]);
     }
 
+    /**
+     * Whether this request is signed in: the session's own fields (user,
+     * fingerprint, under 50000 seconds since its last request), and the
+     * user's row, read this request, active and not deleted
+     * (sessionUserStands()). The row is read because nothing else ends a
+     * session: its time is refreshed on every request, so a user switched off
+     * or removed kept every page for as long as they kept using the browser.
+     */
     public static function logged_in()
     {
         $session_time_passed = isset($_SESSION['session_time']) ? time() - $_SESSION['session_time'] : PHP_INT_MAX;
         if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and hash_equals(self::session_fingerprint(), (string) $_SESSION['session_fingerprint']) and ($session_time_passed < 50000)) {
+            // connect.php's User, when it read this session's user.
+            $read = $GLOBALS['userObj'] ?? null;
+            if (!self::sessionUserStands($read instanceof \User ? $read : null)) {
+                return false;
+            }
             if (!self::$sessionHeartbeatRefreshed) {
                 self::writeSessionValue('session_time', time());
                 self::$sessionHeartbeatRefreshed = true;
@@ -113,6 +126,169 @@ class AUTH
         } else {
             return false;
         }
+    }
+
+    /**
+     * connect.php, once it has read the session's user (new User()): a
+     * session whose user may no longer act is ended there, before the page
+     * reads anything from it, so no page shows or acts on it whether or not
+     * it asks for a sign-in. Nothing is read here: where connect.php read no
+     * row (the install, key and upgrade pages, which sign nobody in, or a
+     * database with no 202_users yet), logged_in() reads it for itself.
+     */
+    public static function endSessionIfItsUserCannotAct(?\User $user): void
+    {
+        if (!isset($_SESSION['user_id']) && !isset($_SESSION['user_own_id'])) {
+            return;
+        }
+        $userId = self::sessionUserId();
+        if ($userId !== null && $user?->standingOf($userId) === null) {
+            return;
+        }
+        self::sessionUserStands($user);
+    }
+
+    /**
+     * Whether the session's user may act (UserStanding), from the row $read
+     * (connect.php's User) holds for this request or, when it holds none for
+     * this user, from the database now; never from an answer kept from an
+     * earlier request, which would outlive the switch-off it is there to see.
+     * A session whose user may not act is ended. A read that fails throws: it
+     * is neither "may act" nor "signed out".
+     */
+    private static function sessionUserStands(?\User $read): bool
+    {
+        $userId = self::sessionUserId();
+        if ($userId === null) {
+            self::endSession(null);
+            return false;
+        }
+        $standing = $read?->standingOf($userId)
+            ?? \Prosper202\User\UserStanding::read(DB::getInstance()->getConnection(), $userId);
+        if (!$standing->canAct()) {
+            self::endSession($userId);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * The user the session is signed in as. begin_user_session() sets
+     * user_id and user_own_id to the same id; a session where either is
+     * missing, is not a positive whole number, or they differ is not one it
+     * made, and names nobody.
+     */
+    private static function sessionUserId(): ?int
+    {
+        $userId = filter_var($_SESSION['user_id'] ?? null, FILTER_VALIDATE_INT);
+        $ownId = filter_var($_SESSION['user_own_id'] ?? null, FILTER_VALIDATE_INT);
+        if (!is_int($userId) || $userId <= 0 || $ownId !== $userId) {
+            return null;
+        }
+
+        return $userId;
+    }
+
+    /**
+     * End this request's session, for a user who may no longer act, as the
+     * sign-out does and more: the session's data and id are replaced by a
+     * signed-out visitor's (a new id, and a new anti-CSRF token so a sign-in
+     * form drawn by this request can be posted), the remember-me cookie is
+     * cleared, and every remember-me key the user holds is revoked, so a
+     * browser kept signed in does not sign back in when the user is switched
+     * on again. $revokeFor is null for a session that names nobody.
+     */
+    private static function endSession(?int $revokeFor): void
+    {
+        $writer = static function (): void {
+            $_SESSION = [];
+            if (session_status() === PHP_SESSION_ACTIVE && !headers_sent()) {
+                session_regenerate_id(true);
+            }
+            $_SESSION['token'] = self::mintCsrfToken();
+        };
+        if (function_exists('withWritableSession')) {
+            withWritableSession($writer);
+        } else {
+            $writer();
+        }
+
+        self::forgetRememberMeCookie();
+
+        if ($revokeFor !== null) {
+            \Prosper202\User\RememberMeKeys::revokeAll(
+                new \Prosper202\Database\Connection(DB::getInstance()->getConnection()),
+                $revokeFor
+            );
+        }
+    }
+
+    /**
+     * Sign this browser out (202-account/signout.php, and Personal settings
+     * after too many wrong current passwords): the session destroyed, the
+     * remember-me cookie cleared, and the stored key that cookie names
+     * deleted, so a copy of the cookie signs nobody in. The sign-out kept the
+     * key, and a copied cookie went on signing in for up to 14 days.
+     *
+     * Only this browser's key: the user's other remembered browsers are other
+     * sign-ins, which this one did not end. Switching the user off ends them
+     * all.
+     *
+     * The session and the cookie end first, whatever the delete does: a
+     * delete that fails then throws, and the page answers with the database
+     * error page rather than a sign-out that reads as complete.
+     */
+    public static function signOut(): void
+    {
+        $named = \Prosper202\User\RememberMeKeys::namedBy($_COOKIE['remember_me'] ?? null);
+        $writer = static function (): void {
+            $_SESSION = [];
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_destroy();
+            }
+        };
+        if (function_exists('withWritableSession')) {
+            withWritableSession($writer);
+        } else {
+            $writer();
+        }
+        self::forgetRememberMeCookie();
+
+        if ($named !== null) {
+            \Prosper202\User\RememberMeKeys::revokeOne(
+                new \Prosper202\Database\Connection(DB::getInstance()->getConnection()),
+                $named[0],
+                $named[1]
+            );
+        }
+    }
+
+    /** Clear this browser's remember_me cookie, for the rest of the request too. */
+    private static function forgetRememberMeCookie(): void
+    {
+        if (!isset($_COOKIE['remember_me'])) {
+            return;
+        }
+        unset($_COOKIE['remember_me']);
+        if (!headers_sent()) {
+            setcookie('remember_me', '', [
+                'expires' => 1,
+                'path' => '/',
+                'domain' => self::cookie_domain(),
+                'secure' => function_exists('getSecureStatus')
+                    ? getSecureStatus()
+                    : (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off'),
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+        }
+    }
+
+    /** A new session's anti-CSRF token: 128 bits from the CSPRNG. */
+    public static function mintCsrfToken(): string
+    {
+        return bin2hex(random_bytes(16));
     }
 
     public static function authenticate(string $username, string $password, \mysqli $db): array
@@ -337,6 +513,18 @@ class AUTH
     public static function require_user($auth_type = '', bool $requireLicense = true)
     {
         if (AUTH::logged_in_with_remember() == false) {
+            // A page's script (jQuery sends X-Requested-With; a browser marks
+            // fetch() Sec-Fetch-Dest: empty) treats a failed status as a
+            // failure; the sign-in page a redirect led to read as the answer,
+            // and was drawn into the panel that asked.
+            $byScript = strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest'
+                || strtolower((string) ($_SERVER['HTTP_SEC_FETCH_DEST'] ?? '')) === 'empty';
+            if ($byScript) {
+                http_response_code(401);
+                header('Content-Type: text/plain; charset=utf-8');
+                header('Cache-Control: no-store');
+                die('You are signed out. Sign in again, then reload the page.');
+            }
             if ($auth_type == "toolbar") {
                 self::writeSessionValue('toolbar', 'true');
             }
@@ -575,7 +763,7 @@ class AUTH
                   	AND
                   	    2u.user_id = 2a.user_id
                     AND
-                        2u.user_deleted != 1
+                        2u.user_deleted = 0
 					AND
 						2u.user_active = 1
                 	LIMIT 1';

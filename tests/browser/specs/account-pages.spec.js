@@ -236,6 +236,65 @@ module.exports = {
     },
 
     {
+      name: 'API integrations: a PayKickstart IPN key is added from its disclosure, never shown back, and removed only when confirmed',
+      async run(ctx) {
+        const { app, ui, db, expect, state } = ctx;
+        const stored = () => db.value("SELECT IFNULL(paykickstart_ipn_secret_keys, '') FROM 202_users_pref WHERE user_id=" + state.owner);
+        const before = stored();
+        db.write('UPDATE 202_users_pref SET paykickstart_ipn_secret_keys=NULL WHERE user_id=' + state.owner);
+        try {
+          await app.goto('/202-account/api-integrations.php');
+          expect.ok(!(await ui.page.$eval('#paykickstart details.p202-disclosure', (d) => d.open)), 'the key form starts closed');
+          await ui.click('#paykickstart summary');
+          await ui.fill({ '#paykickstart_ipn_secret_key': 'u6-browser-pk-KEY1' });
+          await app.submit('#paykickstart .p202-disclosure button[type="submit"]');
+          expect.match(await app.messages(), /PayKickstart IPN secret key was saved; 1 key is stored/, 'saving says so');
+          expect.eq(stored(), 'u6-browser-pk-KEY1', 'and stores it');
+          expect.ok(!(await ui.page.content()).includes('u6-browser-pk-KEY1'), 'the page never shows the key back');
+          expect.match(await ui.page.textContent('#paykickstart'), /Key ending …KEY1/, 'it lists the key by its last characters');
+
+          const remove = '#paykickstart button:has-text("remove")';
+          const said = await app.confirmAnd('dismiss', remove);
+          expect.match(said, /Remove this key\?/, 'removing asks first', said || '(no dialog)');
+          expect.eq(stored(), 'u6-browser-pk-KEY1', 'saying no keeps it');
+          await app.confirmAnd('accept', remove);
+          expect.eq(stored(), '', 'saying yes removes it');
+        } finally {
+          db.write('UPDATE 202_users_pref SET paykickstart_ipn_secret_keys=' + (before === '' ? 'NULL' : "'" + before.replace(/'/g, "''") + "'")
+            + ' WHERE user_id=' + state.owner);
+        }
+      },
+    },
+
+    {
+      name: 'API integrations: JVZoo shows an affiliate URL and a vendor URL, and saves its key trimmed from its disclosure',
+      async run(ctx) {
+        const { app, ui, db, expect, state } = ctx;
+        const stored = () => db.value("SELECT IFNULL(jvzoo_ipn_secret_key, '') FROM 202_users_pref WHERE user_id=" + state.owner);
+        const before = stored();
+        db.write('UPDATE 202_users_pref SET jvzoo_ipn_secret_key=NULL WHERE user_id=' + state.owner);
+        try {
+          await app.goto('/202-account/api-integrations.php');
+          const copies = await ui.page.$$eval('#jvzoo [data-p202-copy]', (els) => els.map((el) => el.getAttribute('data-p202-copy')));
+          expect.eq(copies.length, 2, 'two URLs to copy');
+          expect.match(copies[0] || '', /\/tracking202\/static\/jvzoo\.php\?role=affiliate$/, 'the affiliate\'s first');
+          expect.match(copies[1] || '', /\/tracking202\/static\/jvzoo\.php\?role=vendor$/, 'the vendor\'s second');
+          expect.match(await ui.page.textContent('#jvzoo .p202-pill'), /Not connected/, 'no key, not connected');
+          expect.ok(!(await ui.page.$eval('#jvzoo details.p202-disclosure', (d) => d.open)), 'the key form starts closed');
+          await ui.click('#jvzoo summary');
+          await ui.fill({ '#jvzoo_ipn_secret_key': '  u6-browser-JVZIPN-key  ' });
+          await app.submit('#jvzoo .p202-disclosure button[type="submit"]');
+          expect.match(await app.messages(), /Your JVZoo secret key was saved/, 'saving says so');
+          expect.eq(stored(), 'u6-browser-JVZIPN-key', 'and stores it trimmed, as the endpoint signs with it');
+          expect.match(await ui.page.textContent('#jvzoo .p202-pill'), /Connected/, 'connected once a key is stored');
+        } finally {
+          db.write('UPDATE 202_users_pref SET jvzoo_ipn_secret_key=' + (before === '' ? 'NULL' : "'" + before.replace(/'/g, "''") + "'")
+            + ' WHERE user_id=' + state.owner);
+        }
+      },
+    },
+
+    {
       name: 'API integrations: a key saves from its disclosure; a DNI network is removed only when confirmed',
       async run(ctx) {
         const { app, ui, db, expect, state } = ctx;
@@ -364,6 +423,49 @@ module.exports = {
         expect.match(await app.messages(), /older than 45 days/, 'retention saves');
         expect.eq(db.value('SELECT user_auto_database_optimization_days FROM 202_users_pref WHERE user_id=' + state.owner), '45', 'and is stored');
         db.write('UPDATE 202_users_pref SET user_auto_database_optimization_days=0 WHERE user_id=' + state.owner);
+      },
+    },
+
+    {
+      name: 'Settings: the GeoIP database panel gives the file\'s age, never sends a stored key back, and Remove asks first',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        const key = 'browserPass_0123456789abcdef_mmk';
+        db.write('DELETE FROM 202_geoip_refresh');
+        await app.goto('/202-account/administration.php');
+        const panel = await ui.page.evaluate(() => {
+          const p = document.querySelector('#geoip');
+          return p ? p.innerText : null;
+        });
+        expect.ok(panel !== null, 'the GeoIP database panel is on Settings');
+        expect.match(panel || '', /Built\s+[A-Z][a-z]{2} \d{1,2}, \d{4} · [\d,]+ days ago/, 'it gives the build date and the age', panel);
+        expect.ok(await ui.page.evaluate(() => document.querySelector('#geoip details.p202-disclosure').open),
+          'with no account stored, the set-up form is open');
+
+        await ui.fill({ '#geoip_account_id': '424242', '#geoip_license_key': key });
+        await app.submit('#geoip button[type="submit"]:has-text("Save")');
+        expect.match(await app.messages(), /Saved\. The cron job refreshes the GeoIP database/, 'saving says so');
+        expect.eq(db.value('SELECT account_id FROM 202_geoip_refresh WHERE refresh_id=1'), '424242', 'and stores the account ID');
+        // The shell scrolls to #geoip smoothly: waited for, not read at load.
+        await ui.untilInPage(() => {
+          const y = document.getElementById('geoip').getBoundingClientRect().y;
+          return y >= 0 && y < 120;
+        }, undefined, { describe: 'the redirect to land on #geoip', timeout: 5000 }).catch(() => {});
+        const seen = await ui.page.evaluate(() => {
+          const f = document.querySelector('[data-p202-flashes]');
+          const r = f ? f.getBoundingClientRect() : null;
+          return { inPanel: !!(f && f.closest('#geoip')), inView: !!r && r.y >= 0 && r.y + r.height <= window.innerHeight };
+        });
+        expect.ok(seen.inPanel && seen.inView, 'the message is in the GeoIP panel, in view', JSON.stringify(seen));
+        expect.eq(await ui.page.inputValue('#geoip_license_key'), '', 'the licence key box is empty: a stored key is never sent back');
+        expect.ok(!(await ui.page.content()).includes(key), 'and the page carries the key nowhere');
+
+        const asked = await app.confirmAnd('dismiss', '#geoip button:has-text("Remove the account")');
+        expect.match(asked || '', /Remove the MaxMind account ID and licence key\?/, 'Remove the account asks first', asked || '(no dialog)');
+        expect.eq(db.value('SELECT license_key FROM 202_geoip_refresh WHERE refresh_id=1'), key, 'saying no keeps the key');
+        await app.confirmAnd('accept', '#geoip button:has-text("Remove the account")');
+        expect.match(await app.messages(), /were removed, so the GeoIP database is no longer refreshed/, 'saying yes removes it, and says so');
+        expect.eq(db.value("SELECT CONCAT(account_id, license_key) FROM 202_geoip_refresh WHERE refresh_id=1"), '', 'both are cleared');
       },
     },
 

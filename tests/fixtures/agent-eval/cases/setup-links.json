@@ -34,7 +34,7 @@
       ],
       "ask": "On the EVAL Geo Split redirector, add a rule that sends visitors from the IP address 203.0.113.50 to https://eval-ip-rule.example/landing.",
       "expected": {
-        "runs_one_of": ["rotator rule-create", "rotator rule-update"],
+        "runs_one_of": ["rotator rule-create", "rotator rule-update", "rotator set-rules"],
         "checks": [
           {
             "run": "curl -s -o /dev/null -w '%{redirect_url}' -H 'X-Forwarded-For: 203.0.113.50' \"$(cat /tmp/p202-eval-rotator.url)\"",

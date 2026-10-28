@@ -203,11 +203,12 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
      *
      * @param array<string, string> $get
      * @param array<string, string> $post a POST's fields, when it is one
+     * @param array<string, string> $env more of the page's environment
      */
-    private static function page(string $page, array $get = [], array $post = []): string
+    private static function page(string $page, array $get = [], array $post = [], array $env = []): string
     {
         self::requireScratch();
-        $env = [
+        $env = $env + [
             'P202_TEST_REPORT_USER' => (string) self::USER,
             'P202_TEST_SESSION_DIR' => self::$sessions,
             'P202_TEST_GET' => (string) json_encode((object) $get),
@@ -374,6 +375,59 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
         self::assertSame('', $answer, 'the account\'s own is renamed, and the page answers with a redirect');
         self::assertSame('Renamed', self::redirectorName(self::USER));
         self::q("UPDATE 202_rotators SET name = 'My Rotator' WHERE id = " . self::USER);
+    }
+
+    /** A traffic source's owner and name, as "user_id|name|time". */
+    private static function source(int $id): string
+    {
+        $found = self::$db->query("SELECT CONCAT(user_id, '|', ppc_network_name, '|', ppc_network_time)"
+            . " FROM 202_ppc_networks WHERE ppc_network_id = $id");
+        self::assertInstanceOf(\mysqli_result::class, $found, (string) self::$db->error);
+
+        return (string) ($found->fetch_row()[0] ?? '');
+    }
+
+    /**
+     * A traffic source is renamed only when it is the account's. The rename
+     * named the source by its posted id alone and set user_id to the
+     * session's, so another account's source was renamed and moved into
+     * this account, and the page said it was saved.
+     */
+    public function testRenamingATrafficSourceRenamesOnlyTheAccountsOwn(): void
+    {
+        // The page tags the new name at my.tracking202.com once a save
+        // succeeds; that call goes to a closed port here, not out.
+        $closed = 'http://127.0.0.1:9';
+        $offline = ['https_proxy' => $closed, 'HTTPS_PROXY' => $closed, 'no_proxy' => '', 'NO_PROXY' => ''];
+        $refused = 'That traffic source was not found on this account. Nothing was saved.';
+        $rename = static fn (int $id, string $name): string => self::page(
+            'tracking202/setup/ppc_accounts.php',
+            ['edit_ppc_network_id' => (string) $id, 'edit_ppc_network_name' => 'x'],
+            ['ppc_network_id' => (string) $id, 'ppc_network_name' => $name, 'token' => 'SESSION'],
+            $offline
+        );
+        $theirs = self::source(self::OTHER);
+        self::assertStringStartsWith(self::OTHER . '|Their Source|', $theirs);
+        $out = $rename(self::OTHER, 'Taken');
+        self::assertSame($theirs, self::source(self::OTHER), 'another account\'s source is as it was');
+        self::assertStringContainsString($refused, $out);
+
+        foreach (['0', '-' . self::OTHER, '0' . self::OTHER, self::OTHER . 'abc', ''] as $notAnId) {
+            $out = self::page(
+                'tracking202/setup/ppc_accounts.php',
+                ['edit_ppc_network_id' => (string) self::USER],
+                ['ppc_network_id' => $notAnId, 'ppc_network_name' => 'Taken', 'token' => 'SESSION'],
+                $offline
+            );
+            self::assertStringContainsString($refused, $out, "ppc_network_id '$notAnId'");
+        }
+        self::assertSame($theirs, self::source(self::OTHER));
+        self::assertStringStartsWith(self::USER . '|My Source|', self::source(self::USER));
+
+        $rename(self::USER, 'My Renamed Source');
+        $own = self::source(self::USER);
+        self::assertStringStartsWith(self::USER . '|My Renamed Source|', $own, 'the account\'s own is renamed');
+        self::q("UPDATE 202_ppc_networks SET ppc_network_name = 'My Source' WHERE ppc_network_id = " . self::USER);
     }
 
     public function testCampaignsShowNoOtherAccountsNetworkIntegration(): void

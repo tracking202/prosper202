@@ -68,9 +68,10 @@ final class SqlJoinScan
     // ------------------------------------------------------------------
 
     /**
-     * Every string expression in a PHP source.
+     * Every string expression in a PHP source, with the indexes of its first
+     * and last token in \PhpToken::tokenize($source).
      *
-     * @return list<array{line: int, text: string, holes: list<string>}>
+     * @return list<array{line: int, text: string, holes: list<string>, start: int, end: int}>
      */
     public static function chains(string $source): array
     {
@@ -126,7 +127,7 @@ final class SqlJoinScan
                 // of the second argument.
                 $text = self::sprintfHoles($text, $holes, self::callArguments($tokens, $dot));
             }
-            $chains[] = ['line' => $line, 'text' => $text, 'holes' => $holes];
+            $chains[] = ['line' => $line, 'text' => $text, 'holes' => $holes, 'start' => $i, 'end' => $end];
         }
 
         return $chains;
@@ -377,6 +378,29 @@ final class SqlJoinScan
     {
         $text .= self::HOLE_OPEN . count($holes) . self::HOLE_CLOSE;
         $holes[] = $source;
+    }
+
+    /**
+     * $text and $holes with another chain appended (`$sql .= …`), its holes
+     * renumbered after these; a string for $more appends one hole holding
+     * that PHP source (an append the scan cannot read).
+     *
+     * @param list<string> $holes
+     * @param array{text: string, holes: list<string>}|string $more
+     */
+    public static function append(string &$text, array &$holes, array|string $more): void
+    {
+        if (is_string($more)) {
+            self::addHole($text, $holes, $more);
+            return;
+        }
+        $offset = count($holes);
+        $text .= (string) preg_replace_callback(
+            '/' . self::HOLE_OPEN . '(\d+)' . self::HOLE_CLOSE . '/',
+            static fn (array $m): string => self::HOLE_OPEN . ((int) $m[1] + $offset) . self::HOLE_CLOSE,
+            $more['text']
+        );
+        array_push($holes, ...$more['holes']);
     }
 
     // ------------------------------------------------------------------

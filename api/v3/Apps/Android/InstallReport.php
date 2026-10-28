@@ -28,7 +28,8 @@ use Prosper202\Click\LatestVisit;
  * trusted (attributed) ones, and `events`, `goals_reached` and `revenue`
  * are the goals those installs reached — and every other class stays
  * visible beside them: `organic`, `refuted_count`, `unvouched_count`,
- * `test_count`, `pending`, and the full `match_states` and
+ * `test_count`, `pending` (and `pending_failing`, the pending clicks whose
+ * last settle failed), and the full `match_states` and
  * `integrity_states` breakdowns. An explicit `trusted=` filter recomputes
  * the headline figures — `installs` included — over exactly that class, as
  * the iOS report's `signature=` does (`meta.trusted: as-filtered`).
@@ -104,6 +105,10 @@ final class InstallReport
         'installs' => 'SUM(CASE WHEN {gate} THEN 1 ELSE 0 END)',
         'organic' => "SUM(CASE WHEN i.match_state = 'organic' THEN 1 ELSE 0 END)",
         'pending' => "SUM(CASE WHEN i.match_state IN ('pending_click', 'pending_integrity') THEN 1 ELSE 0 END)",
+        // Of those, the pending clicks whose last settle failed (PendingClickSettler);
+        // each is retried, and the server log says why.
+        'pending_failing' => "SUM(CASE WHEN i.match_state = 'pending_click' AND i.settle_failures > 0
+            THEN 1 ELSE 0 END)",
         'trusted_count' => 'SUM(CASE WHEN i.trusted = 1 THEN 1 ELSE 0 END)',
         'refuted_count' => 'SUM(CASE WHEN i.trusted = 0 THEN 1 ELSE 0 END)',
         'unvouched_count' => 'SUM(CASE WHEN i.trusted IS NULL THEN 1 ELSE 0 END)',

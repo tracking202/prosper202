@@ -213,8 +213,18 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
+        $rows = $this->conn->fetchAll($stmt);
 
-        return ['rows' => $this->conn->fetchAll($stmt), 'total' => $total];
+        // Numbers, as summary() answers them: mysqli hands DECIMAL back as a
+        // string ("54.12500").
+        foreach ($rows as &$row) {
+            foreach (['total_revenue', 'refunded_amount', 'mrr'] as $amount) {
+                $row[$amount] = (float) $row[$amount];
+            }
+        }
+        unset($row);
+
+        return ['rows' => $rows, 'total' => $total];
     }
 
     public function breakdown(LtvQuery $query, string $breakdownType, int $limit, int $offset): array
@@ -289,7 +299,10 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
 
-        return $this->conn->fetchAll($stmt);
+        return array_map(static fn (array $row): array => LtvNumbers::integers(
+            LtvNumbers::decimals($row, ['total_revenue', 'avg_ltv', 'aov', 'repeat_rate', 'mrr', 'spend', 'cac', 'ltv_cac']),
+            ['customers', 'total_orders']
+        ), $this->conn->fetchAll($stmt));
     }
 
     /**
@@ -652,7 +665,11 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
 
-        return $this->conn->fetchAll($stmt);
+        // units is a sum of DECIMAL(12,3) quantities: a measure, 1.5 as well as 2.
+        return array_map(static fn (array $row): array => LtvNumbers::integers(
+            LtvNumbers::decimals($row, ['units', 'total_revenue', 'avg_revenue_per_customer', 'aov', 'repeat_rate', 'mrr']),
+            ['customers', 'orders']
+        ), $this->conn->fetchAll($stmt));
     }
 
     /**

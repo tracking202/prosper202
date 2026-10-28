@@ -37,7 +37,7 @@ if ($token === '' || $eventName === '') {
 // Per-peer fixed-window rate limit (fail-open; tokens are unguessable and
 // events are low-sensitivity writes).
 try {
-    $stateStore = new \Api\V3\Support\ServerStateStore();
+    $stateStore = \Api\V3\Support\ServerStateStore::forInstall($db);
     // softIpRateLimit() keys on the validated TCP peer (REMOTE_ADDR) and
     // prunes stale buckets. Not connect2.php's $ip_address: that is the
     // first of six client-supplied proxy headers with no trusted-proxy

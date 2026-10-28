@@ -158,6 +158,27 @@ function getTrackingDomain(): string
 }
 
 /**
+ * The base, `scheme://host[:port]/<install path>/`, of the tracking links,
+ * pixels and postback URLs a page shows the person who asked for them: the
+ * one the API builds the same link on (TrackingBaseLookup), so Get Links and
+ * `p202 tracker get-url` hand out one URL. The scheme is the stored domain's
+ * when it was saved with one, otherwise this request's
+ * (TrackingBaseUrl::buildForResponse()). Listed with getTrackingDomain()'s
+ * callers in RequestHostSourceTest.
+ *
+ * @param string|null $storedDomain the account's stored tracking domain, when
+ *     the caller has read it already
+ */
+function p202TrackingBaseForResponse(?string $storedDomain = null): string
+{
+    return \Prosper202\Click\TrackingBaseUrl::buildForResponse(
+        $storedDomain ?? p202StoredTrackingDomain(),
+        $_SERVER,
+        dirname(__DIR__)
+    );
+}
+
+/**
  * Whose stored tracking domain a request reads: the given user, else the
  * signed-in one, else (nobody signed in: the click path) the first account.
  * A session user id that is there but is not a positive whole number throws:

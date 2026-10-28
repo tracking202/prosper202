@@ -172,7 +172,8 @@ function wpCreateLp($db, $user): array {
         }
 
         $landing_page_id_public = random_int(1,9) . $insert_id . random_int(1,9);
-        $landing_page_sql = "UPDATE `202_landing_pages` SET `landing_page_id_public`='".$landing_page_id_public."' WHERE `landing_page_id`='".$insert_id."'";
+        $landing_page_sql = "UPDATE `202_landing_pages` SET `landing_page_id_public`='".$landing_page_id_public."' WHERE `landing_page_id`='".$insert_id."'"
+            . " AND `user_id`='" . $mysql['user_id'] . "'";
         try {
             // The error is read from the connection before the finally's
             // markDirty() asks the connection again.

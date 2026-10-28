@@ -153,6 +153,17 @@ $states = static function (mixed $counts): array {
                 </div>
             </div>
         <?php } ?>
+        <?php if ((int)($totals['pending_failing'] ?? 0) > 0) { ?>
+            <div class="alert alert-warning p202-flash" role="status">
+                <i class="bi bi-exclamation-triangle"></i>
+                <div class="p202-flash__body">
+                    <?php echo $num($totals['pending_failing']); ?> of the installs waiting for their click
+                    failed to settle on their last try. Each is tried again, less often the longer it fails;
+                    one whose stored token or body can no longer be read is settled as a bad token
+                    24 hours after it arrived. The server log says why each failed.
+                </div>
+            </div>
+        <?php } ?>
     <?php } elseif ($totals !== null) { ?>
         <div class="p202-tiles">
             <div class="p202-tile">

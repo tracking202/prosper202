@@ -153,36 +153,54 @@ foreach (p202_setup_rows($db, "SELECT pv.ppc_network_id, pv.parameter, pv.placeh
 	ORDER BY pv.ppc_variable_id ASC") as $variable) {
 	$linkVariables[(int) $variable['ppc_network_id']][] = $variable;
 }
-$trackerLink = static function (array $tracker) use ($base, $linkVariables): array {
-	// The variables as the link generator and GET /trackers/{id}/url write
-	// them: the source's own, then `t202kw=`.
-	$variables = \Prosper202\Click\TrackingLinkVariables::query($linkVariables[(int) ($tracker['ppc_network_id'] ?? 0)] ?? [], []);
-	// A link whose landing page or redirector is not one of this account's
-	// (another account's, or removed since) has no link to give: the page's
-	// URL is not this account's to build on, and a direct link would send
-	// the visitor somewhere the link was never made for. It is edited to
-	// choose one again.
-	if ((int) $tracker['named_landing_page_id'] !== 0 && $tracker['landing_page_id'] === null) {
-		return ['', 'no landing page', ''];
-	}
-	if ((int) $tracker['rotator_id'] !== 0 && $tracker['redirector_id'] === null) {
-		return ['', 'no redirector', ''];
-	}
-	if ($tracker['landing_page_id']) {
-		// The landing page's own URL, built as GET /trackers/{id}/url builds
-		// it: port kept, the id and variables before any #fragment. This list
-		// wrote `t202kw=` with no `&` straight onto the id (`t202id=12t202kw=`,
-		// an id no tracker has) and after the fragment, dropped the port, and
-		// left out the source's variables. A URL with no host to build on has
-		// no link either.
-		$link = \Api\V3\Controllers\TrackersController::buildLandingPageUrl((string) $tracker['landing_page_url'], (int) $tracker['tracker_id_public'], $variables);
-		return [(string) $tracker['landing_page_nickname'], $link === '' ? 'no landing page URL' : 'landing page', $link];
-	}
-	if ($tracker['rotator_id']) {
-		return [(string) $tracker['name'], 'redirector', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/rtr.php?t202id=' . $tracker['tracker_id_public'] . $variables];
-	}
-	return [(string) $tracker['aff_campaign_name'], 'direct link', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/dl.php?t202id=' . $tracker['tracker_id_public'] . $variables];
+// The links' base, as GET /trackers/{id}/url builds the same link on.
+$storedDomain = p202StoredTrackingDomain();
+$linkBase = p202TrackingBaseForResponse($storedDomain);
+$trackerLink = static function (array $tracker) use ($linkBase, $linkVariables): array {
+    // The variables as the link generator and GET /trackers/{id}/url write
+    // them: the source's own, then `t202kw=`.
+    $variables = \Prosper202\Click\TrackingLinkVariables::query($linkVariables[(int) ($tracker['ppc_network_id'] ?? 0)] ?? [], []);
+    // A link whose landing page or redirector is not one of this account's
+    // (another account's, or removed since) has no link to give: the page's
+    // URL is not this account's to build on, and a direct link would send
+    // the visitor somewhere the link was never made for. It is edited to
+    // choose one again.
+    if ((int) $tracker['named_landing_page_id'] !== 0 && $tracker['landing_page_id'] === null) {
+        return ['', 'no landing page', ''];
+    }
+    if ((int) $tracker['rotator_id'] !== 0 && $tracker['redirector_id'] === null) {
+        return ['', 'no redirector', ''];
+    }
+    if ($tracker['landing_page_id']) {
+        // The landing page's own URL, built as GET /trackers/{id}/url builds
+        // it: port kept, the id and variables before any #fragment. This list
+        // wrote `t202kw=` with no `&` straight onto the id (`t202id=12t202kw=`,
+        // an id no tracker has) and after the fragment, dropped the port, and
+        // left out the source's variables. A URL with no host to build on has
+        // no link either.
+        $link = \Api\V3\Controllers\TrackersController::buildLandingPageUrl((string) $tracker['landing_page_url'], (int) $tracker['tracker_id_public'], $variables);
+        return [(string) $tracker['landing_page_nickname'], $link === '' ? 'no landing page URL' : 'landing page', $link];
+    }
+    // A redirector's link or a direct link, by the API's own builder.
+    $link = \Api\V3\Controllers\TrackersController::buildDirectUrl(
+        $linkBase,
+        (int) $tracker['tracker_id_public'],
+        ['rotator_id' => $tracker['rotator_id']],
+        $variables
+    );
+    if ($tracker['rotator_id']) {
+        return [(string) $tracker['name'], 'redirector', $link];
+    }
+    return [(string) $tracker['aff_campaign_name'], 'direct link', $link];
 };
+
+// Which scheme those links use, and why, under the list.
+$schemeNote = p202_setup_link_scheme_note(
+    $linkBase,
+    \Prosper202\Click\TrackingBaseUrl::storedSchemeForResponse($storedDomain),
+    $base . '202-account/account.php#profile',
+    'Direct and redirector links use'
+);
 
 template_top('Get Trackers'); ?>
 
@@ -394,8 +412,10 @@ $nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rota
 					<p class="text-body-secondary mb-0">None yet. The links you get are kept here, to copy or change later.</p>
 				<?php } else { ?>
 					<ul class="p202-list" id="tracker-list" data-delete-url="<?php echo p202_setup_e($base . 'tracking202/ajax/delete_tracker.php'); ?>">
-						<?php foreach ($trackers as $tracker) {
+						<?php $anyOnLinkBase = false;
+						foreach ($trackers as $tracker) {
 							[$name, $kind, $link] = $trackerLink($tracker);
+							$anyOnLinkBase = $anyOnLinkBase || in_array($kind, ['redirector', 'direct link'], true);
 							$tid = (int) $tracker['tracker_id']; ?>
 							<li class="p202-list__item" data-p202-filter-text="<?php echo p202_setup_e($name); ?>" data-tracker-id="<?php echo $tid; ?>">
 								<span class="p202-list__name"><?php echo p202_setup_e($name !== '' ? $name : 'Untitled'); ?></span>
@@ -413,6 +433,9 @@ $nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rota
 							</li>
 						<?php } ?>
 					</ul>
+					<?php if ($anyOnLinkBase) { ?>
+						<div class="mt-3"><?php echo $schemeNote; ?></div>
+					<?php } ?>
 				<?php } ?>
 			</div>
 		</section>

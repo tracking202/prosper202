@@ -19,19 +19,26 @@ AUTH::set_timezone($_SESSION['user_timezone']);
  */
 
 $userId = (int) $_SESSION['user_id'];
-$offset = max(0, (int) ($_POST['offset'] ?? 0));
 $limit = 50;
 
 $statuses = ['' => 'All', 'trialing' => 'Trialing', 'active' => 'Active',
     'past_due' => 'Past Due', 'paused' => 'Paused', 'canceled' => 'Canceled'];
-$status = isset($_POST['status']) && array_key_exists((string) $_POST['status'], $statuses)
-    ? (string) $_POST['status']
-    : '';
 
 require_once __DIR__ . '/ltv_ui.php';
 $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
+
+// A page or a status the list does not have is said, and shown as the
+// list's default, where it was shown so without a word.
+$error = null;
+$offset = p202_ltv_posted_or(fn (): int => p202_ltv_posted_offset($_POST['offset'] ?? null), 0, $error);
+$status = p202_ltv_posted_or(fn (): string => p202_ltv_posted_choice(
+    $_POST['status'] ?? null,
+    $statuses,
+    '',
+    'Pick a status from the list.'
+), '', $error);
 
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_subscriptions.php';
 
@@ -51,6 +58,10 @@ try {
 
 <?php echo p202_ltv_ui_styles(); ?>
 <?php echo p202_ltv_tabs('subscriptions'); ?>
+
+<?php if ($error !== null) { ?>
+    <?php echo p202_ltv_flash('error', $esc($error)); ?>
+<?php } ?>
 
 <!-- Recurring revenue summary -->
 <div class="p202-tiles">

@@ -232,13 +232,13 @@ final class AiConnectTest extends TestCase
     }
 
     /** @return array{0: int, 1: array<string, mixed>} */
-    private static function exchange(array $payload): array
+    private function exchange(array $payload): array
     {
         // Every case here is refused before the database is asked anything
         // but whether 202_api_keys has its label column.
         $db = new FakeMysqliConnection();
         $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'label'", [['Field' => 'label']]);
-        return AiConnect::exchange($db, new ServerStateStore(), $payload);
+        return AiConnect::exchange($db, new ServerStateStore($this->stateDir), $payload);
     }
 
     /** A database that cannot say whether it has the label column refuses
@@ -246,15 +246,21 @@ final class AiConnectTest extends TestCase
     public function testADatabaseThatCannotAnswerLeavesTheCodeUnspent(): void
     {
         $verifier = str_repeat('v', 50);
-        $code = AiConnect::approve(new ServerStateStore(), 7, self::readScope(), self::challenge($verifier), 'Claude');
+        $code = AiConnect::approve(
+            new ServerStateStore($this->stateDir),
+            7,
+            self::readScope(),
+            self::challenge($verifier),
+            'Claude'
+        );
         $broken = new FakeMysqliConnection();
         $broken->whenQueryContainsResultFails("SHOW COLUMNS FROM 202_api_keys LIKE 'label'");
         $payload = ['code' => $code, 'code_verifier' => $verifier];
-        [$status, $body] = AiConnect::exchange($broken, new ServerStateStore(), $payload);
+        [$status, $body] = AiConnect::exchange($broken, new ServerStateStore($this->stateDir), $payload);
         self::assertSame([500, 'server_error'], [$status, $body['code']]);
 
         // The code was not consumed: a wrong verifier now reaches the check.
-        [$status, $body] = self::exchange(['code' => $code, 'code_verifier' => str_repeat('w', 50)]);
+        [$status, $body] = $this->exchange(['code' => $code, 'code_verifier' => str_repeat('w', 50)]);
         self::assertStringContainsString('verifier does not match', $body['message']);
     }
 
@@ -271,22 +277,28 @@ final class AiConnectTest extends TestCase
     public function testACodeWorksOnceAndOnlyWithItsVerifier(): void
     {
         $verifier = str_repeat('v', 50);
-        $code = AiConnect::approve(new ServerStateStore(), 7, self::readScope(), self::challenge($verifier), 'Claude');
+        $code = AiConnect::approve(
+            new ServerStateStore($this->stateDir),
+            7,
+            self::readScope(),
+            self::challenge($verifier),
+            'Claude'
+        );
         self::assertMatchesRegularExpression('/^[A-Za-z0-9_-]{43}$/', $code);
 
-        [$status, $body] = self::exchange(['code' => $code, 'code_verifier' => str_repeat('w', 50)]);
+        [$status, $body] = $this->exchange(['code' => $code, 'code_verifier' => str_repeat('w', 50)]);
         self::assertSame([400, 'invalid_grant'], [$status, $body['code']]);
         self::assertStringContainsString('verifier does not match', $body['message']);
 
         // The wrong verifier spent the code: the right one is too late now.
-        [$status, $body] = self::exchange(['code' => $code, 'code_verifier' => $verifier]);
+        [$status, $body] = $this->exchange(['code' => $code, 'code_verifier' => $verifier]);
         self::assertSame([400, 'invalid_grant'], [$status, $body['code']]);
         self::assertStringContainsString('used already', $body['message']);
     }
 
     public function testTheExchangeRefusesAFieldItDoesNotRead(): void
     {
-        $controller = new ConnectController(mysqli_init(), new ServerStateStore());
+        $controller = new ConnectController(mysqli_init(), new ServerStateStore($this->stateDir));
         $body = ['code' => str_repeat('a', 43), 'code_verifier' => str_repeat('v', 50), 'scope' => 'write'];
         try {
             $controller->token($body);
@@ -299,7 +311,13 @@ final class AiConnectTest extends TestCase
     public function testTheCodeItselfIsNeverStored(): void
     {
         $verifier = str_repeat('v', 50);
-        $code = AiConnect::approve(new ServerStateStore(), 7, self::readScope(), self::challenge($verifier), 'Claude');
+        $code = AiConnect::approve(
+            new ServerStateStore($this->stateDir),
+            7,
+            self::readScope(),
+            self::challenge($verifier),
+            'Claude'
+        );
         $stored = (string) shell_exec('cat ' . escapeshellarg($this->stateDir) . '/tokens/connect.json');
         self::assertStringContainsString(hash('sha256', $code), $stored);
         self::assertStringNotContainsString($code, $stored);
@@ -307,7 +325,7 @@ final class AiConnectTest extends TestCase
 
     public function testAnExpiredApprovalIsRefusedAndSwept(): void
     {
-        $store = new ServerStateStore();
+        $store = new ServerStateStore($this->stateDir);
         $grant = ['user_id' => 1, 'scope' => 'read', 'code_challenge' => 'x', 'client_name' => 'A'];
         $store->issueConnectCode(hash('sha256', 'old'), $grant, -1);
         self::assertNull($store->consumeConnectCode(hash('sha256', 'old')));
@@ -328,11 +346,11 @@ final class AiConnectTest extends TestCase
             [['code' => str_repeat('a', 43), 'code_verifier' => 'short'], 'code_verifier must be'],
             ] as [$payload, $want]
         ) {
-            [$status, $body] = self::exchange($payload);
+            [$status, $body] = $this->exchange($payload);
             self::assertSame(400, $status, json_encode($payload));
             self::assertStringContainsString($want, $body['message']);
         }
-        [$status, $body] = self::exchange(['code' => str_repeat('a', 43), 'code_verifier' => str_repeat('v', 50)]);
+        [$status, $body] = $this->exchange(['code' => str_repeat('a', 43), 'code_verifier' => str_repeat('v', 50)]);
         self::assertSame([400, 'invalid_grant'], [$status, $body['code']]);
     }
 }

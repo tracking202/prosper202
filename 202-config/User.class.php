@@ -5,6 +5,12 @@ class User
     private static $db;
     private $userRoles; // Added property definition
 
+    /** The user this object was built for, when its row was read. */
+    private ?int $userId = null;
+
+    /** Whether that user may act, read with the row; null when no row was read. */
+    private ?\Prosper202\User\UserStanding $standing = null;
+
     public function __construct($user_id)
     {
         try {
@@ -28,34 +34,43 @@ class User
 
         $this->userRoles = [];
 
+        // No session, no user to read.
+        $id = filter_var($user_id, FILTER_VALIDATE_INT);
+        if ($id === false || $id <= 0) {
+            return;
+        }
+
         // A read that fails throws, so no page answers as though the user had
-        // no roles: connect.php's handler records it and shows the database
-        // error page. Only a missing 202_users (1146) answers, as
-        // is_installed() reads it: not installed, so no account (index.php
-        // and the setup pages load connect.php before the tables exist).
-        $db = self::$db;
-        $mysql['user_id'] = $db->real_escape_string((string) $user_id);
-        $sql = "SELECT user_id FROM 202_users WHERE user_id = '" . $mysql['user_id'] . "'";
+        // no roles, nor as though they may or may not act: connect.php's
+        // handler records it and shows the database error page. Only a
+        // missing 202_users (1146) answers, as is_installed() reads it: not
+        // installed, so no account (index.php and the setup pages load
+        // connect.php before the tables exist).
         try {
-            $results = $db->query($sql);
-        } catch (\mysqli_sql_exception $e) {
-            // The same answer under a report mode that throws (connect.php's
-            // STRICT alone answers false), as is_installed() gives.
-            if ((int) $e->getCode() !== 1146) {
+            $standing = \Prosper202\User\UserStanding::read(self::$db, $id);
+        } catch (\Prosper202\Database\Exceptions\QueryException $e) {
+            if ($e->getCode() !== 1146) {
                 throw $e;
             }
             return;
         }
-        if ($results === false) {
-            if ($db->errno !== 1146) {
-                throw self::queryFailed($db);
-            }
-            return;
+        $this->userId = $id;
+        $this->standing = $standing;
+        // A user who may not act holds no permission, whatever their roles.
+        if ($standing->canAct()) {
+            $this->loadRoles($id);
         }
-        $row = p202FetchRow($results, $sql);
-        if ($row !== null) {
-            $this->loadRoles($row['user_id']);
-        }
+    }
+
+    /**
+     * Whether the user may act, as read when this object was built, for that
+     * user only; null for another user, or when no row was read (no session,
+     * the install, key and upgrade pages, no 202_users yet). AUTH reads the
+     * session's user here rather than asking the database again.
+     */
+    public function standingOf(int $userId): ?\Prosper202\User\UserStanding
+    {
+        return $this->userId === $userId ? $this->standing : null;
     }
 
     protected function loadRoles($user_id)

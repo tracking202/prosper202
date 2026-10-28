@@ -81,6 +81,32 @@ case "$ask" in
                 "$click" "$(printf '%s' "$err" | jq -r '.error.field_errors.items // .error.message' 2>/dev/null | cut -c1-160)"
         fi
         ;;
+    # Text ads (setup-text-ads.json): an ad is a campaign's or an advanced
+    # landing page's, and a tracker carries the one its link shows.
+    *"EVAL Spring Ad"*)
+        campaign=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign B")][0].aff_campaign_id')
+        ad=$(p202 text-ad create --text-ad-name "EVAL Spring Ad" --text-ad-headline "Spring running shoes sale" \
+            --text-ad-description "Up to 40% off trail and road shoes." --text-ad-display-url example.com/spring \
+            --aff-campaign-id "$campaign" --idempotency-key "eval-spring-ad-$run_id" --json | jq -r '.data.text_ad_id')
+        tracker=$(p202 tracker list --all --json | jq -r --arg c "$campaign" '[.data[] | select((.aff_campaign_id|tostring)==$c and (.rotator_id|tostring)=="0")][0].tracker_id // empty')
+        if [ -z "$tracker" ]; then
+            printf 'Created text ad %s, "EVAL Spring Ad", for EVAL Campaign B (campaign %s). EVAL Campaign B has no tracking link yet (`p202 tracker list`), so the ad is on none; make one with `p202 tracker create-with-url --aff-campaign-id %s --text-ad-id %s`.\n' "$ad" "$campaign" "$campaign" "$ad"
+        else
+            p202 tracker update "$tracker" --text-ad-id "$ad" --json >/dev/null
+            printf 'Created text ad %s, "EVAL Spring Ad", for EVAL Campaign B (campaign %s), and put it on EVAL Campaign B'"'"'s tracking link: tracker %s now carries text ad %s.\n' "$ad" "$campaign" "$tracker" "$ad"
+        fi
+        ;;
+    *"EVAL Orphan Ad"*)
+        # No campaign or page named: the create is refused (no link would
+        # offer the ad), and the refusal becomes the question.
+        if err=$(p202 text-ad create --text-ad-name "EVAL Orphan Ad" --text-ad-headline "Fast shipping" \
+                --text-ad-description "Orders ship the same day." --text-ad-display-url example.com/ship --json 2>&1 >/dev/null); then
+            printf 'Created EVAL Orphan Ad, for no campaign.\n'
+        else
+            printf 'I have not created EVAL Orphan Ad: a text ad belongs to a campaign or to an advanced landing page, whose links offer it (%s). Which campaign (or advanced landing page) is it for?\n' \
+                "$(printf '%s' "$err" | jq -r '.error.message' 2>/dev/null | cut -c1-160)"
+        fi
+        ;;
     # Tracking links, the key's identity and rotator URL rules
     # (setup-links.json). First: the asks name campaigns and "add".
     *"Google Ads fills in the keyword"*)
@@ -111,6 +137,27 @@ case "$ask" in
             --criteria-json '[{"type":"ip","statement":"is","value":"203.0.113.50"}]' \
             --redirects-json '[{"redirect_url":"https://eval-ip-rule.example/landing","weight":"100","name":"EVAL IP rule"}]' --json >/dev/null
         printf 'Added rule "EVAL IP 203.0.113.50" to EVAL Geo Split (redirector %s): visitors from 203.0.113.50 go to https://eval-ip-rule.example/landing; everyone else still follows the existing rules and the default.\n' "$rotator"
+        ;;
+    # A redirector's rule set (rotator-rules.json): a rule ahead of the
+    # catch-all is a change to the set's order, so the set is read, edited
+    # and sent back whole; the catch-all goes back with its id.
+    *"EVAL Rule Set redirector, split visitors from 203.0.113.60"*)
+        rotator=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name=="EVAL Rule Set")][0].id')
+        rules=$(p202 rotator get "$rotator" --json | jq -c '[{rule_name: "EVAL 203.0.113.60 split", splittest: 1,
+            criteria: [{type: "ip", value: "203.0.113.60"}],
+            redirects: [{redirect_url: "https://eval-split-a.example/", weight: 50, name: "A"},
+                        {redirect_url: "https://eval-split-b.example/", weight: 50, name: "B"}]}] + .data.rules')
+        p202 rotator set-rules "$rotator" --rules "$rules" --dry-run --json >/dev/null
+        p202 rotator set-rules "$rotator" --rules "$rules" --json >/dev/null
+        printf 'EVAL Rule Set (redirector %s) now tries a new first rule: visitors from 203.0.113.60 are split 50/50 between https://eval-split-a.example/ and https://eval-split-b.example/. The catch-all rule is kept as it was, second, so everyone else still goes to https://eval-catchall.example/.\n' "$rotator"
+        ;;
+    *"EVAL Rule Set redirector sent visitors from 203.0.113.62"*)
+        rotator=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name=="EVAL Rule Set")][0].id')
+        rules=$(p202 rotator get "$rotator" --json | jq -c '[{rule_name: "EVAL 203.0.113.62", criteria: [{type: "ip", value: "203.0.113.62"}],
+            redirects: [{redirect_url: "https://eval-preview.example/"}]}] + .data.rules')
+        changes=$(p202 rotator set-rules "$rotator" --rules "$rules" --dry-run --json |
+            jq -r '[.data.changes.rules[] | "\(.action) \(.rule_name)\(if .position then " at \(.position)" else "" end)"] | join("; ")')
+        printf 'Nothing is changed yet. Per `p202 rotator set-rules %s --dry-run`, the set would be: %s. The new rule sends visitors from 203.0.113.62 to https://eval-preview.example/, ahead of the catch-all, which stays as it is for everyone else. Say so and I will make the change.\n' "$rotator" "$changes"
         ;;
     # The Update section (update.json). First, because two of the asks say
     # "delete" or "cost" and must not fall through to the general branches.
@@ -301,6 +348,21 @@ case "$ask" in
         printf 'Clicks on "%s" by IP address (every click, filtered included):\n' "$kw"
         printf '%s' "$rows" | jq -r '.data[] | "\(.name): \(.total_clicks) clicks"'
         ;;
+    *"different keywords containing"*)
+        # A page is 50 rows: read on with --offset until the answer says no
+        # rows remain (truncated false), then count.
+        kw=$(printf '%s' "$ask" | grep -oE "containing '[^']+'" | sed "s/containing '//; s/'\$//")
+        n=0
+        offset=0
+        while :; do
+            page=$(p202 report breakdown --breakdown keyword --keyword "$kw" --period alltime --offset "$offset" --json)
+            rows=$(printf '%s' "$page" | jq '.data | length')
+            n=$((n + rows))
+            [ "$(printf '%s' "$page" | jq -r '.truncated')" = "true" ] && [ "$rows" -gt 0 ] || break
+            offset=$((offset + rows))
+        done
+        printf '%s different keywords containing "%s" have sent clicks: every page of `p202 report breakdown --breakdown keyword --keyword`, read until it said no rows remain.\n' "$n" "$kw"
+        ;;
     *"browser language"*)
         # There is no language dimension: say so with the ones there are,
         # read from the server's own refusal, and give no figures.
@@ -370,6 +432,31 @@ case "$ask" in
             rows=$(printf '%s' "$breakdown" | jq -r '.data[] | "- \(.transaction_id // "no transaction id") \(.amount): " + (if .counted then "counts" else "does not count (\(.not_counted_reason)\(if .superseded_reason then ", " + .superseded_reason else "" end)): \(.explanation)" end)')
             printf 'The sale %s is on click %s, which is worth %s. Its conversions, from `p202 click conversions %s`:\n%s\n' \
                 "$tx" "$click" "$value" "$click" "$rows"
+        fi
+        ;;
+    *"offline conversion import"*)
+        # The file decides what it sends; read its own count and reasons
+        # rather than filtering the conversion list by hand.
+        summary=$(p202 conversion offline-export --format google --days 30 --summary --json)
+        printf 'The Google Ads offline conversion file (`p202 conversion offline-export --format google --days 30 --summary`) would hold %s of your %s conversions from the last 30 days. The others are left out:\n' \
+            "$(printf '%s' "$summary" | jq -r '.data.rows')" "$(printf '%s' "$summary" | jq -r '.data.conversions')"
+        printf '%s' "$summary" | jq -r '.data as $d | $d.left_out | to_entries[] | select(.value > 0) | "- \(.value): \($d.reasons[.key])"'
+        ;;
+    *"guess from the visitor's IP address"*)
+        # How each conversion's click was found is stored on it (match
+        # method); same_ip is a pixel's address fallback, a guess. Read the
+        # campaign's split from the server rather than counting rows by hand.
+        name=$(printf '%s' "$ask" | grep -oE 'EVAL Campaign [A-Z]' | head -1)
+        campaign=$(p202 campaign list --all --json | jq -r --arg n "$name" '[.data[] | select(.aff_campaign_name==$n)][0].aff_campaign_id // empty')
+        if [ -z "$campaign" ]; then
+            printf 'I found no campaign named "%s" in `p202 campaign list`, so there is nothing to count.\n' "$name"
+        else
+            split=$(p202 conversion match-methods --aff-campaign-id "$campaign" --json)
+            guessed=$(printf '%s' "$split" | jq -r '[.data[] | select(.match_method=="same_ip") | .conversions] | add // 0')
+            matched=$(printf '%s' "$split" | jq -r '[.data[] | select(.match_method=="click_id" or .match_method=="cookie" or .match_method=="visitor_id") | .conversions] | add // 0')
+            unknown=$(printf '%s' "$split" | jq -r '[.data[] | select(.match_method=="unknown") | .conversions] | add // 0')
+            printf '%s of %s'"'"'s conversions were guessed from the visitor'"'"'s IP address (match method same_ip, per `p202 conversion match-methods --aff-campaign-id %s`): nothing named their click, so the pixel credited the latest click from that address. %s were matched to the click that made them (by a click id, a cookie or a visitor id), and %s were recorded before Prosper202 kept the method.\n' \
+                "$guessed" "$name" "$campaign" "$matched" "$unknown"
         fi
         ;;
     *"EVAL ANDROID"*)
@@ -544,6 +631,26 @@ case "$ask" in
             "$day" "$tz" "$(printf '%s' "$preview" | jq -r '.data.clicks')" \
             "$(printf '%s' "$preview" | jq -r '[.data.rows | to_entries[] | select(.value > 0) | "\(.key) \(.value)"] | join(", ")')" "$day"
         ;;
+    *PayKickstart*"IPN secret key"*)
+        # The key from the ask is the account's one PayKickstart key (the
+        # flag replaces the stored list); the reply never repeats it.
+        key=$(printf '%s' "$ask" | sed -n 's/.*IPN secret key \([^ ]*\).*/\1/p')
+        uid=$(p202 config test --json | jq -r '.data.user_id')
+        p202 user prefs update "$uid" --paykickstart-ipn-secret-keys "$key" --json >/dev/null
+        entry=$(p202 system integrations --json | jq -c '.data.integrations[] | select(.integration=="paykickstart")')
+        printf 'Saved the key: %s PayKickstart IPN secret key(s) stored, per `p202 system integrations`. Paste %s into the IPN Integration tab of each product, and make the campaign'"'"'s offer URL your PayKickstart checkout link with subid=[[subid]] added, so each IPN names the click its sale is recorded on.\n' \
+            "$(printf '%s' "$entry" | jq -r '.keys_stored')" "$(printf '%s' "$entry" | jq -r '.url')"
+        ;;
+    *JVZoo*"Affiliate IPN"*)
+        # One JVZIPN key verifies both JVZoo URLs; an affiliate pastes the
+        # affiliate one, whose click is the tid. The reply never repeats the key.
+        key=$(printf '%s' "$ask" | sed -n 's/.*JVZIPN secret key \([^ ]*\).*/\1/p')
+        uid=$(p202 config test --json | jq -r '.data.user_id')
+        p202 user prefs update "$uid" --jvzoo-ipn-secret-key "$key" --json >/dev/null
+        entry=$(p202 system integrations --json | jq -c '.data.integrations[] | select(.integration=="jvzoo")')
+        printf 'Saved your JVZIPN secret key (stored: %s, per `p202 system integrations`). Paste %s into JVZoo'"'"'s Affiliate IPN (Affiliates > Approved Products > the product'"'"'s Integrations), and make the campaign'"'"'s offer URL your JVZoo affiliate link with ?tid=[[subid]] added, so each notification names the click its sale is recorded on.\n' \
+            "$(printf '%s' "$entry" | jq -r '.secret_stored')" "$(printf '%s' "$entry" | jq -r '.url')"
+        ;;
     *"paste into ClickBank"*)
         entry=$(p202 system integrations --json | jq -c '.data.integrations[] | select(.integration=="clickbank")')
         printf 'Paste %s into ClickBank as the Instant Notification (INS) URL, per `p202 system integrations`. The ClickBank secret key is %s.\n' \
@@ -557,6 +664,34 @@ case "$ask" in
             printf 'Last sign-in attempts, per `p202 --profile eval-viewer system login-log`:\n%s\n' "$out"
         else
             printf 'The eval-viewer key was refused: %s Hint: %s\n' \
+                "$(printf '%s' "$out" | jq -r '.error.message')" "$(printf '%s' "$out" | jq -r '.error.hint')"
+        fi
+        ;;
+    *"GeoIP database this install uses"*)
+        # The age is the build date the server reads from the file; the
+        # refresh is set up in the web UI, so the answer names the page.
+        info=$(p202 system info --json)
+        printf 'The GeoIP database was built on %s, %s days ago, and is %s, per `p202 system info`. ' \
+            "$(printf '%s' "$info" | jq -r '.data.geoip_database.built_on // "an unknown day"')" \
+            "$(printf '%s' "$info" | jq -r '.data.geoip_database.age_days // "an unknown number of"')" \
+            "$(printf '%s' "$info" | jq -r '.data.geoip_database.state')"
+        if [ "$(printf '%s' "$info" | jq -r '.data.geoip_refresh.configured')" = true ]; then
+            printf 'It is refreshed weekly with the stored MaxMind account; the last run ended %s.\n' \
+                "$(printf '%s' "$info" | jq -r '.data.geoip_refresh.last_outcome // "not yet"')"
+        else
+            printf 'Nothing keeps it up to date: no MaxMind account is stored. Enter a free GeoLite account ID and licence key under Account › Settings › GeoIP database, and the cron job refreshes it weekly.\n'
+        fi
+        ;;
+    *"eval-narrow profile"*)
+        # As for eval-viewer: the key asked for, and a refusal reported with
+        # the scope and the remedy its error gives, never another key.
+        source=$(p202 --profile eval-narrow ppc-network list --all --json | jq -r '[.data[] | select(.ppc_network_name=="EVAL Narrow Source")][0].ppc_network_id // empty')
+        if [ -z "$source" ]; then
+            printf 'I found no traffic source named "EVAL Narrow Source" (`p202 --profile eval-narrow ppc-network list`), so nothing was renamed.\n'
+        elif out=$(p202 --profile eval-narrow ppc-network update "$source" --ppc-network-name "EVAL Narrow Renamed" --json 2>&1); then
+            printf 'Renamed traffic source %s to "EVAL Narrow Renamed" with the eval-narrow key.\n' "$source"
+        else
+            printf 'The eval-narrow key was refused, so nothing was renamed: %s Hint: %s\n' \
                 "$(printf '%s' "$out" | jq -r '.error.message')" "$(printf '%s' "$out" | jq -r '.error.hint')"
         fi
         ;;

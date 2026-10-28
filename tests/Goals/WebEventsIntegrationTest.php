@@ -95,7 +95,7 @@ final class WebEventsIntegrationTest extends TestCase
             $e->eventId, $e->name, $e->occurredAt, $this->clock, $e->properties, $e->revenue, $e->revenueTrusted, $e->transactionId, false, $e->clockedByServer
         ), $events);
 
-        return $engine->ingest(1, $engine->clickSubject(1, $clickId), $stamped);
+        return $engine->ingest(1, $engine->clickSubject(1, $clickId), $stamped, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
     }
 
     private function pixels(): void

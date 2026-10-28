@@ -16,6 +16,9 @@ use Prosper202\Database\Schema\TableRegistry;
  * It is minted by one idempotent function (InstallTokenKey::ensure()) from
  * both paths that create a 1.9.76 schema — the installer and the
  * 1.9.75 → 1.9.76 rung — because a fresh install never runs a rung.
+ * The install's id (Prosper202\Database\InstallId), which names the API
+ * state directory, is minted the same way, by the installer and by every
+ * rung that reconciles this table (the 1.9.78 → 1.9.79 rung among them).
  *
  * No user owns a row here, so the user-deletion purge never touches it.
  */
@@ -28,7 +31,36 @@ final class SecretTables
     {
         return [
             self::deploymentSecrets(),
+            self::geoipRefresh(),
         ];
+    }
+
+    /**
+     * The GeoIP database refresh (Prosper202\GeoIp\GeoIpRefresh): the
+     * MaxMind account ID and licence key it downloads with, stored as the
+     * network secrets on 202_users_pref are and never served back, and how
+     * its last run ended. One row, refresh_id 1, for the installation: the
+     * database file is the install's, not a user's.
+     */
+    public static function geoipRefresh(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::GEOIP_REFRESH,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::GEOIP_REFRESH . "` (
+                `refresh_id` tinyint(3) unsigned NOT NULL,
+                `account_id` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+                `license_key` varchar(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+                `last_attempt_at` int(10) unsigned DEFAULT NULL,
+                `last_outcome` varchar(16) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `last_error` varchar(1000) DEFAULT NULL,
+                `last_checked_at` int(10) unsigned DEFAULT NULL,
+                `last_refreshed_at` int(10) unsigned DEFAULT NULL,
+                `archive_sha256` char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `installed_build_epoch` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`refresh_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+              COMMENT='The GeoIP database refresh: MaxMind credentials and the last run'"
+        );
     }
 
     public static function deploymentSecrets(): SchemaDefinition

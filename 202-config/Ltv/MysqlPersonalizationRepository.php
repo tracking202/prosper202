@@ -328,14 +328,15 @@ final class MysqlPersonalizationRepository
     }
 
     /**
-     * Delete rows past their replay window (ltv_maintenance sweep).
+     * Delete up to $limit rows past their replay window (LtvMaintenance's
+     * purge, which calls again while a call deletes $limit).
      */
-    public function purgeExpired(int $now): int
+    public function purgeExpired(int $now, int $limit): int
     {
         $stmt = $this->conn->prepareWrite(
-            'DELETE FROM 202_personalization_tokens WHERE replay_until < ?'
+            'DELETE FROM 202_personalization_tokens WHERE replay_until < ? LIMIT ?'
         );
-        $this->conn->bind($stmt, 'i', [$now]);
+        $this->conn->bind($stmt, 'ii', [$now, max(1, $limit)]);
 
         return $this->conn->executeUpdate($stmt);
     }

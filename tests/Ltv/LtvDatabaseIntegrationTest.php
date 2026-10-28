@@ -138,7 +138,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
     {
         $this->insertClick(2000);
 
-        $result = p202RecordConversion(self::$db, $this->log(2000), '', true, '10.0', 'ORD-LTV-1', [
+        $result = p202RecordConversion(self::$db, $this->log(2000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'ORD-LTV-1', [
             'customer_ref' => 'cust-100',
             'customer_ref_type' => 'merchant_id',
             'customer_crm' => ['first_name' => 'Jane', 'email' => 'jane@acme.com', 'company' => 'Acme  Corp'],
@@ -178,9 +178,9 @@ final class LtvDatabaseIntegrationTest extends TestCase
         $this->insertClick(2000);
         $customer = ['customer_ref' => 'cust-200', 'customer_ref_type' => 'custom'];
 
-        $first = p202RecordConversion(self::$db, $this->log(2000), '', true, '10.0', 'ORD-A', $customer, []);
+        $first = p202RecordConversion(self::$db, $this->log(2000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'ORD-A', $customer, []);
         // Exact replay: no new conversion, no new ledger event, rollups unchanged.
-        $replay = p202RecordConversion(self::$db, $this->log(2000), '', true, '10.0', 'ORD-A', $customer, []);
+        $replay = p202RecordConversion(self::$db, $this->log(2000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'ORD-A', $customer, []);
         self::assertTrue($replay['duplicate']);
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_events'));
 
@@ -189,7 +189,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
         // amount comes from the log's payout.
         $secondLog = $this->log(2000);
         $secondLog['click_payout'] = '15.0';
-        $second = p202RecordConversion(self::$db, $secondLog, '', true, '15.0', 'ORD-B', [], []);
+        $second = p202RecordConversion(self::$db, $secondLog, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '15.0', 'ORD-B', [], []);
         self::assertFalse($second['duplicate']);
         self::assertNotSame((int) $first['conv_id'], (int) $second['conv_id']);
 
@@ -293,10 +293,10 @@ final class LtvDatabaseIntegrationTest extends TestCase
     {
         $this->insertClick(3000);
         $this->insertClick(3001);
-        p202RecordConversion(self::$db, $this->log(3000), '', true, '10.0', 'M-1', ['customer_ref' => 'merge-src', 'customer_crm' => ['company' => 'Solo Inc']], []);
+        p202RecordConversion(self::$db, $this->log(3000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'M-1', ['customer_ref' => 'merge-src', 'customer_crm' => ['company' => 'Solo Inc']], []);
         $dstLog = $this->log(3001);
         $dstLog['click_payout'] = '20.0';
-        p202RecordConversion(self::$db, $dstLog, '', true, '20.0', 'M-2', ['customer_ref' => 'merge-dst'], []);
+        p202RecordConversion(self::$db, $dstLog, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '20.0', 'M-2', ['customer_ref' => 'merge-dst'], []);
 
         $srcId = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref='merge-src'");
         $dstId = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref='merge-dst'");
@@ -417,7 +417,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
         $this->insertClick(5001);
         $log = $this->log(5000);
         $log['click_payout'] = '-7.5';
-        p202RecordConversion(self::$db, $log, '', true, '-7.5', 'NEG-1', ['customer_ref' => 'neg-1'], []);
+        p202RecordConversion(self::$db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '-7.5', 'NEG-1', ['customer_ref' => 'neg-1'], []);
 
         $event = $this->row("SELECT conv_id, event_type, amount FROM 202_revenue_events WHERE event_type='adjustment' LIMIT 1");
         self::assertNotNull($event, 'a negative payout must not ledger as a purchase');
@@ -430,7 +430,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
         // A real purchase for the same customer, then void the negative
         // conversion: its 'void-nc:' marker must not subtract the real order
         // — neither on the immediate path nor when reconciled from scratch.
-        p202RecordConversion(self::$db, $this->log(5001), '', true, '10.0', 'NEG-REAL', ['customer_ref' => 'neg-1'], []);
+        p202RecordConversion(self::$db, $this->log(5001), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'NEG-REAL', ['customer_ref' => 'neg-1'], []);
         $customers = new MysqlCustomerRepository(self::$conn);
         $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
         (new \Prosper202\Conversion\MysqlConversionRepository(self::$conn))->softDelete((int) $event['conv_id'], 1);
@@ -447,7 +447,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
     public function testSoftDeleteNetsLineItemsOutOfProductRevenue(): void
     {
         $this->insertClick(5100);
-        $res = p202RecordConversion(self::$db, $this->log(5100), '', true, '10.0', 'DEL-1', ['customer_ref' => 'del-1'], [
+        $res = p202RecordConversion(self::$db, $this->log(5100), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'DEL-1', ['customer_ref' => 'del-1'], [
             ['sku' => 'SKU-D', 'name' => 'Widget', 'quantity' => 2, 'unit_price' => 5.0, 'amount' => 10.0],
         ]);
         $convId = (int) $res['conv_id'];
@@ -919,12 +919,12 @@ final class LtvDatabaseIntegrationTest extends TestCase
     {
         $this->insertClick(5200);
         $this->insertClick(5201);
-        p202RecordConversion(self::$db, $this->log(5200), '', true, '10.0', 'CF-A', ['customer_ref' => 'cf-a'], [
+        p202RecordConversion(self::$db, $this->log(5200), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'CF-A', ['customer_ref' => 'cf-a'], [
             ['sku' => 'SKU-CF', 'name' => 'Widget', 'quantity' => 1, 'unit_price' => 10.0, 'amount' => 10.0],
         ]);
         $logB = $this->log(5201);
         $logB['click_payout'] = '20.0';
-        p202RecordConversion(self::$db, $logB, '', true, '20.0', 'CF-B', ['customer_ref' => 'cf-b'], [
+        p202RecordConversion(self::$db, $logB, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '20.0', 'CF-B', ['customer_ref' => 'cf-b'], [
             ['sku' => 'SKU-CF', 'name' => 'Widget', 'quantity' => 2, 'unit_price' => 10.0, 'amount' => 20.0],
         ]);
 
@@ -1495,10 +1495,10 @@ CHILD;
         $this->insertClick(8003, 0.0, 2.5);
         $log = $this->log(8000);
         $log['click_payout'] = '20.0';
-        p202RecordConversion(self::$db, $log, '', true, '20.0', 'CAC-1', [
+        p202RecordConversion(self::$db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '20.0', 'CAC-1', [
             'customer_ref' => 'cac-1', 'customer_crm' => ['first_name' => 'Jane', 'last_name' => 'Doe'],
         ], []);
-        p202RecordConversion(self::$db, $this->log(8001), '', true, '10.0', 'CAC-2', ['customer_ref' => 'cac-2'], []);
+        p202RecordConversion(self::$db, $this->log(8001), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'CAC-2', ['customer_ref' => 'cac-2'], []);
 
         $ltv = new \Prosper202\Ltv\MysqlLtvRepository(self::$conn);
 
@@ -1557,7 +1557,7 @@ CHILD;
     public function testCohortMonthsAreTheAccountsCalendarMonths(): void
     {
         $this->insertClick(8100);
-        p202RecordConversion(self::$db, $this->log(8100), '', true, '12.0', 'TZ-1', ['customer_ref' => 'tz-1'], []);
+        p202RecordConversion(self::$db, $this->log(8100), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '12.0', 'TZ-1', ['customer_ref' => 'tz-1'], []);
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_events'), 'the conversion recorded its revenue');
         self::$db->query('UPDATE 202_customers SET first_seen_time = ' . gmmktime(3, 0, 0, 11, 1, 2023));
         // 00:00 on 1 November in New York, an hour after it was first seen there.
@@ -1576,6 +1576,557 @@ CHILD;
         self::assertSame([1, 12.0, 0.0, 12.0], [$ny[0]['customers'], $ny[0]['total_revenue'], $ny[0]['m5_plus'], $ny[0]['ltv_per_customer']], 'numbers, not DECIMAL strings');
     }
 
+    /**
+     * The fields of an LTV answer that hold text, the caller's own or a
+     * name, which may be all digits.
+     */
+    private const LTV_TEXT_FIELDS = [
+        'primary_ref', 'first_name', 'last_name', 'email', 'phone', 'company', 'address_line1', 'address_line2',
+        'city', 'region', 'postal_code', 'country', 'status', 'alias_type', 'alias_value', 'external_sub_id',
+        'plan_name', 'currency', 'billing_interval', 'event_type', 'source', 'external_ref', 'transaction_id',
+        'sku', 'product_name', 'event_name', 'campaign_name', 'landing_page', 'name', 'url', 'basis',
+        'dry_run', 'action', 'resource', 'mode', 'effect',
+        'top_campaign_name', 'top_event_name', 'external_product_id', 'domain', 'normalized_name', 'webhook_url',
+        'subscribed_events', 'webhook_status', 'last_response_body', 'field_key', 'label', 'field_type', 'provider',
+        'cohort_month', 'timezone', 'breakdown', 'refused', 'fallback_reason',
+    ];
+
+    /**
+     * Values typed by something other than the column: a custom field's by
+     * its field, a select field's choices (text), an integration's config
+     * (stored as sent).
+     */
+    private const LTV_FREE_FORM_FIELDS = ['custom_fields', 'options', 'config'];
+
+    /**
+     * Every customer read answers money as numbers and counts as integers,
+     * as GET /ltv/summary has since 1.9.77. GET /ltv/customers and
+     * /ltv/customers/{id} (its subscriptions, revenue events and line items)
+     * answered mysqli's DECIMAL strings ("54.12500", a quantity of "1.500"),
+     * and the engagement SUM()'s "1" for conversions, so one field read as
+     * a number from one endpoint and as text from another. Through the
+     * controller, on a real server: the types are the server's, which a fake
+     * connection would only repeat. Each answer is walked whole, so a
+     * DECIMAL column added later is seen as well as the ones named here.
+     */
+    public function testCustomerReadsServeNumbers(): void
+    {
+        [$ltv, $id] = $this->seedCustomerReads();
+        $answers = [
+            'summary' => $ltv->summary([]),
+            'customers' => $ltv->customers([]),
+            'customer' => $ltv->customerDetail($id),
+            'engagement' => $ltv->customerEngagement($id, []),
+            'next-offer' => $ltv->customerNextOffer($id),
+            'erase preview' => $ltv->deleteCustomerPreview($id),
+        ];
+        foreach ($answers as $read => $answer) {
+            self::assertNoNumericText($answer, $read);
+        }
+
+        $rollups = [54.125, 5.0, 29.99, 2, 1];
+        $of = static fn (array $c, string $orders, string $subs): array
+            => [$c['total_revenue'], $c['refunded_amount'], $c['mrr'], $c[$orders], $c[$subs]];
+        $summary = $answers['summary']['data'];
+        self::assertSame($rollups, $of($summary, 'total_orders', 'active_subscriptions'), 'the summary');
+        $customers = [
+            'list row' => $answers['customers']['data'][0],
+            'detail' => $answers['customer']['data'],
+            'erase preview' => $answers['erase preview']['data']['record'],
+        ];
+        foreach ($customers as $read => $customer) {
+            self::assertSame($rollups, $of($customer, 'order_count', 'active_subscription_count'), $read);
+            self::assertSame('0042', $customer['primary_ref'], "$read: text stays text");
+        }
+
+        $detail = $answers['customer']['data'];
+        self::assertSame(['5551234', '02134'], [$detail['phone'], $detail['postal_code']]);
+        self::assertSame(42.5, $detail['custom_fields']['score']);
+        self::assertSame('98765', $detail['aliases'][1]['alias_value']);
+        $sub = $detail['subscriptions'][0];
+        self::assertSame(
+            ['7002', 29.99, 29.99, 1],
+            [$sub['external_sub_id'], $sub['amount'], $sub['mrr'], $sub['billing_interval_count']]
+        );
+        self::assertSame([-5.0, 10.125, 49.0], array_column($detail['recent_events'], 'amount'));
+        self::assertSame('1001', $detail['recent_events'][2]['transaction_id']);
+        $items = array_merge(...array_column($detail['recent_events'], 'items'));
+        self::assertSame(
+            [['ADDON', 1.5, null, 10.125], ['7001', 2.0, 24.5, 49.0]],
+            array_map(
+                static fn (array $i): array => [$i['sku'], $i['quantity'], $i['unit_price'], $i['amount']],
+                $items
+            ),
+            'a quantity is a measure (1.5), and a unit price never sent stays null'
+        );
+
+        $engagement = $answers['engagement']['data'];
+        self::assertSame([[7, 1, 1]], array_map(
+            static fn (array $b): array => [$b['campaign_id'], $b['clicks'], $b['conversions']],
+            $engagement['browsing']
+        ));
+        self::assertSame([['signed_up', null], ['scroll_depth', 75.0]], array_map(
+            static fn (array $e): array => [$e['event_name'], $e['event_value']],
+            $engagement['events']
+        ), 'an event with no value stays null');
+
+        $offer = $answers['next-offer']['data'];
+        self::assertSame(
+            [7, 'engagement', 1],
+            [$offer['campaign_id'], $offer['why']['basis'], $offer['why']['clicks']]
+        );
+    }
+
+    /**
+     * docs/openapi.yaml's customer schemas name every key the answers carry,
+     * each with the JSON type it is served as, and no key they do not carry.
+     * A customer with no custom field value answered custom_fields as [], a
+     * list, where one with a value answered an object.
+     */
+    public function testCustomerAnswersHaveTheSpecsKeysAndTypes(): void
+    {
+        [$ltv, $id] = $this->seedCustomerReads();
+        $plain = (int) $ltv->upsertCustomer(['customer_ref' => '0043'])['data']['customer_id'];
+        $schemas = self::specSchemas();
+
+        foreach ($ltv->customers([])['data'] as $row) {
+            self::assertMatchesSchema($schemas, 'LtvCustomer', $row, 'GET /ltv/customers');
+        }
+        $plainDetail = $ltv->customerDetail($plain)['data'];
+        self::assertMatchesSchema($schemas, 'LtvCustomerDetail', $plainDetail, 'a customer with no custom field value');
+        $detail = $ltv->customerDetail($id)['data'];
+        self::assertMatchesSchema($schemas, 'LtvCustomerDetail', $detail, 'GET /ltv/customers/{id}');
+        $rows = [
+            'LtvCustomerAlias' => $detail['aliases'],
+            'LtvCustomerSubscription' => $detail['subscriptions'],
+            'LtvCustomerRevenueEvent' => $detail['recent_events'],
+            'LtvCustomerLineItem' => array_merge(...array_column($detail['recent_events'], 'items')),
+        ];
+        $engagement = $ltv->customerEngagement($id, [])['data'];
+        self::assertMatchesSchema($schemas, 'LtvCustomerEngagement', $engagement, 'GET /ltv/customers/{id}/engagement');
+        $rows['LtvBrowsedCampaign'] = $engagement['browsing'];
+        $rows['LtvEngagementEvent'] = $engagement['events'];
+        foreach ($rows as $schema => $list) {
+            self::assertNotSame([], $list, "$schema has a row to compare");
+            foreach ($list as $row) {
+                self::assertMatchesSchema($schemas, $schema, $row, $schema);
+            }
+        }
+    }
+
+    /**
+     * One customer with every part the customer reads answer: a number
+     * custom field, an alias, two sales with line items (one line with no
+     * unit price, a fractional quantity), a refund, a subscription, two
+     * engagement events (one with no value) and a converted click on
+     * campaign 7. Its references, phone, postal code and one sku are all
+     * digits, as a caller's may be.
+     *
+     * @return array{0: \Api\V3\Controllers\LtvController, 1: int}
+     */
+    private function seedCustomerReads(): array
+    {
+        self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id=7, user_id=1,
+            aff_campaign_name='Offer A', aff_campaign_url='https://example.com/a'");
+        $ltv = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        $ltv->createField(['field_key' => 'score', 'field_type' => 'number']);
+        $id = (int) $ltv->upsertCustomer([
+            'customer_ref' => '0042', 'phone' => '5551234', 'postal_code' => '02134',
+            'aliases' => [['type' => 'esp_id', 'value' => '98765']], 'custom_fields' => ['score' => 42.5],
+        ])['data']['customer_id'];
+        $ltv->recordRevenue([
+            'customer_id' => $id, 'amount' => 49, 'idempotency_key' => 'num-1', 'transaction_id' => '1001',
+            'items' => [['sku' => '7001', 'quantity' => 2, 'unit_price' => 24.5]],
+        ]);
+        $ltv->recordRevenue([
+            'customer_id' => $id, 'amount' => 10.125, 'idempotency_key' => 'num-2',
+            'items' => [['sku' => 'ADDON', 'quantity' => 1.5, 'amount' => 10.125]],
+        ]);
+        $ltv->recordRevenue([
+            'customer_id' => $id, 'amount' => -5, 'event_type' => 'refund', 'idempotency_key' => 'num-3',
+        ]);
+        $ltv->upsertSubscription([
+            'customer_id' => $id, 'external_sub_id' => '7002', 'plan_name' => 'Pro', 'amount' => 29.99,
+        ]);
+        $ltv->recordEngagementEvent(['customer_id' => $id, 'event' => 'scroll_depth', 'value' => 75]);
+        $ltv->recordEngagementEvent(['customer_id' => $id, 'event' => 'signed_up']);
+        self::$db->query('INSERT INTO 202_clicks SET click_id=9700, user_id=1, aff_campaign_id=7, click_payout=12.5,
+            click_cpc=0.25, click_lead=1, click_time=UNIX_TIMESTAMP() - 600');
+        self::$db->query("INSERT INTO 202_clicks_tracking SET click_id=9700, c1_id=0, c2_id=0, c3_id=0, c4_id=0,
+            customer_id=$id");
+
+        return [$ltv, $id];
+    }
+
+    /**
+     * Every /ltv read answers money and measures as JSON numbers and counts
+     * and times as integers, as the customer reads above do. The rest of
+     * /ltv answered mysqli's text: GET /ltv/subscriptions a subscription's
+     * amount ("29.99000") where the customer detail answered 29.99, the
+     * breakdowns every amount and their order counts ("4"), the products a
+     * price, the companies and ABM reads their money, averages and times.
+     * The reads are the router's own list, so a GET route added to the
+     * group fails here until it is held to the same.
+     */
+    public function testEveryLtvReadServesNumbers(): void
+    {
+        $seed = $this->seedEveryRead();
+        $answers = [];
+        foreach (self::everyLtvRead($seed) as $label => [$route, $read]) {
+            $answers[$label] = $read();
+            self::assertNoNumericText($answers[$label], $label);
+        }
+
+        $first = static fn (string $label): array => $answers[$label]['data'][0];
+        $sub = $first('GET /ltv/subscriptions');
+        self::assertSame([29.99, 29.99, 54.125, 1], [$sub['amount'], $sub['mrr'], $sub['customer_ltv'], $sub['billing_interval_count']]);
+        self::assertSame('7002', $sub['external_sub_id'], 'text stays text');
+
+        // The click-acquired customer: $20 on one order, $0.25 a click.
+        $acquisition = static fn (array $r): array => [
+            $r['customers'], $r['total_revenue'], $r['avg_ltv'], $r['total_orders'], $r['aov'], $r['repeat_rate'],
+            $r['mrr'], $r['spend'], $r['cac'], $r['ltv_cac'],
+        ];
+        self::assertSame([1, 20.0, 20.0, 1, 20.0, 0.0, 0.0, 0.5, 0.5, 40.0], $acquisition($first('GET /ltv/breakdown?by=campaign')));
+        $byAccount = $first('GET /ltv/breakdown?by=ppc_account');
+        self::assertSame([1, 20.0, 20.0, 1, 20.0, 0.0, 0.0, 0.25, 0.25, 80.0], $acquisition($byAccount));
+        self::assertSame('4455', $byAccount['name'], 'a name of digits stays text');
+        self::assertSame([['7001', 1, 1, 2.0, 49.0, 49.0, 49.0, 0.0], ['ADDON', 1, 1, 1.5, 10.125, 10.125, 10.125, 0.0]], array_map(
+            static fn (array $r): array => [
+                $r['sku'], $r['customers'], $r['orders'], $r['units'], $r['total_revenue'], $r['avg_revenue_per_customer'],
+                $r['aov'], $r['repeat_rate'],
+            ],
+            $answers['GET /ltv/breakdown?by=product']['data']
+        ), 'units is a measure (1.5)');
+
+        self::assertSame([12.5, null, null], array_column($answers['GET /ltv/products']['data'], 'price'), 'a product with no price stays null');
+        self::assertSame(12.5, $answers['PATCH /ltv/products/{id}']['data']['price']);
+        self::assertSame(12.5, $answers['DELETE /ltv/products/{id}?dry_run=1']['data']['record']['price']);
+
+        $rollup = static fn (array $r): array => [$r['contacts'], $r['order_count'], $r['total_revenue'], $r['mrr']];
+        [$acme, $beta] = $answers['GET /ltv/companies']['data'];
+        self::assertSame([1, 1, 20.0, 0.0], $rollup($acme));
+        self::assertGreaterThan(0, $acme['last_activity_time']);
+        self::assertSame([0, 0, 0.0, 0.0, 0], [...$rollup($beta), $beta['last_activity_time']], 'a company with no customer');
+
+        $account = $first('GET /ltv/abm');
+        self::assertSame(['Acme', 1, 20.0, 0.0, 1, 1, 30.0, 0.0], [
+            $account['company'], $account['contacts'], $account['total_revenue'], $account['mrr'],
+            $account['engagements'], $account['custom_events'], $account['avg_time_on_page'], $account['avg_scroll_depth'],
+        ]);
+        $contact = $first('GET /ltv/abm/company');
+        self::assertSame([1, 20.0, 0.0, 1, 30.0], [
+            $contact['order_count'], $contact['total_revenue'], $contact['mrr'], $contact['engagements'], $contact['avg_time_on_page'],
+        ]);
+        self::assertIsInt($contact['last_activity'], 'a time is an integer (GREATEST() answered text)');
+        self::assertGreaterThan(0, $contact['last_activity']);
+
+        $fields = array_column($answers['GET /ltv/fields']['data'], 'options', 'field_key');
+        self::assertSame(['10', '20'], $fields['tier'], "a select field's choices stay text");
+        self::assertSame(['plan' => '7'], $answers['GET /ltv/integrations']['data'][0]['config'], 'a config is as sent');
+    }
+
+    /**
+     * docs/openapi.yaml types every /ltv read: each one's 200 answer refers
+     * to a components schema, and the answer has that schema's keys, each of
+     * the JSON type it gives, into every schema it refers to. Until 1.9.79
+     * all but the customer reads were `additionalProperties: true`, and
+     * GET /ltv/abm's list was documented as an object.
+     */
+    public function testEveryLtvAnswerHasTheSpecsKeysAndTypes(): void
+    {
+        $seed = $this->seedEveryRead();
+        $schemas = self::specSchemas();
+        foreach (self::everyLtvRead($seed) as $label => [$route, $read, $schema, $shape]) {
+            [$method, $path] = explode(' ', (string) preg_replace('/\?.*/', '', $route), 2);
+            if ($shape !== 'record') {
+                // A dry run's answer is documented by its description alone, as every DELETE's is.
+                self::assertStringContainsString(
+                    "#/components/schemas/$schema",
+                    self::specOperation($path, strtolower($method)),
+                    "$label: docs/openapi.yaml's 200 answer for $method $path refers to $schema"
+                );
+            }
+            $data = $read()['data'];
+            $rows = match ($shape) {
+                'list' => $data,
+                'record' => [$data['record']],
+                default => [$data],
+            };
+            self::assertNotSame([], $rows, "$label has a row to compare");
+            foreach ($rows as $i => $row) {
+                self::assertIsArray($row, "$label: a $schema");
+                self::assertMatchesSchema($schemas, $schema, $row, "$label.$i");
+            }
+        }
+    }
+
+    /**
+     * Every /ltv read and the writes that answer a record the reads list,
+     * by label: [route, the answer, the schema of its data, and whether the
+     * data is that schema, a list of it, or a dry run's record]. The GET
+     * routes are held to the router's /ltv read group.
+     *
+     * @param array{ltv: \Api\V3\Controllers\LtvController, customer: int, product: int, company: int, webhook: int} $seed
+     * @return array<string, array{0: string, 1: callable(): array<string, mixed>, 2: string, 3: string}>
+     */
+    private static function everyLtvRead(array $seed): array
+    {
+        ['ltv' => $ltv, 'customer' => $id, 'product' => $product, 'company' => $company, 'webhook' => $webhook] = $seed;
+        $reads = [
+            'GET /ltv/summary' => [fn () => $ltv->summary([]), 'LtvSummary', 'object'],
+            'GET /ltv/customers' => [fn () => $ltv->customers([]), 'LtvCustomer', 'list'],
+            'GET /ltv/customers/{id}' => [fn () => $ltv->customerDetail($id), 'LtvCustomerDetail', 'object'],
+            'GET /ltv/customers/{id}/engagement' => [fn () => $ltv->customerEngagement($id, []), 'LtvCustomerEngagement', 'object'],
+            'GET /ltv/customers/{id}/next-offer' => [fn () => $ltv->customerNextOffer($id), 'LtvNextOffer', 'object'],
+            'GET /ltv/abm' => [fn () => $ltv->abm([]), 'LtvAbmAccount', 'list'],
+            'GET /ltv/abm/company' => [fn () => $ltv->abmCompany(['name' => 'Acme']), 'LtvAbmContact', 'list'],
+            'GET /ltv/breakdown?by=campaign' => [fn () => $ltv->breakdown([]), 'LtvAcquisitionBreakdownRow', 'list'],
+            'GET /ltv/breakdown?by=ppc_account' => [fn () => $ltv->breakdown(['by' => 'ppc_account']), 'LtvAcquisitionBreakdownRow', 'list'],
+            'GET /ltv/breakdown?by=landing_page' => [fn () => $ltv->breakdown(['by' => 'landing_page']), 'LtvAcquisitionBreakdownRow', 'list'],
+            'GET /ltv/breakdown?by=product' => [fn () => $ltv->breakdown(['by' => 'product']), 'LtvProductBreakdownRow', 'list'],
+            'GET /ltv/cohorts' => [fn () => $ltv->cohorts([]), 'LtvCohort', 'list'],
+            'GET /ltv/mrr' => [fn () => $ltv->mrr(), 'LtvMrr', 'object'],
+            'GET /ltv/predict' => [fn () => $ltv->predict([]), 'LtvPrediction', 'object'],
+            'GET /ltv/predict?by=campaign' => [fn () => $ltv->predict(['by' => 'campaign']), 'LtvPredictionByGroup', 'object'],
+            'GET /ltv/predict?by=product' => [fn () => $ltv->predict(['by' => 'product']), 'LtvPredictionByGroup', 'object'],
+            'GET /ltv/products' => [fn () => $ltv->products([]), 'LtvProduct', 'list'],
+            'GET /ltv/companies' => [fn () => $ltv->listCompanies([]), 'LtvCompanyRollup', 'list'],
+            'GET /ltv/subscriptions' => [fn () => $ltv->listSubscriptions([]), 'LtvSubscription', 'list'],
+            'GET /ltv/fields' => [fn () => $ltv->fieldsList(), 'LtvField', 'list'],
+            'GET /ltv/webhooks' => [fn () => $ltv->listWebhooks(), 'LtvWebhook', 'list'],
+            'GET /ltv/webhooks/{id}/deliveries' => [fn () => $ltv->webhookDeliveries($webhook, []), 'LtvWebhookDelivery', 'list'],
+            'GET /ltv/integrations' => [fn () => $ltv->listIntegrations(), 'LtvIntegration', 'list'],
+            'PATCH /ltv/products/{id}' => [fn () => $ltv->updateProduct($product, ['name' => 'Priced']), 'LtvProduct', 'object'],
+            'DELETE /ltv/products/{id}?dry_run=1' => [fn () => $ltv->deleteProductPreview($product), 'LtvProduct', 'record'],
+            'PATCH /ltv/companies/{id}' => [fn () => $ltv->patchCompany($company, ['name' => 'Acme']), 'LtvCompany', 'object'],
+            'DELETE /ltv/companies/{id}?dry_run=1' => [fn () => $ltv->deleteCompanyPreview($company), 'LtvCompany', 'record'],
+        ];
+
+        $covered = [];
+        foreach (array_keys($reads) as $label) {
+            if (str_starts_with($label, 'GET ')) {
+                $covered[] = preg_replace('/^GET |\?.*$/', '', $label);
+            }
+        }
+        $covered = array_values(array_unique($covered));
+        sort($covered);
+        self::assertSame(self::ltvReadRoutes(), $covered, "every GET in api/v3/index.php's /ltv group is read here");
+
+        $everyRead = [];
+        foreach ($reads as $label => [$read, $schema, $shape]) {
+            $everyRead[$label] = [$label, $read, $schema, $shape];
+        }
+
+        return $everyRead;
+    }
+
+    /**
+     * The GET routes api/v3/index.php registers in its /ltv groups, with the
+     * prefix: /ltv/customers/{id} as written there.
+     *
+     * @return list<string>
+     */
+    private static function ltvReadRoutes(): array
+    {
+        $index = (string) file_get_contents(dirname(__DIR__, 2) . '/api/v3/index.php');
+        $routes = [];
+        foreach (explode('$router->group(', $index) as $group) {
+            if (!str_starts_with($group, "'/ltv',")) {
+                continue;
+            }
+            preg_match_all('/\$r->get\(\s*\'([^\']+)\'/', $group, $gets);
+            foreach ($gets[1] as $path) {
+                $routes[] = '/ltv' . $path;
+            }
+        }
+        sort($routes);
+        self::assertContains('/ltv/summary', $routes, 'the /ltv read group is found in api/v3/index.php');
+
+        return $routes;
+    }
+
+    /** One operation of a path in docs/openapi.yaml, as text: from `  $path:` its `    $method:` up to the next. */
+    private static function specOperation(string $path, string $method): string
+    {
+        $spec = (string) file_get_contents(dirname(__DIR__, 2) . '/docs/openapi.yaml');
+        $start = strpos($spec, "\n  $path:\n");
+        self::assertNotFalse($start, "$path is in docs/openapi.yaml");
+        $end = strpos($spec, "\n  /", $start + 1);
+        $block = substr($spec, $start, $end === false ? null : $end - $start);
+        $op = strpos($block, "\n    $method:\n");
+        self::assertNotFalse($op, "$path has a $method operation");
+        $next = preg_match('/\n    (get|post|put|patch|delete):\n/', $block, $m, PREG_OFFSET_CAPTURE, $op + 1) === 1
+            ? $m[0][1]
+            : strlen($block);
+
+        return substr($block, $op, $next - $op);
+    }
+
+    /**
+     * seedCustomerReads(), and what the rest of /ltv reads: a customer
+     * acquired by a click on campaign 7 through traffic source account 3
+     * (named "4455") and landing page 4, at a company with an engagement
+     * event; a second company with no customer; a priced product; a select
+     * field whose choices are digits; a webhook with a delivery; an
+     * integration.
+     *
+     * @return array{ltv: \Api\V3\Controllers\LtvController, customer: int, product: int, company: int, webhook: int}
+     */
+    private function seedEveryRead(): array
+    {
+        [$ltv, $id] = $this->seedCustomerReads();
+        $db = self::$db;
+        foreach (['202_ppc_accounts', '202_landing_pages', '202_ltv_webhooks', '202_ltv_webhook_deliveries', '202_ltv_integrations'] as $table) {
+            $db->query('TRUNCATE TABLE ' . $table);
+        }
+        $db->query("INSERT INTO 202_ppc_accounts SET ppc_account_id=3, user_id=1, ppc_account_name='4455'");
+        $db->query("INSERT INTO 202_landing_pages SET landing_page_id=4, user_id=1, landing_page_url='https://lp.example.com/',
+            landing_page_nickname='LP'");
+        foreach (['202_clicks', '202_clicks_spy'] as $table) {
+            $db->query("INSERT INTO $table SET click_id=9701, user_id=1, aff_campaign_id=7, ppc_account_id=3, landing_page_id=4,
+                click_payout=20, click_cpc=0.25, click_lead=0, click_time=1700000000");
+        }
+        $log = $this->log(9701);
+        $log['click_payout'] = '20.0';
+        p202RecordConversion($db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '20.0', 'EVERY-1', [
+            'customer_ref' => '0044', 'customer_crm' => ['company' => 'Acme'],
+        ], []);
+        $acquired = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref = '0044'");
+        $ltv->recordEngagementEvent(['customer_id' => $acquired, 'event' => 'time_on_page', 'value' => 30]);
+        $ltv->createCompany(['name' => 'Beta']);
+        $company = (int) $this->scalar("SELECT company_id FROM 202_companies WHERE name = 'Acme'");
+        $product = (int) $ltv->upsertProduct(['external_product_id' => '7003', 'name' => 'Priced', 'price' => 12.5])['data']['product_id'];
+        $ltv->createField(['field_key' => 'tier', 'field_type' => 'select', 'options' => ['10', '20']]);
+        $db->query("INSERT INTO 202_ltv_webhooks SET webhook_id=5, user_id=1, webhook_url='https://hooks.example.com/ltv',
+            webhook_secret='s', subscribed_events='', status='active', created_at=1, updated_at=1");
+        $db->query("INSERT INTO 202_ltv_webhook_deliveries SET webhook_id=5, user_id=1, event_name='revenue.recorded',
+            payload='{}', status='failed', attempts=6, next_attempt_at=0, last_status_code=500, last_response_body='502',
+            created_at=1, updated_at=1");
+        $ltv->createIntegration(['provider' => 'stripe', 'name' => '123', 'config' => ['plan' => '7']]);
+
+        return ['ltv' => $ltv, 'customer' => $id, 'product' => $product, 'company' => $company, 'webhook' => 5];
+    }
+
+    /**
+     * Each components schema of docs/openapi.yaml whose properties are
+     * written one to a line in flow style (`name: {type: number, ...}`), by
+     * name: each property's type, whether it is nullable and the schema it
+     * refers to (`{$ref: ...}`, or an array's `items: {$ref: ...}`), with an
+     * allOf's referenced schema folded in, and its `required: [...]` list
+     * when it gives one. Read as text, as LedgerReadsOpenApiTest reads the
+     * spec: no YAML library ships with the project.
+     *
+     * @return array<string, array{properties: array<string, array{0: string, 1: bool, 2: ?string}>, required: ?list<string>}>
+     */
+    private static function specSchemas(): array
+    {
+        $spec = (string) file_get_contents(dirname(__DIR__, 2) . '/docs/openapi.yaml');
+        $components = substr($spec, (int) strpos($spec, "\ncomponents:\n"));
+        $blocks = preg_split('/\n(?=    [A-Za-z]\w*:\n)/', $components) ?: [];
+        $schemas = [];
+        $allOf = [];
+        $refPattern = '\$ref: \'#\/components\/schemas\/(\w+)\'';
+        foreach ($blocks as $block) {
+            if (preg_match('/^    (\w+):\n/', $block, $name) !== 1) {
+                continue;
+            }
+            $schemas[$name[1]] = ['properties' => [], 'required' => null];
+            preg_match_all('/^ {8,10}(\w+): \{type: (\w+)(.*)\}$/m', $block, $props, PREG_SET_ORDER);
+            foreach ($props as [, $property, $type, $rest]) {
+                $items = preg_match('/items: \{' . $refPattern . '\}/', $rest, $item) === 1 ? $item[1] : null;
+                $schemas[$name[1]]['properties'][$property] = [$type, str_contains($rest, 'nullable: true'), $items];
+            }
+            preg_match_all('/^ {8,10}(\w+): \{' . $refPattern . '\}$/m', $block, $refs, PREG_SET_ORDER);
+            foreach ($refs as [, $property, $ref]) {
+                $schemas[$name[1]]['properties'][$property] = ['object', false, $ref];
+            }
+            if (preg_match('/^      required: \[(.*)\]$/m', $block, $required) === 1) {
+                $schemas[$name[1]]['required'] = array_map('trim', explode(',', $required[1]));
+            }
+            if (preg_match('/^      allOf:\n      - ' . $refPattern . '$/m', $block, $ref) === 1) {
+                $allOf[$name[1]] = $ref[1];
+            }
+        }
+        foreach ($allOf as $schema => $base) {
+            $schemas[$schema]['properties'] = ($schemas[$base]['properties'] ?? []) + $schemas[$schema]['properties'];
+        }
+
+        return $schemas;
+    }
+
+    /**
+     * $row has the keys $schema documents, each of the JSON type it gives,
+     * and so on into each schema a property refers to. A schema with a
+     * `required` list may leave out the keys it does not name.
+     *
+     * @param array<string, array{properties: array<string, array{0: string, 1: bool, 2: ?string}>, required: ?list<string>}> $schemas
+     * @param array<string, mixed> $row
+     */
+    private static function assertMatchesSchema(array $schemas, string $schema, array $row, string $where): void
+    {
+        self::assertArrayHasKey($schema, $schemas, "$schema is in docs/openapi.yaml with its properties");
+        self::assertNotSame([], $schemas[$schema]['properties'], "$schema has its properties in flow style");
+        $properties = $schemas[$schema]['properties'];
+        $documented = array_keys($properties);
+        $served = array_keys($row);
+        sort($documented);
+        sort($served);
+        $required = $schemas[$schema]['required'];
+        if ($required === null) {
+            self::assertSame($documented, $served, "$where: the keys $schema documents are the keys served");
+        } else {
+            self::assertSame([], array_values(array_diff($served, $documented)), "$where: keys $schema does not document");
+            self::assertSame([], array_values(array_diff($required, $served)), "$where: keys $schema requires");
+        }
+        foreach ($properties as $property => [$type, $nullable, $ref]) {
+            if (!array_key_exists($property, $row)) {
+                continue;
+            }
+            $value = $row[$property];
+            if ($value === null) {
+                self::assertTrue($nullable, "$where: $property is null, which $schema does not say it may be");
+                continue;
+            }
+            // A list or an object as JSON writes it: PHP's [] is a list.
+            $json = (string) json_encode($value);
+            $is = match ($type) {
+                'integer' => is_int($value),
+                'number' => is_float($value) || is_int($value),
+                'string' => is_string($value),
+                'boolean' => is_bool($value),
+                'array' => str_starts_with($json, '['),
+                'object' => str_starts_with($json, '{'),
+                default => false,
+            };
+            self::assertTrue($is, "$where: $property is " . get_debug_type($value) . " $json, $schema says $type");
+            if ($ref !== null && is_array($value)) {
+                foreach ($type === 'array' ? $value : [$value] as $i => $item) {
+                    self::assertIsArray($item, "$where.$property: $ref is an object");
+                    self::assertMatchesSchema($schemas, $ref, $item, $type === 'array' ? "$where.$property.$i" : "$where.$property");
+                }
+            }
+        }
+    }
+
+    /** A numeric string anywhere in $value but a text field (or a free-form one, LTV_FREE_FORM_FIELDS). */
+    private static function assertNoNumericText(mixed $value, string $path): void
+    {
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                if (!in_array($key, self::LTV_FREE_FORM_FIELDS, true)) {
+                    self::assertNoNumericText($item, $path . '.' . $key);
+                }
+            }
+
+            return;
+        }
+        $field = substr($path, (int) strrpos($path, '.') + 1);
+        if (is_string($value) && is_numeric($value) && !in_array($field, self::LTV_TEXT_FIELDS, true)) {
+            self::fail("$path is the string \"$value\": money is a JSON number, and a count or a time an integer");
+        }
+    }
+
     public function testNextOfferRebuildAndScoringEndToEnd(): void
     {
         foreach ([[7, 'Offer A'], [8, 'Offer B'], [9, 'Offer C'], [10, 'Offer D']] as [$id, $name]) {
@@ -1591,7 +2142,7 @@ CHILD;
             $this->insertClick($clickId, 10.0, 0.0, $campaignId);
             $log = $this->log($clickId);
             $log['conv_time'] = $convTime;
-            $result = p202RecordConversion(self::$db, $log, '', true, '10.0', $tx, ['customer_ref' => $ref], []);
+            $result = p202RecordConversion(self::$db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', $tx, ['customer_ref' => $ref], []);
 
             return (int) $result['conv_id'];
         };
@@ -1780,7 +2331,7 @@ CHILD;
         $log = $this->log(9201);
         $log['click_time'] = $freshTime;
         $log['conv_time'] = $freshTime + 100; // after first_shown_at — the reward window
-        p202RecordConversion(self::$db, $log, '', true, '25.0', 'FAT-1', ['customer_ref' => 'fat-1'], []);
+        p202RecordConversion(self::$db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '25.0', 'FAT-1', ['customer_ref' => 'fat-1'], []);
         self::assertGreaterThan(0, $recs->stampRecommendationConversions(1));
         self::assertNotNull($this->scalar("SELECT converted_at FROM 202_offer_recommendations WHERE customer_id=$cid AND campaign_id=7 AND surface='lp'"));
 

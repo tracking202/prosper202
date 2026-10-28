@@ -303,6 +303,7 @@ const SETUP_PAGES = [
   { path: '/tracking202/setup/get_dynamic_smart_component_code.php', menu: null },
   { path: '/tracking202/setup/get_trackers.php', menu: 'Get Links' },
   { path: '/tracking202/setup/get_postback.php', menu: 'Postback/Pixel' },
+  { path: '/tracking202/setup/offline_conversions.php', menu: 'Offline Conversions' },
 ];
 
 /**

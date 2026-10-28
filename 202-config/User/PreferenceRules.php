@@ -7,6 +7,8 @@ namespace Prosper202\User;
 use Prosper202\Click\TrackingDomain;
 use Prosper202\Ltv\MysqlEngagementRepository;
 use Prosper202\Ltv\MysqlPersonalizationRepository;
+use Prosper202\PaymentNotification\JVZoo\JVZooKey;
+use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 
 /**
  * Every preference `PUT /users/{id}/preferences` writes, and the rule the
@@ -23,7 +25,9 @@ use Prosper202\Ltv\MysqlPersonalizationRepository;
  * Owners: Personal settings (202-account/account.php) for the profile
  * choices, the report pages (functions-report-prefs.php,
  * functions-ui-partials.php p202_report_ranges()) for the report defaults,
- * Integrations (202-account/api-integrations.php) for the network secrets,
+ * Integrations (202-account/api-integrations.php) for the network secrets
+ * (PayKickstartKeys for PayKickstart's, a list; JVZooKey for JVZoo's, which
+ * its endpoint signs with),
  * and LTV › Settings (tracking202/ajax/ltv_settings.php) for the LTV values.
  */
 final class PreferenceRules
@@ -48,6 +52,7 @@ final class PreferenceRules
         'user_pref_referer_data' => ['browser', 't202ref'],
         'user_pref_dynamic_bid' => ['0', '1'],
         'user_pref_privacy' => ['disabled', 'eu', 'all'],
+        'user_pref_same_ip_fallback' => ['0', '1'],
         'user_pref_cloak_referer' => ['origin', 'never'],
         'user_pref_ad_settings' => ['show_all', 'hide_login', 'hide_all'],
         'user_pref_limit' => self::REPORT_ROW_LIMITS,
@@ -58,7 +63,9 @@ final class PreferenceRules
     ];
 
     /** Integer columns among CHOICES: bound as 'i'. */
-    private const INTEGER_COLUMNS = ['user_pref_dynamic_bid', 'user_pref_limit', 'user_ltv_customer_cparam'];
+    private const INTEGER_COLUMNS = [
+        'user_pref_dynamic_bid', 'user_pref_same_ip_fallback', 'user_pref_limit', 'user_ltv_customer_cparam',
+    ];
 
     /**
      * Free-text secrets and settings, column => the column's width. '' is
@@ -71,13 +78,13 @@ final class PreferenceRules
         'ipqs_api_key' => 250,
         'cb_key' => 250,
         'zaxaa_api_signature' => 250,
-        'jvzoo_ipn_secret_key' => 250,
     ];
 
     /** Everything else this class knows, handled by name in check(). */
     private const SPECIAL = [
         'user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email',
         'user_ltv_personalization_fields', 'user_ltv_score_weights', 'user_ltv_rec_fatigue',
+        'paykickstart_ipn_secret_keys', 'jvzoo_ipn_secret_key',
     ];
 
     private function __construct()
@@ -188,6 +195,14 @@ final class PreferenceRules
                 return self::personalizationFields($value);
             case 'user_ltv_score_weights':
                 return self::scoreWeights($value);
+            case 'jvzoo_ipn_secret_key':
+                // The endpoint reads the key through JVZooKey too, so a key
+                // stored here is one it can sign with.
+                return JVZooKey::parse($value);
+            case 'paykickstart_ipn_secret_keys':
+                // The whole list: the keys cannot be read back, so a caller
+                // adding one sends every key it keeps (PayKickstartKeys).
+                return PayKickstartKeys::serialize(PayKickstartKeys::parse($value));
             case 'user_ltv_rec_fatigue':
                 $value = trim($value);
                 if ($value !== '' && preg_match('/^\d{1,3}(,\d{1,4})?$/D', $value) !== 1) {

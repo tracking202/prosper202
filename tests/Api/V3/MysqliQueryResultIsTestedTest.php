@@ -206,12 +206,6 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             . ' as "Could not be checked", and the required checks, which do not read the database, still decide'
             . ' the page.',
         ],
-        '202-config/User.class.php::__construct' => [
-            1,
-            'Only a missing 202_users (errno 1146) is answered: not installed, as is_installed() reads it, so no'
-            . ' account and no roles; index.php and the setup pages load connect.php before the tables exist. Any'
-            . ' other failure throws.',
-        ],
         '202-config/sessions.php::write' => [
             1,
             'False is PHP\'s save-handler answer for a failed write: PHP warns and the stored session stays as it'

@@ -98,14 +98,17 @@ final class PublicIntake
      * Behind a TLS-terminating proxy the peer is the proxy, so the ceiling is
      * an aggregate one; that is the price of never keying on a header an
      * attacker chooses. softIpRateLimit() fails open itself; the catch here
-     * covers building the store.
+     * covers building the store, whose directory is named by the install
+     * the configuration's database is (every caller has loaded it).
      */
     public static function rateLimit(string $bucket, int $perWindow, int $windowSeconds): void
     {
         try {
-            $retryAfter = (new ServerStateStore())->softIpRateLimit($bucket, $perWindow, $windowSeconds);
+            $retryAfter = ServerStateStore::forInstall(Bootstrap::db())
+                ->softIpRateLimit($bucket, $perWindow, $windowSeconds);
         } catch (\Throwable $e) {
-            error_log('p202 apps: rate limiter unavailable for ' . $bucket . ', serving request: ' . $e->getMessage());
+            error_log('p202 apps: rate limiter unavailable for ' . $bucket . ', serving request: ' . $e->getMessage()
+                . ($e->getPrevious() !== null ? ' (' . $e->getPrevious()->getMessage() . ')' : ''));
             $retryAfter = null;
         }
         if ($retryAfter !== null) {

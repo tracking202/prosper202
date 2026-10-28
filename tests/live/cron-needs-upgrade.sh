@@ -12,7 +12,7 @@
 #   1. winds the stored version back so upgrade_needed() is true
 #   2. runs each job from another directory, as cron does: exit status 1, the
 #      reason on stderr naming both versions, nothing on stdout, and nothing
-#      done (the outbox untouched, no cron lock left behind)
+#      done (the outbox untouched, the cron's lock free)
 #   3. GETs one job over HTTP: still the 302 to the upgrade page
 #   4. restores the version (also on any exit), and runs the attribution
 #      worker, the sync worker and the data engine job again: exit 0, so the
@@ -90,7 +90,6 @@ say "wind the stored version back to $PRIOR (code is $CODE)"
 Q "UPDATE 202_version SET version='$PRIOR'"
 eq "$(Q "SELECT version FROM 202_version")" "$PRIOR" "stored version is $PRIOR, so upgrade_needed() is true"
 PENDING=$(Q "SELECT COUNT(*) FROM 202_attribution_pending")
-rm -f "$ROOT/202-cronjobs/cron.lock"
 
 JOBS=("$ROOT"/202-cronjobs/*.php)
 if [ "${#JOBS[@]}" -ge 10 ]; then ok "${#JOBS[@]} cron entry points found"; else bad "cron entry points found (${#JOBS[@]})"; fi
@@ -106,7 +105,8 @@ done
 
 say "nothing was done"
 eq "$(Q "SELECT COUNT(*) FROM 202_attribution_pending")" "$PENDING" "the attribution outbox is as it was"
-if [ ! -e "$ROOT/202-cronjobs/cron.lock" ]; then ok "the minutely cron left no lock behind"; else bad "the minutely cron left no lock behind"; fi
+HELD=$("$PHP" -r 'require $argv[1]; var_export(Prosper202\Cron\CronLock::isHeld(Prosper202\Cron\CronLock::path()));' "$ROOT/vendor/autoload.php")
+eq "$HELD" "false" "the minutely cron's lock is free"
 eq "$(Q "SELECT version FROM 202_version")" "$PRIOR" "the version is still $PRIOR"
 
 say "over HTTP the job still redirects to the upgrade page"

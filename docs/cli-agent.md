@@ -222,7 +222,7 @@ In table mode (including `--table`, `--csv` and `-q`) the same information is tw
 |-----------|----------|---------|--------------|
 | 0 | | Success | |
 | 1 | validation | Bad input, missing flags, invalid arguments, or a 4xx other than auth and 402 | Lists valid values, or `Run <command> --help` |
-| 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config get` / `p202 config set-key` |
+| 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config show` / `p202 config set-key`. A 403 for a scope the key lacks names the scope and what grants it: a new key with that scope (`p202 user apikey create <user_id> --scope ...`; a key's scope cannot be changed), or for an AI app's connection, connecting the app again with the access the install names |
 | 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
 | 4 | server | API returned a 5xx error, or a 402 that is not the install's licence refusal (a proxy, WAF or host in front of the install answered it) | Retry after a wait; `p202 system health` (for that 402, check what serves the URL in `p202 config show`) |
 | 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `system cron`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |
@@ -293,6 +293,25 @@ A row is one stored value: clicks with no value for the dimension (no referer, n
 
 Rows tied on the sort column come back in id order, so paging with `--offset` (offset = rows read so far) neither skips nor repeats a row. `--sort` takes any metric column (`cpa`, `avg_cpc`, `total_click_throughs` included); an unknown one is refused by name.
 
+**Check `truncated` before totalling or ranking rows.** One answer is one page (`--limit`, default 50, at most 500). Beside `data` it carries `truncated`, `limit` and `offset`: `"truncated": true` means rows remain after this page, so the page's rows are not the dimension's figures. Read on with `--offset` = `offset` + `limit` until `truncated` is `false` (a page of exactly the remaining rows says `false`), or take totals from `report summary`. Under `--ndjson` every line carries `"truncated": true`; under a table, stderr has one `Note:` naming the next `--offset`. `--json` and `--ndjson` keep stderr for errors. `analytics` (without `--split-at`) answers the same way. A server from before the flag sends none of the three keys; a page it filled to the limit may have rows after it.
+
+```json
+{"data":[...50 rows...],"breakdown":"keyword","available_breakdowns":[...],"truncated":true,"limit":50,"offset":0}
+```
+
+The commands that compute from a breakdown say what their answer covers:
+
+| Command | Reads | `"truncated": true` means |
+|---|---|---|
+| `report breakeven` | one page, as `report breakdown` (`--limit`, `--offset`), most clicks first, ranked by margin within the page | rows remain after the page: read on with `--offset` |
+| `report losers`, `report winners` | every row, 500 a request, up to the 5000 with the most clicks | the classification covers only those 5000: narrow the window or filter |
+| `report crosstab` | the `--limit-rows` (default 20; `0` for up to 5000) rows with the highest `--metric`, ranked by the server over every row; every column value of each, up to 5000 | rows remain past `--limit-rows`, or a row's columns past 5000 |
+| `campaign optimize` | every other campaign, most revenue first, up to 5000 | the EPC ranking covers only those 5000 |
+
+`losers`, `winners`, `crosstab` and `campaign optimize` always carry `truncated` in `--json`, `false` when nothing was left out.
+
+`report losers`, `report winners`, `report crosstab` and `campaign optimize` (its offers' `epc`) list the breakdown's figures unchanged under its names (`total_cost`, `avg_cpc`, `total_net`, `epc`, …), so they can be compared with `report breakdown` field by field; a sub-cent CPC is not rounded in `--json`. With `--payout`, losers and winners add `payout_net` (sales × payout − `total_cost`, what they classify and sort on): read that for profit at your stated value, and `total_net` for profit at the recorded revenue.
+
 Narrow any report with the Analyze pages' filters, which combine:
 
 ```bash
@@ -318,7 +337,7 @@ Periods: `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth
 p202 report timeseries --interval day --period last90 --json
 ```
 
-One bucket per `period`, oldest first, at most 2000 per response. When the window holds more, the response carries `"truncated": true` and `"limit": 2000` beside `data` and `interval`, the newest buckets are the missing ones, and stderr has a `Warning:` naming the last bucket returned plus a `Hint:` — narrow `--time-from`/`--time-to`, or use a coarser `--interval` (`week`, `month`). Check `truncated` before treating the last bucket as the latest. A server from before the flag sends neither key and cuts at 2000 silently; 2000 buckets from one of those get the same warning, as "may be missing".
+One bucket per `period`, oldest first, at most 2000 per response. When the window holds more, the response carries `"truncated": true` and `"limit": 2000` beside `data` and `interval` (each `--ndjson` line carries `"truncated": true`), the newest buckets are the missing ones, and stderr has a `Warning:` naming the last bucket returned plus a `Hint:` — narrow `--time-from`/`--time-to`, or use a coarser `--interval` (`week`, `month`). Check `truncated` before treating the last bucket as the latest. A server from before the flag sends neither key and cuts at 2000 silently; 2000 buckets from one of those get the same warning, as "may be missing".
 
 ### Compare before and after a date
 
@@ -580,6 +599,7 @@ p202 rotator rule-create "$ROTATOR_ID" \
 
 JSON fields (`--criteria-json`, `--redirects-json`, `--weighting-config`) are validated locally before the API call. Malformed JSON produces an immediate error (exit 1).
 A rotator's default is one destination (`--default-url`, `--default-campaign` or `--default-lp`); setting one on `update` replaces the default whatever its kind. Each redirect names exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`; criteria types are country, region, city, isp, ip, platform, device, browser, and countries are written `United States(US)` (`p202 rotator criteria-values`) — a bare `US` is refused, because it never matches. An `ip` criterion lists single IPv4 or IPv6 addresses (stored canonical, so `2001:DB8::1` is `2001:db8::1`); a range or a typo is refused by name for the same reason.
+A rule needs at least one criterion and one redirect: the redirects read a rule with no criterion as every visitor, so `rule-create` refuses one without `--criteria-json` or `--country`, and an empty list, before any request. To match every visitor, say so with the value `ALL`.
 
 ### Forecast next week and flag today as normal or anomalous
 
@@ -790,10 +810,10 @@ hint names the new `tracker_id`: run `tracker get-url` for it, never
 | Flag | Create | Type |
 |------|--------|------|
 | `--landing-page-url` | (R) | string |
-| `--aff-campaign-id` | (R) | string |
+| `--aff-campaign-id` | (R) | string (`0` for an advanced page) |
 | `--landing-page-nickname` | (R) | string |
 | `--leave-behind-page-url` | optional | string (`update --leave-behind-page-url ""` clears it) |
-| `--landing-page-type` | optional | integer: 0 simple, 1 advanced |
+| `--landing-page-type` | optional | integer: 0 simple, 1 advanced (with `--aff-campaign-id 0`) |
 
 Landing page code (Setup > Get LP Code):
 
@@ -814,9 +834,13 @@ an advanced page `offers[]` (`position`, `type`, `id`, `public_id`, `name`,
 | `--text-ad-headline` | (R) | string |
 | `--text-ad-description` | (R) | string |
 | `--text-ad-display-url` | (R) | string |
-| `--aff-campaign-id` | optional | string |
-| `--landing-page-id` | optional | string |
-| `--text-ad-type` | optional | integer |
+| `--aff-campaign-id` | (R) for type 0 | string: the campaign the ad is for |
+| `--landing-page-id` | (R) for type 1 | string: the advanced landing page the ad is for |
+| `--text-ad-type` | optional | integer: 0 a campaign's ad (default), 1 an advanced landing page's |
+
+The type's link is refused when missing before any request (exit 1, naming the
+flag), on `create` and on an `update` that would leave the ad without it.
+`p202 tracker update <id> --text-ad-id <id>` puts an ad on a tracker.
 
 ### Clicks
 
@@ -840,8 +864,16 @@ p202 click update-cpc --from YYYY-MM-DD --to YYYY-MM-DD --cpc D
 ```
 p202 conversion list   [--limit 50] [--offset 0] [--campaign-id N] [--all]
                        [--time-from T] [--time-to T] [--click-id N]
-                       [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|app_install|goal|legacy_baseline]
+                       [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|paykickstart|jvzoo|app_install|goal|legacy_baseline]
+                       [--match-method click_id|cookie|visitor_id|same_ip|unknown]   # how the click was found; same_ip = a guess
                        [--goal N] [--json]
+p202 conversion match-methods [--aff-campaign-id N] [--period P] [--time-from T] [--time-to T] [--json]
+                       # each campaign's conversions, counted ones and income by how their click was found
+p202 conversion offline-export --format google|google_uploads|microsoft [--days 1-90] [--aff-campaign-id N]
+                       [--conversion-name S] [--ad-user-data granted|denied] [--ad-personalization granted|denied]
+                       [--output FILE] [--summary] [--json]
+                       # Setup › Offline Conversions: the Google Ads / Microsoft Advertising import CSV;
+                       # --summary says how many conversions it holds and why each other one is left out
 p202 conversion get    <id> [--json]
 p202 conversion create --click-id N [--payout F] [--transaction-id S] [--conv-time T] [--idempotency-key S]
                        [--status reversed [--reversal-id S]]      # a reversal of the sale with --transaction-id
@@ -873,7 +905,9 @@ p202 report summary    [-p period] [--time-from T] [--time-to T] [filters...]
 p202 report breakdown  [-b dimension] [-s sort_col] [--sort-dir ASC|DESC]
                        [-l limit] [-o offset] [-p period] [filters...] [--json]
 p202 analytics         --group-by DIM [--period P | --days N]
-                       [--sort METRIC] [--sort-dir ASC|DESC] [filters...] [--json]
+                       [--sort METRIC] [--sort-dir ASC|DESC] [-l limit] [-o offset] [filters...] [--json]
+p202 report breakeven  --aff-campaign-id ID [-b dimension] [--max-cpc N]
+                       [-l limit] [-o offset] [-p period] [filters...] [--json]
 p202 analytics         --group-by DIM --split-at YYYY-MM-DD|UNIX
                        [--days N | --time-from UNIX [--time-to UNIX]]
                        [--sort clicks|conversions|revenue[_per_day]] [--sort-dir ASC|DESC]
@@ -938,7 +972,8 @@ p202 rotator delete <id> [--force] [--dry-run] [--json]
 p202 rotator delete --ids N1,N2,... [--force] [--dry-run] [--json]
 
 p202 rotator rule-create <rotator_id> --rule-name S [--splittest 0|1] [--status 0|1]
-                         [--criteria-json JSON] [--redirects-json JSON] [--idempotency-key S] [--json]
+                         (--criteria-json JSON | --country CC) (--redirects-json JSON | --redirect-campaign N)
+                         [--idempotency-key S] [--json]
 p202 rotator rule-delete <rotator_id> <rule_id> [--force] [--dry-run] [--json]
 p202 rotator rule-delete <rotator_id> --ids N1,N2,... [--force] [--dry-run] [--json]
 p202 rotator rule-update <rotator_id> <rule_id> [--rule-name S] [--splittest 0|1]
@@ -957,7 +992,9 @@ with `deleted: true`. A missing rotator is exit 1 with a hint naming
 Multi-touch attribution: credit for each conversion spread over the visitor's
 journey (their clicks, linked by first-party identity signals, across
 campaigns) under every active model. The worker computes credits from the
-conversion outbox every minute; `queue` shows what it has not processed yet.
+conversion outbox every minute; `queue` shows what it has not processed yet,
+and the identity merges whose re-queue failed or was retired (`merges_failing`,
+`merges_retired`, `merge_rows` with each one's `last_error`).
 
 ```
 p202 attribution model list      [--type T] [--json]
@@ -1056,6 +1093,7 @@ p202 ltv fields update <field-id> [--label S] [--option V]... [--required=true|f
 p202 ltv fields delete <field-id> | --ids N1,N2 [--dry-run] [--force]
 p202 ltv webhooks list | create --url https://… [--events E1,E2 | --events '*'] | delete <id> [--dry-run] [--force]
 p202 ltv webhooks deliveries <webhook-id> [--limit 1-100] [--status pending|delivered|failed] [--json]
+p202 ltv webhooks revive <webhook-id> [--requeue=false] [--json]   # a dead webhook active again
 p202 ltv integrations list | create --provider P [--name S] [--config JSON | --config-file FILE]
                        | delete <id> [--dry-run] [--force]
 ```
@@ -1073,11 +1111,36 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
 - `ltv product delete` is refused (409, exit 1) while order line items name
   the product; `--dry-run` returns that reason as `refused`. Rename it with
   `ltv product update` instead.
+- A subscription no renewal reaches turns `past_due` once its period end and
+  `grace_days` are over and `canceled` 30 days later, on the cron job's
+  hourly run, so `ltv subscriptions --status past_due` and `ltv mrr` can be up
+  to an hour behind the clock. A renewal (`ltv subscription event <id> --type
+  renewal`) makes it `active` again. `ltv mrr` counts churn by `canceled_at`,
+  which for a lapsed subscription is when the rule canceled it, not when the
+  cron ran. Each change the sweep makes queues `subscription.changed`
+  (`action` `upsert` for `past_due`, `cancel` for `canceled`), as the API's
+  change does, when it took effect in the last 7 days; an older one (an
+  upgraded install's backlog) is moved without an event.
 - `ltv webhooks deliveries` lists one webhook's deliveries newest first (25
   by default): `status`, `attempts`, `next_attempt_at` (pending only),
   `last_status_code` and `last_response_body` (the last response or error,
-  e.g. `curl: …`, `blocked: …`); never the secret, never the payload. An
+  e.g. `curl: …`, `blocked: …`, or `expired: …` for a delivery still unsent
+  7 days after it was queued, which is never sent); never the secret, never
+  the payload. The minutely cron job sends what is due, so a `pending`
+  delivery whose `next_attempt_at` is past waits for the next cron run. An
   unknown webhook id is a 404 whose hint names `p202 ltv webhooks list`.
+- `ltv webhooks revive` makes a dead webhook (one delivery failed 6 times)
+  active again with its id, URL and secret, and sends every delivery it did
+  not deliver from the last 7 days: again for the one that failed and the
+  ones held while it was dead (`failed`, `held: …` in `deliveries`), and the
+  ones still pending, their attempts back at 0; oldest first on the next
+  cron run (a pending one waiting out a retry's backoff keeps its time, at
+  most 32 minutes); never a delivered one. `--requeue=false` revives it for
+  new events only, and holds the ones still pending too. The answer says
+  `revived` (false when it was already active), `requeued`, `attempts_reset`
+  and `held`. A 409 means a cron run was still sending after 20 seconds and
+  nothing changed: run it again in a minute. The Landing Page Optimizer's
+  pairing webhook needs no pairing again.
 - `ltv webhooks create` prints the signing secret once (`X-P202-Signature:
   sha256=HMAC(body, secret)`); `webhooks list` never shows it. `--events`
   takes the known names or `*` (every event, including future ones), and is
@@ -1128,7 +1191,8 @@ p202 user identity-key rotate <user_id> [--force] [--json]
 p202 user prefs get    <user_id> [--json]               # a secret only as {"stored": true|false}, never its value
 p202 user prefs update <user_id> [--user-tracking-domain S] [--user-daily-email never|00..23]
                        [--user-account-currency CODE] [--user-pref-time-predefined R] [--user-pref-limit N]
-                       [--user-pref-privacy disabled|eu|all] [--cb-key S] [--user-ltv-score-weights S] ... [--json]
+                       [--user-pref-privacy disabled|eu|all] [--user-pref-same-ip-fallback 0|1]
+                       [--cb-key S] [--user-ltv-score-weights S] ... [--json]
                        # every settings-page preference; --help lists each with its values; "" clears free text
 ```
 
@@ -1168,6 +1232,7 @@ Notes for agents:
 - If the API reports `sync_plan` and `async_jobs` capabilities, CLI auto-routes to server-side `/sync/*` endpoints.
 - If server capabilities are unavailable, CLI falls back to local diff/sync behavior.
 - When async jobs are enabled server-side, ensure the sync worker is running (`POST /sync/worker/run` or cron script `202-cronjobs/sync-worker.php`).
+- A server-side sync or diff calls both profiles' URLs from the `--from` profile's install, at public `https://` addresses only. A refused profile URL exits 1 with a hint naming the profile to repoint (`p202 --profile <name> config set-url https://…`) and `P202_WEBHOOK_ALLOW_NETWORKS`, the setting that admits an install on that server's own machine or network; it is not run from this machine instead. A job stopped by a refusal or by a cap carries `error_code` (`sync_url_refused`, `sync_url_unresolved`, `sync_limit`, `sync_key_unreadable`) and exits 5 with that reason's next step.
 - `tracker list --resolve-names` enriches FK IDs with companion name fields; IDs remain unchanged in output.
 
 ### System
@@ -1182,13 +1247,17 @@ p202 system dataengine [--json]     # Admin only
 p202 system metrics    [--json]     # Admin only; sync counters, queue, alerts
 
 # Account › Settings — Admin and a role with access_to_settings:
-p202 system info       [--json]     # versions (database_upgrade_needed), PHP limits, memcache, clicks, DB size, cron, DataEngine
+p202 system info       [--json]     # versions (database_upgrade_needed), PHP limits, memcache, clicks, DB size, cron, DataEngine, geoip_database (state current|stale|missing|unreadable, built_on, age_days), geoip_refresh (last_outcome, last_error; never the MaxMind credentials)
 p202 system login-log  [--limit 1-500] [--status passed|failed|not_completed] [--json]   # newest first: user_name, login_time, ip_address, status, login_success
                        # not_completed: the password was right but a database failure stopped the sign-in; the throttle counts failed alone
 p202 system retention show [--json]               # auto_delete_days, scheduled_deletion
 p202 system retention set --days 0-36500 [--force]                 # asks when it keeps less than now
 p202 system retention delete-before --date YYYY-MM-DD [--dry-run] [--force]   # irreversible; always previews
 p202 system isp-lookup show | enable | disable [--json]
+p202 system traffic-source-owners show [--json]   # sources another user's traffic source accounts name (taken by Setup's rename before 1.9.79)
+p202 system traffic-source-owners repair <ppc_network_id> [--to-user-id N] [--force]   # reads the report, says what moves, asks
+p202 system traffic-source-owners repair --all [--force]                             # every source the report names a user for
+p202 system traffic-source-owners split <ppc_network_id> [--force]                  # a copy of its own for each named_by user; their accounts move onto it
 # Admin and a role with access_to_api_integrations:
 p202 system integrations [--json]   # notification URLs per integration; secret_stored, never the secret
 ```
@@ -1211,6 +1280,33 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
   cron job deletes every click recorded before midnight that began the day N
   days ago (server time), in batches over its next runs; the command itself
   deletes nothing, so say the deletion is set, not done.
+- `system traffic-source-owners` never moves a source by itself. `show` names,
+  per source, the user it is in, each user whose traffic source accounts name
+  it (with their accounts, clicks and conversions), `repair_to_user_id` and
+  `ambiguous` (`owner_has_accounts`, `several_users`, `saved_after_rename`,
+  `no_such_user`, `deleted_user`). `repair <id>` moves a source to its
+  `repair_to_user_id`; an ambiguous one is refused (exit 1, nothing sent)
+  unless `--to-user-id` names one of its `named_by` users, and never a deleted
+  one. Ask the user which before passing it: the same
+  rows come from accounts the API put on another user's source before 1.9.77.
+  `--all` leaves the ambiguous ones and repairs the rest one request at a
+  time. Each request sends back the owner and `repair_to_user_id` the report
+  showed: a source that changed since is refused (exit 1; under `--all`,
+  `skipped` with `reason: changed`), so read the report again before retrying.
+  `--all` stops at any other failure, names the sources already moved, and
+  prints nothing to stdout. Only the source's user changes. A move out of or
+  into user 1's, or an Admin's, account is a 403 unless the key is user 1's.
+  A source marked `owner_has_accounts` or `several_users` is listed again
+  after any move; `split <id>` clears it: the source stays where it is, each
+  `named_by` user gets a copy with its name, custom variables and removed mark,
+  and their accounts move onto it. It refuses (exit 1, nothing sent) a source
+  a deleted or missing user's accounts name, sends back the owner and
+  `copy_to_user_ids` it showed (a changed source is a 422, exit 1: read the
+  report again), and needs a key whose user may act on every user it names.
+  To leave the source with another user, `repair --to-user-id` first, then
+  `split`. A person can do the same on Account › Settings: the notice there
+  opens a panel that lists the sources and moves or splits each after a
+  confirmation.
 - None of the `system` writes can be staged; `--staged` is refused before any
   request. AutoCron and "update available" are not exposed (they call a remote
   Prosper202 service).
@@ -1249,8 +1345,11 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   One call there reads at most 1 MB of the install's answers, so its list
   tools take no `all`: page with `limit` and `offset`. It decodes at most
   80,000 JSON values from them and takes at most 1,000 in a call's
-  arguments; past either, the call is refused (`validation`) with how to ask
-  for less.
+  arguments (5,000 in `rotator_set_rules`, whose rules are one document);
+  past either, the call is refused (`validation`) with how to ask for less.
+  The text ad writes (`text_ad_create`, `text_ad_update`, `text_ad_delete`)
+  need a connection approved on 1.9.79 or later; an older one answers 403
+  for them until it is connected again.
 
 If you are defining this CLI as a tool for an LLM some other way, here are
 recommendations:

@@ -95,7 +95,7 @@ LPIP=$(Q "SELECT landing_page_id_public FROM 202_landing_pages WHERE landing_pag
 # (Chrome) has one, everything else is the default campaign.
 must "$(api POST /rotators "{\"name\":\"$TAG campaigns\",\"default_campaign\":$CB}")" "rotator"
 RC=$(field "d['data']['id']")
-must "$(api POST "/rotators/$RC/rules" "{\"rule_name\":\"$TAG rule A\",\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Firefox\"}],\"redirects\":[{\"redirect_campaign\":$CA,\"weight\":34,\"name\":\"a1\"},{\"redirect_campaign\":$CB,\"weight\":33,\"name\":\"a2\"},{\"redirect_url\":\"https://example.com/rb-a3\",\"weight\":33,\"name\":\"a3\"}]}")" "rule A"
+must "$(api POST "/rotators/$RC/rules" "{\"rule_name\":\"$TAG rule A\",\"splittest\":1,\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Firefox\"}],\"redirects\":[{\"redirect_campaign\":$CA,\"weight\":34,\"name\":\"a1\"},{\"redirect_campaign\":$CB,\"weight\":33,\"name\":\"a2\"},{\"redirect_url\":\"https://example.com/rb-a3\",\"weight\":33,\"name\":\"a3\"}]}")" "rule A"
 must "$(api POST "/rotators/$RC/rules" "{\"rule_name\":\"$TAG rule B\",\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Chrome\"}],\"redirects\":[{\"redirect_campaign\":$CB,\"weight\":100,\"name\":\"b1\"}]}")" "rule B"
 RULE_A=$(Q "SELECT id FROM 202_rotator_rules WHERE rotator_id=$RC AND rule_name='$TAG rule A'")
 RULE_B=$(Q "SELECT id FROM 202_rotator_rules WHERE rotator_id=$RC AND rule_name='$TAG rule B'")

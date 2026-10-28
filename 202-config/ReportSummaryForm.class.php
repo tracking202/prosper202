@@ -21,7 +21,7 @@ class ReportSummaryForm extends ReportBasicForm
 	const DEBUG = 'MO_DEBUG';
 
 	private static $DISPLAY_LEVEL_ARRAY = [ReportBasicForm::DISPLAY_LEVEL_TITLE, ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT, ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT, ReportBasicForm::DISPLAY_LEVEL_SU, ReportBasicForm::DISPLAY_LEVEL_PAYOUT, ReportBasicForm::DISPLAY_LEVEL_EPC, ReportBasicForm::DISPLAY_LEVEL_CPC, ReportBasicForm::DISPLAY_LEVEL_INCOME, ReportBasicForm::DISPLAY_LEVEL_COST, ReportBasicForm::DISPLAY_LEVEL_NET, ReportBasicForm::DISPLAY_LEVEL_ROI];
-	private static $DETAIL_LEVEL_ARRAY = [ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK, ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT, ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK, ReportBasicForm::DETAIL_LEVEL_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE, ReportBasicForm::DETAIL_LEVEL_KEYWORD, ReportBasicForm::DETAIL_LEVEL_TEXT_AD, ReportBasicForm::DETAIL_LEVEL_REFERER, ReportBasicForm::DETAIL_LEVEL_COUNTRY, ReportBasicForm::DETAIL_LEVEL_REGION, ReportBasicForm::DETAIL_LEVEL_CITY, ReportBasicForm::DETAIL_LEVEL_ISP, ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME, ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE, ReportBasicForm::DETAIL_LEVEL_BROWSER, ReportBasicForm::DETAIL_LEVEL_PLATFORM, ReportBasicForm::DETAIL_LEVEL_IP, ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT, ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM, ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE, ReportBasicForm::DETAIL_LEVEL_UTM_TERM, ReportBasicForm::DETAIL_LEVEL_C1, ReportBasicForm::DETAIL_LEVEL_C2, ReportBasicForm::DETAIL_LEVEL_C3, ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ ReportBasicForm::DETAIL_LEVEL_ROTATOR, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT, ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE, ReportBasicForm::DETAIL_LEVEL_PUBLISHERS];
+	private static $DETAIL_LEVEL_ARRAY = [ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK, ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT, ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK, ReportBasicForm::DETAIL_LEVEL_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE, ReportBasicForm::DETAIL_LEVEL_KEYWORD, ReportBasicForm::DETAIL_LEVEL_TEXT_AD, ReportBasicForm::DETAIL_LEVEL_REFERER, ReportBasicForm::DETAIL_LEVEL_COUNTRY, ReportBasicForm::DETAIL_LEVEL_REGION, ReportBasicForm::DETAIL_LEVEL_CITY, ReportBasicForm::DETAIL_LEVEL_ISP, ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME, ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE, ReportBasicForm::DETAIL_LEVEL_BROWSER, ReportBasicForm::DETAIL_LEVEL_PLATFORM, ReportBasicForm::DETAIL_LEVEL_IP, ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT, ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM, ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE, ReportBasicForm::DETAIL_LEVEL_UTM_TERM, ReportBasicForm::DETAIL_LEVEL_C1, ReportBasicForm::DETAIL_LEVEL_C2, ReportBasicForm::DETAIL_LEVEL_C3, ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ ReportBasicForm::DETAIL_LEVEL_ROTATOR, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT, ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE, ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD, ReportBasicForm::DETAIL_LEVEL_PUBLISHERS];
 	private static $SORT_LEVEL_ARRAY = [ReportBasicForm::SORT_NAME, ReportBasicForm::SORT_CLICK, ReportBasicForm::SORT_LEAD, ReportBasicForm::SORT_SU, ReportBasicForm::SORT_PAYOUT, ReportBasicForm::SORT_EPC, ReportBasicForm::SORT_CPC, ReportBasicForm::SORT_INCOME, ReportBasicForm::SORT_COST, ReportBasicForm::SORT_NET, ReportBasicForm::SORT_ROI];
 
 	// +-----------------------------------------------------------------------+
@@ -335,6 +335,8 @@ class ReportSummaryForm extends ReportBasicForm
 			return "transaction_key";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE) {
 			return "goal_source_key";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD) {
+			return "match_method_key";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_PUBLISHERS) {
 			return "publisher_id";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_INTERVAL) {
@@ -420,6 +422,8 @@ class ReportSummaryForm extends ReportBasicForm
 			return "ReportSummaryTransactionsForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE) {
 			return "ReportSummaryGoalSourceForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD) {
+			return "ReportSummaryMatchMethodForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_PUBLISHERS) {
 			return "ReportSummaryPublishersForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_INTERVAL) {
@@ -466,7 +470,7 @@ class ReportSummaryForm extends ReportBasicForm
 		// The ledger levels' keys are built never empty and never null
 		// (ledgerLevelKeys()); folding '' or '0' into one group would merge a
 		// transaction id "0" with rows that carry none.
-		if ($gb === 'transaction_key' || $gb === 'goal_source_key') {
+		if ($gb === 'transaction_key' || $gb === 'goal_source_key' || $gb === 'match_method_key') {
 			return $gb;
 		}
 		// c1-c4 group by the value itself, which is text: a value of "0" is
@@ -552,8 +556,10 @@ class ReportSummaryForm extends ReportBasicForm
 	 *   goal_source_key  n, g:<goal id>, s:<source>; a pre-ledger lead's
 	 *                    cached value is s:legacy_baseline, the row its next
 	 *                    conversion carries it in as
+	 *   match_method_key n, m:<match method>; a pre-ledger lead's cached
+	 *                    value is m:unknown, as its legacy_baseline row will be
 	 *
-	 * @return array{transaction_key: string, goal_source_key: string}
+	 * @return array{transaction_key: string, goal_source_key: string, match_method_key: string}
 	 */
 	static function ledgerLevelKeys(): array
 	{
@@ -564,6 +570,9 @@ class ReportSummaryForm extends ReportBasicForm
 			'goal_source_key' => "CASE WHEN lcp.conv_id IS NULL THEN IF(2c.leads > 0, 's:legacy_baseline', 'n')"
 				. " WHEN lcp.goal_id > 0 THEN CONCAT('g:', lcp.goal_id)"
 				. " ELSE CONCAT('s:', lcp.source) END",
+			'match_method_key' => "CASE WHEN lcp.conv_id IS NULL THEN IF(2c.leads > 0, 'm:"
+				. \Prosper202\Conversion\Ledger\MatchMethod::UNKNOWN->value . "', 'n')"
+				. " ELSE CONCAT('m:', lcp.match_method) END",
 		];
 	}
 
@@ -783,7 +792,8 @@ class ReportSummaryForm extends ReportBasicForm
 			";
 		}
 		$ledgerLevel = $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)
-			|| $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE);
+			|| $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE)
+			|| $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD);
 		if ($ledgerLevel) {
 			$keys = self::ledgerLevelKeys();
 			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
@@ -792,6 +802,9 @@ class ReportSummaryForm extends ReportBasicForm
 			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE)) {
 				$info_sql .= $keys['goal_source_key'] . " AS goal_source_key,\n";
 				$info_sql .= "MAX(lcp.goal_name) AS goal_name,\n";
+			}
+			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD)) {
+				$info_sql .= $keys['match_method_key'] . " AS match_method_key,\n";
 			}
 		}
 
@@ -1313,6 +1326,10 @@ class ReportSummaryForm extends ReportBasicForm
 			ReportBasicForm::echoCell("Goal / source");
 		}
 
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD)) {
+			ReportBasicForm::echoCell("Match method");
+		}
+
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
 			ReportBasicForm::echoCell("Publisher/User");
 		}
@@ -1687,6 +1704,10 @@ class ReportSummaryForm extends ReportBasicForm
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE)) {
 			ReportBasicForm::echoCell($row->getGoalSourceKeyLabel());
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD)) {
+			ReportBasicForm::echoCell($row->getMatchMethodKeyLabel());
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
@@ -3521,6 +3542,40 @@ class ReportSummaryGoalSourceForm extends ReportSummaryTotalForm
 	}
 }
 
+/**
+ * Group Overview's Match method level: income by how each conversion's
+ * click was found (Prosper202\Conversion\Ledger\MatchMethod) — a click id
+ * the request named, a cookie, the landing page's visitor id, or the
+ * visitor's address — from the ledger's counted rows, as the Goal / source
+ * level is.
+ */
+class ReportSummaryMatchMethodForm extends ReportSummaryTotalForm
+{
+	#[\Override]
+    function getId()
+	{
+		return $this->getMatchMethodKey();
+	}
+
+	#[\Override]
+    function getName()
+	{
+		return $this->getMatchMethodKeyLabel();
+	}
+
+	#[\Override]
+    function getTitle()
+	{
+		return $this->getName();
+	}
+
+	#[\Override]
+    function getPrintTitle()
+	{
+		return $this->getName();
+	}
+}
+
 class ReportSummaryPublishersForm extends ReportSummaryTotalForm
 {
 	/**
@@ -3681,6 +3736,7 @@ class ReportSummaryTotalForm
 	private $transaction_id;
 	private $transaction_key;
 	private $goal_source_key;
+	private $match_method_key;
 	private $goal_name;
 	private $publisher_name;
 
@@ -5069,6 +5125,16 @@ class ReportSummaryTotalForm
 		$this->goal_source_key = (string) $arg0;
 	}
 
+	function getMatchMethodKey()
+	{
+		return $this->match_method_key;
+	}
+
+	function setMatchMethodKey($arg0)
+	{
+		$this->match_method_key = (string) $arg0;
+	}
+
 	function getGoalName()
 	{
 		return $this->goal_name;
@@ -5108,6 +5174,20 @@ class ReportSummaryTotalForm
 		if (str_starts_with($key, 's:')) {
 			$source = \Prosper202\Conversion\Ledger\ConversionSource::tryFrom(substr($key, 2));
 			return $source !== null ? $source->label() : substr($key, 2);
+		}
+		return '[Not converted]';
+	}
+
+	/**
+	 * The Match method level's label for this row's key: how the click of
+	 * the conversions in it was found. Read as getTransactionKeyLabel() is.
+	 */
+	function getMatchMethodKeyLabel(): string
+	{
+		$key = (string) $this->getMatchMethodKey();
+		if (str_starts_with($key, 'm:')) {
+			$method = \Prosper202\Conversion\Ledger\MatchMethod::tryFrom(substr($key, 2));
+			return $method !== null ? $method->label() : substr($key, 2);
 		}
 		return '[Not converted]';
 	}
