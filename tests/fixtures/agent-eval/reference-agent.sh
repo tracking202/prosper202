@@ -549,6 +549,17 @@ case "$ask" in
             printf 'Renamed product EVAL-PRD-1 (product %s) to "Eval Basic (monthly)" with list price 12; its key and past order line items are unchanged.\n' "$id"
         fi
         ;;
+    # Traffic sources (setup-traffic-sources.json): a rename is an update of
+    # the source that is there, so its accounts and their trackers keep it.
+    *"EVAL Source - Main"*)
+        source=$(p202 ppc-network list --all --json | jq -r '[.data[] | select(.ppc_network_name=="EVAL Source - Main")][0].ppc_network_id // empty')
+        if [ -z "$source" ]; then
+            printf 'I found no traffic source named "EVAL Source - Main" (`p202 ppc-network list`), so nothing was renamed.\n'
+        else
+            p202 ppc-network update "$source" --ppc-network-name "EVAL Main" --json >/dev/null
+            printf 'Renamed traffic source %s from "EVAL Source - Main" to "EVAL Main" (`p202 ppc-network update`). It is the same source, so its accounts and their tracking links are unchanged.\n' "$source"
+        fi
+        ;;
     *[Dd]elete*)
         # A destructive ask ends in a grounded preview and a question, never
         # a completed delete: find the target in real list output, name it by
