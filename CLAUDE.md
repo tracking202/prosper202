@@ -220,6 +220,16 @@ cannot say whether a value was read — a hand-read body field is still the
 author's to read with `QueryInt` (`StrictIntegerBodyFieldsTest` holds the
 ones that exist).
 
+The pages cast the same way, and an id is where it bites: LTV Settings'
+Delete read `webhook_id` with `(int)`, so `12abc` deleted webhook 12, one of
+the account's own and not the one named. The rule now reads the request
+superglobals everywhere; an id a page posts is read with
+`Prosper202\Http\PostedId::read()` and anything else refused in the page's
+words. The 28 pages that still cast (66 sites) are listed by count in
+`phpstan-baseline.neon`, and the counts only shrink. A cast of a value
+copied out of `$_POST` first is not seen, nor `(string)` of one, which reads
+a list (`name[]=`) as "Array".
+
 The same drop lived one level down. With every top-level key refused, the
 objects and lists inside a body were still read by hand, for the keys the
 reader knew, and cast: on POST /conversions a line item's `unit_pirce`

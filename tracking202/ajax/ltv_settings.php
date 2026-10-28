@@ -20,7 +20,10 @@ AUTH::set_timezone($_SESSION['user_timezone']);
  */
 
 $userId = (int) $_SESSION['user_id'];
-$action = (string) ($_POST['action'] ?? '');
+$action = $_POST['action'] ?? '';
+if (!is_string($action)) {
+    $action = '?'; // a list names no action: the switch below says "Unknown action."
+}
 
 require_once __DIR__ . '/ltv_ui.php';
 $esc = p202_ltv_esc(...);
@@ -52,6 +55,30 @@ function ltv_settings_validate_p13n_fields(string $raw): string
     }
 }
 
+/**
+ * A field as the form posts it: one string, '' when absent. A list
+ * (`name[]=…`) is refused, where `(string)` read it as "Array".
+ */
+function ltv_settings_posted(string $field): string
+{
+    $value = $_POST[$field] ?? '';
+    if (!is_string($value)) {
+        throw new \RuntimeException('The form sent "' . $field . '" as a list; it takes one value.');
+    }
+
+    return $value;
+}
+
+/**
+ * The id a row's button posts, read exactly (PostedId), or the page's
+ * sentence: `(int)` made `12abc` row 12, one of the account's own and not
+ * the one named.
+ */
+function ltv_settings_posted_id(string $field, string $refusal): int
+{
+    return \Prosper202\Http\PostedId::read($_POST[$field] ?? null) ?? throw new \RuntimeException($refusal);
+}
+
 try {
     $conn = new \Prosper202\Database\Connection($db);
     $fieldsRepo = new \Prosper202\Ltv\MysqlCustomerFieldRepository($conn);
@@ -65,11 +92,12 @@ try {
             try {
                 switch ($action) {
                     case 'save_prefs':
-                        $cparam = (int) ($_POST['cparam'] ?? 0);
-                        if ($cparam < 0 || $cparam > 4) {
+                        $cparamPosted = ltv_settings_posted('cparam');
+                        if (preg_match('/^[0-4]$/D', $cparamPosted) !== 1) {
                             throw new \RuntimeException('Customer c-param must be Off or c1–c4.');
                         }
-                        $p13nFields = ltv_settings_validate_p13n_fields((string) ($_POST['p13n_fields'] ?? ''));
+                        $cparam = (int) $cparamPosted;
+                        $p13nFields = ltv_settings_validate_p13n_fields(ltv_settings_posted('p13n_fields'));
 
                         // Engagement-score weights: five inputs -> canonical
                         // pref string, validated by the same parser the read
@@ -77,7 +105,7 @@ try {
                         // default changes automatically).
                         $weightInput = [];
                         foreach (array_keys(\Prosper202\Ltv\MysqlEngagementRepository::DEFAULT_SCORE_WEIGHTS) as $component) {
-                            $value = trim((string) ($_POST['weight_' . $component] ?? ''));
+                            $value = trim(ltv_settings_posted('weight_' . $component));
                             if (preg_match('/^\d{1,3}$/', $value) !== 1) {
                                 throw new \RuntimeException('Score weight "' . $component . '" must be an integer 0-100.');
                             }
@@ -96,7 +124,7 @@ try {
                         // Recommendation fatigue: '' = defaults, '0' = off,
                         // otherwise "shown,days" — validated by the same
                         // parser the serving path uses.
-                        $fatiguePref = trim((string) ($_POST['rec_fatigue'] ?? ''));
+                        $fatiguePref = trim(ltv_settings_posted('rec_fatigue'));
                         if ($fatiguePref !== '' && preg_match('/^\d{1,3}(,\d{1,4})?$/', $fatiguePref) !== 1) {
                             throw new \RuntimeException('Offer fatigue must be empty (defaults), 0 (off), or "times,days" — e.g. 3,21.');
                         }
@@ -113,16 +141,24 @@ try {
                         break;
 
                     case 'add_field':
+                        // The box posts 1 when ticked and nothing when not.
+                        $required = match ($_POST['field_required'] ?? null) {
+                            null => false,
+                            '1' => true,
+                            default => throw new \RuntimeException(
+                                'Required is ticked or left clear; the form sent something else.'
+                            ),
+                        };
                         $payload = [
-                            'field_key' => (string) ($_POST['field_key'] ?? ''),
-                            'label' => (string) ($_POST['field_label'] ?? ''),
-                            'field_type' => (string) ($_POST['field_type'] ?? 'text'),
-                            'is_required' => !empty($_POST['field_required']),
+                            'field_key' => ltv_settings_posted('field_key'),
+                            'label' => ltv_settings_posted('field_label'),
+                            'field_type' => ltv_settings_posted('field_type'),
+                            'is_required' => $required,
                         ];
                         if ($payload['field_type'] === 'select') {
                             $options = array_values(array_filter(array_map(
                                 trim(...),
-                                explode(',', (string) ($_POST['field_options'] ?? ''))
+                                explode(',', ltv_settings_posted('field_options'))
                             ), static fn (string $o): bool => $o !== ''));
                             $payload['options'] = $options;
                         }
@@ -131,33 +167,53 @@ try {
                         break;
 
                     case 'delete_field':
-                        $fieldsRepo->delete($userId, (int) ($_POST['field_id'] ?? 0));
+                        $fieldsRepo->delete(
+                            $userId,
+                            ltv_settings_posted_id('field_id', 'Pick the field to delete from the list.')
+                        );
                         $notice = 'Custom field and all its stored values deleted.';
                         break;
 
                     case 'add_webhook':
-                        $events = isset($_POST['webhook_events']) && is_array($_POST['webhook_events'])
-                            ? array_map(strval(...), $_POST['webhook_events'])
-                            : [];
-                        $created = $webhooksRepo->create($userId, trim((string) ($_POST['webhook_url'] ?? '')), $events);
+                        // No box ticked posts nothing, which create() would
+                        // read as every event; a string is not the list.
+                        $events = $_POST['webhook_events'] ?? [];
+                        if (!is_array($events) || $events === []) {
+                            throw new \RuntimeException('Tick the events this webhook is sent.');
+                        }
+                        foreach ($events as $event) {
+                            if (!is_string($event)) {
+                                throw new \RuntimeException('The form sent an event as a list; each event is one name.');
+                            }
+                        }
+                        $created = $webhooksRepo->create(
+                            $userId,
+                            trim(ltv_settings_posted('webhook_url')),
+                            array_values($events)
+                        );
                         $newWebhookSecret = $created['secret'];
                         $notice = 'Webhook #' . $created['webhookId'] . ' registered.';
                         break;
 
                     case 'delete_webhook':
-                        $webhooksRepo->delete($userId, (int) ($_POST['webhook_id'] ?? 0));
+                        $webhooksRepo->delete(
+                            $userId,
+                            ltv_settings_posted_id('webhook_id', 'Pick the webhook to delete from the list.')
+                        );
                         $notice = 'Webhook deleted.';
                         break;
 
                     case 'revive_webhook':
-                        $reviveId = (string) ($_POST['webhook_id'] ?? '');
-                        if (preg_match('/^[1-9][0-9]{0,18}$/D', $reviveId) !== 1) {
-                            throw new \RuntimeException('Pick the webhook to revive from the list.');
-                        }
+                        $reviveId = ltv_settings_posted_id('webhook_id', 'Pick the webhook to revive from the list.');
                         try {
-                            $revival = $webhooksRepo->revive($userId, (int) $reviveId, true, time());
+                            $revival = $webhooksRepo->revive($userId, $reviveId, true, time());
                         } catch (\Prosper202\Ltv\RecordNotFoundException) {
                             throw new \RuntimeException('That webhook is not one of this account\'s.');
+                        } catch (\Prosper202\Ltv\LtvConflictException) {
+                            // revive() waited for a dispatcher run still sending, and changed nothing.
+                            throw new \RuntimeException('Webhook #' . $reviveId . ' was not revived: webhook'
+                                . ' deliveries are being sent right now. Nothing was changed; Revive it again'
+                                . ' in a minute.');
                         }
                         $notice = $revival['revived']
                             ? 'Webhook #' . $reviveId . ' is active again; ' . $revival['requeued']
@@ -168,14 +224,17 @@ try {
                     case 'add_integration':
                         $integrationsRepo->create(
                             $userId,
-                            (string) ($_POST['integration_provider'] ?? ''),
-                            (string) ($_POST['integration_name'] ?? '')
+                            ltv_settings_posted('integration_provider'),
+                            ltv_settings_posted('integration_name')
                         );
                         $notice = 'Integration added.';
                         break;
 
                     case 'delete_integration':
-                        $integrationsRepo->delete($userId, (int) ($_POST['integration_id'] ?? 0));
+                        $integrationsRepo->delete(
+                            $userId,
+                            ltv_settings_posted_id('integration_id', 'Pick the integration to delete from the list.')
+                        );
                         $notice = 'Integration deleted.';
                         break;
 
@@ -214,7 +273,13 @@ try {
         : [];
 
     // Read-only delivery log for one endpoint (no CSRF needed — no write).
-    $deliveryLogWebhookId = (int) ($_POST['show_deliveries'] ?? 0);
+    $deliveryLogWebhookId = 0;
+    if (($_POST['show_deliveries'] ?? '') !== '') {
+        $deliveryLogWebhookId = \Prosper202\Http\PostedId::read($_POST['show_deliveries']) ?? 0;
+        if ($deliveryLogWebhookId === 0) {
+            $error ??= 'Pick the webhook whose log to show from the list.';
+        }
+    }
     $deliveryLog = $deliveryLogWebhookId > 0
         ? $webhooksRepo->recentDeliveries($userId, $deliveryLogWebhookId, 25)
         : [];
