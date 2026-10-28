@@ -132,7 +132,8 @@ final class TrafficSourceOwnersController
         $owners = $this->owners();
         $repaired = [];
         $skipped = [];
-        foreach ($this->guard(fn (): array => $owners->report()) as $entry) {
+        // Ownership and ambiguity are all this reads; the counts scan clicks.
+        foreach ($this->guard(fn (): array => $owners->report(false)) as $entry) {
             $sourceId = (int) $entry['ppc_network_id'];
             $skip = static fn (string $reason, string $message): array => [
                 'ppc_network_id' => $sourceId,
