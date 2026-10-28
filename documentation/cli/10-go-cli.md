@@ -261,6 +261,8 @@ p202 diff all --from prod --to staging
 
 Reports `only_in_source`, `only_in_target`, `changed`, and `identical_count` using natural key matching.
 
+When the `--from` profile's install offers server-side plans (`sync_plan`), it computes the diff and calls both profiles' URLs to do it. A profile URL it refuses stops `p202 diff` exactly as it stops `p202 sync` (below): a validation error with the same hint, and no diff from this machine instead. A server without the plan route falls back to the diff from this machine, as before.
+
 ## Sync Orchestration
 
 One-way replication with dependency ordering and foreign key remapping.

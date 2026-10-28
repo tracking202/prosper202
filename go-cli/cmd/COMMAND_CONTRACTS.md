@@ -118,12 +118,12 @@ This file captures the API paths and payload/query expectations used by upcoming
   - `PUT /api/v3/rotators/{id}/rules/{ruleId}`
 - `diff` (capability-enabled path)
   - `POST /api/v3/sync/plan` (preferred when `sync_plan=true`)
-  - falls back to paginated `GET /api/v3/{entity}` compare
+  - falls back to paginated `GET /api/v3/{entity}` compare, except on a 422 naming `source.url` or `target.url` (a profile url the server will not call), which is returned with `p202 sync`'s hint and nothing is read from this machine
 - `sync/re-sync` (capability-enabled path)
   - `POST /api/v3/sync/jobs` or `POST /api/v3/sync/re-sync` (preferred when `async_jobs=true`)
   - may trigger `POST /api/v3/sync/worker/run` and then `GET /api/v3/sync/jobs/{id}` polling
   - `GET /api/v3/sync/status`, `GET /api/v3/sync/history` (preferred when `async_jobs=true`)
-  - falls back to local sync implementation with direct CRUD calls
+  - falls back to local sync implementation with direct CRUD calls, except on the same `source.url`/`target.url` 422 to `sync/jobs` or `sync/re-sync`
 
 ## Filter mapping convention
 

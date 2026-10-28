@@ -63,20 +63,10 @@ var diffCmd = &cobra.Command{
 			return err
 		}
 
-		if fromClient.SupportsCapability("sync_features", "sync_plan") {
-			sourceConn, srcErr := loadProfileConnection(fromProfile)
-			targetConn, tgtErr := loadProfileConnection(toProfile)
-			if srcErr == nil && tgtErr == nil {
-				serverPayload := map[string]interface{}{
-					"entity": target,
-					"source": sourceConn,
-					"target": targetConn,
-				}
-				if resp, srvErr := fromClient.Post("sync/plan", serverPayload); srvErr == nil {
-					render(resp)
-					return nil
-				}
-			}
+		if handled, err := tryServerPlan(fromClient, target, fromProfile, toProfile); err != nil {
+			return err
+		} else if handled {
+			return nil
 		}
 
 		done := metrics.Timer("diff", target)
@@ -139,6 +129,40 @@ var diffCmd = &cobra.Command{
 		render(payload)
 		return nil
 	},
+}
+
+// tryServerPlan has the --from profile's install compute the diff (POST
+// sync/plan). It answers false when that install cannot, and the caller
+// diffs from this machine; a profile url the install will not call is the
+// error instead.
+func tryServerPlan(c *api.Client, entity, fromProfile, toProfile string) (bool, error) {
+	if !c.SupportsCapability("sync_features", "sync_plan") {
+		return false, nil
+	}
+	sourceConn, err := loadProfileConnection(fromProfile)
+	if err != nil {
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means the server-side plan is unavailable, so the caller diffs from this machine
+	}
+	targetConn, err := loadProfileConnection(toProfile)
+	if err != nil {
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means the server-side plan is unavailable, so the caller diffs from this machine
+	}
+	resp, err := c.Post("sync/plan", map[string]interface{}{
+		"entity": entity,
+		"source": sourceConn,
+		"target": targetConn,
+	})
+	if err != nil {
+		// As for a sync job: a profile url the server will not call is its
+		// answer, and diffing from this machine would make the calls it
+		// refused with the refusal never shown.
+		if refused := syncURLRefusal(err, fromProfile, toProfile); refused != nil {
+			return true, refused
+		}
+		return false, nil //nolint:nilerr // probe-and-fall-back: any other failure (a 404 or 405, a server error) leaves the diff to this machine
+	}
+	render(resp)
+	return true, nil
 }
 
 func fetchPortableEntityData(c *api.Client) (map[string][]map[string]interface{}, error) {

@@ -1166,7 +1166,7 @@ Notes for agents:
 - If the API reports `sync_plan` and `async_jobs` capabilities, CLI auto-routes to server-side `/sync/*` endpoints.
 - If server capabilities are unavailable, CLI falls back to local diff/sync behavior.
 - When async jobs are enabled server-side, ensure the sync worker is running (`POST /sync/worker/run` or cron script `202-cronjobs/sync-worker.php`).
-- A server-side sync calls both profiles' URLs from the `--from` profile's install, at public `https://` addresses only. A refused profile URL exits 1 with a hint naming the profile to repoint (`p202 --profile <name> config set-url https://…`) and `P202_WEBHOOK_ALLOW_NETWORKS`, the setting that admits an install on that server's own machine or network; it is not run from this machine instead. A job stopped by a refusal or by a cap carries `error_code` (`sync_url_refused`, `sync_url_unresolved`, `sync_limit`, `sync_key_unreadable`) and exits 5 with that reason's next step.
+- A server-side sync or diff calls both profiles' URLs from the `--from` profile's install, at public `https://` addresses only. A refused profile URL exits 1 with a hint naming the profile to repoint (`p202 --profile <name> config set-url https://…`) and `P202_WEBHOOK_ALLOW_NETWORKS`, the setting that admits an install on that server's own machine or network; it is not run from this machine instead. A job stopped by a refusal or by a cap carries `error_code` (`sync_url_refused`, `sync_url_unresolved`, `sync_limit`, `sync_key_unreadable`) and exits 5 with that reason's next step.
 - `tracker list --resolve-names` enriches FK IDs with companion name fields; IDs remain unchanged in output.
 
 ### System

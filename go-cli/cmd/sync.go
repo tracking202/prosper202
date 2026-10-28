@@ -836,8 +836,11 @@ func syncURLHint(profile string) string {
 		"which also allows http:// there; link-local and cloud metadata addresses are never admitted."
 }
 
-// syncURLRefusal is the 422 a sync job is refused with when a profile's url
-// is one the server will not call, with its hint; nil for any other error.
+// syncURLRefusal is the 422 a sync job or plan is refused with when a
+// profile's url is one the server will not call, with its hint; nil for any
+// other error. Every path that has the server call the profiles, and falls
+// back to this machine, asks it first
+// (TestEveryPathThatSendsTheProfilesIsHeldToTheRefusal).
 func syncURLRefusal(err error, fromProfile, toProfile string) error {
 	var apiErr *api.APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != 422 {

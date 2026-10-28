@@ -1603,6 +1603,7 @@ p202 diff all --from prod --to staging --json
 
 `diff` reports per-entity `only_in_source`, `only_in_target`, `changed`, and `identical_count`.
 When server capabilities expose `sync_plan`, the CLI uses `POST /api/v3/sync/plan` automatically and falls back to client-side diff when unavailable.
+The plan is computed by the `--from` profile's install, which calls both profiles' URLs. A profile URL it refuses on its field (`source.url` or `target.url`) is the same validation error (exit 1, same hint) as for `p202 sync` below, and the CLI does not then diff from this machine; any other failure of the plan request (a server without the route, an entity it does not know) still falls back to the client-side diff.
 
 ### Sync and re-sync
 
