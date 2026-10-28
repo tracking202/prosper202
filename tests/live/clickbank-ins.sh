@@ -164,11 +164,15 @@ eq "$(rows "$CLICK_B")" 2 "the sale and one rebill"
 
 say "a refund, a chargeback and a returned eCheck take a payment back"
 SALE_B=$(Q "SELECT conv_id FROM 202_conversion_logs WHERE click_id=$CLICK_B AND transaction_id='RB$RUN' AND reverses_conv_id IS NULL")
-eq "$(cb "$CB_B" RFND "RB$RUN" "$CLICK_B" -12.50)" 200 "account $USER_B's RFND of its sale answers 200"
+TR=$(TZ=America/Denver date +%Y-%m-%dT%H:%M:%S%:z)
+eq "$(post "$(note "$CB_B" "$(order RFND "RB$RUN" "\"$CLICK_B\"" -12.50 "$TR")")")" 200 "account $USER_B's RFND of its sale answers 200"
 has "$OUT/r" '"outcome":"reversed"' "as reversed"
 eq "$(row "$CLICK_B" "RB$RUN" | tail -1)" "$USER_B RB$RUN -12.50000 clickbank 2 $SALE_B 0" "a reversal of the sale, by what the refund states"
-eq "$(cb "$CB_B" RFND "RB$RUN" "$CLICK_B" -12.50)" 200 "the same refund again answers 200"
+eq "$(post "$(note "$CB_B" "$(order RFND "RB$RUN" "\"$CLICK_B\"" -12.50 "$TR" 2)")")" 200 "ClickBank's retry of the refund answers 200"
 has "$OUT/r" '"outcome":"duplicate"' "as a duplicate"
+sleep 1
+eq "$(cb "$CB_B" RFND "RB$RUN" "$CLICK_B" -12.50)" 409 "another refund of the refunded sale, of the same amount, is a 409"
+has "$OUT/r" 'is another notification than that reversal' "saying it is another refund"
 eq "$(cb "$CB_B" CGBK "RB$RUN" "$CLICK_B" -5.00)" 409 "a chargeback of the refunded sale stating another amount is a 409"
 eq "$(cb "$CB_A" RFND "RB$RUN-0001" "$CLICK_B" -9.95)" 404 "account 1's key cannot refund account $USER_B's rebill"
 eq "$(cb "$CB_B" CGBK "RB$RUN-0001" "$CLICK_B" 0)" 200 "a chargeback of the rebill stating 0 answers 200"

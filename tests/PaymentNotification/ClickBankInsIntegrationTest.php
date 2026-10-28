@@ -482,7 +482,9 @@ final class ClickBankInsIntegrationTest extends TestCase
     {
         $this->post([], self::FIRST_KEY);
         $sale = self::conversions()[0];
-        $refund = ['transactionType' => 'RFND', 'totalAccountAmount' => '-37.62'];
+        $refund = [
+            'transactionType' => 'RFND', 'totalAccountAmount' => '-37.62', 'transactionTime' => self::stated(time()),
+        ];
 
         $outcome = $this->post($refund, self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);
@@ -496,19 +498,21 @@ final class ClickBankInsIntegrationTest extends TestCase
         self::assertNotNull($rows[1]['reverses_conv_id']);
         self::assertSame('0.00000', self::clickPayout());
 
-        // The same refund again, however its amount is spelled; a chargeback of the same amount is the same reversal.
-        foreach ([['-37.62'], ['37.62'], [-37.62]] as [$amount]) {
-            $again = $this->post(['totalAccountAmount' => $amount] + $refund, self::FIRST_KEY);
+        // The same refund again: ClickBank's retries of it, its order with the attempt count raised.
+        foreach ([2, 3] as $attempt) {
+            $again = $this->post(['attemptCount' => $attempt] + $refund, self::FIRST_KEY);
             self::assertOutcome(OutcomeKind::DUPLICATE, 200, $again);
         }
-        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post(
-            ['transactionType' => 'CGBK', 'totalAccountAmount' => '-37.62'],
-            self::FIRST_KEY
-        ));
+        // Any other reversal of the sale, a chargeback of the same amount included, is refused:
+        // a sale is reversed once.
+        $reversal = (int) self::conversionIds()[1];
+        $chargeback = $this->post(['transactionType' => 'CGBK'] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $chargeback);
         $other = $this->post(['totalAccountAmount' => '-10.00'] + $refund, self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $other);
-        self::assertSame('Transaction CWOGBZLN on click ' . self::CLICK . ' is already reversed by 37.62; this RFND'
-            . ' states 10.00, and a sale is reversed once. Nothing was changed.', $other->message);
+        self::assertSame('Transaction CWOGBZLN on click ' . self::CLICK . ' is already reversed by 37.62 in conversion '
+            . $reversal . '; this RFND is another notification than that reversal\'s and states 10.00, and a sale is'
+            . ' reversed once. Nothing was changed.', $other->message);
         self::assertCount(2, self::conversions());
         self::assertSame($sale['transaction_id'], self::conversions()[1]['transaction_id']);
     }
@@ -548,6 +552,45 @@ final class ClickBankInsIntegrationTest extends TestCase
         $rest = $this->post(['transactionType' => 'RFND', 'totalAccountAmount' => '0'], self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $rest);
         self::assertStringContainsString('27.62 of its 37.62 is still credited', $rest->message);
+    }
+
+    /**
+     * ClickBank's retry of a notification is its order again, so a refund
+     * whose order differs from the one a standing reversal came from is
+     * another refund, whatever it states: a second partial refund of the
+     * same amount is refused where ClickBank's log shows it, not answered
+     * 200 as the first one sent again while the account lost it too.
+     */
+    public function testAnotherRefundOfTheSameAmountIsRefusedNotAnsweredAsTheFirst(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $first = [
+            'transactionType' => 'RFND', 'totalAccountAmount' => '-10.00',
+            'transactionTime' => '2026-10-24T09:00:00-06:00',
+        ];
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($first, self::FIRST_KEY));
+        $reversal = (int) self::conversionIds()[1];
+
+        $second = $this->post(['transactionTime' => '2026-10-25T09:00:00-06:00'] + $first, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $second);
+        self::assertSame(
+            'Transaction CWOGBZLN on click ' . self::CLICK . ' is already reversed by 10 in conversion '
+            . $reversal . ', and 27.62 of its 37.62 is still credited; this RFND is another notification than'
+            . ' that reversal\'s and states 10.00, and a sale is reversed once. Nothing was changed.',
+            $second->message
+        );
+        $chargeback = $this->post(['transactionType' => 'CGBK'] + $first, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $chargeback);
+        self::assertStringContainsString(
+            'this CGBK is another notification than that reversal\'s',
+            $chargeback->message
+        );
+
+        // ClickBank's own retry of the first is still that refund.
+        $retry = $this->post(['attemptCount' => 2] + $first, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $retry);
+        self::assertSame(['37.62000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
+        self::assertSame('27.62000', self::clickPayout());
     }
 
     public function testAChargebackAndAReturnedEcheckReverseTheWholeSaleWhenTheyStateNoAmount(): void

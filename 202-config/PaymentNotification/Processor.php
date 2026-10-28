@@ -22,7 +22,9 @@ use Prosper202\Database\Connection;
  * a payment or refund already on file is a duplicate only when it states
  * the same amount (a refund that states none takes back the whole sale);
  * one that states another is refused, never answered as the first
- * (CLAUDE.md #15).
+ * (CLAUDE.md #15). Where the provider says what one notification is
+ * (FingerprintsNotifications), a refund is a duplicate only when it is that
+ * notification.
  */
 final class Processor
 {
@@ -213,11 +215,13 @@ final class Processor
         // retry sent again unchanged is that refund, whether or not its
         // reversal still stands, and any other is compared with the reversal
         // that stands (a sale is reversed once), or reverses the sale again
-        // when none does: the one on file was deleted.
+        // when none does: the one on file was deleted. A provider that says
+        // what one notification is (FingerprintsNotifications) sends a retry
+        // as that same notification, so any other is another reversal, never
+        // a duplicate of the one that stands, whatever amount it states.
         $ownId = $n->transactionId !== null && $n->transactionId !== $original;
-        $body = $provider instanceof FingerprintsNotifications
-            ? $provider->fingerprint($request)
-            : self::fingerprint($request->fields);
+        $exact = $provider instanceof FingerprintsNotifications;
+        $body = $exact ? $provider->fingerprint($request) : self::fingerprint($request->fields);
         $reference = $ownId ? (string) $n->transactionId : 'body:' . $body;
         $on = 'Transaction ' . $original . ' on click ' . $n->clickId;
         // A refund is dated when it happened, the sale keeping its own day;
@@ -237,7 +241,7 @@ final class Processor
                 ? $this->liveReversalOfTransaction($n->clickId, $original, $owner)
                 : null;
             if ($standing !== null) {
-                return $this->repeatedReversal($n, $on, $standing, $owner);
+                return $this->repeatedReversal($n, $on, $standing, $owner, $exact);
             }
 
             return new Outcome(
@@ -414,16 +418,23 @@ final class Processor
     /**
      * A refund that repeats a reversal on file: a duplicate only when it takes
      * back what that reversal took back (one that states no amount takes the
-     * whole sale), and refused naming both otherwise (CLAUDE.md #15).
+     * whole sale), and refused naming both otherwise (CLAUDE.md #15). One
+     * that is known to be another notification than the reversal's
+     * ($another) is refused whatever it states: it is another refund.
      */
-    private function repeatedReversal(Notification $n, string $on, int $reversalId, int $owner): Outcome
-    {
+    private function repeatedReversal(
+        Notification $n,
+        string $on,
+        int $reversalId,
+        int $owner,
+        bool $another = false
+    ): Outcome {
         $stored = $this->storedReversal($reversalId, $owner);
         $stated = $n->amount !== null ? Amount::toUnits($n->amount) : $stored['sale'];
         $by = self::units($stored['reversed']);
-        if ($stated !== $stored['reversed']) {
-            $states = '; this ' . $n->event . ' states '
-                . ($n->amount ?? 'its full amount, ' . self::units($stored['sale']));
+        if ($another || $stated !== $stored['reversed']) {
+            $states = '; this ' . $n->event . ($another ? ' is another notification than that reversal\'s and' : '')
+                . ' states ' . ($n->amount ?? 'its full amount, ' . self::units($stored['sale']));
             if ($stored['deleted']) {
                 return new Outcome(
                     OutcomeKind::CONFLICT,
@@ -440,7 +451,8 @@ final class Processor
 
             return new Outcome(
                 OutcomeKind::CONFLICT,
-                $on . ' is already reversed by ' . $by . $credited . $states
+                $on . ' is already reversed by ' . $by . ($another ? ' in conversion ' . $reversalId : '') . $credited
+                . $states
                 . ', and a sale is reversed once. Nothing was changed.',
                 $reversalId,
                 $owner
