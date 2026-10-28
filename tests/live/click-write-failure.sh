@@ -41,6 +41,10 @@ OUT=$(mktemp -d)
 TRIGGER=p202_click_write_failure_pass
 cleanup() { Q "DROP TRIGGER IF EXISTS $TRIGGER" >/dev/null 2>&1; rm -rf "$OUT"; }
 trap cleanup EXIT
+# The pass reads back the click rows a refused write left, recorded from here.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" || exit 2
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS + 1)); printf '  \033[32mPASS\033[0m %s\n' "$1"; }
