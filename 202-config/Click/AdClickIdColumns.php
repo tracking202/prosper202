@@ -26,9 +26,9 @@ final class AdClickIdColumns
     }
 
     /**
-     * The click's ids, '' for none: for a click its caller has already read
-     * as the account's. On the write handle, which sees a click its caller's
-     * transaction has just written.
+     * The click's ids, '' for none, each the greatest of its rows' (sql()):
+     * for a click its caller has already read as the account's. On the write
+     * handle, which sees a click its caller's transaction has just written.
      *
      * @return array{gbraid: string, wbraid: string, ttclid: string, msclkid: string, fbclid: string}
      */
@@ -36,7 +36,8 @@ final class AdClickIdColumns
     {
         try {
             $stmt = $conn->prepareWrite(
-                'SELECT gbraid, wbraid, ttclid, msclkid, fbclid FROM 202_google WHERE click_id = ? LIMIT 1'
+                'SELECT MAX(gbraid) AS gbraid, MAX(wbraid) AS wbraid, MAX(ttclid) AS ttclid,'
+                    . ' MAX(msclkid) AS msclkid, MAX(fbclid) AS fbclid FROM 202_google WHERE click_id = ?'
             );
             $conn->bind($stmt, 'i', [$clickId]);
             $row = $conn->fetchOne($stmt) ?? [];
@@ -54,6 +55,32 @@ final class AdClickIdColumns
             'msclkid' => (string) ($row['msclkid'] ?? ''),
             'fbclid' => (string) ($row['fbclid'] ?? ''),
         ];
+    }
+
+    /**
+     * One of a click's ad click ids (ClickRecord::AD_CLICK_IDS) as a scalar
+     * subquery, for a statement that reads clicks: the greatest of the
+     * click's 202_google values, NULL when it has no row (the redirector
+     * writes none). 202_google's key is (click_id, gclid), so a click can
+     * have more than one row, and a join to it repeats the click once for
+     * each. No row says which visit wrote it, so none can be read as the
+     * latest; and taking the row with a gclid would drop an id another row
+     * holds. Each id is read across the rows instead: '' sorts below every
+     * id, so an id any row has is read, and rows that disagree always give
+     * the same one.
+     *
+     * @param string $clickId the statement's click id column, alias.column
+     */
+    public static function sql(string $id, string $clickId): string
+    {
+        if (!array_key_exists($id, ClickRecord::AD_CLICK_IDS)) {
+            throw new \InvalidArgumentException("$id is not an ad click id a click keeps");
+        }
+        if (preg_match('/\A[A-Za-z0-9_]+\.[A-Za-z0-9_]+\z/D', $clickId) !== 1) {
+            throw new \InvalidArgumentException("$clickId is not a column");
+        }
+
+        return "(SELECT MAX(g_ids.$id) FROM 202_google AS g_ids WHERE g_ids.click_id = $clickId)";
     }
 
     /** Whether a URL has a [[token]] for one of them. */
