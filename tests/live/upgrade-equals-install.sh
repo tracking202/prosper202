@@ -293,7 +293,9 @@ say "5. compare the rows both installs seed"
 #   202_users, 202_api_keys  the account and its key (1.9.55 minted no REST key)
 #   202_deployment_secrets   random per install
 #   202_users_pref           auto_cron records whether a remote registration
-#                            call answered, which the network decides
+#                            call answered, which the network decides; and the
+#                            1.9.55 account keeps its privacy setting
+#                            ('disabled') where a fresh install's starts at 'eu'
 #   202_attribution_models   compared below without its timestamps
 #   202_attribution_backfill the upgrade's own marker for bringing the clicks
 #                            recorded before it into attribution; a fresh
@@ -331,5 +333,8 @@ eq "$(mysql_q -N "$DB_FRESH" -e "SELECT COUNT(*) FROM 202_reclick_backfill")" "0
 MODELS="SELECT user_id, model_name, model_slug, model_type, weighting_config, lookback_days, status, is_default FROM 202_attribution_models ORDER BY model_id"
 eq "$(mysql_q -N "$DB_UP" -e "$MODELS")" "$(mysql_q -N "$DB_FRESH" -e "$MODELS")" \
     "the account's default attribution model is the one a fresh install gives it"
+PRIVACY="SELECT GROUP_CONCAT(user_pref_privacy ORDER BY user_id) FROM 202_users_pref"
+eq "$(mysql_q -N "$DB_UP" -e "$PRIVACY")" "disabled" "the $ORIGIN_VERSION account keeps its privacy setting through the upgrade"
+eq "$(mysql_q -N "$DB_FRESH" -e "$PRIVACY")" "eu" "a fresh install's account starts at privacy eu"
 
 finish
