@@ -45,6 +45,24 @@ final class RefreshLockTest extends TestCase
         GeoIpRefresh::tryLock($unlockable);
     }
 
+    /** flock() on a stream that cannot lock reports the errno an earlier call left behind. */
+    public function testALockThatCannotBeTakenIsAFailureAfterAStaleEagain(): void
+    {
+        $pipe = popen('sleep 1', 'r');
+        self::assertIsResource($pipe);
+        $unlockable = fopen('php://memory', 'r+');
+        self::assertIsResource($unlockable);
+        try {
+            stream_set_blocking($pipe, false);
+            self::assertSame('', fread($pipe, 1), 'an empty non-blocking read leaves errno at EAGAIN');
+            $this->expectException(RefreshFailed::class);
+            $this->expectExceptionMessage('could not lock its lock file');
+            GeoIpRefresh::tryLock($unlockable);
+        } finally {
+            pclose($pipe);
+        }
+    }
+
     public function testTheCronJobRecordsItsHourBeforeTheRefresh(): void
     {
         $source = (string) file_get_contents(SourceScan::repoRoot() . '/202-cronjobs/index.php');

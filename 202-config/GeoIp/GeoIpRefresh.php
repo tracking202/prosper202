@@ -188,13 +188,17 @@ final class GeoIpRefresh
      * that fails for any other reason (a filesystem without locks) throws:
      * read as "busy", it would skip every run with nothing recorded.
      *
+     * A stream that cannot lock is refused before flock(): flock() on one sets
+     * $wouldBlock from whatever errno an earlier call left, so a stale EAGAIN
+     * read it as busy.
+     *
      * @param resource $handle
      * @throws RefreshFailed
      */
     public static function tryLock($handle): bool
     {
         $wouldBlock = 0;
-        if (flock($handle, LOCK_EX | LOCK_NB, $wouldBlock)) {
+        if (stream_supports_lock($handle) && flock($handle, LOCK_EX | LOCK_NB, $wouldBlock)) {
             return true;
         }
         if ($wouldBlock === 1) {
