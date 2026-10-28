@@ -158,12 +158,12 @@ cleanup
 VERSION_BEFORE=$(Q "SELECT version FROM 202_version LIMIT 1")
 restore_version() { Q "UPDATE 202_version SET version = '$VERSION_BEFORE'"; }
 trap 'cleanup; restore_version' EXIT
+# The traffic source posts back to this machine (loopback-postbacks.sh).
+p202_allow_loopback_postbacks || exit 2
 # The clicks set their cookies and the intake stores the device's address.
 # shellcheck source=tests/live/privacy.sh
 . "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
 p202_track_in_full "$BASE" "$P202_API_KEY" || exit 2
-# The traffic source posts back to this machine (loopback-postbacks.sh).
-p202_allow_loopback_postbacks || exit 2
 
 # ─────────────────────────────────────────────────────────────────────
 say "setup: an Android app with the default limits, a linked campaign, a traffic source"

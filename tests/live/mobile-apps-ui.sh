@@ -136,12 +136,12 @@ SQL
 }
 cleanup
 trap cleanup EXIT
+# The traffic source posts back to this machine (loopback-postbacks.sh).
+p202_allow_loopback_postbacks || exit 2
 # Installs are matched to clicks this pass records from this machine.
 # shellcheck source=tests/live/privacy.sh
 . "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
 p202_track_in_full "$BASE" "$P202_API_KEY" "$OWNER" || exit 2
-# The traffic source posts back to this machine (loopback-postbacks.sh).
-p202_allow_loopback_postbacks || exit 2
 
 # A previous pass may have spent this peer's intake bucket: wait it out
 # rather than read 429s as defects.

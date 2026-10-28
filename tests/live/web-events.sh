@@ -140,12 +140,12 @@ if [ "${P202_KEEP:-}" = 1 ]; then
 else
   trap cleanup EXIT
 fi
+# The traffic source posts back to this machine (loopback-postbacks.sh).
+p202_allow_loopback_postbacks || exit 2
 # The pass's clicks and events are recorded from this machine.
 # shellcheck source=tests/live/privacy.sh
 . "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
 p202_track_in_full "$BASE" "$P202_API_KEY" "$OWNER" || exit 2
-# The traffic source posts back to this machine (loopback-postbacks.sh).
-p202_allow_loopback_postbacks || exit 2
 
 mysql_q "$DB" -e "INSERT INTO 202_aff_networks SET user_id=$OWNER, aff_network_name='web events pass', aff_network_deleted=0, aff_network_time=$NOW"
 NET=$(Q "SELECT aff_network_id FROM 202_aff_networks WHERE aff_network_name='web events pass'")
