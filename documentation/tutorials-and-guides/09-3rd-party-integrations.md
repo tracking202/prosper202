@@ -174,8 +174,8 @@ For a **vendor**:
 Either way, store your **JVZIPN secret key** on the page (JVZoo shows it under
 **My Account › Account Details › Seller Settings**; one JVZoo account has one,
 for both roles). Prosper202 checks each notification's `cverify` with the
-stored keys, and the account whose key verifies it is the one it records for.
-The vendor URL never reads `caffitid`, which is whatever tid an affiliate
+stored keys, and the account whose key verifies it is the one it records for
+(a deleted account's key verifies nothing). The vendor URL never reads `caffitid`, which is whatever tid an affiliate
 chose, and the affiliate URL never reads `cvendthru`, which is the vendor's.
 For a subscription, set the campaign's **When a click converts more than
 once** (under Advanced) to **Add them up**, so each rebill adds to the sale.
