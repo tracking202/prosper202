@@ -1260,6 +1260,16 @@ UPDATE` of its own columns), and the test is a row another writer has
 touched. `ClickRowsWrittenOnlyByTheWriterTest` holds a click's rows to one
 writer, `MysqlClickRepository`.
 
+A second writer owes what the first one does after its write, not only the
+columns. Every API change of a subscription's status queued
+`subscription.changed`; the hourly sweep wrote `past_due` and `canceled`
+with no event, so a subscriber never heard that a subscription lapsed. The
+sweep queues it now, in its own transaction, and only for a change that took
+effect in the last 7 days: an announcement made late about the past is
+bounded by when the thing happened, or an upgrade's backlog becomes 30,000
+events ahead of every live one. `SubscriptionWritesAreAnnouncedTest` lists
+every statement that writes `202_subscriptions` with who announces it.
+
 A "none" that is also a lookup key finds every row that has none. A direct
 link's click without cloaking is stored with public id 0, and off.php looked
 the visitor's last click up by its public id: `click_id_public = '0'` matched

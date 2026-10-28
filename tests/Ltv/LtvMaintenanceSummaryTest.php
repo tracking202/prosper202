@@ -20,6 +20,8 @@ final class LtvMaintenanceSummaryTest extends TestCase
             'past_due' => 0,
             'canceled' => 0,
             'swept_customers' => 0,
+            'announced' => 0,
+            'unannounced' => 0,
             'reconciled' => 0,
             'checked' => 0,
             'full' => false,
@@ -36,9 +38,19 @@ final class LtvMaintenanceSummaryTest extends TestCase
     public function testTheLineNamesOnlyTheJobsThatRan(): void
     {
         self::assertSame(
-            'subscriptions 3 to past_due, 2 to canceled, 4 customer rollups refreshed',
+            'subscriptions 3 to past_due, 2 to canceled, 4 customer rollups refreshed,'
+                . ' 5 announced as subscription.changed',
             LtvMaintenance::summary(self::report([
                 'jobs' => [LtvMaintenance::SWEEP], 'past_due' => 3, 'canceled' => 2, 'swept_customers' => 4,
+                'announced' => 5,
+            ]))
+        );
+        self::assertSame(
+            'subscriptions 0 to past_due, 9 to canceled, 3 customer rollups refreshed,'
+                . ' 1 announced as subscription.changed (8 that took effect more than 7 days ago not announced)',
+            LtvMaintenance::summary(self::report([
+                'jobs' => [LtvMaintenance::SWEEP], 'canceled' => 9, 'swept_customers' => 3,
+                'announced' => 1, 'unannounced' => 8,
             ]))
         );
         self::assertSame(

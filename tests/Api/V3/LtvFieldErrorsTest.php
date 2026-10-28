@@ -58,6 +58,7 @@ final class LtvFieldErrorsTest extends TestCase
         '202-config/Ltv/LtvMaintenance.php' => [
             'GET_LOCK failed for' => 'the cron\'s maintenance, which no /ltv route reaches',
             'LTV maintenance needs a selected database' => 'the cron\'s maintenance, ditto',
+            'The sweep locked ' => 'the cron\'s sweep, a write the database did not keep under its lock',
         ],
         '202-config/Ltv/MysqlCustomerFieldRepository.php' => [
             'Failed to encode field options' => 'json_encode() of strings failing is the server\'s',

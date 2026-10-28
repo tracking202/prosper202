@@ -1115,7 +1115,10 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
   to an hour behind the clock. A renewal (`ltv subscription event <id> --type
   renewal`) makes it `active` again. `ltv mrr` counts churn by `canceled_at`,
   which for a lapsed subscription is when the rule canceled it, not when the
-  cron ran.
+  cron ran. Each change the sweep makes queues `subscription.changed`
+  (`action` `upsert` for `past_due`, `cancel` for `canceled`), as the API's
+  change does, when it took effect in the last 7 days; an older one (an
+  upgraded install's backlog) is moved without an event.
 - `ltv webhooks deliveries` lists one webhook's deliveries newest first (25
   by default): `status`, `attempts`, `next_attempt_at` (pending only),
   `last_status_code` and `last_response_body` (the last response or error,

@@ -229,6 +229,17 @@ change with it. A `trialing` or `paused` subscription is left as it is.
   backlog takes more than one run). One that lapsed long ago goes straight to `canceled`, dated when it
   would have been canceled, so it counts in churn only if that falls in the
   last 90 days.
+- Each change queues a `subscription.changed` webhook event, as the API's
+  change of that status does: `past_due` with `action` `upsert` (the API
+  reaches `past_due` only through `POST /ltv/subscriptions`), `canceled` with
+  `action` `cancel` (the cancel event). It is queued in the same transaction
+  as the change, and only for a change that took effect in the last 7 days,
+  the time the sender keeps an unsent delivery: the first run after the
+  upgrade announces the last week's lapses, not every subscription that
+  lapsed since it was recorded (on a test install with 30,000 lapsed over
+  two years, 561 events, where announcing all would have queued 30,000 for
+  each webhook, hours of sending ahead of every live event). The run's line
+  says how many it did not announce.
 - The customer rollups (`order_count`, `total_revenue`, `refunded_amount`,
   `mrr`, `active_subscription_count`) are also recomputed from the ledger
   once a day, for the customers active in the last 48 hours, in case a write
@@ -314,6 +325,13 @@ address that passed, with no proxy and no redirects; a refused one is
 logged `blocked: …` and nothing is sent. A receiver on the operator's own
 network is admitted by `P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php`, the
 export webhooks' setting; link-local and metadata addresses never are.
+
+`subscription.changed` carries `{subscription_id, customer_id, action}`:
+`upsert`, `renewal`, `cancel` or `refund` for a write through the API, and
+`upsert` (to `past_due`) or `cancel` when the hourly sweep moves a
+subscription that stopped renewing (see [When a subscription stops
+renewing](#when-a-subscription-stops-renewing)). Read the subscription for
+its status.
 
 `events` is a list of the events this install sends — `customer.updated`,
 `revenue.recorded`, `subscription.changed`, `conversion.recorded`,
