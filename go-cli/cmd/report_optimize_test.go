@@ -167,7 +167,7 @@ func losersServer(t *testing.T, models string, attr func(q url.Values) (int, str
 			w.Write([]byte(models))
 		case strings.Contains(r.URL.Path, "/campaigns/"): // the payout `losers` reads when --aff-campaign-id is set
 			w.WriteHeader(200)
-			w.Write([]byte(`{"data":{"aff_campaign_payout":"0"}}`))
+			w.Write([]byte(`{"data":{"aff_campaign_payout":0}}`))
 		case strings.HasSuffix(r.URL.Path, "/attribution/models/4"):
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"model_id":4,"model_name":"First touch","model_type":"first_touch","status":"active"}}`))
@@ -943,7 +943,7 @@ func payoutServer(t *testing.T, classic string, campaigns *int, calls *[]url.Val
 		case strings.Contains(r.URL.Path, "/campaigns/"):
 			*campaigns++
 			w.WriteHeader(200)
-			w.Write([]byte(`{"data":{"aff_campaign_payout":"160"}}`))
+			w.Write([]byte(`{"data":{"aff_campaign_payout":160}}`))
 		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
 			*calls = append(*calls, r.URL.Query())
 			w.WriteHeader(200)

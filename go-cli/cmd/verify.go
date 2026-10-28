@@ -237,8 +237,7 @@ var rotatorTestCmd = &cobra.Command{
 			}
 			rows = append(rows, row)
 		}
-		render(rowsToJSON(rows))
-		return nil
+		return renderRows(rows)
 	},
 }
 
@@ -318,8 +317,7 @@ var trackerTestCmd = &cobra.Command{
 			}
 			rows = append(rows, row)
 		}
-		render(rowsToJSON(rows))
-		return nil
+		return renderRows(rows)
 	},
 }
 
@@ -441,7 +439,9 @@ var rotatorCheckCmd = &cobra.Command{
 			})
 		}
 		rows = append(rows, fetchFailures...)
-		render(rowsToJSON(rows))
+		if err := renderRows(rows); err != nil {
+			return err
+		}
 		if failed > 0 {
 			return partialFailureError("%d rotator(s) have configuration issues", failed)
 		}
@@ -494,8 +494,7 @@ var rotatorTraceCmd = &cobra.Command{
 				"click_cpc":         t["click_cpc"],
 			})
 		}
-		render(rowsToJSON(rows))
-		return nil
+		return renderRows(rows)
 	},
 }
 
@@ -600,7 +599,9 @@ var trackerCheckCmd = &cobra.Command{
 				"destination": dest,
 			})
 		}
-		render(rowsToJSON(rows))
+		if err := renderRows(rows); err != nil {
+			return err
+		}
 		if failed > 0 {
 			return partialFailureError("%d tracker(s) did not resolve to a redirect", failed)
 		}

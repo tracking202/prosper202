@@ -272,7 +272,11 @@ func runSystemCron(cmd *cobra.Command, _ []string) error {
 	if len(opts.Fields) == 0 {
 		opts.Fields = cronColumns
 	}
-	output.RenderWith(rowsToJSON(rows), opts)
+	out, err := rowsToJSON(rows)
+	if err != nil {
+		return err
+	}
+	output.RenderWith(out, opts)
 	if sum.LastExecution != nil {
 		ago := *sum.LastExecutionAge + " ago"
 		if *sum.LastExecutionAgeSeconds < 0 {

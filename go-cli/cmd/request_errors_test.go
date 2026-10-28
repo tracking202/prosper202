@@ -15,8 +15,6 @@ import (
 // requestErrorDrops are the requests whose error is still assigned to _, keyed "file: callee", with what the drop
 // does. The list only shrinks.
 var requestErrorDrops = map[string]string{
-	"cmd/report_optimize.go: fetchCampaignPayout": "report losers/winners --aff-campaign-id: a failed read of the campaign's " +
-		"payout classifies the rows at payout 0, as though no payout were known",
 	"cmd/sync.go: orchestrator.Post": "sync's server-side job: kicks the server's sync worker between status reads; if " +
 		"every kick fails, the 20 reads end and the job is printed as queued, with no warning",
 }
