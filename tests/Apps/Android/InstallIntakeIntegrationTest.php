@@ -47,6 +47,8 @@ final class InstallIntakeIntegrationTest extends TestCase
         self::assertSame('install:' . $row['install_row_id'], $ledger[0]['source_ref']);
         self::assertNull($ledger[0]['transaction_id'], 'no network sent an id');
         self::assertSame((string) $ledger[0]['conv_id'], (string) $row['conversion_id'], 'the install row names its conversion');
+        self::assertSame('click_id', self::$db->query('SELECT match_method FROM 202_conversion_logs WHERE conv_id = '
+            . (int) $ledger[0]['conv_id'])->fetch_assoc()['match_method'], 'the install\'s signed token named its click');
         self::assertSame(['lead' => 1, 'payout' => '2.50000'], self::clickValue(100));
         self::assertSame(1, self::rows('202_attribution_pending', 'conv_id = ' . (int) $ledger[0]['conv_id']), 'queued for MTA in the same transaction');
 
@@ -494,6 +496,8 @@ final class InstallIntakeIntegrationTest extends TestCase
         self::assertCount(1, $goalRows);
         self::assertSame(['goal:' . $level3 . ':1', '4.00000', '1'], [$goalRows[0]['source_ref'], $goalRows[0]['click_payout'], (string) $goalRows[0]['payable']]);
         self::assertSame(['lead' => 1, 'payout' => '6.50000'], self::clickValue(100), 'install 2.50 + level 3 4.00, accumulated');
+        self::assertSame([['match_method' => 'click_id']], self::$db->query('SELECT DISTINCT match_method FROM 202_conversion_logs WHERE click_id = 100')
+            ->fetch_all(MYSQLI_ASSOC), 'an install\'s events reach goals on the click its token named');
         $reached = array_values(array_filter(self::outbox(), static fn (array $r): bool => $r['kind'] === 'reached'));
         self::assertCount(2, $reached);
         self::assertStringContainsString('goal=Level%203&v=4.00', $reached[1]['url']);

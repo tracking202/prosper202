@@ -75,6 +75,7 @@ class Application extends ConsoleApplication
         $this->add(new Commands\ConversionCreateCommand());
         $this->add(new Commands\EventSendCommand());
         $this->add(new Commands\ConversionDeleteCommand());
+        $this->add(new Commands\ConversionMatchMethodsCommand());
 
         // --- Reports ---
         $this->add(new Commands\ReportSummaryCommand());

@@ -49,7 +49,7 @@ final class InMemoryConversionRepository implements ConversionRepositoryInterfac
         return $conv;
     }
 
-    public function create(int $userId, array $data): int
+    public function create(int $userId, array $data, \Prosper202\Conversion\Ledger\MatchMethod $matchedBy): int
     {
         $clickId = (int) $data['click_id'];
         if ($clickId <= 0) {
@@ -72,6 +72,7 @@ final class InMemoryConversionRepository implements ConversionRepositoryInterfac
             'click_time' => (int) ($click['click_time'] ?? 0),
             'conv_time' => (int) ($data['conv_time'] ?? time()),
             'deleted' => 0,
+            'match_method' => $matchedBy->value,
         ];
 
         // Update click (simulates UPDATE 202_clicks SET click_lead=1)

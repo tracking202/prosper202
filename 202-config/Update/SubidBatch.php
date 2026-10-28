@@ -8,6 +8,7 @@ use Prosper202\Click\ClickId;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\BatchInterrupted;
 use Prosper202\Conversion\Ledger\ConversionSource;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
@@ -144,6 +145,8 @@ final class SubidBatch
                         'pixel_type' => 0,
                         'once_per_click' => true,
                     ],
+                    // The list named the click.
+                    MatchMethod::CLICK_ID,
                     function (int $lockedClickId) use ($userId): void {
                         // A converting click is never left filtered.
                         foreach (['UPDATE 202_clicks SET click_filtered = 0 WHERE click_id = ? AND user_id = ?',

@@ -43,7 +43,7 @@ final class RecordConversionTest extends TestCase
         $db = new FakeRecordMysqli();
 
         try {
-            p202RecordConversion($db, ['click_id' => 0], '', false, '', '');
+            p202RecordConversion($db, ['click_id' => 0], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', false, '', '');
             self::fail('Expected InvalidArgumentException');
         } catch (InvalidArgumentException $e) {
             self::assertSame([], $db->queries, 'No query/connection work should happen for an invalid click id');
@@ -63,7 +63,7 @@ final class RecordConversionTest extends TestCase
         $log = ['click_id' => 5, 'campaign_id' => '1', 'user_id' => '1'] + $extra;
 
         try {
-            p202RecordConversion($db, $log, '', false, '', '');
+            p202RecordConversion($db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', false, '', '');
             self::fail('Expected InvalidArgumentException');
         } catch (InvalidArgumentException $e) {
             self::assertStringContainsString('once_per_click', $e->getMessage());

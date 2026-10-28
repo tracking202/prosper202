@@ -138,7 +138,13 @@ try {
         exit;
     }
     $p202Engine = new \Prosper202\Goals\GoalEngine($p202Conn, null, null, null, new \Prosper202\Goals\TrafficSourceNotifier($p202Conn, false));
-    $p202Result = $p202Engine->ingest($p202Click['user_id'], $p202Engine->clickSubject($p202Click['user_id'], $p202Click['click_id']), [$p202Event]);
+    // The click is the one the page's visitor id was last seen on.
+    $p202Result = $p202Engine->ingest(
+        $p202Click['user_id'],
+        $p202Engine->clickSubject($p202Click['user_id'], $p202Click['click_id']),
+        [$p202Event],
+        \Prosper202\Conversion\Ledger\MatchMethod::VISITOR_ID
+    );
 } catch (\Prosper202\Goals\GoalEngineException $p202Refused) {
     match ($p202Refused->reason) {
         \Prosper202\Goals\GoalEngineException::EVENT_CONFLICT => $p202EventRefuse(409, $p202Refused->getMessage()),

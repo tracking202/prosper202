@@ -108,7 +108,7 @@ final class LegacyPostbackCampaignIntegrationTest extends TestCase
     /** @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string} */
     private static function postback(string $campaign, string $transaction): array
     {
-        return p202RecordLegacyConversion(self::$db, self::CLICK, 2, [
+        return p202RecordLegacyConversion(self::$db, self::CLICK, 2, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, [
             'campaign_id' => self::$campaign[$campaign], 'transaction_id' => $transaction, 'source' => 'legacy_pixel',
         ]);
     }

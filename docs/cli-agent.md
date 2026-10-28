@@ -841,7 +841,10 @@ p202 click update-cpc --from YYYY-MM-DD --to YYYY-MM-DD --cpc D
 p202 conversion list   [--limit 50] [--offset 0] [--campaign-id N] [--all]
                        [--time-from T] [--time-to T] [--click-id N]
                        [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|app_install|goal|legacy_baseline]
+                       [--match-method click_id|cookie|visitor_id|same_ip|unknown]   # how the click was found; same_ip = a guess
                        [--goal N] [--json]
+p202 conversion match-methods [--aff-campaign-id N] [--period P] [--time-from T] [--time-to T] [--json]
+                       # each campaign's conversions, counted ones and income by how their click was found
 p202 conversion get    <id> [--json]
 p202 conversion create --click-id N [--payout F] [--transaction-id S] [--conv-time T] [--idempotency-key S]
                        [--status reversed [--reversal-id S]]      # a reversal of the sale with --transaction-id
