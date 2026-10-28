@@ -67,6 +67,10 @@ expect() { # what it answered, the pattern it must match, what it says
 
 T=$(date +%s%N | cut -c1-13)
 U="https://outage.example/$T"
+# The URLs are kept by clicks recorded from this machine.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" || exit 2
 say "setup: a campaign, a tracker and a landing page through the API"
 must "$(api POST /aff-networks "{\"aff_network_name\":\"outage $T\"}")" "category"
 NET=$(field "d['data']['aff_network_id']")
@@ -88,6 +92,8 @@ hit "/tracking202/redirect/lp.php?lpip=$LPS" >/dev/null
 hit "/tracking202/redirect/off.php?acip=$ACIP" >/dev/null
 
 say "the database out of reach"
+# Put back now: the outage outlasts the pass, and the restore needs the database.
+p202_privacy_restore
 bash -c "$OUTAGE"
 sleep 1
 if mysql "${MYSQL_ARGS[@]}" -h 127.0.0.1 -P "$OUTAGE_PORT" -e 'SELECT 1' >/dev/null 2>&1; then
