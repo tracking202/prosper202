@@ -59,11 +59,11 @@ note() { # note <secret> <order json> [cipher] -> the request body
         "$(printf '%s' "$plain" | openssl enc "-$cipher" -K "$keyhex" -iv "$ivhex" | base64 -w0)" \
         "$(base64 -w0 "$OUT/iv")"
 }
-order() { # order <type> <receipt> <click> <amount>: an INS 8.0 order, the amount a string as 8.0 sends it
-    printf '{"transactionTime":"2026-10-23T13:47:51-06:00","receipt":"%s","transactionType":"%s","vendor":"testacct",'\
+order() { # order <type> <receipt> <click> <amount> [time]: an INS 8.0 order, the amount a string as 8.0 sends it
+    printf '{"transactionTime":"%s","receipt":"%s","transactionType":"%s","vendor":"testacct",'\
 '"affiliate":"affiliate1","role":"AFFILIATE","totalAccountAmount":"%s","paymentMethod":"VISA","currency":"USD",'\
 '"trackingCodes":[%s],"customer":{"billing":{"fullName":"Test Buyer","email":"buyer-7pjv@example.com"}},'\
-'"version":"8","attemptCount":1}' "$2" "$1" "$4" "$3"
+'"version":"8","attemptCount":1}' "${5:-$(TZ=America/Denver date +%Y-%m-%dT%H:%M:%S%:z)}" "$2" "$1" "$4" "$3"
 }
 post() { # post <body> -> HTTP status; the answer in $OUT/r
     curl -sS -o "$OUT/r" -w '%{http_code}' -H 'Content-Type: application/json' --data-binary "$1" \
@@ -152,6 +152,16 @@ has "$OUT/r" '"outcome":"ambiguous_account"' "as ambiguous"
 eq "$(rows "$CLICK_A")" 1 "and recorded nothing"
 api "$KEY_B" PUT "/users/$USER_B/preferences" "{\"cb_key\":\"$CB_B\"}" > /dev/null
 eq "$(cb "$CB_A" SALE "RS$RUN" "$CLICK_A" 5.00)" 200 "once the key is one account's again, the same notification records"
+
+say "a sale is dated when ClickBank says it happened"
+CT=$(Q "SELECT click_time FROM 202_clicks WHERE click_id=$CLICK_A ORDER BY click_time LIMIT 1")
+sleep 2
+AT=$(( $(date +%s) - 1 ))
+STATED=$(TZ=America/Denver date -d "@$AT" +%Y-%m-%dT%H:%M:%S%:z)
+eq "$(post "$(note "$CB_A" "$(order SALE "RD$RUN" "\"$CLICK_A\"" 1.00 "$STATED")")")" 200 "a sale stating $STATED, after its click at $CT, answers 200"
+eq "$(Q "SELECT conv_time FROM 202_conversion_logs WHERE click_id=$CLICK_A AND transaction_id='RD$RUN'")" "$AT" "and is dated then, read with its offset"
+eq "$(post "$(note "$CB_A" "$(order SALE "RE$RUN" "\"$CLICK_A\"" 1.00 2026-13-01T00:00:00-06:00)")")" 400 "a time that names no moment is a 400"
+has "$OUT/r" 'transactionTime is' "naming the field"
 
 say "server log"
 if [ -n "${P202_SERVER_LOG:-}" ] && [ -f "$P202_SERVER_LOG" ]; then

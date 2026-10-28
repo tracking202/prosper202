@@ -144,9 +144,18 @@ final class ClickBankInsIntegrationTest extends TestCase
     /** @param array<string, mixed> $overrides */
     private function post(array $overrides, string $key): Outcome
     {
-        $order = ClickBankAdapterTest::sale($overrides + ['trackingCodes' => [(string) self::CLICK]]);
+        $order = ClickBankAdapterTest::sale($overrides + [
+            'trackingCodes' => [(string) self::CLICK],
+            'transactionTime' => self::stated(time() - 60),
+        ]);
 
         return $this->deliver(ClickBankAdapterTest::body($order, $key));
+    }
+
+    /** A Unix time as ClickBank states it, in a zone of its own. */
+    private static function stated(int $time): string
+    {
+        return (new \DateTimeImmutable('@' . $time))->setTimezone(new \DateTimeZone('-06:00'))->format('Y-m-d\TH:i:sP');
     }
 
     private function deliver(string $body, string $method = 'POST'): Outcome
@@ -216,6 +225,44 @@ final class ClickBankInsIntegrationTest extends TestCase
         foreach (['buyer@example.com', 'Test Guy', self::FIRST_KEY, self::SECOND_KEY] as $private) {
             self::assertStringNotContainsString($private, $log);
         }
+    }
+
+    /** A notification ClickBank sent late is dated when the sale happened, read with its offset. */
+    public function testASaleIsDatedWhenClickBankSaysItHappened(): void
+    {
+        $clickTime = (int) self::scalar(
+            'SELECT click_time FROM 202_clicks WHERE click_id = ' . self::CLICK . ' LIMIT 1'
+        );
+
+        $stated = $this->post(['transactionTime' => self::stated($clickTime + 120)], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $stated);
+        self::assertSame(
+            (string) ($clickTime + 120),
+            self::scalar("SELECT conv_time FROM 202_conversion_logs WHERE transaction_id = 'CWOGBZLN'")
+        );
+
+        $before = time();
+        $order = ClickBankAdapterTest::sale(['receipt' => 'NOTIMEGIVEN', 'trackingCodes' => [(string) self::CLICK]]);
+        unset($order['transactionTime']);
+        $untimed = $this->deliver(ClickBankAdapterTest::body($order, self::FIRST_KEY));
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $untimed);
+        $arrived = (int) self::scalar("SELECT conv_time FROM 202_conversion_logs WHERE transaction_id = 'NOTIMEGIVEN'");
+        self::assertGreaterThanOrEqual($before, $arrived, 'no time stated: dated on arrival');
+
+        $badTime = ['receipt' => 'BADTIME1', 'transactionTime' => '2026-13-01T00:00:00-06:00'];
+        $bad = $this->post($badTime, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::MALFORMED, 400, $bad);
+        self::assertStringStartsWith('transactionTime is "2026-13-01T00:00:00-06:00"', $bad->message);
+        self::assertCount(2, self::conversions());
+    }
+
+    private static function scalar(string $sql): ?string
+    {
+        $result = self::requireScratch()->query($sql);
+        self::assertInstanceOf(\mysqli_result::class, $result);
+        $row = $result->fetch_row();
+
+        return $row === null || $row[0] === null ? null : (string) $row[0];
     }
 
     public function testOneAccountsKeyOnAnotherAccountsClickReadsAsNoClick(): void

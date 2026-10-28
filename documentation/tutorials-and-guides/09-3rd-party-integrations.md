@@ -49,10 +49,17 @@ is answered with a 2xx):
 | a notification no stored key decrypts | nothing | `403` |
 | a key more than one account stores | nothing | `409` |
 | an account that counts in a currency other than USD | nothing: ClickBank's amounts are USD, and Prosper202 does not convert them | `422` |
-| a malformed field (a tracking code such as `42.9`, an amount such as `1,000.00`) | nothing | `400`, naming the field |
+| a malformed field (a tracking code such as `42.9`, an amount such as `1,000.00`, a `transactionTime` without its offset) | nothing | `400`, naming the field |
 | a legacy notification (version 4.0 or earlier, signed with `cverify`) | nothing | `415`, saying to choose version 8.0 |
 | a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
 | a notification that could not be recorded just now | nothing that a retry would double: a receipt is recorded once | `500` |
+
+A sale is dated by its `transactionTime`, read with the offset it carries
+(`2023-10-05T13:47:51-06:00`, or 7.0's `20231005T134751-0600`), so one
+ClickBank sends again hours later still falls on the day it happened; without
+one, it is dated when it arrives. A time before the click is dated at the
+click, and one ahead of this server's clock at its arrival; the answer says
+so.
 
 Each notification is logged in the server's error log in one line: the
 outcome, the type, the click, the receipt and the account, never a key or the

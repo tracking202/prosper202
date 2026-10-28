@@ -138,8 +138,9 @@ final class ClickBankAdapterTest extends TestCase
 
         self::assertSame([3 => 0], $adapter->verify($request, [3 => [self::VECTOR_SECRET]])?->secretByAccount);
         $n = $adapter->parse($request);
+        // 2026-10-23T13:47:51-06:00, as `date -d … +%s` reads it.
         self::assertSame(
-            [NotificationKind::SALE, 'SALE', 'KNOWNANS', null, '37.62', 'USD', 4242, null],
+            [NotificationKind::SALE, 'SALE', 'KNOWNANS', null, '37.62', 'USD', 4242, 1792784871],
             [$n->kind, $n->event, $n->transactionId, $n->originalTransactionId, $n->amount, $n->currency, $n->clickId,
                 $n->occurredAt]
         );
@@ -360,6 +361,40 @@ final class ClickBankAdapterTest extends TestCase
 
         self::assertNotNull($adapter->verify($request, [3 => [self::KEY_A]]));
         self::assertSame('CWOGBZLN', $adapter->parse($request)->transactionId);
+    }
+
+    /** The payment's own time dates the row; the values are `date -d … +%s`'s. */
+    public function testTheTransactionTimeIsReadWithItsOffset(): void
+    {
+        $times = [
+            '2023-10-05T13:47:51-06:00' => 1696535271, '2023-10-05T19:47:51Z' => 1696535271,
+            '2023-10-05T19:47:51-00:00' => 1696535271, '2023-10-05T13:47:51+05:30' => 1696493871,
+            '20200819T144359-0700' => 1597873439, '20200819T144359Z' => 1597848239,
+        ];
+        foreach ($times as $sent => $read) {
+            self::assertSame($read, self::parsed(self::sale(['transactionTime' => $sent]))->occurredAt, $sent);
+        }
+        $none = self::sale();
+        unset($none['transactionTime']);
+        self::assertNull(self::parsed($none)->occurredAt);
+        self::assertNull(self::parsed(self::sale(['transactionTime' => '']))->occurredAt);
+
+        $refused = [
+            '2023-10-05 13:47:51', '2023-10-05T13:47:51', '2023-13-05T13:47:51-06:00', '2023-02-30T13:47:51-06:00',
+            '2023-10-05T24:00:00-06:00', '2023-10-05T13:47:51.123-06:00', '20200819T144359-07:00',
+            '2023-10-05T13:47:51-0600', '1696535271', '2038-01-19T03:14:08Z', '1969-12-31T23:59:59Z',
+        ];
+        foreach ($refused as $time) {
+            self::assertStringStartsWith(
+                'transactionTime is "' . $time . '"; ClickBank sends a time with its offset',
+                self::refused(self::sale(['transactionTime' => $time])),
+                $time
+            );
+        }
+        self::assertStringStartsWith(
+            'transactionTime is integer;',
+            self::refused(self::sale(['transactionTime' => 1696535271]))
+        );
     }
 
     public function testParseReadsOnlyTheRequestVerifyDecrypted(): void
