@@ -74,8 +74,10 @@ Everything else is hands-off:
 ## 4. Deploy and finish the wizard
 
 Click **Deploy**. Coolify builds the image from git (the app and its Composer
-dependencies are baked in — first build takes a few minutes) and starts the
-stack; the web service reports healthy once `/health/` responds.
+dependencies are baked in, installed from the repository's `composer.lock` so
+every build of one commit runs the same dependency set — first build takes a few
+minutes) and starts the stack; the web service reports healthy once `/health/`
+responds.
 
 Then open your domain. The setup wizard runs with the database step already
 completed — you only validate your API key and create the admin account.
