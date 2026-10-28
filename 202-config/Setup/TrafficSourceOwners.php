@@ -52,6 +52,12 @@ use Prosper202\Lpo\DimensionSync;
  * An unmarked source has one user to go back to (repair_to_user_id), and the
  * repair takes it there without being told. A marked one moves only to a user
  * the operator names, who must be one whose accounts name it.
+ *
+ * A move cannot clear a source that accounts of more than one user name
+ * (owner_has_accounts, several_users): whichever account it is in, another
+ * user's accounts still name it, and it is listed again. The split
+ * (POST /system/traffic-source-owners/split) leaves it where it is and gives
+ * each user in named_by a copy of their own, which their accounts then name.
  */
 final class TrafficSourceOwners
 {
@@ -61,15 +67,23 @@ final class TrafficSourceOwners
     public const NO_SUCH_USER = 'no_such_user';
     public const DELETED_USER = 'deleted_user';
 
+    /**
+     * 202_ppc_network_variables.ppc_network_id is a signed mediumint, while a
+     * source's id is unsigned: a copy above this id has nowhere to keep its
+     * variables, and a non-strict server would clip the id onto another source.
+     */
+    private const VARIABLES_MAX_SOURCE_ID = 8388607;
+
     public function __construct(private readonly Connection $conn)
     {
     }
 
     /**
      * Every source another user's accounts name, by id, each with the clicks
-     * and the counted conversions recorded on each user's accounts. Without
-     * $counts they are left out: they scan each account's clicks, and
-     * Account › Settings asks on every load only whether anything is listed.
+     * and the counted conversions recorded on each user's accounts, and the
+     * custom variables a split copies. Without $counts they are left out:
+     * they scan each account's clicks, and Account › Settings asks on every
+     * load only whether anything is listed.
      *
      * @return list<array<string, mixed>>
      */
@@ -86,6 +100,7 @@ final class TrafficSourceOwners
         }
         $sources = $this->sources($ids);
         $accounts = $this->accounts($ids);
+        $variables = $counts ? $this->variableCounts($ids) : [];
 
         $entries = [];
         foreach ($ids as $id) {
@@ -98,6 +113,7 @@ final class TrafficSourceOwners
                 continue;
             }
             if ($counts) {
+                $entry['custom_variables'] = $variables[$id] ?? 0;
                 $entry['owner'] = $this->withCounts($entry['owner']);
                 $entry['named_by'] = array_map($this->withCounts(...), $entry['named_by']);
             }
@@ -220,6 +236,185 @@ final class TrafficSourceOwners
         DimensionSync::markDirty($this->conn->writeConnection(), $toUserId);
 
         return $moved;
+    }
+
+    /**
+     * What a split of $sourceId would do: leave it in the account it is in,
+     * and give each user the report lists under named_by a copy, onto which
+     * that user's accounts naming it move. $shownOwner and $shownCopyTo are
+     * the owner and the named_by users the operator was shown, when the
+     * caller sends them back: a source that has moved since, or would give
+     * copies to other users now, is refused.
+     *
+     * @param list<int>|null $shownCopyTo
+     * @return array{owner: int, copies: array<int, list<int>>, entry: array<string, mixed>}
+     *     copies: each user who gets one => the ids of their accounts naming it
+     * @throws TrafficSourceRepairRefused when it is not listed, or not as shown
+     */
+    public function planSplit(int $sourceId, ?int $shownOwner = null, ?array $shownCopyTo = null): array
+    {
+        $sources = $this->sources([$sourceId]);
+        $accounts = $this->accounts([$sourceId]);
+        $plan = $this->resolveSplit($sourceId, $sources[$sourceId] ?? null, $accounts[$sourceId] ?? []);
+        $again = ' Nothing was copied. Read the report again.';
+        if ($shownOwner !== null && $plan['owner'] !== $shownOwner) {
+            throw new TrafficSourceRepairRefused('owner_user_id', 'Traffic source ' . $sourceId . ' is now in user '
+                . $plan['owner'] . "'s account, not in user " . $shownOwner . "'s as the report you read said."
+                . $again);
+        }
+        if ($shownCopyTo !== null) {
+            $shown = array_values(array_unique($shownCopyTo));
+            sort($shown);
+            if (array_keys($plan['copies']) !== $shown) {
+                throw new TrafficSourceRepairRefused('copy_to_user_ids', 'Traffic source ' . $sourceId
+                    . ' would now give a copy to users ' . implode(', ', array_keys($plan['copies']))
+                    . ', not to users ' . implode(', ', $shown) . ' as the report you read said.' . $again);
+            }
+        }
+
+        return $plan;
+    }
+
+    /**
+     * Split the source as planSplit() answered: in one transaction, each
+     * user in $copies gets a new source in their own account with the
+     * source's name, its removed mark and its live custom variables; their
+     * accounts naming it move onto it, a report filter of theirs naming it
+     * names the copy, and the accounts are queued for the report rollup
+     * (RollupRefresh), whose rows take the source from the account. The
+     * users, those accounts and the source are locked, everything is read
+     * again, and nothing is written unless it still resolves the same way.
+     * The source itself, and its owner's accounts, are not changed. The split
+     * is logged.
+     *
+     * The clicks already recorded keep the custom variable values they were
+     * recorded with, which name the source's variables, not the copy's.
+     *
+     * @param array<int, list<int>> $copies user => the ids of their accounts naming it
+     * @return array<string, mixed>
+     * @throws TrafficSourceRepairRefused when it no longer resolves so
+     */
+    public function split(int $sourceId, int $ownerUserId, array $copies, int $actorUserId): array
+    {
+        if ($copies === []) {
+            throw new \LogicException('a split gives at least one user a copy');
+        }
+        $split = $this->conn->transaction(function () use ($sourceId, $ownerUserId, $copies): array {
+            // Locked before any plain read, so every read after them is
+            // current (CLAUDE.md #36): the users first, as repair() locks
+            // them; then the accounts that move, by id; then the source. A
+            // click's rollup share-locks its account and then the account's
+            // source, so a split that held the source and waited for an
+            // account would deadlock with it (repair() writes no account and
+            // locks none). A rebuild reading the owner's click and then a
+            // moved account's takes them the other way and can deadlock with
+            // this; the server rolls one back whole, and either is sent again.
+            $this->lockUsers([$ownerUserId, ...array_keys($copies)]);
+            $this->lockAccounts(array_merge(...array_values($copies)));
+            $sources = $this->sources([$sourceId], true);
+            $accounts = $this->accounts([$sourceId]);
+            $now = $this->resolveSplit($sourceId, $sources[$sourceId] ?? null, $accounts[$sourceId] ?? []);
+            if ($now['owner'] !== $ownerUserId || $now['copies'] !== $copies) {
+                throw new TrafficSourceRepairRefused('ppc_network_id', 'Traffic source ' . $sourceId
+                    . ' changed after it was read: it is in user ' . $now['owner'] . "'s account and would give a"
+                    . ' copy to users ' . implode(', ', array_keys($now['copies'])) . ' for their traffic source'
+                    . ' accounts ' . implode(', ', array_merge(...array_values($now['copies'])))
+                    . '. Nothing was copied. Read the report again.');
+            }
+            $source = $sources[$sourceId];
+            $variables = $this->variables($sourceId);
+            $at = time();
+
+            $made = [];
+            foreach ($copies as $user => $accountIds) {
+                $insert = $this->conn->prepareWrite('INSERT INTO 202_ppc_networks'
+                    . ' (user_id, ppc_network_name, ppc_network_deleted, ppc_network_time) VALUES (?, ?, ?, ?)');
+                $this->conn->bind($insert, 'isii', [
+                    $user,
+                    (string) $source['ppc_network_name'],
+                    (int) $source['ppc_network_deleted'],
+                    $at,
+                ]);
+                $copyId = $this->conn->executeInsert($insert);
+                if ($copyId < 1 || ($variables !== [] && $copyId > self::VARIABLES_MAX_SOURCE_ID)) {
+                    throw new \LogicException('The copy of traffic source ' . $sourceId . ' for user ' . $user
+                        . ' was given id ' . $copyId . ', where its custom variables cannot be kept');
+                }
+                foreach ($variables as $variable) {
+                    $copied = $this->conn->prepareWrite('INSERT INTO 202_ppc_network_variables'
+                        . ' (ppc_network_id, name, parameter, placeholder, deleted) VALUES (?, ?, ?, ?, 0)');
+                    $this->conn->bind($copied, 'isss', [
+                        $copyId,
+                        (string) $variable['name'],
+                        (string) $variable['parameter'],
+                        (string) $variable['placeholder'],
+                    ]);
+                    $this->conn->executeInsert($copied);
+                }
+
+                $move = $this->conn->prepareWrite('UPDATE 202_ppc_accounts SET ppc_network_id = ?'
+                    . ' WHERE ppc_network_id = ? AND user_id = ?'
+                    . ' AND ppc_account_id IN (' . self::marks($accountIds) . ')');
+                $this->conn->bind($move, 'iii' . str_repeat('i', count($accountIds)), [
+                    $copyId,
+                    $sourceId,
+                    $user,
+                    ...$accountIds,
+                ]);
+                if ($this->conn->executeUpdate($move) !== count($accountIds)) {
+                    throw new \LogicException('User ' . $user . "'s traffic source accounts on traffic source "
+                        . $sourceId . ' were locked, and moving them to its copy did not move each of them');
+                }
+                $filter = $this->conn->prepareWrite('UPDATE 202_users_pref SET user_pref_ppc_network_id = ?'
+                    . ' WHERE user_id = ? AND user_pref_ppc_network_id = ?');
+                $this->conn->bind($filter, 'iii', [$copyId, $user, $sourceId]);
+                $this->conn->executeUpdate($filter);
+                foreach ($accountIds as $accountId) {
+                    RollupRefresh::account($this->conn, $user, $accountId, $at);
+                }
+
+                $made[] = [
+                    'user_id' => $user,
+                    'ppc_network_id' => $copyId,
+                    'ppc_account_ids' => $accountIds,
+                    'custom_variables' => count($variables),
+                ];
+            }
+
+            return [
+                'ppc_network_id' => $sourceId,
+                'ppc_network_name' => $now['entry']['ppc_network_name'],
+                'removed' => $now['entry']['removed'],
+                'owner_user_id' => $ownerUserId,
+                'copies' => $made,
+                'queued_ppc_accounts' => count(array_merge(...array_values($copies))),
+            ];
+        });
+
+        error_log(sprintf(
+            'Prosper202 traffic source split: traffic source %d ("%s") stays in user %d\'s account; %s;'
+            . ' at user %d\'s request',
+            $sourceId,
+            (string) preg_replace('/[\x00-\x1F\x7F]/', '?', (string) $split['ppc_network_name']),
+            $ownerUserId,
+            implode('; ', array_map(
+                static fn (array $copy): string => sprintf(
+                    'user %d\'s %d traffic source account(s) now name its copy, traffic source %d',
+                    $copy['user_id'],
+                    count($copy['ppc_account_ids']),
+                    $copy['ppc_network_id']
+                ),
+                $split['copies']
+            )),
+            $actorUserId
+        ));
+        // After the commit, as repair() does: each user's Landing Page
+        // Optimizer snapshot lists their sources.
+        foreach (array_keys($copies) as $user) {
+            DimensionSync::markDirty($this->conn->writeConnection(), $user);
+        }
+
+        return $split;
     }
 
     /**
@@ -359,6 +554,45 @@ final class TrafficSourceOwners
     }
 
     /**
+     * @param array<string, mixed>|null $found
+     * @param list<array<string, mixed>> $accounts
+     * @return array{owner: int, copies: array<int, list<int>>, entry: array<string, mixed>}
+     */
+    private function resolveSplit(int $sourceId, ?array $found, array $accounts): array
+    {
+        $none = ' Nothing was copied.';
+        if ($found === null) {
+            throw new TrafficSourceRepairRefused('ppc_network_id', 'There is no traffic source ' . $sourceId
+                . ' on this install.' . $none);
+        }
+        $entry = self::classify($found, $accounts, $this->users($found, $accounts));
+        $owner = (int) $found['user_id'];
+        if ($entry === null) {
+            throw new TrafficSourceRepairRefused('ppc_network_id', 'Traffic source ' . $sourceId
+                . ' is not in the report: ' . ($accounts === []
+                    ? 'no traffic source account names it.'
+                    : 'every traffic source account that names it is in user ' . $owner . "'s account, as it is.")
+                . $none);
+        }
+        $copies = [];
+        foreach ($entry['named_by'] as $party) {
+            $user = (int) $party['user_id'];
+            $whose = 'User ' . $user . ', whose traffic source accounts name traffic source ' . $sourceId . ',';
+            if ($party['user_name'] === null) {
+                throw new TrafficSourceRepairRefused('ppc_network_id', $whose . ' does not exist on this install,'
+                    . ' and a copy goes only to a user who does.' . $none);
+            }
+            if ($party['user_deleted'] === true) {
+                throw new TrafficSourceRepairRefused('ppc_network_id', $whose . ' is deleted: nobody signs in as'
+                    . ' them, and nothing is copied into a deleted account.' . $none);
+            }
+            $copies[$user] = $party['ppc_account_ids'];
+        }
+
+        return ['owner' => $owner, 'copies' => $copies, 'entry' => $entry];
+    }
+
+    /**
      * @param array<string, mixed> $entry
      * @return array<string, mixed>
      */
@@ -387,6 +621,59 @@ final class TrafficSourceOwners
         );
         $this->conn->bind($stmt, str_repeat('i', count($ids)), $ids);
         $this->conn->fetchAll($stmt);
+    }
+
+    /**
+     * Lock traffic source accounts' rows by their primary key, in ascending
+     * order: no gap, and nothing of the ppc_network_id index, is locked.
+     *
+     * @param list<int> $ids
+     */
+    private function lockAccounts(array $ids): void
+    {
+        $ids = array_values(array_unique($ids));
+        sort($ids);
+        $stmt = $this->conn->prepareWrite(
+            'SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_account_id IN (' . self::marks($ids) . ')'
+            . ' ORDER BY ppc_account_id FOR UPDATE'
+        );
+        $this->conn->bind($stmt, str_repeat('i', count($ids)), $ids);
+        $this->conn->fetchAll($stmt);
+    }
+
+    /**
+     * A source's live custom variables, as a copy takes them.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function variables(int $sourceId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT name, parameter, placeholder FROM 202_ppc_network_variables'
+            . ' WHERE ppc_network_id = ? AND deleted = 0 ORDER BY ppc_variable_id'
+        );
+        $this->conn->bind($stmt, 'i', [$sourceId]);
+
+        return $this->conn->fetchAll($stmt);
+    }
+
+    /**
+     * @param list<int> $ids
+     * @return array<int, int> live custom variables by ppc_network_id
+     */
+    private function variableCounts(array $ids): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT ppc_network_id, COUNT(*) AS variables FROM 202_ppc_network_variables'
+            . ' WHERE ppc_network_id IN (' . self::marks($ids) . ') AND deleted = 0 GROUP BY ppc_network_id'
+        );
+        $this->conn->bind($stmt, str_repeat('i', count($ids)), $ids);
+        $counts = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $counts[(int) $row['ppc_network_id']] = (int) $row['variables'];
+        }
+
+        return $counts;
     }
 
     /**

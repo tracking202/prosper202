@@ -1401,6 +1401,17 @@ accounts on it, which was saved first) and moves one only on an admin's
 say-so, never in the upgrade. When a fix closes a hole, ask what the hole left
 behind, and what else leaves the same rows.
 
+And run each repair to its fixed point. The move changes one id's owner, so
+a source both users' accounts named was listed again wherever it went, and
+the Settings notice that reports it never went away (measured live): a row
+shared by two owners has no owner a move can give it. The split gives each
+other owner a copy, and `TrafficSourceSplitIntegrationTest` holds both marks
+no move clears (`owner_has_accounts`, `several_users`) to a report that no
+longer lists the source after the split. A copy is a new id with readers of its own: the report rows are
+re-derived (#31), and what the old id's dependants recorded (a click's custom
+variable values name the source's variables) stays with the old id, which is
+said where the split is offered.
+
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 17305ee made the API answer money as numbers rather than mysqli's decimal
 strings — right at the edge, and every PHP suite stayed green. It broke four

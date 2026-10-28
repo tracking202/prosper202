@@ -867,6 +867,10 @@ paths:
         taken with no traffic source account under it leaves no sign and is
         not listed.
 
+        No move clears a source marked `owner_has_accounts` or
+        `several_users`: whichever account it is in, another user's accounts
+        still name it. `POST /system/traffic-source-owners/split` does.
+
         Admin (or Super user) with `access_to_settings`, and `system:read`:
         the report names every user's sources.
       operationId: systemTrafficSourceOwners
@@ -1018,6 +1022,131 @@ paths:
                                 type: string
                             message:
                               type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /system/traffic-source-owners/split:
+    post:
+      tags: [System]
+      summary: Give each user whose accounts name a traffic source a copy of their own
+      description: |
+        For a source that traffic source accounts of more than one user
+        name (`owner_has_accounts`, `several_users`), which no repair
+        clears: wherever the source is, another user's accounts still name
+        it and it is listed again. `{"ppc_network_id": N}` leaves the source
+        in the account it is in, untouched, and gives each of its
+        `named_by` users a new source in their own account with its name,
+        its removed mark and its live custom variables (a removed variable
+        is not copied); that user's traffic source accounts naming it
+        (removed ones too) move onto the copy, a report filter of theirs
+        set to the source is set to the copy, and those accounts are queued
+        for the cron job's report rollup, so the clicks already on them are
+        reported under the copy after its next run. The custom variable
+        values recorded on those clicks before the split stay recorded
+        against the source's own variables. The report no longer lists the
+        source. To have it end up in another user's account, move it there
+        first (`repair` with `to_user_id`), then split it.
+
+        `owner_user_id` and `copy_to_user_ids` send back the report's
+        `owner.user_id` and its `named_by` user ids as the caller read
+        them: a source that is in another account by now, or would give
+        copies to other users, is refused (`422` naming the field) rather
+        than copied for users the caller never saw. `p202 system
+        traffic-source-owners split` sends both.
+
+        One transaction: the users (a user being deleted is waited for,
+        then read as deleted), then the accounts that move, by id, then the
+        source, are locked, in the order a click's report rollup takes an
+        account and its source; everything is read again, and nothing is
+        written unless it still resolves the same way. A failure part way
+        leaves nothing written: a split the server rolls back (a deadlock
+        with a report rebuild that reads the two users' clicks in the other
+        order can) is a `500`, and can be sent again. Each split is written
+        to the PHP error log
+        (the source, each copy and its accounts, and who asked).
+
+        A source not in the report, one a `named_by` user of which has no
+        user record or is deleted (nothing is copied into a deleted
+        account), or one that changed after it was read is a `422` naming
+        the field; nothing is copied.
+
+        Admin (or Super user) with `access_to_settings`, and `system:write`,
+        who may also act, as Account › Users allows, on the user the source
+        is in and on each user who gets a copy (an Admin's or the Super
+        user's account needs `add_edit_delete_admin`), else a `403`. Not
+        stageable, and no preview (`?dry_run=1` is a `422`): the report is
+        what a split would do.
+      operationId: systemSplitTrafficSourceOwner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ppc_network_id]
+              properties:
+                ppc_network_id:
+                  type: integer
+                  minimum: 1
+                  maximum: 16777215
+                owner_user_id:
+                  type: integer
+                  minimum: 0
+                  maximum: 16777215
+                  description: The report's owner.user_id, sent back; refused when the source is in another account now
+                copy_to_user_ids:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  description: The report's named_by user ids, sent back; refused when the copies would go to other users now
+                  items:
+                    type: integer
+                    minimum: 1
+                    maximum: 16777215
+      responses:
+        "200":
+          description: The source, which stays where it is, and each copy made
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ppc_network_id:
+                        type: integer
+                      ppc_network_name:
+                        type: string
+                      removed:
+                        type: boolean
+                      owner_user_id:
+                        type: integer
+                        description: The user it stays with
+                      copies:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            user_id:
+                              type: integer
+                            ppc_network_id:
+                              type: integer
+                              description: The copy, in this user's account
+                            ppc_account_ids:
+                              type: array
+                              description: This user's traffic source accounts that now name the copy
+                              items:
+                                type: integer
+                            custom_variables:
+                              type: integer
+                              description: The custom variables copied
+                      queued_ppc_accounts:
+                        type: integer
+                        description: The accounts queued for the report rollup
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -10776,6 +10905,9 @@ components:
           items:
             type: string
             enum: [owner_has_accounts, several_users, saved_after_rename, no_such_user, deleted_user]
+        custom_variables:
+          type: integer
+          description: The source's live custom variables, which a split copies
 
     SystemIspLookup:
       type: object

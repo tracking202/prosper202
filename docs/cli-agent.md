@@ -1190,6 +1190,7 @@ p202 system isp-lookup show | enable | disable [--json]
 p202 system traffic-source-owners show [--json]   # sources another user's traffic source accounts name (taken by Setup's rename before 1.9.79)
 p202 system traffic-source-owners repair <ppc_network_id> [--to-user-id N] [--force]   # reads the report, says what moves, asks
 p202 system traffic-source-owners repair --all [--force]                             # every source the report names a user for
+p202 system traffic-source-owners split <ppc_network_id> [--force]                  # a copy of its own for each named_by user; their accounts move onto it
 # Admin and a role with access_to_api_integrations:
 p202 system integrations [--json]   # notification URLs per integration; secret_stored, never the secret
 ```
@@ -1228,8 +1229,17 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
   `--all` stops at any other failure, names the sources already moved, and
   prints nothing to stdout. Only the source's user changes. A move out of or
   into user 1's, or an Admin's, account is a 403 unless the key is user 1's.
-  A person can do the same on Account › Settings: the notice there opens a
-  panel that lists the sources and moves each back after a confirmation.
+  A source marked `owner_has_accounts` or `several_users` is listed again
+  after any move; `split <id>` clears it: the source stays where it is, each
+  `named_by` user gets a copy with its name, custom variables and removed mark,
+  and their accounts move onto it. It refuses (exit 1, nothing sent) a source
+  a deleted or missing user's accounts name, sends back the owner and
+  `copy_to_user_ids` it showed (a changed source is a 422, exit 1: read the
+  report again), and needs a key whose user may act on every user it names.
+  To leave the source with another user, `repair --to-user-id` first, then
+  `split`. A person can do the same on Account › Settings: the notice there
+  opens a panel that lists the sources and moves or splits each after a
+  confirmation.
 - None of the `system` writes can be staged; `--staged` is refused before any
   request. AutoCron and "update available" are not exposed (they call a remote
   Prosper202 service).

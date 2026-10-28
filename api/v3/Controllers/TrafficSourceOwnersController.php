@@ -25,13 +25,16 @@ use Prosper202\Setup\TrafficSourceRepairRefused;
  * - GET  /system/traffic-source-owners         the report
  * - POST /system/traffic-source-owners/repair  move one back, or all the
  *                                              report can name a user for
+ * - POST /system/traffic-source-owners/split   give each user whose accounts
+ *                                              name one a copy of their own
  *
  * Behind Admin and access_to_settings, as the rest of /system's install
  * settings (api/v3/index.php; TrafficSourceOwnersRoutesTest): the report
  * names every user's sources. A repair moves a source out of one user's
  * account into another's, so the caller must also be one who may act on both
  * users (Auth::requireSelfOrMayManageUser(), Account › Users' rule): only
- * user 1 moves a source into or out of user 1's account.
+ * user 1 moves a source into or out of user 1's account. A split asks the
+ * same of the user the source is in and of each user who gets a copy.
  *
  * Account › Settings runs this controller too, for the signed-in user
  * (Auth::forSignedInUser()) behind the same two checks
@@ -126,6 +129,70 @@ final class TrafficSourceOwnersController
         return ['data' => ['repaired' => [$moved], 'skipped' => []]];
     }
 
+    /**
+     * {"ppc_network_id": N} leaves the source in the account it is in and
+     * gives each user the report lists under named_by a copy of their own,
+     * onto which their accounts naming it move: the way to clear a source
+     * that accounts of more than one user name, which no move can.
+     * "owner_user_id" and "copy_to_user_ids", the report's owner and
+     * named_by users sent back, refuse the split when the source is in
+     * another account now, or would give copies to other users.
+     *
+     * @param array<string, mixed> $payload
+     * @return array{data: array<string, mixed>}
+     */
+    public function split(array $payload): array
+    {
+        $keys = ['ppc_network_id', 'owner_user_id', 'copy_to_user_ids'];
+        PayloadKeys::refuseUnknown($payload, $keys, 'a traffic source split', [
+            'dry_run' => 'is not taken: GET /system/traffic-source-owners says what a split would do',
+            'to_user_id' => 'is not taken: a split leaves the source in the account it is in. To have it in'
+                . ' another, move it there first (POST /system/traffic-source-owners/repair with to_user_id),'
+                . ' then split it',
+            'all' => 'is not taken: each source is split by itself',
+        ]);
+        if (!array_key_exists('ppc_network_id', $payload)) {
+            throw new ValidationException('ppc_network_id is required', [
+                'ppc_network_id' => 'is required: the traffic source to split',
+            ]);
+        }
+        $sourceId = QueryInt::required($payload, 'ppc_network_id', 1, self::MAX_ID, 'the traffic source to split');
+        $shownOwner = array_key_exists('owner_user_id', $payload)
+            ? QueryInt::required($payload, 'owner_user_id', 0, self::MAX_ID, 'the owner the report showed')
+            : null;
+        PayloadKeys::refuse(PayloadKeys::valueListErrors(
+            $payload,
+            'copy_to_user_ids',
+            'user ids, the ones the report showed under named_by',
+            static fn (mixed $id): ?string => (is_int($id) && $id >= 1 && $id <= self::MAX_ID)
+                || (is_string($id) && preg_match('/\A[1-9][0-9]{0,7}\z/', $id) === 1 && (int) $id <= self::MAX_ID)
+                ? null : 'must be a user id, a whole number from 1 to ' . self::MAX_ID
+        ));
+        $shownCopyTo = null;
+        if (array_key_exists('copy_to_user_ids', $payload)) {
+            $why = 'must be a list of the user ids the report showed under named_by';
+            if ($payload['copy_to_user_ids'] === null) {
+                throw new ValidationException('Invalid copy_to_user_ids', ['copy_to_user_ids' => $why]);
+            }
+            $shownCopyTo = array_map('intval', $payload['copy_to_user_ids']);
+            if ($shownCopyTo === [] || count(array_unique($shownCopyTo)) !== count($shownCopyTo)) {
+                throw new ValidationException('Invalid copy_to_user_ids', [
+                    'copy_to_user_ids' => $why . ': at least one, each once',
+                ]);
+            }
+        }
+
+        $owners = $this->owners();
+        $plan = $this->refused(fn (): array => $owners->planSplit($sourceId, $shownOwner, $shownCopyTo));
+        $this->maySplit($plan['owner'], array_keys($plan['copies']));
+        $actor = $this->auth->userId();
+        $split = $this->refused(
+            fn (): array => $owners->split($sourceId, $plan['owner'], $plan['copies'], $actor)
+        );
+
+        return ['data' => $split];
+    }
+
     /** @return array{repaired: list<array<string, mixed>>, skipped: list<array<string, mixed>>} */
     private function repairAll(): array
     {
@@ -183,6 +250,19 @@ final class TrafficSourceOwnersController
     {
         $this->auth->requireSelfOrMayManageUser($this->db, $from);
         $this->auth->requireSelfOrMayManageUser($this->db, $to);
+    }
+
+    /**
+     * The caller may act on the user the source is in, whose source is
+     * copied, and on each user who gets a copy, as mayMove() asks of a move.
+     *
+     * @param list<int> $copyTo
+     */
+    public function maySplit(int $owner, array $copyTo): void
+    {
+        foreach ([$owner, ...$copyTo] as $user) {
+            $this->auth->requireSelfOrMayManageUser($this->db, $user);
+        }
     }
 
     private function owners(): TrafficSourceOwners

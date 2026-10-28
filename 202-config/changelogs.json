@@ -19,7 +19,8 @@
       "Changed: New installs, and every account made from 1.9.79 on, start with privacy set to Enabled for European Traffic: visitors from Europe get no tracking cookies and a masked address. Accounts that existed before keep their setting; change it under My Account, Personal Settings",
       "Fixed: Security. A user who could open Setup could rename a traffic source of another user and take it into their own account. A traffic source is now renamed only by its own user. Update as soon as you can, then check each user's Setup › Traffic Sources for a source that is missing",
       "New: An admin can list the traffic sources taken into another user's account before this fix, and move each back to the user whose traffic source accounts name it (GET /system/traffic-source-owners, p202 system traffic-source-owners). Nothing moves by itself: a source that may have been shared on purpose moves only to a user you name",
-      "New: Settings tells an admin when a traffic source is in another user's account, lists each one with whose accounts name it, and moves it back after a confirmation that says what will move. The same list and move as the API and the CLI, for owners who use neither"
+      "New: Settings tells an admin when a traffic source is in another user's account, lists each one with whose accounts name it, and moves it back after a confirmation that says what will move. The same list and move as the API and the CLI, for owners who use neither",
+      "New: A traffic source that more than one user's traffic source accounts name, which moving it back never cleared, can be split from Settings (or the API and CLI): it stays where it is and each other user gets a copy of their own, which their accounts then name"
     ]
   },
   "1.9.78": {

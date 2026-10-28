@@ -1732,6 +1732,7 @@ p202 system traffic-source-owners show                  # each source other user
 p202 system traffic-source-owners repair 12             # says what moves where, then asks; --force skips
 p202 system traffic-source-owners repair 12 --to-user-id 3   # an ambiguous source, to a user you name
 p202 system traffic-source-owners repair --all          # every source the report names a user for, one by one
+p202 system traffic-source-owners split 9               # a copy of its own for each user whose accounts name it
 ```
 
 Nothing is moved by itself, the upgrade included, because the same rows have
@@ -1755,9 +1756,20 @@ of any other kind stops the run and names the sources already moved.
 It needs a key whose user may act on both users, as Account › Users allows
 (only user 1 moves a source into or out of user 1's account). A source taken
 with no traffic source account under it leaves no sign and is not listed.
+No move clears a source accounts of more than one user name
+(`owner_has_accounts`, `several_users`): wherever it is, another user's accounts
+still name it. `split` leaves it where it is and gives each user `show` lists
+under `named_by` a copy of their own, with its name, its custom variables and
+its removed mark; their accounts move onto the copy, a report filter of theirs
+set to the source follows, and the accounts' clicks are queued for the report
+rollup. It says what it copies and asks (`--force` skips), sends back the owner
+and the users it showed (a source that changed since is refused), refuses a
+source a deleted user's accounts name, and needs a key whose user may act on
+the user the source is in and on each who gets a copy. To have the source end
+up with another user, `repair --to-user-id` it there first, then split it.
 Account › Settings shows the same list to the same admins, as a notice whose
-Review link opens a panel that moves each source back through the same code
-and the same checks.
+Review link opens a panel that moves or splits each source through the same
+code and the same checks.
 
 For an https base URL, `system health` checks the host's TLS certificate before it calls the API:
 a verified handshake on its own connection, with no HTTP request. It adds `tls_status`,

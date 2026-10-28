@@ -58,10 +58,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 	}
 }
 
-// A traffic source moved back from the panel: TrafficSourceOwnersController's
-// repair, behind the routes' checks (functions-traffic-source-owners-ui.php).
+// A traffic source moved back or split from the panel:
+// TrafficSourceOwnersController's repair or split, behind the routes' checks
+// (functions-traffic-source-owners-ui.php).
 if (isset($_POST['traffic_source_repair'])) {
     p202_ts_owners_repair_posted($db, (int) $_SESSION['user_own_id'], $_POST);
+}
+if (isset($_POST['traffic_source_split'])) {
+    p202_ts_owners_split_posted($db, (int) $_SESSION['user_own_id'], $_POST);
 }
 
 if (isset($_POST['autocron'])) {
