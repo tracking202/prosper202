@@ -29,7 +29,11 @@ use Tests\Support\SourceScan;
  *    user may not act right after it reads the user for the role, before any
  *    page code runs, so no page reads that session's identity; and a session
  *    is opened only there, after it, or by the setup wizard, which runs
- *    before any account exists. Both are held here, by token order.
+ *    before any account exists. Both are held here, by token order. The
+ *    remember-me cookie signs a browser in in connect.php too, once, before
+ *    that read, in the same block, so the User the check asks and every page
+ *    uses is the signed-in user's on the cookie's first request as well:
+ *    tried by the page, after the read, it ran that request with no roles.
  *  - A new sign-in. The session's identity is written only by
  *    AUTH::begin_user_session(), called only from the password sign-in and
  *    the remember-me cookie, whose reads ask the same rule;
@@ -91,6 +95,8 @@ final class SessionSignInPathsTest extends TestCase
     public static function connectPlants(): array
     {
         $call = 'AUTH::endSessionIfItsUserCannotAct($userObj);';
+        $cookie = "    AUTH::remember_me_on_logged_out();\n";
+        $read = "    \$userObj = new User(\$_SESSION['user_own_id'] ?? null);\n";
 
         return [
             'the call removed' => [$call, '', 'nothing ends the session'],
@@ -133,6 +139,37 @@ final class SessionSignInPathsTest extends TestCase
                 'the object asked is not the one the pages use',
             ],
             'a goto in the file' => [$call, $call . ' goto done; done:', 'a goto can jump over the call'],
+            'the cookie tried after the User read' => [
+                $cookie . $read,
+                $read . $cookie,
+                'the first request after the cookie uses a User read for nobody',
+            ],
+            'the cookie not tried' => [$cookie, '', 'the page tries it, after the User read'],
+            'the cookie tried again after the check' => [
+                $call,
+                $call . ' AUTH::remember_me_on_logged_out();',
+                'a second sign-in after the User was read',
+            ],
+            'the cookie behind a condition' => [
+                $cookie,
+                '    if ($navigation[1] == "tracking202") { AUTH::remember_me_on_logged_out(); }' . "\n",
+                'skipped on some pages',
+            ],
+            'the cookie short-circuited' => [
+                $cookie,
+                '    $_is_ajax || AUTH::remember_me_on_logged_out();' . "\n",
+                'skipped for AJAX',
+            ],
+            'the cookie by another class' => [
+                $cookie,
+                '    MyAUTH::remember_me_on_logged_out();' . "\n",
+                'a name is not a call site',
+            ],
+            'an exit between the cookie and the User read' => [
+                $cookie,
+                $cookie . '    if ($_is_ajax) { exit; }' . "\n",
+                'an AJAX request leaves before the User is read',
+            ],
         ];
     }
 
@@ -368,6 +405,7 @@ final class SessionSignInPathsTest extends TestCase
             $problems[] = 'no `new User(...)` reads the session\'s user before the check';
             $read = $at;
         }
+        $problems = [...$problems, ...self::cookieSignInBefore($t, $depth, $read)];
         $readArgs = [$read, self::closing($t, $read + 2)];
         for ($i = $read; $i < $at; $i++) {
             if (is_array($t[$i]) && in_array($t[$i][0], [T_EXIT, T_RETURN, T_THROW], true)) {
@@ -390,6 +428,58 @@ final class SessionSignInPathsTest extends TestCase
                     $problems[] = 'who the session is signed in as is read before the check: $_SESSION['
                         . ($key ?? '?') . ']';
                 }
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * Problems with the remember-me cookie's sign-in in connect.php: it is
+     * tried once, as a statement of its own, before the User is read ($read,
+     * the `new` of `new User`), in the same block, with nothing between that
+     * leaves. Tried after the read, or not at all there (the page tried it),
+     * the User every page uses was read for nobody on the cookie's first
+     * request, and it ran with no roles.
+     *
+     * @param list<string|array{int, string, int}> $t
+     * @param list<int> $depth
+     * @return list<string>
+     */
+    private static function cookieSignInBefore(array $t, array $depth, int $read): array
+    {
+        $calls = [];
+        foreach ($t as $i => $x) {
+            if (
+                is_array($x) && $x[0] === T_STRING && strcasecmp($x[1], 'remember_me_on_logged_out') === 0
+                && self::text($t[$i - 1] ?? '') === '::'
+                && in_array(self::text($t[$i - 2] ?? ''), ['AUTH', '\\AUTH'], true)
+                && self::text($t[$i + 1] ?? '') === '('
+            ) {
+                $calls[] = $i - 2;
+            }
+        }
+        if (count($calls) !== 1) {
+            return ['the remember-me cookie is tried ' . count($calls) . ' times in connect.php, not once,'
+                . ' before the User is read'];
+        }
+        $at = $calls[0];
+        if ($at > $read) {
+            return ['the remember-me cookie is tried after the User is read: on its first request every page'
+                . ' would use a User read for nobody, with no roles'];
+        }
+        $problems = [];
+        if (!self::isBoundary($t[$at - 1] ?? null) || self::text($t[self::closing($t, $at + 3) + 1] ?? '') !== ';') {
+            $problems[] = 'the remember-me cookie is not tried as a statement of its own';
+        }
+        for ($i = $at; $i < $read; $i++) {
+            $s = self::text($t[$i]);
+            if ($s === '{' || $s === '}' || $depth[$i] !== $depth[$read]) {
+                $problems[] = 'the remember-me cookie is not tried in the block that reads the User';
+                break;
+            }
+            if (is_array($t[$i]) && in_array($t[$i][0], [T_EXIT, T_RETURN, T_THROW], true)) {
+                $problems[] = 'something between the remember-me cookie and the User read leaves: ' . $t[$i][1];
             }
         }
 

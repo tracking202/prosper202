@@ -101,6 +101,23 @@ class AUTH
         self::updateSession([$key => $value]);
     }
 
+    /** Whether this request has tried its remember-me cookie (remember_me_on_logged_out()). */
+    private static bool $rememberMeTried = false;
+
+    /**
+     * The session's own claim to be signed in: a user, this browser's
+     * fingerprint and a request in the last 50000 seconds. Whether that user
+     * may still act is logged_in()'s question, which needs the user's row.
+     */
+    private static function sessionClaimsSignIn(): bool
+    {
+        $passed = isset($_SESSION['session_time']) ? time() - (int) $_SESSION['session_time'] : PHP_INT_MAX;
+
+        return isset($_SESSION['user_name'], $_SESSION['user_id'], $_SESSION['session_fingerprint'])
+            && hash_equals(self::session_fingerprint(), (string) $_SESSION['session_fingerprint'])
+            && $passed < 50000;
+    }
+
     /**
      * Whether this request is signed in: the session's own fields (user,
      * fingerprint, under 50000 seconds since its last request), and the
@@ -111,8 +128,7 @@ class AUTH
      */
     public static function logged_in()
     {
-        $session_time_passed = isset($_SESSION['session_time']) ? time() - $_SESSION['session_time'] : PHP_INT_MAX;
-        if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and hash_equals(self::session_fingerprint(), (string) $_SESSION['session_fingerprint']) and ($session_time_passed < 50000)) {
+        if (self::sessionClaimsSignIn()) {
             // connect.php's User, when it read this session's user.
             $read = $GLOBALS['userObj'] ?? null;
             if (!self::sessionUserStands($read instanceof \User ? $read : null)) {
@@ -719,9 +735,20 @@ class AUTH
         return self::$accountTimezones[$userId] = $zone;
     }
 
+    /**
+     * Sign this request in by its remember-me cookie, once a request at most.
+     * connect.php tries it before it reads the session's user, so the User
+     * every page uses (and the check of whether it may act) is the signed-in
+     * user's from the first request: tried later, by the page, the User had
+     * been read for nobody, and that request ran with no roles. A later call
+     * (the sign-in page, logged_in_with_remember()) reads nothing again and
+     * answers false. A session that already claims a sign-in is not replaced:
+     * connect.php reads its user and ends it if that user may not act.
+     */
     public static function remember_me_on_logged_out()
     {
-        if (isset($_COOKIE['remember_me']) && AUTH::logged_in() == false) {
+        if (!self::$rememberMeTried && isset($_COOKIE['remember_me']) && !self::sessionClaimsSignIn()) {
+            self::$rememberMeTried = true;
             $parts = explode('-', (string) $_COOKIE['remember_me']);
             if (count($parts) !== 3) {
                 return false;
