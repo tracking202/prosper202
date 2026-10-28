@@ -35,6 +35,31 @@ const mcpMaxResultChars = 60000
 // mcpMaxInputBytes bounds one call's JSON arguments.
 const mcpMaxInputBytes = 256 * 1024
 
+// hostedAnswerValues bounds the JSON values a hosted call decodes from the
+// install's answers, all of them together (api.LimitAnswerValues). The
+// relay's 1 MiB read budget bounds bytes, and an engine's memory follows
+// values: 1 MiB of {"a":0} is 260,000 of them and grew an engine to 83 MiB
+// (136.5 on report_timeseries, which decodes its answer twice), where 1 MiB
+// of report rows takes 31.
+//
+// 80,000 is the lowest round bound that no real answer within the budget
+// reaches. The densest measured, compact breakdown rows of zero traffic, hold
+// 78,500 values a MiB (report rows 62,600, click rows 57,500, campaigns
+// 31,400); at 60,000, 1 MiB of report rows was refused on 36 of the 37 read
+// tools, and the tools that read more than they print (crosstab, a list with
+// its stats) do read that much. The worst shapes measured just under it left
+// an engine at 38 MiB, and at 54.6 on report_timeseries; 100,000 left 44 and
+// 64, and admits no real answer that 80,000 refuses.
+const hostedAnswerValues = 80_000
+
+// hostedArgumentValues bounds the JSON values in a hosted call's arguments.
+// They are decoded too, and each item of a list becomes a flag its command
+// parses (pflag gives each item of a list flag a 4 KiB reader): 256 KiB of
+// landing_page_code offers, 131,000 of them, grew an engine to 588 MiB,
+// where 1,000 took 17. A tool takes 29 arguments at most, and
+// landing_page_code, the one that takes a list, at most 100 offers.
+const hostedArgumentValues = 1_000
+
 type mcpKind string
 
 const (
@@ -57,9 +82,10 @@ var (
 
 // mcpIDFlagPattern is what an *_id flag takes. An id goes into a filter or
 // a request path (report_breakeven's into campaigns/<id>), so a model can
-// send nothing else there.
-func mcpIDFlagPattern(property string) (*regexp.Regexp, string) {
-	if property == "ppc_network_id" {
+// send nothing else there. none is a read's filter only: a write stores the
+// id, and the API refuses none there.
+func mcpIDFlagPattern(property string, kind mcpKind) (*regexp.Regexp, string) {
+	if property == "ppc_network_id" && kind == mcpRead {
 		return mcpNumericOrNone, "a numeric id, or none"
 	}
 	return mcpNumericID, "a numeric id"
@@ -108,7 +134,25 @@ type mcpToolSpec struct {
 	// server do not cover (AiConnect::READ_AREAS in api/v3), so that server
 	// does not offer it (mcpCatalog.HostedExcludes).
 	NotHosted bool
+	// HostedOmit lists flags the hosted server leaves out of the tool, beyond
+	// Omit: a hosted call reads a bounded amount of the install's answers,
+	// so a flag that reads every page can only be refused there. The
+	// catalogue names them (mcpCatalog.HostedOmits) for the relay, which
+	// lists the tools from a native build, and a hosted run refuses them.
+	HostedOmit []string
 }
+
+// mcpHostedRun is true in the hosted relay's engine (the js/wasm build,
+// hostedBuild); a variable so the native tests can run as the engine does.
+var mcpHostedRun = hostedBuild
+
+// mcpEveryPage is HostedOmit for a list whose --all reads every page: the
+// rows it could return under mcpMaxResultChars are a page or two of --limit
+// and --offset, and more is refused. The flags that read every page to
+// answer what one page cannot (--url-contains, --min-clicks: a filter;
+// --with-stats, --resolve-names: a join) stay, and answer where the
+// install's answers fit the hosted read limit.
+var mcpEveryPage = []string{"all"}
 
 // mcpOmittedFlags are never tool arguments: --force is the tool approval's
 // to give (mcpToolArgv adds it to writes); the rest need a terminal, a
@@ -134,6 +178,12 @@ var rareFilters = []string{"browser-id", "device-type", "ip", "isp-id", "method-
 // model is told to show the user the preview first.
 const deleteNote = "It deletes as soon as the call is approved: call it with dry_run: true first and show the user what it would remove."
 
+// setupParentDeleteNote: a traffic source or a category is removed alone, as
+// its Setup page removes it; what it holds stays, under a removed parent.
+func setupParentDeleteNote(parent, children, tool string) string {
+	return "It removes the " + parent + " alone: its " + children + " stay, so delete them first (" + tool + ") if they are to go too. " + deleteNote
+}
+
 // textAdNote: an ad is used through a tracker, which names it.
 const textAdNote = "To use it on a tracker, set the tracker's text_ad_id (tracker_update)."
 
@@ -155,7 +205,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "attribution_breakdown", Command: []string{"attribution", "breakdown"}, Title: "Attributed conversions by dimension", Kind: mcpRead},
 
 	// Campaigns
-	{Name: "campaign_list", Command: []string{"campaign", "list"}, Title: "List campaigns", Kind: mcpRead},
+	{Name: "campaign_list", Command: []string{"campaign", "list"}, Title: "List campaigns", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "campaign_get", Command: []string{"campaign", "get"}, Title: "Get a campaign", Kind: mcpRead, Args: []mcpArg{idArg("id", "Campaign id (from campaign_list).", true)}},
 	// Its campaign is the positional; --aff-campaign-id would narrow the
 	// offers it compares against to that one campaign, silently.
@@ -166,7 +216,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "campaign_delete", Command: []string{"campaign", "delete"}, Title: "Delete a campaign", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Campaign id (from campaign_list); or give ids for several.", false)}, Note: deleteNote},
 
 	// Trackers
-	{Name: "tracker_list", Command: []string{"tracker", "list"}, Title: "List trackers", Kind: mcpRead},
+	{Name: "tracker_list", Command: []string{"tracker", "list"}, Title: "List trackers", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "tracker_get", Command: []string{"tracker", "get"}, Title: "Get a tracker", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
 	{Name: "tracker_get_url", Command: []string{"tracker", "get-url"}, Title: "Get a tracking link", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
 	{Name: "tracker_create_with_url", Command: []string{"tracker", "create-with-url"}, Title: "Create a tracking link", Kind: mcpCreate},
@@ -174,7 +224,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "tracker_delete", Command: []string{"tracker", "delete"}, Title: "Delete a tracker", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list); or give ids for several.", false)}, Note: "Its tracking links stop working, including any running in ads. " + deleteNote},
 
 	// Landing pages
-	{Name: "landing_page_list", Command: []string{"landing-page", "list"}, Title: "List landing pages", Kind: mcpRead},
+	{Name: "landing_page_list", Command: []string{"landing-page", "list"}, Title: "List landing pages", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "landing_page_get", Command: []string{"landing-page", "get"}, Title: "Get a landing page", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
 	{Name: "landing_page_code", Command: []string{"landing-page", "code"}, Title: "Get landing page tracking code", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
 	{Name: "landing_page_create", Command: []string{"landing-page", "create"}, Title: "Create a landing page", Kind: mcpCreate},
@@ -182,27 +232,33 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "landing_page_delete", Command: []string{"landing-page", "delete"}, Title: "Delete a landing page", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list); or give ids for several.", false)}, Note: deleteNote},
 
 	// Traffic sources and categories
-	{Name: "ppc_network_list", Command: []string{"ppc-network", "list"}, Title: "List traffic sources", Kind: mcpRead},
+	{Name: "ppc_network_list", Command: []string{"ppc-network", "list"}, Title: "List traffic sources", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "ppc_network_create", Command: []string{"ppc-network", "create"}, Title: "Create a traffic source", Kind: mcpCreate},
-	{Name: "ppc_account_list", Command: []string{"ppc-account", "list"}, Title: "List traffic source accounts", Kind: mcpRead},
+	{Name: "ppc_network_update", Command: []string{"ppc-network", "update"}, Title: "Update a traffic source", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Traffic source id (from ppc_network_list).", true)}},
+	{Name: "ppc_network_delete", Command: []string{"ppc-network", "delete"}, Title: "Delete a traffic source", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Traffic source id (from ppc_network_list); or give ids for several.", false)}, Note: setupParentDeleteNote("traffic source", "accounts", "ppc_account_delete")},
+	{Name: "ppc_account_list", Command: []string{"ppc-account", "list"}, Title: "List traffic source accounts", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "ppc_account_create", Command: []string{"ppc-account", "create"}, Title: "Create a traffic source account", Kind: mcpCreate},
-	{Name: "aff_network_list", Command: []string{"aff-network", "list"}, Title: "List categories", Kind: mcpRead},
+	{Name: "ppc_account_update", Command: []string{"ppc-account", "update"}, Title: "Update a traffic source account", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Traffic source account id (from ppc_account_list).", true)}},
+	{Name: "ppc_account_delete", Command: []string{"ppc-account", "delete"}, Title: "Delete a traffic source account", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Traffic source account id (from ppc_account_list); or give ids for several.", false)}, Note: "Trackers that use it are not changed. " + deleteNote},
+	{Name: "aff_network_list", Command: []string{"aff-network", "list"}, Title: "List categories", Kind: mcpRead, HostedOmit: mcpEveryPage},
+	{Name: "aff_network_update", Command: []string{"aff-network", "update"}, Title: "Update a category", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Category id (from aff_network_list).", true)}},
+	{Name: "aff_network_delete", Command: []string{"aff-network", "delete"}, Title: "Delete a category", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Category id (from aff_network_list); or give ids for several.", false)}, Note: setupParentDeleteNote("category", "campaigns", "campaign_delete")},
 	{Name: "aff_network_create", Command: []string{"aff-network", "create"}, Title: "Create a category", Kind: mcpCreate},
-	{Name: "text_ad_list", Command: []string{"text-ad", "list"}, Title: "List text ads", Kind: mcpRead},
+	{Name: "text_ad_list", Command: []string{"text-ad", "list"}, Title: "List text ads", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "text_ad_create", Command: []string{"text-ad", "create"}, Title: "Create a text ad", Kind: mcpCreate, Note: textAdNote},
 	{Name: "text_ad_update", Command: []string{"text-ad", "update"}, Title: "Update a text ad", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Text ad id (from text_ad_list).", true)}},
 	{Name: "text_ad_delete", Command: []string{"text-ad", "delete"}, Title: "Delete a text ad", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Text ad id (from text_ad_list); or give ids for several.", false)}, Note: deleteNote},
 
 	// Rotators
-	{Name: "rotator_list", Command: []string{"rotator", "list"}, Title: "List rotators", Kind: mcpRead},
+	{Name: "rotator_list", Command: []string{"rotator", "list"}, Title: "List rotators", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "rotator_get", Command: []string{"rotator", "get"}, Title: "Get a rotator and its rules", Kind: mcpRead, Args: []mcpArg{idArg("id", "Rotator id (from rotator_list).", true)}},
 	{Name: "rotator_stats", Command: []string{"rotator", "stats"}, Title: "Rotator performance", Kind: mcpRead, Args: []mcpArg{idArg("id", "Rotator id (from rotator_list).", true)}, Omit: rareFilters},
 
 	// Clicks and conversions
-	{Name: "click_list", Command: []string{"click", "list"}, Title: "List clicks", Kind: mcpRead},
+	{Name: "click_list", Command: []string{"click", "list"}, Title: "List clicks", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "click_get", Command: []string{"click", "get"}, Title: "Get a click", Kind: mcpRead, Args: []mcpArg{idArg("id", "Click id (from click_list).", true)}},
 	{Name: "click_conversions", Command: []string{"click", "conversions"}, Title: "Explain a click's conversions", Kind: mcpRead, Args: []mcpArg{idArg("click_id", "Click id (from click_list).", true)}},
-	{Name: "conversion_list", Command: []string{"conversion", "list"}, Title: "List conversions", Kind: mcpRead},
+	{Name: "conversion_list", Command: []string{"conversion", "list"}, Title: "List conversions", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "conversion_get", Command: []string{"conversion", "get"}, Title: "Get a conversion", Kind: mcpRead, Args: []mcpArg{idArg("id", "Conversion id (from conversion_list).", true)}},
 	{Name: "conversion_postback_url", Command: []string{"conversion", "postback-url"}, Title: "Get the postback URL", Kind: mcpRead},
 
@@ -289,6 +345,9 @@ type mcpCatalog struct {
 	// HostedExcludes are the tools the hosted relay never offers
 	// (mcpToolSpec.NotHosted): its keys cannot reach what they read.
 	HostedExcludes []string `json:"hosted_excludes"`
+	// HostedOmits are the arguments, by tool, that the hosted relay leaves
+	// out of the tools it lists (mcpToolSpec.HostedOmit).
+	HostedOmits map[string][]string `json:"hosted_omits"`
 }
 
 // mcpFlagKinds maps pflag value types to JSON types. A curated command with
@@ -352,9 +411,16 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 	for _, f := range s.Required {
 		required[f] = true
 	}
+	hostedOmit := map[string]bool{}
+	for _, f := range s.HostedOmit {
+		if fl := c.LocalFlags().Lookup(f); fl == nil || !keepFlag(fl) || mcpOmittedFlags[f] || omit[f] || mcpIsAlias(fl) || required[f] {
+			return nil, nil, fmt.Errorf("tool %s: HostedOmit names --%s, which is not an optional flag the tool takes", s.Name, f)
+		}
+		hostedOmit[f] = mcpHostedRun
+	}
 	var err error
 	c.LocalFlags().VisitAll(func(f *pflag.Flag) {
-		if err != nil || !keepFlag(f) || mcpOmittedFlags[f.Name] || omit[f.Name] || mcpIsAlias(f) {
+		if err != nil || !keepFlag(f) || mcpOmittedFlags[f.Name] || omit[f.Name] || mcpIsAlias(f) || hostedOmit[f.Name] {
 			return
 		}
 		kind, ok := mcpFlagKinds[f.Value.Type()]
@@ -371,7 +437,7 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 		flags[prop] = f
 		p := mcpParam{property: prop, flag: f.Name, kind: kind, required: required[f.Name]}
 		if kind == "string" && strings.HasSuffix(prop, "_id") {
-			p.pattern, p.form = mcpIDFlagPattern(prop)
+			p.pattern, p.form = mcpIDFlagPattern(prop, s.Kind)
 		}
 		params = append(params, p)
 	})
@@ -499,6 +565,7 @@ func buildMCPCatalog(root *cobra.Command, readOnly, staged bool) (mcpCatalog, er
 		Tools:              []mcpTool{},
 		StagedExcludes:     []string{},
 		HostedExcludes:     []string{},
+		HostedOmits:        map[string][]string{},
 	}
 	if staged {
 		cat.Instructions += mcpStagedInstructions
@@ -509,6 +576,19 @@ func buildMCPCatalog(root *cobra.Command, readOnly, staged bool) (mcpCatalog, er
 		}
 		if s.NotHosted {
 			cat.HostedExcludes = append(cat.HostedExcludes, s.Name)
+		}
+		if len(s.HostedOmit) > 0 {
+			c, err := s.command(root)
+			if err != nil {
+				return mcpCatalog{}, err
+			}
+			// Checks each name is an optional flag the tool takes.
+			if _, _, err := s.params(c); err != nil {
+				return mcpCatalog{}, err
+			}
+			for _, f := range s.HostedOmit {
+				cat.HostedOmits[s.Name] = append(cat.HostedOmits[s.Name], strings.ReplaceAll(f, "-", "_"))
+			}
 		}
 		if !s.offered(readOnly, staged) {
 			continue
@@ -594,6 +674,15 @@ func mcpToolArgv(root *cobra.Command, s mcpToolSpec, input []byte) ([]string, er
 	args, err := mcpDecodeObject(input)
 	if err != nil {
 		return nil, mcpArgError(s, names, "the arguments for %s %s", s.Name, err.Error())
+	}
+	if mcpHostedRun {
+		for _, f := range s.HostedOmit {
+			prop := strings.ReplaceAll(f, "-", "_")
+			if _, given := args[prop]; given {
+				return nil, validationError("%s does not take %s on the hosted server, which limits what one call reads from the install", s.Name, prop).
+					WithHint("%s", fmt.Sprintf("Page with limit and offset instead (offset for the next page); `p202 mcp` on your own computer takes %s. %s takes: %s.", prop, s.Name, strings.Join(names, ", ")))
+			}
+		}
 	}
 	var unknown []string
 	for k := range args {

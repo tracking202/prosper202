@@ -516,6 +516,12 @@ Claude Desktop and Cursor take the same command in their MCP settings:
 - A write tool runs with `--force` once the app's approval prompt is answered,
   so do not set the app to always allow the delete tools; deleting a tracker
   stops its links. Each delete tool takes `dry_run: true` for a preview.
+- Traffic sources, their accounts and categories have update and delete
+  tools too (`ppc_network_update`, `ppc_account_update`, `aff_network_update`
+  and their `_delete`s), so "rename Google Ads - Main to Main" renames the
+  source rather than making a second one. A delete removes that one record,
+  as its Setup page does: a traffic source's accounts and a category's
+  campaigns stay, and the tool's description says so.
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.
@@ -530,7 +536,12 @@ sign in and approve the connection on your own install (Prosper202 1.9.78 or
 later, on https), choosing read only, propose changes, or read and change. The
 connection is an API key labelled `AI: <app> via mcp.tracking202.com` in
 My Account › Personal Settings › API keys; remove it there to disconnect. It needs a ClickServer Pro
-licence. A connection keeps the access it was approved with: one approved before the install ran
+licence. One call there reads at most 1 MB of the install's answers, so its list
+tools take no `all`: page with `limit` and `offset`. It also decodes at most
+80,000 JSON values from them (a megabyte of real rows holds fewer), and takes at
+most 1,000 in a call's arguments; past either, the call is refused with how to
+ask for less.
+A connection keeps the access it was approved with: one approved before the install ran
 1.9.79, to propose or make changes, reads text ads but cannot change them (text_ad_create, text_ad_update and
 text_ad_delete answer 403); connect again for that.
 
@@ -610,7 +621,8 @@ such as `access_to_update_section` or `access_to_setup_section`, granting a
 role with `p202 user role assign`, and when it says `Admin access required.`, that the key's user needs
 the Admin or Super user role, with `p202 whoami` to see its roles; 404 use
 `list` for ids; 429 back off;
-5xx retry then `p202 system health`; a 402 that is not the licence refusal,
+5xx retry then `p202 system health`, except a 503 saying the database needs an
+upgrade, which names `202-config/upgrade.php`; a 402 that is not the licence refusal,
 retry then check what serves the URL; network check the URL and `p202 config
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.

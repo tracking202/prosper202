@@ -209,6 +209,56 @@ module.exports = {
     },
 
     {
+      name: 'On the landing-page URL, anything but 1 is a refusal, as the tracker reads it',
+      async run(ctx) {
+        const { page, expect } = ctx;
+        // Each spelling PHP's $_GET files as p202_consent, and a value its
+        // trim() leaves as more than 1 (a no-break space is not one it trims).
+        const refusals = [
+          'p202_consent=false', 'p202_consent=off', 'p202_consent=00', 'p202_consent=',
+          'p202_consent%5B%5D=0', 'p202_consent%5B%5D=1', 'p202.consent=0', 'p202%20consent=0', 'p202%5Bconsent=0',
+          'p202_consent=%C2%A01', 'p202_consent=1&p202_consent%5Bx%5D=1',
+          // PHP cuts a name at a NUL before it reads brackets.
+          'p202_consent%00x=0', 'p202_consent%00%5B%5D=0',
+        ];
+        for (const query of refusals) {
+          const beacon = await openLanding(ctx, '?' + query);
+          expect.eq(beacon.searchParams.get('p202_consent'), '0', query + ' refuses');
+          await page.evaluate(() => window.p202.consent(true));
+        }
+        for (const query of ['p202_consent=1', 'p202.consent=1', 'p202_consent=%0B1', 'p202_consent=0&p202.consent=1',
+          'p202_consent%5B%5D=0&p202_consent=1', 'p202_consentx=0', 'p202_consent%5B%00%5D=0']) {
+          const given = await openLanding(ctx, '?' + query);
+          expect.eq(given.searchParams.get('p202_consent'), null, query + ' is consent');
+        }
+      },
+    },
+
+    {
+      name: 'A followed tracker link carries one spelling of the consent parameter: the refusal, or none',
+      async run(ctx) {
+        const { page, expect } = ctx;
+        const follow = async (spelling) => {
+          await page.evaluate((extra) => {
+            const a = document.getElementById('go');
+            a.href = a.href + (a.href.includes('?') ? '&' : '?') + extra;
+          }, spelling);
+          const nav = page.waitForRequest((r) => r.url().includes('/tracking202/redirect/dl.php'));
+          await page.click('#go');
+          const names = [...new URL((await nav).url()).searchParams.keys()];
+          return names.filter((name) => /^ *p202[ ._[]consent/.test(name));
+        };
+        await openLanding(ctx);
+        expect.eq(JSON.stringify(await follow('p202.consent=0')), '[]', 'with consent, a refusal the link carried is removed');
+        await openLanding(ctx);
+        await page.evaluate(() => window.p202.consent(false));
+        expect.eq(JSON.stringify(await follow('p202_consent%5B%5D=1')), '["p202_consent"]', 'refused, only the refusal goes');
+        await openLanding(ctx);
+        await page.evaluate(() => window.p202.consent(true));
+      },
+    },
+
+    {
       name: 'A refusal set before the snippet, or by a script after it, stops the very first beacon',
       async run(ctx) {
         const { page, expect } = ctx;

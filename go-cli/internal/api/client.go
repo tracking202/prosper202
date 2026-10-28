@@ -226,6 +226,9 @@ func HintFor(err error) string {
 			return h
 		}
 	}
+	if AnswerTooManyValues(err) {
+		return "Ask for less in one call: a smaller limit (with offset for the next page), a shorter period, or a narrower filter. `p202 mcp` on your own computer has no such bound."
+	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		switch {
@@ -305,6 +308,10 @@ func HintFor(err error) string {
 			return "The server rejected the request values; fix what the message names and retry (`--help` lists the flags)."
 		case apiErr.Status == 429:
 			return "Rate limited. Wait and retry with backoff; reduce --concurrency for bulk operations."
+		// The files were deployed and the upgrade has not run (the message
+		// names both versions); `system health` answers healthy meanwhile.
+		case apiErr.Status == 503 && strings.Contains(apiErr.Message, "the database needs an upgrade"):
+			return "Nothing on this request is wrong: the install's files are newer than its database. An admin opens 202-config/upgrade.php on the site (signed in) to run the upgrade; then retry."
 		case apiErr.Status >= 500:
 			return "Server-side failure. Retry after a short wait; if it persists, run `p202 system health` and check the server logs."
 		}
@@ -433,6 +440,10 @@ func (c *Client) ensureCapabilities() {
 
 	c.negotiateVersionLocked()
 
+	if refused := sendRefusal("GET", "capabilities"); refused != nil {
+		c.capabilitiesErr = refused
+		return
+	}
 	req, err := http.NewRequest("GET", c.baseURL+"/capabilities", nil)
 	if err != nil {
 		c.capabilitiesErr = err
@@ -455,9 +466,13 @@ func (c *Client) ensureCapabilities() {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, tooMany, err := readAnswer(resp.Body, maxResponseSize)
 	if err != nil {
 		c.capabilitiesErr = fmt.Errorf("reading capabilities response: %w", err)
+		return
+	}
+	if tooMany != nil {
+		c.capabilitiesErr = tooMany
 		return
 	}
 	var decoded map[string]interface{}
@@ -480,6 +495,9 @@ var apiVersionPattern = regexp.MustCompile(`^[0-9]{1,4}$`)
 
 // negotiateVersionLocked must be called with c.mu held.
 func (c *Client) negotiateVersionLocked() {
+	if sendRefusal("GET", "versions") != nil {
+		return
+	}
 	req, err := http.NewRequest("GET", c.rootURL+"/api/versions", nil)
 	if err != nil {
 		return
@@ -496,8 +514,11 @@ func (c *Client) negotiateVersionLocked() {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-	if err != nil {
+	// An answer past the value bound keeps the compiled-in version, as an
+	// unreadable one does; the bound, once passed, refuses the call's next
+	// answer.
+	body, tooMany, err := readAnswer(resp.Body, maxResponseSize)
+	if err != nil || tooMany != nil {
 		return
 	}
 	var decoded map[string]interface{}
@@ -691,6 +712,9 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 		return nil, &RequestError{Kind: "validation", Op: "read_only", Err: fmt.Errorf(
 			"%s %s would change data, and this connection is read-only; nothing was sent", method, path)}
 	}
+	if refused := sendRefusal(method, path); refused != nil {
+		return nil, refused
+	}
 	// Read once under the lock: version negotiation can rewrite baseURL from
 	// another goroutine, and the URL and the version header below must agree.
 	baseURL := c.currentBaseURL()
@@ -771,13 +795,27 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 	if strict {
 		readLimit = limit + 1
 	}
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, readLimit))
+	respBody, tooMany, err := readAnswer(resp.Body, readLimit)
 	if err != nil {
 		return nil, &RequestError{Kind: "network", Op: "read_response", Err: err}
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, parseAPIError(resp.StatusCode, respBody)
+		// The status still says what failed; only the message is not read.
+		apiErr := parseAPIError(resp.StatusCode, respBody)
+		if tooMany != nil {
+			apiErr.Message = fmt.Sprintf("HTTP %d, with a message that was not read: %v", resp.StatusCode, tooMany.Err)
+		}
+		return nil, apiErr
+	}
+	if tooMany != nil {
+		if method != http.MethodGet && method != http.MethodHead && !readsAsPost && params["dry_run"] == "" {
+			// It was sent and accepted: whatever it changed stands (CLAUDE.md #13).
+			noteWriteRefused()
+			return nil, &RequestError{Kind: tooMany.Kind, Op: tooMany.Op, Err: fmt.Errorf(
+				"%w; the install accepted the %s (HTTP %d) before its answer was refused, so it may have changed data", tooMany.Err, method, resp.StatusCode)}
+		}
+		return nil, tooMany
 	}
 	if strict && int64(len(respBody)) > limit {
 		// Not a network failure: the server answered in full and the file

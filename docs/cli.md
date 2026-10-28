@@ -500,6 +500,14 @@ returns one per campaign without a request per campaign.
 |----------------------|----------|--------------|
 | `--ppc-network-name` | Yes      | Network name |
 
+`p202 ppc-network update <id> --ppc-network-name Main` renames a source in
+place: its accounts, and the trackers and clicks recorded on them, keep it.
+`delete` (`--dry-run` first) removes the source alone, as Setup › Traffic
+Sources does; its accounts are not deleted with it, so delete them first
+(`p202 ppc-account delete`) if they are to go too. `aff-network delete` is the
+same for a category and its campaigns, and `ppc-account delete` for an account
+and the trackers that name it.
+
 A traffic source's custom variables — the extra `parameter=placeholder` pairs
 its tracking links carry, edited in Setup › Traffic Sources › variables:
 
@@ -1528,6 +1536,10 @@ request. A free-text flag given `""` clears it.
 | `--user-pref-time-predefined`, `--user-pref-limit`, `--user-cpc-or-cpv`, `--chart-time-range` | report and chart defaults |
 | `--user-slack-incoming-webhook`, `--ipqs-api-key`, `--cb-key`, `--zaxaa-api-signature`, `--jvzoo-ipn-secret-key` | Integrations (a value here stays in shell history) |
 | `--user-ltv-customer-cparam`, `--user-ltv-personalization-fields`, `--user-ltv-score-weights`, `--user-ltv-rec-fatigue` | LTV › Settings |
+
+An integration secret is never read back: `prefs get` (and the answer `prefs update`
+prints) shows each one as `cb_key: (stored)` or `(not stored)`, and as
+`{"stored": true}` under `--json`.
 
 ## Export and import
 

@@ -72,8 +72,9 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	}
 	// Characters, about 21k tokens. Most of it is the report tools' filters;
 	// a new tool or flag that crosses this should omit what few asks need.
-	// The text ad writes are about 3,400 of it: Setup › Text Ads' own fields.
-	const budget = 84000
+	// The traffic source and category updates and deletes are about 4,600,
+	// the text ad writes about 3,400 (Setup › Text Ads' own fields).
+	const budget = 88000
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}
@@ -162,6 +163,17 @@ func TestMCPToolArgv(t *testing.T) {
 		{"campaign_delete", `{"id":"7","dry_run":true}`, []string{"campaign", "delete", "--dry-run=true", "--force", "--", "7"}, ""},
 		{"campaign_delete", `{"ids":"7,8"}`, []string{"campaign", "delete", "--ids=7,8", "--force"}, ""},
 		{"change_apply", `{"change_id":"chg_abc"}`, []string{"change", "apply", "--force", "--", "chg_abc"}, ""},
+		{"ppc_network_update", `{"id":"4","ppc_network_name":"Main"}`, []string{"ppc-network", "update", "--ppc-network-name=Main", "--", "4"}, ""},
+		{"ppc_network_update", `{"ppc_network_name":"Main"}`, nil, "ppc_network_update needs id"},
+		{"ppc_network_delete", `{"id":"4","dry_run":true}`, []string{"ppc-network", "delete", "--dry-run=true", "--force", "--", "4"}, ""},
+		{"ppc_account_update", `{"id":"9","ppc_account_default":"1","ppc_network_id":"4"}`, []string{"ppc-account", "update", "--ppc-account-default=1", "--ppc-network-id=4", "--", "9"}, ""},
+		{"ppc_account_update", `{"id":"9","ppc_network_id":"../4"}`, nil, "ppc_network_id must be a numeric id"},
+		{"ppc_account_update", `{"id":"9","ppc_network_id":"none"}`, nil, "ppc_network_id must be a numeric id"},
+		{"ppc_account_create", `{"ppc_account_name":"A","ppc_network_id":"none"}`, nil, "ppc_network_id must be a numeric id"},
+		{"report_summary", `{"ppc_network_id":"none"}`, []string{"report", "summary", "--ppc-network-id=none"}, ""},
+		{"ppc_account_delete", `{"ids":"9,10"}`, []string{"ppc-account", "delete", "--ids=9,10", "--force"}, ""},
+		{"aff_network_update", `{"id":"2","aff_network_name":"Offers"}`, []string{"aff-network", "update", "--aff-network-name=Offers", "--", "2"}, ""},
+		{"aff_network_delete", `{"id":"2","dry_run":true}`, []string{"aff-network", "delete", "--dry-run=true", "--force", "--", "2"}, ""},
 		{"text_ad_create", `{"text_ad_name":"N","text_ad_headline":"H","text_ad_description":"D","text_ad_display_url":"example.com","aff_campaign_id":3}`,
 			[]string{"text-ad", "create", "--aff-campaign-id=3", "--text-ad-description=D", "--text-ad-display-url=example.com", "--text-ad-headline=H", "--text-ad-name=N"}, ""},
 		{"text_ad_create", `{"text_ad_name":"N","text_ad_headline":"H","text_ad_description":"D","text_ad_display_url":"example.com","text_ad_type":"1","landing_page_id":"7"}`,

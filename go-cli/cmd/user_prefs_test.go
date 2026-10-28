@@ -134,3 +134,58 @@ func TestUserPrefsUpdateRefusesAChoiceTheServerDoesNotOfferBeforeAnyRequest(t *t
 		t.Errorf("requests = %+v", *seen)
 	}
 }
+
+// The server answers a secret only as {"stored": <bool>}; a table names that
+// state, and JSON keeps the API's own shape.
+const prefsWithStoredSecrets = `{"data":{"user_id":1,"user_pref_limit":50,"user_tracking_domain":"t.example",` +
+	`"cb_key":{"stored":true},"ipqs_api_key":{"stored":false},"lpo_bridge_config":{"stored":true}}}`
+
+func TestUserPrefsShowAStoredSecretAsItsState(t *testing.T) {
+	for _, args := range [][]string{
+		{"user", "prefs", "get", "1", "--table"},
+		{"user", "prefs", "update", "1", "--cb-key", "k", "--table"},
+	} {
+		goalServer(t, 200, prefsWithStoredSecrets)
+		stdout, _, err := executeCommand(args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		for _, line := range []*regexp.Regexp{
+			regexp.MustCompile(`(?m)^cb_key:\s+\(stored\)$`),
+			regexp.MustCompile(`(?m)^ipqs_api_key:\s+\(not stored\)$`),
+			regexp.MustCompile(`(?m)^lpo_bridge_config:\s+\(stored\)$`),
+			regexp.MustCompile(`(?m)^user_tracking_domain:\s+t\.example$`),
+		} {
+			if line.FindString(stdout) == "" {
+				t.Errorf("%v: no line matches %s:\n%s", args, line, stdout)
+			}
+		}
+		if strings.Contains(stdout, `"stored"`) {
+			t.Errorf("%v: the table shows the raw state object:\n%s", args, stdout)
+		}
+	}
+}
+
+func TestUserPrefsJSONKeepsTheStoredStateTheAPIGave(t *testing.T) {
+	goalServer(t, 200, prefsWithStoredSecrets)
+	stdout, _, err := executeCommand("user", "prefs", "get", "1", "--json")
+	if err != nil {
+		t.Fatalf("prefs get --json: %v", err)
+	}
+	if !strings.Contains(stdout, `"stored": true`) || strings.Contains(stdout, "(stored)") {
+		t.Errorf("--json output = %s, want the API's {\"stored\": true}", stdout)
+	}
+}
+
+func TestWithStoredStatesLeavesEverythingElseAlone(t *testing.T) {
+	for _, in := range []string{
+		`{"data":[{"cb_key":{"stored":true}}]}`,
+		`{"data":{"x":{"stored":"yes"},"y":{"stored":true,"n":1},"z":{}}}`,
+		`not json`,
+	} {
+		out := string(withStoredStates([]byte(in)))
+		if strings.Contains(out, "(stored)") || strings.Contains(out, "(not stored)") {
+			t.Errorf("withStoredStates(%s) = %s, want nothing relabelled", in, out)
+		}
+	}
+}

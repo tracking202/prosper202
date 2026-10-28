@@ -19,23 +19,76 @@ final class SchemaVersion
      */
     public static function mismatch(\mysqli $db, string $codeVersion): ?string
     {
+        $stored = self::stored($db);
+        if (isset($stored['error'])) {
+            return 'cannot read the schema version from 202_version (' . $stored['error'] . '); open 202-config/upgrade.php on the site to repair it.';
+        }
+        if ($stored['version'] === $codeVersion) {
+            return null;
+        }
+        if (self::isVersion($stored['version']) && version_compare($stored['version'], $codeVersion, '>')) {
+            return 'the database\'s schema is version ' . $stored['version'] . ', newer than this code (version '
+                . $codeVersion . '): these files are older than the database. Nothing was run. Deploy the files of'
+                . ' version ' . $stored['version'] . ' or later; an upgrade cannot help.';
+        }
+
+        return 'the database needs an upgrade: its schema is version ' . ($stored['version'] !== '' ? $stored['version'] : '(none recorded)')
+            . ' and this code is version ' . $codeVersion
+            . '. Nothing was run. Open 202-config/upgrade.php on the site (signed in) to upgrade it; cron jobs run again once it has.';
+    }
+
+    /**
+     * What an answer that has already failed says while the files are
+     * deployed and the upgrade has not run, when a statement can fail on the
+     * older schema. Null unless the schema is older than this code, by
+     * version_compare(): when it is current, newer (files rolled back, which
+     * no upgrade mends), or its version cannot be read or is not a version,
+     * the answer claims no cause, as it did. It never throws, being asked
+     * only on an error path.
+     */
+    public static function pendingUpgrade(\mysqli $db, string $codeVersion): ?string
+    {
         try {
-            $result = $db->query('SELECT version FROM 202_version');
-        } catch (\mysqli_sql_exception $e) {
-            return 'cannot read the schema version from 202_version (' . $e->getMessage() . '); open 202-config/upgrade.php on the site to repair it.';
+            $stored = self::stored($db);
+        } catch (\Throwable) {
+            return null;
         }
-        if (!$result instanceof \mysqli_result) {
-            return 'cannot read the schema version from 202_version (' . $db->error . '); open 202-config/upgrade.php on the site to repair it.';
-        }
-        $row = $result->fetch_assoc();
-        $result->free();
-        $stored = is_array($row) ? (string) ($row['version'] ?? '') : '';
-        if ($stored === $codeVersion) {
+        if (
+            isset($stored['error']) || !self::isVersion($stored['version'])
+            || !version_compare($stored['version'], $codeVersion, '<')
+        ) {
             return null;
         }
 
-        return 'the database needs an upgrade: its schema is version ' . ($stored !== '' ? $stored : '(none recorded)')
+        return 'the database needs an upgrade: its schema is version ' . $stored['version']
             . ' and this code is version ' . $codeVersion
-            . '. Nothing was run. Open 202-config/upgrade.php on the site (signed in) to upgrade it; cron jobs run again once it has.';
+            . '. Open 202-config/upgrade.php on the site (signed in) to upgrade it.';
+    }
+
+    /**
+     * Dotted numbers, as 202_version holds them, with the one letter the
+     * ladder has written (1.9.30a, 1.9.30b, which version_compare() orders
+     * before 1.9.30): it orders anything else by its own rules.
+     */
+    private static function isVersion(string $version): bool
+    {
+        return preg_match('/\A\d+(\.\d+)*[a-z]?\z/', $version) === 1;
+    }
+
+    /** @return array{version: string}|array{error: string} */
+    private static function stored(\mysqli $db): array
+    {
+        try {
+            $result = $db->query('SELECT version FROM 202_version');
+        } catch (\mysqli_sql_exception $e) {
+            return ['error' => $e->getMessage()];
+        }
+        if (!$result instanceof \mysqli_result) {
+            return ['error' => $db->error];
+        }
+        $row = $result->fetch_assoc();
+        $result->free();
+
+        return ['version' => is_array($row) ? (string) ($row['version'] ?? '') : ''];
     }
 }
