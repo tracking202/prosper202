@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Conversion;
 
+use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Click\FirstVisit;
 use Prosper202\Database\Connection;
 
@@ -37,7 +38,8 @@ final class TrafficSourcePixels
      */
     private const TOKENS = [
         'c1' => ['c1'], 'c2' => ['c2'], 'c3' => ['c3'], 'c4' => ['c4'],
-        't202pubid' => ['t202pubid'], 'gclid' => ['gclid'], 'msclkid' => ['msclkid'], 'fbclid' => ['fbclid'],
+        't202pubid' => ['t202pubid'], 'gclid' => ['gclid'], 'gbraid' => ['gbraid'], 'wbraid' => ['wbraid'],
+        'ttclid' => ['ttclid'], 'msclkid' => ['msclkid'], 'fbclid' => ['fbclid'],
         'utm_source' => ['utm_source'], 'utm_medium' => ['utm_medium'], 'utm_campaign' => ['utm_campaign'],
         'utm_term' => ['utm_term'], 'utm_content' => ['utm_content'],
         'subid' => ['subid'], 't202kw' => ['t202kw'], 'payout' => ['payout'], 'random' => ['random'],
@@ -233,6 +235,7 @@ final class TrafficSourcePixels
             return null;
         }
         $cpc = (string) ($row['click_cpc'] ?? '0');
+        $adClickIds = AdClickIdColumns::of($conn, $clickId);
 
         return [
             'ppc_account_id' => (int) ($row['ppc_account_id'] ?? 0),
@@ -244,6 +247,9 @@ final class TrafficSourcePixels
                 'c3' => (string) ($row['c3'] ?? ''),
                 'c4' => (string) ($row['c4'] ?? ''),
                 'gclid' => (string) ($row['gclid'] ?? ''),
+                'gbraid' => $adClickIds['gbraid'],
+                'wbraid' => $adClickIds['wbraid'],
+                'ttclid' => $adClickIds['ttclid'],
                 'utm_source' => (string) ($row['utm_source'] ?? ''),
                 'utm_medium' => (string) ($row['utm_medium'] ?? ''),
                 'utm_campaign' => (string) ($row['utm_campaign'] ?? ''),

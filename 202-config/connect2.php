@@ -660,9 +660,9 @@ function rotateTrackerUrl($db, $tracker_row)
  * record_simple.php). Values are raw; replaceTokens() URL-encodes them.
  *
  * @param array<string, scalar|null> $click keyword, t202pubid, c1-c4, gclid,
- *     msclkid, fbclid, utm_source, utm_medium, utm_campaign, utm_term,
- *     utm_content, country, country_code, region, city, cpc, cpa, payout,
- *     ppc_account_id
+ *     gbraid, wbraid, ttclid, msclkid, fbclid, utm_source, utm_medium,
+ *     utm_campaign, utm_term, utm_content, country, country_code, region,
+ *     city, cpc, cpa, payout, ppc_account_id
  * @return array<string, scalar|null>
  */
 function p202ClickUrlTokens(string $clickId, array $click): array
@@ -689,6 +689,9 @@ function p202ClickUrlTokens(string $clickId, array $click): array
         'c3' => $text('c3'),
         'c4' => $text('c4'),
         'gclid' => $text('gclid'),
+        'gbraid' => $text('gbraid'),
+        'wbraid' => $text('wbraid'),
+        'ttclid' => $text('ttclid'),
         'msclkid' => $text('msclkid'),
         'fbclid' => $text('fbclid'),
         'utm_source' => $text('utm_source'),
@@ -819,6 +822,14 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
     // No such click (a page reading an earlier one by a subid it was sent):
     // its tokens are blank, as they always were.
     $click_row ??= [];
+    // The ids 1.9.79 added, read apart (AdClickIdColumns::of()) and only for
+    // a URL that asks for one, from a click the read above found the owner's.
+    if ($click_row !== [] && \Prosper202\Click\AdClickIdColumns::namedIn((string) $url)) {
+        $click_row += \Prosper202\Click\AdClickIdColumns::of(
+            \Prosper202\Repository\LookupRepositoryFactory::connection($db),
+            (int) $tokenClickId
+        );
+    }
 
     return replaceClickPlaceholders($url, (string) $click_id, [
         'keyword' => $click_row['keyword'] ?? null,
@@ -828,6 +839,9 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
         'c3' => $click_row['c3'] ?? null,
         'c4' => $click_row['c4'] ?? null,
         'gclid' => $click_row['gclid'] ?? null,
+        'gbraid' => $click_row['gbraid'] ?? null,
+        'wbraid' => $click_row['wbraid'] ?? null,
+        'ttclid' => $click_row['ttclid'] ?? null,
         'msclkid' => $click_row['msclkid'] ?? null,
         'fbclid' => $click_row['fbclid'] ?? null,
         'utm_source' => $click_row['utm_source'] ?? null,
