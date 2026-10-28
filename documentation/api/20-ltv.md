@@ -255,6 +255,7 @@ to it by the LTV maintenance job (`202-cronjobs/ltv_maintenance.php`), which
 creates the company if it has to. A `company` of nothing but spaces (tabs,
 no-break or ideographic spaces) names no company: the job stores it as `""`,
 as clearing it would, and the customer's email domain does not attach it.
+Either is a change to the customer, and its `updated_at` is when the job made it.
 
 ```bash
 p202 ltv product upsert --sku PRO-1 --name "Pro plan" --price 49

@@ -300,6 +300,15 @@ kept reading and writing with every key they held, under their role.
 deactivated user (and `DeactivatedUserKeyInstanceTest` proves it over HTTP).
 When a state means "this person may not act", list every way a person acts.
 
+A row's change stamp is the same sweep over its writers. Every write of a
+customer's company set `updated_at` but the LTV maintenance job's link, so a
+customer it attached answered the time of its last save on `GET
+/ltv/customers/{id}`, with nothing wrong in any one file.
+`CustomerWritesStampUpdatedAtTest` holds every write of `202_customers` to
+setting it; the other tables that keep `updated_at` are not held, and some
+of their writers do not (a model's default cleared, an app's icon stored).
+Writing a stamped row means writing its stamp.
+
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
 

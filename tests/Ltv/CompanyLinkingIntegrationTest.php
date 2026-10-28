@@ -7,6 +7,9 @@ namespace Tests\Ltv;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlCompanyRepository;
+use Prosper202\Ltv\MysqlCustomerCrmRepository;
+use Prosper202\Ltv\MysqlCustomerFieldRepository;
+use Prosper202\Ltv\MysqlCustomerRepository;
 
 /**
  * The company-linking sweep on a real server. A company string that
@@ -123,6 +126,25 @@ final class CompanyLinkingIntegrationTest extends TestCase
         return new MysqlCompanyRepository(new Connection(self::$db));
     }
 
+    /**
+     * The account's customers whose updated_at is at or after $since, in id
+     * order: the predicate a list's updated_since applies (Controller::list()),
+     * which no customer list takes yet.
+     *
+     * @return list<int>
+     */
+    private static function changedSince(int $userId, int $since): array
+    {
+        $ids = [];
+        $result = self::$db->query("SELECT customer_id FROM 202_customers WHERE user_id = $userId"
+            . " AND updated_at >= $since ORDER BY customer_id");
+        while ($row = $result->fetch_row()) {
+            $ids[] = (int) $row[0];
+        }
+
+        return $ids;
+    }
+
     public function testMoreThanABatchOfUnlinkableNamesAheadDoesNotHoldBackALinkableOne(): void
     {
         $blanks = [];
@@ -170,6 +192,41 @@ final class CompanyLinkingIntegrationTest extends TestCase
         }
         self::assertSame('Five', self::customer($ids[7])['company']);
         self::assertSame(0, self::pending(self::USER));
+    }
+
+    /**
+     * A customer the sweep links, or whose blank company it stores as '', has
+     * changed: GET /ltv/customers/{id} answers its updated_at, and a reader
+     * asking what changed since before the sweep has to find it. The link
+     * left updated_at as it was.
+     */
+    public function testWhatTheSweepWritesReadsAsChangedSinceBeforeIt(): void
+    {
+        [$acme, $blank, $pristine, $detached] = self::customers(self::USER, 'u-', ['Acme', "\t", null, '']);
+        self::customers(self::OTHER, 'o-', ['Acme']);
+        self::assertSame([], self::changedSince(self::USER, 2), 'every customer was last written at 1');
+        $before = time();
+
+        self::assertSame(1, $this->sweep()->linkUnlinkedCustomers(self::USER, 2000));
+
+        self::assertSame([$acme, $blank], self::changedSince(self::USER, $before));
+        self::assertSame([], self::changedSince(self::OTHER, $before));
+
+        $conn = new Connection(self::$db);
+        $crm = new MysqlCustomerCrmRepository(
+            $conn,
+            new MysqlCustomerRepository($conn),
+            new MysqlCustomerFieldRepository($conn)
+        );
+        foreach ([[$acme, 'Acme'], [$blank, '']] as [$id, $company]) {
+            $detail = $crm->get(self::USER, $id);
+            self::assertIsArray($detail, "customer $id");
+            self::assertSame($company, $detail['company'], "customer $id");
+            self::assertGreaterThanOrEqual($before, (int) $detail['updated_at'], "customer $id is a change");
+        }
+        foreach ([$pristine, $detached] as $id) {
+            self::assertSame('1', (string) $crm->get(self::USER, $id)['updated_at'], "customer $id is not");
+        }
     }
 
     public function testOnlyTheAccountsOwnUnmergedCustomersAreTaken(): void
