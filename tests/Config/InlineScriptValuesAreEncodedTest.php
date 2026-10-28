@@ -26,9 +26,6 @@ final class InlineScriptValuesAreEncodedTest extends TestCase
 
     /** @var array<string, array<string, string>> file => echoed expression => why it needs no encoding */
     private const LISTED = [
-        '202-account/api-integrations.php' => [
-            '$dniProcessingJson' => 'json_encode()d with the JSON_HEX_* flags where it is set',
-        ],
         '202-config/template.php' => [
             '$readsDatabase ? p202CronBeaconStatement() : \'/* no cron ping */\'' => 'p202CronBeaconStatement()'
                 . ' json_encode()s its URL with the JSON_HEX_* flags; the other branch is a fixed comment',
