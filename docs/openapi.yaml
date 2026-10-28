@@ -7652,8 +7652,7 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/LtvCustomer'
                   pagination:
                     $ref: '#/components/schemas/Pagination'
         '403':
@@ -7755,8 +7754,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvCustomerDetail'
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -7785,8 +7783,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvCustomerDetail'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -7877,8 +7874,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvCustomerDetail'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -7939,8 +7935,9 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvCustomerEngagement'
+                  window_days:
+                    type: integer
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -8056,8 +8053,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvCustomerDetail'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -8104,8 +8100,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvCustomerDetail'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -13119,6 +13114,134 @@ components:
           type: string
           maxLength: 255
           description: The identifier; an email_md5 or email_sha256 value is its hex digest.
+
+    LtvCustomer:
+      type: object
+      description: >-
+        A customer and its rollups, as GET /ltv/customers lists it. Money is a JSON number and a count an
+        integer. Until 1.9.79 the money was MySQL's decimal text ("54.12500") here and in a customer's detail,
+        while GET /ltv/summary answered numbers.
+      properties:
+        customer_id: {type: integer}
+        primary_ref: {type: string, description: "Your reference for the customer; erased:<id> once erased"}
+        first_name: {type: string, nullable: true}
+        last_name: {type: string, nullable: true}
+        email: {type: string, nullable: true}
+        company: {type: string, nullable: true}
+        city: {type: string, nullable: true}
+        region: {type: string, nullable: true}
+        country: {type: string, nullable: true}
+        status: {type: string, description: "active, merged or anonymized"}
+        first_seen_time: {type: integer, description: "Unix seconds"}
+        last_activity_time: {type: integer, description: "Unix seconds"}
+        first_click_id: {type: integer, nullable: true}
+        order_count: {type: integer}
+        total_revenue: {type: number, example: 54.125, description: "Lifetime revenue, net of refunds"}
+        refunded_amount: {type: number, example: 5}
+        active_subscription_count: {type: integer}
+        mrr: {type: number, example: 39.99}
+
+    LtvCustomerDetail:
+      description: >-
+        One customer in full, as GET /ltv/customers/{id} answers it and every write that shows a customer
+        (POST and PATCH /ltv/customers, a merge, a new alias): the rollups of LtvCustomer, the rest of the
+        record, its aliases, custom fields and subscriptions, and its 20 most recent revenue events with their
+        line items, newest first.
+      allOf:
+      - $ref: '#/components/schemas/LtvCustomer'
+      - type: object
+        properties:
+          merged_into_customer_id: {type: integer, nullable: true}
+          phone: {type: string, nullable: true}
+          company_id: {type: integer, nullable: true}
+          address_line1: {type: string, nullable: true}
+          address_line2: {type: string, nullable: true}
+          postal_code: {type: string, nullable: true}
+          created_at: {type: integer, description: "Unix seconds"}
+          updated_at: {type: integer, description: "Unix seconds"}
+          aliases: {type: array, items: {$ref: '#/components/schemas/LtvCustomerAlias'}}
+          custom_fields: {type: object, additionalProperties: true, description: "Each field's value by its key, in its field's type (a number field's a number, a boolean field's true or false, a date field's unix seconds), or null"}
+          subscriptions: {type: array, items: {$ref: '#/components/schemas/LtvCustomerSubscription'}}
+          recent_events: {type: array, items: {$ref: '#/components/schemas/LtvCustomerRevenueEvent'}}
+
+    LtvCustomerAlias:
+      type: object
+      properties:
+        alias_id: {type: integer}
+        alias_type: {type: string}
+        alias_value: {type: string}
+        created_at: {type: integer, description: "Unix seconds"}
+
+    LtvCustomerSubscription:
+      type: object
+      properties:
+        subscription_id: {type: integer}
+        external_sub_id: {type: string}
+        plan_name: {type: string, nullable: true}
+        status: {type: string, enum: [trialing, active, past_due, paused, canceled]}
+        amount: {type: number, example: 29.99}
+        currency: {type: string}
+        billing_interval: {type: string, enum: [day, week, month, year]}
+        billing_interval_count: {type: integer}
+        mrr: {type: number, example: 29.99, description: "The amount as a monthly figure"}
+        started_at: {type: integer, description: "Unix seconds"}
+        current_period_start: {type: integer, description: "Unix seconds"}
+        current_period_end: {type: integer, description: "Unix seconds"}
+        canceled_at: {type: integer, nullable: true, description: "Unix seconds"}
+
+    LtvCustomerRevenueEvent:
+      type: object
+      properties:
+        event_id: {type: integer}
+        event_type: {type: string, enum: [purchase, renewal, one_time, refund, chargeback, adjustment]}
+        amount: {type: number, example: 49, description: "Negative for a refund, a chargeback or a negative adjustment"}
+        currency: {type: string}
+        occurred_at: {type: integer, description: "Unix seconds"}
+        source: {type: string, enum: [conversion, subscription, api, import]}
+        conv_id: {type: integer, nullable: true}
+        subscription_id: {type: integer, nullable: true}
+        click_id: {type: integer, nullable: true}
+        external_ref: {type: string, nullable: true}
+        transaction_id: {type: string, nullable: true}
+        plan_name: {type: string, nullable: true, description: "The subscription's plan, for an event from one"}
+        items: {type: array, items: {$ref: '#/components/schemas/LtvCustomerLineItem'}}
+
+    LtvCustomerLineItem:
+      type: object
+      properties:
+        event_id: {type: integer}
+        product_id: {type: integer, nullable: true}
+        sku: {type: string, nullable: true}
+        product_name: {type: string, nullable: true}
+        quantity: {type: number, example: 1.5, description: "A measure, so it may be fractional (it was the text \"1.500\")"}
+        unit_price: {type: number, nullable: true, example: 24.5, description: "null when the line was sent without one"}
+        amount: {type: number, example: 49}
+
+    LtvCustomerEngagement:
+      type: object
+      properties:
+        browsing: {type: array, items: {$ref: '#/components/schemas/LtvBrowsedCampaign'}}
+        events: {type: array, items: {$ref: '#/components/schemas/LtvEngagementEvent'}}
+
+    LtvBrowsedCampaign:
+      type: object
+      description: A campaign the customer's tracked clicks reached in the window, most recent first.
+      properties:
+        campaign_id: {type: integer}
+        campaign_name: {type: string, nullable: true}
+        landing_page: {type: string, nullable: true}
+        clicks: {type: integer}
+        last_seen: {type: integer, description: "Unix seconds"}
+        conversions: {type: integer, description: "Clicks that converted (the text \"1\" until 1.9.79)"}
+
+    LtvEngagementEvent:
+      type: object
+      properties:
+        event_name: {type: string}
+        source: {type: string, enum: [api, site]}
+        event_value: {type: number, nullable: true, example: 75}
+        occurred_at: {type: integer, description: "Unix seconds"}
+        click_id: {type: integer, nullable: true}
 
     SyncProfile:
       type: object
