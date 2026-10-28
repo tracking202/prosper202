@@ -7,6 +7,7 @@ namespace Prosper202\PaymentNotification\ClickBank;
 use Prosper202\Click\ClickId;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\AccountSecrets;
 use Prosper202\PaymentNotification\ConfirmsTestNotifications;
 use Prosper202\PaymentNotification\FingerprintsNotifications;
 use Prosper202\PaymentNotification\InboundRequest;
@@ -24,9 +25,10 @@ use Prosper202\PaymentNotification\Verification;
  * (ClickBankCipher). Each Prosper202 account stores its own key
  * (202_users_pref.cb_key); the account is the one whose key decrypts the
  * notification, and a key two accounts store is refused rather than credited
- * to either. The click is the order's first tracking code, which a HopLink's
- * tid=[[subid]] fills with the click id (or, in 8.0, an affiliate's extclid);
- * the receipt is the transaction id.
+ * to either (a deleted account stores none: AccountSecrets). The click is
+ * the order's first tracking code, which a HopLink's tid=[[subid]] fills
+ * with the click id (or, in 8.0, an affiliate's extclid); the receipt is
+ * the transaction id.
  *
  * ClickBank's amounts are in USD (totalAccountAmount: "Total you received for
  * the transaction in USD"), so they are stated as USD and an account that
@@ -112,15 +114,12 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
 
     public function storedSecrets(Connection $conn): array
     {
-        $stmt = $conn->prepareRead(
-            "SELECT user_id, cb_key FROM 202_users_pref WHERE cb_key IS NOT NULL AND cb_key <> '' ORDER BY user_id"
-        );
         $secrets = [];
-        foreach ($conn->fetchAll($stmt) as $row) {
+        foreach (AccountSecrets::stored($conn, 'cb_key') as $accountId => $column) {
             // A ClickBank key is capital letters and digits: space around one is the paste's.
-            $key = is_string($row['cb_key']) ? trim($row['cb_key']) : '';
+            $key = trim($column);
             if ($key !== '') {
-                $secrets[(int) $row['user_id']] = [$key];
+                $secrets[$accountId] = [$key];
             }
         }
 
