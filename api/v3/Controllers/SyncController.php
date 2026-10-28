@@ -21,6 +21,7 @@ use Api\V3\Support\RequestFlag;
 class SyncController
 {
     private readonly SyncEngine $engine;
+    private readonly ServerStateStore $store;
 
     /** The statuses a job ends in: it runs no more, and keeps no key. */
     private const FINISHED = ['succeeded', 'failed', 'cancelled', 'partial'];
@@ -28,13 +29,14 @@ class SyncController
     public function __construct(
         private readonly \mysqli $db,
         private readonly int $userId,
-        private readonly ServerStateStore $store = new ServerStateStore(),
+        ?ServerStateStore $store = null,
         ?SyncEngine $engine = null,
         private ?SyncProfileKeys $keys = null,
     ) {
         if ($db->connect_errno !== 0) {
             throw new DatabaseException('Database connection unavailable for sync controller');
         }
+        $this->store = $store ?? ServerStateStore::forInstall($db);
         $this->engine = $engine ?? new SyncEngine($this->store);
     }
 

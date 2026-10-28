@@ -683,13 +683,18 @@ if (!function_exists('_upgrade_measurement_tables')) {
         // The Android install-token key (plan §5.1), minted by the same
         // idempotent statement the installer runs, once its table exists.
         // An existing key is never replaced: links already in circulation
-        // keep verifying.
+        // keep verifying. The install's id beside it, the same way: it names
+        // the API state directory (Prosper202\Database\InstallId).
         if ($ok) {
             foreach ($definitions as $definition) {
                 if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::DEPLOYMENT_SECRETS) {
                     if (_upgrade_query(\Api\V3\Apps\Android\InstallTokenKey::mintStatement()) === false) {
                         $ok = false;
                         error_log('Prosper202 upgrade: failed to mint the Android install-token key');
+                    }
+                    if (_upgrade_query(\Prosper202\Database\InstallId::mintStatement()) === false) {
+                        $ok = false;
+                        error_log('Prosper202 upgrade: failed to mint the install id');
                     }
                     break;
                 }
@@ -4582,6 +4587,8 @@ class UPGRADE
                 \Prosper202\Database\Tables\ConversionTables::offlineConversionNames(),
                 // The pending-click settler's queue: settle_failures, settle_next_at and settle_due.
                 \Prosper202\Database\Tables\AppTables::appInstalls(),
+                // Mints the install's id there, which names the API state directory.
+                \Prosper202\Database\Tables\SecretTables::deploymentSecrets(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             if ($step_ok) {
