@@ -426,7 +426,7 @@ final class ReClickBackfillIntegrationTest extends TestCase
      * server's words quote; its transaction leaves nothing, the clicks before
      * it in the chunk are done, and the cursor stops at it, so the next run
      * starts there. The walk's progress says it is stopped at that click and
-     * how many runs in a row it failed, until a run gets past it.
+     * how many runs it failed, until a run gets past it.
      */
     public function testAFailedClickIsLoggedAndIsWhereTheNextRunStarts(): void
     {
@@ -493,8 +493,8 @@ final class ReClickBackfillIntegrationTest extends TestCase
 
     /**
      * A click that fails for an hour of runs is the click's to fail (a value
-     * its rows hold), not the moment's: once it has failed in
-     * STEP_OVER_RUNS runs in a row over STEP_OVER_SECONDS it is logged,
+     * its rows hold), not the moment's: once it has failed with an error of
+     * its own in STEP_OVER_RUNS runs over STEP_OVER_SECONDS it is logged,
      * counted and stepped over, and the walk goes on and finishes, saying so.
      * Either condition alone keeps retrying it: ten runs inside a minute (a
      * lock held that long), or two runs hours apart (a cron run hourly).
@@ -565,7 +565,78 @@ final class ReClickBackfillIntegrationTest extends TestCase
         ));
         self::assertCount(1, $skips, $this->logged());
         self::assertStringContainsString('p202 re-click backfill: click 32 ', $skips[0]);
-        self::assertStringContainsString('after failing in ' . ($runs + 1) . ' runs in a row', $skips[0]);
+        self::assertStringContainsString('after failing with its own error in ' . ($runs + 1) . ' runs', $skips[0]);
+    }
+
+    /** @return iterable<string, array{int}> */
+    public static function errorsOfTheMoment(): iterable
+    {
+        yield 'a lock wait' => [1205];
+        yield 'a lost connection' => [2013];
+        yield 'a statement timed out' => [1969];
+    }
+
+    /**
+     * An error of the moment stops the run at the click, as any failure
+     * does, and counts towards no step-over however long it lasts: two hours
+     * of a lock held on the click's rows step nothing over. The count starts
+     * with the click's own errors, and the step-over comes at the tenth.
+     *
+     * @dataProvider errorsOfTheMoment
+     */
+    public function testAnErrorOfTheMomentCountsTowardsNoStepOver(int $errno): void
+    {
+        $at = self::NOW - 86400;
+        foreach ([41, 42, 43] as $click) {
+            self::legacyReClicked($click, $at, 1, '3.00');
+        }
+        self::mark();
+        $refuse = static function (string $signal): void {
+            self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+            self::q('CREATE TRIGGER p202_test_record_refused BEFORE INSERT ON 202_click_latest_visits FOR EACH ROW'
+                . ' BEGIN IF NEW.click_id = 42 THEN ' . $signal . '; END IF; END');
+        };
+        $runs = ReClickBackfill::STEP_OVER_RUNS;
+        $hours = 2 * ReClickBackfill::STEP_OVER_SECONDS;
+        try {
+            $refuse("SIGNAL SQLSTATE 'HY000' SET MYSQL_ERRNO = $errno, MESSAGE_TEXT = 'the moment'");
+            for ($run = 0; $run <= 2 * $runs; $run++) {
+                $did = $this->walk(PHP_INT_MAX, self::NOW + intdiv($run * $hours, 2 * $runs));
+                $at = [$did['failed_click_id'] ?? null, $did['skipped_clicks'] ?? null];
+                self::assertSame([42, 0], $at, "run $run");
+            }
+            $held = $this->backfill(self::NOW + $hours)->progress();
+
+            $refuse("SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'");
+            for ($run = 1; $run < $runs; $run++) {
+                $did = $this->walk(PHP_INT_MAX, self::NOW + $hours + $run);
+                $at = [$did['failed_click_id'] ?? null, $did['skipped_clicks'] ?? null];
+                self::assertSame([42, 0], $at, "own error $run");
+            }
+            $tenth = $this->walk(PHP_INT_MAX, self::NOW + $hours + $runs);
+        } finally {
+            self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+        }
+        self::assertSame(
+            [42, 0, self::NOW, 0],
+            [
+                $held['stalled_at_click_id'] ?? null, $held['failed_runs'] ?? null,
+                $held['failing_since'] ?? null, $held['skipped_clicks'] ?? null,
+            ],
+            'stopped at the click since the first run, with no run of its own counted'
+        );
+        self::assertSame(
+            [1, 1, true],
+            [$tenth['skipped_clicks'] ?? null, $tenth['reclicked_clicks'] ?? null, $tenth['finished'] ?? null],
+            'the tenth error of its own steps it over'
+        );
+        self::assertNull(self::recorded(42));
+        $skips = array_values(array_filter(
+            explode("\n", $this->logged()),
+            static fn (string $l): bool => str_contains($l, 'stepped over')
+        ));
+        self::assertCount(1, $skips, $this->logged());
+        self::assertStringContainsString('after failing with its own error in ' . $runs . ' runs', $skips[0]);
     }
 
     /**
