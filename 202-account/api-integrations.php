@@ -57,9 +57,9 @@ function validateRequired($field_value, $error_key, $error_message, &$error)
 function updateUserPreference($field_name, $value, $user_id, $db): void
 {
 	$escaped_value = $db->real_escape_string((string)$value);
-	$escaped_user_id = $db->real_escape_string((string)$user_id);
 
-	$sql = "UPDATE `202_users_pref` SET `{$field_name}` = '{$escaped_value}' WHERE `user_id` = '{$escaped_user_id}'";
+	$sql = "UPDATE `202_users_pref` SET `{$field_name}` = '{$escaped_value}'"
+        . " WHERE `user_id` = '" . (int) $user_id . "'";
 	if (_mysqli_query($db, $sql) === false) {
 		throw new RuntimeException('The ' . $field_name . ' setting could not be saved.');
 	}
