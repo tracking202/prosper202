@@ -14,6 +14,8 @@ use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
  */
 final class PayKickstartKeysTest extends TestCase
 {
+    private const SECRET = 'a-session-secret-of-sixty-four-bytes-0123456789abcdef0123456789';
+
     private const NOT_A_CHARACTER = 'has a character that is not a letter, a digit or punctuation;'
         . ' paste it as PayKickstart shows it.';
     private const LENGTH = ' characters long; a PayKickstart IPN secret key is 8 to 128.';
@@ -73,7 +75,11 @@ final class PayKickstartKeysTest extends TestCase
         $stored = ['first-key-0001', 'second-key-0002'];
 
         self::assertSame([...$stored, 'third-key-0003'], PayKickstartKeys::added($stored, ' third-key-0003 '));
-        self::assertSame(['first-key-0001'], PayKickstartKeys::removed($stored, '2', "\u{2026}0002"));
+        $token = static fn (string $key): string => PayKickstartKeys::removalToken($key, self::SECRET);
+        self::assertSame(
+            ['first-key-0001'],
+            PayKickstartKeys::removed($stored, '2', $token('second-key-0002'), self::SECRET)
+        );
         foreach (
             [
                 ['', 'Paste the IPN secret key of a PayKickstart campaign.'],
@@ -88,11 +94,20 @@ final class PayKickstartKeysTest extends TestCase
                 self::assertSame($message, $e->getMessage());
             }
         }
-        $stale = [['2', "\u{2026}0001"], ['3', "\u{2026}0003"], ['0', "\u{2026}0001"], ['1x', "\u{2026}0001"]];
-        foreach ($stale as [$place, $hint]) {
+        $stale = [
+            ['2', $token('first-key-0001')],
+            ['3', $token('third-key-0003')],
+            ['0', $token('first-key-0001')],
+            ['1x', $token('first-key-0001')],
+            // What the form used to carry: the ending the page shows.
+            ['2', "\u{2026}0002"],
+            // The right key's token, made under another session's secret.
+            ['2', PayKickstartKeys::removalToken('second-key-0002', str_repeat('b', 64))],
+        ];
+        foreach ($stale as [$place, $sent]) {
             try {
-                PayKickstartKeys::removed($stored, $place, $hint);
-                self::fail("removed $place $hint");
+                PayKickstartKeys::removed($stored, $place, $sent, self::SECRET);
+                self::fail("removed $place $sent");
             } catch (InvalidArgumentException $e) {
                 self::assertStringStartsWith('The stored keys changed since this page was loaded', $e->getMessage());
             }
@@ -100,6 +115,38 @@ final class PayKickstartKeysTest extends TestCase
         $twenty = array_map(static fn (int $i): string => sprintf('campaign-key-%02d', $i), range(1, 20));
         $this->expectExceptionMessage('At most 20 keys');
         PayKickstartKeys::added($twenty, 'campaign-key-21');
+    }
+
+    /**
+     * Another tab removed a key and added one ending in the same four
+     * characters at its place: the first tab's Remove, made for the old key,
+     * removes nothing.
+     */
+    public function testAStaleRemoveDoesNotTakeANewKeyWithTheSameEnding(): void
+    {
+        $shown = ['campaign-one-AB12', 'campaign-two-0002'];
+        $form = PayKickstartKeys::removalToken('campaign-one-AB12', self::SECRET);
+        $now = ['campaign-new-AB12', 'campaign-two-0002'];
+        self::assertSame(PayKickstartKeys::hint($shown[0]), PayKickstartKeys::hint($now[0]), 'the same ending');
+
+        try {
+            PayKickstartKeys::removed($now, '1', $form, self::SECRET);
+            self::fail('the stale form removed the new key');
+        } catch (InvalidArgumentException $e) {
+            self::assertStringStartsWith('The stored keys changed since this page was loaded', $e->getMessage());
+        }
+        self::assertSame(['campaign-two-0002'], PayKickstartKeys::removed($shown, '1', $form, self::SECRET));
+    }
+
+    public function testATokenNamesTheWholeKeyAndNeverShowsIt(): void
+    {
+        $token = PayKickstartKeys::removalToken('campaign-one-AB12', self::SECRET);
+        self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/D', $token);
+        self::assertStringNotContainsString('AB12', $token);
+        self::assertNotSame($token, PayKickstartKeys::removalToken('campaign-new-AB12', self::SECRET));
+        self::assertNotSame($token, PayKickstartKeys::removalToken('campaign-one-AB12', str_repeat('b', 64)));
+        $this->expectException(\LogicException::class);
+        PayKickstartKeys::removalToken('campaign-one-AB12', '');
     }
 
     public function testThePageShowsTheLastFourCharacters(): void
