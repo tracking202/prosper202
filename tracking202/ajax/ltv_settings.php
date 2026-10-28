@@ -149,6 +149,22 @@ try {
                         $notice = 'Webhook deleted.';
                         break;
 
+                    case 'revive_webhook':
+                        $reviveId = (string) ($_POST['webhook_id'] ?? '');
+                        if (preg_match('/^[1-9][0-9]{0,18}$/D', $reviveId) !== 1) {
+                            throw new \RuntimeException('Pick the webhook to revive from the list.');
+                        }
+                        try {
+                            $revival = $webhooksRepo->revive($userId, (int) $reviveId, true, time());
+                        } catch (\Prosper202\Ltv\RecordNotFoundException) {
+                            throw new \RuntimeException('That webhook is not one of this account\'s.');
+                        }
+                        $notice = $revival['revived']
+                            ? 'Webhook #' . $reviveId . ' is active again; ' . $revival['requeued']
+                                . ' delivery(ies) it missed in the last 7 days will be sent on the next cron run.'
+                            : 'Webhook #' . $reviveId . ' was already active.';
+                        break;
+
                     case 'add_integration':
                         $integrationsRepo->create(
                             $userId,
@@ -193,6 +209,9 @@ try {
 
     $fieldDefinitions = $fieldsRepo->list($userId);
     $webhooks = $webhooksRepo->list($userId);
+    $missedDeliveries = in_array('dead', array_column($webhooks, 'status'), true)
+        ? $webhooksRepo->missedCounts($userId, time())
+        : [];
 
     // Read-only delivery log for one endpoint (no CSRF needed — no write).
     $deliveryLogWebhookId = (int) ($_POST['show_deliveries'] ?? 0);
@@ -357,6 +376,10 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                 <?php } ?>
                 <?php foreach ($webhooks as $webhook) {
                     $status = (string) ($webhook['status'] ?? '');
+                    $hookId = (int) $webhook['webhook_id'];
+                    $reviveConfirm = 'Revive webhook #' . $hookId . '? It is sent new events again, and '
+                        . ($missedDeliveries[$hookId] ?? 0) . ' delivery(ies) from the last 7 days'
+                        . ' that it did not get are sent again, oldest first.';
                 ?>
                     <tr>
                         <td class="text-secondary">#<?php echo (int) $webhook['webhook_id']; ?></td>
@@ -364,13 +387,19 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                         <td><span class="text-secondary" style="font-size: 12px;"><?php echo $esc(str_replace(',', ', ', (string) ($webhook['subscribed_events'] ?? ''))); ?></span></td>
                         <td>
                             <?php if ($status === 'dead') { ?>
-                                <span title="Deliveries exhausted their retries; fix the endpoint and re-register."><?php echo p202_ltv_status_pill('dead'); ?></span>
+                                <span title="A delivery failed 6 times; events are held. Fix the endpoint, then Revive."><?php echo p202_ltv_status_pill('dead'); ?></span>
                             <?php } else { ?>
                                 <?php echo p202_ltv_status_pill($status); ?>
                             <?php } ?>
                         </td>
                         <td><?php echo $when($webhook['created_at'] ?? 0); ?></td>
                         <td class="num" style="white-space: nowrap;">
+                            <?php if ($status === 'dead') { ?>
+                                <button type="button" class="btn btn-sm btn-primary" onclick="ltvSettingsAction(
+                                    'revive_webhook', 'webhook_id', <?php echo $hookId; ?>,
+                                    <?php echo $esc(json_encode($reviveConfirm)); ?>);">
+                                    <i class="bi bi-arrow-clockwise"></i> Revive</button>
+                            <?php } ?>
                             <button type="button" class="btn btn-secondary btn-sm"
                                 onclick="ltvWebhookLog(<?php echo (int) $webhook['webhook_id']; ?>);"><i class="bi bi-list-ul"></i> Log</button>
                             <button type="button" class="btn btn-sm btn-outline-danger"
@@ -485,6 +514,9 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
         ltvNav('settings', { show_deliveries: webhookId });
     }
     function ltvSettingsDelete(action, idField, id, message) {
+        ltvSettingsAction(action, idField, id, message);
+    }
+    function ltvSettingsAction(action, idField, id, message) {
         if (!window.confirm(message)) { return; }
         var payload = {
             action: action,

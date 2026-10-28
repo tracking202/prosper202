@@ -94,6 +94,7 @@ class Application extends ConsoleApplication
         $this->add(new Commands\LtvEngagementCommand());
         $this->add(new Commands\LtvSubscriptionsCommand());
         $this->add(new Commands\LtvCompaniesCommand());
+        $this->add(new Commands\LtvWebhookReviveCommand());
 
         // --- Rotators ---
         $this->add(new Commands\RotatorListCommand());

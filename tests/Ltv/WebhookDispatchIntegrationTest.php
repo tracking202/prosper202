@@ -133,7 +133,7 @@ final class WebhookDispatchIntegrationTest extends TestCase
         return static fn (array $delivery): array => LocalWebhookReceiver::send($base, $delivery);
     }
 
-    /** @return array{delivered: int, failed: int, expired: int, deferred: int, taken: int, more: bool} */
+    /** @return array{delivered: int, failed: int, held: int, expired: int, deferred: int, taken: int, more: bool} */
     private static function dispatch(?callable $send = null, int $seconds = 30, ?callable $clock = null): array
     {
         $report = WebhookDispatcher::runExclusive(self::conn(), time() + $seconds, $send ?? self::toReceiver(), $clock);

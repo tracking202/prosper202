@@ -298,7 +298,8 @@ p202 ltv company create --name Acme --domain acme.com
 is never shown again. Each delivery is `POST {event, occurred_at, data}`
 with `X-P202-Signature: sha256=<HMAC-SHA256 of the body with the secret>`
 (and `X-P202-Event`, `X-P202-Delivery`), retried with backoff and failed
-after 6 attempts, which marks the webhook dead.
+after 6 attempts, which marks the webhook dead until it is revived
+([A dead webhook](#a-dead-webhook)).
 
 The URL is held to the export webhooks' rules
 ([13-attribution.md](13-attribution.md#exports)): spelled plainly (no user
@@ -327,8 +328,8 @@ subscribed the hook to every event).
 `limit` 1–100 (default 25), `status` `pending`, `delivered` or `failed`,
 each with its attempts, next retry, last HTTP status and the last response
 or error (`curl: …` when the request failed, `blocked: …` when the address
-was refused at sending, `expired: …` below). An unknown webhook is a `404`,
-never an empty log.
+was refused at sending, `expired: …` and `held: …` below). An unknown
+webhook is a `404`, never an empty log.
 
 ### How deliveries are sent
 
@@ -359,9 +360,53 @@ it is sent, so a delivery is never sent by two runs.
   (the database went away mid-run) is sent again 5 minutes later.
   `X-P202-Delivery` is the same each time; de-duplicate by it.
 
+### A dead webhook
+
+The 6th failed attempt of one delivery, about an hour of retries, marks its
+webhook `dead`. Nothing is sent to a dead webhook. Its events are still
+queued and then held: each is `failed` with the attempts it had and `held:
+its webhook is dead, so it was not sent; …` as its last response, never
+tried.
+
+`PUT /ltv/webhooks/{id}` with `{"status": "active"}` revives it (LTV
+Settings has a Revive button on a dead webhook's row; `p202 ltv webhooks
+revive <id>`; `bin/p202 ltv:webhook:revive <id>`):
+
+- It keeps its id, URL and secret, so a receiver checks the signature as
+  before, and the Landing Page Optimizer's pairing webhook goes on with no
+  pairing again.
+- By default every delivery of it that was not delivered and was queued in
+  the last 7 days is sent: the one that failed 6 times and the ones held
+  while it was dead are sent again, and the ones still pending (queued
+  since the last cron run, or waiting out a retry's backoff when it died)
+  are sent too. They go oldest first on the next cron run, each with its
+  own `X-P202-Delivery`, so a receiver that took one without answering 2xx
+  sees the same delivery again; a pending one that was waiting out a
+  backoff keeps its time, at most 32 minutes. The attempts of the pending
+  ones start again from 0, so the next failure does not mark it dead at
+  once. A delivered one is never sent again, and older ones stay `failed`,
+  the 7 days of [How deliveries are sent](#how-deliveries-are-sent).
+- `"requeue": false` revives it for new events only: the deliveries still
+  pending are held too, `failed` with the attempts they had and `held: its
+  webhook was revived for new events only, …` as their last response, and
+  only events queued after the revival are sent.
+- A revival waits for a cron run that is sending (up to 20 seconds), so it
+  never changes a delivery a run is in the middle of; one that has not
+  ended by then is a `409`, and nothing changed.
+- The answer is the webhook (never its secret) with `revived`, `requeued`
+  (how many are sent again), `attempts_reset` and `held` (how many pending
+  ones `"requeue": false` set aside). An active webhook is left as it is
+  (`revived: false`). Any other `status` is a `422`: the server alone marks
+  a webhook dead, and `DELETE` removes one.
+
+Fix the receiver before reviving: a webhook whose next delivery fails 6
+times dies again.
+
 ```bash
 p202 ltv webhooks create --url https://hooks.example.com/p202 --events revenue.recorded,subscription.changed
 p202 ltv webhooks deliveries 3 --status failed
+p202 ltv webhooks revive 3
+p202 ltv webhooks revive 3 --requeue=false
 p202 ltv webhooks delete 3 --dry-run
 ```
 
@@ -380,6 +425,7 @@ own settings, a JSON object stored as sent (a list is a `422`).
 | `422` `started_at`: "a unix time in seconds" | A date where a time is read | Send unix seconds |
 | `422` `period`, `sort`, `limit`, `cf.<key>` | A read parameter off its list or range | Use a listed value |
 | `422` `events.0` on a webhook | An event this install never sends | One of the five names, or `*` |
+| `422` `status` on `PUT /ltv/webhooks/{id}` | Anything but `"active"` | Send `{"status": "active"}` to revive it; `DELETE` removes one |
 | `422` `is_required` | A flag that is not one | `true` or `false` |
 | `422` `staged` | An LTV write sent with `?staged=1` | Send it without |
 | `422` `amount`: "Must not be negative for purchase" | A negative `purchase` or `one_time` | Send it as `refund`/`chargeback` (positive amount) or `adjustment` |
@@ -389,4 +435,4 @@ own settings, a JSON object stored as sent (a list is a `422`).
 | `422` `idempotency_key` | A reserved prefix (`void:`, `sub:`, …) | Your own id for the event |
 | `422` `idempotency_key` (or `transaction_id` on a subscription event): "Already used for … with a different amount" | The key recorded a different request; the message lists what differs. Nothing was written | A retry sends exactly the first request; a different event gets its own key |
 | `404` | A customer, subscription, product, field, webhook or company of another account, or none | List them first (`p202 ltv customers`, `subscriptions`, `products`, …) |
-| `409` | A product an order line item names; a company name or domain in use; a company with customers attached (it was a `422`); a merge another request changed first | Leave the product; merge the companies, or pick another name; retry the merge |
+| `409` | A product an order line item names; a company name or domain in use; a company with customers attached (it was a `422`); a merge another request changed first; a revival while a cron run was still sending webhook deliveries | Leave the product; merge the companies, or pick another name; retry the merge or the revival |

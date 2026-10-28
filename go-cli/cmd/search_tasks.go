@@ -113,6 +113,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"c1 c2 c3 c4", "custom variable breakdown"}},
 	{Run: "p202 ltv summary", Pages: []string{"Analyze › Customer LTV"},
 		Phrases: []string{"customer lifetime value"}},
+	{Run: "p202 ltv webhooks revive",
+		Phrases: []string{"revive webhook", "reactivate webhook", "webhook stopped sending", "resend missed webhook deliveries"}},
 	{Run: "p202 app report", Pages: []string{"Analyze › Mobile Apps"},
 		Phrases: []string{"app installs report", "skadnetwork postbacks"}},
 
