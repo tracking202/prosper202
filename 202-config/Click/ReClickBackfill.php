@@ -48,8 +48,12 @@ use Prosper202\DataEngine\ClickRollupSql;
  * visit, as every click the walk has not reached is. An error of the moment
  * (MOMENT_ERRNOS: a lock, a timeout, a lost connection, a server that will
  * not write) stops the run at the click the same way and counts towards
- * nothing, however long it lasts; any other failure counts. A click whose rows
- * name more than one account is left as it is, logged, and counted.
+ * nothing, however long it lasts, and so does a failure that names no cause
+ * (no errno and no value of the click's: a type error, a wrapper that dropped
+ * the errno). What counts is a server error of another errno, or a value the
+ * click's rows hold that reads wrong, and the hour runs from the first run
+ * that failed so. A click whose rows name more than one account is left as it
+ * is, logged, and counted.
  *
  * Two of a click's rows in its latest second are both its latest visit, and
  * every per-row sum counts the click twice (the report rollup, keyed by
@@ -67,7 +71,7 @@ final class ReClickBackfill
     /** Runs a click fails with an error of its own before it is stepped over, with STEP_OVER_SECONDS. */
     public const STEP_OVER_RUNS = 10;
 
-    /** How long a click fails, from its first failed run, before it is stepped over. */
+    /** How long a click fails, from its first run that failed with an error of its own, before it is stepped over. */
     public const STEP_OVER_SECONDS = 3600;
 
     /**
@@ -75,11 +79,14 @@ final class ReClickBackfill
      * click: a lock wait or deadlock, a statement interrupted or timed out
      * (1317, MariaDB's 1969, MySQL's 3024), a connection killed, refused or
      * timed out (1927, 1040, 1203, 4031, and every client error, 2000-2999),
-     * a server shutting down (1053), out of memory (1037, 1038, 1041), full
-     * (1021, 1114) or read-only (1290, 1792, 1836).
+     * a network read or write that failed or was interrupted (1158-1161), a
+     * server shutting down (1053), out of memory (1037, 1038, 1041), full
+     * (1021, 1114) or read-only (1290, 1792, 1836), and the storage engine's
+     * own errors (1030, a temporary one 1297, one during commit 1180).
      */
     public const MOMENT_ERRNOS = [
-        1205, 1213, 1317, 1969, 3024, 1927, 1040, 1203, 4031, 1053, 1037, 1038, 1041, 1021, 1114, 1290, 1792, 1836,
+        1205, 1213, 1317, 1969, 3024, 1927, 1040, 1203, 4031, 1158, 1159, 1160, 1161, 1053, 1037, 1038, 1041,
+        1021, 1114, 1290, 1792, 1836, 1030, 1297, 1180,
     ];
 
     /** @var callable(): int */
@@ -166,7 +173,7 @@ final class ReClickBackfill
                             . ' account; they are left as they are');
                     }
                 } catch (\Throwable $e) {
-                    $own = !self::isTheMoments($e);
+                    $own = self::isTheClicks($e);
                     if ($own && $this->stepsOver($state, $clickId)) {
                         self::logFailure($clickId, $e, $state['failed_runs'] + 1);
                         $done['skipped_clicks']++;
@@ -280,8 +287,9 @@ final class ReClickBackfill
         } elseif ($s['failed_click_id'] !== null) {
             $note = 'The walk is stopped at click ' . $s['failed_click_id'] . ', which has failed with an error of'
                 . ' its own in ' . $s['failed_runs'] . ' run' . ($s['failed_runs'] === 1 ? '' : 's') . ' (a lock,'
-                . ' a timeout or a lost connection counts in none); the server\'s error log says why ("p202'
-                . ' re-click backfill: click ' . $s['failed_click_id'] . ' ..."), and each cron run tries it again,'
+                . ' a timeout, a lost connection or an error that names no cause counts in none); the server\'s'
+                . ' error log says why ("p202 re-click backfill: click ' . $s['failed_click_id'] . ' ..."), and'
+                . ' each cron run tries it again,'
                 . ' stepping over it once it has failed with its own error in ' . self::STEP_OVER_RUNS
                 . ' runs over an hour. Until then, reports over dates before the upgrade count it, and every'
                 . ' re-clicked click after it, at each of its visits.';
@@ -372,18 +380,24 @@ final class ReClickBackfill
     /**
      * Keep the click the run stopped at with the cursor, and since when it
      * fails: failed_runs counts its runs that failed with an error of its own
-     * ($own), which an error of the moment neither adds to nor resets. The
-     * assignments run left to right, so the click is written last.
+     * ($own), and failing_since is the first of them; an error that is not
+     * the click's neither adds to nor resets either. The assignments run left
+     * to right, so the click is written last.
      */
     private function recordFailure(int $clickId, bool $own): void
     {
         $stmt = $this->conn->prepareWrite(
             'UPDATE 202_reclick_backfill SET failed_runs = IF(failed_click_id <=> ?, failed_runs + ?, ?),'
-            . ' failing_since = IF(failed_click_id <=> ?, failing_since, ?), failed_click_id = ?'
+            . ' failing_since = IF(failed_click_id <=> ? AND failing_since IS NOT NULL, failing_since,'
+            . ' IF(? = 1, ?, NULL)), failed_click_id = ?'
             . ' WHERE backfill_id = 1'
         );
         $count = $own ? 1 : 0;
-        $this->conn->bind($stmt, 'iiiiii', [$clickId, $count, $count, $clickId, ($this->clock)(), $clickId]);
+        $this->conn->bind(
+            $stmt,
+            'iiiiiii',
+            [$clickId, $count, $count, $clickId, $count, ($this->clock)(), $clickId]
+        );
         if ($this->conn->executeUpdate($stmt) !== 1) {
             throw new \RuntimeException('the re-click backfill could not record that click ' . $clickId . ' failed');
         }
@@ -404,20 +418,26 @@ final class ReClickBackfill
     }
 
     /**
-     * Whether the failure carries one of MOMENT_ERRNOS anywhere in its chain:
-     * a mysqli_sql_exception's code, or the ` [errno N]` Connection puts last.
+     * Whether the failure is the click's: nothing in its chain carries one of
+     * MOMENT_ERRNOS, and something names a cause — a server errno (a
+     * mysqli_sql_exception's code, or the ` [errno N]` Connection puts last)
+     * or a value of the click's rows that read wrong (the repair's
+     * UnexpectedValueException). A failure that names neither is not counted:
+     * a step-over cannot be undone, and an unknown is not evidence.
      */
-    private static function isTheMoments(\Throwable $e): bool
+    private static function isTheClicks(\Throwable $e): bool
     {
+        $named = false;
         for ($current = $e; $current !== null; $current = $current->getPrevious()) {
             $errno = $current instanceof \mysqli_sql_exception ? (int) $current->getCode()
                 : (preg_match('/ \[errno (\d+)\]\z/', $current->getMessage(), $m) === 1 ? (int) $m[1] : 0);
             if (in_array($errno, self::MOMENT_ERRNOS, true) || ($errno >= 2000 && $errno <= 2999)) {
-                return true;
+                return false;
             }
+            $named = $named || $errno > 0 || $current instanceof \UnexpectedValueException;
         }
 
-        return false;
+        return $named;
     }
 
     /**

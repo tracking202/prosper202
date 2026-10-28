@@ -543,8 +543,13 @@ gives consent only as `1` now, on the tracking link and on the landing page
 read the parameter by its exact name, and PHP files `p202.consent`,
 `p202 consent`, `p202[consent` and `p202_consent[]` under it, so each was a
 refusal to the tracker and consent to the script (found by review). A second
-reader of a request value reads it as the first one's parser does:
-`p202PhpParam()` was held to `parse_str()` on 36 spellings.
+reader of a request value reads it as the first one's parser does, and a
+claim that it does is a test, not a scratch run: `LandingConsentReaderTest`
+runs the shipped reader and link decorator under node and holds them to
+`parse_str()` on 45 spellings (found by review: the first claim could not be
+run again). Its first draft defined the decorator outside the reader's scope,
+and the decorator's own `catch` took the ReferenceError, so every link read
+as left alone; only the comparison with PHP said so.
 
 State found where this install's own state would be is the same question.
 `ServerStateStore` renamed the pre-1.9.75 shared temp directory into a new
@@ -1819,7 +1824,13 @@ the real cron job). The first draft counted every failure, so an hour of
 lock waits on one click, a read-only server or a lost connection stepped it
 over for good (found by review): a decision that cannot be undone counts only
 the failures that are the click's, and an errno it can name as the
-moment's (`ReClickBackfill::MOMENT_ERRNOS`) counts in none.
+moment's (`ReClickBackfill::MOMENT_ERRNOS`) counts in none. That fix still
+counted whatever it could not name, a type error or a wrapper that dropped
+the errno, and started the hour at the first failure of any kind, so ten
+minutes of the click's own errors after two hours of lock waits stepped it
+over (found by review): what counts is shown to be the click's (a server
+errno that is not the moment's, a value its rows hold that reads wrong), and
+the hour starts at the first of those.
 
 ### 36. A lock does not move the snapshot
 The ledger's click lock read the click's values with the locking read itself,
