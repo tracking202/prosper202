@@ -8,6 +8,7 @@ use Prosper202\Click\ClickId;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\ConfirmsTestNotifications;
+use Prosper202\PaymentNotification\FingerprintsNotifications;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
@@ -41,7 +42,7 @@ use Prosper202\PaymentNotification\Verification;
  * The legacy versions (4.0 and earlier: a form signed with an 8-digit
  * `cverify`) are answered 415, saying which version to set.
  */
-final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotifications
+final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotifications, FingerprintsNotifications
 {
     /**
      * Every transactionType ClickBank's INS article lists, and what each asks
@@ -234,6 +235,40 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
         $stmt = $conn->prepareWrite('UPDATE 202_users_pref SET cb_verified = 1 WHERE user_id = ?');
         $conn->bind($stmt, 'i', [$accountId]);
         $conn->executeUpdate($stmt);
+    }
+
+    /**
+     * The decrypted order, keys in order, without attemptCount: ClickBank
+     * raises that on each retry of the same notification, and the ciphertext
+     * and IV of a retry need not be the ones sent before.
+     */
+    public function fingerprint(InboundRequest $request): string
+    {
+        if ($request !== $this->decrypted) {
+            throw new \LogicException(
+                'ClickBankAdapter::fingerprint() reads the order verify() decrypted from this request'
+            );
+        }
+        $order = $this->order;
+        unset($order['attemptCount']);
+
+        return hash('sha256', serialize(self::byName($order)));
+    }
+
+    /**
+     * @param array<array-key, mixed> $value
+     * @return array<array-key, mixed>
+     */
+    private static function byName(array $value): array
+    {
+        ksort($value, SORT_STRING);
+        foreach ($value as $key => $item) {
+            if (is_array($item)) {
+                $value[$key] = self::byName($item);
+            }
+        }
+
+        return $value;
     }
 
     /** The account's own Slack webhook, or null when it has none. */

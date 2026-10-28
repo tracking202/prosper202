@@ -223,7 +223,10 @@ final class Processor
         // that stands (a sale is reversed once), or reverses the sale again
         // when none does: the one on file was deleted.
         $ownId = $n->transactionId !== null && $n->transactionId !== $original;
-        $reference = $ownId ? (string) $n->transactionId : 'body:' . self::fingerprint($request->fields);
+        $body = $provider instanceof FingerprintsNotifications
+            ? $provider->fingerprint($request)
+            : self::fingerprint($request->fields);
+        $reference = $ownId ? (string) $n->transactionId : 'body:' . $body;
         $on = 'Transaction ' . $original . ' on click ' . $n->clickId;
         // A refund is dated when it happened, the sale keeping its own day;
         // never before the sale it takes back.

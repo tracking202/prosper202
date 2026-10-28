@@ -442,6 +442,36 @@ final class ClickBankAdapterTest extends TestCase
         self::assertSame('CWOGBZLN', $adapter->parse($request)->transactionId);
     }
 
+    /** One notification is its order without the attempt count, however it is encrypted. */
+    public function testANotificationSentAgainHasItsFingerprintAndAnotherDoesNot(): void
+    {
+        $print = static function (array $order): string {
+            $adapter = new ClickBankAdapter();
+            $request = self::request(self::body($order, self::KEY_A));
+            self::assertNotNull($adapter->verify($request, [3 => [self::KEY_A]]));
+
+            return $adapter->fingerprint($request);
+        };
+        $refund = self::sale(['transactionType' => 'RFND', 'totalAccountAmount' => '-37.62']);
+
+        $first = $print($refund);
+        self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $first);
+        self::assertSame($first, $print($refund), 'another IV');
+        self::assertSame($first, $print(['attemptCount' => 4] + $refund), 'a retry');
+        self::assertSame($first, $print(array_reverse($refund, true)), 'the keys in another order');
+        $customer = ['customer' => ['billing' => ['email' => 'buyer@example.com', 'fullName' => 'Test Guy']]];
+        self::assertSame($first, $print($customer + $refund), 'nested keys in another order');
+        foreach (
+            [['transactionType' => 'CGBK'], ['totalAccountAmount' => '-10.00'], ['transactionTime' => '2026-11-01'],
+            ['receipt' => 'OTHERRCP']] as $change
+        ) {
+            self::assertNotSame($first, $print($change + $refund), (string) json_encode($change));
+        }
+
+        $this->expectException(\LogicException::class);
+        (new ClickBankAdapter())->fingerprint(self::request(self::body($refund, self::KEY_A)));
+    }
+
     /** The payment's own time dates the row; the values are `date -d … +%s`'s. */
     public function testTheTransactionTimeIsReadWithItsOffset(): void
     {

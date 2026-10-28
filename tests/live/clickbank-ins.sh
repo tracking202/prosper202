@@ -59,11 +59,11 @@ note() { # note <secret> <order json> [cipher] -> the request body
         "$(printf '%s' "$plain" | openssl enc "-$cipher" -K "$keyhex" -iv "$ivhex" | base64 -w0)" \
         "$(base64 -w0 "$OUT/iv")"
 }
-order() { # order <type> <receipt> <click> <amount> [time]: an INS 8.0 order, the amount a string as 8.0 sends it
+order() { # order <type> <receipt> <click> <amount> [time] [attempt]: an INS 8.0 order, the amount a string as 8.0 sends it
     printf '{"transactionTime":"%s","receipt":"%s","transactionType":"%s","vendor":"testacct",'\
 '"affiliate":"affiliate1","role":"AFFILIATE","totalAccountAmount":"%s","paymentMethod":"VISA","currency":"USD",'\
 '"trackingCodes":[%s],"customer":{"billing":{"fullName":"Test Buyer","email":"buyer-7pjv@example.com"}},'\
-'"version":"8","attemptCount":1}' "${5:-$(TZ=America/Denver date +%Y-%m-%dT%H:%M:%S%:z)}" "$2" "$1" "$4" "$3"
+'"version":"8","attemptCount":%s}' "${5:-$(TZ=America/Denver date +%Y-%m-%dT%H:%M:%S%:z)}" "$2" "$1" "$4" "$3" "${6:-1}"
 }
 post() { # post <body> -> HTTP status; the answer in $OUT/r
     curl -sS -o "$OUT/r" -w '%{http_code}' -H 'Content-Type: application/json' --data-binary "$1" \
@@ -193,6 +193,21 @@ api "$KEY_B" GET "/conversions?source=clickbank&limit=50" > "$OUT/conv"
 eq "$(jq -r "[.data[] | select(.click_id == $CLICK_B) | \"\(.transaction_id) \(.click_payout)\"] | sort | join(\",\")" "$OUT/conv")" \
     "RB$RUN -12.5,RB$RUN 12.5,RB$RUN-0001 -9.95,RB$RUN-0001 9.95" "GET /conversions lists them to account $USER_B"
 eq "$(api "$ADMIN_KEY" GET "/conversions?source=clickbank&limit=200" | jq "[.data[] | select(.click_id == $CLICK_B)] | length")" 0 "and not to account 1"
+
+say "a reversal deleted: the same refund sent again changes nothing, a chargeback reverses again"
+T1=$(TZ=America/Denver date +%Y-%m-%dT%H:%M:%S%:z)
+eq "$(cb "$CB_A" SALE "RX$RUN" "$CLICK_A" 15.00)" 200 "a sale of account 1"
+eq "$(post "$(note "$CB_A" "$(order RFND "RX$RUN" "\"$CLICK_A\"" -15.00 "$T1")")")" 200 "its refund answers 200"
+REV=$(Q "SELECT conv_id FROM 202_conversion_logs WHERE click_id=$CLICK_A AND transaction_id='RX$RUN' AND reverses_conv_id IS NOT NULL")
+eq "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $ADMIN_KEY" "$BASE/api/v3/conversions/$REV")" 204 "DELETE /conversions/$REV (the refund undone) answers 204"
+eq "$(post "$(note "$CB_A" "$(order RFND "RX$RUN" "\"$CLICK_A\"" -15.00 "$T1" 2)")")" 200 "the same refund, ClickBank's second attempt, answers 200"
+has "$OUT/r" 'is that refund sent again' "as that refund sent again"
+sleep 1
+eq "$(cb "$CB_A" CGBK "RX$RUN" "$CLICK_A" -15.00)" 200 "a chargeback of the sale answers 200"
+has "$OUT/r" '"outcome":"reversed"' "and reverses it again"
+eq "$(Q "SELECT GROUP_CONCAT(CONCAT(click_payout, ':', deleted) ORDER BY conv_id) FROM 202_conversion_logs WHERE click_id=$CLICK_A AND transaction_id='RX$RUN'")" \
+    "15.00000:0,-15.00000:1,-15.00000:0" "the sale, the deleted reversal and the chargeback's"
+eq "$(cb "$CB_A" SALE "RX$RUN" "$CLICK_A" 15.00)" 409 "the sale sent again while its chargeback stands is a 409"
 say "a sale is dated when ClickBank says it happened"
 CT=$(Q "SELECT click_time FROM 202_clicks WHERE click_id=$CLICK_A ORDER BY click_time LIMIT 1")
 sleep 2

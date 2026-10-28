@@ -7,6 +7,7 @@ namespace Tests\PaymentNotification;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickRecord;
 use Prosper202\Click\MysqlClickRepository;
+use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\ClickBank\ClickBankAdapter;
 use Prosper202\PaymentNotification\InboundRequest;
@@ -511,6 +512,29 @@ final class ClickBankInsIntegrationTest extends TestCase
         self::assertSame($sale['transaction_id'], self::conversions()[1]['transaction_id']);
     }
 
+    public function testARefundIsDatedWhenClickBankSaysItHappened(): void
+    {
+        $clickTime = (int) self::scalar(
+            'SELECT click_time FROM 202_clicks WHERE click_id = ' . self::CLICK . ' LIMIT 1'
+        );
+        $this->post(['transactionTime' => self::stated($clickTime + 60)], self::FIRST_KEY);
+
+        $refund = $this->post([
+            'transactionType' => 'RFND', 'totalAccountAmount' => '-37.62',
+            'transactionTime' => self::stated($clickTime + 120),
+        ], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+        $times = self::requireScratch()->query('SELECT conv_time FROM 202_conversion_logs WHERE click_id = '
+            . self::CLICK . ' ORDER BY conv_id');
+        self::assertInstanceOf(\mysqli_result::class, $times);
+        self::assertSame(
+            [(string) ($clickTime + 60), (string) ($clickTime + 120)],
+            array_column($times->fetch_all(MYSQLI_ASSOC), 'conv_time')
+        );
+        $bad = $this->post(['transactionType' => 'CGBK', 'transactionTime' => '20261301T000000-0600'], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::MALFORMED, 400, $bad);
+    }
+
     public function testAPartialRefundTakesBackWhatTheAccountLost(): void
     {
         $this->post([], self::FIRST_KEY);
@@ -569,6 +593,61 @@ final class ClickBankInsIntegrationTest extends TestCase
         self::assertSame('37.62000', self::clickPayout());
     }
 
+    /** A sale a refund took back is not counted, so the SALE sent again is no duplicate. */
+    public function testASaleSentAgainAfterItsRefundIsRefusedNamingTheReversalToDelete(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $this->post(['transactionType' => 'RFND', 'totalAccountAmount' => '-37.62'], self::FIRST_KEY);
+        $reversal = (int) self::conversionIds()[1];
+
+        $again = $this->post(['attemptCount' => 2], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $again);
+        self::assertSame('Transaction CWOGBZLN on click ' . self::CLICK . ' is recorded and reversed by conversion '
+            . $reversal . '; this SALE states the sale again. Nothing was changed: if the refund was undone, delete'
+            . ' conversion ' . $reversal . ' to count the sale.', $again->message);
+
+        self::conversionRepository()->softDelete($reversal, self::FIRST);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post([], self::FIRST_KEY));
+    }
+
+    /**
+     * A reversal deleted (the refund undone): the same refund, however often
+     * ClickBank sends it again, changes nothing, and a later chargeback of
+     * the sale reverses it again. ClickBank's order is not its form fields,
+     * so the adapter says what one notification is: the order without the
+     * attempt count, which a retry raises.
+     */
+    public function testAReversalAfterTheOneOnFileWasDeletedReversesTheSaleAgain(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $refund = [
+            'transactionType' => 'RFND', 'totalAccountAmount' => '-37.62',
+            'transactionTime' => '2026-10-24T09:00:00-06:00',
+        ];
+        $this->post($refund, self::FIRST_KEY);
+        $deleted = (int) self::conversionIds()[1];
+        self::conversionRepository()->softDelete($deleted, self::FIRST);
+
+        $retry = $this->post(['attemptCount' => 2] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $retry);
+        self::assertSame('Transaction CWOGBZLN on click ' . self::CLICK . ' was reversed by conversion ' . $deleted
+            . ', since deleted; this RFND is that refund sent again, so nothing was changed.', $retry->message);
+
+        $chargeback = [
+            'transactionType' => 'CGBK', 'totalAccountAmount' => '-37.62',
+            'transactionTime' => '2026-11-02T09:00:00-06:00',
+        ];
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($chargeback, self::FIRST_KEY));
+        self::assertSame(
+            [['37.62000', '0'], ['-37.62000', '1'], ['-37.62000', '0']],
+            array_map(static fn (array $r): array => [$r['click_payout'], $r['deleted']], self::conversions())
+        );
+        $chargebackAgain = $this->post(['attemptCount' => 3] + $chargeback, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $chargebackAgain);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($refund, self::FIRST_KEY));
+        self::assertCount(3, self::conversions());
+    }
+
     public function testAReversalOfNothingOnFileOrOfAnotherAccountsClickWritesNothing(): void
     {
         $missing = $this->post(['transactionType' => 'RFND', 'receipt' => 'NEVERSOLD'], self::FIRST_KEY);
@@ -587,6 +666,21 @@ final class ClickBankInsIntegrationTest extends TestCase
         $noClick = $this->post(['transactionType' => 'RFND', 'trackingCodes' => []], self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::NO_CLICK, 200, $noClick);
         self::assertCount(1, self::conversions());
+    }
+
+    private static function conversionRepository(): MysqlConversionRepository
+    {
+        return new MysqlConversionRepository(new Connection(self::requireScratch()));
+    }
+
+    /** @return list<string> */
+    private static function conversionIds(): array
+    {
+        $result = self::requireScratch()->query('SELECT conv_id FROM 202_conversion_logs WHERE click_id = '
+            . self::CLICK . ' ORDER BY conv_id');
+        self::assertInstanceOf(\mysqli_result::class, $result);
+
+        return array_column($result->fetch_all(MYSQLI_ASSOC), 'conv_id');
     }
 
     private static function clickPayout(): string
