@@ -90,10 +90,12 @@ services:
       test: ["CMD", "true"]
       interval: 30s
 
-  # Standalone CLI workers the HTTP cron endpoint does not cover: attribution
-  # export queue and API v3 sync worker every minute, snapshot rebuild hourly.
-  # Runs the same image as the web service, as the web user, sharing the
-  # export/state volumes.
+  # Standalone CLI cron workers run as their own process (mirrors the
+  # attribution-cron service in docker-compose.coolify.yaml): the multi-touch
+  # attribution worker, attribution exports, the API v3 sync worker and the
+  # Android intake every minute, the app retention prune hourly. Runs the same
+  # image as the web service, as the web user, sharing the export/state
+  # volumes.
   worker:
     image: ghcr.io/tracking202/prosper202:latest
     restart: unless-stopped
@@ -122,14 +124,16 @@ services:
       - bash
       - -c
       - |
-        last_rebuild=0
+        last_hourly=0
         while true; do
-          php 202-cronjobs/attribution-export.php || true
+          php 202-cronjobs/attribution-worker.php || true
+          php 202-cronjobs/attribution-exports.php || true
           php 202-cronjobs/sync-worker.php || true
+          php 202-cronjobs/app-installs.php || true
           now=$$(date +%s)
-          if [ $$((now - last_rebuild)) -ge 3600 ]; then
-            php 202-cronjobs/attribution-rebuild.php || true
-            last_rebuild=$$now
+          if [ $$((now - last_hourly)) -ge 3600 ]; then
+            php 202-cronjobs/app-retention.php || true
+            last_hourly=$$now
           fi
           sleep 60
         done
