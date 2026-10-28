@@ -264,8 +264,11 @@ class AUTH
         }
     }
 
-    /** Clear this browser's remember_me cookie, for the rest of the request too. */
-    private static function forgetRememberMeCookie(): void
+    /**
+     * Clear this browser's remember_me cookie, for the rest of the request
+     * too: at a sign-out, and once its key is deleted (a password change).
+     */
+    public static function forgetRememberMeCookie(): void
     {
         if (!isset($_COOKIE['remember_me'])) {
             return;

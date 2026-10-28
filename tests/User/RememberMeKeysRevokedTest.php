@@ -10,34 +10,47 @@ use Prosper202\User\UserDataPurge;
 use Tests\Support\SourceScan;
 
 /**
- * Every writer that leaves a user unable to act deletes their remember-me
- * keys, and every sign-out deletes the key of the browser signing out.
+ * Every writer that leaves a user unable to act, and every writer of a new
+ * password, deletes their remember-me keys, and every sign-out deletes the
+ * key of the browser signing out.
  *
  * A remember-me key (202_auth_keys) outlived what ended its sign-in: the
  * sign-out cleared the cookie and kept the row, so a copy of the cookie went
  * on signing in for up to 14 days; switching a user off kept every row, so a
  * remembered browser that made no request while the user was off signed back
- * in once they were on again. Held here:
+ * in once they were on again; and a new password kept every row, so a stolen
+ * cookie went on signing in after its owner changed the password. Held here:
  *
- *  - The writers. Every statement in the served tree that writes 202_users'
- *    user_active or user_deleted, or whose SET list is built at run time and
- *    so can write either (and any REPLACE INTO or ON DUPLICATE KEY UPDATE of
- *    202_users), is found by reading the SQL as PHP assembles it, and the
- *    named function that holds it calls RememberMeKeys::revokeAll() — or is
- *    listed in REVOKED_OTHERWISE with how. The set is pinned in WRITERS, so a
- *    new writer is seen. An INSERT makes a user, who has no key yet.
+ *  - The writers. Every statement in the served tree that writes a column of
+ *    202_users this test watches (user_active and user_deleted; user_pass),
+ *    or whose SET list is built at run time and so can write any of them (and
+ *    any REPLACE INTO or ON DUPLICATE KEY UPDATE of 202_users), is found by
+ *    reading the SQL as PHP assembles it. The sets are pinned (WRITERS,
+ *    PASSWORD_WRITERS), so a new writer is seen.
+ *  - Standing: the named function that holds a writer calls
+ *    RememberMeKeys::revokeAll(), or is listed in REVOKED_OTHERWISE with how.
+ *  - Password: each writer is listed as a change or a rehash, and the two are
+ *    held to opposite answers. A change (Personal settings, the reset link,
+ *    Account › Users, PUT /users/{id}) calls revokeAll(). A rehash stores
+ *    the password the user has just signed in with under a newer hash: it is
+ *    not a new password, a stolen cookie is no less stolen after it, and
+ *    deleting the keys there would sign every remembered browser out
+ *    whenever the hash algorithm moves, so it must not call revokeAll(). The
+ *    scan cannot tell which a statement is; the list says, with why.
+ *  - An INSERT makes a user, who has no key yet.
  *  - The sign-outs. Only AUTH destroys a session or sets the remember_me
  *    cookie, and the pages that sign a browser out call AUTH::signOut().
  *
  * RememberMeKeysRevokedIntegrationTest runs each writer and the sign-out
- * against a database, the revocation in the writer's transaction included.
+ * against a database, the revocation in the writer's transaction and the
+ * rehash's keeping the keys included.
  *
  * What this does not see: a writer that holds users somewhere else than
  * 202_users (InMemoryUserRepository, a test double, holds no keys); SQL a
  * builder assembles from pieces that are not PHP strings at the statement
  * (a table name from a constant: none writes 202_users that way); and
  * whether the revocation runs on every path through the function, which the
- * integration test executes.
+ * integration tests execute.
  */
 final class RememberMeKeysRevokedTest extends TestCase
 {
@@ -56,8 +69,60 @@ final class RememberMeKeysRevokedTest extends TestCase
             . ' (testTheDeleteCascadeRevokesTheKeys)',
     ];
 
+    /** The columns that decide whether a user may act. */
+    private const STANDING = ['user_active', 'user_deleted'];
+
+    private const CHANGE = 'a new password: revokes every key of the user';
+
+    /**
+     * Every writer of a user's password, path::function => what it is: a
+     * change (revokes) or a rehash (must not), with why.
+     */
+    private const PASSWORD_WRITERS = [
+        '202-config/User/MysqlUserRepository.php::update' => self::CHANGE,
+        '202-config/User/PasswordChange.php::store' => self::CHANGE,
+        '202-config/functions-account-ui.php::p202_account_save_user' => self::CHANGE,
+        '202-config/functions-auth.php::upgrade_user_password' => 'rehash: AUTH::authenticate() stores the password'
+            . ' just verified under a newer hash (verify_user_pass() said needsRehash); the same password',
+        'api/v3/Controllers/UsersController.php::update' => self::CHANGE,
+    ];
+
     /** The pages that sign a browser out. */
     private const SIGN_OUTS = ['202-account/signout.php', '202-account/account.php'];
+
+    public function testEveryWriterOfAPasswordRevokesTheKeysUnlessItIsARehash(): void
+    {
+        $files = SourceScan::phpFiles();
+        self::assertGreaterThan(500, count($files), 'the walk read the served tree');
+        $found = [];
+        $wrong = [];
+        foreach ($files as $path => $source) {
+            foreach (self::writers($source, ['user_pass']) as [$function, $revokes, $line]) {
+                $key = "$path::$function";
+                $found[$key] = true;
+                $kind = self::PASSWORD_WRITERS[$key] ?? null;
+                if ($kind === null) {
+                    continue;
+                }
+                $isChange = $kind === self::CHANGE;
+                if ($revokes !== $isChange) {
+                    $wrong[] = "$key (line $line): listed as " . ($isChange ? 'a change' : 'a rehash')
+                        . ($revokes ? ', and calls revokeAll()' : ', and does not call revokeAll()');
+                }
+            }
+        }
+        $found = array_keys($found);
+        sort($found);
+        $listed = array_keys(self::PASSWORD_WRITERS);
+        sort($listed);
+        self::assertSame([], $wrong, "A password writer does not do what it is listed as:\n  " . implode("\n  ", $wrong)
+            . "\nA new password calls Prosper202\\User\\RememberMeKeys::revokeAll() in the same transaction"
+            . ' (PasswordChange::store() does both); a rehash of the password just verified at sign-in must not.');
+        self::assertSame($listed, $found, 'The writers of user_pass changed. A new one is a change, which revokes'
+            . " the user's remember-me keys in its transaction, or a rehash of the password the user has just"
+            . ' signed in with, which must not; list it in PASSWORD_WRITERS as which, and remove one that no longer'
+            . ' writes it.');
+    }
 
     public function testEveryWriterThatLeavesAUserUnableToActRevokesTheirKeys(): void
     {
@@ -66,7 +131,7 @@ final class RememberMeKeysRevokedTest extends TestCase
         $found = [];
         $unrevoked = [];
         foreach ($files as $path => $source) {
-            foreach (self::writers($source) as [$function, $revokes, $line]) {
+            foreach (self::writers($source, self::STANDING) as [$function, $revokes, $line]) {
                 $key = "$path::$function";
                 $found[$key] = true;
                 if (!$revokes && !array_key_exists($key, self::REVOKED_OTHERWISE)) {
@@ -129,8 +194,60 @@ final class RememberMeKeysRevokedTest extends TestCase
      */
     public function testTheWriterScanReadsTheSqlAsPhpAssemblesIt(string $code, array $want): void
     {
-        $got = array_map(static fn (array $w): bool => $w[1], self::writers("<?php\n" . $code . "\n"));
+        $got = array_map(static fn (array $w): bool => $w[1], self::writers("<?php\n" . $code . "\n", self::STANDING));
         self::assertSame($want, $got, $code);
+    }
+
+    /**
+     * The password scan, executed: the column and nothing that only begins
+     * with its name.
+     *
+     * @dataProvider passwordShapes
+     * @param list<bool> $want one entry per writer the source holds: whether it revokes
+     */
+    public function testThePasswordScanReadsThePasswordColumnOnly(string $code, array $want): void
+    {
+        $got = array_map(static fn (array $w): bool => $w[1], self::writers("<?php\n" . $code . "\n", ['user_pass']));
+        self::assertSame($want, $got, $code);
+    }
+
+    /** @return array<string, array{string, list<bool>}> */
+    public static function passwordShapes(): array
+    {
+        $revoke = ' \\Prosper202\\User\\RememberMeKeys::revokeAll($conn, $id);';
+        $wrap = static fn (string $body): string => 'function f($conn, $id, $sets) { ' . $body . ' }';
+        $change = "\$sql = 'UPDATE 202_users SET user_pass = ? WHERE user_id = ?';";
+
+        return [
+            'the password' => [$wrap($change), [false]],
+            'the password, revoking' => [$wrap($change . $revoke), [true]],
+            'the reset request: its key and time only' => [
+                $wrap("\$sql = \"UPDATE 202_users SET user_pass_key='\" . \$k"
+                    . " . \"', user_pass_time='\" . \$t . \"'\";"),
+                [],
+            ],
+            'a reset that clears its key' => [
+                $wrap("\$sql = 'UPDATE 202_users SET user_pass = ?, user_pass_key = NULL, user_pass_time = 0';"),
+                [false],
+            ],
+            'after another column' => [$wrap("\$sql = 'UPDATE 202_users SET user_email = ?, user_pass = ?';"), [false]],
+            'backticked' => [$wrap("\$sql = 'UPDATE `202_users` SET `user_pass` = ? WHERE `user_id` = ?';"), [false]],
+            'through an alias' => [
+                $wrap("\$sql = 'UPDATE 202_users u SET u.user_pass = ? WHERE u.user_id = ?';"),
+                [false],
+            ],
+            'a SET list built at run time' => [
+                $wrap("\$sql = 'UPDATE 202_users SET ' . implode(', ', \$sets) . ' WHERE user_id = ?';"),
+                [false],
+            ],
+            'a standing column only' => [$wrap("\$sql = 'UPDATE 202_users SET user_active = 0';"), []],
+            'a new user' => [$wrap("\$sql = 'INSERT INTO 202_users (user_name, user_pass) VALUES (?, ?)';"), []],
+            'the sign-in log' => [
+                $wrap("\$sql = 'INSERT INTO 202_users_log (user_name, user_pass) VALUES (?, ?)';"),
+                [],
+            ],
+            'another table of the name' => [$wrap("\$sql = 'UPDATE 202_users_log SET user_pass = ?';"), []],
+        ];
     }
 
     /** @return array<string, array{string, list<bool>}> */
@@ -267,11 +384,13 @@ final class RememberMeKeysRevokedTest extends TestCase
     }
 
     /**
-     * The writers a source holds: [function, whether that function revokes, line].
+     * The writers of any of $columns a source holds: [function, whether that
+     * function revokes, line].
      *
+     * @param list<string> $columns
      * @return list<array{string, bool, int}>
      */
-    private static function writers(string $source): array
+    private static function writers(string $source, array $columns): array
     {
         $t = self::tokens($source);
         $functions = self::namedFunctions($t);
@@ -289,7 +408,7 @@ final class RememberMeKeysRevokedTest extends TestCase
                 continue;
             }
             $seen[$start] = true;
-            if (!self::writesStanding(self::assemble($t, $start))) {
+            if (!self::writesAnyOf(self::assemble($t, $start), $columns)) {
                 continue;
             }
             $scope = null;
@@ -306,11 +425,14 @@ final class RememberMeKeysRevokedTest extends TestCase
     }
 
     /**
-     * Whether assembled SQL (run-time pieces as \0) writes user_active or
-     * user_deleted of 202_users, or a SET list it cannot read.
+     * Whether assembled SQL (run-time pieces as \0) writes one of $columns of
+     * 202_users, or a SET list it cannot read.
+     *
+     * @param list<string> $columns
      */
-    private static function writesStanding(string $sql): bool
+    private static function writesAnyOf(string $sql, array $columns): bool
     {
+        $named = implode('|', array_map(static fn (string $c): string => preg_quote($c, '/'), $columns));
         if (preg_match('/\bREPLACE\s+INTO\s+`?202_users`?(?![\w])/i', $sql) === 1) {
             return true;
         }
@@ -330,7 +452,7 @@ final class RememberMeKeysRevokedTest extends TestCase
             if (preg_match('/(?:^|,)[\s`]*\x00/', $clause) === 1) {
                 return true;
             }
-            if (preg_match('/(?:^|,)\s*`?(?:\w+`?\.`?)?(?:user_active|user_deleted)`?\s*=/i', $clause) === 1) {
+            if (preg_match('/(?:^|,)\s*`?(?:\w+`?\.`?)?(?:' . $named . ')`?\s*=/i', $clause) === 1) {
                 return true;
             }
         }
