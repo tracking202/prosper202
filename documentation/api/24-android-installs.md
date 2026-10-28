@@ -105,7 +105,7 @@ anything fails, so the SDK's retry is safe):
 | `organic` | unvouched | Play's organic referrer, or none |
 | `third_party` | unvouched | Another source's referrer (a `gclid`, Meta's envelope, another tracker's `utm_*`); the fields are kept |
 | `unavailable` | unvouched | The referrer API was unavailable on the device |
-| `pending_click` | unvouched | The token verifies but its click row is not written yet — the redirect writes it after sending the user on. `202-cronjobs/app-installs.php` settles it; a click that never appears within 24 hours makes it `bad_token` |
+| `pending_click` | unvouched | The token verifies but its click row is not written yet — the redirect writes it after sending the user on. `202-cronjobs/app-installs.php` settles it; a click that never appears within 24 hours makes it `bad_token`, as does a stored token or body that can no longer be read (§6) |
 | `bad_token` | refuted | The signature does not verify, the token is malformed, or the click was never recorded |
 | `foreign_click` | refuted | The click is another account's, or its campaign is linked to another app |
 | `implausible` | refuted | Google's timestamps contradict the click: the install began before the store click (click injection); Google saw the store click more than 2 minutes before your click or more than 30 minutes after it (click spamming); or Play gave no server timestamps |
@@ -241,6 +241,23 @@ safe:
 * * * * * /usr/bin/php /path/to/prosper202/202-cronjobs/app-installs.php >> /var/log/prosper202/app-installs.log 2>&1
 ```
 
+The settler takes `pending_click` installs in turns: one it has not tried
+yet first, then the one it tried longest ago, so installs that cannot
+settle, or are still waiting for their click, never hold back one that can.
+A settle that fails is tried again on the next run, then after a minute,
+doubling to an hour. `settle_failures` and `settle_next_at` on the install
+(`GET /apps/{id}/installs`), `pending_failing` in `GET /apps/report` and a
+warning on Analyze › Mobile Apps show it; the server log says why. Only a
+failure caused by the install's own stored row ends it: a body that no
+longer reads as an install, or a token this server's install-token key no
+longer verifies (the key was replaced after the install arrived), is settled
+as `bad_token` 24 hours after the install arrived, the same deadline a
+missing click has, with `match_reason` saying why. Until then a replaced key
+can be put back. A missing key, a database error or a lock is the server's
+state, not the install's: the install is tried again for as long as it
+lasts, and never settled because of it. The job's summary line counts the
+installs it `retired as unreadable`.
+
 ## 7. Reading installs
 
 | Method | Path | CLI |
@@ -253,6 +270,11 @@ safe:
 send for a real click — Google's timestamps seconds after it — and prints
 the intake's answer; the install is real. It refuses `--staged`: the public
 intake records at once and cannot hold a proposal.
+
+An install waiting for its click carries `settle_failures` (the settler's
+tries in a row that failed) and `settle_next_at` (its next try), and
+`GET /apps/report?platform=android` counts `pending_failing`, the pending
+installs whose last try failed, beside `pending` (§6).
 
 These routes need the `apps` scope area (`apps:read`). The PHP CLI has
 `app:install:list`, `app:install:get` and `app:install:token`.

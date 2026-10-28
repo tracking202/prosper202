@@ -4580,6 +4580,8 @@ class UPGRADE
                 // names (Prosper202\OfflineConversion).
                 \Prosper202\Database\Tables\ConversionTables::offlineConversionFeeds(),
                 \Prosper202\Database\Tables\ConversionTables::offlineConversionNames(),
+                // The pending-click settler's queue: settle_failures, settle_next_at and settle_due.
+                \Prosper202\Database\Tables\AppTables::appInstalls(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             if ($step_ok) {

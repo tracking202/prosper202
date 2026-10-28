@@ -5787,8 +5787,9 @@ paths:
         reached counts in its install's group, however much later it was
         reached. `installs` are distinct trusted (attributed) installs;
         `organic`, `refuted_count`, `unvouched_count`, `test_count`,
-        `pending` and the `match_states` / `integrity_states` breakdowns
-        count every install beside them. `events`, `goals_reached` and
+        `pending` (with `pending_failing`, the pending clicks whose last
+        settle failed) and the `match_states` / `integrity_states`
+        breakdowns count every install beside them. `events`, `goals_reached` and
         `revenue` are the goals trusted installs reached (`trusted=`
         recomputes `installs` and these over that class, `meta.trusted:
         as-filtered`); `revenue` is the value of payable outcomes.
@@ -15434,6 +15435,20 @@ components:
           type: integer
           nullable: true
           description: When the state became final; null while pending
+        settle_failures:
+          type: integer
+          description: >-
+            While `pending_click`, how many of the settler's tries in a row
+            failed (the server log says why); kept as it was once the install
+            settles. Each failure waits longer for the next try, from the next
+            minute up to an hour; an install whose stored token or body can no
+            longer be read is settled as `bad_token` 24 hours after it arrived,
+            saying so in `match_reason`
+        settle_next_at:
+          type: integer
+          description: >-
+            While `pending_click`, when the settler next tries it (0 until it
+            has been tried once)
         remote_ip:
           type: string
           description: >-
@@ -15758,6 +15773,12 @@ components:
         pending:
           type: integer
           description: Android — installs waiting for their click or their Play Integrity verdict
+        pending_failing:
+          type: integer
+          description: >-
+            Android — of `pending`, the installs waiting for their click whose
+            last settle failed (each is tried again; `settle_failures` on the
+            install, and the server log, say more)
         ctit_measured:
           type: integer
           description: Android — installs whose click-to-install time was measured (their token named a click of yours)
@@ -15879,6 +15900,8 @@ components:
         organic:
           type: integer
         pending:
+          type: integer
+        pending_failing:
           type: integer
         ctit_measured:
           type: integer

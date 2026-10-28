@@ -238,16 +238,19 @@ final class InstallIntakeIntegrationTest extends TestCase
         self::assertSame(['Retry-After' => '60'], $waiting['headers'] ?? null);
 
         $settler = new PendingClickSettler(self::$db, fn (): int => $this->clock);
-        self::assertSame(['examined' => 1, 'settled' => [], 'still_pending' => 1, 'failed' => 0], $settler->run());
+        self::assertSame(['examined' => 1, 'settled' => [], 'still_pending' => 1, 'failed' => 0,
+            'retired' => 0], $settler->run());
 
         $this->click(500);
-        self::assertSame(['examined' => 1, 'settled' => ['attributed' => 1], 'still_pending' => 0, 'failed' => 0], $settler->run());
+        self::assertSame(['examined' => 1, 'settled' => ['attributed' => 1], 'still_pending' => 0, 'failed' => 0,
+            'retired' => 0], $settler->run());
         $row = self::installRow(self::U1);
         self::assertSame('attributed', $row['match_state']);
         self::assertNotNull($row['settled_at']);
         self::assertSame((string) self::ledger(500)[0]['conv_id'], (string) $row['conversion_id']);
         self::assertCount(1, self::outbox());
-        self::assertSame(['examined' => 0, 'settled' => [], 'still_pending' => 0, 'failed' => 0], $settler->run(), 'settled once');
+        self::assertSame(['examined' => 0, 'settled' => [], 'still_pending' => 0, 'failed' => 0,
+            'retired' => 0], $settler->run(), 'settled once');
 
         self::assertSame(200, $this->events(self::U1, [['event_id' => 'e1', 'name' => 'level_reached', 'occurred_at' => self::CLICK_TIME + 500]])['status']);
     }
@@ -265,7 +268,8 @@ final class InstallIntakeIntegrationTest extends TestCase
 
         $this->click(600, 31, 2);
         $settler = new PendingClickSettler(self::$db, fn (): int => $this->clock);
-        self::assertSame(['examined' => 1, 'settled' => ['attributed' => 1], 'still_pending' => 0, 'failed' => 0], $settler->run(1),
+        self::assertSame(['examined' => 1, 'settled' => ['attributed' => 1], 'still_pending' => 0, 'failed' => 0,
+            'retired' => 0], $settler->run(1),
             'the one slot went to the install that can be settled, not the older orphan');
         self::assertSame('attributed', self::installRow(self::U2)['match_state']);
         self::assertSame(['bad_token', '0'], [self::installRow(self::U1)['match_state'], (string) self::installRow(self::U1)['trusted']],

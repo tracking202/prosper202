@@ -27,7 +27,9 @@ declare(strict_types=1);
  *     click it names had not been written yet. Each is re-classified from
  *     its stored body under the same locks and in the same transaction
  *     shape as the intake (Api\V3\Apps\Android\PendingClickSettler); one
- *     whose click never appears within 24 hours becomes bad_token.
+ *     whose click never appears within 24 hours becomes bad_token, as does
+ *     one whose stored token or body no longer reads. A failed settle is
+ *     tried again in its turn, backing off to an hour.
  *  2. Send the traffic-source notifications that are due
  *     (Prosper202\Notifications\NotificationOutbox::sendDue()): the rows
  *     written with each install or goal conversion. The request path makes

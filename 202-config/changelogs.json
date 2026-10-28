@@ -56,7 +56,8 @@
       "Changed: The API answers a customer's revenue, refunds and MRR (and its subscriptions', revenue events' and line items' amounts, and its engagement) as numbers, as the LTV summary does, rather than as text such as \"54.12500\", and its custom_fields as an object even when it holds none",
       "Fixed: Security. The container image no longer ships the test suite, whose helper scripts could act on a database with no sign-in; in a checkout served as the web root they now answer 404",
       "Fixed: Changing one redirector rule's destinations through the API or the CLI (PUT /rotators/{id}/rules/{ruleId}, p202 rotator rule-update) keeps each destination sent with its id, as saving the whole rule set does; every destination took a new id, so the clicks it had sent were listed under no redirect in Group Overview",
-      "Fixed: Customer LTV's Companies, Products and customer pages act only on the record a button or the merge dialog names: an id sent as 12abc merged, deleted, erased or unlinked number 12, and is refused now"
+      "Fixed: Customer LTV's Companies, Products and customer pages act only on the record a button or the merge dialog names: an id sent as 12abc merged, deleted, erased or unlinked number 12, and is refused now",
+      "Fixed: Android installs waiting for their click are settled in turns. Installs that could not be settled (their install token no longer verified, or their stored install no longer read) took every place in the cron job's batch, so no other app's installs were settled. A failed settle is now retried less and less often, one that can never be read is settled as a bad token 24 hours after it arrived, and Analyze › Mobile Apps says how many are failing"
     ]
   },
   "1.9.78": {
