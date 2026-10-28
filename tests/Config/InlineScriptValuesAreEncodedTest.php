@@ -20,7 +20,7 @@ use Tests\Support\SourceScan;
  */
 final class InlineScriptValuesAreEncodedTest extends TestCase
 {
-    private const OFFSET = 'an integer: `max(0, (int) …)` or `(int) floor(…)` where it is set';
+    private const OFFSET = 'an integer: p202_ltv_posted_offset() (0 when refused) or `(int) floor(…)` where it is set';
     private const SELF_URL = 'the install\'s directory under the document root (get_absolute_url()) and a fixed path';
     private const INSTALL_PATH = 'the install\'s directory under the document root, which the operator chose';
 

@@ -24,9 +24,6 @@ AUTH::set_timezone($_SESSION['user_timezone']);
  */
 
 $userId = (int) $_SESSION['user_id'];
-$customerId = (int) ($_POST['customer_id'] ?? $_GET['customer_id'] ?? 0);
-$mode = (string) ($_POST['mode'] ?? '');
-$action = (string) ($_POST['action'] ?? '');
 
 require_once __DIR__ . '/ltv_ui.php';
 $money = p202_ltv_money(...);
@@ -37,6 +34,30 @@ $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_customer.php';
 
 $saveError = null;
 $saved = false;
+$crmColumns = ['first_name', 'last_name', 'phone', 'company',
+    'address_line1', 'address_line2', 'city', 'region', 'postal_code', 'country'];
+
+// The customer every action here acts on and the page shows, read exactly
+// (an Erase posted with `12abc` erased customer 12), and what to do with it;
+// a request that names neither exactly runs nothing.
+$customerId = 0;
+$mode = '';
+$action = '';
+try {
+    $customerId = p202_ltv_posted_id(
+        $_POST['customer_id'] ?? $_GET['customer_id'] ?? null,
+        'Pick the customer from the Customer LTV list.'
+    );
+    $mode = p202_ltv_posted_text($_POST['mode'] ?? null, 'mode');
+    $action = p202_ltv_posted_choice(
+        $_POST['action'] ?? null,
+        array_fill_keys(['erase', 'merge', 'add_alias', 'delete_alias', 'save'], ''),
+        '',
+        'Unknown action.'
+    );
+} catch (\RuntimeException $requestError) {
+    $saveError = $requestError->getMessage();
+}
 
 try {
     $conn = new \Prosper202\Database\Connection($db);
@@ -68,11 +89,11 @@ try {
         if (!AUTH::check_csrf_token()) {
             $saveError = 'Your session token was invalid — please try again.';
         } else {
-            $sourceId = (int) ($_POST['source_customer_id'] ?? 0);
             try {
-                if ($sourceId <= 0) {
-                    throw new \RuntimeException('Enter the customer # to merge into this record.');
-                }
+                $sourceId = p202_ltv_posted_id(
+                    $_POST['source_customer_id'] ?? null,
+                    'Pick the customer to merge away from the list.'
+                );
                 $crm->merge($userId, $sourceId, $customerId);
                 $saved = true; // fall through to render the refreshed detail
             } catch (\RuntimeException $mergeError) {
@@ -87,11 +108,13 @@ try {
             $saveError = 'Your session token was invalid — please try again.';
         } else {
             try {
+                $aliasType = p202_ltv_posted_text($_POST['alias_type'] ?? 'custom', 'alias_type');
+                $aliasValue = p202_ltv_posted_text($_POST['alias_value'] ?? null, 'alias_value');
                 $owner = $conn->transaction(fn (): int => $customersRepo->addAlias(
                     $userId,
                     $customerId,
-                    (string) ($_POST['alias_type'] ?? 'custom'),
-                    (string) ($_POST['alias_value'] ?? ''),
+                    $aliasType,
+                    $aliasValue,
                     time()
                 ));
                 if ($owner !== $customerId) {
@@ -110,7 +133,11 @@ try {
             $saveError = 'Your session token was invalid — please try again.';
         } else {
             try {
-                $customersRepo->deleteAlias($userId, $customerId, (int) ($_POST['alias_id'] ?? 0));
+                $customersRepo->deleteAlias(
+                    $userId,
+                    $customerId,
+                    p202_ltv_posted_id($_POST['alias_id'] ?? null, 'Pick the identity to unlink from the list.')
+                );
                 $saved = true;
             } catch (\RuntimeException $aliasError) {
                 $saveError = $aliasError->getMessage();
@@ -124,25 +151,33 @@ try {
             $saveError = 'Your session token was invalid — please try again.';
             $mode = 'edit';
         } else {
-            $crmInput = isset($_POST['crm']) && is_array($_POST['crm']) ? $_POST['crm'] : [];
-            $cfInput = isset($_POST['cf']) && is_array($_POST['cf']) ? $_POST['cf'] : [];
-
-            $payload = ['customer_id' => $customerId];
-            foreach (['first_name', 'last_name', 'phone', 'company',
-                'address_line1', 'address_line2', 'city', 'region', 'postal_code', 'country'] as $column) {
-                // Always present from the form: an emptied input deliberately
-                // clears the stored value.
-                $payload[$column] = trim((string) ($crmInput[$column] ?? ''));
-            }
-            $payload['email'] = trim((string) ($_POST['email'] ?? ''));
-            if ($cfInput !== []) {
-                $payload['custom_fields'] = array_map(
-                    static fn ($v): string => trim((string) $v),
-                    $cfInput
-                );
-            }
-
             try {
+                // The form posts every field, and an emptied one clears the
+                // stored value; so one left out, or the group sent as one
+                // value, is refused rather than read as emptied.
+                $crmInput = p202_ltv_posted_group($_POST['crm'] ?? null, 'crm');
+                $cfInput = p202_ltv_posted_group($_POST['cf'] ?? null, 'cf');
+                $payload = ['customer_id' => $customerId];
+                foreach ($crmColumns as $column) {
+                    if (!array_key_exists($column, $crmInput)) {
+                        throw new \RuntimeException('The form left out "crm[' . $column . ']"; nothing was saved.');
+                    }
+                    $payload[$column] = trim($crmInput[$column]);
+                }
+                $unknown = array_diff_key($crmInput, array_flip($crmColumns));
+                if ($unknown !== []) {
+                    throw new \RuntimeException(
+                        'The form sent "crm[' . array_key_first($unknown) . ']", which is no customer field.'
+                    );
+                }
+                if (!array_key_exists('email', $_POST)) {
+                    throw new \RuntimeException('The form left out "email"; nothing was saved.');
+                }
+                $payload['email'] = trim(p202_ltv_posted_text($_POST['email'], 'email'));
+                if ($cfInput !== []) {
+                    $payload['custom_fields'] = array_map(trim(...), $cfInput);
+                }
+
                 $crm->upsert($userId, $payload);
                 $saved = true;
             } catch (\RuntimeException $validation) {
@@ -202,7 +237,9 @@ try {
 <a href="#" class="btn btn-link btn-sm px-0 mb-2" onclick="ltvNav('report'); return false;"><i class="bi bi-chevron-left"></i> Back to Customer LTV</a>
 
 <?php if ($customer === null) { ?>
-    <?php echo p202_ltv_flash('warn', 'Customer not found.'); ?>
+    <?php echo $customerId === 0 && $saveError !== null
+        ? p202_ltv_flash('error', $esc($saveError))
+        : p202_ltv_flash('warn', 'Customer not found.'); ?>
     <?php return; ?>
 <?php } ?>
 
@@ -224,21 +261,24 @@ if ($displayName === '') {
 $avatarInitial = mb_strtoupper(mb_substr($displayName, 0, 1));
 
 // When re-rendering the edit form after a failed save, show what the user
-// typed, not the stored values, so nothing they entered is lost.
+// typed, not the stored values, so nothing they entered is lost; a field the
+// request left out or sent as a list shows the stored value.
 $fromPost = $saveError !== null && $action === 'save';
-$crmValue = static function (string $column) use ($fromPost, $customer): string {
-    if ($fromPost) {
-        $crmInput = isset($_POST['crm']) && is_array($_POST['crm']) ? $_POST['crm'] : [];
-        return trim((string) ($crmInput[$column] ?? ''));
+$typed = static function (string $group, string $key) use ($fromPost): ?string {
+    $posted = $group === '' ? ($_POST[$key] ?? null) : ($_POST[$group] ?? null);
+    if ($group !== '') {
+        $posted = is_array($posted) ? ($posted[$key] ?? null) : null;
     }
-    return (string) ($customer[$column] ?? '');
+
+    return $fromPost && is_string($posted) ? trim($posted) : null;
 };
-$emailValue = $fromPost ? trim((string) ($_POST['email'] ?? '')) : (string) ($customer['email'] ?? '');
-$cfValue = static function (array $field) use ($fromPost, $customer): string {
+$crmValue = static fn (string $column): string => $typed('crm', $column) ?? (string) ($customer[$column] ?? '');
+$emailValue = $typed('', 'email') ?? (string) ($customer['email'] ?? '');
+$cfValue = static function (array $field) use ($typed, $customer): string {
     $key = (string) $field['field_key'];
-    if ($fromPost) {
-        $cfInput = isset($_POST['cf']) && is_array($_POST['cf']) ? $_POST['cf'] : [];
-        return trim((string) ($cfInput[$key] ?? ''));
+    $posted = $typed('cf', $key);
+    if ($posted !== null) {
+        return $posted;
     }
     $value = $customer['custom_fields'][$key] ?? null;
     if ($value === null) {

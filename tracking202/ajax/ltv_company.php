@@ -18,12 +18,20 @@ AUTH::set_timezone($_SESSION['user_timezone']);
  */
 
 $userId = (int) $_SESSION['user_id'];
-$company = isset($_POST['company']) && is_scalar($_POST['company']) ? trim((string) $_POST['company']) : '';
 
 require_once __DIR__ . '/ltv_ui.php';
 $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
+
+// A list is refused, where it was read as no company and answered "No
+// contacts found".
+$error = null;
+$company = p202_ltv_posted_or(
+    fn (): string => trim(p202_ltv_posted_text($_POST['company'] ?? null, 'company')),
+    '',
+    $error
+);
 
 $contacts = [];
 try {
@@ -45,7 +53,9 @@ try {
 <a href="#" class="btn btn-link btn-sm px-0 mb-2" onclick="ltvNav('companies'); return false;"><i class="bi bi-chevron-left"></i> All companies</a>
 
 <?php if ($company === '' || $contacts === []) { ?>
-    <?php echo p202_ltv_flash('warn', 'No contacts found for this company.'); ?>
+    <?php echo $error !== null
+        ? p202_ltv_flash('error', $esc($error))
+        : p202_ltv_flash('warn', 'No contacts found for this company.'); ?>
     <?php return; ?>
 <?php } ?>
 

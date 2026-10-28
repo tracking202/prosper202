@@ -99,36 +99,6 @@ parameters:
 
 		-
 			identifier: prosper202.numericCastOfRequestParam
-			count: 7
-			path: 'tracking202/ajax/ltv_companies.php'
-
-		-
-			identifier: prosper202.numericCastOfRequestParam
-			count: 3
-			path: 'tracking202/ajax/ltv_customer.php'
-
-		-
-			identifier: prosper202.numericCastOfRequestParam
-			count: 1
-			path: 'tracking202/ajax/ltv_merge_search.php'
-
-		-
-			identifier: prosper202.numericCastOfRequestParam
-			count: 5
-			path: 'tracking202/ajax/ltv_products.php'
-
-		-
-			identifier: prosper202.numericCastOfRequestParam
-			count: 1
-			path: 'tracking202/ajax/ltv_subscriptions.php'
-
-		-
-			identifier: prosper202.numericCastOfRequestParam
-			count: 1
-			path: 'tracking202/ajax/sort_ltv.php'
-
-		-
-			identifier: prosper202.numericCastOfRequestParam
 			count: 2
 			path: 'tracking202/analyze/MobileAppsReportController.php'
 
