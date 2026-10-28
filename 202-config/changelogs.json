@@ -39,7 +39,8 @@
       "Fixed: The group report (GET /reports/groups, p202 report groups) answers EPC, CPC, conversion rate, ROI and CPA to the decimals the summary and the breakdown answer them to; it answered them unrounded, so the same traffic showed two figures",
       "Fixed: p202 report breakeven shows the conversion rate and average CPC report breakdown shows for the same traffic; it replaced them with conversions per click and a rounded CPC. The rate break-even uses is its own column, click_conv_rate",
       "Fixed: ClickBank rebills are recorded on the click that sent the buyer, each under its own receipt, and a refund, chargeback or returned eCheck takes the sale back by what ClickBank says you lost. Cancellations record nothing. For a subscription, set the campaign's When a click converts more than once to Add them up",
-      "New: A dead LTV webhook can be revived (LTV Settings, PUT /ltv/webhooks/{id}, p202 ltv webhooks revive): it keeps its id, URL and secret, so the Landing Page Optimizer needs no pairing again, and it is sent the events of the last 7 days it did not get, which are held while it is dead"
+      "New: A dead LTV webhook can be revived (LTV Settings, PUT /ltv/webhooks/{id}, p202 ltv webhooks revive): it keeps its id, URL and secret, so the Landing Page Optimizer needs no pairing again, and it is sent the events of the last 7 days it did not get, which are held while it is dead",
+      "Fixed: Adding or changing one redirector rule through the API or the CLI is refused when the rule would have no criterion, as the Redirector page refuses it: such a rule matches every visitor, so one call sent all of a redirector's traffic to it. Rules already saved that way keep working as before, and the Redirector page lists them as matching any visitor"
     ]
   },
   "1.9.78": {

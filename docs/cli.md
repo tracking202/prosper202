@@ -1351,8 +1351,10 @@ p202 rotator rule-create 5 \
 | `--rule-name`      | Yes      | Rule name                  |
 | `--splittest`      | No       | Enable split test (0 or 1) |
 | `--status`         | No       | 1 active (default), 0 created paused |
-| `--criteria-json`  | No       | Criteria as JSON array: `type` country, region, city, isp, ip, platform, device or browser; `statement` is or is_not; `value` comma-separated, countries as `United States(US)`, `ip` as single IPv4/IPv6 addresses (no ranges) |
-| `--redirects-json` | No       | Redirects as JSON array: each with exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`, plus `weight` (0-100) and `name` |
+| `--criteria-json`  | Yes, or `--country` | Criteria as JSON array: `type` country, region, city, isp, ip, platform, device or browser; `statement` is or is_not; `value` comma-separated, countries as `United States(US)`, `ip` as single IPv4/IPv6 addresses (no ranges), `ALL` for every visitor |
+| `--country`        | Yes, or `--criteria-json` | An ISO country code (`US`): a country `is` criterion |
+| `--redirects-json` | Yes, or `--redirect-campaign` | Redirects as JSON array: each with exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`, plus `weight` (0-100) and `name` |
+| `--redirect-campaign` | Yes, or `--redirects-json` | A campaign id: one redirect to it at full weight |
 
 Both JSON fields are checked for syntax before sending, and the server checks
 the rest before writing anything: an unknown criterion type, a country written
@@ -1362,6 +1364,14 @@ landing page that is not yours is refused naming the entry. A value list is
 stored as the Redirector page stores it: each value trimmed, the empty ones
 dropped. A rule created here is tried after the redirector's others; to put it
 anywhere else, use `set-rules`.
+
+A rule needs a criterion and a destination, as on the Redirectors page and in
+`set-rules`, and the server refuses it in the same words. The redirects read a
+rule with no criterion as every visitor, so a rule created without
+`--criteria-json` took all of the redirector's traffic before 1.9.79; the
+command now refuses one, and an empty list, before any request. To send every
+visitor to the rule, say so: `--criteria-json
+'[{"type":"country","statement":"is","value":"ALL"}]'`.
 
 ### Delete a rule
 
@@ -1388,6 +1398,14 @@ p202 rotator rule-update 5 12 \
 | `--status`         | Rule status (0 or 1)       |
 | `--criteria-json`  | Criteria as JSON array     |
 | `--redirects-json` | Redirects as JSON array    |
+
+What the command does not send, the rule keeps. The rule it would leave is
+checked as `set-rules` checks one: `--splittest 0` on a rule with two redirects
+is refused, and an empty `--criteria-json` or `--redirects-json` list is
+refused before any request. A rule stored with no criterion by an older
+`rule-create` matches every visitor; any update that would leave it with none,
+a rename included, is refused until it has one (the value `ALL` keeps it on
+every visitor), or it is deleted.
 
 ## Attribution
 

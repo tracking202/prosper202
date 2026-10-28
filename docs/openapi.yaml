@@ -3110,24 +3110,35 @@ paths:
     post:
       tags: [Rotators]
       summary: Create a rule
-      description: Creates a rule with optional criteria and redirects. Wrapped in a transaction.
+      description: |
+        Adds one rule, tried after the redirector's others, in one
+        transaction. It is checked as the set (`PUT /rotators/{id}/rules`)
+        checks a rule and refused in the same words: a `rule_name`, at least
+        one criterion (the value `ALL` matches every visitor) and at least
+        one redirect; one redirect unless it is a split test; a `weight` on
+        each redirect of a split test, at least one above 0. The redirects
+        read a rule with no criterion as every visitor, and this call wrote
+        one when `criteria` was left out (before 1.9.79), sending all of the
+        redirector's traffic to that rule.
       operationId: createRotatorRule
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RotatorRuleCreate"
+              allOf:
+                - $ref: "#/components/schemas/RotatorRuleCreate"
+                - type: object
+                  required: [rule_name, criteria, redirects]
       responses:
-        "201":
-          description: Rule created
+        "200":
+          description: The redirector, with its rules as `GET /rotators/{id}/rules` answers them.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    $ref: "#/components/schemas/RotatorRule"
+                $ref: "#/components/schemas/RotatorDetailResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
     put:
@@ -3282,6 +3293,16 @@ paths:
         update names ids that are gone). A create refuses them. A redirect
         that carries the auto_monetizer it holds, and no destination, stays
         the auto-monetizer. PATCH is accepted as the same operation.
+
+        What the body leaves out is kept as stored, and not checked again.
+        The rule the write would leave is checked as the set checks one, kept
+        parts included, and refused in the same words: it needs at least one
+        criterion and one redirect, one redirect unless it is a split test,
+        and a weight on each redirect of a split test. A rule stored with no
+        criterion (POST wrote one when `criteria` was left out, before
+        1.9.79) is read by the redirects as every visitor, as it always was;
+        a write that would leave it with none is a 422 saying so (send its
+        criteria, the value `ALL` keeping it on every visitor, or delete it).
       operationId: updateRotatorRule
       requestBody:
         required: true
@@ -3291,14 +3312,11 @@ paths:
               $ref: "#/components/schemas/RotatorRuleCreate"
       responses:
         "200":
-          description: Rule updated
+          description: The redirector, with its rules as `GET /rotators/{id}/rules` answers them.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    $ref: "#/components/schemas/RotatorRule"
+                $ref: "#/components/schemas/RotatorDetailResponse"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -12709,6 +12727,9 @@ components:
           type: integer
         criteria:
           type: array
+          description: >-
+            Empty only for a rule stored before 1.9.79, which the redirects
+            read as every visitor; a write keeping it so is refused.
           items:
             type: object
             properties:
@@ -12760,6 +12781,11 @@ components:
           default: 1
         criteria:
           type: array
+          minItems: 1
+          description: >-
+            Every criterion has to match. A rule needs at least one: the
+            redirects read a rule with none as every visitor, so say so with
+            the value ALL.
           items:
             type: object
             required: [type, value]
@@ -12782,6 +12808,7 @@ components:
                   form; a value that is not an address (a range included) is a 422.
         redirects:
           type: array
+          minItems: 1
           items:
             type: object
             description: Exactly one of redirect_url, redirect_campaign, redirect_lp.

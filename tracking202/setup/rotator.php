@@ -419,7 +419,7 @@ if ($error) {
 												<span class="p202-list__name"><?php echo p202_setup_e($rule['rule_name']); ?></span>
 												<?php if ((string) $rule['status'] === '0') { ?><span class="p202-pill p202-pill--warn">inactive</span><?php } ?>
 												<?php if ((int) $rule['splittest'] === 1) { ?><span class="p202-pill">split test</span><?php } ?>
-												<span class="p202-list__meta">If <?php echo p202_setup_e($conditions === [] ? 'no criteria' : implode(' and ', $conditions)); ?> · to <?php echo p202_setup_e($targets === [] ? 'nowhere yet' : implode(', ', $targets)); ?></span>
+												<span class="p202-list__meta">If <?php echo p202_setup_e($conditions === [] ? 'any visitor (no criteria)' : implode(' and ', $conditions)); ?> · to <?php echo p202_setup_e($targets === [] ? 'nowhere yet' : implode(', ', $targets)); ?></span>
 											</li>
 										<?php } ?>
 									</ul>

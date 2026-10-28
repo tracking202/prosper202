@@ -472,6 +472,17 @@ RULE_ARGS=(--data-urlencode "post_rules=1" --data-urlencode "rotator_id=$ROT" --
 ajax "$AJAX/rotator.php" "$OUT/r-csrf.txt" --data-urlencode "token=wrong" "${RULE_ARGS[@]}"
 has "$OUT/r-csrf.txt" "ERROR" "saving rules with a bad token is refused"
 eq "$(Q "SELECT COUNT(*) FROM 202_rotator_rules WHERE rotator_id=$ROT")" "0" "and writes no rule"
+# The redirects read a rule with no criterion as every visitor: the save
+# refuses one, as the API's rule writes do, with nothing else in the answer.
+NO_CRITERION=(--data-urlencode "post_rules=1" --data-urlencode "rotator_id=$ROT" --data-urlencode "default_type=campaign" --data-urlencode "defaults=$CAMP"
+  --data-urlencode "data[0][rule_id]=none" --data-urlencode "data[0][rule_name]=Everyone" --data-urlencode "data[0][status]=active" --data-urlencode "data[0][split]=false"
+  --data-urlencode "data[0][redirects][0][id]=none" --data-urlencode "data[0][redirects][0][type]=url" --data-urlencode "data[0][redirects][0][value]=https://everyone.example/")
+ajax "$AJAX/rotator.php" "$OUT/r-nocrit.txt" --data-urlencode "token=$T" "${NO_CRITERION[@]}"
+eq "$(cat "$OUT/r-nocrit.txt")" "ERROR" "a rule with no criterion is refused"
+ajax "$AJAX/rotator.php" "$OUT/r-novalue.txt" --data-urlencode "token=$T" "${NO_CRITERION[@]}" \
+  --data-urlencode "data[0][criteria][0][criteria_id]=none" --data-urlencode "data[0][criteria][0][type]=country" --data-urlencode "data[0][criteria][0][statement]=is" --data-urlencode "data[0][criteria][0][value]="
+eq "$(cat "$OUT/r-novalue.txt")" "ERROR" "so is one whose criterion has no value"
+eq "$(Q "SELECT COUNT(*) FROM 202_rotator_rules WHERE rotator_id=$ROT")" "0" "and neither writes a rule"
 ajax "$AJAX/rotator.php" "$OUT/r-rules.txt" --data-urlencode "token=$T" "${RULE_ARGS[@]}"
 has "$OUT/r-rules.txt" "DONE" "saving rules with the token is accepted"
 eq "$(Q "SELECT default_campaign FROM 202_rotators WHERE id=$ROT")" "$CAMP" "the default campaign was stored"
@@ -519,6 +530,16 @@ PY
 selected_lp "$P" 'name="default_lp"' "the default's select shows the advanced landing page chosen"
 selected_lp "$P" 'data-rule-field="redirect_lp"' "the rule's redirect select shows it chosen"
 has "$P" "(advanced)" "and names it as an advanced page"
+
+# A rule an older API call stored with no criterion is listed as what the
+# redirects read it as, so it can be found.
+say "rotators: a stored rule with no criterion is listed as matching any visitor"
+mysql_q "$DB" -e "INSERT INTO 202_rotators SET user_id=$OWNER, public_id=990001, name='EVAL Legacy Redirector', default_url='https://d.example/';
+  INSERT INTO 202_rotator_rules SET rotator_id=LAST_INSERT_ID(), rule_name='EVAL Legacy Rule', splittest=0, status=1;"
+LEGACY_ROT=$(Q "SELECT id FROM 202_rotators WHERE name='EVAL Legacy Redirector'")
+get "$SETUP/rotator.php" "$OUT/r-legacy.html"
+has "$OUT/r-legacy.html" "If any visitor (no criteria)" "the list says the rule matches any visitor"
+mysql_q "$DB" -e "DELETE FROM 202_rotator_rules WHERE rotator_id=$LEGACY_ROT; DELETE FROM 202_rotators WHERE id=$LEGACY_ROT;"
 
 # ─── Trackers ───────────────────────────────────────────────────────────
 say "trackers: generate, list, delete"

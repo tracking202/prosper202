@@ -199,7 +199,27 @@ var rotatorDeleteCmd = &cobra.Command{
 const (
 	criteriaJSONHint  = `A JSON array of {"type","statement","value"}: type country, region, city, isp, ip, platform, device or browser; statement is or is_not; value comma-separated (countries as "United States(US)", see ` + "`p202 rotator criteria-values`" + `; ip as single IPv4 or IPv6 addresses, no ranges).`
 	redirectsJSONHint = `A JSON array of {"redirect_url" | "redirect_campaign" | "redirect_lp", "weight" (0-100), "name"}: one destination each.`
+	// everyVisitorHint says how to write the rule a missing criterion would
+	// have made: the redirects read a rule with no criterion as every visitor.
+	everyVisitorHint = `To send every visitor to this rule, say so: --criteria-json '[{"type":"country","statement":"is","value":"ALL"}]'.`
 )
+
+// ruleListError refuses a rule's criteria or redirects given as an empty
+// list. The server refuses a rule with none, as Setup › Redirectors does;
+// one from before 1.9.79 stored it, and its redirects read a rule with no
+// criterion as every visitor.
+func ruleListError(flag string, value interface{}) error {
+	list, ok := value.([]interface{})
+	if !ok || len(list) > 0 {
+		return nil
+	}
+	if flag == "--criteria-json" {
+		return validationError("--criteria-json is an empty list: a rule needs at least one criterion").
+			WithHint("%s %s", everyVisitorHint, criteriaJSONHint)
+	}
+	return validationError("--redirects-json is an empty list: a rule needs at least one destination").
+		WithHint("%s", redirectsJSONHint)
+}
 
 // rotatorRuleSetHint says what a rule set is, for its refusals.
 const rotatorRuleSetHint = "A rule set is every rule the redirector is to have, in the order they are tried: " +
@@ -373,6 +393,9 @@ var rotatorRuleCreateCmd = &cobra.Command{
 			if err := json.Unmarshal([]byte(v), &criteria); err != nil {
 				return validationError("invalid --criteria-json: %s", err.Error()).WithHint("%s", criteriaJSONHint)
 			}
+			if err := ruleListError("--criteria-json", criteria); err != nil {
+				return err
+			}
 			body["criteria"] = criteria
 		} else if code, _ := cmd.Flags().GetString("country"); code != "" {
 			// Sugar: build a country criterion from an ISO code so the caller
@@ -388,10 +411,23 @@ var rotatorRuleCreateCmd = &cobra.Command{
 			if err := json.Unmarshal([]byte(v), &redirects); err != nil {
 				return validationError("invalid --redirects-json: %s", err.Error()).WithHint("%s", redirectsJSONHint)
 			}
+			if err := ruleListError("--redirects-json", redirects); err != nil {
+				return err
+			}
 			body["redirects"] = redirects
 		} else if camp, _ := cmd.Flags().GetString("redirect-campaign"); camp != "" {
 			// Sugar: a single-campaign redirect at full weight.
 			body["redirects"] = []map[string]string{{"redirect_campaign": camp, "weight": "100", "name": "to campaign " + camp}}
+		}
+		// A rule with no criterion matches every visitor: the server refuses
+		// one, and one from before 1.9.79 stored it.
+		if _, ok := body["criteria"]; !ok {
+			return validationError("a rule needs a criterion: pass --criteria-json or --country").
+				WithHint("%s %s", everyVisitorHint, criteriaJSONHint)
+		}
+		if _, ok := body["redirects"]; !ok {
+			return validationError("a rule needs a destination: pass --redirects-json or --redirect-campaign").
+				WithHint("%s", redirectsJSONHint)
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -461,12 +497,18 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 			if err := json.Unmarshal([]byte(v), &criteria); err != nil {
 				return validationError("invalid --criteria-json: %s", err.Error()).WithHint("%s", criteriaJSONHint)
 			}
+			if err := ruleListError("--criteria-json", criteria); err != nil {
+				return err
+			}
 			body["criteria"] = criteria
 		}
 		if v, _ := cmd.Flags().GetString("redirects_json"); v != "" {
 			var redirects interface{}
 			if err := json.Unmarshal([]byte(v), &redirects); err != nil {
 				return validationError("invalid --redirects-json: %s", err.Error()).WithHint("%s", redirectsJSONHint)
+			}
+			if err := ruleListError("--redirects-json", redirects); err != nil {
+				return err
 			}
 			body["redirects"] = redirects
 		}

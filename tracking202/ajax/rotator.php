@@ -50,6 +50,13 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	}
 
 	foreach ($_POST['data'] as $rule) {
+        // A rule with no criterion matches every visitor, so a rule needs
+        // one, as the API asks (RotatorsController::planRule()); and one
+        // destination at least. The editor posts neither list empty.
+        $listed = static fn ($list): bool => is_array($list) && $list !== [];
+        if (!is_array($rule) || !$listed($rule['criteria'] ?? null) || !$listed($rule['redirects'] ?? null)) {
+            die("ERROR");
+        }
 		$rule_empty = count($rule) != count(array_filter($rule));
 		if ($rule_empty) {
 			die("ERROR");

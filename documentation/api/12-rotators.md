@@ -160,6 +160,29 @@ redirect that Setup → Redirectors made the auto-monetizer (no destination,
 `auto_monetizer` set) stays the auto-monetizer when it is sent back that way;
 sending a destination beside it is a `422`.
 
+### One rule: `POST` and `PUT /rotators/{id}/rules/{ruleId}`
+
+`POST /rotators/{id}/rules` adds one rule, and `PUT
+/rotators/{id}/rules/{ruleId}` changes one. Both check the rule as the set
+does and refuse it in the same words: a `rule_name`, at least one criterion
+and at least one redirect, one redirect unless it is a split test, and a
+`weight` on each redirect of a split test with at least one above 0.
+
+- **A `PUT` keeps what it leaves out**, as stored and unchecked: a rule
+  renamed keeps its criteria and redirects. The checks of the rule as a whole
+  are made of the rule the write would leave, kept parts included, so
+  `{"splittest": 0}` on a rule with two redirects is a `422`, and so is
+  `{"criteria": []}`.
+- **A rule with no criterion matches every visitor.** These two calls wrote
+  one before 1.9.79 when `criteria` was left out (`p202 rotator rule-create`
+  without `--criteria-json`), and that rule took all of the redirector's
+  traffic. Such a rule is left as it is: the redirects go on reading it as
+  every visitor, `GET` answers it with `"criteria": []`, and Setup →
+  Redirectors lists it as "If any visitor (no criteria)". A write that would
+  leave it with none, a rename included, is a `422` that says so: send its
+  criteria (`[{"type": "country", "statement": "is", "value": "ALL"}]` keeps
+  it on every visitor) or delete the rule.
+
 ### Create/Update Rule Payload
 
 ```json
@@ -185,6 +208,8 @@ sending a destination beside it is a `422`.
 | `rule_name` | string | Yes | Rule name (1-255 characters) |
 | `splittest` | integer | No | `1` splits by the redirects' weights; `0` (default) |
 | `status` | integer | No | `1` active (default), `0` paused |
+| `criteria` | array | Yes, on a create | At least one; every criterion has to match |
+| `redirects` | array | Yes, on a create | At least one; exactly one unless `splittest` is `1` |
 
 ### Criteria Object
 

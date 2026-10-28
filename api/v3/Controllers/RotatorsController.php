@@ -441,24 +441,9 @@ class RotatorsController
      * The read-only keys GET answers are held to the rule's own values
      * ($current: the rule as get() answers it; null on a create, where each
      * is refused). An entry whose shape is wrong (not a list, not an object)
-     * is left to ruleParts(), which refuses it.
-     *
-     * @param array<string, mixed> $payload
-     * @param array<string, mixed>|null $current
-     */
-    private static function refuseNestedKeys(array $payload, ?array $current): void
-    {
-        $errors = self::nestedKeyErrors($payload, $current);
-        if ($errors !== []) {
-            $message = count($errors) === 1 ? 'Unknown or read-only field' : 'Unknown or read-only fields';
-            throw new ValidationException($message, $errors);
-        }
-    }
-
-    /**
-     * refuseNestedKeys()' field errors, for a caller that reports several
-     * rules' together. An entry's `id` names one entry: listed twice, the
-     * second write of it would replace the first in silence.
+     * is left to ruleParts(), which refuses it. An entry's `id` names one
+     * entry: listed twice, the second write of it would replace the first in
+     * silence. planRule() reports these with the rule's other problems.
      *
      * @param array<string, mixed> $payload
      * @param array<string, mixed>|null $current
@@ -576,8 +561,8 @@ class RotatorsController
      * (offrtr.php reads no other).
      *
      * A redirect read with GET from one the Setup page made the
-     * auto-monetizer carries `auto_monetizer` (refuseNestedKeys() has held
-     * it to that redirect's own value) and no destination; sent back, it is
+     * auto-monetizer carries `auto_monetizer` (nestedKeyErrors() holds it
+     * to that redirect's own value) and no destination; sent back, it is
      * kept as the auto-monetizer rather than refused for wanting one. A
      * redirect sent with the id of one of $rule's keeps the weight and the
      * name it holds when they are sent as held, as destination() keeps a
@@ -1047,28 +1032,47 @@ class RotatorsController
     }
 
     /**
-     * One rule of a set, checked as createRule() and updateRule() check a
-     * rule, and held to what Setup › Redirectors holds one to. $held is the
-     * redirector's rule it is, with its place in the set as stored.
+     * One rule, checked before it is written, as Setup › Redirectors checks
+     * one: by a set (planRuleSet()), by POST /rotators/{id}/rules and by PUT
+     * /rotators/{id}/rules/{ruleId}, so the three refuse the same rules in
+     * the same words. The single-rule writes checked only the entries sent,
+     * so a rule with no criterion, which the redirects read as every
+     * visitor, was written by one call and took all of a redirector's
+     * traffic. $held is the redirector's rule it is, with its place in the
+     * set as stored, or null for a new rule.
+     *
+     * With $whole false (PUT of one rule), a key the body leaves out keeps
+     * what $held holds: its name, switches, criteria and destinations, as
+     * stored and unchecked, as destination() keeps a held destination. What
+     * is asked of the rule as a whole (a criterion, a destination, one
+     * destination unless it is a split test, a weight for each of a split
+     * test's) is asked of the rule the write would leave, kept parts
+     * included.
      *
      * @param array<string, mixed> $rule
      * @param array<string, mixed>|null $held
      * @return array<string, mixed>
      */
-    private function planRule(int $rotatorId, array $rule, ?array $held, int $position): array
+    private function planRule(int $rotatorId, array $rule, ?array $held, int $position, bool $whole = true): array
     {
         $errors = [];
         if (array_key_exists('rotator_id', $rule) && !PayloadKeys::same($rule['rotator_id'], $rotatorId)) {
             $errors['rotator_id'] = "is read-only: send this redirector's id ($rotatorId), as GET returns it, or omit it";
         }
         $errors += self::nestedKeyErrors($rule, $held);
+        $kept = [];
+        if (!$whole && $held !== null) {
+            foreach (['criteria', 'redirects'] as $list) {
+                if (!array_key_exists($list, $rule)) {
+                    $kept[$list] = (array) $held[$list];
+                }
+            }
+        }
         foreach (['criteria', 'redirects'] as $list) {
-            $entries = $rule[$list] ?? null;
+            $entries = array_key_exists($list, $kept) ? $kept[$list] : ($rule[$list] ?? null);
             if (!is_array($entries) || !array_is_list($entries) || $entries === []) {
-                $errors[$list] = $list === 'criteria'
-                    ? 'A rule needs at least one criterion, as on Setup › Redirectors: a list of {"type", "statement", "value"} (the value ALL matches every visitor)'
-                    : 'A rule needs at least one destination: a list of {"redirect_url" | "redirect_campaign" | "redirect_lp", "weight", "name"}';
-            } elseif (count($entries) > self::MAX_ENTRIES) {
+                $errors[$list] = self::missingEntriesMessage($list, $held);
+            } elseif (!array_key_exists($list, $kept) && count($entries) > self::MAX_ENTRIES) {
                 $errors[$list] = 'At most ' . self::MAX_ENTRIES . ' entries';
             }
         }
@@ -1076,10 +1080,14 @@ class RotatorsController
         // Every check runs, and every problem is refused together: two bad
         // criteria in one rule are two field errors in one 422.
         $name = '';
-        try {
-            $name = self::ruleOrRotatorName($rule, 'rule_name', true);
-        } catch (ValidationException $e) {
-            $errors += $e->getFieldErrors();
+        if (!$whole && $held !== null && !array_key_exists('rule_name', $rule)) {
+            $name = (string) $held['rule_name'];
+        } else {
+            try {
+                $name = self::ruleOrRotatorName($rule, 'rule_name', true);
+            } catch (ValidationException $e) {
+                $errors += $e->getFieldErrors();
+            }
         }
         $splittest = null;
         try {
@@ -1108,8 +1116,11 @@ class RotatorsController
             // A list's own shape is already refused above, in this method's words.
             $errors += $e->getFieldErrors();
         }
+        foreach ($kept as $list => $entries) {
+            $parts[$list] = self::heldEntries($list, $entries);
+        }
 
-        $sent = $rule['redirects'] ?? null;
+        $sent = array_key_exists('redirects', $kept) ? $kept['redirects'] : ($rule['redirects'] ?? null);
         if ($splittest !== null && is_array($sent) && array_is_list($sent) && $sent !== []) {
             if ($splittest === 0 && count($sent) > 1) {
                 $errors['redirects'] ??= 'splittest is 0, so the rule sends every visitor it matches to one destination: '
@@ -1145,6 +1156,61 @@ class RotatorsController
             'redirects' => $redirects,
             'held' => $held,
         ];
+    }
+
+    /**
+     * Why a rule with no criteria or no destinations is refused. A rule
+     * stored with no criterion (the single-rule writes took one before
+     * 1.9.79) is still read by the redirects as matching every visitor, so
+     * its refusal says so.
+     *
+     * @param 'criteria'|'redirects' $list
+     * @param array<string, mixed>|null $held
+     */
+    private static function missingEntriesMessage(string $list, ?array $held): string
+    {
+        if ($list === 'redirects') {
+            return 'A rule needs at least one destination: '
+                . 'a list of {"redirect_url" | "redirect_campaign" | "redirect_lp", "weight", "name"}';
+        }
+        $criteria = 'a list of {"type", "statement", "value"} (the value ALL matches every visitor)';
+        if ($held !== null && $held['criteria'] === []) {
+            return 'This rule has no criterion, which the redirects read as every visitor; a rule needs at least one, '
+                . 'as on Setup › Redirectors: send its criteria, ' . $criteria . ', or remove the rule';
+        }
+
+        return 'A rule needs at least one criterion, as on Setup › Redirectors: ' . $criteria;
+    }
+
+    /**
+     * A rule's criteria or destinations as stored (GET's shape), in the shape
+     * a planned rule carries them, for a PUT of one rule that leaves them out.
+     *
+     * @param 'criteria'|'redirects' $list
+     * @param array<array-key, mixed> $entries
+     * @return list<array<string, mixed>>
+     */
+    private static function heldEntries(string $list, array $entries): array
+    {
+        $text = static fn (mixed $v): ?string => $v === null ? null : (string) $v;
+        $number = static fn (mixed $v): ?int => $v === null ? null : (int) $v;
+        $out = [];
+        foreach ($entries as $e) {
+            $e = (array) $e;
+            $out[] = $list === 'criteria'
+                ? [
+                    'id' => (int) $e['id'], 'type' => (string) $e['type'],
+                    'statement' => (string) $e['statement'], 'value' => (string) $e['value'],
+                ]
+                : [
+                    'id' => (int) $e['id'], 'url' => $text($e['redirect_url']),
+                    'campaign' => $number($e['redirect_campaign']), 'lp' => $number($e['redirect_lp']),
+                    'monetizer' => $text($e['auto_monetizer']), 'weight' => $text($e['weight']),
+                    'name' => (string) $e['name'],
+                ];
+        }
+
+        return $out;
     }
 
     /**
@@ -1445,15 +1511,8 @@ class RotatorsController
             'a redirector rule'
         );
         self::refuseChangedReadOnly($payload, null, self::RULE_READ_ONLY);
-        self::refuseNestedKeys($payload, null);
-        $this->get($rotatorId);
 
-        $ruleName = self::ruleOrRotatorName($payload, 'rule_name', true);
-        $splittest = self::flag($payload, 'splittest', 0);
-        $status = self::flag($payload, 'status', 1);
-        $parts = $this->ruleParts($payload);
-
-        return $this->transaction(function () use ($parts, $rotatorId, $ruleName, $splittest, $status): array {
+        return $this->transaction(function () use ($payload, $rotatorId): array {
             $this->lockRotator($rotatorId);
             // A rule added on its own is tried after the others.
             $stmt = $this->prepare('SELECT COALESCE(MAX(position), 0) + 1 AS next FROM 202_rotator_rules WHERE rotator_id = ?');
@@ -1461,15 +1520,16 @@ class RotatorsController
             $this->execute($stmt, 'Rule position lookup failed');
             $position = (int) ($this->resultOf($stmt, 'Rule position lookup failed')->fetch_assoc()['next'] ?? 1);
             $stmt->close();
+            $rule = $this->planRule($rotatorId, $payload, null, $position);
 
             $stmt = $this->prepare('INSERT INTO 202_rotator_rules (rotator_id, rule_name, splittest, status, position) VALUES (?, ?, ?, ?, ?)');
-            $this->bind($stmt, 'isiii', $rotatorId, $ruleName, $splittest, $status, $position);
+            $this->bind($stmt, 'isiii', $rotatorId, $rule['rule_name'], $rule['splittest'], $rule['status'], $position);
             $this->execute($stmt, 'Failed to create rule');
             $ruleId = $stmt->insert_id;
             $stmt->close();
 
-            $this->insertCriteria($rotatorId, $ruleId, $parts['criteria'] ?? []);
-            $this->insertRedirects($ruleId, $parts['redirects'] ?? []);
+            $this->insertCriteria($rotatorId, $ruleId, $rule['criteria']);
+            $this->insertRedirects($ruleId, $rule['redirects']);
 
             // Read back under the lock, as setRules() does.
             return $this->get($rotatorId);
@@ -1494,55 +1554,35 @@ class RotatorsController
             // The rule as stored is what the read-only keys of a GET body sent
             // back, and the ids of its entries, are held to.
             $rule = null;
-            foreach ($this->get($rotatorId)['data']['rules'] as $candidate) {
+            foreach ($this->get($rotatorId)['data']['rules'] as $index => $candidate) {
                 if ((int) $candidate['id'] === $ruleId) {
-                    $rule = $candidate;
+                    $rule = $candidate + ['position' => $index + 1];
                 }
             }
             if ($rule === null) {
                 throw new NotFoundException('Rule not found for rotator');
             }
             self::refuseChangedReadOnly($payload, $rule, self::RULE_READ_ONLY);
-            self::refuseNestedKeys($payload, $rule);
-
-            $setParts = [];
-            $binds = [];
-            $types = '';
-            if (array_key_exists('rule_name', $payload)) {
-                $setParts[] = 'rule_name = ?';
-                $binds[] = self::ruleOrRotatorName($payload, 'rule_name', true);
-                $types .= 's';
-            }
-            if (array_key_exists('splittest', $payload)) {
-                $setParts[] = 'splittest = ?';
-                $binds[] = self::flag($payload, 'splittest', 0);
-                $types .= 'i';
-            }
-            if (array_key_exists('status', $payload)) {
-                $setParts[] = 'status = ?';
-                $binds[] = self::flag($payload, 'status', 1);
-                $types .= 'i';
-            }
-            $hasCriteria = array_key_exists('criteria', $payload);
-            $hasRedirects = array_key_exists('redirects', $payload);
-            if ($hasCriteria && !is_array($payload['criteria'])) {
-                throw new ValidationException('criteria must be an array', ['criteria' => 'Expected array']);
-            }
-            if ($hasRedirects && !is_array($payload['redirects'])) {
-                throw new ValidationException('redirects must be an array', ['redirects' => 'Expected array']);
-            }
-            if ($setParts === [] && !$hasCriteria && !$hasRedirects) {
+            if (array_intersect_key($payload, array_flip(self::RULE_FIELDS)) === []) {
                 throw new ValidationException('No fields to update');
             }
-            // Every entry checked before the first write.
-            $parts = $this->ruleParts($payload, $rule);
+            // The rule as this write would leave it, checked as a set checks
+            // one, before the first write.
+            $planned = $this->planRule($rotatorId, $payload, $rule, (int) $rule['position'], false);
 
-            if ($setParts !== []) {
-                array_push($binds, $ruleId, $rotatorId);
+            if (array_intersect_key($payload, array_flip(['rule_name', 'splittest', 'status'])) !== []) {
                 $update = $this->prepare(
-                    'UPDATE 202_rotator_rules SET ' . implode(', ', $setParts) . ' WHERE id = ? AND rotator_id = ?'
+                    'UPDATE 202_rotator_rules SET rule_name = ?, splittest = ?, status = ? WHERE id = ? AND rotator_id = ?'
                 );
-                $this->bind($update, $types . 'ii', ...$binds);
+                $this->bind(
+                    $update,
+                    'siiii',
+                    $planned['rule_name'],
+                    $planned['splittest'],
+                    $planned['status'],
+                    $ruleId,
+                    $rotatorId
+                );
                 $this->execute($update, 'Failed to update rule');
                 $changed = $update->affected_rows;
                 $update->close();
@@ -1553,20 +1593,20 @@ class RotatorsController
                 }
             }
 
-            if ($hasCriteria) {
+            if (array_key_exists('criteria', $payload)) {
                 $deleteCriteria = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?');
                 $this->bind($deleteCriteria, 'i', $ruleId);
                 $this->execute($deleteCriteria, 'Failed to clear criteria');
                 $deleteCriteria->close();
-                $this->insertCriteria($rotatorId, $ruleId, $parts['criteria'] ?? []);
+                $this->insertCriteria($rotatorId, $ruleId, $planned['criteria']);
             }
 
-            if ($hasRedirects) {
+            if (array_key_exists('redirects', $payload)) {
                 $deleteRedirects = $this->prepare('DELETE FROM 202_rotator_rules_redirects WHERE rule_id = ?');
                 $this->bind($deleteRedirects, 'i', $ruleId);
                 $this->execute($deleteRedirects, 'Failed to clear redirects');
                 $deleteRedirects->close();
-                $this->insertRedirects($ruleId, $parts['redirects'] ?? []);
+                $this->insertRedirects($ruleId, $planned['redirects']);
             }
 
             // Read back under the locks, as setRules() does.
