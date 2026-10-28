@@ -150,6 +150,10 @@ SQL
 }
 trap cleanup EXIT
 cleanup
+# A journey is the clicks one browser's cookies link.
+# shellcheck source=tests/live/privacy.sh
+. "$HERE/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" "$USER_ID" || exit 2
 ORIG_DEFAULT=$(Q "SELECT model_id FROM 202_attribution_models WHERE user_id=$USER_ID AND is_default=1")
 
 cat > "$OUT/probe.py" <<'PY'

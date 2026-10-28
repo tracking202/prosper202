@@ -101,6 +101,10 @@ restore() {
     done
 }
 trap restore EXIT
+# The deletion is read off clicks this pass records from this machine.
+# shellcheck source=tests/live/privacy.sh
+. "$HERE/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" "$OWNER" || exit 2
 
 TAG="sd-pass $(date +%s)"
 say "setup: a campaign, a rotator, a redirector tracker and a direct-link tracker ($TAG)"
