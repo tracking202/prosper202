@@ -81,6 +81,10 @@ var searchTasks = []searchTask{
 	{Run: "p202 conversion match-methods",
 		Phrases: []string{"how conversions were matched", "conversions matched by ip", "guessed conversions",
 			"cookie conversions", "conversions without a subid"}},
+	{Run: "p202 conversion offline-export --format google", Pages: []string{"Setup › Offline Conversions"},
+		Phrases: []string{"offline conversions csv", "google ads offline conversions",
+			"upload conversions to google ads", "gclid upload", "microsoft ads offline conversions", "msclkid upload",
+			"bing offline conversions", "scheduled conversion upload"}},
 
 	// Overview
 	{Run: "p202 report breakdown --breakdown campaign", Pages: []string{"Overview › Campaign Overview"},

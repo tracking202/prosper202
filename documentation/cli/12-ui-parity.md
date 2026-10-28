@@ -39,6 +39,7 @@ record links only to the caller's own records
 | Get LP Code | `GET /landing-pages/{id}/code` (`?offers=campaign:12,rotator:3` for an advanced page) | `p202 landing-page code <id>` (`--offer`) | ✅ |
 | Get Links | `POST /trackers`, `GET /trackers/{id}/url` (`t202kw`, `c1`–`c4`, `utm_*`, the source's custom variables) | `p202 tracker create`, `tracker create-with-url`, `tracker get-url`, `tracker bulk-urls` | ✅ |
 | Postback/Pixel | `GET /conversions/postback-code` | `p202 conversion postback-url`, `p202 conversion pixel` (`--type simple\|advanced\|universal`, `--iframe`) | ✅ |
+| Offline Conversions: the download | `GET /conversions/offline-export`, `GET /conversions/offline-export/summary` | `p202 conversion offline-export` (`--summary`) | ◐ the conversion names and the fetch URLs are set on the page only: a URL's key is shown once, there |
 
 ## Overview
 

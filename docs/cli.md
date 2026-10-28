@@ -802,6 +802,47 @@ with every method's totals over the campaigns it lists; `--json` is
 `GET /conversions/match-methods`. The PHP CLI's `conversion:match-methods`
 prints the same.
 
+### Offline conversion files for Google Ads and Microsoft Advertising
+
+```bash
+p202 conversion offline-export --format google --output google-ads.csv
+p202 conversion offline-export --format google_uploads --days 30 --ad-user-data granted --ad-personalization granted
+p202 conversion offline-export --format microsoft --days 7 --summary
+```
+
+The account's conversions as an ad platform's offline conversion import
+file, to upload so its bidding learns which clicks converted: `google` is
+Google Ads Data Manager's (gclid, gbraid and wbraid, each in its column),
+`google_uploads` Google's classic Conversions › Uploads template (a
+`Parameters:TimeZone` line, gclid only) and `microsoft` Microsoft
+Advertising's (msclkid, times in UTC). A conversion is a line when it counts
+now, at the value it counts for net of partial refunds, in the account's
+currency, and only when it named its click (`match_method` `click_id` or
+`cookie`); a click found by a visitor id or guessed from an IP address is
+left out, as is a click with no id from the platform, one more than 90 days
+old or less than 6 hours old. Each line is sent under its campaign's
+conversion name, set on Setup › Offline Conversions (`--conversion-name`
+names every line instead). `--summary` prints how many conversions the file
+holds and why each other one is left out (`GET
+/conversions/offline-export/summary`); without it the file goes to
+`--output`, or to stdout.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format` | required | `google`, `google_uploads` or `microsoft` |
+| `--days` | 90 | Conversions from the last this many days, 1 to 90 |
+| `--aff-campaign-id` | | Only this campaign's conversions |
+| `--conversion-name` | | Send every conversion under this conversion action (Google) or goal (Microsoft) |
+| `--ad-user-data`, `--ad-personalization` | empty | Google's consent columns on every line: `granted` or `denied`, as your consent banner collected it |
+| `--output` | stdout | Write the file here |
+| `--summary` | false | Print the counts and the reasons instead of the file |
+
+A file the platform fetches by itself on a schedule is a fetch URL made on
+Setup › Offline Conversions; the CLI does not make one, because its key is
+shown once, on that page. The CLI downloads at most 64 MB: a larger file is
+refused whole, nothing written, and the hint names `--days` and
+`--aff-campaign-id` for a smaller one (a fetch URL has no such limit).
+
 ### Get a conversion
 
 ```bash

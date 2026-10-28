@@ -9,6 +9,9 @@ List, inspect, manually create, and delete conversions.
 | `GET` | `/conversions` | List conversions (paginated) |
 | `GET` | `/conversions/{id}` | Get conversion details |
 | `GET` | `/conversions/match-methods` | Each campaign's conversions by how their click was found ([below](#how-each-conversions-click-was-found)) |
+| `GET` | `/conversions/offline-export` | The conversions as Google Ads' or Microsoft Advertising's offline conversion import CSV ([below](#offline-conversion-files)) |
+| `GET` | `/conversions/offline-export/summary` | What that file holds, and why each other conversion is left out |
+| `GET` | `/offline-conversions/{key}` | A fetch URL made on Setup › Offline Conversions: the file, with no API key |
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
 | `GET` | `/conversions/postback-code` | The conversion pixels and postback URLs Setup › Postback / Pixel shows ([Setup API](27-setup.md)) |
@@ -102,6 +105,73 @@ netted (a reversal is under its own request's method). A role without access
 to campaign data gets the three figures as `null` and `masked: true`. Group
 Overview's **Match method** level shows the same split by click time, with
 each group's clicks and cost.
+
+## Offline conversion files
+
+`GET /conversions/offline-export?format=google` answers the account's
+conversions as an ad platform's offline conversion import file (`text/csv`),
+the one Setup › Offline Conversions downloads and its fetch URLs serve. The
+[offline conversions guide](../features/offline-conversions.md) says what
+each platform's file holds, where to upload it, and how to have the platform
+fetch it on a schedule.
+
+| Parameter | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `format` | string | required | `google` (Google Ads Data Manager: `Google Click ID`, `GBRAID`, `WBRAID`), `google_uploads` (Google's Conversions › Uploads template: a `Parameters:TimeZone=` line, `Google Click ID`) or `microsoft` (Microsoft Advertising: `Parameters:TimeZone=+0000`, `Microsoft Click ID`) |
+| `days` | integer | 90 | Conversions from the last this many days, by conversion time (1 to 90) |
+| `campaign_id` | integer | — | Only this campaign's conversions |
+| `conversion_name` | string | — | Every line under this name, whatever its campaign's |
+| `ad_user_data`, `ad_personalization` | string | empty | Google's consent columns, the same on every line: `granted` or `denied`. Refused for `microsoft` |
+
+A conversion is a line when all of these hold, and is counted in the summary
+under the first that does not:
+
+1. it counts now: not deleted, not refunded in full, not replaced by a later
+   conversion on its click, payable (`not_counted`); a partial refund is
+   netted from its value;
+2. its click was named: `match_method` `click_id` or `cookie`. A click found
+   by the landing page's visitor id (`visitor_id`), guessed from the visitor's
+   address (`same_ip`) or recorded before 1.9.79 (`match_unknown`) would teach
+   the platform's bidding clicks the conversion may not have come from;
+3. the click came with an id the platform issues (`no_click_id`; for
+   `google_uploads`, a click with only a gbraid or wbraid is
+   `gbraid_wbraid_only`), in the form the platform issues
+   (`malformed_click_id`: an msclkid is 32 hexadecimal digits, as Microsoft
+   documents it; Google documents no form for its ids, which are held to
+   base64url characters);
+4. the click is at most 90 days old (`click_too_old`), before the conversion
+   (`before_click`), this account's (`not_accounts_click`) and at least 6
+   hours old (`click_too_recent`: a later fetch whose window still covers it
+   sends it);
+5. its value is not negative (`negative_value`), and it has a conversion name:
+   its campaign's or the account's, set on the Setup page, or `conversion_name`
+   (`no_conversion_name`);
+6. a Microsoft file stops at Microsoft's 100,000 rows an upload, newest first
+   (`over_row_limit`).
+
+Each line's `Conversion Time` is the conversion's in the account's time zone
+with the offset in force at that instant (`2026-10-27T02:22:48-04:00`), or in
+UTC for Microsoft, whose time zones are its own names. `Conversion Value` is
+the amount the conversion counts for, as the ledger records it in the
+account's currency (`Conversion Currency`), three decimals for Microsoft.
+`Order ID` is `P202-` and the conversion's id: the same on every download, so
+Google counts a conversion uploaded twice once. A refund or deletion after a
+platform has a conversion is not sent to it; adjust it in the platform.
+
+The answer's `X-P202-Rows` and `X-P202-Left-Out` headers count the lines and
+the conversions left out. `GET /conversions/offline-export/summary` takes the
+same parameters and answers the counts: `conversions` in the window (a
+reversal is not one), `rows`, `left_out` by reason (every reason listed),
+`left_out_total`, and each reason's sentence under `reasons`. Both need the
+`access_to_campaign_data` permission: the file carries every value. An
+unknown parameter, or a value not listed, is a 422 naming it.
+
+`GET /offline-conversions/{key}` is a fetch URL made on the Setup page, which
+shows it once and keeps only its key's hash. It takes no API key: the 43
+characters of the key are the credential. It serves the URL's file (its
+format, window, conversion name and consent columns), and answers `404` to a
+key of the wrong shape, an unknown, replaced or deleted key, and the key of a
+deactivated account or of a role that no longer reads campaign data, alike.
 
 ## Create Conversion
 

@@ -4576,6 +4576,10 @@ class UPGRADE
                 \Prosper202\Database\Tables\GoalTables::goalEvents(),
                 // The GeoIP database refresh's credentials and last run (Prosper202\GeoIp).
                 \Prosper202\Database\Tables\SecretTables::geoipRefresh(),
+                // The offline conversion files' fetch URLs and conversion
+                // names (Prosper202\OfflineConversion).
+                \Prosper202\Database\Tables\ConversionTables::offlineConversionFeeds(),
+                \Prosper202\Database\Tables\ConversionTables::offlineConversionNames(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             if ($step_ok) {
