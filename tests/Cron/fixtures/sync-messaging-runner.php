@@ -16,6 +16,12 @@
 
 declare(strict_types=1);
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 $root = dirname(__DIR__, 3);
 $scratch = (string) getenv('P202_TEST_DB_NAME');
 if ($scratch === '' || (string) getenv('MESSAGING_API_URL') === '') {

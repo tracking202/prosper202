@@ -12,6 +12,12 @@
 
 declare(strict_types=1);
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 require dirname(__DIR__, 3) . '/vendor/autoload.php';
 
 use Prosper202\Cron\CronLock;
