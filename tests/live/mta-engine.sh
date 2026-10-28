@@ -108,6 +108,10 @@ CREDITS_DDL=$(mysql_q -N "$DB" -e "SHOW CREATE TABLE 202_attribution_credits" | 
 restore_credits() { Q "SHOW TABLES LIKE '202_attribution_credits'" | grep -q . || mysql_q "$DB" -e "$(printf '%b' "$CREDITS_DDL")"; }
 trap 'restore_credits; cleanup' EXIT
 cleanup
+# A journey is the clicks one browser's cookies link.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" "$USER_ID" || exit 2
 
 mysql_q "$DB" <<SQL
 SET SESSION sql_mode='';
