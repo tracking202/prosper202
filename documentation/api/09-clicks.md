@@ -176,6 +176,7 @@ Each row (`data[]`) carries:
 | `explanation` | the reason as a sentence |
 | `source`, `source_label` | what produced the row: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `app_install`, `goal`, `legacy_baseline` |
 | `source_ref`, `linked_to` | what that is, resolved: a goal and its version (`Goal "Level 3" v2`), a revenue upload and its file, the conversion a reversal nets, or the API key that wrote the row (named by when it was created — the reference is a digest, never the key) |
+| `match_method`, `match_method_label` | how the row's click was found: `click_id` (the request named it), `cookie`, `visitor_id` (the landing-page script's visitor id), `same_ip` (a guess from the visitor's address) or `unknown` (recorded before 1.9.79); see [Conversions](10-conversions.md#how-each-conversions-click-was-found) |
 | `event_name`, `transaction_id`, `reverses_conv_id` | the event that reached a goal, the network's id, and the sale a reversal reverses |
 
 `click` holds the click's value as the reports show it (`click_payout`,

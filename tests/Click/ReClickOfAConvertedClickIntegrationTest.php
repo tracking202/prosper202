@@ -99,7 +99,7 @@ final class ReClickOfAConvertedClickIntegrationTest extends TestCase
             ),
             static fn (): int => 51
         );
-        $converted = p202RecordLegacyConversion(self::requireScratch(), $clickId, 1, ['user_id' => self::USER]);
+        $converted = p202RecordLegacyConversion(self::requireScratch(), $clickId, 1, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['user_id' => self::USER]);
         self::assertTrue($converted['recorded'], (string) json_encode($converted));
     }
 
@@ -164,11 +164,11 @@ final class ReClickOfAConvertedClickIntegrationTest extends TestCase
     {
         $clickId = self::FIRST_CLICK + 1;
         self::convertedClick($clickId);
-        $again = p202RecordLegacyConversion(self::requireScratch(), $clickId, 1, ['user_id' => self::USER]);
+        $again = p202RecordLegacyConversion(self::requireScratch(), $clickId, 1, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['user_id' => self::USER]);
         self::assertSame('already_lead', $again['reason'], 'before the re-click');
 
         self::reClickOntoTheOtherCampaign($clickId);
-        $again = p202RecordLegacyConversion(self::requireScratch(), $clickId, 1, ['user_id' => self::USER]);
+        $again = p202RecordLegacyConversion(self::requireScratch(), $clickId, 1, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['user_id' => self::USER]);
 
         self::assertSame('already_lead', $again['reason'], 'after it: ' . json_encode($again));
         self::assertSame(

@@ -115,7 +115,7 @@ final class LedgerReadsAfterTheLockIntegrationTest extends TestCase
     /** @param array<string, mixed> $data */
     private function record(array $data): int
     {
-        $result = $this->repo->record(self::USER, ['click_id' => self::CLICK] + $data);
+        $result = $this->repo->record(self::USER, ['click_id' => self::CLICK] + $data, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertFalse($result['duplicate']);
 
         return (int) $result['convId'];
@@ -225,7 +225,7 @@ final class LedgerReadsAfterTheLockIntegrationTest extends TestCase
         $outcome = self::deleteWhile($first, function (Connection $conn): void {
             (new MysqlConversionRepository($conn))->recordInTransaction(
                 self::USER,
-                ['click_id' => self::CLICK, 'payout' => '9', 'transaction_id' => 'TX-2']
+                ['click_id' => self::CLICK, 'payout' => '9', 'transaction_id' => 'TX-2'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID
             );
         });
 
@@ -249,7 +249,7 @@ final class LedgerReadsAfterTheLockIntegrationTest extends TestCase
         $outcome = self::deleteWhile($sale, function (Connection $conn) use ($customer, &$reversal): void {
             $recorded = (new MysqlConversionRepository($conn))->recordInTransaction(
                 self::USER,
-                ['click_id' => self::CLICK, 'transaction_id' => 'TX-1', 'reversal' => true] + $customer
+                ['click_id' => self::CLICK, 'transaction_id' => 'TX-1', 'reversal' => true] + $customer, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID
             );
             $reversal = (int) $recorded['convId'];
         });
@@ -280,7 +280,7 @@ final class LedgerReadsAfterTheLockIntegrationTest extends TestCase
         $outcome = self::deleteWhile($preLedger, function (Connection $conn): void {
             (new MysqlConversionRepository($conn))->recordInTransaction(
                 self::USER,
-                ['click_id' => self::CLICK, 'payout' => '4', 'transaction_id' => 'TX-2']
+                ['click_id' => self::CLICK, 'payout' => '4', 'transaction_id' => 'TX-2'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID
             );
         });
 
@@ -306,7 +306,7 @@ final class LedgerReadsAfterTheLockIntegrationTest extends TestCase
         $customer = ['customer_ref' => 'cust-701', 'customer_ref_type' => 'custom'];
         $goal = $this->repo->record(self::USER, [
             'click_id' => self::CLICK, 'source' => 'goal', 'payout' => '10', 'transaction_id' => 'G-1',
-        ] + $customer);
+        ] + $customer, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         $goalId = (int) $goal['convId'];
         $conn = new Connection(self::$db);
         $conn->transaction(function () use ($conn, $goalId): void {

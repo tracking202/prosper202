@@ -48,6 +48,7 @@ record links only to the caller's own records
 | Breakdown Analysis | `/reports/timeseries`, `/reports/breakdown` | `p202 report timeseries`, `report breakdown` | ✅ |
 | Day Parting / Week Parting | `/reports/daypart`, `/reports/weekpart` | `p202 report daypart`, `report weekpart` | ✅ |
 | Group Overview (up to four groupings, nested, with subtotals) | `GET /reports/groups?by=…` | `p202 report groups --by …` | ✅ |
+| Group Overview's Match method level (conversions by how their click was found) | `GET /conversions/match-methods`, `GET /conversions?match_method=…` | `p202 conversion match-methods`, `conversion list --match-method …` | ≈ by campaign and conversion time; the page splits by click time, with each group's clicks and cost |
 | Rotator breakdown | `GET /rotators/{id}/stats` | `p202 rotator stats` | ✅ each rule by the rule the click matched, offer-rotator clicks included, as the page counts them |
 
 ## Analyze

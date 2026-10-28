@@ -86,6 +86,7 @@ lead()   { Q "SELECT click_lead FROM 202_clicks WHERE click_id=$1"; }
 payout() { Q "SELECT click_payout FROM 202_clicks WHERE click_id=$1"; }
 ptype()  { Q "SELECT GROUP_CONCAT(DISTINCT pixel_type) FROM 202_conversion_logs WHERE click_id=$1"; }
 txids()  { Q "SELECT GROUP_CONCAT(COALESCE(transaction_id,'-') ORDER BY conv_id) FROM 202_conversion_logs WHERE click_id=$1"; }
+method() { Q "SELECT GROUP_CONCAT(DISTINCT match_method) FROM 202_conversion_logs WHERE click_id=$1"; }
 
 say "px.php: the per-campaign pixel records a row from the cookie"
 curl -sS -o /dev/null -w '%{http_code}\n' -b "tracking202subid=$CLICK_A" "$BASE/tracking202/static/px.php?acip=$ACIP" > "$OUT/px1"
@@ -93,6 +94,7 @@ eq "$(cat "$OUT/px1")" 200 "pixel answers 200"
 eq "$(rows $CLICK_A)" 1 "one conversion row written"
 eq "$(lead $CLICK_A)" 1 "click flagged as a lead"
 eq "$(ptype $CLICK_A)" 1 "row carries pixel_type 1 (image pixel)"
+eq "$(method $CLICK_A)" cookie "and says the cookie named its click"
 eq "$(payout $CLICK_A)" 7.50000 "click payout kept at the campaign payout (pixel carries no amount)"
 curl -sS -o /dev/null -b "tracking202subid=$CLICK_A" "$BASE/tracking202/static/px.php?acip=$ACIP"
 eq "$(rows $CLICK_A)" 1 "a second fire of the same pixel adds no row (one conversion per click without an id)"
@@ -118,6 +120,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/tracking202/static/pb.php?acip=
 eq "$(cat "$OUT/pb1")" 200 "postback answers 200"
 eq "$(rows $CLICK_B)" 1 "one row for ORDER-1"
 eq "$(ptype $CLICK_B)" 2 "row carries pixel_type 2 (postback)"
+eq "$(method $CLICK_B)" click_id "and says the subid named its click"
 curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_B&txid=ORDER-1"
 eq "$(rows $CLICK_B)" 1 "replaying ORDER-1 adds no row"
 curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_B&txid=ORDER-2"
@@ -158,11 +161,13 @@ eq "$(rows $CLICK_F)" 1 "the retry adds no row (one conversion per click without
 curl -sS -o /dev/null "$BASE/tracking202/static/gpb.php?subid=$CLICK_F&txid=GPB-2"
 eq "$(rows $CLICK_F)" 2 "a postback that carries a transaction id is still a second sale on the click"
 eq "$(txids $CLICK_F)" "-,GPB-2" "the id-less row and the GPB-2 row, nothing else"
+eq "$(method $CLICK_F)" click_id "both say the subid named the click"
 
 say "upx.php: a reloaded universal pixel without a transaction id records one conversion"
 curl -sS -o /dev/null "$BASE/tracking202/static/upx.php?subid=$CLICK_G"
 eq "$(rows $CLICK_G)" 1 "one conversion row written"
 eq "$(ptype $CLICK_G)" 3 "row carries pixel_type 3 (universal pixel)"
+eq "$(method $CLICK_G)" click_id "and says the subid named its click"
 curl -sS -o /dev/null "$BASE/tracking202/static/upx.php?subid=$CLICK_G"
 eq "$(rows $CLICK_G)" 1 "the reload adds no row"
 curl -sS -o /dev/null "$BASE/tracking202/static/upx.php?subid=$CLICK_G&txid=UPX-2"
@@ -189,6 +194,7 @@ eq "$(cb_post RCPT-A $CLICK_D 49.95 SALE)" 200 "the same receipt again answers 2
 eq "$(rows $CLICK_D)" 1 "a repeated INS delivery of one sale adds no row"
 eq "$(cb_post RCPT-B $CLICK_D 10.00 SALE)" 200 "a second receipt answers 200"
 eq "$(rows $CLICK_D)" 2 "a second sale on the click is a second row"
+eq "$(method $CLICK_D)" click_id "ClickBank's tracking code named the click"
 eq "$(cb_post RCPT-X 910099999 5.00 SALE)" 404 "a sale naming an unknown click is a 404, not a silent 200"
 grep -q 'Unknown tracking code' "$OUT/cb.out" && ok "the 404 names the cause" || bad "the 404 names the cause"
 eq "$(cb_post RCPT-F $CLICK_E 5.00 SALE)" 404 "a sale naming another account's click is a 404 (scoped to the key's account)"

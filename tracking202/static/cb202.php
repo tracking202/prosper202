@@ -92,7 +92,8 @@ if (function_exists('openssl_decrypt')) {
             // user_id: the notification was authenticated with THIS account's
             // ClickBank key, so a tracking code naming another account's click
             // is refused rather than converting in the other tenant.
-            $outcome = p202RecordLegacyConversion($db, $click_id, 2, [
+            // The tracking code named the click (MatchMethod::CLICK_ID).
+            $outcome = p202RecordLegacyConversion($db, $click_id, 2, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, [
                 'user_id'          => (int) $mysql['user_id'],
                 'transaction_id'   => $receipt,
                 'use_pixel_payout' => true,

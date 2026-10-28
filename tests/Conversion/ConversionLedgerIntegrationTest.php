@@ -126,7 +126,7 @@ final class ConversionLedgerIntegrationTest extends TestCase
 
     private function record(int $clickId, array $data): array
     {
-        return $this->repo->record(1, ['click_id' => $clickId, 'source' => 'postback'] + $data);
+        return $this->repo->record(1, ['click_id' => $clickId, 'source' => 'postback'] + $data, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
     }
 
     public function testReplaceKeepsTheLatestAndSaysWhatItReplaced(): void
@@ -763,7 +763,7 @@ final class ConversionLedgerIntegrationTest extends TestCase
         $customer = ['customer_ref' => 'rev-ltv-4', 'customer_ref_type' => 'custom'];
         $goal = $this->repo->record(
             1,
-            ['click_id' => 100, 'source' => 'goal', 'payout' => '10', 'transaction_id' => 'G-1'] + $customer
+            ['click_id' => 100, 'source' => 'goal', 'payout' => '10', 'transaction_id' => 'G-1'] + $customer, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID
         );
         $goalId = (int) $goal['convId'];
         $this->record(100, ['transaction_id' => 'G-1', 'reversal' => true] + $customer);

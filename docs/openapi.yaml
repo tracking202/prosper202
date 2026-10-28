@@ -1798,7 +1798,8 @@ paths:
         produced it (`source`) and what that is (`linked_to`: a goal and
         version, a revenue upload, the conversion a reversal nets, or the
         API key that wrote it, named by when it was created and never by its
-        value), its transaction id and time, and whether it counts toward the
+        value), how its click was found (`match_method`), its transaction id
+        and time, and whether it counts toward the
         click's value (`counted`), with the reason when it does not
         (`not_counted_reason`: `deleted`, `unpaid`, `superseded` with its
         `superseded_reason`, or `not_netted` for a reversal whose sale does
@@ -1866,6 +1867,14 @@ paths:
           description: Only conversions this source produced.
           schema:
             $ref: "#/components/schemas/ConversionSource"
+        - name: match_method
+          in: query
+          description: >-
+            Only conversions whose click was found this way: `same_ip` lists
+            the ones guessed from the visitor's address, `unknown` the ones
+            recorded before 1.9.79.
+          schema:
+            $ref: "#/components/schemas/MatchMethod"
         - name: goal
           in: query
           description: Only this goal's outcomes, under every version of it.
@@ -1975,6 +1984,66 @@ paths:
                           deleted:
                             type: boolean
                             enum: [true]
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/match-methods:
+    get:
+      tags: [Conversions]
+      summary: Conversions by campaign and by how their click was found
+      description: |
+        The account's live conversions grouped by campaign and by
+        `match_method`, how each one's click was found: `click_id` (the
+        request named it: a subid, ClickBank's tracking code, the API or an
+        upload line, an app install's token), `cookie` (a tracking cookie
+        named it), `visitor_id` (the landing-page script's visitor id),
+        `same_ip` (nothing named a click: the latest click from the
+        visitor's address) or `unknown` (recorded before 1.9.79).
+
+        Per campaign and method, `conversions` counts the conversions that
+        are not reversals, `counted` those that count toward their click's
+        value, and `income` what the counting rows add up to, reversals
+        netted; a reversal is under the method of its own request. `totals`
+        is the same per method over the campaigns `data` covers (every
+        campaign, or the one `campaign_id` names), every method listed.
+        The window is the conversion time's, as `GET /conversions` reads
+        it. A role without access to campaign data gets the counts and the
+        income as null (`masked: true`). Group Overview's Match method level
+        is the same split by click time, with the clicks and cost beside it.
+      operationId: getConversionMatchMethods
+      parameters:
+        - name: campaign_id
+          in: query
+          description: Only this campaign's conversions. Anything but a positive id is a 422 naming campaign_id.
+          schema:
+            type: integer
+            minimum: 1
+        - $ref: "#/components/parameters/period"
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
+      responses:
+        "200":
+          description: One row per campaign and method that has conversions, campaign by campaign
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ConversionMatchMethodRow"
+                  totals:
+                    type: array
+                    description: Every method, in `match_methods` order, over every campaign.
+                    items:
+                      $ref: "#/components/schemas/ConversionMatchMethodRow"
+                  match_methods:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MatchMethod"
+                  masked:
+                    type: boolean
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -11641,6 +11710,8 @@ components:
           type: string
         source:
           $ref: "#/components/schemas/ConversionSource"
+        match_method:
+          $ref: "#/components/schemas/MatchMethod"
         source_ref:
           type: string
           nullable: true
@@ -11678,6 +11749,46 @@ components:
       type: string
       description: What produced a ledger row.
       enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, paykickstart, app_install, goal, legacy_baseline]
+
+    MatchMethod:
+      type: string
+      description: >-
+        How the conversion's click was found. click_id is the request naming
+        it (a subid or sid, ClickBank's tracking code, the API's or an upload
+        line's click id, an app install's token); cookie a tracking cookie
+        naming it; visitor_id the landing-page script's visitor id, on the
+        click it was last seen on; same_ip the latest click from the
+        visitor's address when nothing named one; unknown a conversion
+        recorded before 1.9.79, the value carried in from before the ledger,
+        or a goal reached by an event stored before then.
+      enum: [click_id, cookie, visitor_id, same_ip, unknown]
+
+    ConversionMatchMethodRow:
+      type: object
+      properties:
+        campaign_id:
+          type: integer
+          description: Absent from `totals`.
+        campaign_name:
+          type: string
+          nullable: true
+          description: Null for a campaign that is not the account's. Absent from `totals`.
+        match_method:
+          $ref: "#/components/schemas/MatchMethod"
+        match_method_label:
+          type: string
+        conversions:
+          type: integer
+          nullable: true
+          description: Live conversions that are not reversals.
+        counted:
+          type: integer
+          nullable: true
+          description: Of those, the ones that count toward their click's value.
+        income:
+          type: number
+          nullable: true
+          description: What the rows that count add up to, reversals netted.
 
     ClickConversion:
       type: object
@@ -11721,6 +11832,11 @@ components:
         source_ref:
           type: string
           nullable: true
+        match_method:
+          $ref: "#/components/schemas/MatchMethod"
+        match_method_label:
+          type: string
+          description: The method in words (Click id, Cookie, Visitor id, Same IP, Unknown).
         linked_to:
           type: object
           nullable: true

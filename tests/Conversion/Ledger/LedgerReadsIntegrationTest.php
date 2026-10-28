@@ -118,7 +118,7 @@ final class LedgerReadsIntegrationTest extends TestCase
 
     private function record(int $clickId, array $data): int
     {
-        $r = $this->repo->record(1, ['click_id' => $clickId] + $data + ['source' => 'postback']);
+        $r = $this->repo->record(1, ['click_id' => $clickId] + $data + ['source' => 'postback'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertFalse($r['duplicate'], 'fixture rows are new');
 
         return (int) $r['convId'];
@@ -502,7 +502,7 @@ final class LedgerReadsIntegrationTest extends TestCase
         $this->click(200, 1);
         $this->click(201, 1, '0.00', 0, 2);
         $this->record(200, ['payout' => '5', 'transaction_id' => 'A']);
-        $this->repo->record(2, ['click_id' => 201, 'payout' => '6', 'transaction_id' => 'B', 'source' => 'postback']);
+        $this->repo->record(2, ['click_id' => 201, 'payout' => '6', 'transaction_id' => 'B', 'source' => 'postback'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         $clicks = array_column(self::$db->query('SELECT p.click_id FROM ' . LedgerReportSql::partsTable('s.user_id = 1') . ' p')->fetch_all(MYSQLI_ASSOC), 'click_id');
         self::assertSame(['200'], array_map('strval', $clicks));
@@ -582,7 +582,7 @@ final class LedgerReadsIntegrationTest extends TestCase
         self::assertNotNull($breakdown->forClick(300, null), 'a session that sees every account');
         self::assertNull($breakdown->forClick(999, null));
 
-        $this->repo->record(2, ['click_id' => 300, 'payout' => '5', 'transaction_id' => 'A', 'source' => 'postback']);
+        $this->repo->record(2, ['click_id' => 300, 'payout' => '5', 'transaction_id' => 'A', 'source' => 'postback'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::$db->query('UPDATE 202_clicks SET click_payout = 7 WHERE click_id = 300');
         $b = $breakdown->forClick(300, 2);
         self::assertFalse($b['click']['matches_click'], 'a cache that is not what its rows add up to is reported, not hidden');

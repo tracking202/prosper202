@@ -9,6 +9,7 @@ use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\LedgerIntegrityException;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Conversion\MysqlConversionRepository;
@@ -421,12 +422,21 @@ final class GoalEngine
      * own bookkeeping about "this subject has events" then commits with the
      * events or not at all, never ahead of a batch the engine refuses.
      *
+     * $matchedBy is how the request found the subject's click: each new
+     * event is stored with it, and the ledger row of an outcome a click
+     * subject's event reaches carries the method of that event, whenever
+     * the row is written (a replay or a re-evaluation writes rows for
+     * events stored earlier). An install's click is the one its signed
+     * token named, so an install subject's rows are click_id whatever is
+     * passed here.
+     *
      * @param list<GoalEvent> $events
      * @param (callable(list<string>): void)|null $onStored
      * @return array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int, outcomes: list<array<string, mixed>>, notifications: list<array<string, mixed>>}
      */
-    public function ingest(int $userId, GoalSubject $subject, array $events, ?callable $onStored = null): array
+    public function ingest(int $userId, GoalSubject $subject, array $events, MatchMethod $matchedBy, ?callable $onStored = null): array
     {
+        $events = array_map(static fn (GoalEvent $event): GoalEvent => $event->matchedBy($matchedBy), $events);
         $work = fn (): array => $this->ingestLocked($userId, $subject, $events, $onStored);
         try {
             $done = $this->conn->transaction($work);
@@ -1337,6 +1347,10 @@ final class GoalEngine
         $payable = $v['payable'];
         $amountUnits = $v['units'];
         $isInstallGoal = $v['install'];
+        // The click an install subject's row goes on is the one its signed
+        // token named; a click subject's is found as the event that reached
+        // the outcome was (ingest()).
+        $matchedBy = $subject->type === GoalSubject::INSTALL ? MatchMethod::CLICK_ID : ($event?->matchMethod ?? MatchMethod::UNKNOWN);
         $data = [
             'click_id' => $subject->clickId,
             'source' => ConversionSource::GOAL->value,
@@ -1362,7 +1376,7 @@ final class GoalEngine
         if ($event?->transactionId !== null) {
             $data['transaction_id'] = $event->transactionId;
         }
-        $recorded = $this->conversions->recordInTransaction($userId, $data);
+        $recorded = $this->conversions->recordInTransaction($userId, $data, $matchedBy);
         if (!$recorded['clickFound']) {
             throw new GoalEngineException('click ' . $subject->clickId . ' is gone; its outcome cannot be recorded', GoalEngineException::INTEGRITY);
         }
@@ -1947,19 +1961,28 @@ final class GoalEngine
 
     private function insertEvent(int $userId, GoalSubject $subject, GoalEvent $event): void
     {
-        $stmt = $this->conn->prepareWrite(
+        [$stmt, $named] = MatchMethod::prepareInsert(
+            $this->conn,
+            'INSERT INTO 202_goal_events
+                (subject_type, subject_id, user_id, event_id, name, properties, revenue, currency, revenue_trusted, transaction_id,
+                 occurred_at, received_at, fingerprint, match_method)
+             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)',
             'INSERT INTO 202_goal_events
                 (subject_type, subject_id, user_id, event_id, name, properties, revenue, currency, revenue_trusted, transaction_id,
                  occurred_at, received_at, fingerprint)
              VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)'
         );
-        $this->conn->bind($stmt, 'siissssisiis', [
+        $row = [
             $subject->type, $subject->id, $userId, $event->eventId, (string) $event->name,
             json_encode((object) $event->properties, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             $event->revenue === null ? null : json_encode($event->revenue, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION),
             $event->revenueTrusted ? 1 : 0, $event->transactionId,
             $event->occurredAt, $event->receivedAt, $event->fingerprint(),
-        ]);
+        ];
+        if ($named) {
+            $row[] = $event->matchMethod->value;
+        }
+        $this->conn->bind($stmt, $named ? 'siissssisiiss' : 'siissssisiis', $row);
         $this->conn->executeUpdate($stmt);
     }
 
@@ -2002,6 +2025,16 @@ final class GoalEngine
             }
         }
 
+        // No column at all is a table the 1.9.79 upgrade has not reached
+        // (SELECT * reads what is there), whose events it will give unknown.
+        try {
+            $matchMethod = array_key_exists('match_method', $row)
+                ? MatchMethod::fromStored($row['match_method'], $where)
+                : MatchMethod::UNKNOWN;
+        } catch (LedgerIntegrityException $e) {
+            throw new GoalEngineException($e->getMessage(), GoalEngineException::INTEGRITY, [], $e);
+        }
+
         /** @var array<string, string|int|float|bool> $props */
         return new GoalEvent(
             (string) $row['event_id'],
@@ -2012,6 +2045,9 @@ final class GoalEngine
             $revenue,
             (int) $row['revenue_trusted'] === 1,
             $row['transaction_id'] !== null ? (string) $row['transaction_id'] : null,
+            false,
+            false,
+            $matchMethod,
         );
     }
 

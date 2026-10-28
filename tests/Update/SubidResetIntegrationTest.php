@@ -58,7 +58,7 @@ final class SubidResetIntegrationTest extends TestCase
         foreach ([self::CLICK, self::OTHER_CLICK] as $click) {
             $recorded = (new MysqlConversionRepository(new Connection(self::$db)))->record($u, [
                 'click_id' => $click, 'transaction_id' => 'reset-' . $click, 'source' => 'api', 'payout' => '1.00',
-            ]);
+            ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
             self::assertTrue($recorded['clickFound']);
         }
     }
@@ -118,7 +118,7 @@ final class SubidResetIntegrationTest extends TestCase
         \Prosper202\Click\LatestVisit::refresh($conn, self::MOVED_CLICK);
         $recorded = (new MysqlConversionRepository($conn))->record($u, [
             'click_id' => self::MOVED_CLICK, 'transaction_id' => 'moved', 'source' => 'api', 'payout' => '1.00',
-        ]);
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertTrue($recorded['clickFound']);
 
         $batch = new SubidBatch($conn);

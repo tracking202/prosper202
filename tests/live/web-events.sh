@@ -382,6 +382,10 @@ eq "$(Q "SELECT CONCAT(payable, ':', value_note) FROM 202_goal_outcomes WHERE su
    "so the purchase goal tracks it and does not pay it"
 eq "$(track "lpip=$LP_PUBLIC&p202lpid=$LPID&event_id=js-2&name=signup")" 202 "a tracked signup"
 eq "$(value "$LP_CLICK")" "1/1.00000" "pays its fixed value"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT match_method) FROM 202_goal_events WHERE subject_id=$LP_CLICK")" visitor_id \
+   "its events are stored as found by the page's visitor id"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT match_method) FROM 202_conversion_logs WHERE click_id=$LP_CLICK")" visitor_id \
+   "and so are the conversions they reached"
 eq "$(track "lpip=$LP_PUBLIC&p202lpid=$LPID&event_id=js-2&name=signup")" 202 "sent again"
 eq "$(field "d['duplicate']")" true "is a duplicate"
 eq "$(track "lpip=$LP_PUBLIC&p202lpid=0123456789abcdef0123456789abcdef&event_id=js-3&name=signup")" 204 "a visitor id never seen on a click: 204"

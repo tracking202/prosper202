@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Prosper202\Goals;
 
+use Prosper202\Conversion\Ledger\MatchMethod;
+
 /**
  * One event reported for a goal subject: the evidence goals are evaluated
  * against (plan §5.5). An event on its own records nothing.
@@ -27,6 +29,10 @@ namespace Prosper202\Goals;
  *                    reporter said, so a retry that arrives a second
  *                    later is still the same event (GoalEngine compares it
  *                    at the stored time).
+ *   match_method     how the request that reported it found its click
+ *                    (MatchMethod), stamped by GoalEngine::ingest() and
+ *                    carried by the ledger row of an outcome it reaches.
+ *                    Not what the event says, so not in its fingerprint.
  *
  * The evaluation time is `min(occurred_at, received_at)`: a reporter's clock
  * can move an event earlier, never later than it arrived, so it cannot be
@@ -56,6 +62,7 @@ final class GoalEvent
         public readonly ?string $transactionId,
         public readonly bool $isInstall = false,
         public readonly bool $clockedByServer = false,
+        public readonly MatchMethod $matchMethod = MatchMethod::UNKNOWN,
     ) {
     }
 
@@ -64,7 +71,7 @@ final class GoalEvent
     {
         return new self(
             $this->eventId, $this->name, $occurredAt, $this->receivedAt, $this->properties, $this->revenue,
-            $this->revenueTrusted, $this->transactionId, $this->isInstall, $this->clockedByServer,
+            $this->revenueTrusted, $this->transactionId, $this->isInstall, $this->clockedByServer, $this->matchMethod,
         );
     }
 
@@ -73,7 +80,16 @@ final class GoalEvent
     {
         return new self(
             $this->eventId, $this->name, $this->occurredAt, $this->receivedAt, $this->properties, $this->revenue,
-            $this->revenueTrusted, $this->transactionId, $this->isInstall, true,
+            $this->revenueTrusted, $this->transactionId, $this->isInstall, true, $this->matchMethod,
+        );
+    }
+
+    /** The same event, as found on its click by $method. */
+    public function matchedBy(MatchMethod $method): self
+    {
+        return new self(
+            $this->eventId, $this->name, $this->occurredAt, $this->receivedAt, $this->properties, $this->revenue,
+            $this->revenueTrusted, $this->transactionId, $this->isInstall, $this->clockedByServer, $method,
         );
     }
 
