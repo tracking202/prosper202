@@ -7,6 +7,7 @@ namespace Prosper202\PaymentNotification\ClickBank;
 use Prosper202\Click\ClickId;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\ClickField;
 use Prosper202\PaymentNotification\ConfirmsTestNotifications;
 use Prosper202\PaymentNotification\FingerprintsNotifications;
 use Prosper202\PaymentNotification\InboundRequest;
@@ -110,6 +111,12 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
         return 'encryption';
     }
 
+    /** An affiliate on version 8.0 can carry the click in extclid, read when the order has no tracking code. */
+    public function clickField(): ClickField
+    {
+        return new ClickField('tracking code or extclid', 'the HopLink', 'tid=[[subid]] or extclid=[[subid]]');
+    }
+
     public function storedSecrets(Connection $conn): array
     {
         $stmt = $conn->prepareRead(
@@ -210,7 +217,7 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
                 null,
                 $amount,
                 'USD',
-                self::clickId($order, $shown, $receipt),
+                self::namedClick($order),
                 self::occurredAt($order)
             );
         }
@@ -225,7 +232,7 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
             $receipt,
             $amount === null || preg_match('/^0+(?:\.0+)?$/D', $amount) === 1 ? null : $amount,
             'USD',
-            self::clickId($order, $shown, $receipt),
+            self::namedClick($order),
             self::occurredAt($order)
         );
     }
@@ -338,27 +345,12 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
     /**
      * The click the order names: its first tracking code (a HopLink's
      * tid=[[subid]]), or where it has none the extclid that version 8.0
-     * sends an affiliate (extclid=[[subid]]). One that names neither is
-     * answered as no_click (200), saying so; a value that is not a click id
-     * is refused rather than read as none.
+     * sends an affiliate (extclid=[[subid]]). Null when it names neither,
+     * which the processor answers as no_click (200); a value that is not a
+     * click id is refused rather than read as none.
      *
      * @param array<string, mixed> $order
      */
-    private static function clickId(array $order, string $type, string $receipt): int
-    {
-        $clickId = self::namedClick($order);
-        if ($clickId === null) {
-            throw Refusal::of(
-                OutcomeKind::NO_CLICK,
-                'Verified. The ' . $type . ' of receipt ' . $receipt . ' carries no tracking code (the HopLink had'
-                . ' no tid=[[subid]]), so it names no click; nothing was recorded.'
-            );
-        }
-
-        return $clickId;
-    }
-
-    /** @param array<string, mixed> $order */
     private static function namedClick(array $order): ?int
     {
         $codes = $order['trackingCodes'] ?? [];

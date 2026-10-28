@@ -121,13 +121,28 @@ final class ClickBankAdapterTest extends TestCase
         return $refusal->getMessage();
     }
 
-    /** @param array<string, mixed> $order */
+    /**
+     * An order that names no click reads with none, which the Processor
+     * answers in ClickBank's names (ClickAnswersAreWordedByTheProviderTest).
+     *
+     * @param array<string, mixed> $order
+     */
     private static function assertNoClick(array $order): void
     {
+        $adapter = new ClickBankAdapter();
+        $request = self::request(self::body($order, self::KEY_A));
+        self::assertNotNull($adapter->verify($request, [3 => [self::KEY_A]]));
+        $notification = $adapter->parse($request);
+        self::assertNull($notification->clickId);
+        $outcome = ClickAnswersAreWordedByTheProviderTest::answer($adapter, $notification);
+
+        self::assertSame(OutcomeKind::NO_CLICK, $outcome->kind);
         self::assertSame(
-            'Verified. The ' . $order['transactionType'] . ' of receipt ' . $order['receipt'] . ' carries no tracking'
-            . ' code (the HopLink had no tid=[[subid]]), so it names no click; nothing was recorded.',
-            self::refused($order, OutcomeKind::NO_CLICK)
+            'Verified. The ' . $order['transactionType'] . ' notification of transaction ' . $order['receipt']
+            . ' carries no tracking code or extclid (the HopLink had no tid=[[subid]] or extclid=[[subid]]), so it'
+            . ' names no click and ' . ($notification->kind->records() ? 'nothing was recorded.' : 'there is no sale'
+            . ' to reverse.'),
+            $outcome->message
         );
     }
 
@@ -314,6 +329,21 @@ final class ClickBankAdapterTest extends TestCase
             'trackingCodes is not a list',
             self::refused(self::sale(['trackingCodes' => ['a' => '42']]))
         );
+    }
+
+    /**
+     * The order is read whole before the Processor finds no click in it, so
+     * a time it cannot read is refused naming it, as PayKickstart's and
+     * JVZoo's are; it was answered no_click while the adapter raised that.
+     */
+    public function testAnUnreadableTimeIsRefusedWhetherOrNotTheOrderNamesAClick(): void
+    {
+        foreach ([['42'], []] as $codes) {
+            self::assertStringStartsWith(
+                'transactionTime is "yesterday"',
+                self::refused(self::sale(['trackingCodes' => $codes, 'transactionTime' => 'yesterday']))
+            );
+        }
     }
 
     /** Version 8.0 sends an affiliate the HopLink's extclid; a tracking code, where there is one, decides. */

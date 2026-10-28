@@ -570,10 +570,61 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         self::assertOutcome(OutcomeKind::IGNORED, 200, $created);
         $noClick = $this->post(self::fields(['custom_subid' => '']), self::KEY_1);
         self::assertOutcome(OutcomeKind::NO_CLICK, 200, $noClick);
-        self::assertSame('Verified. Transaction PK-TX-0001 names no click (the checkout link carried no subid),'
-            . ' so nothing was recorded.', $noClick->message);
+        self::assertSame(
+            'Verified. The sales notification of transaction PK-TX-0001 carries no custom_subid (the checkout link'
+            . ' had no subid=[[subid]]), so it names no click and nothing was recorded.',
+            $noClick->message
+        );
         self::assertOutcome(OutcomeKind::MALFORMED, 400, $this->post(self::fields(['amount' => '47,00']), self::KEY_1));
         self::assertSame([], self::conversions());
+    }
+
+    /**
+     * The answers about the click name PayKickstart's field and the checkout
+     * link's variable, and no other provider's (ClickAnswersAreWordedByTheProviderTest).
+     */
+    public function testNoClickAndAnUnknownClickAreAnsweredInPayKickstartsNames(): void
+    {
+        $missing = (string) (self::CLICK + 98);
+        $other = (string) self::OTHER_CLICK;
+        $refund = ['event' => 'refund'];
+        $cases = [
+            'a sale with no click' => [[], '', OutcomeKind::NO_CLICK, 200],
+            'a refund with no click' => [$refund, '', OutcomeKind::NO_CLICK, 200],
+            'a sale on a click that is not there' => [[], $missing, OutcomeKind::UNKNOWN_CLICK, 404],
+            'a sale on another account\'s click' => [[], $other, OutcomeKind::UNKNOWN_CLICK, 404],
+            'a refund on a click that is not there' => [$refund, $missing, OutcomeKind::UNKNOWN_CLICK, 404],
+        ];
+        $answers = [];
+        foreach ($cases as $what => [$overrides, $click, $kind, $status]) {
+            $outcome = $this->post(self::fields(['custom_subid' => $click] + $overrides), self::KEY_1);
+            self::assertOutcome($kind, $status, $outcome);
+            ClickAnswersAreWordedByTheProviderTest::assertNamesOnlyItsOwnField(
+                new PayKickstartAdapter(),
+                $outcome->message
+            );
+            $answers[$what] = $outcome->message;
+        }
+
+        self::assertSame(
+            'Verified. The refund notification of transaction PK-TX-0001 carries no custom_subid (the checkout link'
+            . ' had no subid=[[subid]]), so it names no click and there is no sale to reverse.',
+            $answers['a refund with no click']
+        );
+        self::assertSame(
+            'There is no click ' . $missing . ' in the account whose secret key verified this notification;'
+            . ' nothing was recorded. The click is the notification\'s custom_subid, which the checkout link\'s'
+            . ' subid=[[subid]] carries when the buyer comes through a tracker of that account.',
+            $answers['a sale on a click that is not there']
+        );
+        self::assertSame(
+            str_replace((string) self::OTHER_CLICK, 'N', $answers['a sale on another account\'s click']),
+            str_replace($missing, 'N', $answers['a sale on a click that is not there']),
+            'a click of another account answers as one that does not exist'
+        );
+        self::assertSame([], self::conversions());
+        self::assertStringContainsString('PayKickstart notification: no_click (200), sales (sale), transaction'
+            . ' PK-TX-0001: Verified.', (string) file_get_contents($this->log));
     }
 
     public function testAStoredEntryThatIsNotAKeyVerifiesNothing(): void

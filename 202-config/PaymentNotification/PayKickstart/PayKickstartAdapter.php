@@ -7,6 +7,7 @@ namespace Prosper202\PaymentNotification\PayKickstart;
 use Prosper202\Click\ClickId;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\ClickField;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
@@ -53,6 +54,11 @@ final class PayKickstartAdapter implements ProviderAdapter
     public function signatureField(): string
     {
         return 'hash';
+    }
+
+    public function clickField(): ClickField
+    {
+        return new ClickField('custom_subid', 'the checkout link', 'subid=[[subid]]');
     }
 
     public function storedSecrets(Connection $conn): array

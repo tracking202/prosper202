@@ -50,8 +50,8 @@ is answered with a 2xx):
 | `TEST`, and `TEST_SALE`, `TEST_BILL`, `TEST_RFND`, `CANCEL-TEST-REBILL`, `UNCANCEL-TEST-REBILL` | the key is marked Verified; nothing is recorded | `200 test` |
 | `CANCEL-REBILL` and `UNCANCEL-REBILL` (a subscription cancelled, a cancellation undone), `SUBSCRIPTION-CHG`, `ABANDONED_ORDER`, `CUSTOMER_AUTH_FAILURE`, `CUSTOMER_EMAIL_UPDATE`, `CUSTOMER_UPDATE_CC_NOTIFICATION`, `PURCHASE_DETAILS_EMAIL_RESPONSE` | nothing: no money moves | `200 ignored` |
 | a type ClickBank's INS article does not list | nothing | `400`, naming it |
-| a sale with no tracking code | nothing: no click to credit | `200 no_click` |
-| a tracking code that is not a click of the account | nothing | `404` |
+| a sale, rebill or reversal with no tracking code and no `extclid` | nothing: no click to credit; the answer says the HopLink had no `tid=[[subid]]` or `extclid=[[subid]]` | `200 no_click` |
+| a tracking code (or `extclid`) that is not a click of the account | nothing; the answer names the field, and the HopLink's `tid=[[subid]]` or `extclid=[[subid]]` that fills it | `404` |
 | a notification no stored key decrypts | nothing | `403` |
 | a key more than one account stores | nothing | `409` |
 | an account that counts in a currency other than USD | nothing: ClickBank's amounts are USD, and Prosper202 does not convert them | `422` |
@@ -107,8 +107,8 @@ What each IPN does, and what PayKickstart's IPN log shows for it:
 | a `refund` of a sale already reversed | nothing; a refund that takes back another amount than the one on file is refused, naming both: a full refund after a partial one says how much is still credited. Once that reversal is deleted, a later refund reverses the sale again; the deleted one's own refund, sent again unchanged, changes nothing | `200 duplicate` / `409` |
 | test mode (`mode=test`) | nothing | `200 test` |
 | `subscription-payment` and every other event | nothing (`sales` already counts every payment) | `200 ignored` |
-| a sale whose checkout carried no subid | nothing: no click to credit | `200 no_click` |
-| a `custom_subid` that is not a click of the account | nothing | `404` |
+| a sale or refund with no `custom_subid` (the checkout link carried no `subid=[[subid]]`) | nothing: no click to credit; the answer names both | `200 no_click` |
+| a `custom_subid` that is not a click of the account | nothing; the answer names `custom_subid`, and the checkout link's `subid=[[subid]]` that fills it | `404` |
 | a hash no stored key verifies | nothing | `403` |
 | a malformed field (an amount such as `1,000`, `custom_subid=[[subid]]`, a `transaction_time` that is not a Unix time) | nothing | `400`, naming the field |
 | an IPN that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
@@ -186,8 +186,8 @@ is sent again every hour for 72 hours):
 | a `SALE` again after its refund (JVZoo's way of undoing a refund) | nothing: the answer names the reversal; delete it (`p202 conversion delete <id>`) to count the sale again. A refund sent after that reverses the sale again; the first refund sent again unchanged is a retry and changes nothing | `409` |
 | `CANCEL-REBILL`, `UNCANCEL-REBILL` | nothing | `200 ignored` |
 | `TEST` | nothing | `200 test` |
-| a notification with no click (no tid, a tid that is not a click id, no `subid` in `cvendthru`) | nothing | `200 no_click` |
-| a click that is not one of the account's | nothing | `404` |
+| a notification with no click (no `caffitid` on the affiliate URL, a tid that is not a click id, no `subid` in `cvendthru` on the vendor URL) | nothing; the answer names the field the URL reads and the link's `?tid=[[subid]]` or `?subid=[[subid]]` that fills it | `200 no_click` |
+| a click that is not one of the account's | nothing; the answer names the field it came in | `404` |
 | a `cverify` no stored key verifies | nothing | `403` |
 | a malformed field (a `ctranstime` that is not a Unix time among them), a field JVZIPN v1 does not post, a URL with no `?role=` | nothing | `400`, naming it |
 | a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |

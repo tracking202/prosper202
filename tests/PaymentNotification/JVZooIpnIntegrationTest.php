@@ -477,12 +477,84 @@ final class JVZooIpnIntegrationTest extends TestCase
         }
         $noClick = $this->post(self::fields(['caffitid' => '']), self::KEY);
         self::assertOutcome(OutcomeKind::NO_CLICK, 200, $noClick);
-        self::assertSame('Verified. The SALE of receipt ' . self::RECEIPT . ' carries no tid (the affiliate link had'
-            . ' no ?tid=[[subid]]), so it names no click; nothing was recorded.', $noClick->message);
+        self::assertSame(
+            'Verified. The SALE notification of transaction ' . self::RECEIPT . ' carries no caffitid (the JVZoo'
+            . ' affiliate link had no ?tid=[[subid]]), so it names no click and nothing was recorded.',
+            $noClick->message
+        );
         self::assertOutcome(OutcomeKind::MALFORMED, 400, $this->post(self::fields(), self::KEY, null));
         $pennies = $this->post(self::fields(['ctransamount' => '4700']), self::KEY);
         self::assertOutcome(OutcomeKind::MALFORMED, 400, $pennies);
         self::assertSame([], self::conversions());
+    }
+
+    /**
+     * The answers about the click name the role's field and its link's
+     * variable, and no other provider's or role's (ClickAnswersAreWordedByTheProviderTest).
+     */
+    public function testNoClickAndAnUnknownClickAreAnsweredInTheRolesNames(): void
+    {
+        $missing = (string) (self::CLICK + 98);
+        $other = (string) self::OTHER_CLICK;
+        $roles = [
+            'affiliate' => [JVZooRole::AFFILIATE, static fn (string $click): array => ['caffitid' => $click]],
+            'vendor' => [JVZooRole::VENDOR, static fn (string $click): array => [
+                'caffitid' => (string) self::CLICK,
+                'cvendthru' => $click === '' ? 'utm=fb' : 'subid=' . $click,
+            ]],
+        ];
+        $answers = [];
+        foreach ($roles as $label => [$role, $click]) {
+            $cases = [
+                'a sale with no click' => ['SALE', '', OutcomeKind::NO_CLICK, 200],
+                'a refund with no click' => ['RFND', '', OutcomeKind::NO_CLICK, 200],
+                'a sale on a click that is not there' => ['SALE', $missing, OutcomeKind::UNKNOWN_CLICK, 404],
+                'a sale on another account\'s click' => ['SALE', $other, OutcomeKind::UNKNOWN_CLICK, 404],
+                'a chargeback on a click that is not there' => ['CGBK', $missing, OutcomeKind::UNKNOWN_CLICK, 404],
+            ];
+            foreach ($cases as $what => [$type, $clickId, $kind, $status]) {
+                $outcome = $this->post(self::fields(['ctransaction' => $type] + $click($clickId)), self::KEY, $role);
+                self::assertOutcome($kind, $status, $outcome);
+                ClickAnswersAreWordedByTheProviderTest::assertNamesOnlyItsOwnField(
+                    new JVZooAdapter($role),
+                    $outcome->message
+                );
+                $answers[$label . ': ' . $what] = $outcome->message;
+            }
+        }
+
+        self::assertSame(
+            'Verified. The SALE notification of transaction ' . self::RECEIPT . ' carries no subid in cvendthru'
+            . ' (the buy link had no ?subid=[[subid]]), so it names no click and nothing was recorded.',
+            $answers['vendor: a sale with no click']
+        );
+        self::assertSame(
+            'Verified. The RFND notification of transaction ' . self::RECEIPT . ' carries no caffitid (the JVZoo'
+            . ' affiliate link had no ?tid=[[subid]]), so it names no click and there is no sale to reverse.',
+            $answers['affiliate: a refund with no click']
+        );
+        self::assertSame(
+            'There is no click ' . $missing . ' in the account whose secret key verified this notification;'
+            . ' nothing was recorded. The click is the notification\'s caffitid, which the JVZoo affiliate link\'s'
+            . ' ?tid=[[subid]] carries when the buyer comes through a tracker of that account.',
+            $answers['affiliate: a sale on a click that is not there']
+        );
+        self::assertSame(
+            'There is no click ' . $missing . ' in the account whose secret key verified this notification;'
+            . ' nothing was recorded. The click is the notification\'s subid in cvendthru, which the buy link\'s'
+            . ' ?subid=[[subid]] carries when the buyer comes through a tracker of that account.',
+            $answers['vendor: a sale on a click that is not there']
+        );
+        foreach (['affiliate', 'vendor'] as $label) {
+            self::assertSame(
+                str_replace((string) self::OTHER_CLICK, 'N', $answers[$label . ': a sale on another account\'s click']),
+                str_replace($missing, 'N', $answers[$label . ': a sale on a click that is not there']),
+                'a click of another account answers as one that does not exist'
+            );
+        }
+        self::assertSame([], self::conversions());
+        self::assertStringContainsString('JVZoo notification: no_click (200), SALE (sale), transaction '
+            . self::RECEIPT . ': Verified.', (string) file_get_contents($this->log));
     }
 
     public function testAStoredEntryThatIsNotAKeyVerifiesNothing(): void

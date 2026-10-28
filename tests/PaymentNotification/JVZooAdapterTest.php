@@ -211,17 +211,27 @@ final class JVZooAdapterTest extends TestCase
     public static function noClick(): array
     {
         return [
-            'an affiliate sale with no tid' => [['caffitid' => ''], JVZooRole::AFFILIATE, 'carries no tid'],
-            'a tid that is not a click id' => [['caffitid' => 'fbweek1'], JVZooRole::AFFILIATE, 'tid "fbweek1"'],
-            'a tid of 0' => [['caffitid' => '0'], JVZooRole::AFFILIATE, 'tid "0"'],
-            'no tid field at all' => [['caffitid' => null], JVZooRole::AFFILIATE, 'carries no tid'],
-            'a vendor sale with no variables' => [['cvendthru' => ''], JVZooRole::VENDOR, 'carries no subid'],
-            'variables without subid' => [['cvendthru' => 'utm=fb&subid2=5'], JVZooRole::VENDOR, 'carries no subid'],
+            'an affiliate sale with no tid' => [['caffitid' => ''], JVZooRole::AFFILIATE, 'carries no caffitid'],
+            'no tid field at all' => [['caffitid' => null], JVZooRole::AFFILIATE, 'carries no caffitid'],
+            'a vendor sale with no variables' => [
+                ['cvendthru' => ''],
+                JVZooRole::VENDOR,
+                'carries no subid in cvendthru',
+            ],
+            'variables without subid' => [
+                ['cvendthru' => 'utm=fb&subid2=5'],
+                JVZooRole::VENDOR,
+                'carries no subid in cvendthru',
+            ],
             'a refund with no tid' => [['ctransaction' => 'RFND', 'caffitid' => ''], JVZooRole::AFFILIATE, 'RFND'],
+            'a vendor chargeback with no subid' => [['ctransaction' => 'CGBK'], JVZooRole::VENDOR, 'CGBK'],
         ];
     }
 
     /**
+     * A field that carries nothing is no click, which the Processor answers
+     * in the role's names (ClickAnswersAreWordedByTheProviderTest).
+     *
      * @dataProvider noClick
      * @param array<string, mixed> $overrides
      */
@@ -231,12 +241,42 @@ final class JVZooAdapterTest extends TestCase
         string $says
     ): void {
         $fields = array_filter(self::sale($overrides), static fn (mixed $v): bool => $v !== null);
-        $refusal = self::refusal(static fn () => (new JVZooAdapter($role))->parse(self::request($fields)));
+        $adapter = new JVZooAdapter($role);
+        $notification = $adapter->parse(self::request($fields));
+        self::assertNull($notification->clickId);
+        $outcome = ClickAnswersAreWordedByTheProviderTest::answer($adapter, $notification);
+
+        self::assertSame(OutcomeKind::NO_CLICK, $outcome->kind);
+        self::assertStringStartsWith('Verified. The ', $outcome->message);
+        self::assertStringContainsString($says, $outcome->message);
+        self::assertStringContainsString('5CA16795AA047184W', $outcome->message);
+        ClickAnswersAreWordedByTheProviderTest::assertNamesOnlyItsOwnField($adapter, $outcome->message);
+    }
+
+    /** @return array<string, array{string}> */
+    public static function tidThatIsNoClick(): array
+    {
+        return ['a word' => ['fbweek1'], 'zero' => ['0'], 'a decimal' => ['42.9']];
+    }
+
+    /**
+     * An affiliate's tid is theirs to use for any tracker: one that is there
+     * and is not a click id names no click, and the answer shows it.
+     *
+     * @dataProvider tidThatIsNoClick
+     */
+    public function testAnAffiliatesTidThatIsNoClickIdIsNoClickNamingIt(string $tid): void
+    {
+        $request = self::request(self::sale(['caffitid' => $tid]));
+        $refusal = self::refusal(static fn () => (new JVZooAdapter(JVZooRole::AFFILIATE))->parse($request));
 
         self::assertSame(OutcomeKind::NO_CLICK, $refusal->outcome->kind);
-        self::assertStringStartsWith('Verified. The ', $refusal->outcome->message);
-        self::assertStringContainsString($says, $refusal->outcome->message);
-        self::assertStringContainsString('5CA16795AA047184W', $refusal->outcome->message);
+        self::assertSame(
+            'Verified. The SALE of receipt 5CA16795AA047184W carries tid "' . $tid . '", which is not a Prosper202'
+            . ' click id, so nothing was recorded. A tracker fills ?tid=[[subid]] on the affiliate link with the'
+            . ' click id.',
+            $refusal->outcome->message
+        );
     }
 
     /** @return array<string, array{array<string, mixed>, ?JVZooRole, string}> */

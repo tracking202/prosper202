@@ -7,6 +7,7 @@ namespace Prosper202\PaymentNotification\JVZoo;
 use Prosper202\Click\ClickId;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\ClickField;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
@@ -79,6 +80,15 @@ final class JVZooAdapter implements ProviderAdapter
     public function signatureField(): string
     {
         return 'cverify';
+    }
+
+    public function clickField(): ClickField
+    {
+        if ($this->role === null) {
+            throw new \LogicException('a JVZoo URL with no role has no click field; parse() refuses its notifications');
+        }
+
+        return $this->role->clickField();
     }
 
     public function storedSecrets(Connection $conn): array
@@ -246,34 +256,36 @@ final class JVZooAdapter implements ProviderAdapter
     }
 
     /**
-     * The click this role's field names. None is answered as no_click
-     * (200), saying which field carried nothing.
+     * The click this role's field names, or null when it is empty, which the
+     * processor answers as no_click (200) in this role's names
+     * (JVZooRole::clickField()).
      *
      * @param array<array-key, mixed> $fields
      */
-    private function clickId(array $fields, string $type, string $receipt): int
+    private function clickId(array $fields, string $type, string $receipt): ?int
     {
-        $what = 'Verified. The ' . $type . ' of receipt ' . $receipt;
         if ($this->role === JVZooRole::AFFILIATE) {
             $tid = self::text($fields, 'caffitid');
-            $clickId = $tid !== null ? ClickId::parse($tid) : null;
+            if ($tid === null) {
+                return null;
+            }
+            $clickId = ClickId::parse($tid);
             if ($clickId !== null) {
                 return $clickId;
             }
-            throw Refusal::of(OutcomeKind::NO_CLICK, $what . ($tid === null
-                ? ' carries no tid (the affiliate link had no ?tid=[[subid]]), so it names no click; nothing was'
-                    . ' recorded.'
-                : ' carries tid "' . self::shown($tid) . '", which is not a Prosper202 click id, so nothing was'
-                    . ' recorded. A tracker fills ?tid=[[subid]] on the affiliate link with the click id.'));
+            // The tid is the affiliate's to use for any tracker: one that is
+            // not a click id names no click here, and the answer shows it.
+            throw Refusal::of(
+                OutcomeKind::NO_CLICK,
+                'Verified. The ' . $type . ' of receipt ' . $receipt . ' carries tid "' . self::shown($tid) . '",'
+                . ' which is not a Prosper202 click id, so nothing was recorded. A tracker fills ?tid=[[subid]] on'
+                . ' the affiliate link with the click id.'
+            );
         }
 
         $subids = self::vendorSubids(self::text($fields, 'cvendthru') ?? '');
         if ($subids === []) {
-            throw Refusal::of(
-                OutcomeKind::NO_CLICK,
-                $what . ' carries no subid in cvendthru (the buy link had no ?subid=[[subid]]), so it names no'
-                . ' click; nothing was recorded.'
-            );
+            return null;
         }
         if (count($subids) > 1) {
             throw self::malformed('cvendthru carries subid more than once, with different values.');

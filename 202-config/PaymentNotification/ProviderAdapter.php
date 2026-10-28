@@ -8,10 +8,11 @@ use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 
 /**
- * One payment provider's notifications (PayKickstart's IPN; JVZoo's and
- * ClickBank's are meant to follow): where its secrets are stored, how a
- * request is verified against them, and how a verified request reads as a
- * Notification. Recording is the Processor's, the same for every provider.
+ * One payment provider's notifications (PayKickstart's IPN, JVZoo's JVZIPN,
+ * ClickBank's INS): where its secrets are stored, how a request is verified
+ * against them, how a verified request reads as a Notification, and which
+ * field carries the click. Recording, and the answers about the click, are
+ * the Processor's, the same for every provider.
  *
  * The account a notification is for is the one whose stored secret
  * verifies it, never one the request names (CLAUDE.md #16).
@@ -26,6 +27,13 @@ interface ProviderAdapter
 
     /** The field its notifications carry their signature in ("hash"), for the answers. */
     public function signatureField(): string;
+
+    /**
+     * Where its notifications carry the click, which the answers to one that
+     * names no click, or a click the account does not have, are worded from
+     * (Processor). Called only for a notification parse() read.
+     */
+    public function clickField(): ClickField;
 
     /**
      * Every account's stored secrets for this provider. An entry that cannot
