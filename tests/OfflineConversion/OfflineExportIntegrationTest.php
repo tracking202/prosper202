@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\OfflineConversion;
 
+use Api\V3\Controllers\ClicksController;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\MysqlConversionRepository;
@@ -289,6 +290,32 @@ final class OfflineExportIntegrationTest extends TestCase
 
         [, $summary] = $this->file(new ExportOptions(Format::GOOGLE, 30, $this->now), self::OTHER);
         self::assertSame(0, $summary->conversions, 'another account reads none of them');
+    }
+
+    /**
+     * 202_google's key is (click_id, gclid), so a click can have two rows,
+     * and the one read first can have no gclid. The conversion is one line,
+     * with each id any row has: the gclid for Google, the msclkid for
+     * Microsoft, as GET /clicks names them.
+     */
+    public function testAClickWithTwoGoogleRowsIsSentOnceWithEachId(): void
+    {
+        $this->click(130, 7, ['gclid' => 'EAIaIQ_130']);
+        self::fixture("INSERT INTO 202_google SET click_id = 130, gclid = '',"
+            . " msclkid = '0123456789abcdef0123456789abc130', utm_source_id = 0, utm_medium_id = 0,"
+            . ' utm_campaign_id = 0, utm_term_id = 0, utm_content_id = 0');
+        $this->record(130, MatchMethod::CLICK_ID, ['payout' => '5', 'conv_time' => $this->now - 86400]);
+
+        [$lines, $summary] = $this->file(new ExportOptions(Format::GOOGLE, 30, $this->now, null, 'Sale'));
+        self::assertSame([1, 1], [$summary->conversions, $summary->rows], 'one conversion, one line');
+        self::assertStringStartsWith('EAIaIQ_130,,,Sale,', $lines[1]);
+
+        [$lines, $summary] = $this->file(new ExportOptions(Format::MICROSOFT, 30, $this->now, null, 'Sale'));
+        self::assertSame([1, 1], [$summary->conversions, $summary->rows]);
+        self::assertSame('0123456789abcdef0123456789abc130', explode(',', $lines[2])[4]);
+
+        $api = (new ClicksController(self::$db, self::USER))->get(130)['data'];
+        self::assertSame(['EAIaIQ_130', '0123456789abcdef0123456789abc130'], [$api['gclid'], $api['msclkid']]);
     }
 
     /**

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\OfflineConversion;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\AdClickIdColumns;
 use Prosper202\OfflineConversion\ExportOptions;
 use Prosper202\OfflineConversion\Format;
 use Prosper202\OfflineConversion\LeftOut;
@@ -121,7 +122,10 @@ final class ReasonForTest extends TestCase
         self::assertStringContainsString('cn.user_id = cl.user_id', $sql);
         self::assertStringContainsString('dn.user_id = cl.user_id', $sql);
         self::assertStringContainsString('WHERE cl.user_id = ?', $sql);
-        self::assertStringContainsString("(g.gclid <> '' OR g.gbraid <> '' OR g.wbraid <> '')", $sql);
+        foreach (['gclid', 'gbraid', 'wbraid', 'msclkid'] as $id) {
+            self::assertStringContainsString(AdClickIdColumns::sql($id, 'cl.click_id') . ", '') AS $id", $sql);
+        }
+        self::assertStringNotContainsString('JOIN 202_google', $sql, 'one row a conversion, as GET /clicks reads ids');
         $oldest = self::NOW - OfflineExport::CLICK_MAX_AGE;
         self::assertStringContainsString('AND cl.click_time BETWEEN ? AND ? THEN EXISTS', $sql);
         self::assertStringContainsString('oc.user_id = cl.user_id AND oc.click_time BETWEEN ? AND ?)', $sql);
@@ -130,7 +134,5 @@ final class ReasonForTest extends TestCase
             [$oldest, self::NOW, $oldest, self::NOW, 'google', 'google', 5, self::NOW - 7 * 86400, self::NOW, 12],
             $values
         );
-        [$sql] = OfflineExport::query(new ExportOptions(Format::MICROSOFT, 7, self::NOW), 5);
-        self::assertStringContainsString("(g.msclkid <> '')", $sql);
     }
 }

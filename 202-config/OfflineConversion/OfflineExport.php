@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\OfflineConversion;
 
 use Prosper202\Attribution\CountedAmount;
+use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Database\Connection;
@@ -81,7 +82,6 @@ final class OfflineExport
         $leftOut = array_fill_keys(LeftOut::values(), 0);
         $conversions = 0;
         $rows = 0;
-        $previous = 0;
         $limit = $format->rowLimit();
         $this->conn->eachRow($stmt, static function (array $row) use (
             $options,
@@ -92,15 +92,9 @@ final class OfflineExport
             $limit,
             &$leftOut,
             &$conversions,
-            &$rows,
-            &$previous
+            &$rows
         ): void {
             $convId = StoredRow::int($row, 'conv_id');
-            if ($convId === $previous) {
-                // A click with a second 202_google row: the conversion is written once.
-                return;
-            }
-            $previous = $convId;
             $stored = StoredRow::nullableText($row, 'conversion_name');
             $name = $options->conversionName ?? ($stored !== '' ? $stored : null);
             if ($options->onlyConversionName !== null && $name !== $options->onlyConversionName) {
@@ -222,19 +216,20 @@ final class OfflineExport
      * The read: every conversion of the account in the window that is not a
      * reversal, newest first, with the amount it counts for (NULL when it
      * does not count), its click's ids, its conversion name, and whether its
-     * click is the account's. That last is a lookup by click id that cannot
-     * be narrowed to a partition (about 175 µs a conversion on a 158-week
-     * install, measured), so it is asked only of a named conversion whose
-     * click has an id the layout writes.
+     * click is the account's, asked only of a named conversion whose click
+     * is in the file's range.
      *
      * @return array{0: string, 1: string, 2: list<int|string>}
      */
     public static function query(ExportOptions $options, int $userId): array
     {
-        $present = '(' . implode(' OR ', array_map(
-            static fn (string $column): string => "g.$column <> ''",
-            $options->format->idColumns()
-        )) . ')';
+        // Each id as GET /clicks reads it, one value per click however many
+        // 202_google rows it has (AdClickIdColumns::sql()), so a conversion is
+        // one row here and names the ids the API names.
+        $ids = '';
+        foreach (['gclid', 'gbraid', 'wbraid', 'msclkid'] as $id) {
+            $ids .= ' COALESCE(' . AdClickIdColumns::sql($id, 'cl.click_id') . ", '') AS $id,";
+        }
         $named = "'" . MatchMethod::CLICK_ID->value . "', '" . MatchMethod::COOKIE->value . "'";
         // Whose click: any visit's row answers (a click's visits share its
         // user_id). 202_clicks is partitioned by click_time, and a probe by
@@ -244,15 +239,12 @@ final class OfflineExport
         // bounded by that range and reads only those days' partitions.
         $oldest = $options->now - self::CLICK_MAX_AGE;
         $sql = 'SELECT cl.conv_id, cl.click_time, cl.conv_time, cl.match_method, '
-            . CountedAmount::sqlOrNull('cl') . ' AS counted_amount,'
-            . " COALESCE(g.gclid, '') AS gclid, COALESCE(g.gbraid, '') AS gbraid,"
-            . " COALESCE(g.wbraid, '') AS wbraid, COALESCE(g.msclkid, '') AS msclkid,"
+            . CountedAmount::sqlOrNull('cl') . ' AS counted_amount,' . $ids
             . ' COALESCE(cn.conversion_name, dn.conversion_name) AS conversion_name,'
-            . " CASE WHEN cl.match_method IN ($named) AND $present AND cl.click_time BETWEEN ? AND ?"
+            . " CASE WHEN cl.match_method IN ($named) AND cl.click_time BETWEEN ? AND ?"
             . ' THEN EXISTS (SELECT 1 FROM 202_clicks AS oc WHERE oc.click_id = cl.click_id AND oc.user_id = cl.user_id'
             . ' AND oc.click_time BETWEEN ? AND ?) END AS owned'
             . ' FROM 202_conversion_logs AS cl'
-            . ' LEFT JOIN 202_google AS g ON g.click_id = cl.click_id'
             . ' LEFT JOIN 202_offline_conversion_names AS cn ON cn.user_id = cl.user_id AND cn.platform = ?'
             . ' AND cn.aff_campaign_id = cl.campaign_id'
             . ' LEFT JOIN 202_offline_conversion_names AS dn ON dn.user_id = cl.user_id AND dn.platform = ?'
