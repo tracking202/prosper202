@@ -76,23 +76,91 @@ func fetchCampaignPayout(c *api.Client, campaignID string) (float64, error) {
 	return toFloat(resp.Data["aff_campaign_payout"]), nil
 }
 
-// fetchBreakdownRows runs a breakdown report and returns its rows.
-func fetchBreakdownRows(c *api.Client, params map[string]string) ([]map[string]interface{}, error) {
-	data, err := c.Get("reports/breakdown", params)
+// breakdownReadRows bounds what a command that ranks, sums or picks breakdown rows reads: ten pages, each a full
+// aggregation on the server. Past it the command says its answer covers these rows.
+const breakdownReadRows = 5000
+
+// fetchBreakdownRows reads a breakdown's rows in the server's order, page after page, until it has want of them or
+// none remain; truncated says rows remain after those returned. A request asks for one row more than it still needs,
+// which answers that on a server from before `truncated` too.
+func fetchBreakdownRows(c *api.Client, params map[string]string, want int) ([]map[string]interface{}, bool, error) {
+	var all []map[string]interface{}
+	seen := map[string]bool{}
+	for offset := 0; ; {
+		limit := min(breakdownPageSize, want-len(all)+1)
+		page := make(map[string]string, len(params)+2)
+		for k, v := range params {
+			page[k] = v
+		}
+		page["limit"], page["offset"] = strconv.Itoa(limit), strconv.Itoa(offset)
+		data, err := c.Get("reports/breakdown", page)
+		if err != nil {
+			return nil, false, err
+		}
+		// Every caller ranks or sums these rows.
+		if err := refuseMaskedFigures(data, "This command"); err != nil {
+			return nil, false, err
+		}
+		var resp struct {
+			Data      []map[string]interface{} `json:"data"`
+			Truncated *bool                    `json:"truncated"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, false, err
+		}
+		added := 0
+		for _, r := range resp.Data {
+			// New traffic can move a row onto the next page; read twice, it counts once.
+			if id := scalarString(r["id"]); id != "" {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+			}
+			all = append(all, r)
+			added++
+		}
+		more := len(resp.Data) == limit
+		if resp.Truncated != nil {
+			more = *resp.Truncated
+		}
+		switch {
+		case len(all) > want:
+			return all[:want], true, nil
+		case !more:
+			return all, false, nil
+		case len(all) == want && resp.Truncated != nil:
+			return all, true, nil
+		case added == 0:
+			return nil, false, withHint(fmt.Errorf("reading reports/breakdown: the page at offset %d held only rows already read", offset),
+				"The server keeps returning the same rows; retry, and if it persists check the API version with `p202 system version` and the server logs.")
+		}
+		offset += len(resp.Data)
+	}
+}
+
+// coversFirstRowsNote is the note of a command whose answer was computed from the first breakdownReadRows rows
+// (fetchBreakdownRows said rows remain): which rows it covers and how to read them all.
+func coversFirstRowsNote(dimension, order string) string {
+	return fmt.Sprintf("Note: this answer covers the first %d %s rows (%s); the breakdown has more. "+
+		"Narrow the window (--period, --time-from/--time-to) or add a filter to cover every row.",
+		breakdownReadRows, dimension, order)
+}
+
+// pageJSON is rows as a command's answer, with what the breakdown said about the rows after them.
+func pageJSON(rows []map[string]interface{}, page map[string]interface{}) []byte {
+	out := map[string]interface{}{"data": rows}
+	for k, v := range page {
+		out[k] = v
+	}
+	b, err := json.Marshal(out)
 	if err != nil {
-		return nil, err
+		// Returning nil here would render as no output at all; render() reports
+		// the empty payload, so add the cause.
+		fmt.Fprintf(os.Stderr, "Error encoding rows for output: %v\n", err)
+		return nil
 	}
-	// Every caller ranks or sums these rows.
-	if err := refuseMaskedFigures(data, "This command"); err != nil {
-		return nil, err
-	}
-	var resp struct {
-		Data []map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Data, nil
+	return b
 }
 
 // enrichBreakeven adds breakeven_cpc, margin, and a verdict to each row.
@@ -150,14 +218,7 @@ func round(f float64, places int) float64 {
 }
 
 func rowsToJSON(rows []map[string]interface{}) []byte {
-	out, err := json.Marshal(map[string]interface{}{"data": rows})
-	if err != nil {
-		// Returning nil here would render as no output at all; render() reports
-		// the empty payload, so add the cause.
-		fmt.Fprintf(os.Stderr, "Error encoding rows for output: %v\n", err)
-		return nil
-	}
-	return out
+	return pageJSON(rows, nil)
 }
 
 var reportBreakevenCmd = &cobra.Command{
@@ -165,7 +226,8 @@ var reportBreakevenCmd = &cobra.Command{
 	Short: "Break-even CPC per row: max biddable click price (payout × conversion rate)",
 	Long: "Computes the maximum profitable cost-per-click for each breakdown row.\n" +
 		"breakeven_cpc = campaign payout × (conversions / clicks); margin = breakeven_cpc − avg_cpc.\n" +
-		"Requires --aff-campaign-id (the INTERNAL id from `campaign list`) to read the payout.",
+		"Requires --aff-campaign-id (the INTERNAL id from `campaign list`) to read the payout.\n\n" +
+		"One page, as in `report breakdown` (--limit, --offset), ranked by margin; truncated: true says rows remain.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
 		if campaignID == "" {
@@ -194,14 +256,44 @@ var reportBreakevenCmd = &cobra.Command{
 			breakdown = "keyword"
 		}
 		params["breakdown"] = resolveDimension(breakdown)
+		for _, f := range []string{"limit", "offset"} {
+			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
+				params[f] = v
+			}
+		}
 
-		rows, err := fetchBreakdownRows(c, params)
+		// One page, as `report breakdown` reads it: the answer is a row per row, so it pages like one.
+		data, err := c.Get("reports/breakdown", params)
 		if err != nil {
 			return err
 		}
+		if err := refuseMaskedFigures(data, "This command"); err != nil {
+			return err
+		}
+		var resp struct {
+			Data      []map[string]interface{} `json:"data"`
+			Truncated *bool                    `json:"truncated"`
+			Limit     *int                     `json:"limit"`
+			Offset    *int                     `json:"offset"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return err
+		}
+		rows := resp.Data
 		enrichBreakeven(rows, payout, maxCPC)
 		sortRowsBy(rows, "margin", true) // worst margin first
-		render(rowsToJSON(rows))
+		page := map[string]interface{}{}
+		if resp.Truncated != nil {
+			page["truncated"] = *resp.Truncated
+		}
+		if resp.Limit != nil {
+			page["limit"] = *resp.Limit
+		}
+		if resp.Offset != nil {
+			page["offset"] = *resp.Offset
+		}
+		render(pageJSON(rows, page))
+		noteForPeople(cmd, breakdownMoreRowsNote(data, params, ", most clicks first (each page ranked by margin)"))
 		return nil
 	},
 }
@@ -734,7 +826,7 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				payout, _ = fetchCampaignPayout(client, campaignID)
 			}
 
-			rows, err := fetchBreakdownRows(client, params)
+			rows, truncated, err := fetchBreakdownRows(client, params, breakdownReadRows)
 			if err != nil {
 				return err
 			}
@@ -820,6 +912,9 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			for _, n := range notes {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
 			}
+			if truncated {
+				noteForPeople(cmd, coversFirstRowsNote(params["breakdown"], "most clicks first"))
+			}
 			listed := make([]map[string]interface{}, 0, len(picked))
 			for _, t := range picked {
 				listed = append(listed, t.row)
@@ -832,7 +927,7 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				first = "SCALE"
 			}
 			sort.SliceStable(out, func(i, j int) bool { return out[i]["bucket"] == first && out[j]["bucket"] != first })
-			render(rowsToJSON(out))
+			render(pageJSON(out, map[string]interface{}{"truncated": truncated}))
 			return nil
 		},
 	}
@@ -932,11 +1027,16 @@ func sortRowsBy(rows []map[string]interface{}, field string, asc bool) {
 	})
 }
 
+// triageReadNote ends `report losers` and `report winners`' help: what they read.
+var triageReadNote = fmt.Sprintf("It reads up to the %d rows with the most clicks; truncated: true says there were more.", breakdownReadRows)
+
 func init() {
 	addReportFilters(reportBreakevenCmd)
 	reportBreakevenCmd.Flags().StringP("breakdown", "b", "keyword", "Dimension")
 	enumFlag(reportBreakevenCmd, "breakdown", dimensionEnum(breakdownDimensions))
 	reportBreakevenCmd.Flags().Float64("max-cpc", 0, "Override the payout-derived break-even CPC target")
+	reportBreakevenCmd.Flags().StringP("limit", "l", "", "Rows per page (default 50, max 500)")
+	reportBreakevenCmd.Flags().StringP("offset", "o", "", "Rows to skip")
 	reportCmd.AddCommand(reportBreakevenCmd)
 
 	losers := triageCmd("losers", "Rows to CUT: over-bid keywords/geos and zero-conversion spend; rows that start sales come back as TEST", false)
@@ -957,7 +1057,8 @@ func init() {
 		"A filter other than the breakdown itself (an entity id, --keyword, --show, --ip, ...) turns the check off: the\n" +
 		"attribution report is account-wide.\n" +
 		"On a server that can't page the attribution report, rows past the first page are marked attribution_checked:\n" +
-		"false. --no-attribution-check turns it off."
+		"false. --no-attribution-check turns it off.\n\n" +
+		triageReadNote
 	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos; closers come back as CLOSER", true)
 	winners.Long = "Rows to SCALE from the classic (last-click) report: profitable and converting. Profit is the campaign's\n" +
 		"recorded income less cost, or with --payout (your revenue per conversion) sales × payout less cost, the value the\n" +
@@ -970,7 +1071,8 @@ func init() {
 		"The check runs for campaign, ppc_account (traffic source), landing_page, keyword and country, and needs a First\n" +
 		"touch model (the first active one, or --first-touch-model) and an attribution:read key. When it can't run, the\n" +
 		"classic winners are still listed with the reason on stderr. A filter other than the breakdown itself (an entity\n" +
-		"id, --keyword, --show, ...) turns it off; --no-attribution-check does too."
+		"id, --keyword, --show, ...) turns it off; --no-attribution-check does too.\n\n" +
+		triageReadNote
 	for _, c := range []*cobra.Command{losers, winners} {
 		addReportFilters(c)
 		c.Flags().StringP("breakdown", "b", "keyword", "Dimension to triage")

@@ -2585,6 +2585,10 @@ paths:
         moves with the clock and new traffic changes the sort values, so page
         a fixed `time_from`/`time_to` window for a consistent read.
 
+        `truncated` is true when rows remain after the page: read on with
+        `offset` plus `limit` until it is false, and check it before summing
+        or ranking the rows of one page.
+
         Each row is one stored value of the dimension; clicks with no value
         for it (no referer, no c1, not matched by a rotator rule) are in the
         summary and in no row. `ip` is the visitor's address (IPv6 decoded),
@@ -2708,6 +2712,20 @@ paths:
                     type: array
                     items:
                       type: string
+                  truncated:
+                    type: boolean
+                    description: >-
+                      True when rows remain after this page; false on the last
+                      page, including a page of exactly the rows that remain.
+                      Absent from servers that predate it.
+                  limit:
+                    type: integer
+                    description: The page size this answer was read with (the request's, or 50).
+                    example: 50
+                  offset:
+                    type: integer
+                    description: The rows skipped before this page.
+                    example: 0
         "422":
           $ref: "#/components/responses/ValidationError"
 

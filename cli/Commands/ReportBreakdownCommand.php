@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use Api\V3\Controllers\ReportsController;
 use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
 class ReportBreakdownCommand extends BaseCommand
@@ -46,6 +48,38 @@ class ReportBreakdownCommand extends BaseCommand
 
         $result = $this->client()->get('reports/breakdown', $params);
         $this->render($output, $result, $input);
+        // --json carries `truncated` itself; a table says it on stderr.
+        $note = $this->isJson($input) ? null : self::moreRowsNote($result);
+        if ($note !== null) {
+            ($output instanceof ConsoleOutputInterface ? $output->getErrorOutput() : $output)->writeln($note);
+        }
         return Command::SUCCESS;
+    }
+
+    /**
+     * The note under a page with rows after it (`truncated`), naming the
+     * --offset that reads them; null for the last page.
+     *
+     * @param array<mixed> $result
+     */
+    public static function moreRowsNote(array $result): ?string
+    {
+        if (($result['truncated'] ?? null) !== true) {
+            return null;
+        }
+        $rows = is_array($result['data'] ?? null) ? count($result['data']) : 0;
+        $offset = is_int($result['offset'] ?? null) ? $result['offset'] : 0;
+        $limit = is_int($result['limit'] ?? null) ? $result['limit'] : $rows;
+        $note = sprintf(
+            'Note: more rows remain after rows %d-%d; --offset %d reads the next page',
+            $offset + 1,
+            $offset + $rows,
+            $offset + $rows
+        );
+        if ($limit < ReportsController::BREAKDOWN_MAX_LIMIT) {
+            $note .= sprintf(' (--limit takes up to %d)', ReportsController::BREAKDOWN_MAX_LIMIT);
+        }
+
+        return $note . '.';
     }
 }

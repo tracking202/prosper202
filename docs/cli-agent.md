@@ -293,6 +293,23 @@ A row is one stored value: clicks with no value for the dimension (no referer, n
 
 Rows tied on the sort column come back in id order, so paging with `--offset` (offset = rows read so far) neither skips nor repeats a row. `--sort` takes any metric column (`cpa`, `avg_cpc`, `total_click_throughs` included); an unknown one is refused by name.
 
+**Check `truncated` before totalling or ranking rows.** One answer is one page (`--limit`, default 50, at most 500). Beside `data` it carries `truncated`, `limit` and `offset`: `"truncated": true` means rows remain after this page, so the page's rows are not the dimension's figures. Read on with `--offset` = `offset` + `limit` until `truncated` is `false` (a page of exactly the remaining rows says `false`), or take totals from `report summary`. Under `--ndjson` every line carries `"truncated": true`; under a table, stderr has one `Note:` naming the next `--offset`. `--json` and `--ndjson` keep stderr for errors. `analytics` (without `--split-at`) answers the same way. A server from before the flag sends none of the three keys; a page it filled to the limit may have rows after it.
+
+```json
+{"data":[...50 rows...],"breakdown":"keyword","available_breakdowns":[...],"truncated":true,"limit":50,"offset":0}
+```
+
+The commands that compute from a breakdown say what their answer covers:
+
+| Command | Reads | `"truncated": true` means |
+|---|---|---|
+| `report breakeven` | one page, as `report breakdown` (`--limit`, `--offset`), most clicks first, ranked by margin within the page | rows remain after the page: read on with `--offset` |
+| `report losers`, `report winners` | every row, 500 a request, up to the 5000 with the most clicks | the classification covers only those 5000: narrow the window or filter |
+| `report crosstab` | the `--limit-rows` (default 20; `0` for up to 5000) rows with the highest `--metric`, ranked by the server over every row; every column value of each, up to 5000 | rows remain past `--limit-rows`, or a row's columns past 5000 |
+| `campaign optimize` | every other campaign, most revenue first, up to 5000 | the EPC ranking covers only those 5000 |
+
+`losers`, `winners`, `crosstab` and `campaign optimize` always carry `truncated` in `--json`, `false` when nothing was left out.
+
 Narrow any report with the Analyze pages' filters, which combine:
 
 ```bash
@@ -318,7 +335,7 @@ Periods: `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth
 p202 report timeseries --interval day --period last90 --json
 ```
 
-One bucket per `period`, oldest first, at most 2000 per response. When the window holds more, the response carries `"truncated": true` and `"limit": 2000` beside `data` and `interval`, the newest buckets are the missing ones, and stderr has a `Warning:` naming the last bucket returned plus a `Hint:` — narrow `--time-from`/`--time-to`, or use a coarser `--interval` (`week`, `month`). Check `truncated` before treating the last bucket as the latest. A server from before the flag sends neither key and cuts at 2000 silently; 2000 buckets from one of those get the same warning, as "may be missing".
+One bucket per `period`, oldest first, at most 2000 per response. When the window holds more, the response carries `"truncated": true` and `"limit": 2000` beside `data` and `interval` (each `--ndjson` line carries `"truncated": true`), the newest buckets are the missing ones, and stderr has a `Warning:` naming the last bucket returned plus a `Hint:` — narrow `--time-from`/`--time-to`, or use a coarser `--interval` (`week`, `month`). Check `truncated` before treating the last bucket as the latest. A server from before the flag sends neither key and cuts at 2000 silently; 2000 buckets from one of those get the same warning, as "may be missing".
 
 ### Compare before and after a date
 
@@ -880,7 +897,9 @@ p202 report summary    [-p period] [--time-from T] [--time-to T] [filters...]
 p202 report breakdown  [-b dimension] [-s sort_col] [--sort-dir ASC|DESC]
                        [-l limit] [-o offset] [-p period] [filters...] [--json]
 p202 analytics         --group-by DIM [--period P | --days N]
-                       [--sort METRIC] [--sort-dir ASC|DESC] [filters...] [--json]
+                       [--sort METRIC] [--sort-dir ASC|DESC] [-l limit] [-o offset] [filters...] [--json]
+p202 report breakeven  --aff-campaign-id ID [-b dimension] [--max-cpc N]
+                       [-l limit] [-o offset] [-p period] [filters...] [--json]
 p202 analytics         --group-by DIM --split-at YYYY-MM-DD|UNIX
                        [--days N | --time-from UNIX [--time-to UNIX]]
                        [--sort clicks|conversions|revenue[_per_day]] [--sort-dir ASC|DESC]

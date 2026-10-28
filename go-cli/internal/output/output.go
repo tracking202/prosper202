@@ -177,14 +177,22 @@ func renderQuiet(data []byte) {
 // renderNDJSON prints one compact JSON object per row.
 func renderNDJSON(data []byte) {
 	// A masked answer's flag sits beside its rows; each line carries it, so
-	// a reader of one line knows its blanks are hidden, not zero.
+	// a reader of one line knows its blanks are hidden, not zero. So does a
+	// truncated one's: a reader summing the lines knows rows remain.
 	var top struct {
 		Masked bool `json:"masked"`
+		// Raw: a `truncated` that is a count elsewhere must not unread masked.
+		Truncated json.RawMessage `json:"truncated"`
 	}
-	masked := json.Unmarshal(data, &top) == nil && top.Masked
+	parsed := json.Unmarshal(data, &top) == nil
+	masked := parsed && top.Masked
+	truncated := parsed && string(top.Truncated) == "true"
 	for _, obj := range rowsOf(data) {
 		if masked {
 			obj["masked"] = true
+		}
+		if truncated {
+			obj["truncated"] = true
 		}
 		if b, err := json.Marshal(obj); err == nil {
 			fmt.Println(string(b))

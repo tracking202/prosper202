@@ -396,7 +396,8 @@ class ReportsController
             ORDER BY $sortBy $sortDir, $idSql ASC
             LIMIT ? OFFSET ?";
 
-        $binds[] = $limit;
+        // One row past the page says whether rows remain (`truncated`).
+        $binds[] = $limit + 1;
         $types .= 'i';
         $binds[] = $offset;
         $types .= 'i';
@@ -422,10 +423,18 @@ class ReportsController
         }
         $stmt->close();
 
+        $truncated = count($rows) > $limit;
+        if ($truncated) {
+            $rows = array_slice($rows, 0, $limit);
+        }
+
         return [
             'data' => $rows,
             'breakdown' => $breakdownType,
             'available_breakdowns' => array_keys(self::BREAKDOWNS),
+            'truncated' => $truncated,
+            'limit' => $limit,
+            'offset' => $offset,
         ];
     }
 

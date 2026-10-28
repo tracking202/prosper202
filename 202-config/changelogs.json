@@ -33,7 +33,8 @@
       "Fixed: A GeoIP database that cannot be opened no longer stops a click; the visitor is recorded without a location, and the error log says why",
       "Fixed: LTV webhooks are sent only to public addresses. Azure's 168.63.129.16 and IPv6 spellings of loopback and the cloud metadata address (::ffff:169.254.169.254) were let through and called; such a webhook is now refused when it is saved, and its deliveries are logged \"blocked\" and not sent. A receiver on your own network needs P202_WEBHOOK_ALLOW_NETWORKS in 202-config.php",
       "Changed: A pixel that names no click guesses it from the visitor's IP address only for an account with Match conversions by IP address on (Personal Settings, under Advanced). New accounts start with it off; accounts from before 1.9.79 keep it on, and choosing Off there stops the guesses. A visitor your privacy setting holds back is never matched by IP address",
-      "Fixed: The global and universal pixels guess a click from the IP address among the clicks of the account whose campaign the pixel names, not the first account's"
+      "Fixed: The global and universal pixels guess a click from the IP address among the clicks of the account whose campaign the pixel names, not the first account's",
+      "New: A report breakdown from the API or the CLI says when it has more rows than it returned, and the CLI's losers, winners, crosstab and campaign optimize read every page they need instead of the first 50 rows"
     ]
   },
   "1.9.78": {

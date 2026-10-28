@@ -204,18 +204,23 @@ const textAdNote = "To use it on a tracker, set the tracker's text_ad_id (tracke
 
 const reportFilterNote = "Filter with the *_id arguments (ids from the list tools) and choose the window with period, or time_from and time_to."
 
+// pageNote is on the tools that answer one page: truncated: true says rows
+// remain. (winners and losers say it too, past 5000 rows, which few reach.)
+const pageNote = "truncated: true: more rows at offset + limit."
+
 var mcpToolSpecs = []mcpToolSpec{
 	// Reports
 	{Name: "report_summary", Command: []string{"report", "summary"}, Title: "Performance totals", Kind: mcpRead, Note: reportFilterNote},
-	{Name: "report_breakdown", Command: []string{"report", "breakdown"}, Title: "Performance by dimension", Kind: mcpRead, Note: "The Overview and Analyze pages: choose the dimension with breakdown (campaign, ppc_account, country, keyword, landing_page, device, ...). " + reportFilterNote},
+	{Name: "report_breakdown", Command: []string{"report", "breakdown"}, Title: "Performance by dimension", Kind: mcpRead, Note: "The Overview and Analyze pages: choose the dimension with breakdown (campaign, ppc_account, country, keyword, landing_page, device, ...). " + reportFilterNote + " " + pageNote},
 	{Name: "report_timeseries", Command: []string{"report", "timeseries"}, Title: "Performance over time", Kind: mcpRead, Note: reportFilterNote, Omit: rareFilters},
 	{Name: "report_daypart", Command: []string{"report", "daypart"}, Title: "Performance by hour of day", Kind: mcpRead, Omit: rareFilters},
 	{Name: "report_weekpart", Command: []string{"report", "weekpart"}, Title: "Performance by day of week", Kind: mcpRead, Omit: rareFilters},
 	{Name: "report_groups", Command: []string{"report", "groups"}, Title: "Grouped performance", Kind: mcpRead, Omit: rareFilters, Required: []string{"by"}},
-	{Name: "report_crosstab", Command: []string{"report", "crosstab"}, Title: "Two-dimension performance table", Kind: mcpRead, Omit: rareFilters, Required: []string{"rows", "cols"}},
+	{Name: "report_crosstab", Command: []string{"report", "crosstab"}, Title: "Two-dimension performance table", Kind: mcpRead, Omit: rareFilters, Required: []string{"rows", "cols"},
+		Note: "truncated: true: rows or columns left out."},
 	{Name: "report_winners", Command: []string{"report", "winners"}, Title: "Rows to scale", Kind: mcpRead, Omit: rareFilters},
 	{Name: "report_losers", Command: []string{"report", "losers"}, Title: "Rows to cut", Kind: mcpRead, Omit: rareFilters},
-	{Name: "report_breakeven", Command: []string{"report", "breakeven"}, Title: "Break-even CPC", Kind: mcpRead, Omit: rareFilters, Required: []string{"aff-campaign-id"}},
+	{Name: "report_breakeven", Command: []string{"report", "breakeven"}, Title: "Break-even CPC", Kind: mcpRead, Omit: rareFilters, Required: []string{"aff-campaign-id"}, Note: pageNote},
 	{Name: "forecast", Command: []string{"forecast"}, Title: "Forecast performance", Kind: mcpRead, Required: []string{"metric"}},
 	{Name: "attribution_breakdown", Command: []string{"attribution", "breakdown"}, Title: "Attributed conversions by dimension", Kind: mcpRead},
 

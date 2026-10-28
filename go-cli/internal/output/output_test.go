@@ -605,6 +605,32 @@ func TestRenderNDJSON(t *testing.T) {
 	}
 }
 
+// A truncated answer's flag sits beside its rows, as masked does: each NDJSON
+// line carries it, so a reader summing the lines knows rows remain. A
+// `truncated` that is not true (false, or a count) stamps nothing and leaves
+// masked read.
+func TestRenderNDJSONStampsATruncatedAnswersLines(t *testing.T) {
+	out := captureStdout(t, func() {
+		RenderWith([]byte(`{"data":[{"id":1},{"id":2}],"truncated":true,"limit":2}`), Opts{NDJSON: true})
+	})
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], `"truncated":true`) || !strings.Contains(lines[1], `"truncated":true`) {
+		t.Errorf("every line carries truncated, got:\n%s", out)
+	}
+	for _, body := range []string{
+		`{"data":[{"id":1}],"truncated":false}`,
+		`{"data":[{"id":1}],"truncated":3,"masked":true}`,
+	} {
+		out = captureStdout(t, func() { RenderWith([]byte(body), Opts{NDJSON: true}) })
+		if strings.Contains(out, "truncated") {
+			t.Errorf("%s: no stamp, got %s", body, out)
+		}
+		if strings.Contains(body, "masked") && !strings.Contains(out, `"masked":true`) {
+			t.Errorf("%s: a count in truncated must not unread masked, got %s", body, out)
+		}
+	}
+}
+
 func TestTrimLongDecimal(t *testing.T) {
 	cases := map[string]string{
 		"0.288613861":   "0.2886",

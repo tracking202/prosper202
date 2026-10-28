@@ -1133,6 +1133,14 @@ A row is one stored value; clicks with no value for the dimension (no referer, n
 
 Rows tied on the sort column come back in id order, so paging with `--offset` neither skips nor repeats a row.
 
+A page with rows after it says so: `--json` carries the server's `"truncated": true` with the page's `limit` and `offset`, each `--ndjson` line carries `"truncated": true`, and a table (or `--csv`, `--quiet`) gets one line on stderr naming the next page, e.g. `Note: more rows remain after rows 1-50; --offset 50 reads the next page (--limit takes up to 500).` Don't total the rows of a truncated page as the dimension's figures: read on with `--offset` until `truncated` is false, or use `report summary` for the totals. `--min-clicks`, `--min-cost`, `--zero-leads` and `--having` filter only the page read, and the note says so. A server from before the flag says nothing; a page it filled to `--limit` gets the note as "does not say whether rows remain".
+
+The commands built on a breakdown say the same:
+
+- `report breakeven` reads one page as `report breakdown` does (`-l, --limit`, default 50, at most 500; `-o, --offset`), most clicks first, and ranks that page by margin; `--json` carries `truncated`, `limit` and `offset`, and a table's note names the next `--offset`.
+- `report losers`, `report winners` and `campaign optimize` classify or rank every row: they read page after page, 500 rows a request, up to the 5000 with the most clicks (`campaign optimize`: the most revenue). Their `--json` always has `truncated`; `true` means the answer covers only those 5000, and a table's note says so.
+- `report crosstab` asks the server for the `--limit-rows` (default 20; `0` for up to 5000) row values with the highest `--metric`, ranked over every row, and reads every column value of each, up to 5000. `"truncated": true` means rows remain past `--limit-rows` or a row's columns past 5000; the note says which.
+
 ### Analytics shorthand
 
 ```bash
@@ -1144,6 +1152,7 @@ p202 analytics --group-by campaign --days 14 --sort roi --limit 10
 - `--group-by` takes the breakdown dimensions above; `lp`, `source`, `network`, `offer` and `geo` map to `landing_page`, `ppc_account`, `aff_network`, `campaign` and `country`
 - `--sort conversions` maps to `total_leads`
 - `--period` takes precedence over `--days`
+- a page with rows after it carries `truncated` and gets the same note as `report breakdown`
 
 #### Before/after a date (`--split-at`)
 

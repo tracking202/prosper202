@@ -348,6 +348,54 @@ func TestMCPCallCarriesProfileAndStaged(t *testing.T) {
 	}
 }
 
+// The report tools that can leave rows out answer with truncated; the ones
+// that commonly do say in their description what to do then, and the
+// one-page ones take the offset that reads on.
+func TestMCPReportToolsSayWhenRowsRemain(t *testing.T) {
+	cat, err := buildMCPCatalog(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]mcpTool{}
+	for _, tool := range cat.Tools {
+		tools[tool.Name] = tool
+	}
+	for _, name := range []string{"report_breakdown", "report_breakeven", "report_crosstab"} {
+		if !strings.Contains(tools[name].Description, "truncated: true") {
+			t.Errorf("%s's description does not say what truncated means: %q", name, tools[name].Description)
+		}
+	}
+	for _, name := range []string{"report_breakdown", "report_breakeven"} {
+		for _, arg := range []string{"limit", "offset"} {
+			if _, ok := tools[name].InputSchema.Properties[arg]; !ok {
+				t.Errorf("%s takes no %s", name, arg)
+			}
+		}
+	}
+
+	_, requests := depthServer(t, pagedBreakdown(80, true))
+	for tool, input := range map[string]string{
+		"report_breakdown": `{"breakdown":"keyword","offset":"20"}`,
+		"report_breakeven": `{"aff_campaign_id":"3","limit":"20","offset":"20"}`,
+		"report_losers":    `{"breakdown":"keyword","no_attribution_check":true}`,
+	} {
+		stdout, stderr, err := mcpExecute(t, "mcp", "call", tool, "--input", input)
+		if err != nil {
+			t.Fatalf("%s: %v\nstderr: %s", tool, err, stderr)
+		}
+		want := `"truncated":true`
+		if tool == "report_losers" {
+			want = `"truncated":false`
+		}
+		if !strings.Contains(stdout, want) {
+			t.Errorf("%s: the answer must carry %s, got %.200s", tool, want, stdout)
+		}
+	}
+	if n := len(requests()); n < 4 {
+		t.Errorf("the calls reached the install %d times", n)
+	}
+}
+
 func TestMCPCallIsCompactJSONWhateverTheConfigSays(t *testing.T) {
 	fake := &mcpFakeInstall{}
 	srv := fake.server(t)
