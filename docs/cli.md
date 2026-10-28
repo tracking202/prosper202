@@ -487,6 +487,11 @@ stats are not narrowed by `--aff-network-id`: a campaign's clicks count wherever
 The window flags are refused without `--with-stats`. There is no last-click date: no API endpoint
 returns one per campaign without a request per campaign.
 
+`p202 campaign optimize <id>` prints a diagnosis on stderr: clicks, conversions, the reports' `conv_rate`
+(conversions ÷ click-throughs) beside the conversions per click, EPC, and the break-even CPC (the campaign's
+payout × conversions per click, since a click is what the traffic costs). On landing-page traffic the two rates
+differ, and `conv_rate` is the one every report shows. Stdout lists the other offers ranked by EPC.
+
 ### Affiliate network (`p202 aff-network`)
 
 | Flag | Required | Description |

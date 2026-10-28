@@ -883,6 +883,8 @@ p202 report daypart    [-s sort_col] [--sort-dir ASC|DESC] [-p period] [filters.
 p202 report weekpart   [-s sort_col] [--sort-dir ASC|DESC] [-p period] [filters...] [--json]
 ```
 
+`p202 campaign optimize <id>` diagnoses one campaign on stderr (the MCP tool `campaign_optimize` returns it as its notes): clicks, conversions, `conv_rate` as every report gives it (conversions ÷ click-throughs) beside the conversions per click, EPC, and the break-even CPC, which is the payout × conversions per click. The two rates differ on landing-page traffic; quote `conv_rate` when comparing with a report. Stdout lists the other offers by EPC.
+
 ### Forecasting
 
 ```
