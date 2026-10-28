@@ -15,8 +15,8 @@ use RuntimeException;
  * customer aggregate — no drift), and the ltv_maintenance cron reconciles
  * everything anyway.
  *
- * Time-based transitions (active -> past_due -> canceled) are handled by the
- * ltv_maintenance sweep, not here.
+ * Time-based transitions (active -> past_due -> canceled) are LtvMaintenance's
+ * sweep, which the hourly cron runs, not here.
  */
 final class MysqlSubscriptionRepository
 {

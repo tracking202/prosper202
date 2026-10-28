@@ -1097,6 +1097,13 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
 - `ltv product delete` is refused (409, exit 1) while order line items name
   the product; `--dry-run` returns that reason as `refused`. Rename it with
   `ltv product update` instead.
+- A subscription no renewal reaches turns `past_due` once its period end and
+  `grace_days` are over and `canceled` 30 days later, on the cron job's
+  hourly run, so `ltv subscriptions --status past_due` and `ltv mrr` can be up
+  to an hour behind the clock. A renewal (`ltv subscription event <id> --type
+  renewal`) makes it `active` again. `ltv mrr` counts churn by `canceled_at`,
+  which for a lapsed subscription is when the rule canceled it, not when the
+  cron ran.
 - `ltv webhooks deliveries` lists one webhook's deliveries newest first (25
   by default): `status`, `attempts`, `next_attempt_at` (pending only),
   `last_status_code` and `last_response_body` (the last response or error,
