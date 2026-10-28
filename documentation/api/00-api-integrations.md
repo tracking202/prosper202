@@ -59,12 +59,45 @@ Enforcement is central: GET/HEAD requires `<area>:read`, everything else
 `<area>:write` (`POST /sync/plan` counts as a read — it computes a diff
 without applying it). `/capabilities`, `/versions`, and the API root stay
 readable by any valid key so clients can discover what they may do. A denied
-request returns `403` with a message naming the required scope. A scoped key
+request returns `403` naming the required scope (see below). A scoped key
 cannot mint a key broader than itself, and the legacy v1/v2 APIs refuse
 scoped keys outright rather than over-granting. Requires the `scope` column
 on `202_api_keys` (fresh installs have it; the 1.9.75 upgrade backfills it —
 `features.api_key_scopes` in [capabilities](17-capabilities.md) reports
 whether scoped keys can be minted).
+
+#### A key without the scope
+
+A key keeps the scope it was made with, and its scope cannot be changed. So
+when a release lets an AI app's connection do more, every connection approved
+before it is refused there until it is approved again. The refusal says which
+scope is missing and what grants it, in its message and in fields:
+
+```json
+{
+  "error": true,
+  "message": "Insufficient API key scope for this operation: requires 'ppc-networks:write' (key has: campaigns:read). A key's scope cannot be changed: make a key whose scope includes 'ppc-networks:write' (POST /users/{id}/api-keys with a key that holds it, or a full-access key from My Account › Personal Settings › API keys) and use it instead.",
+  "status": 403,
+  "code": "insufficient_scope",
+  "required_scope": "ppc-networks:write",
+  "key_scope": "campaigns:read",
+  "key_source": "api_key",
+  "remedy": "A key's scope cannot be changed: make a key whose scope includes 'ppc-networks:write' (…) and use it instead."
+}
+```
+
+| Field | Meaning |
+| ----- | ------- |
+| `code` | `insufficient_scope`: the key's scope, not the user's role, refused it |
+| `required_scope` | The token the request needed (`text-ads:write`; `write` for a staged change whose area cannot be told) |
+| `key_scope` | The key's own scope, comma-separated |
+| `key_source` | `ai_connection` for a key an AI app's connection made (its label is `AI: <app> via mcp.tracking202.com`), `api_key` for any other, `unknown` when the key's row could not be read |
+| `connect_access` | Unless `key_source` is `api_key`: the approval page's access to choose when connecting the AI app again (`read`, `propose` or `write`; never less than the connection has now), or `null` when no connection's key can hold the scope (users, system, sync) |
+| `remedy` | What grants it: for a connection, connect the AI app again and choose that access; for any other key, a new key whose scope includes the missing token; for `unknown`, both. The message ends with it |
+
+The message keeps its first sentence as before, so a reader matching it still
+matches. A refusal for the user's role (`Admin access required.`, a missing
+permission) is a `403` with `error`, `message` and `status` only.
 
 ### Role Permissions
 
@@ -468,6 +501,10 @@ Empty response body.
 }
 ```
 
+A `403` for the key's scope adds `code`, `required_scope`, `key_scope`,
+`key_source`, `remedy` and, for an AI connection, `connect_access`
+([A key without the scope](#a-key-without-the-scope)).
+
 ## Status Codes
 
 | Code | Meaning |
@@ -478,6 +515,7 @@ Empty response body.
 | 204 | No Content (DELETE) |
 | 400 | Bad Request |
 | 401 | Unauthorized (missing or invalid API key) |
+| 403 | Forbidden: the key's scope (`code: insufficient_scope`, naming the scope and what grants it; see [A key without the scope](#a-key-without-the-scope)) or the user's role |
 | 409 | Conflict (version/etag mismatch on update: an `If-Match` header, or a body's `version`/`etag`) |
 | 422 | Unprocessable Entity (validation errors) |
 | 429 | Too Many Requests (rate limit exceeded) |

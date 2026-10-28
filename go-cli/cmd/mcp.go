@@ -141,6 +141,11 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 		// to ask for less and what the tool takes.
 		return &CLIError{Category: "validation", Message: err.Error(), ExitCode: ExitValidation, Hint: mcpAskForLess(spec), Cause: err}
 	}
+	if refusal, ok := api.ScopeRefusalOf(err); ok && mcpHostedRun {
+		// The hosted server's key is the connection's, whatever the install
+		// could tell: approving it again is the one remedy its user has.
+		return withHint(err, "%s", refusal.ConnectionHint())
+	}
 	if mcpHostedRun && api.AnswerBoundPassed() {
 		if err != nil {
 			// A command that carried on past the refusal (a delete of several

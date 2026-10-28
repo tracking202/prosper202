@@ -229,6 +229,9 @@ func HintFor(err error) string {
 	if AnswerTooManyValues(err) {
 		return "Ask for less in one call: a smaller limit (with offset for the next page), a shorter period, or a narrower filter. `p202 mcp` on your own computer has no such bound."
 	}
+	if refusal, ok := ScopeRefusalOf(err); ok {
+		return refusal.Hint()
+	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		switch {
