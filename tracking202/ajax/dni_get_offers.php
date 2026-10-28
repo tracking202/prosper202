@@ -33,14 +33,14 @@ function p202_dni_require_token(): void
 }
 
 /**
- * This account's integration row for the requested id, or null when it has
- * none by that id. A query that fails is an error, not "none" (#1).
+ * The signed-in account's integration row for the requested id, or null when
+ * it has none by that id. A query that fails is an error, not "none" (#1).
  *
  * @return array<string, mixed>|null
  */
-function p202_dni_row(mysqli $db, array $mysql): ?array
+function p202_dni_row(mysqli $db, string $dniId): ?array
 {
-	$sql = "SELECT dni.networkId, dni.apiKey, dni.affiliateId, dni.name, 2u.install_hash FROM 202_dni_networks AS dni LEFT JOIN 202_users AS 2u USING(user_id) WHERE dni.user_id = '".$mysql['user_id']."' AND dni.id = '".$mysql['dni_id']."'";
+	$sql = "SELECT dni.networkId, dni.apiKey, dni.affiliateId, dni.name, 2u.install_hash FROM 202_dni_networks AS dni LEFT JOIN 202_users AS 2u USING(user_id) WHERE dni.user_id = '".$db->real_escape_string((string)$_SESSION['user_id'])."' AND dni.id = '".$db->real_escape_string($dniId)."'";
 	$results = $db->query($sql);
 	if (!$results instanceof mysqli_result) {
 		record_mysql_error($db, $sql);
@@ -64,7 +64,7 @@ if (isset($_GET['dni']) && isset($_GET['all_offers'])) {
 	$sort = $_GET['column'] ?? null;
 	$filter = $_GET['filter'] ?? null;
 
-	$dni = p202_dni_row($db, $mysql);
+	$dni = p202_dni_row($db, $dni_id);
 	if ($dni !== null) {
 
 		$sort_by = ['column' => '', 'by' => ''];
@@ -127,7 +127,7 @@ if (isset($_GET['dni']) && isset($_GET['all_offers'])) {
 
 if (isset($_GET['dni']) && isset($_GET['get_offer']) && isset($_GET['offer_id'])) {
 	$offerId = p202_dni_token_param('offer_id');
-	$dni = p202_dni_row($db, $mysql);
+	$dni = p202_dni_row($db, $dni_id);
 	if ($dni !== null) {
 		echo getDniOfferById($dni['install_hash'], $dni['networkId'], $dni['apiKey'], $dni['affiliateId'], $offerId);
 	}
@@ -137,7 +137,7 @@ if (isset($_GET['dni']) && isset($_GET['request_offer_access']) && isset($_GET['
 	p202_dni_require_token();
 	$offerId = p202_dni_token_param('offer_id');
 	$type = p202_dni_token_param('type');
-	$dni = p202_dni_row($db, $mysql);
+	$dni = p202_dni_row($db, $dni_id);
 	if ($dni !== null) {
 		echo requestDniOfferAccess($dni['install_hash'], $dni['networkId'], $dni['apiKey'], $dni['affiliateId'], $offerId, $type);
 	}
@@ -151,7 +151,7 @@ if (isset($_GET['dni']) && isset($_GET['offer_id']) && isset($_GET['submit_offer
 	$offerId = p202_dni_token_param('offer_id');
 	$answers = $_POST;
 	unset($answers['token']);
-	$dni = p202_dni_row($db, $mysql);
+	$dni = p202_dni_row($db, $dni_id);
 	if ($dni !== null) {
 		echo submitDniOfferAnswers($dni['install_hash'], $dni['networkId'], $dni['apiKey'], $dni['affiliateId'], $offerId, $answers);
 	}
@@ -160,7 +160,7 @@ if (isset($_GET['dni']) && isset($_GET['offer_id']) && isset($_GET['submit_offer
 if (isset($_GET['dni']) && isset($_GET['offer_id']) && isset($_GET['setup_offer'])) {
 	p202_dni_require_token();
 	$offerId = p202_dni_token_param('offer_id');
-	$dni = p202_dni_row($db, $mysql);
+	$dni = p202_dni_row($db, $dni_id);
 	if ($dni !== null) {
 		header('Content-Type: application/json');
 		$aff_network_sql = "SELECT aff_network_id FROM 202_aff_networks WHERE dni_network_id = '".$mysql['dni_id']."' AND user_id = '".$mysql['user_id']."' AND aff_network_deleted = 0";
