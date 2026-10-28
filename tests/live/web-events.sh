@@ -133,6 +133,10 @@ SQL
 cleanup
 # P202_KEEP=1 leaves the seeded rows in place for a look afterwards.
 [ "${P202_KEEP:-}" = 1 ] || trap cleanup EXIT
+# The pass's clicks and events are recorded from this machine.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" "$OWNER" || exit 2
 
 mysql_q "$DB" -e "INSERT INTO 202_aff_networks SET user_id=$OWNER, aff_network_name='web events pass', aff_network_deleted=0, aff_network_time=$NOW"
 NET=$(Q "SELECT aff_network_id FROM 202_aff_networks WHERE aff_network_name='web events pass'")

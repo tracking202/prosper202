@@ -96,7 +96,10 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         self::cleanUp();
         foreach ([self::OWNER, self::OTHER] as $user) {
             self::user($user);
-            self::q("INSERT INTO 202_users_pref SET user_id = $user");
+            // Capture is the subject, so nobody is held back: a new account's
+            // row starts at 'eu', which holds back this test's 127.0.0.1 and
+            // would make every "captures nothing" here pass for that reason.
+            self::q("INSERT INTO 202_users_pref SET user_id = $user, user_pref_privacy = 'disabled'");
         }
         $page = static fn (int $id, int $user, string $url, int $type = 0) => self::row('202_landing_pages', [
             'landing_page_id' => $id, 'user_id' => $user, 'landing_page_id_public' => $id + 100000,
