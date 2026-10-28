@@ -151,6 +151,7 @@ refuse() { # $1 label, $2 endpoint, $3 target url, $4 text the field error carri
     has "$OUT/r.json" "$4" "$1: says why ($4)"
     [ -n "$5" ] && hasnt "$OUT/r.json" "$5" "$1: and not $5"
     hasnt "$OUT/r.json" "$P202_TARGET_KEY" "$1: the key is not in the answer"
+    hasnt "$OUT/r.json" '"job_id"' "$1: no job"
 }
 for endpoint in sync/jobs sync/plan; do
     refuse "metadata" "$endpoint" "http://169.254.169.254/latest/meta-data" "link-local" "P202_WEBHOOK_ALLOW_NETWORKS"
@@ -161,8 +162,6 @@ for endpoint in sync/jobs sync/plan; do
     refuse "a password" "$endpoint" "https://admin:pw@sync.example.com" "user name or password"
 done
 eq "$(wc -l < "$INTERNAL_LOG" | tr -d ' ')" 0 "the internal listener heard nothing"
-post sync/worker/run '{"limit":100}' "$OUT/w.json" > /dev/null
-eq "$(js "d['data']['processed']" < "$OUT/w.json")" 0 "and the worker finds no job queued"
 
 # ─────────────────────────────────────────────────────────────────────
 say "the operator admits 127.0.0.1/32: a sync between the two installs runs"
