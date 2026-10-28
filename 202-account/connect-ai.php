@@ -92,20 +92,20 @@ $relayHost = (string) parse_url(AiConnect::relayOrigin(), PHP_URL_HOST);
 $accessChoices = [
     'read' => [
         'Read only <span class="text-secondary">(recommended)</span>',
-        'It reads your campaigns, trackers, landing pages, traffic sources, rotators, reports, clicks and '
-            . 'conversions, as far as your role can, and changes nothing.',
+        'It reads your campaigns, trackers, landing pages, text ads, traffic sources, rotators, reports, clicks '
+            . 'and conversions, as far as your role can, and changes nothing.',
     ],
     'propose' => [
         'Read, and propose changes',
-        'It reads the same. A change it makes to campaigns, trackers, landing pages, traffic sources or '
-            . 'categories waits as a proposal until you apply it with the p202 command line '
+        'It reads the same. A change it makes to campaigns, trackers, landing pages, text ads, traffic sources '
+            . 'or categories waits as a proposal until you apply it with the p202 command line '
             . '(<code>p202 change apply</code>).',
     ],
     'write' => [
         'Read and change',
-        'It reads the same, and can change and delete campaigns, trackers, landing pages, traffic sources and '
-            . 'categories; deleting a tracker stops its links. Your AI app\'s approval prompt is then the only '
-            . 'check, so do not set it to always allow deletes.',
+        'It reads the same, and can change and delete campaigns, trackers, landing pages, text ads, traffic '
+            . 'sources and categories; deleting a tracker stops its links. Your AI app\'s approval prompt is '
+            . 'then the only check, so do not set it to always allow deletes.',
     ],
 ];
 echo p202_standalone_card('Connect an AI assistant');

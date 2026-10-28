@@ -55,6 +55,32 @@ case "$ask" in
                 "$click" "$(printf '%s' "$err" | jq -r '.error.field_errors.items // .error.message' 2>/dev/null | cut -c1-160)"
         fi
         ;;
+    # Text ads (setup-text-ads.json): an ad is a campaign's or an advanced
+    # landing page's, and a tracker carries the one its link shows.
+    *"EVAL Spring Ad"*)
+        campaign=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign B")][0].aff_campaign_id')
+        ad=$(p202 text-ad create --text-ad-name "EVAL Spring Ad" --text-ad-headline "Spring running shoes sale" \
+            --text-ad-description "Up to 40% off trail and road shoes." --text-ad-display-url example.com/spring \
+            --aff-campaign-id "$campaign" --idempotency-key "eval-spring-ad-$run_id" --json | jq -r '.data.text_ad_id')
+        tracker=$(p202 tracker list --all --json | jq -r --arg c "$campaign" '[.data[] | select((.aff_campaign_id|tostring)==$c and (.rotator_id|tostring)=="0")][0].tracker_id // empty')
+        if [ -z "$tracker" ]; then
+            printf 'Created text ad %s, "EVAL Spring Ad", for EVAL Campaign B (campaign %s). EVAL Campaign B has no tracking link yet (`p202 tracker list`), so the ad is on none; make one with `p202 tracker create-with-url --aff-campaign-id %s --text-ad-id %s`.\n' "$ad" "$campaign" "$campaign" "$ad"
+        else
+            p202 tracker update "$tracker" --text-ad-id "$ad" --json >/dev/null
+            printf 'Created text ad %s, "EVAL Spring Ad", for EVAL Campaign B (campaign %s), and put it on EVAL Campaign B'"'"'s tracking link: tracker %s now carries text ad %s.\n' "$ad" "$campaign" "$tracker" "$ad"
+        fi
+        ;;
+    *"EVAL Orphan Ad"*)
+        # No campaign or page named: the create is refused (no link would
+        # offer the ad), and the refusal becomes the question.
+        if err=$(p202 text-ad create --text-ad-name "EVAL Orphan Ad" --text-ad-headline "Fast shipping" \
+                --text-ad-description "Orders ship the same day." --text-ad-display-url example.com/ship --json 2>&1 >/dev/null); then
+            printf 'Created EVAL Orphan Ad, for no campaign.\n'
+        else
+            printf 'I have not created EVAL Orphan Ad: a text ad belongs to a campaign or to an advanced landing page, whose links offer it (%s). Which campaign (or advanced landing page) is it for?\n' \
+                "$(printf '%s' "$err" | jq -r '.error.message' 2>/dev/null | cut -c1-160)"
+        fi
+        ;;
     # Tracking links, the key's identity and rotator URL rules
     # (setup-links.json). First: the asks name campaigns and "add".
     *"Google Ads fills in the keyword"*)

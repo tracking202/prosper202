@@ -599,10 +599,10 @@ not combinable with `--page`/`--limit`/`--offset`).
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--landing-page-url` | Yes | Landing page URL |
-| `--aff-campaign-id` | Yes | Campaign ID |
+| `--aff-campaign-id` | Yes | Campaign ID; `0` for an advanced landing page |
 | `--landing-page-nickname` | Yes | Landing page nickname |
 | `--leave-behind-page-url` | No | Leave-behind page URL (on update, `""` clears it) |
-| `--landing-page-type` | No | Landing page type: 0 simple (one campaign), 1 advanced (several offers) |
+| `--landing-page-type` | No | `0` simple (one campaign, the default) or `1` advanced (several offers, `--aff-campaign-id 0`) |
 
 The page's tracking code, as Setup › Get LP Code hands it out:
 
@@ -624,13 +624,27 @@ carries (`lpip=`) is accepted too.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--text-ad-name` | Yes | Text ad name |
-| `--text-ad-headline` | Yes | Headline |
-| `--text-ad-description` | Yes | Description text |
-| `--text-ad-display-url` | Yes | Display URL |
-| `--aff-campaign-id` | No | Campaign ID |
-| `--landing-page-id` | No | Landing page ID |
-| `--text-ad-type` | No | Text ad type |
+| `--text-ad-name` | Yes | Text ad name, up to 100 characters |
+| `--text-ad-headline` | Yes | Headline, up to 100 characters |
+| `--text-ad-description` | Yes | Description text, up to 100 characters |
+| `--text-ad-display-url` | Yes | Display URL, up to 100 characters |
+| `--aff-campaign-id` | For type 0 | The campaign the ad is for |
+| `--landing-page-id` | For type 1 | The advanced landing page the ad is for |
+| `--text-ad-type` | No | `0` a campaign's ad (the default) or `1` an advanced landing page's |
+
+As Setup › Text Ads does, `create` refuses a campaign's ad without
+`--aff-campaign-id` and an advanced landing page's ad without
+`--landing-page-id`, before any request: Get Links offers an ad only on the
+links of its campaign or advanced landing page. `update` holds the ad as it
+will be (the flags given over the stored ad, read when a flag sets the type or
+a link) to the same rule, so `--text-ad-type 1` needs the ad to have, or be
+given, its landing page. A tracker carries the ad its links show:
+
+```bash
+p202 text-ad create --text-ad-name "Spring" --text-ad-headline "Spring sale" \
+  --text-ad-description "Up to 40% off." --text-ad-display-url example.com/spring --aff-campaign-id 3
+p202 tracker update 12 --text-ad-id <text_ad_id from the create>
+```
 
 ## Clicks
 

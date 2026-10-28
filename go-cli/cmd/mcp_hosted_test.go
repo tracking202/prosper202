@@ -33,6 +33,8 @@ var mcpWriteToolInput = map[string]map[string]string{
 	"ppc_network_create":      {"ppc_network_name": "N"},
 	"ppc_account_create":      {"ppc_account_name": "A", "ppc_network_id": "1"},
 	"aff_network_create":      {"aff_network_name": "C"},
+	"text_ad_create":          {"text_ad_name": "T", "text_ad_headline": "H", "text_ad_description": "D", "text_ad_display_url": "example.com", "aff_campaign_id": "1"},
+	"text_ad_update":          {"text_ad_headline": "I"},
 }
 
 // mcpHostedOptionalReads are reads a hosted tool makes when its key allows

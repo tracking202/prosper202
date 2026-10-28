@@ -184,6 +184,9 @@ func setupParentDeleteNote(parent, children, tool string) string {
 	return "It removes the " + parent + " alone: its " + children + " stay, so delete them first (" + tool + ") if they are to go too. " + deleteNote
 }
 
+// textAdNote: an ad is used through a tracker, which names it.
+const textAdNote = "To use it on a tracker, set the tracker's text_ad_id (tracker_update)."
+
 const reportFilterNote = "Filter with the *_id arguments (ids from the list tools) and choose the window with period, or time_from and time_to."
 
 var mcpToolSpecs = []mcpToolSpec{
@@ -242,6 +245,9 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "aff_network_delete", Command: []string{"aff-network", "delete"}, Title: "Delete a category", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Category id (from aff_network_list); or give ids for several.", false)}, Note: setupParentDeleteNote("category", "campaigns", "campaign_delete")},
 	{Name: "aff_network_create", Command: []string{"aff-network", "create"}, Title: "Create a category", Kind: mcpCreate},
 	{Name: "text_ad_list", Command: []string{"text-ad", "list"}, Title: "List text ads", Kind: mcpRead, HostedOmit: mcpEveryPage},
+	{Name: "text_ad_create", Command: []string{"text-ad", "create"}, Title: "Create a text ad", Kind: mcpCreate, Note: textAdNote},
+	{Name: "text_ad_update", Command: []string{"text-ad", "update"}, Title: "Update a text ad", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Text ad id (from text_ad_list).", true)}},
+	{Name: "text_ad_delete", Command: []string{"text-ad", "delete"}, Title: "Delete a text ad", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Text ad id (from text_ad_list); or give ids for several.", false)}, Note: deleteNote},
 
 	// Rotators
 	{Name: "rotator_list", Command: []string{"rotator", "list"}, Title: "List rotators", Kind: mcpRead, HostedOmit: mcpEveryPage},

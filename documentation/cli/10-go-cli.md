@@ -555,6 +555,9 @@ tools take no `all`: page with `limit` and `offset`. It also decodes at most
 80,000 JSON values from them (a megabyte of real rows holds fewer), and takes at
 most 1,000 in a call's arguments; past either, the call is refused with how to
 ask for less.
+A connection keeps the access it was approved with: one approved before the install ran
+1.9.79, to propose or make changes, reads text ads but cannot change them (text_ad_create, text_ad_update and
+text_ad_delete answer 403); connect again for that.
 
 To improve the connector, the hosted server records which tools the app calls, the names (not the
 values) of their arguments, whether they work, with the error when one fails (quoted values taken
