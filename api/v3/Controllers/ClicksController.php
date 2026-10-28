@@ -22,9 +22,9 @@ class ClicksController
      * traffic source, landing page and text ad by name, the visitor's IP,
      * keyword, device and location, and the referrer, landing and outbound
      * URLs; and the ad platforms' click ids the click arrived with, as the
-     * Visitors download lists them. The list and the single click share it,
-     * so the two cannot drift. A name is joined only when the record is the
-     * click's own account's. An IPv6 address is decoded from its 202_ips_v6 row, as
+     * Visitors download lists them (detailColumns()). The list and the
+     * single click share it, so the two cannot drift. A name is joined only
+     * when the record is the click's own account's. An IPv6 address is decoded from its 202_ips_v6 row, as
      * Prosper202\DataEngine\IpAddressSql reads it for the Visitors page:
      * served raw it was that row's id ("1").
      */
@@ -43,8 +43,7 @@ class ClicksController
                 lc.country_name, lc.country_code, lr.region_name, lci.city_name, li.isp_name,
                 p.platform_name, b.browser_name, dm.device_name, dt.type_name AS device_type,
                 su_ref.site_url_address AS referer, su_lp.site_url_address AS landing,
-                su_out.site_url_address AS outbound,
-                g.gclid, g.gbraid, g.wbraid, g.ttclid';
+                su_out.site_url_address AS outbound';
 
     private const DETAIL_JOINS = '
             LEFT JOIN 202_clicks_record cr ON c.click_id = cr.click_id
@@ -69,8 +68,7 @@ class ClicksController
             LEFT JOIN 202_device_types dt ON dm.device_type = dt.type_id
             LEFT JOIN 202_site_urls su_ref ON cs.click_referer_site_url_id = su_ref.site_url_id
             LEFT JOIN 202_site_urls su_lp ON cs.click_landing_site_url_id = su_lp.site_url_id
-            LEFT JOIN 202_site_urls su_out ON cs.click_outbound_site_url_id = su_out.site_url_id
-            LEFT JOIN 202_google g ON c.click_id = g.click_id';
+            LEFT JOIN 202_site_urls su_out ON cs.click_outbound_site_url_id = su_out.site_url_id';
 
     /**
      * Values the visitor (or the visitor's browser) wrote: stripped of
@@ -173,7 +171,7 @@ class ClicksController
         $total = (int)$this->resultOf($stmt, 'Count query failed')->fetch_assoc()['total'];
         $stmt->close();
 
-        $sql = 'SELECT ' . self::DETAIL_COLUMNS . '
+        $sql = 'SELECT ' . self::detailColumns() . '
             FROM 202_clicks c ' . self::DETAIL_JOINS . "
             $whereClause
             ORDER BY c.click_time DESC, c.click_id DESC
@@ -203,6 +201,22 @@ class ClicksController
             'data' => $rows,
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
         ];
+    }
+
+    /**
+     * DETAIL_COLUMNS and each ad click id, one value per click
+     * (AdClickIdColumns::sql()), never a join to 202_google: that repeats a
+     * click once for each of its rows there, past the list's count and
+     * through its page.
+     */
+    private static function detailColumns(): string
+    {
+        $ids = [];
+        foreach (array_keys(\Prosper202\Click\ClickRecord::AD_CLICK_IDS) as $id) {
+            $ids[] = \Prosper202\Click\AdClickIdColumns::sql($id, 'c.click_id') . ' AS ' . $id;
+        }
+
+        return self::DETAIL_COLUMNS . ', ' . implode(', ', $ids);
     }
 
     /**
@@ -262,7 +276,7 @@ class ClicksController
      */
     public function get(int $id): array
     {
-        $sql = 'SELECT ' . self::DETAIL_COLUMNS . ',
+        $sql = 'SELECT ' . self::detailColumns() . ',
                 c.user_id, cr.click_reviewed, ct.c1_id, ct.c2_id, ct.c3_id, ct.c4_id,
                 t1.c1, t2.c2, t3.c3, t4.c4
             FROM 202_clicks c ' . self::DETAIL_JOINS . '

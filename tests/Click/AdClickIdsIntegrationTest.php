@@ -239,6 +239,47 @@ final class AdClickIdsIntegrationTest extends TestCase
     }
 
     /**
+     * 202_google's key is (click_id, gclid), so a click can have two rows.
+     * GET /clicks serves it once, as many rows as it counts, page by page;
+     * it, GET /clicks/{id} and the token read name the same ids, each one
+     * any row has.
+     */
+    public function testAClickWithTwoGoogleRowsIsServedOnceWithEachId(): void
+    {
+        $twice = self::FIRST_CLICK + 9;
+        self::record($twice, ['gclid' => self::GCLID, 'wbraid' => self::WBRAID]);
+        self::record(self::FIRST_CLICK + 10, ['ttclid' => self::ttclid()]);
+        self::q("INSERT INTO 202_google SET click_id = $twice, gclid = '', gbraid = '" . self::GBRAID . "',"
+            . " wbraid = '', ttclid = '', utm_source_id = 0, utm_medium_id = 0, utm_campaign_id = 0,"
+            . ' utm_term_id = 0, utm_content_id = 0');
+
+        $clicks = new ClicksController(self::$db, self::USER);
+        $list = $clicks->list(['limit' => '500']);
+        $total = $list['pagination']['total'];
+        $listed = array_map('intval', array_column($list['data'], 'click_id'));
+        self::assertCount($total, $listed, 'the list serves as many rows as it counts');
+        self::assertSame($listed, array_values(array_unique($listed)), 'each click once');
+        $ids = ['gclid' => self::GCLID, 'gbraid' => self::GBRAID, 'wbraid' => self::WBRAID, 'ttclid' => null];
+        self::assertSame($ids, array_intersect_key($clicks->get($twice)['data'], $ids), 'GET /clicks/{id}');
+        $row = array_column($list['data'], null, 'click_id')[$twice];
+        self::assertSame($ids, array_intersect_key($row, $ids), 'GET /clicks names the ids GET /clicks/{id} does');
+
+        $paged = [];
+        for ($offset = 0; $offset < $total; $offset++) {
+            $page = $clicks->list(['limit' => '1', 'offset' => (string) $offset])['data'];
+            self::assertCount(1, $page, "page $offset");
+            $paged[] = (int) $page[0]['click_id'];
+        }
+        self::assertSame($listed, $paged, 'a page at a time is the list');
+
+        self::assertSame(
+            ['gbraid' => self::GBRAID, 'wbraid' => self::WBRAID, 'ttclid' => ''],
+            AdClickIdColumns::of(new Connection(self::$db), $twice),
+            'the token read names the same ids'
+        );
+    }
+
+    /**
      * The tokens a traffic source's pixels are sent with: each id, '' for
      * none, encoded once into the URL.
      */
