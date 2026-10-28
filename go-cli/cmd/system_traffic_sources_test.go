@@ -281,9 +281,22 @@ func TestTrafficSourceOwnersRepairAllMovesWhatItShowedOneByOne(t *testing.T) {
 	seen = updateServer(t, func(updateRequest) (int, string) {
 		return 200, strings.Replace(tsoReportBody, `"repair_to_user_id":2`, `"repair_to_user_id":null`, 1)
 	})
-	_, stderr, err = executeCommand("system", "traffic-source-owners", "repair", "--all", "--force")
+	stdout, stderr, err = executeCommand("system", "traffic-source-owners", "repair", "--all", "--force", "--json")
 	if err != nil || len(*seen) != 1 || !strings.Contains(stderr, "Nothing was sent") {
 		t.Errorf("nothing repairable sends nothing: err %v, requests %+v, stderr %q", err, *seen, stderr)
+	}
+	// Under --json the answer is still a document: none moved, each skipped.
+	answer.Data.Repaired, answer.Data.Skipped = nil, nil
+	if err := json.Unmarshal([]byte(stdout), &answer); err != nil || answer.Data.Repaired == nil || len(answer.Data.Repaired) != 0 || len(answer.Data.Skipped) != 2 {
+		t.Errorf("nothing repairable still answers {repaired: [], skipped: [...]}: err %v, %+v\n%s", err, answer.Data, stdout)
+	}
+
+	updateServer(t, func(updateRequest) (int, string) { return 200, `{"data":{"sources":[],"repairable":0,"ambiguous":0}}` })
+	stdout, _, err = executeCommand("system", "traffic-source-owners", "repair", "--all", "--force", "--json")
+	answer.Data.Repaired, answer.Data.Skipped = nil, nil
+	if err != nil || json.Unmarshal([]byte(stdout), &answer) != nil || answer.Data.Repaired == nil || answer.Data.Skipped == nil ||
+		len(answer.Data.Repaired)+len(answer.Data.Skipped) != 0 {
+		t.Errorf("an empty report answers {repaired: [], skipped: []}: err %v, %+v\n%s", err, answer.Data, stdout)
 	}
 }
 
