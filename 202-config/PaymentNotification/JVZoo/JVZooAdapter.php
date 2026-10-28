@@ -23,7 +23,8 @@ use Prosper202\PaymentNotification\Verification;
  *
  * `ctransaction` decides what is done: SALE and BILL (a rebill, under its
  * own receipt) are recorded at `ctransamount`, the amount paid to the party
- * receiving the notification; RFND, CGBK and INSF (an eCheck chargeback)
+ * receiving the notification, and every money event is dated by
+ * `ctranstime`; RFND, CGBK and INSF (an eCheck chargeback)
  * reverse the whole sale `ctransreceipt` names, since JVZoo refunds a
  * payment whole and sends the refund under the sale's receipt.
  * CANCEL-REBILL and UNCANCEL-REBILL move no money. JVZoo lists tests among
@@ -206,8 +207,16 @@ final class JVZooAdapter implements ProviderAdapter
                 . ' and "-", at most 64).'
             );
         }
+        // When it happened, which dates the row: a time that cannot be read is
+        // refused, never replaced by the time it arrived (CLAUDE.md #4).
         $time = self::text($fields, 'ctranstime');
-        $occurredAt = $time !== null && preg_match('/^[1-9]\d{0,10}$/D', $time) === 1 ? (int) $time : null;
+        if ($time !== null && (preg_match('/^[1-9]\d{0,9}$/D', $time) !== 1 || (int) $time > Notification::LAST_TIME)) {
+            throw self::malformed(
+                'ctranstime is "' . self::shown($time) . '"; JVZoo sends it as a Unix time (seconds since 1970,'
+                . ' such as 1613419768).'
+            );
+        }
+        $occurredAt = $time !== null ? (int) $time : null;
         if ($kind->records()) {
             $amount = self::amount($fields);
 

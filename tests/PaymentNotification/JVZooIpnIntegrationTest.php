@@ -319,7 +319,8 @@ final class JVZooIpnIntegrationTest extends TestCase
     public function testASaleSentAgainAfterItsRefundIsNotAnsweredAsADuplicate(): void
     {
         $this->post(self::fields(), self::KEY);
-        $refund = self::fields(['ctransaction' => 'RFND', 'ctranstime' => '1792790000']);
+        $at = time();
+        $refund = self::fields(['ctransaction' => 'RFND', 'ctranstime' => (string) $at]);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($refund, self::KEY));
         $reversal = (int) self::conversions()[1]['conv_id'];
 
@@ -336,12 +337,68 @@ final class JVZooIpnIntegrationTest extends TestCase
         $resent = $this->post($refund, self::KEY);
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $resent);
         self::assertStringContainsString('since deleted; this RFND is that refund sent again', $resent->message);
-        $later = $this->post(['ctranstime' => '1792799999'] + $refund, self::KEY);
+        $later = $this->post(['ctranstime' => (string) ($at - 1)] + $refund, self::KEY);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $later);
         self::assertSame(
             [['47.00000', '0'], ['-47.00000', '1'], ['-47.00000', '0']],
             array_map(static fn (array $r): array => [$r['click_payout'], $r['deleted']], self::conversions())
         );
+    }
+
+    /**
+     * JVZoo resends a notification hourly for 72 hours: a late one is dated
+     * by ctranstime, when the payment or refund happened, held to the click
+     * for a sale and to the sale for a refund.
+     */
+    public function testALateNotificationIsDatedByItsCtranstime(): void
+    {
+        $click = self::CLICK + 5;
+        (new MysqlClickRepository(new Connection(self::requireScratch())))->recordClick(new ClickRecord(
+            clickId: $click,
+            userId: self::ACCOUNT,
+            clickTime: time() - 5 * 86400,
+            affCampaignId: self::CAMPAIGN,
+            clickPayout: '30.00',
+            recordsCampaignRows: false,
+        ));
+        $sold = time() - 3 * 86400;
+        $refunded = time() - 2 * 86400;
+        $late = ['caffitid' => (string) $click, 'ctransreceipt' => 'LATE0001'];
+
+        $sale = $this->post(self::fields(['ctranstime' => (string) $sold] + $late), self::KEY);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $sale);
+        self::assertSame('Recorded transaction LATE0001 on click ' . $click . ' at 47.00.', $sale->message);
+        $refund = $this->post(
+            self::fields(['ctransaction' => 'RFND', 'ctranstime' => (string) $refunded] + $late),
+            self::KEY
+        );
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+
+        // A chargeback stating a time before its sale is dated at the sale.
+        $second = ['caffitid' => (string) $click, 'ctransreceipt' => 'LATE0002'];
+        $this->post(self::fields(['ctransamount' => '9.00', 'ctranstime' => (string) $sold] + $second), self::KEY);
+        $early = $this->post(
+            self::fields(['ctransaction' => 'CGBK', 'ctranstime' => (string) ($sold - 86400)] + $second),
+            self::KEY
+        );
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $early);
+        self::assertStringEndsWith(', is before the sale.', $early->message);
+
+        $result = self::requireScratch()->query('SELECT conv_time, click_payout FROM 202_conversion_logs'
+            . ' WHERE click_id = ' . $click . ' ORDER BY conv_id');
+        self::assertInstanceOf(\mysqli_result::class, $result);
+        self::assertSame(
+            [[(string) $sold, '47.00000'], [(string) $refunded, '-47.00000'], [(string) $sold, '9.00000'],
+                [(string) $sold, '-9.00000']],
+            array_map(static fn (array $r): array => [(string) $r[0], (string) $r[1]], $result->fetch_all())
+        );
+
+        // The time is signed: one changed after signing verifies with no key.
+        $signed = JVZooAdapterTest::signed(self::fields(['ctranstime' => (string) $sold] + $late), self::KEY);
+        $moved = $this->deliver(['ctranstime' => (string) ($sold - 86400)] + $signed);
+        self::assertOutcome(OutcomeKind::UNVERIFIED, 403, $moved);
+        $unreadable = $this->post(self::fields(['ctranstime' => '2026-10-23'] + $late), self::KEY);
+        self::assertOutcome(OutcomeKind::MALFORMED, 400, $unreadable);
     }
 
     public function testNothingIsWrittenForANotificationTheStoredKeyDoesNotVerify(): void

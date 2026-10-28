@@ -130,7 +130,7 @@ is sent again every hour for 72 hours):
 | a notification with no click (no tid, a tid that is not a click id, no `subid` in `cvendthru`) | nothing | `200 no_click` |
 | a click that is not one of the account's | nothing | `404` |
 | a `cverify` no stored key verifies | nothing | `403` |
-| a malformed field, a field JVZIPN v1 does not post, a URL with no `?role=` | nothing | `400`, naming it |
+| a malformed field (a `ctranstime` that is not a Unix time among them), a field JVZIPN v1 does not post, a URL with no `?role=` | nothing | `400`, naming it |
 | a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
 
 A few things JVZoo's documentation leaves to the receiver:
@@ -140,6 +140,11 @@ A few things JVZoo's documentation leaves to the receiver:
   (`10.00`). Prosper202 reads a decimal such as `47.00` as dollars and refuses
   a whole number such as `1000`, rather than guess which it is. JVZIPN states
   no currency: the amount is recorded in the account's.
+- **Dates.** JVZoo resends an unanswered notification every hour for 72 hours,
+  so a conversion or reversal is dated by `ctranstime`, when the payment or
+  refund happened, not when the notification arrived. A time before the click
+  is held to the click, one before the sale a refund takes back to the sale,
+  and one ahead of this server's clock to its arrival; the answer says so.
 - **Tests.** JVZoo marks no notification as a test. A test purchase (Test
   Purchase Mode) is a real sale at a test price and is recorded; refund it in
   JVZoo and the refund reverses it.

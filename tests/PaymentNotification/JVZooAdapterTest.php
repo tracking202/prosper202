@@ -191,7 +191,8 @@ final class JVZooAdapterTest extends TestCase
         }
         self::assertEquals(new Notification(NotificationKind::TEST, 'TEST'), self::parsed(['ctransaction' => 'TEST']));
         self::assertSame('0.00', self::parsed(['ctransamount' => '0.00'])->amount, 'a free sale is a sale at 0');
-        self::assertNull(self::parsed(['ctranstime' => 'yesterday'])->occurredAt, 'logged only, never refused');
+        self::assertSame(1613419768, self::parsed(['ctranstime' => '1613419768'])->occurredAt, 'when it happened');
+        self::assertNull(self::parsed(['ctranstime' => ''])->occurredAt, 'none stated: dated when it arrives');
     }
 
     public function testTheVendorsClickIsTheBuyLinksSubidAndTheTidIsNotRead(): void
@@ -273,6 +274,18 @@ final class JVZooAdapterTest extends TestCase
                 'ctransamount is "1.000001"' . self::AMOUNT_RULE,
             ],
             'an amount moved into it' => [['ctransamount' => '17|47.00'], $affiliate, 'ctransamount is "17|47.00"'],
+            'a time that is not a Unix time' => [
+                ['ctranstime' => 'yesterday'],
+                $affiliate,
+                'ctranstime is "yesterday"',
+            ],
+            'a time of 0' => [['ctranstime' => '0'], $affiliate, 'ctranstime is "0"'],
+            'a time past 2038' => [['ctranstime' => '2147483648'], $affiliate, 'ctranstime is "2147483648"'],
+            'a time in milliseconds' => [
+                ['ctranstime' => '1613419768000'],
+                $affiliate,
+                'ctranstime is "1613419768000"',
+            ],
             'a list where a value belongs' => [
                 ['ctransaction' => ['SALE']],
                 $affiliate,
