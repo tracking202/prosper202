@@ -34,13 +34,17 @@ final class JVZooIpnIntegrationTest extends TestCase
     private const ACCOUNT = 990501;
     private const OTHER = 990502;
     private const SHARING = 990503;
+    /** An account deleted in Account › Users, whose preferences row still holds its key. */
+    private const DELETED = 990505;
     private const CLICK = 99050101;
     private const SECOND_CLICK = 99050102;
     private const OTHER_CLICK = 99050111;
     private const SHARING_CLICK = 99050121;
+    private const DELETED_CLICK = 99050141;
     private const CAMPAIGN = 990561;
     private const OTHER_CAMPAIGN = 990562;
     private const SHARING_CAMPAIGN = 990563;
+    private const DELETED_CAMPAIGN = 990565;
 
     private const KEY = 'jvzipn-ACCOUNT-key-1';
     private const OTHER_KEY = 'jvzipn-OTHER-key-77';
@@ -67,6 +71,7 @@ final class JVZooIpnIntegrationTest extends TestCase
             self::ACCOUNT => self::CAMPAIGN,
             self::OTHER => self::OTHER_CAMPAIGN,
             self::SHARING => self::SHARING_CAMPAIGN,
+            self::DELETED => self::DELETED_CAMPAIGN,
         ];
         foreach ($campaigns as $user => $campaign) {
             self::user($user);
@@ -77,6 +82,7 @@ final class JVZooIpnIntegrationTest extends TestCase
                 . ' aff_campaign_payout = 30, aff_campaign_time = 1, aff_campaign_foreign_payout = 30,'
                 . " payout_mode = 'accumulate'");
         }
+        self::q('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ' . self::DELETED);
     }
 
     public static function tearDownAfterClass(): void
@@ -100,12 +106,14 @@ final class JVZooIpnIntegrationTest extends TestCase
         self::key(self::ACCOUNT, self::KEY);
         self::key(self::OTHER, self::OTHER_KEY);
         self::key(self::SHARING, null);
+        self::key(self::DELETED, null);
         $repo = new MysqlClickRepository(new Connection($db));
         $clicks = [
             self::CLICK => [self::ACCOUNT, self::CAMPAIGN],
             self::SECOND_CLICK => [self::ACCOUNT, self::CAMPAIGN],
             self::OTHER_CLICK => [self::OTHER, self::OTHER_CAMPAIGN],
             self::SHARING_CLICK => [self::SHARING, self::SHARING_CAMPAIGN],
+            self::DELETED_CLICK => [self::DELETED, self::DELETED_CAMPAIGN],
         ];
         foreach ($clicks as $click => [$user, $campaign]) {
             $repo->recordClick(new ClickRecord(
@@ -138,7 +146,7 @@ final class JVZooIpnIntegrationTest extends TestCase
         foreach ([...self::CLICK_TABLES, '202_conversion_logs'] as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
         }
-        $users = self::ACCOUNT . ', ' . self::OTHER . ', ' . self::SHARING;
+        $users = self::ACCOUNT . ', ' . self::OTHER . ', ' . self::SHARING . ', ' . self::DELETED;
         self::q("DELETE FROM 202_aff_campaigns WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users_pref WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users WHERE user_id IN ($users)");
@@ -464,6 +472,43 @@ final class JVZooIpnIntegrationTest extends TestCase
         self::assertSame(self::SHARING, $theirs->accountId);
         self::assertOutcome(OutcomeKind::RECORDED, 200, $ours);
         self::assertSame(self::ACCOUNT, $ours->accountId);
+    }
+
+    /**
+     * A deleted account owns no key: one it still stores verifies nothing,
+     * its clicks are credited by no one's, and an account that stores the
+     * same key now is the only one it verifies. An account switched off in
+     * Account › Users still owns its key.
+     */
+    public function testADeletedAccountsStoredKeyVerifiesNothing(): void
+    {
+        self::key(self::DELETED, self::KEY);
+
+        $ours = $this->post(self::fields(['ctransreceipt' => 'D1']), self::KEY);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $ours);
+        self::assertSame(self::ACCOUNT, $ours->accountId);
+
+        $deletedClick = ['caffitid' => (string) self::DELETED_CLICK, 'ctransreceipt' => 'D2'];
+        self::assertOutcome(OutcomeKind::UNKNOWN_CLICK, 404, $this->post(self::fields($deletedClick), self::KEY));
+        self::key(self::DELETED, 'jvzipn-DELETED-key-9');
+        $onlyDeleted = $this->post(self::fields($deletedClick), 'jvzipn-DELETED-key-9');
+        self::assertOutcome(OutcomeKind::UNVERIFIED, 403, $onlyDeleted);
+        self::assertSame(
+            [[(string) self::CLICK, (string) self::ACCOUNT]],
+            array_map(static fn (array $r): array => [$r['click_id'], $r['user_id']], self::conversions())
+        );
+
+        self::q('UPDATE 202_users SET user_active = 0 WHERE user_id = ' . self::OTHER);
+        try {
+            $off = $this->post(
+                self::fields(['caffitid' => (string) self::OTHER_CLICK, 'ctransreceipt' => 'D3']),
+                self::OTHER_KEY
+            );
+        } finally {
+            self::q('UPDATE 202_users SET user_active = 1 WHERE user_id = ' . self::OTHER);
+        }
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $off);
+        self::assertSame(self::OTHER, $off->accountId);
     }
 
     public function testTypesThatMoveNoMoneyANotificationWithNoClickAndAUrlWithNoRoleRecordNothing(): void
