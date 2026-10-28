@@ -4601,7 +4601,7 @@ class UPGRADE
                         . 'leaving version at 1.9.78 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: the re-click tables, 202_google or 202_users_pref could not be reconciled,'
+                error_log('Prosper202 upgrade: a table of the 1.9.79 step could not be reconciled (the list above),'
                     . ' the new accounts\' privacy default set or the re-click backfill marked; leaving version'
                     . ' at 1.9.78 so the next run retries.');
             }
