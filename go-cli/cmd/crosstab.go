@@ -44,9 +44,7 @@ var reportCrosstabCmd = &cobra.Command{
 	Use:   "crosstab",
 	Short: "Two-dimension breakdown (e.g. traffic source × country) for one metric",
 	Long: "Pivots one metric across two dimensions by fanning out a breakdown per row.\n" +
-		"The rows are the --limit-rows (default 20) with the highest --metric, ranked by the server over every row;\n" +
-		"each row's columns are every value of --cols, up to the 5000 with the most clicks. When rows or columns\n" +
-		"remain past those, the answer has truncated: true, and a note under a table says which.\n" +
+		"Rows: the --limit-rows with the highest --metric over every row; columns: up to 5000. truncated: true says more remain.\n" +
 		"Example: report crosstab --rows ppc_account --cols country --metric profit --aff-campaign-id 90008",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()

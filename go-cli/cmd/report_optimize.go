@@ -227,9 +227,7 @@ var reportBreakevenCmd = &cobra.Command{
 	Long: "Computes the maximum profitable cost-per-click for each breakdown row.\n" +
 		"breakeven_cpc = campaign payout × (conversions / clicks); margin = breakeven_cpc − avg_cpc.\n" +
 		"Requires --aff-campaign-id (the INTERNAL id from `campaign list`) to read the payout.\n\n" +
-		"It reads one page of the breakdown, as `report breakdown` does: --limit rows (default 50, at most 500), most\n" +
-		"clicks first, from --offset, and ranks that page by margin. When rows remain after the page the answer has\n" +
-		"truncated: true, and a note under a table names the --offset that reads the next page.",
+		"One page, as in `report breakdown` (--limit, --offset), ranked by margin; truncated: true says rows remain.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
 		if campaignID == "" {
@@ -1030,9 +1028,7 @@ func sortRowsBy(rows []map[string]interface{}, field string, asc bool) {
 }
 
 // triageReadNote ends `report losers` and `report winners`' help: what they read.
-var triageReadNote = fmt.Sprintf("Every row of the breakdown is classified, read %d a page, up to the %d with the most clicks.\n"+
-	"Past those the answer has truncated: true (each --ndjson line too), and a note under a table says what it covers.",
-	breakdownPageSize, breakdownReadRows)
+var triageReadNote = fmt.Sprintf("It reads up to the %d rows with the most clicks; truncated: true says there were more.", breakdownReadRows)
 
 func init() {
 	addReportFilters(reportBreakevenCmd)
