@@ -3064,11 +3064,15 @@ paths:
         like `redirects.0.weigth`). A rule read with GET can be sent back
         whole: its id and rotator_id, and each entry's id, rotator_id,
         rule_id and auto_monetizer, are accepted with the rule's own values
-        and refused with any other (an entry id must be one of this rule's;
-        the entries are written afresh, so a body read before an earlier
-        update names ids that are gone). A create refuses them. A redirect
-        that carries the auto_monetizer it holds, and no destination, stays
-        the auto-monetizer. PATCH is accepted as the same operation.
+        and refused with any other (an entry id must be one of this rule's).
+        A create refuses them. A redirect that carries the auto_monetizer it
+        holds, and no destination, stays the auto-monetizer. PATCH is
+        accepted as the same operation.
+
+        The criteria and redirects it sends are written as the set writes a
+        rule it keeps: one sent with its id keeps the id, which its clicks
+        and their report rows name; one the list leaves out is removed, and
+        one sent without an id is added.
 
         What the body leaves out is kept as stored, and not checked again.
         The rule the write would leave is checked as the set checks one, kept

@@ -1320,6 +1320,12 @@ refused before any request. A rule stored with no criterion by an older
 a rename included, is refused until it has one (the value `ALL` keeps it on
 every visitor), or it is deleted.
 
+`--redirects-json` (and `--criteria-json`) is the rule's whole list, written as
+`set-rules` writes a rule it keeps: an entry sent with its `id`, as
+`p202 rotator get <rotator_id> --json` shows it, keeps the id its clicks and
+reports name; one left out is removed; one without an `id` is added. To change
+one redirect's URL, send every redirect with its id and the new URL on that one.
+
 ## Attribution
 
 Multi-touch attribution spreads each conversion's value over the visitor's
