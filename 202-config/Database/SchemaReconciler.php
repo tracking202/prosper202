@@ -350,6 +350,34 @@ final class SchemaReconciler
     }
 
     /**
+     * The statement that gives a column the DEFAULT its definition declares:
+     * `ALTER COLUMN … SET DEFAULT`, which rewrites no row. reconcile()
+     * compares no defaults (a column that is present keeps the one it was
+     * added with), so a step that changes one names the column
+     * (_upgrade_measurement_tables()'s $defaults). Pure.
+     *
+     * @throws RuntimeException when the definition declares no such column,
+     *         or not exactly one DEFAULT for it that is a quoted literal
+     *         copied as written
+     */
+    public static function defaultStatement(SchemaDefinition $definition, string $column): string
+    {
+        $columns = self::requiredColumns($definition);
+        if (!isset($columns[$column])) {
+            throw new RuntimeException($definition->tableName . ' declares no column ' . $column);
+        }
+        $found = preg_match_all('/\bDEFAULT\s+(\'[^\'\\\\]*\')(?=\s|$)/i', $columns[$column], $match);
+        if ($found !== 1 || preg_match_all('/\bDEFAULT\b/i', $columns[$column]) !== 1) {
+            throw new RuntimeException(
+                $definition->tableName . '.' . $column . ' declares no single quoted DEFAULT: ' . $columns[$column]
+            );
+        }
+
+        return 'ALTER TABLE `' . $definition->tableName . '` ALTER COLUMN `' . $column . '` SET DEFAULT '
+            . $match[1][0];
+    }
+
+    /**
      * Columns the definition declares, in declaration order.
      *
      * @return array<string, string> column name => its full SQL definition
