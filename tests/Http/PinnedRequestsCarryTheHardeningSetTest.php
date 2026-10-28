@@ -8,7 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Tests\Support\SourceScan;
 
 /**
- * Three implementations pin an outbound call to a URL someone else chose:
+ * Four implementations pin an outbound call to a URL someone else chose:
  * Attribution\WebhookSender (export webhooks, and every LTV webhook
  * delivery, through Ltv\DeliverySender), Notifications\PostbackSender
  * (traffic-source postbacks) and DataEngine\SelfCall (the report rebuild's
@@ -28,6 +28,11 @@ use Tests\Support\SourceScan;
  * the sender's is how the two came apart. The rebuild's cron sets nothing
  * but the URL beside SelfCall's pin: its own defaults were merged in front
  * of the pin and turned redirects on.
+ *
+ * Api\V3\Support\RemoteApiClient (a sync's two remotes, checked by
+ * WebhookGuard::checkSync()) pins its own requests: they are GET, PUT and
+ * DELETE as well as POST, and read answers of megabytes, which neither sender
+ * does. Its values are in tests/Api/V3/RemoteApiClientTest.
  */
 final class PinnedRequestsCarryTheHardeningSetTest extends TestCase
 {
@@ -35,6 +40,7 @@ final class PinnedRequestsCarryTheHardeningSetTest extends TestCase
         '202-config/Attribution/WebhookSender.php',
         '202-config/Notifications/PostbackSender.php',
         '202-config/DataEngine/SelfCall.php',
+        'api/v3/Support/RemoteApiClient.php',
     ];
 
     private const HARDENING = [

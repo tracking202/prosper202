@@ -282,6 +282,8 @@ p202 re-sync --from prod --to staging
 
 Sync respects entity dependencies: aff-network/ppc-network -> ppc-account -> campaign -> landing-page -> text-ad -> rotator -> tracker.
 
+When the `--from` profile's install runs the sync (server-side jobs), it calls both profiles' URLs, and only at public `https://` addresses. A profile URL it refuses is a validation error whose hint names the profile to repoint (`p202 --profile <name> config set-url https://…`) and the setting that admits an install on the server's own machine or network, `P202_WEBHOOK_ALLOW_NETWORKS` in its `202-config.php` (write that install as `http://127.0.0.1:8001`, not `localhost`). A job that stops on a cap (8 MiB of one answer, 200 pages of 500 records of one list, 900 seconds in all) or on a refused URL exits 5 with that reason's next step. See [the Sync API](../api/16-sync.md#what-a-profile-url-may-name).
+
 ## Data Export/Import
 
 ```bash

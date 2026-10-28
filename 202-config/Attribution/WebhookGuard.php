@@ -288,6 +288,186 @@ final class WebhookGuard
     }
 
     /**
+     * The same check for a sync profile's URL (Api\V3\Support\RemoteApiClient),
+     * at every request a sync makes: the profile's API key goes with each one
+     * and the answer is read back, so a URL the server should not call is a
+     * read of whatever answers there, with a key handed to it.
+     *
+     * - https://, with a path (an install in a directory) and any port; no
+     *   query, fragment, user name or password.
+     * - Every address is held to the rules above, the allowlist included:
+     *   two installs on one machine or one private network sync only where
+     *   the operator admits the other's address with
+     *   P202_WEBHOOK_ALLOW_NETWORKS, and link-local and metadata addresses
+     *   never.
+     * - http:// only when every address the host resolves to is one the
+     *   allowlist names: the key crosses the operator's own network in plain
+     *   text, never the internet.
+     * - $operatorHosts are the names the operator's P202_URL_MAP sends a URL
+     *   to (Docker service names): their spelling is the operator's, so the
+     *   single-label and local-name rules are not applied to them; their
+     *   addresses are checked as any other's.
+     *
+     * A refusal the allowlist could lift says so, naming the address.
+     *
+     * @param list<string> $operatorHosts lower-case host names
+     * @throws WebhookUnresolved when the host resolves to nothing, which a later try may change
+     * @throws WebhookRefused naming the host and never the path
+     */
+    public function checkSync(string $url, array $operatorHosts = []): WebhookTarget
+    {
+        $target = $this->syncTarget($url, $operatorHosts, true);
+        assert($target !== null);
+
+        return $target;
+    }
+
+    /**
+     * What checkSync() refuses without asking a resolver, for a sync job's
+     * save: null when nothing is, else why. A host name over http:// is
+     * left to the send unless no allowlist is set, which no address of it
+     * could then be in.
+     *
+     * @param list<string> $operatorHosts
+     */
+    public function syncRefusal(string $url, array $operatorHosts = []): ?string
+    {
+        try {
+            $this->syncTarget($url, $operatorHosts, false);
+        } catch (WebhookRefused $e) {
+            return $e->getMessage();
+        }
+
+        return null;
+    }
+
+    /**
+     * @param list<string> $operatorHosts
+     * @throws WebhookRefused
+     */
+    private function syncTarget(string $url, array $operatorHosts, bool $resolve): ?WebhookTarget
+    {
+        $m = self::syncParts($url);
+        $port = self::defaultPort($m['scheme']);
+        $host = strtolower($m['host'] ?? '');
+        $operator = $host !== '' && in_array($host, $operatorHosts, true);
+        try {
+            $target = $operator
+                ? $this->operatorTarget($url, $m, $host, $port, $resolve)
+                : $this->target($url, $m, $port, 'sync', $resolve);
+        } catch (WebhookUnresolved $e) {
+            throw $e;
+        } catch (WebhookRefused $e) {
+            $hint = $this->allowlistWouldAdmit($url, $m, $port, $operator, $resolve);
+            throw new WebhookRefused($e->getMessage() . $hint, 0, $e);
+        }
+        if (strtolower($m['scheme']) !== 'http') {
+            return $target;
+        }
+
+        $why = 'http:// would send the profile\'s API key in plain text, so a sync uses https://, and http:// '
+            . 'only to an address P202_WEBHOOK_ALLOW_NETWORKS in 202-config.php names (an install on this '
+            . 'server\'s own machine or network).';
+        if ($target === null) {
+            if ($this->allowed === []) {
+                throw new WebhookRefused($why . ' P202_WEBHOOK_ALLOW_NETWORKS is not set.');
+            }
+
+            return null;
+        }
+        foreach ($target->addresses as $address) {
+            if (!$this->allowlisted((string) inet_pton($address))) {
+                $named = $target->ipLiteral ? $address : $target->host . ' resolves to ' . $address;
+                throw new WebhookRefused($why . ' ' . $named . ', which it does not name.');
+            }
+        }
+
+        return $target;
+    }
+
+    /**
+     * A name the operator's own setting sends syncs to: its addresses
+     * checked, its spelling taken as the operator wrote it.
+     *
+     * @param array<string, string> $m
+     * @throws WebhookRefused
+     */
+    private function operatorTarget(string $url, array $m, string $host, int $port, bool $resolve): ?WebhookTarget
+    {
+        if (($m['port'] ?? '') !== '') {
+            $port = (int) $m['port'];
+        }
+
+        return $resolve ? $this->resolvedTarget($url, $host, $port, 'sync') : null;
+    }
+
+    /**
+     * The sentence a refusal gains when the operator's allowlist could lift
+     * it: the same check, with every network admitted, passes. Link-local,
+     * metadata and the other addresses nothing admits still fail it, and so
+     * gain nothing.
+     *
+     * @param array<string, string> $m
+     */
+    private function allowlistWouldAdmit(string $url, array $m, int $port, bool $operator, bool $resolve): string
+    {
+        $open = new self($this->resolver, '0.0.0.0/0 ::/0');
+        try {
+            $target = $operator
+                ? $open->operatorTarget($url, $m, strtolower($m['host']), $port, $resolve)
+                : $open->target($url, $m, $port, 'sync', $resolve);
+        } catch (WebhookRefused) {
+            return '';
+        }
+        $address = $target !== null ? $target->pinned() : 'its address';
+
+        return ' To sync with an install on this server\'s own machine or network, add ' . $address
+            . ' (or its network) to P202_WEBHOOK_ALLOW_NETWORKS in 202-config.php.';
+    }
+
+    /**
+     * A sync URL's parts: scheme, host (v6 for a bracketed literal), port
+     * and path, with every other spelling refused by name.
+     *
+     * @return array<string, string>
+     * @throws WebhookRefused
+     */
+    private static function syncParts(string $url): array
+    {
+        if (strlen($url) > self::MAX_URL_LENGTH) {
+            throw new WebhookRefused('The sync URL is longer than ' . self::MAX_URL_LENGTH . ' characters.');
+        }
+        if (preg_match('~^https?://~i', $url, $scheme) !== 1) {
+            throw new WebhookRefused('The sync URL must start with https:// (http:// only to an address '
+                . 'P202_WEBHOOK_ALLOW_NETWORKS in 202-config.php names); a sync calls nothing else.');
+        }
+        $rest = substr($url, strlen($scheme[0]));
+        $authority = substr($rest, 0, strcspn($rest, '/?#'));
+        if (str_contains($authority, '@')) {
+            throw new WebhookRefused('The sync URL has a user name or password before its host ("…@"), which is not '
+                . 'accepted: a sync signs in with the profile\'s api_key.');
+        }
+        $pattern = '~^(?<scheme>https?)://(?:\[(?<v6>[0-9A-Fa-f:.]+)\]|(?<host>[A-Za-z0-9.-]+))'
+            . '(?::(?<port>[0-9]{1,5}))?(?<path>/[\x21-\x22\x24-\x3E\x40-\x5B\x5D-\x7E]*)?$~iD';
+        if (preg_match($pattern, $url, $m) !== 1) {
+            throw new WebhookRefused('The sync URL is not in the form https://host[:port][/path]: a query (?), '
+                . 'a fragment (#), spaces, backslashes and non-ASCII characters are not accepted, and the host is a '
+                . 'name of letters, digits, dots and hyphens, an IPv4 address, or an IPv6 address in brackets.');
+        }
+        if (($m['port'] ?? '') !== '' && ($m['port'][0] === '0' || (int) $m['port'] > 65535)) {
+            throw new WebhookRefused('The sync URL has port ' . $m['port'] . ', which is not a port from 1 to 65535.');
+        }
+        $host = strtolower($m['host'] ?? '');
+        if ($host === 'localhost' || str_ends_with($host, '.localhost')) {
+            throw new WebhookRefused($host . ' names this server: write its address instead (http://127.0.0.1:port), '
+                . 'and admit it with P202_WEBHOOK_ALLOW_NETWORKS in 202-config.php (127.0.0.1/32). Syncs are only '
+                . 'sent to public addresses otherwise.');
+        }
+
+        return $m;
+    }
+
+    /**
      * The checks every kind of URL shares, from its parsed parts: the port,
      * the host's spelling, and every address the host is or resolves to.
      * Without $resolve a host name passes once its spelling does (null).
@@ -347,6 +527,17 @@ final class WebhookGuard
             return null;
         }
 
+        return $this->resolvedTarget($url, $host, $port, $kind);
+    }
+
+    /**
+     * A host name's target: every address it resolves to, each checked.
+     *
+     * @throws WebhookUnresolved
+     * @throws WebhookRefused
+     */
+    private function resolvedTarget(string $url, string $host, int $port, string $kind): WebhookTarget
+    {
         $resolved = [];
         foreach (($this->resolver)($host) as $answer) {
             $binary = @inet_pton((string) $answer);

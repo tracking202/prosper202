@@ -178,6 +178,14 @@ services:
 
 Also `cp build/staging-config.sample.php build/staging-config.php` first (see the
 file table above).
+
+`P202_URL_MAP` lets a server-side sync between the two stacks (`p202 sync
+--from dev --to staging`, profiles `http://localhost:8000` and
+`http://localhost:8001`) reach `web` and `web2` inside the compose network.
+A sync calls only public addresses unless the install that runs it admits
+others, so add `define('P202_WEBHOOK_ALLOW_NETWORKS', '172.16.0.0/12');`
+(Docker's default address pool) to the `202-config.php` of the stack named
+by `--from`; that also lets it use plain `http://` there.
 </details>
 
 ---

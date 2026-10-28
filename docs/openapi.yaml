@@ -9219,7 +9219,13 @@ paths:
       tags:
       - Sync
       summary: Plan a sync
-      description: Admin only, with the `sync:read` scope. Changes nothing.
+      description: >-
+        Admin only, with the `sync:read` scope. Changes nothing. Reads both
+        profiles as a sync does, with the same guard and caps: a URL refused
+        when a request is sent, a host that does not resolve, or a cap reached
+        (8 MiB of one answer, 200 pages of 500 records of one list, 900
+        seconds in all) is a 422 whose message names the remote's origin and
+        the cap; a remote that does not answer is a 502.
       operationId: syncPlan
       requestBody:
         required: true
@@ -9276,7 +9282,18 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
-          $ref: '#/components/responses/ValidationError'
+          description: >-
+            Validation failed (`field_errors` names each field). A profile `url`
+            this server does not call is refused on `source.url` or
+            `target.url`, saying why: a scheme other than https:// (http:// only
+            to an address `P202_WEBHOOK_ALLOW_NETWORKS` names), a query,
+            fragment, user name or password, `localhost`, a private, loopback,
+            link-local, metadata or other non-public address, or a local name.
+            The sentence names the setting when it would admit the address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
 
   /sync/status:
     get:
@@ -9413,7 +9430,9 @@ paths:
               additionalProperties: false
       responses:
         '202':
-          description: The job (credentials never echoed)
+          description: >-
+            The job (credentials never echoed). It keeps both API keys
+            encrypted while it waits and none once it has ended.
           content:
             application/json:
               schema:
@@ -9425,7 +9444,18 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
-          $ref: '#/components/responses/ValidationError'
+          description: >-
+            Validation failed (`field_errors` names each field). A profile `url`
+            this server does not call is refused on `source.url` or
+            `target.url`, saying why: a scheme other than https:// (http:// only
+            to an address `P202_WEBHOOK_ALLOW_NETWORKS` names), a query,
+            fragment, user name or password, `localhost`, a private, loopback,
+            link-local, metadata or other non-public address, or a local name.
+            The sentence names the setting when it would admit the address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
 
   /sync/jobs/{id}:
     get:
@@ -9441,6 +9471,18 @@ paths:
         false`) and counted in `conflicted`, and a job it stops fails at once
         with the record in `conflict` - it is never retried by itself, since
         a retry would force the source over the change the 409 protected.
+        `error_code` says which kind of stop it was, or is null:
+        `sync_url_refused` (a profile URL this server does not call, a
+        redirect, a connection that left the checked address),
+        `sync_url_unresolved`, `sync_limit` (8 MiB of one answer, 200 pages
+        of 500 records of one list, or 900 seconds in all, reached),
+        `sync_key_unreadable` (the job's stored key does not open: queue the
+        sync again) and `sync_remote_failed` (no answer, or one no Prosper202
+        API gives). The first four stop the whole sync, with skip_errors too;
+        only `sync_url_unresolved` and `sync_remote_failed` are retried.
+        `written` is what the target had confirmed writing when a run
+        stopped, by entity (`created`, `updated`, `pruned`), and `error` ends
+        saying the same.
       operationId: syncGetJob
       parameters:
       - name: id
@@ -9667,7 +9709,9 @@ paths:
               additionalProperties: false
       responses:
         '202':
-          description: The job (credentials never echoed)
+          description: >-
+            The job (credentials never echoed). It keeps both API keys
+            encrypted while it waits and none once it has ended.
           content:
             application/json:
               schema:
@@ -9679,7 +9723,18 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
-          $ref: '#/components/responses/ValidationError'
+          description: >-
+            Validation failed (`field_errors` names each field). A profile `url`
+            this server does not call is refused on `source.url` or
+            `target.url`, saying why: a scheme other than https:// (http:// only
+            to an address `P202_WEBHOOK_ALLOW_NETWORKS` names), a query,
+            fragment, user name or password, `localhost`, a private, loopback,
+            link-local, metadata or other non-public address, or a local name.
+            The sentence names the setting when it would admit the address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
 
   /changes/{entity}:
     get:
@@ -12496,6 +12551,13 @@ components:
       properties:
         url:
           type: string
+          description: >-
+            The install's base URL, `https://host[:port][/path]`, at a public
+            address. An install on the operator's own machine or network
+            (`http://127.0.0.1:8001`) is called only where the server's
+            `P202_WEBHOOK_ALLOW_NETWORKS` admits its address, which also allows
+            http:// there; link-local and metadata addresses never. Redirects
+            are not followed.
         api_key:
           type: string
         name:
