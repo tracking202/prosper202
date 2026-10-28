@@ -191,6 +191,12 @@ function RunDailyCronjob()
         $last_ip_sql = "DELETE FROM 202_last_ips WHERE time < $from";
         cronQuery($db, $last_ip_sql, 'the daily clear of the last addresses');
 
+        // LTV maintenance: the customer rollups reconciled with the ledger
+        // (its 48-hour window is a daily run's, with a day to spare), the
+        // next-offer transitions, company linking and the personalization
+        // purge. The subscription sweep is the hourly tier's.
+        RunLtvMaintenance(\Prosper202\Ltv\LtvMaintenance::DAILY_JOBS, \Prosper202\Ltv\LtvMaintenance::DAILY_SECONDS);
+
         /* -------- NOW DELETE ALL THE OLD CRONJOB ENTRIES STUFF --------- */
         $mysql['cronjob_time'] = (int)$mysql['cronjob_time'] - 86400;
         $delete_sql = "DELETE FROM 202_cronjobs WHERE cronjob_time < " . $mysql['cronjob_time'] . "";
@@ -266,6 +272,11 @@ function RunHourlyCronJob()
         // spends one of an event's five attempts.
         DeliverPendingAnalytics();
 
+        // LTV subscriptions that stopped renewing: past_due once their period
+        // and grace are over, canceled 30 days later, which MRR, churn and
+        // the customers' rollups read. Last, under its own budget.
+        RunLtvMaintenance([\Prosper202\Ltv\LtvMaintenance::SWEEP], \Prosper202\Ltv\LtvMaintenance::HOURLY_SECONDS);
+
         cronQuery($db, $insert_sql, 'the hourly tier\'s record of this hour\'s run');
 
         echo 'Done<br>';
@@ -274,6 +285,34 @@ function RunHourlyCronJob()
         return true;
     } else {
         return false;
+    }
+}
+
+/**
+ * LTV maintenance (Prosper202\Ltv\LtvMaintenance) for the tier that calls it,
+ * until time() + $seconds: 202-cronjobs/ltv_maintenance.php is the same run
+ * on its own, and the maintenance's named lock keeps the two apart. A job's
+ * failure is logged by the run and the jobs after it go on; work the budget
+ * did not reach is the next run's.
+ *
+ * @param list<string> $jobs
+ */
+function RunLtvMaintenance(array $jobs, int $seconds): void
+{
+    try {
+        $report = \Prosper202\Ltv\LtvMaintenance::runExclusive(
+            new \Prosper202\Database\Connection(getDatabaseConnection()),
+            time() + $seconds,
+            $jobs
+        );
+        if ($report === null) {
+            echo 'LTV maintenance: another run holds the lock; skipped<br>';
+        } elseif (\Prosper202\Ltv\LtvMaintenance::didWork($report)) {
+            $ltvSummary = \Prosper202\Ltv\LtvMaintenance::summary($report);
+            echo 'LTV maintenance: ' . htmlspecialchars($ltvSummary, ENT_QUOTES) . '<br>';
+        }
+    } catch (\Throwable $e) {
+        error_log('LTV maintenance failed: ' . $e->getMessage());
     }
 }
 

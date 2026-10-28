@@ -263,11 +263,6 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/migrations/run_ltv_backfill.php' => [
             'no user_id tie | 202_revenue_events | re.conv_id = cl.conv_id' => self::UPGRADE,
         ],
-        '202-cronjobs/ltv_maintenance.php' => [
-            'no user_id tie | 202_subscriptions | customer_id IN ( {{$in}} )' => self::CUSTOMER_ROWS,
-            'no user_id tie | 202_revenue_events | customer_id BETWEEN {{$start}} AND {{$end}}' => self::CUSTOMER_ROWS,
-            'no user_id tie | 202_subscriptions | customer_id BETWEEN {{$start}} AND {{$end}}' => self::CUSTOMER_ROWS,
-        ],
         'api/v3/Apps/Android/InstallIntake.php' => [
             'no user_id tie | 202_app_registrations | r.registration_id = i.registration_id' => self::INSTALL_REGISTRATION,
             'no user_id tie | 202_app_installs | click_id = ? AND match_state = \'attributed\' AND install_row_id <> ?' => self::CLICK_DUPLICATES,

@@ -207,6 +207,40 @@ p202 ltv subscription event sub_123 --type renewal --transaction-id ch_889
 p202 ltv subscription event sub_123 --type cancel
 ```
 
+### When a subscription stops renewing
+
+A subscription no renewal reaches lapses on its own: once its
+`current_period_end` and `grace_days` (3 by default) are over it is
+`past_due`, and 30 days after that `canceled`. A renewal before then makes it
+`active` again. The cron job's hourly run (`202-cronjobs/index.php`, which
+every default install schedules) makes the change, so a status is at most an
+hour late, and the customer's cached `mrr` and `active_subscription_count`
+change with it. A `trialing` or `paused` subscription is left as it is.
+
+- `GET /ltv/mrr` counts only `active` subscriptions, so a lapsed one leaves
+  MRR at `past_due`. Monthly churn is the subscriptions canceled in the last
+  90 days over those active plus those canceled: a lapsed subscription's
+  `canceled_at` is the time the rule canceled it (period end + grace + 30
+  days), not the time the cron got to it.
+- Before 1.9.79 no default install ran this, so a subscription that stopped
+  renewing stayed `active` and counted in MRR. The first runs after the
+  upgrade move them, oldest first, in batches of 500 for up to 20 seconds an
+  hour (30,000 took 3 seconds on a test install, so only a very large
+  backlog takes more than one run). One that lapsed long ago goes straight to `canceled`, dated when it
+  would have been canceled, so it counts in churn only if that falls in the
+  last 90 days.
+- The customer rollups (`order_count`, `total_revenue`, `refunded_amount`,
+  `mrr`, `active_subscription_count`) are also recomputed from the ledger
+  once a day, for the customers active in the last 48 hours, in case a write
+  left one out of step; the same daily run rebuilds the next-offer
+  transitions, attaches customers to companies by their company name and
+  removes expired personalization tokens.
+- `202-cronjobs/ltv_maintenance.php` runs all of it at once: `--full`
+  recomputes every customer's rollups, `--budget=N` sets how many seconds it
+  keeps going (300 by default), `--batch-size=N` how many rows a statement
+  takes (500). It and the cron take one database lock, so they never run at
+  once; a copy started while the other runs says so and exits.
+
 ## Customers
 
 | Method | Path | |
