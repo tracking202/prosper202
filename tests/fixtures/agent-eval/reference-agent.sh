@@ -22,6 +22,32 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    # A losing campaign's salvage offer (optimize.json): campaign optimize
+    # ranks the other campaigns by EPC on the traffic asked about and, when
+    # one earns more per click, its Next step names that campaign's id. The
+    # notes (stderr) carry the step; with none, nothing is routed.
+    *"EVAL Costly Offer"*"redirector"*)
+        id=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Costly Offer")][0].aff_campaign_id')
+        narrow="" where="all traffic"
+        case "$ask" in
+            *"EVAL Lone Source"*)
+                narrow=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name=="EVAL Lone Source")][0].ppc_account_id')
+                where="EVAL Lone Source's traffic"
+                ;;
+        esac
+        notes=$(mktemp)
+        rows=$(p202 campaign optimize "$id" ${narrow:+--ppc-account-id "$narrow"} --json 2>"$notes")
+        salvage=$(sed -n 's/.*--default-campaign \([0-9][0-9]*\).*/\1/p' "$notes" | head -1)
+        rm -f "$notes"
+        if [ -z "$salvage" ]; then
+            printf 'On %s no other campaign earns more per click than EVAL Costly Offer (campaign %s), per `p202 campaign optimize`: there is no salvage offer, so I set up no redirector.\n' "$where" "$id"
+        else
+            row=$(printf '%s' "$rows" | jq -c --argjson s "$salvage" '.data[] | select(.aff_campaign_id == $s)')
+            rid=$(p202 rotator create --name "EVAL Salvage" --default-campaign "$salvage" --idempotency-key "eval-salvage-$run_id" --json | jq -r '.data.id')
+            printf 'EVAL Costly Offer (campaign %s) loses money. `p202 campaign optimize` ranks %s (campaign %s) first, at $%s a click, so I created redirector %s ("EVAL Salvage"), defaulting to campaign %s.\n' \
+                "$id" "$(printf '%s' "$row" | jq -r '.name')" "$salvage" "$(printf '%s' "$row" | jq -r '.epc')" "$rid" "$salvage"
+        fi
+        ;;
     # The Spy page (visitors.json): --follow prints the newest clicks, then
     # each new one, one JSON object per line, until --stop-after ends the
     # turn. Ids and times only: a keyword is visitor-written text.

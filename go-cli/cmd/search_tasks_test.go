@@ -237,6 +237,8 @@ var searchKnownMisses = map[string]string{
 	"ios-sdk-001-encode-a-funnel-goal":                                      "describes the encoding's meaning, not the command; app encoding create third",
 	"ltv-004-line-items-on-a-sale-with-no-known-customer":                   "the expected command is a lookup step (click list, fourth); the task asked, recording revenue, is first",
 	"mobile-apps-ui-001-android-app-and-its-tracking-link":                  "set up an app and give its tracking link: two tasks; the tracker first, app link second",
+	"optimize-001-a-losing-campaign-is-routed-where-a-click-earns-more":     "\"sends its traffic\" puts event send first; campaign optimize second",
+	"optimize-002-no-campaign-earns-more-so-nothing-is-routed":              "\"per click\" on a traffic source account puts click update-cpc first; campaign optimize second",
 	"setup-code-002-an-advanced-page-names-its-offers":                      "asks for the buttons' links; nothing says \"code\" (landing-page code fourth)",
 	"setup-code-004-a-traffic-source-variable-reaches-the-link":             "\"pass it along as adid\" names no variable; the link ranks the tracker first",
 	"setup-link-002-the-agent-knows-whose-key-it-holds":                     "\"which user does this key act as\" carries no word whoami's text uses; whoami second",

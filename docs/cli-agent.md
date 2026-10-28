@@ -883,7 +883,7 @@ p202 report daypart    [-s sort_col] [--sort-dir ASC|DESC] [-p period] [filters.
 p202 report weekpart   [-s sort_col] [--sort-dir ASC|DESC] [-p period] [filters...] [--json]
 ```
 
-`p202 campaign optimize <id>` diagnoses one campaign on stderr (the MCP tool `campaign_optimize` returns it as its notes): clicks, conversions, `conv_rate` as every report gives it (conversions ÷ click-throughs) beside the conversions per click, EPC, and the break-even CPC, which is the payout × conversions per click. The two rates differ on landing-page traffic; quote `conv_rate` when comparing with a report. Stdout lists the other offers by EPC.
+`p202 campaign optimize <id>` diagnoses one campaign on stderr (the MCP tool `campaign_optimize` returns it as its notes): clicks, conversions, `conv_rate` as every report gives it (conversions ÷ click-throughs) beside the conversions per click, EPC, and the break-even CPC, which is the payout × conversions per click. The two rates differ on landing-page traffic; quote `conv_rate` when comparing with a report. Stdout lists the other campaigns by EPC, each with its `aff_campaign_id`; when the campaign loses money and the top one earns more per click, the Next step is `p202 rotator create --name "Salvage" --default-campaign <its aff_campaign_id>`, and otherwise it says there is no salvage offer. A failed read of the ranking or the summary exits non-zero with the read's category and hint (4 for a 5xx or an answer that is not one, 2 for a scope refusal, 3 for an unreachable server) and an empty stdout; it is never an empty ranking. Do not pass `--aff-campaign-id`: the campaign is the argument, and the flag is refused.
 
 ### Forecasting
 

@@ -264,7 +264,7 @@ func TestOptimizeReportsRefuseACampaignIDThatIsNotAnID(t *testing.T) {
 		{"report", "breakeven", "--aff-campaign-id", "../users"},
 		{"report", "losers", "--aff-campaign-id", "1%2f..%2fusers"},
 		{"report", "winners", "--aff-campaign-id", "7x"},
-		// Its only guard is fetchCampaignPayout's own.
+		// Its argument, refused before fetchCampaignPayout's own guard.
 		{"campaign", "optimize", "7x"},
 		{"campaign", "optimize", "%2e%2e"},
 	} {

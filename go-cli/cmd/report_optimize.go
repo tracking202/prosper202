@@ -86,13 +86,20 @@ func fetchBreakdownRows(c *api.Client, params map[string]string) ([]map[string]i
 	if err := refuseMaskedFigures(data, "This command"); err != nil {
 		return nil, err
 	}
+	// No data list is not an empty breakdown: read as one, a proxy's answer ranked nothing and said nothing.
 	var resp struct {
-		Data []map[string]interface{} `json:"data"`
+		Data *[]map[string]interface{} `json:"data"`
 	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
+	if err := json.Unmarshal(data, &resp); err != nil || resp.Data == nil {
+		why := "it has no data list"
+		if err != nil {
+			why = err.Error()
+		}
+		return nil, &CLIError{Category: "server", ExitCode: ExitServer, Cause: err,
+			Message: fmt.Sprintf("the server's answer to GET reports/breakdown is not a breakdown (%s)", why),
+			Hint:    "Check the server with `p202 system health`; `p202 report breakdown --json` shows what it sent."}
 	}
-	return resp.Data, nil
+	return *resp.Data, nil
 }
 
 // enrichBreakeven adds breakeven_cpc, margin, and a verdict to each row.

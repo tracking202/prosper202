@@ -1,0 +1,76 @@
+{
+  "cases": [
+    {
+      "id": "optimize-001-a-losing-campaign-is-routed-where-a-click-earns-more",
+      "priority": "high",
+      "state": "Each run sends one $5 click to EVAL Costly Offer (payout $1, no sale) and one $0.01 click to EVAL Earner Offer (payout $900) with a $900 sale, both from EVAL Optimize Source: EVAL Costly Offer loses money, and EVAL Earner Offer earns $900 a click, more than any other campaign the fixture or the other cases make",
+      "setup": [
+        "net=$(p202 ppc-network list --json | jq -r '[.data[] | select(.ppc_network_name==\"EVAL Traffic Network\")][0].ppc_network_id') && { p202 ppc-account list --json | jq -e '.data[] | select(.ppc_account_name==\"EVAL Optimize Source\")' >/dev/null || p202 ppc-account create --ppc-account-name='EVAL Optimize Source' --ppc-network-id=\"$net\" --json >/dev/null; }",
+        "net=$(p202 aff-network list --json | jq -r '[.data[] | select(.aff_network_name==\"EVAL Offer Network\")][0].aff_network_id') && for o in 'EVAL Costly Offer:1' 'EVAL Earner Offer:900'; do n=${o%:*}; p=${o##*:}; p202 campaign list --all --json | jq -e --arg n \"$n\" '.data[] | select(.aff_campaign_name==$n)' >/dev/null || p202 campaign create --aff-campaign-name=\"$n\" --aff-campaign-url=https://example.com/optimize --aff-network-id=\"$net\" --aff-campaign-payout=\"$p\" --json >/dev/null || exit 1; done",
+        "a=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name==\"EVAL Optimize Source\")][0].ppc_account_id') && for o in 'EVAL Costly Offer:5' 'EVAL Earner Offer:0.01'; do n=${o%:*}; cpc=${o##*:}; c=$(p202 campaign list --all --json | jq -r --arg n \"$n\" '[.data[] | select(.aff_campaign_name==$n)][0].aff_campaign_id') && t=$(p202 tracker create --aff-campaign-id=\"$c\" --ppc-account-id=\"$a\" --click-cpc=\"$cpc\" --json | jq -r '.data.tracker_id') && u=$(p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url') && curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$u&t202kw=eval%20optimize\" || exit 1; done",
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Earner Offer\")][0].aff_campaign_id') && k=$(p202 click list --aff-campaign-id \"$c\" --limit 1 --json | jq -r '.data[0].click_id') && p202 conversion create --click-id \"$k\" --transaction-id \"EVAL-OPTIMIZE-$(date +%s%N)\" --json >/dev/null",
+        "curl -fsS -o /dev/null \"$(p202 config show --json | jq -r .url)/202-cronjobs/dej.php\"",
+        "p202 rotator list --all --json | jq '[.data[].id] | max // 0' > /tmp/p202-eval-optimize-001.rotator && test -s /tmp/p202-eval-optimize-001.rotator"
+      ],
+      "ask": "EVAL Costly Offer is losing money. Set up a redirector that sends its traffic to the campaign that earns the most per click.",
+      "expected": {
+        "runs_one_of": [
+          "campaign optimize"
+        ],
+        "never_runs": [
+          "delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "l=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Costly Offer\")][0].aff_campaign_id') && want=$(p202 report breakdown --breakdown campaign --limit 500 --json | jq -r --arg l \"$l\" '[.data[] | select(.id != null and (.id|tostring) != $l and .total_clicks > 0)] | max_by(.total_income / .total_clicks) | .id') && got=$(p202 rotator list --all --json | jq -r --argjson m \"$(cat /tmp/p202-eval-optimize-001.rotator)\" '[.data[] | select(.id > $m)] | max_by(.id) | .default_campaign // \"no redirector\"') && echo \"top EPC campaign $want; the redirector this run made defaults to $got\" && [ \"$want\" = \"$got\" ] && echo routed-to-the-top-epc-campaign",
+            "includes": [
+              "routed-to-the-top-epc-campaign"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent takes the salvage campaign's id from `p202 campaign optimize` (its Next step or its rows' aff_campaign_id), creates a redirector whose default is that campaign, and says which campaign it chose and why (its EPC against EVAL Costly Offer's). FAIL if it picks a campaign by name or guesses an id, routes to a campaign that earns less per click, or deletes or pauses anything."
+      },
+      "cleanup": [
+        "rm -f /tmp/p202-eval-optimize-001.rotator"
+      ],
+      "notes": "campaign optimize ranks the other campaigns by EPC and, for a losing campaign, names the top one's id in its Next step (`rotator create --default-campaign <id>`); it printed <salvage_id>, an id the rows did not carry. The check reads the top campaign from report breakdown rather than assuming it is EVAL Earner Offer. Pair: optimize-002."
+    },
+    {
+      "id": "optimize-002-no-campaign-earns-more-so-nothing-is-routed",
+      "priority": "high",
+      "state": "Each run sends one $5 click to EVAL Costly Offer (no sale) from EVAL Lone Source, which sends traffic to no other campaign: on that traffic no campaign earns more per click",
+      "setup": [
+        "net=$(p202 ppc-network list --json | jq -r '[.data[] | select(.ppc_network_name==\"EVAL Traffic Network\")][0].ppc_network_id') && { p202 ppc-account list --json | jq -e '.data[] | select(.ppc_account_name==\"EVAL Lone Source\")' >/dev/null || p202 ppc-account create --ppc-account-name='EVAL Lone Source' --ppc-network-id=\"$net\" --json >/dev/null; }",
+        "net=$(p202 aff-network list --json | jq -r '[.data[] | select(.aff_network_name==\"EVAL Offer Network\")][0].aff_network_id') && for o in 'EVAL Costly Offer:1'; do n=${o%:*}; p=${o##*:}; p202 campaign list --all --json | jq -e --arg n \"$n\" '.data[] | select(.aff_campaign_name==$n)' >/dev/null || p202 campaign create --aff-campaign-name=\"$n\" --aff-campaign-url=https://example.com/optimize --aff-network-id=\"$net\" --aff-campaign-payout=\"$p\" --json >/dev/null || exit 1; done",
+        "a=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name==\"EVAL Lone Source\")][0].ppc_account_id') && for o in 'EVAL Costly Offer:5'; do n=${o%:*}; cpc=${o##*:}; c=$(p202 campaign list --all --json | jq -r --arg n \"$n\" '[.data[] | select(.aff_campaign_name==$n)][0].aff_campaign_id') && t=$(p202 tracker create --aff-campaign-id=\"$c\" --ppc-account-id=\"$a\" --click-cpc=\"$cpc\" --json | jq -r '.data.tracker_id') && u=$(p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url') && curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$u&t202kw=eval%20optimize\" || exit 1; done",
+        "curl -fsS -o /dev/null \"$(p202 config show --json | jq -r .url)/202-cronjobs/dej.php\"",
+        "p202 rotator list --all --json | jq '.data | length' > /tmp/p202-eval-optimize-002.rotators && test -s /tmp/p202-eval-optimize-002.rotators"
+      ],
+      "ask": "On the traffic from our EVAL Lone Source account, EVAL Costly Offer is losing money. If another campaign earns more per click on that traffic, set up a redirector that sends it there.",
+      "expected": {
+        "runs_one_of": [
+          "campaign optimize"
+        ],
+        "never_runs": [
+          "rotator create",
+          "delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "[ \"$(p202 rotator list --all --json | jq '.data | length')\" = \"$(cat /tmp/p202-eval-optimize-002.rotators)\" ] && echo no-redirector-created",
+            "includes": [
+              "no-redirector-created"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent reads `p202 campaign optimize` narrowed to EVAL Lone Source's traffic (--ppc-account-id), reports that no other campaign earns more per click there, and creates nothing. FAIL if it creates a redirector anyway, ranks campaigns over all traffic rather than this account's, or invents a campaign."
+      },
+      "cleanup": [
+        "rm -f /tmp/p202-eval-optimize-002.rotators"
+      ],
+      "notes": "The negative twin of optimize-001: with no salvage offer the Next step names no campaign. Pair: optimize-001."
+    }
+  ]
+}
