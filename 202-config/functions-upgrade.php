@@ -4430,6 +4430,8 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // The attribution worker's queue of identity merges: the requeue_* columns and requeue_due.
+                \Prosper202\Database\Tables\IdentityTables::identityMerges(),
             ]);
 
             if ($step_ok) {

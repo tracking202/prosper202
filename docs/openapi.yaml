@@ -3228,7 +3228,10 @@ paths:
     get:
       tags: [Attribution]
       summary: The attribution worker's backlog
-      description: Conversions waiting to be attributed, failing ones with their last error and retry time, and identity merges and model changes not yet fanned out.
+      description: >-
+        Conversions waiting to be attributed, failing ones with their last error and retry time, and
+        identity merges and model changes not yet fanned out, with the merges that failed or were
+        retired and why (merge_rows).
       operationId: attributionQueue
       parameters:
         - name: limit
@@ -12753,8 +12756,44 @@ components:
           type: integer
         merges_awaiting_requeue:
           type: integer
+          description: >-
+            Identity merges whose conversions the worker has not re-queued yet, including the failing
+            ones; a retired merge is not counted.
+        merges_failing:
+          type: integer
+          description: >-
+            Of those, the merges whose last re-queue failed. Each is tried again, after a wait that
+            doubles to an hour; merge_rows says why.
+        merges_retired:
+          type: integer
+          description: >-
+            Merges whose own data refuses the re-queue (the merged person has more visitor keys than
+            one statement can name). They are not tried again until
+            202-cronjobs/attribution-worker.php --retry-now.
         models_awaiting_recompute:
           type: integer
+        merge_rows:
+          type: array
+          description: The failing and retired merges, retired first, up to limit.
+          items:
+            type: object
+            properties:
+              merge_id:
+                type: integer
+              merged_at:
+                type: integer
+              failures:
+                type: integer
+                description: Re-queues of this merge in a row that failed
+              last_error:
+                type: string
+                nullable: true
+              retry_at:
+                type: integer
+                description: When a failing merge is next taken
+              retired_at:
+                type: integer
+                nullable: true
         rows:
           type: array
           items:
