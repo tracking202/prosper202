@@ -114,8 +114,12 @@ This file captures the API paths and payload/query expectations used by upcoming
   - `click list --all`/`--follow` and `conversion list --all` carry `"masked": true` into the rows they rebuild when the server sent it
 - delete `--ids`
   - repeated `DELETE /api/v3/{entity}/{id}` from a single CLI invocation
+- `rotator rule-create`
+  - `POST /api/v3/rotators/{id}/rules`
+  - no request without a criterion (`--criteria-json` or `--country`) and a destination (`--redirects-json` or `--redirect-campaign`), or with either list empty: the redirects read a rule with no criterion as every visitor
 - `rotator rule-update`
   - `PUT /api/v3/rotators/{id}/rules/{ruleId}`
+  - no request with an empty `--criteria-json` or `--redirects-json` list
 - `diff` (capability-enabled path)
   - `POST /api/v3/sync/plan` (preferred when `sync_plan=true`)
   - falls back to paginated `GET /api/v3/{entity}` compare

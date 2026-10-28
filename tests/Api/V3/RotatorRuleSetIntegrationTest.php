@@ -21,9 +21,11 @@ use Prosper202\Rotator\RuleOrder;
  * it, one left out is removed; a campaign of another account, another
  * redirector's rule, or anything Setup › Redirectors would refuse is refused
  * with nothing written; a dry run writes nothing; a statement that fails
- * part way through the set leaves the set as it was; and the redirects read
+ * part way through the set leaves the set as it was; the redirects read
  * the rules in the set's order, and in id order on a database the 1.9.79
- * upgrade has not reached.
+ * upgrade has not reached; and POST and PUT of one rule refuse what the set
+ * refuses, in its words (RotatorRuleWritesAreCheckedTest holds a fourth
+ * write to the same check).
  *
  * Skips unless a scratch database is configured (P202_TEST_DB_HOST,
  * P202_TEST_DB_PORT, P202_TEST_DB_USER, P202_TEST_DB_PASS, P202_TEST_DB_NAME);
@@ -35,6 +37,12 @@ final class RotatorRuleSetIntegrationTest extends TestCase
 {
     private const USER = 5511;
     private const OTHER = 5512;
+
+    /** A rule's criteria and destination for every visitor. */
+    private const EVERYONE = [
+        'criteria' => [['type' => 'country', 'value' => 'ALL']],
+        'redirects' => [['redirect_url' => 'https://keep.example/']],
+    ];
 
     private static ?\mysqli $db = null;
 
@@ -362,6 +370,194 @@ final class RotatorRuleSetIntegrationTest extends TestCase
             }
         }
         self::assertSame($before, self::stored($id), 'the set as it was');
+    }
+
+    /**
+     * POST and PUT of one rule refuse what the set refuses, through the same
+     * check and in the same words: the refused set's rule, sent alone as a
+     * new rule and as the whole of a rule that exists, is answered with the
+     * field errors the set answers for it, and nothing is written. They
+     * checked only the entries sent, so a rule with no criterion, which the
+     * redirects read as every visitor, answered 200 and took all of a
+     * redirector's traffic.
+     *
+     * @dataProvider refusedSets
+     */
+    public function testEachRuleWriteRefusesWhatTheSetRefusesInItsWords(callable $change, string $field): void
+    {
+        $mine = self::campaign(self::USER);
+        $theirs = self::campaign(self::OTHER);
+        $id = $this->rotator();
+        $this->set($id, [['rule_name' => 'keep'] + self::EVERYONE]);
+        $keep = (int) $this->rotators()->listRules($id)['data'][0]['id'];
+        $before = self::stored($id);
+        self::assertSame(1, preg_match('/^rules\.(\d+)\.(.+)$/', $field, $at), $field);
+        $rule = $change(self::twoRules($mine), $mine, $theirs)[(int) $at[1]];
+        // A PUT of one rule keeps what it leaves out; a rule in a set is whole.
+        $whole = $rule + ['criteria' => [], 'redirects' => []];
+
+        $refusal = static function (callable $write): array {
+            try {
+                $write();
+            } catch (ValidationException $e) {
+                return $e->getFieldErrors();
+            }
+            self::fail('the write was accepted');
+        };
+        $inTheSet = static function (array $errors): array {
+            $out = [];
+            foreach ($errors as $key => $message) {
+                self::assertStringStartsWith('rules.0.', (string) $key);
+                $out[substr((string) $key, 8)] = $message;
+            }
+            return $out;
+        };
+        $writes = [
+            'POST /rotators/{id}/rules' => [
+                fn () => $this->rotators()->createRule($id, $rule),
+                fn () => $this->set($id, [$rule]),
+            ],
+            'PUT /rotators/{id}/rules/{ruleId}' => [
+                fn () => $this->rotators()->updateRule($id, $keep, $whole),
+                fn () => $this->set($id, [['id' => $keep] + $whole]),
+            ],
+        ];
+        foreach ($writes as $write => [$one, $set]) {
+            $answered = $refusal($one);
+            $expected = $inTheSet($refusal($set));
+            if ($at[2] === 'rotator_id') {
+                // A read-only key: the single writes refuse it as every
+                // resource refuses its own (refuseChangedReadOnly()).
+                self::assertSame(['rotator_id'], array_keys($answered), $write);
+                self::assertSame(['rotator_id'], array_keys($expected), $write);
+                continue;
+            }
+            self::assertArrayHasKey($at[2], $answered, $write);
+            self::assertSame($expected, $answered, $write);
+        }
+        self::assertSame($before, self::stored($id), 'nothing was written');
+    }
+
+    /**
+     * A PUT of one rule is checked as the rule it would leave: what it sends,
+     * and what the rule holds of what it leaves out.
+     */
+    public function testAPutOfOneRuleIsCheckedAsTheRuleItWouldLeave(): void
+    {
+        $id = $this->rotator();
+        $this->set($id, self::twoRules(self::campaign(self::USER)));
+        [$office, $everyone] = $this->rotators()->listRules($id)['data'];
+        $before = self::stored($id);
+        $url = [['redirect_url' => 'https://x.example/']];
+        $refused = [
+            // As `p202 rotator rule-create` sends a rule without --criteria-json.
+            ['create', ['rule_name' => 'no criteria key', 'redirects' => $url], ['criteria']],
+            ['create', ['rule_name' => 'null criteria', 'criteria' => null, 'redirects' => $url], ['criteria']],
+            ['create', ['rule_name' => 'no redirects key', 'criteria' => self::EVERYONE['criteria']], ['redirects']],
+            ['update', ['criteria' => []], ['criteria']],
+            ['update', ['criteria' => null], ['criteria']],
+            ['update', ['redirects' => []], ['redirects']],
+            // Two destinations kept, and the split test turned off.
+            ['update', ['splittest' => 0], ['redirects']],
+            // A split test's destination sent with no weight.
+            ['update', ['redirects' => [['weight' => 50] + $url[0], $url[0]]], ['redirects.1.weight']],
+        ];
+        foreach ($refused as [$write, $body, $fields]) {
+            try {
+                $write === 'create'
+                    ? $this->rotators()->createRule($id, $body)
+                    : $this->rotators()->updateRule($id, (int) $office['id'], $body);
+                self::fail("$write accepted " . json_encode($body));
+            } catch (ValidationException $e) {
+                $errors = $e->getFieldErrors();
+                self::assertSame($fields, array_keys($errors), json_encode($body) . ': ' . json_encode($errors));
+            }
+        }
+        self::assertSame($before, self::stored($id), 'nothing was written');
+
+        // What it leaves out stays as stored; the switch it sends is written.
+        $body = ['splittest' => 1, 'rule_name' => 'everyone, split'];
+        $after = $this->rotators()->updateRule($id, (int) $everyone['id'], $body)['data']['rules'][1];
+        self::assertSame(['everyone, split', 1], [$after['rule_name'], $after['splittest']]);
+        self::assertSame([$everyone['criteria'], $everyone['redirects']], [$after['criteria'], $after['redirects']]);
+    }
+
+    /**
+     * A rule stored with no criterion (POST and PUT of one rule wrote them
+     * before 1.9.79) is left as it is, and the redirects go on reading it as
+     * every visitor, as they always have. A write that would keep it with
+     * none is refused in words that say what it does; one that gives it a
+     * criterion is taken.
+     */
+    public function testARuleStoredWithNoCriterionStaysAndAWriteOfItSaysWhatItDoes(): void
+    {
+        $id = $this->rotator();
+        $legacy = [
+            "INSERT INTO 202_rotator_rules SET rotator_id = $id, rule_name = 'legacy', splittest = 0, status = 1",
+            "INSERT INTO 202_rotator_rules_redirects SET rule_id = LAST_INSERT_ID(),"
+                . " redirect_url = 'https://legacy.example/', weight = '100', name = ''",
+        ];
+        foreach ($legacy as $sql) {
+            self::assertTrue(self::$db->query($sql), (string) self::$db->error);
+        }
+        $read = $this->rotators()->listRules($id)['data'];
+        $rule = (int) $read[0]['id'];
+        self::assertSame([], $read[0]['criteria'], 'GET answers it with no criteria');
+        self::assertCount(1, $read[0]['redirects']);
+        $tried = RuleOrder::activeRules(self::$db, $id, self::reader());
+        $tried = array_map('intval', array_column($tried, 'rule_id'));
+        self::assertSame([$rule], $tried, 'the redirects still try it');
+        $before = self::stored($id);
+
+        $writes = [
+            'rule_name' => fn () => $this->rotators()->updateRule($id, $rule, ['rule_name' => 'renamed']),
+            'rules.0.criteria' => fn () => $this->set($id, $read),
+        ];
+        foreach ($writes as $key => $write) {
+            try {
+                $write();
+                self::fail("$key: a rule left with no criterion was written");
+            } catch (ValidationException $e) {
+                $errors = $e->getFieldErrors();
+                $field = $key === 'rule_name' ? 'criteria' : $key;
+                self::assertSame([$field], array_keys($errors), json_encode($errors) ?: '');
+                $said = 'This rule has no criterion, which the redirects read as every visitor';
+                self::assertStringStartsWith($said, $errors[$field]);
+            }
+        }
+        self::assertSame($before, self::stored($id), 'the stored rule is as it was');
+
+        $all = ['criteria' => [['type' => 'country', 'statement' => 'is', 'value' => 'all']]];
+        $after = $this->rotators()->updateRule($id, $rule, $all)['data']['rules'][0];
+        $criterion = static fn (array $c): array => [$c['type'], $c['statement'], $c['value']];
+        self::assertSame([['country', 'is', 'ALL']], array_map($criterion, $after['criteria']));
+    }
+
+    /**
+     * What a PUT of one rule leaves out is kept as stored and not checked
+     * again, as a destination the rule holds is kept: a criterion an older
+     * write stored, which the check would refuse now, does not stop a rename.
+     */
+    public function testAPutOfOneRuleDoesNotCheckWhatItLeavesOutAgain(): void
+    {
+        $id = $this->rotator();
+        $this->set($id, self::twoRules(self::campaign(self::USER)));
+        $office = $this->rotators()->listRules($id)['data'][0];
+        $criterion = (int) $office['criteria'][0]['id'];
+        $sql = "UPDATE 202_rotator_rules_criteria SET type = 'device', value = 'Mobile' WHERE id = $criterion";
+        self::assertTrue(self::$db->query($sql), (string) self::$db->error);
+
+        $rule = (int) $office['id'];
+        $after = $this->rotators()->updateRule($id, $rule, ['rule_name' => 'renamed'])['data']['rules'][0];
+        self::assertSame('renamed', $after['rule_name']);
+        $kept = static fn (array $c): array => [(int) $c['id'], $c['type'], $c['value']];
+        self::assertSame([[$criterion, 'device', 'Mobile']], array_map($kept, $after['criteria']));
+        try {
+            $this->rotators()->updateRule($id, $rule, ['criteria' => [['type' => 'device', 'value' => 'Mobile']]]);
+            self::fail('a device sent in capitals was written');
+        } catch (ValidationException $e) {
+            self::assertSame(['criteria.0.value'], array_keys($e->getFieldErrors()));
+        }
     }
 
     /** Every problem in the set is answered in one 422, several in one rule included, each by its place. */
@@ -982,14 +1178,15 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         $this->set($id, self::twoRules(self::campaign(self::USER)));
         $read = $this->rotators()->listRules($id)['data'];
         $this->rotators()->updateRule($id, (int) $read[1]['id'], ['status' => 0]);
-        $this->rotators()->createRule($id, ['rule_name' => 'last', 'redirects' => [['redirect_url' => 'https://l.example/']]]);
+        $this->rotators()->createRule($id, [
+            'rule_name' => 'last',
+            'criteria' => [['type' => 'device', 'value' => 'bot']],
+            'redirects' => [['redirect_url' => 'https://l.example/']],
+        ]);
         $this->set($id, [
             ['rule_name' => 'first', 'criteria' => [['type' => 'country', 'value' => 'ALL']], 'redirects' => [['redirect_url' => 'https://f.example/']]],
             ...array_map(static function (array $rule): array {
                 unset($rule['splittest'], $rule['status']);
-                if ($rule['criteria'] === []) {
-                    $rule['criteria'] = [['type' => 'country', 'value' => 'ALL']];
-                }
                 return $rule;
             }, $this->rotators()->listRules($id)['data']),
         ]);

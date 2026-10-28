@@ -76,8 +76,9 @@ final class RtrClickInstanceTest extends TestCase
             ], 'ppc_account_id');
             // The rule and its redirect must have different ids, or a swap of
             // the two reads the same. Their tables count apart, but a fresh
-            // install starts them level: then a redirect-less rule takes a
-            // rule id, and the redirector is built again.
+            // install starts them level: then a rule with two redirects takes
+            // one rule id and two redirect ids, and the redirector is built
+            // again.
             for ($attempt = 1;; $attempt++) {
                 self::$ids['rotator'] = self::create('rotators', [
                     'name' => "$run redirector $attempt", 'default_campaign' => self::$ids['campaign'],
@@ -104,7 +105,14 @@ final class RtrClickInstanceTest extends TestCase
                 if ($attempt === 3) {
                     throw new \RuntimeException('The rule and its redirect kept the same id: ' . self::$ids['rule']);
                 }
-                self::createRow('rotators/' . self::$ids['rotator'] . '/rules', ['rule_name' => "$run spare"], 200);
+                self::createRow('rotators/' . self::$ids['rotator'] . '/rules', [
+                    'rule_name' => "$run spare", 'splittest' => 1,
+                    'criteria' => [['type' => 'ip', 'statement' => 'is', 'value' => '192.0.2.1']],
+                    'redirects' => [
+                        ['redirect_url' => 'https://spare.example/a', 'weight' => 50],
+                        ['redirect_url' => 'https://spare.example/b', 'weight' => 50],
+                    ],
+                ], 200);
             }
             $tracker = self::createRow('trackers', [
                 'aff_campaign_id' => 0, 'rotator_id' => self::$ids['rotator'],

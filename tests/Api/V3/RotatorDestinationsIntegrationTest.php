@@ -32,6 +32,12 @@ final class RotatorDestinationsIntegrationTest extends TestCase
     private const USER = 5501;
     private const OTHER = 5502;
 
+    /** A rule's criteria and destination, which every rule needs. */
+    private const RULE = [
+        'criteria' => [['type' => 'country', 'statement' => 'is', 'value' => 'ALL']],
+        'redirects' => [['redirect_url' => 'https://keep.example/']],
+    ];
+
     private static ?\mysqli $db = null;
 
     public static function setUpBeforeClass(): void
@@ -245,11 +251,11 @@ final class RotatorDestinationsIntegrationTest extends TestCase
         $ids = ['{mine}' => self::campaign(self::USER), '{theirs}' => self::campaign(self::OTHER)];
         $payload = json_decode(strtr((string) json_encode($payload), array_map('strval', $ids)), true);
         $id = (int) $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/'])['data']['id'];
-        $rules = $this->rotators()->createRule($id, ['rule_name' => 'keep', 'redirects' => [['redirect_url' => 'https://keep.example/']]])['data']['rules'];
+        $rules = $this->rotators()->createRule($id, ['rule_name' => 'keep'] + self::RULE)['data']['rules'];
         $ruleId = (int) $rules[0]['id'];
         $before = self::$db->query("SELECT COUNT(*) FROM 202_rotator_rules_redirects WHERE rule_id = $ruleId")->fetch_row()[0];
 
-        foreach (['createRule' => fn () => $this->rotators()->createRule($id, ['rule_name' => 'x'] + $payload), 'updateRule' => fn () => $this->rotators()->updateRule($id, $ruleId, $payload)] as $write => $call) {
+        foreach (['createRule' => fn () => $this->rotators()->createRule($id, ['rule_name' => 'x'] + $payload + self::RULE), 'updateRule' => fn () => $this->rotators()->updateRule($id, $ruleId, $payload)] as $write => $call) {
             try {
                 $call();
                 self::fail("$write accepted " . json_encode($payload));
@@ -325,7 +331,8 @@ final class RotatorDestinationsIntegrationTest extends TestCase
     public function testAnAutoMonetizerRedirectSurvivesTheRoundTrip(): void
     {
         $id = (int) $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/'])['data']['id'];
-        $rule = ['rule_name' => 'm', 'redirects' => [['redirect_url' => 'https://a.d/']]];
+        // A split test: the page's two destinations need one.
+        $rule = ['rule_name' => 'm', 'splittest' => 1, 'criteria' => self::RULE['criteria'], 'redirects' => [['redirect_url' => 'https://a.d/', 'weight' => 100]]];
         $made = $this->rotators()->createRule($id, $rule);
         $ruleId = (int) $made['data']['rules'][0]['id'];
         // As tracking202/ajax/rotator.php saves a monetizer redirect.
@@ -392,7 +399,7 @@ final class RotatorDestinationsIntegrationTest extends TestCase
     {
         $id = (int) $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/'])['data']['id'];
         $gone = self::campaign(self::USER);
-        $made = $this->rotators()->createRule($id, ['rule_name' => 'k', 'redirects' => [['redirect_campaign' => $gone]]]);
+        $made = $this->rotators()->createRule($id, ['rule_name' => 'k', 'criteria' => self::RULE['criteria'], 'redirects' => [['redirect_campaign' => $gone]]]);
         $ruleId = (int) $made['data']['rules'][0]['id'];
         self::$db->query("UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = $gone");
 
