@@ -723,11 +723,12 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 		$new_hash = hash_user_pass($newPass);
 		$passSaved = false;
         $passError = '';
+        $generation = null;
         try {
-            // The password and every remember-me key of the user, this
-            // browser's too (a stolen cookie is a copy of one), in one
-            // transaction; the session goes on.
-            \Prosper202\User\PasswordChange::store(
+            // The password, every remember-me key of the user (this
+            // browser's too: a stolen cookie is a copy of one) and every
+            // session of theirs, in one transaction.
+            $generation = \Prosper202\User\PasswordChange::store(
                 new \Prosper202\Database\Connection($db),
                 (int) ($_SESSION['user_own_id'] ?? 0),
                 $new_hash,
@@ -741,9 +742,12 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
             prosper_log('account', 'Failed to update password: ' . $passError);
 			$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your password could not be changed. Your old password still works; try again.'];
 		} else {
-			// Its key is gone with the rest: the cookie would only be refused.
+			// This session goes on, at the generation the change made; every
+			// other one ends at its next request. Its key is gone with the
+			// rest: the cookie would only be refused.
+			AUTH::keepSessionAfterPasswordChange((int) $generation);
 			AUTH::forgetRememberMeCookie();
-			p202_account_flash('ok', 'Your password is changed. Browsers kept signed in now need it to sign in again; this one stays signed in.');
+			p202_account_flash('ok', 'Your password is changed. Every other browser signed in as you is signed out, and needs it to sign in again; this one stays signed in.');
 			p202_account_redirect('202-account/account.php#password');
 		}
 	}

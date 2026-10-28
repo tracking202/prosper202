@@ -4475,6 +4475,12 @@ class UPGRADE
                 // (Prosper202\Click\ClickRecord).
                 \Prosper202\Database\Tables\TrackingTables::google(),
                 \Prosper202\Database\Tables\UserTables::usersPref(),
+                // 202_users gains user_session_generation, which a new
+                // password, a switch-off or a removal counts up so that
+                // connect.php ends the user's other sessions
+                // (Prosper202\User\SessionGeneration). 0 for everyone, which
+                // a session from before the upgrade, holding none, reads as.
+                \Prosper202\Database\Tables\UserTables::users(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             if ($step_ok) {

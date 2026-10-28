@@ -26,7 +26,10 @@
  *       P202_SU_POST (a JSON object: a POST; "token": "SESSION" sends the
  *       session's), P202_SU_AJAX=1 (X-Requested-With, as jQuery sends it) or
  *       fetch (Sec-Fetch-Dest: empty, as a browser marks fetch()),
- *       P202_SU_NAME, P202_SU_PASS, P202_SU_PERMISSION (call:may)
+ *       P202_SU_NAME, P202_SU_PASS, P202_SU_PERMISSION (call:may),
+ *       P202_SU_GENERATION (the session generation a new signed-in session
+ *       holds; none when unset), P202_SU_SESSION_ID (resume the session an
+ *       earlier request left, as the same browser's next request)
  *
  * Prints what the page printed, then one line: "@@RESULT " and a JSON object
  * with the status, whether 202-access-denied.php answered, the session's id
@@ -78,7 +81,15 @@ $_COOKIE = $remember === '' ? [] : ['remember_me' => $remember];
 
 $runnerToken = 'p202sessionuserrunnertoken000000';
 session_save_path($sessionDir);
-if (getenv('P202_SU_SESSION') === 'anonymous') {
+$resume = (string) getenv('P202_SU_SESSION_ID');
+if ($resume !== '') {
+    // The same browser's next request: the session as an earlier request left it.
+    if (!is_file($sessionDir . '/sess_' . $resume)) {
+        fwrite(STDERR, "no session '$resume' to resume\n");
+        exit(2);
+    }
+    session_id($resume);
+} elseif (getenv('P202_SU_SESSION') === 'anonymous') {
     session_id('p202su' . bin2hex(random_bytes(8)));
     session_start();
     $_SESSION = ['token' => $runnerToken];
@@ -101,6 +112,12 @@ if (getenv('P202_SU_SESSION') === 'anonymous') {
         'valid_key' => true,
         'token' => $runnerToken,
     ];
+    // The generation the sign-in stored; none, as a session from before
+    // 1.9.79 holds, unless one is given.
+    $generation = getenv('P202_SU_GENERATION');
+    if (is_string($generation) && $generation !== '') {
+        $_SESSION['user_session_generation'] = (int) $generation;
+    }
     session_write_close();
 }
 if (($post['token'] ?? null) === 'SESSION') {
@@ -131,6 +148,7 @@ register_shutdown_function(static function () use (&$answer, &$uncaught, $root, 
         'session_id' => session_id(),
         'session_keys' => array_keys($_SESSION ?? []),
         'token' => $_SESSION['token'] ?? null,
+        'generation' => $_SESSION['user_session_generation'] ?? null,
         'cookie_kept' => isset($_COOKIE['remember_me']),
         'answer' => $answer,
         'uncaught' => $uncaught,

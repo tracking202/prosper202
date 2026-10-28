@@ -32,6 +32,12 @@ final class UserTables
         ];
     }
 
+    /**
+     * user_session_generation counts the changes that end every session of
+     * the user (a new password, a switch-off, a removal): a session holds the
+     * value it began with, and connect.php ends one that holds another
+     * (Prosper202\User\SessionGeneration). From 1.9.79, added by its rung.
+     */
     public static function users(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -62,6 +68,7 @@ final class UserTables
                 `secret_key` char(48) DEFAULT NULL,
                 `user_mods_lb` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 `p202_customer_api_key` char(60) DEFAULT NULL,
+                `user_session_generation` int(10) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`user_id`),
                 UNIQUE KEY `user_name_2` (`user_name`),
                 KEY `user_name` (`user_name`,`user_pass`),

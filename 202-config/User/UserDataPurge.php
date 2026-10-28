@@ -153,7 +153,6 @@ final class UserDataPurge
 
     /** Taken first in the delete's transaction: see deleteUser(). */
     public const LOCK_USER = 'SELECT user_id FROM 202_users WHERE user_id = ? FOR UPDATE';
-
     /** What lets the user act at all through the API; revoked with the rest. */
     private const ACCESS_STATEMENTS = [
         'DELETE FROM 202_api_keys WHERE user_id = ?',
@@ -254,7 +253,13 @@ final class UserDataPurge
                     $this->run($sql, $userId);
                 }
                 $unlinked = (new AppDataPurge($this->db))->purgeUser($userId);
-                $this->run('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?', $userId);
+                // Every open session of the user ends with the delete
+                // (SessionGeneration), so a row restored by hand stays signed out.
+                $this->run(
+                    'UPDATE 202_users SET user_deleted = 1,'
+                        . ' user_session_generation = user_session_generation + 1 WHERE user_id = ?',
+                    $userId
+                );
 
                 return [$exportFileNames, $unlinked];
             });
