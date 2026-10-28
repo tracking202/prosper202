@@ -5,8 +5,12 @@ declare(strict_types=1);
 namespace Prosper202\Cron;
 
 /**
- * One run of 202-cronjobs/index.php at a time: an flock() on
- * 202-cronjobs/cron-run.lock, held until the run ends, however it ends. It is
+ * One run at a time of a cron job's work: an flock() on a file in
+ * 202-cronjobs/, held until the run ends, however it ends. FILE is
+ * 202-cronjobs/index.php's, for the whole run; ANALYTICS_DELIVERY_FILE is the
+ * analytics delivery's, which index.php's hourly tier and
+ * 202-cronjobs/sync-messaging.php both make
+ * (MessagingService::deliverPendingExclusive()). It is
  * released when this object goes (at the latest when the request or the
  * process ends, an uncaught error or a fatal one included), and the kernel
  * releases it when the process dies, so nothing removes the file and no age
@@ -25,6 +29,8 @@ final class CronLock
 {
     public const FILE = 'cron-run.lock';
 
+    public const ANALYTICS_DELIVERY_FILE = 'analytics-delivery.lock';
+
     /**
      * @param resource $handle
      */
@@ -38,9 +44,10 @@ final class CronLock
         fclose($this->handle);
     }
 
-    public static function path(): string
+    /** @param self::FILE|self::ANALYTICS_DELIVERY_FILE $file */
+    public static function path(string $file = self::FILE): string
     {
-        return dirname(__DIR__, 2) . '/202-cronjobs/' . self::FILE;
+        return dirname(__DIR__, 2) . '/202-cronjobs/' . $file;
     }
 
     /**

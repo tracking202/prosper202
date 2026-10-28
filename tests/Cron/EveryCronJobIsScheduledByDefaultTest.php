@@ -85,7 +85,7 @@ final class EveryCronJobIsScheduledByDefaultTest extends TestCase
         // Hourly in index.php: a page closed inside the throttle, or a backlog
         // left by a portal outage, is delivered by nothing else.
         'sync-messaging.php' => [
-            ['static', 'MessagingService', 'deliverPending'],
+            ['static', 'MessagingService', 'deliverPendingExclusive'],
         ],
     ];
 

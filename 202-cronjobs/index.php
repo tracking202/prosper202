@@ -302,15 +302,22 @@ function RunLtvMaintenance(array $jobs, int $seconds): void
 }
 
 /**
- * Hourly analytics delivery: MessagingService::deliverPending(), the run
- * 202-cronjobs/sync-messaging.php makes on its own. Its failures are logged
- * by the service; what it does not deliver stays pending for the next hour.
+ * Hourly analytics delivery: MessagingService::deliverPendingExclusive(), the
+ * run 202-cronjobs/sync-messaging.php makes on its own, under the same lock,
+ * so the two never deliver at once; while that run holds it this one skips.
+ * Its failures are logged by the service; what it does not deliver stays
+ * pending for the next hour.
  */
 function DeliverPendingAnalytics(): void
 {
     try {
-        $analytics = MessagingService::deliverPending(getDatabaseConnection());
-        if ($analytics['sent'] + $analytics['more'] + $analytics['failed'] > 0) {
+        $analytics = MessagingService::deliverPendingExclusive(
+            getDatabaseConnection(),
+            \Prosper202\Cron\CronLock::path(\Prosper202\Cron\CronLock::ANALYTICS_DELIVERY_FILE)
+        );
+        if ($analytics === null) {
+            echo 'Analytics delivery: another run holds the lock; skipped<br>';
+        } elseif ($analytics['sent'] + $analytics['more'] + $analytics['failed'] > 0) {
             echo 'Analytics delivery: ' . (int) $analytics['sent'] . ' delivered, ' . (int) $analytics['more'] . ' with more pending, '
                 . (int) $analytics['failed'] . ' failed<br>';
         }
