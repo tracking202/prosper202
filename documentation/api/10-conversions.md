@@ -135,8 +135,10 @@ under the first that does not:
    the platform's bidding clicks the conversion may not have come from;
 3. the click came with an id the platform issues (`no_click_id`; for
    `google_uploads`, a click with only a gbraid or wbraid is
-   `gbraid_wbraid_only`), in the characters the platforms use
-   (`malformed_click_id`);
+   `gbraid_wbraid_only`), in the form the platform issues
+   (`malformed_click_id`: an msclkid is 32 hexadecimal digits, as Microsoft
+   documents it; Google documents no form for its ids, which are held to
+   base64url characters);
 4. the click is at most 90 days old (`click_too_old`), before the conversion
    (`before_click`), this account's (`not_accounts_click`) and at least 6
    hours old (`click_too_recent`: a later fetch whose window still covers it

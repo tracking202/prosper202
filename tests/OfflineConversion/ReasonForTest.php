@@ -65,6 +65,12 @@ final class ReasonForTest extends TestCase
         self::assertSame(LeftOut::GBRAID_WBRAID_ONLY, self::reason(['gclid' => '', 'wbraid' => 'CkIK', 'owned' => null], Format::GOOGLE_UPLOADS));
         self::assertNull(self::reason(['gclid' => '', 'wbraid' => 'CkIK']), 'the Data Manager file takes a wbraid alone');
         self::assertSame(LeftOut::MALFORMED_CLICK_ID, self::reason(['gbraid' => '=cmd|x']));
+        self::assertSame(
+            LeftOut::MALFORMED_CLICK_ID,
+            self::reason(['msclkid' => 'abc'], Format::MICROSOFT),
+            'an msclkid is 32 hexadecimal digits'
+        );
+        self::assertNull(self::reason(['msclkid' => 'abc']), 'a Google file does not read the msclkid');
         self::assertSame(LeftOut::CLICK_TOO_OLD, self::reason(['click_time' => self::NOW - OfflineExport::CLICK_MAX_AGE - 1, 'conv_time' => self::NOW - 60]));
         self::assertSame(
             LeftOut::CLICK_TOO_OLD,

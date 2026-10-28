@@ -82,7 +82,9 @@ final class OfflineConversionEndpointsInstanceTest extends TestCase
         if (!self::$converted) {
             self::$converted = true;
             $run = self::$run;
-            foreach (["gclid=$run-G", '', "gbraid=$run-B", "msclkid=$run-M"] as $i => $ids) {
+            // An msclkid is 32 hexadecimal digits, or the file leaves it out.
+            $msclkid = bin2hex(random_bytes(16));
+            foreach (["gclid=$run-G", '', "gbraid=$run-B", "msclkid=$msclkid"] as $i => $ids) {
                 self::createRow('conversions', [
                     'click_id' => self::click($ids), 'payout' => 2, 'transaction_id' => "$run-$i",
                 ]);

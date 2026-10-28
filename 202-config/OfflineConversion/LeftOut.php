@@ -54,8 +54,8 @@ enum LeftOut: string
             self::NO_CLICK_ID => 'Its click came with no click id from this ad platform.',
             self::GBRAID_WBRAID_ONLY => 'Its click has only a gbraid or wbraid, which the Uploads template has no'
                 . ' column for. The Data Manager file sends it.',
-            self::MALFORMED_CLICK_ID => 'Its click id has characters no ad platform issues, so it did not come from'
-                . ' an ad click.',
+            self::MALFORMED_CLICK_ID => 'Its click id is not in the form the ad platform issues (an msclkid is 32'
+                . ' hexadecimal digits), so it did not come from an ad click and matches none.',
             self::CLICK_TOO_OLD => 'Its click is more than 90 days old; Google and Microsoft import no conversion'
                 . ' that long after its click.',
             self::BEFORE_CLICK => 'Its conversion time is before its click, which the platforms refuse.',

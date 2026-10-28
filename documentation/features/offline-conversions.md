@@ -49,10 +49,11 @@ are not sent either.
 
 A conversion is also left out when it no longer counts (deleted, refunded in
 full, replaced by a later conversion on its click), when its click came with
-no id from the platform, when the click is more than 90 days old (neither
-platform imports a conversion that long after its click), when the click is
-less than 6 hours old (the platforms may not have processed it yet; the next
-fetch sends it), or when it has no conversion name. The page, `GET
+no id from the platform or one not in the platform's form (Microsoft documents
+its msclkid as 32 hexadecimal digits), when the click is more than 90 days old
+(neither platform imports a conversion that long after its click), when the
+click is less than 6 hours old (the platforms may not have processed it yet;
+the next fetch sends it), or when it has no conversion name. The page, `GET
 /conversions/offline-export/summary` and `p202 conversion offline-export
 --summary` count every conversion left out, by reason; the
 [API reference](../api/10-conversions.md#offline-conversion-files) lists

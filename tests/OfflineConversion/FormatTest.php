@@ -111,11 +111,29 @@ final class FormatTest extends TestCase
 
     public function testAnIdIsWrittenOnlyInTheShapeThePlatformsIssue(): void
     {
-        foreach (['EAIaIQobChMI_gclid-1_BwE', '0AAAAADgbraid', '0123456789abcdef0123456789abcdef'] as $id) {
-            self::assertTrue(Format::wellFormedId($id), $id);
+        $issued = ['gclid' => 'EAIaIQobChMI_gclid-1_BwE', 'gbraid' => '0AAAAADgbraid', 'wbraid' => 'CkIK-x_1'];
+        foreach ($issued as $column => $id) {
+            self::assertTrue(Format::wellFormedId($column, $id), $id);
         }
         foreach (['', '=HYPERLINK("x")', '@SUM(1)', 'a b', 'a,b', "a\nb", 'a"b', str_repeat('a', 151)] as $id) {
-            self::assertFalse(Format::wellFormedId($id), var_export($id, true));
+            foreach (['gclid', 'gbraid', 'wbraid', 'msclkid'] as $column) {
+                self::assertFalse(Format::wellFormedId($column, $id), $column . ' ' . var_export($id, true));
+            }
+        }
+    }
+
+    /** Microsoft: "The MSCLKID is a GUID (32 characters)", as its click carries it. */
+    public function testAnMsclkidIsThirtyTwoHexadecimalDigits(): void
+    {
+        foreach (['0123456789abcdef0123456789abcdef', '0123456789ABCDEF0123456789ABCDEF'] as $id) {
+            self::assertTrue(Format::wellFormedId('msclkid', $id), $id);
+        }
+        $refused = [
+            'abc', 'EAIaIQobChMI_gclid-1_BwE', '0123456789abcdef0123456789abcde', '0123456789abcdef0123456789abcdef0',
+            '01234567-89ab-cdef-0123-456789abcdef', '0123456789abcdef0123456789abcdeg',
+        ];
+        foreach ($refused as $id) {
+            self::assertFalse(Format::wellFormedId('msclkid', $id), $id);
         }
     }
 

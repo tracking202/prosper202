@@ -188,14 +188,21 @@ enum Format: string
     }
 
     /**
-     * Whether a stored click id has the shape the platforms issue (base64url
-     * characters; Microsoft's is 32 hex digits). Anything else did not come
-     * from an ad click, cannot match one, and is not written: a value that
-     * began with = or @ would run as a formula in a spreadsheet.
+     * Whether a stored click id has the form its platform issues. Microsoft
+     * documents the msclkid as "a GUID (32 characters)" (Tracking offline
+     * conversions): 32 hexadecimal digits, without the hyphens a GUID's 36
+     * would hold, sent as stored. Google documents no form for the gclid,
+     * gbraid or wbraid, which arrive in base64url characters. Anything else
+     * did not come from an ad click, cannot match one, and is not written:
+     * a value that began with = or @ would run as a formula in a spreadsheet.
+     *
+     * @param string $column the 202_google column it was read from
      */
-    public static function wellFormedId(string $id): bool
+    public static function wellFormedId(string $column, string $id): bool
     {
-        return preg_match('/\A[A-Za-z0-9_-]{1,150}\z/D', $id) === 1;
+        $form = $column === 'msclkid' ? '/\A[0-9A-Fa-f]{32}\z/D' : '/\A[A-Za-z0-9_-]{1,150}\z/D';
+
+        return preg_match($form, $id) === 1;
     }
 
     /** @return list<string> */

@@ -163,8 +163,8 @@ final class OfflineExport
                 ? LeftOut::GBRAID_WBRAID_ONLY
                 : LeftOut::NO_CLICK_ID;
         }
-        foreach ($ids as $id) {
-            if (!Format::wellFormedId($id)) {
+        foreach ($ids as $column => $id) {
+            if (!Format::wellFormedId($column, $id)) {
                 return LeftOut::MALFORMED_CLICK_ID;
             }
         }
