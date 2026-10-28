@@ -247,7 +247,9 @@ final class CompanyTest extends TestCase
         ]);
         $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
 
+        $before = time();
         $repo->linkUnlinkedCustomers(7, 100);
+        $after = time();
 
         $selects = $write->statementsContaining('FROM 202_customers FORCE INDEX');
         self::assertCount(1, $selects, 'a batch shorter than the limit is the last');
@@ -257,11 +259,18 @@ final class CompanyTest extends TestCase
         self::assertCount(0, $write->statementsContaining('INSERT INTO 202_companies'), 'an existing entity is reused');
         $stamps = $write->statementsContaining('UPDATE 202_customers SET company_id = ?');
         self::assertCount(1, $stamps, 'only the customer with a real name is stamped');
-        self::assertSame([4, 'Acme Corp', 11, 7], $stamps[0]->boundValues);
+        self::assertStringContainsString('updated_at = ?', $stamps[0]->sql, 'a link is a change to the customer');
+        self::assertSame('isiii', $stamps[0]->boundTypes);
+        [$companyId, $name, $stampedAt, $customerId, $userId] = $stamps[0]->boundValues;
+        self::assertSame([4, 'Acme Corp', 11, 7], [$companyId, $name, $customerId, $userId]);
+        self::assertGreaterThanOrEqual($before, $stampedAt);
+        self::assertLessThanOrEqual($after, $stampedAt);
 
         $cleared = $write->statementsContaining("UPDATE 202_customers SET company = ''");
         self::assertCount(1, $cleared, 'the names that say nothing are stored as none in one statement');
         self::assertSame('iiiiss', $cleared[0]->boundTypes);
+        self::assertGreaterThanOrEqual($before, $cleared[0]->boundValues[0]);
+        self::assertLessThanOrEqual($after, $cleared[0]->boundValues[0]);
         self::assertSame([7, 12, 13, "\t", "\u{00A0}\u{3000}"], array_slice($cleared[0]->boundValues, 1));
     }
 

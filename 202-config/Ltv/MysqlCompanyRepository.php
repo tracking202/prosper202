@@ -735,12 +735,13 @@ final class MysqlCompanyRepository
                 }
                 $companyId = self::companyIdOrFail($entities[$normalized]['id'], $userId, $canonical);
                 $update = $this->conn->prepareWrite(
-                    'UPDATE 202_customers SET company_id = ?, company = ?
+                    'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
                      WHERE customer_id = ? AND user_id = ? AND company_id IS NULL'
                 );
-                $this->conn->bind($update, 'isii', [
+                $this->conn->bind($update, 'isiii', [
                     $companyId,
                     $entities[$normalized]['name'],
+                    time(),
                     $after,
                     $userId,
                 ]);
