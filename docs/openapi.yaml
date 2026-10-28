@@ -14700,9 +14700,11 @@ components:
           enum: [0, 1]
           description: >-
             0 switches the user off: they cannot sign in, a browser they are
-            signed in on is signed out at its next request (its remember-me
-            keys revoked), and every API key they hold answers 401 (on v1 and
-            v2 too) until it is 1 again.
+            signed in on is signed out at its next request, every
+            remember-me key they hold is deleted in the same write (a key
+            that cannot be deleted leaves the user as they were and answers
+            500), and every API key they hold answers 401 (on v1 and v2 too)
+            until it is 1 again.
 
     Role:
       type: object

@@ -83,6 +83,12 @@ enum UserStanding
         return self::ofRow($row);
     }
 
+    /** Whether a value written to user_active leaves the user active. */
+    public static function isActive(mixed $value): bool
+    {
+        return self::is($value, 1);
+    }
+
     public function canAct(): bool
     {
         return $this === self::Active;

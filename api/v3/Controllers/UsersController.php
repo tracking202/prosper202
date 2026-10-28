@@ -249,10 +249,12 @@ class UsersController
         $binds = [];
         $types = '';
 
+        $switchesOff = false;
         foreach ($this->profileFields($payload, $id) as $f => [$t, $value]) {
             $sets[] = "$f = ?";
             $binds[] = $value;
             $types .= $t;
+            $switchesOff = $switchesOff || ($f === 'user_active' && !\Prosper202\User\UserStanding::isActive($value));
         }
 
         if (array_key_exists('user_pass', $payload) && $payload['user_pass'] !== '') {
@@ -276,12 +278,26 @@ class UsersController
         $binds[] = $id;
         $types .= 'i';
 
-        $stmt = $this->prepare('UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?');
-        $this->bind($stmt, $types, ...$binds);
-        $this->execute($stmt, 'Update failed');
-        $stmt->close();
+        // Switched off, the user's remember-me keys go in the same
+        // transaction: a browser kept signed in must not sign back in when
+        // the user is switched on again (RememberMeKeys).
+        $this->transaction(function () use ($sets, $types, $binds, $id, $switchesOff): void {
+            $stmt = $this->prepare('UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?');
+            $this->bind($stmt, $types, ...$binds);
+            $this->execute($stmt, 'Update failed');
+            $stmt->close();
+            if ($switchesOff) {
+                \Prosper202\User\RememberMeKeys::revokeAll(new Connection($this->db), $id);
+            }
+        });
 
-        return $this->get($id);
+        // Committed: only the read-back remains, and its failure is not a
+        // failed update.
+        try {
+            return $this->get($id);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('user', $e);
+        }
     }
 
     /**

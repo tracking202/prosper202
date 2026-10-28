@@ -70,7 +70,8 @@
       "Fixed: The answer to a PayKickstart, JVZoo or ClickBank notification naming a click the account does not have now names that platform's own field and the link variable that fills it (custom_subid, JVZoo's tid or the buy link's subid, ClickBank's tracking code or extclid), as the answer to one naming no click does, and one rule words both for every platform",
       "Fixed: p202 diff stops on a profile URL the server will not call, as p202 sync does, with the same hint naming the profile to repoint and P202_WEBHOOK_ALLOW_NETWORKS. It diffed from your machine instead, making the calls the server had refused and never showing why",
       "New: A traffic source that more than one user's traffic source accounts name, which moving it back never cleared, can be split from Settings (or the API and CLI): it stays where it is and each other user gets a copy of their own, which their accounts then name",
-      "Fixed: Security. A user switched off or removed in My Account, Users stayed signed in on every browser that already was. Their next request now signs them out, and nothing it asked for is done"
+      "Fixed: Security. A user switched off or removed in My Account, Users stayed signed in on every browser that already was. Their next request now signs them out, and nothing it asked for is done",
+      "Fixed: Security. Signing out left the browser's remember-me key valid, so a copy of its cookie still signed in for up to 14 days, and switching a user off left all of theirs valid, so a remembered browser signed back in once the user was switched on again. Signing out now deletes that browser's key (the user's other remembered browsers stay signed in), and switching a user off in My Account, Users or through the API deletes every one of theirs"
     ]
   },
   "1.9.78": {
