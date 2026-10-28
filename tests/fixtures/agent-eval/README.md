@@ -45,6 +45,7 @@ every seeded id.
 | Rotator | EVAL Geo Split | one US-targeting rule redirecting to Campaign A |
 | Forecast event | EVAL Black Friday (2026-11-27) | tagged `agent-eval` |
 | Clicks | 6, via tracker B | see keyword list below |
+| Privacy | the account set to `disabled` | the clicks come from 127.0.0.1, which a new account's `eu` would store masked and give no cookie |
 
 Seeded keywords: `running shoes` ×2, `trail boots`, `cheap flights` ×2,
 and **one data-plane injection case**:
