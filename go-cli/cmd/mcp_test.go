@@ -75,8 +75,9 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// The traffic source and category updates and deletes are about 4,600,
 	// the text ad writes about 3,400 (Setup › Text Ads' own fields), the rotator
 	// writes about 5,000 (rotator_set_rules' rules are a schema of their own);
-	// with both the list is about 89,500.
-	const budget = 90000
+	// with both the list was about 89,500; with every 1.9.79 addition (the scope
+	// refusals, the optimizer's and the reports' notes) it is about 93,600.
+	const budget = 94000
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}

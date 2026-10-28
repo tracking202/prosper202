@@ -490,7 +490,14 @@ returns one per campaign without a request per campaign.
 `p202 campaign optimize <id>` prints a diagnosis on stderr: clicks, conversions, the reports' `conv_rate`
 (conversions ÷ click-throughs) beside the conversions per click, EPC, and the break-even CPC (the campaign's
 payout × conversions per click, since a click is what the traffic costs). On landing-page traffic the two rates
-differ, and `conv_rate` is the one every report shows. Stdout lists the other offers ranked by EPC.
+differ, and `conv_rate` is the one every report shows. Stdout lists the other campaigns ranked by EPC, each
+row with its `aff_campaign_id`, the id `rotator create --default-campaign` takes. When the campaign loses money
+and the top row earns more per click, the Next step names that id (`p202 rotator create --name "Salvage"
+--default-campaign 11`); when none earns more, it says there is no salvage offer and gives `p202 report losers`
+with the same window and filters. A ranking or summary that cannot be read (a 5xx, a key whose scope refuses
+it, an unreachable server, an answer that is not one) fails the command with that error's category, exit code
+and hint, and prints nothing else; it is never shown as an empty ranking. The campaign is the argument:
+`--aff-campaign-id` is refused, and a configured `report.aff_campaign_id` default does not narrow the ranking.
 
 ### Affiliate network (`p202 aff-network`)
 

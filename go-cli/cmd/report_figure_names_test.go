@@ -15,10 +15,7 @@ import (
 
 // figureRewrites are the writes of a computed value under a report field's name that are known, keyed
 // "file:declaration:field", with why. The list is to shrink, not to grow.
-var figureRewrites = map[string]string{
-	"cmd/report_optimize.go:enrichBreakeven:conv_rate": "report breakeven's leads ÷ clicks; R083 (#287) names it click_conv_rate",
-	"cmd/report_optimize.go:enrichBreakeven:avg_cpc":   "report breakeven's cost ÷ clicks rounded to 4 decimals; R083 (#287) keeps the server's",
-}
+var figureRewrites = map[string]string{}
 
 // TestReportFiguresKeepTheServersValues holds every value a command writes under a report field's name (metricColumns,
 // as a string key in a map literal or an index assignment) to one read from a row as the server sent it. A command

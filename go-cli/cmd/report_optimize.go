@@ -81,6 +81,30 @@ func fetchCampaignPayout(c *api.Client, campaignID string) (float64, error) {
 // aggregation on the server. Past it the command says its answer covers these rows.
 const breakdownReadRows = 5000
 
+// breakdownAnswer is what the rankings read of a reports/breakdown answer.
+type breakdownAnswer struct {
+	Data      *[]map[string]interface{} `json:"data"`
+	Truncated *bool                     `json:"truncated"`
+	Limit     *int                      `json:"limit"`
+	Offset    *int                      `json:"offset"`
+}
+
+// decodeBreakdown reads a reports/breakdown answer. No data list is not an empty breakdown: read as one, a
+// proxy's answer ranked nothing and said nothing.
+func decodeBreakdown(data []byte) (breakdownAnswer, error) {
+	var resp breakdownAnswer
+	if err := json.Unmarshal(data, &resp); err != nil || resp.Data == nil {
+		why := "it has no data list"
+		if err != nil {
+			why = err.Error()
+		}
+		return resp, &CLIError{Category: "server", ExitCode: ExitServer, Cause: err,
+			Message: fmt.Sprintf("the server's answer to GET reports/breakdown is not a breakdown (%s)", why),
+			Hint:    "Check the server with `p202 system health`; `p202 report breakdown --json` shows what it sent."}
+	}
+	return resp, nil
+}
+
 // fetchBreakdownRows reads a breakdown's rows in the server's order, page after page, until it has want of them or
 // none remain; truncated says rows remain after those returned. A request asks for one row more than it still needs,
 // which answers that on a server from before `truncated` too.
@@ -102,15 +126,13 @@ func fetchBreakdownRows(c *api.Client, params map[string]string, want int) ([]ma
 		if err := refuseMaskedFigures(data, "This command"); err != nil {
 			return nil, false, err
 		}
-		var resp struct {
-			Data      []map[string]interface{} `json:"data"`
-			Truncated *bool                    `json:"truncated"`
-		}
-		if err := json.Unmarshal(data, &resp); err != nil {
+		resp, err := decodeBreakdown(data)
+		if err != nil {
 			return nil, false, err
 		}
+		got := *resp.Data
 		added := 0
-		for _, r := range resp.Data {
+		for _, r := range got {
 			// New traffic can move a row onto the next page; read twice, it counts once.
 			if id := scalarString(r["id"]); id != "" {
 				if seen[id] {
@@ -121,7 +143,7 @@ func fetchBreakdownRows(c *api.Client, params map[string]string, want int) ([]ma
 			all = append(all, r)
 			added++
 		}
-		more := len(resp.Data) == limit
+		more := len(got) == limit
 		if resp.Truncated != nil {
 			more = *resp.Truncated
 		}
@@ -136,7 +158,7 @@ func fetchBreakdownRows(c *api.Client, params map[string]string, want int) ([]ma
 			return nil, false, withHint(fmt.Errorf("reading reports/breakdown: the page at offset %d held only rows already read", offset),
 				"The server keeps returning the same rows; retry, and if it persists check the API version with `p202 system version` and the server logs.")
 		}
-		offset += len(resp.Data)
+		offset += len(got)
 	}
 }
 
@@ -273,16 +295,11 @@ var reportBreakevenCmd = &cobra.Command{
 		if err := refuseMaskedFigures(data, "This command"); err != nil {
 			return err
 		}
-		var resp struct {
-			Data      []map[string]interface{} `json:"data"`
-			Truncated *bool                    `json:"truncated"`
-			Limit     *int                     `json:"limit"`
-			Offset    *int                     `json:"offset"`
-		}
-		if err := json.Unmarshal(data, &resp); err != nil {
+		resp, err := decodeBreakdown(data)
+		if err != nil {
 			return err
 		}
-		rows := resp.Data
+		rows := *resp.Data
 		enrichBreakeven(rows, payout, maxCPC)
 		sortRowsBy(rows, "margin", true) // worst margin first
 		page := map[string]interface{}{}
