@@ -89,13 +89,16 @@ services:
     healthcheck:
       test: ["CMD", "true"]
       interval: 30s
+      timeout: 5s
+      retries: 3
 
   # Standalone CLI cron workers run as their own process (mirrors the
   # attribution-cron service in docker-compose.coolify.yaml): the multi-touch
   # attribution worker, attribution exports, the API v3 sync worker and the
   # Android intake every minute, the app retention prune hourly. Runs the same
   # image as the web service, as the web user, sharing the export/state
-  # volumes.
+  # volumes. Override retention windows with P202_APP_RETENTION_DAYS_* here
+  # for this job, and on the prosper202 service for index.php's hourly prune.
   worker:
     image: ghcr.io/tracking202/prosper202:latest
     restart: unless-stopped
@@ -140,6 +143,8 @@ services:
     healthcheck:
       test: ["CMD", "true"]
       interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   prosper202-mysql-data:
