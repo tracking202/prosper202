@@ -225,8 +225,10 @@ Delete read `webhook_id` with `(int)`, so `12abc` deleted webhook 12, one of
 the account's own and not the one named. The rule now reads the request
 superglobals everywhere; an id a page posts is read with
 `Prosper202\Http\PostedId::read()` and anything else refused in the page's
-words. The 28 pages that still cast (66 sites) are listed by count in
-`phpstan-baseline.neon`, and the counts only shrink. A cast of a value
+words. The 22 pages that still cast (48 sites) are listed by count in
+`phpstan-baseline.neon`, and the counts only shrink: Customer LTV's other
+pages left it next, where Companies' merge had read `12abc` as company 12,
+and read through `ltv_helpers.php`'s `p202_ltv_posted_*()`. A cast of a value
 copied out of `$_POST` first is not seen, nor `(string)` of one, which reads
 a list (`name[]=`) as "Array".
 

@@ -43,6 +43,11 @@ final class FieldErrorPathsAreDottedTest extends TestCase
             'offers[<n>]: an offer by its place in the comma-separated `offers` query value, numbered from 1 as'
             . ' the Setup page numbers them; a query value, not a body list',
         ],
+        'tracking202/ajax/ltv_customer.php' => [
+            2,
+            'crm[<column>]: the customer edit form\'s own field names, as the page receives them, named in its'
+            . ' refusal of a save that left one out or sent one it does not have; a form post, not an API body',
+        ],
         '202-config/Report/OverviewChart.php' => [
             2,
             'levels[<i>][id], types[<i>][type]: the Overview chart builder\'s own form field names, as'
