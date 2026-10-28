@@ -22,6 +22,8 @@ on:
       - 'tracking202/_config/top.php'
       - '202-config/template.php'
       - 'tests/fixtures/agent-eval/cases/**'
+      - 'tests/fixtures/summary-totals/**'
+      - '202-config/Database/Tables/MiscTables.php'
       - 'tests/fixtures/rotator-criterion-values.json'
       - 'documentation/tools--resources/999-common-network-subid-parameters.md'
   pull_request:
@@ -41,6 +43,8 @@ on:
       - 'tracking202/_config/top.php'
       - '202-config/template.php'
       - 'tests/fixtures/agent-eval/cases/**'
+      - 'tests/fixtures/summary-totals/**'
+      - '202-config/Database/Tables/MiscTables.php'
       - 'tests/fixtures/rotator-criterion-values.json'
       - 'documentation/tools--resources/999-common-network-subid-parameters.md'
 

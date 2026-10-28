@@ -195,6 +195,10 @@ SQL
 }
 cleanup
 trap cleanup EXIT
+# Installs are matched to clicks this pass records from this machine.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" "$OWNER" || exit 2
 
 for _ in 1 2 3; do
     code=$(curl -s -o /dev/null -D "$OUT/probe" -w '%{http_code}' "$BASE/api/v3/apps/installs")
