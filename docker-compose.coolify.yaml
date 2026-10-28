@@ -138,16 +138,17 @@ services:
 
   # Runs the standalone CLI cron workers as their own process, with the full
   # per-minute budget the web request cannot give them: the multi-touch
-  # attribution worker, the attribution exports, the API v3 sync worker and
-  # the Android intake (Play Integrity verdicts, pending-click settles,
-  # postbacks) every minute, and the app retention prune hourly. The minutely
-  # 202-cronjobs/index.php runs all of these except the sync worker too, so a
-  # deployment without this service still settles installs and prunes; the
-  # attribution worker and the Android intake each hold a database lock, so
-  # running both is safe, and the prune only deletes rows already past their
-  # window. Runs the image built by the web service so the code and composer
-  # dependencies always match; the shared entrypoint writes this container's
-  # own 202-config.php from the env below.
+  # attribution worker, the attribution exports, the API v3 sync worker, the
+  # Android intake (Play Integrity verdicts, pending-click settles,
+  # postbacks) and the LTV webhook dispatcher every minute, and the app
+  # retention prune hourly. The minutely 202-cronjobs/index.php runs all of
+  # these except the sync worker too, so a deployment without this service
+  # still settles installs, sends webhooks and prunes; the attribution worker,
+  # the Android intake and the webhook dispatcher each hold a database lock,
+  # so running both is safe, and the prune only deletes rows already past
+  # their window. Runs the image built by the web service so the code and
+  # composer dependencies always match; the shared entrypoint writes this
+  # container's own 202-config.php from the env below.
   #
   # Retention windows are read by the process that prunes: override them with
   # P202_APP_RETENTION_DAYS_* in the environment below for this job, and in
@@ -180,6 +181,7 @@ services:
           php 202-cronjobs/attribution-exports.php || true
           php 202-cronjobs/sync-worker.php || true
           php 202-cronjobs/app-installs.php || true
+          php 202-cronjobs/ltv_webhooks.php || true
           now=$$(date +%s)
           if [ $$((now - last_hourly)) -ge 3600 ]; then
             php 202-cronjobs/app-retention.php || true

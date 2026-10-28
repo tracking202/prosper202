@@ -83,6 +83,10 @@ final class LtvFieldErrorsTest extends TestCase
         '202-config/Ltv/MysqlWebhookRepository.php' => [
             'Failed to encode webhook payload for' => 'an event this install built',
         ],
+        '202-config/Ltv/WebhookDispatcher.php' => [
+            'GET_LOCK failed for' => 'the cron\'s dispatcher, which no /ltv route reaches',
+            'The LTV webhook dispatcher needs a selected database' => 'the cron\'s dispatcher, ditto',
+        ],
     ];
 
     public function testEveryValidationExceptionTheControllerBuildsNamesAField(): void
