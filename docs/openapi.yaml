@@ -907,18 +907,22 @@ paths:
                               The click the walk is stopped at, which failed in
                               the last run; null while nothing fails. Each run
                               tries it again, and the server's error log says why,
-                              until it has failed in 10 runs in a row over an hour
-                              and is stepped over.
+                              until it has failed with an error of its own (not a
+                              lock, a timeout or a lost connection) in 10 runs over
+                              an hour and is stepped over.
                           failed_runs:
                             type: integer
-                            description: How many runs in a row stalled_at_click_id has failed; 0 while nothing fails
+                            description: >-
+                              How many runs stalled_at_click_id has failed with an
+                              error of its own; a lock, a timeout or a lost
+                              connection counts in none. 0 while nothing fails
                           failing_since:
                             type: integer
                             nullable: true
-                            description: Unix time of the first of those runs; null while nothing fails
+                            description: Unix time of its first failed run; null while nothing fails
                           skipped_clicks:
                             type: integer
-                            description: Clicks stepped over after failing in 10 runs in a row over an hour; each counts at every one of its visits
+                            description: Clicks stepped over after failing with an error of their own in 10 runs over an hour; each counts at every one of its visits
                           last_skipped_click_id:
                             type: integer
                             nullable: true
