@@ -162,11 +162,12 @@ function p202_setup_code_box(string $value, array $options = []): string
  * buttons that insert the token at the caret of $targetId (p202-setup.js).
  *
  * They sit under a closed disclosure: they are a typing aid, not a field,
- * and seventeen buttons open by default buried the one field that matters.
+ * and the buttons open by default buried the one field that matters.
  */
 function p202_setup_placeholders(string $targetId, string $remember): string
 {
     $tokens = ['[[subid]]', '[[c1]]', '[[c2]]', '[[c3]]', '[[c4]]', '[[random]]', '[[referer]]', '[[gclid]]',
+        '[[gbraid]]', '[[wbraid]]', '[[ttclid]]',
         '[[utm_source]]', '[[utm_medium]]', '[[utm_campaign]]', '[[utm_term]]', '[[utm_content]]',
         '[[payout]]', '[[cpc]]', '[[cpc2]]', '[[timestamp]]'];
     $buttons = '';

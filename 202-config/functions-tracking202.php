@@ -1528,6 +1528,13 @@ function setupDniOffer($hash, $network, $key, $affId, $currency, $id, $ddlci)
 
 function getDNICacheProgress($hash, $data)
 {
+    // As the page's poller sent it, which encoded it with JSON_NUMERIC_CHECK
+    // (the cron's cache request does too).
+    $body = json_encode($data, JSON_NUMERIC_CHECK | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($body === false) {
+        error_log('getDNICacheProgress: the request could not be encoded: ' . json_last_error_msg());
+        return false;
+    }
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/cache/progress');
     curl_setopt($ch, CURLOPT_HEADER, false);
@@ -1536,7 +1543,7 @@ function getDNICacheProgress($hash, $data)
         "Content-type: application/json"
     ]);
     curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
     $results = curl_exec($ch);
     curl_close($ch);
     return $results;
