@@ -77,12 +77,15 @@ CMD ["apache2-foreground"]
 # The entrypoint sees vendor/autoload.php and skips its runtime composer
 # install, so container start stays fast.
 FROM base AS app
-# Dependencies first, in their own layer keyed on composer.json alone: a code
-# change then reuses the cached vendor layer instead of re-resolving and
-# re-downloading every package on every deploy. (No composer.lock is committed,
-# so an install is a full resolution — cache it as hard as possible.)
-COPY composer.json /var/www/html/composer.json
-RUN composer install --no-dev --no-interaction --no-scripts --no-autoloader --no-progress
+# Dependencies first, in their own layer keyed on composer.json and
+# composer.lock: a code change then reuses the cached vendor layer. The install
+# is the locked set, the one the release zip ships; without the lock composer
+# resolves whatever matches composer.json that day. validate stops the build
+# when the lock has drifted from composer.json, where install would only warn
+# and install the old set. ImageInstallsTheLockedSetTest holds this shape.
+COPY composer.json composer.lock /var/www/html/
+RUN composer validate --no-check-publish --no-check-all \
+    && composer install --no-dev --no-interaction --no-scripts --no-autoloader --no-progress
 COPY --chown=www-data:www-data . /var/www/html
 RUN composer dump-autoload --optimize --no-dev
 # Pre-create the volume mount points owned by the web user: a named volume
