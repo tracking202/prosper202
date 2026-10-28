@@ -28,6 +28,9 @@ use Prosper202\Conversion\Ledger\Amount;
  *   are UTC, stated as +0000 on the Parameters line and on every row.
  *   Microsoft takes at most 100,000 rows an upload and three decimals of a
  *   value; it has no order id and no consent columns.
+ *
+ * Each platform counts one conversion per click and second, whatever its
+ * Order ID (secondKey()).
  */
 enum Format: string
 {
@@ -143,6 +146,41 @@ enum Format: string
     public function rowLimit(): ?int
     {
         return $this === self::MICROSOFT ? self::MICROSOFT_ROW_LIMIT : null;
+    }
+
+    /**
+     * The click a line is counted under, which the platform keeps one
+     * conversion a second of, or null for a line with no id: the id it is
+     * sent under, named with its kind so that a gclid and a gbraid of the
+     * same text are two clicks. ClickSeconds moves the second conversion on
+     * one key in one second to the next free second.
+     *
+     * Google: CLICK_CONVERSION_ALREADY_EXISTS, "The imported event has the
+     * same click and conversion_date_time as an existing conversion" (the
+     * Google Ads API's ConversionUploadError; its import guidelines name the
+     * conversion name too), whatever the Order ID. A Data Manager line names
+     * every id its click came with and is counted under the first of its
+     * gclid, gbraid and wbraid. Google's ids are held to base64url
+     * characters (wellFormedId()), where Abc and abc are two ids, so their
+     * case is kept.
+     * Microsoft: "Duplicate offline conversions with the same
+     * MicrosoftClickId and ConversionTime will be ignored" (the
+     * OfflineConversion API reference; its help names the conversion name
+     * too). An msclkid is a GUID's hex digits, the same GUID in either case.
+     * Both templates' times are whole seconds.
+     *
+     * @param array<string, string> $ids the line's ids, by 202_google column, as OfflineExport::ids() reads them
+     */
+    public function secondKey(array $ids): ?string
+    {
+        foreach ($this->idColumns() as $column) {
+            $id = $ids[$column] ?? '';
+            if ($id !== '') {
+                return $column . ':' . ($this === self::MICROSOFT ? strtolower($id) : $id);
+            }
+        }
+
+        return null;
     }
 
     /**

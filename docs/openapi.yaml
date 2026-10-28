@@ -2389,6 +2389,13 @@ paths:
           (three decimals), `Conversion Currency`, `Microsoft Click ID` and the
           two hashed contact columns, empty.
 
+        Both platforms count one conversion per click and second, whatever its
+        Order ID (Google's click is the line's gclid, or in a `google` file its
+        gbraid or wbraid when it has no gclid; Microsoft's the msclkid), so of
+        two conversions on one click in one second the one recorded first keeps
+        its time and the other is sent at the next second no conversion on
+        that click holds, the same on every fetch.
+
         A conversion is a line when it counts now (net of partial refunds; one
         refunded in full, deleted, replaced on its click or not payable is
         not), its click was named (`match_method` `click_id` or `cookie`; a

@@ -319,6 +319,59 @@ final class OfflineExportIntegrationTest extends TestCase
     }
 
     /**
+     * Two sales on one click in one second, recorded by the ledger's writer,
+     * and one a second later: Google and Microsoft keep one conversion per
+     * click and second, so the server reads the one recorded first first and
+     * each file sends the other at the next free second, at the same second
+     * on every fetch and after the first is deleted.
+     */
+    public function testTwoConversionsOnOneClickInOneSecondAreTwoSeconds(): void
+    {
+        $msclkid = '0123456789abcdef0123456789abc140';
+        $this->click(140, 8, ['gclid' => 'EAIaIQ_140', 'msclkid' => $msclkid]);
+        $t = $this->now - 86400;
+        $sale = static fn (string $payout, int $time): array => [
+            'payout' => $payout, 'transaction_id' => 'T' . $payout, 'conv_time' => $time,
+        ];
+        $first = $this->record(140, MatchMethod::CLICK_ID, $sale('1', $t));
+        $second = $this->record(140, MatchMethod::CLICK_ID, $sale('2', $t));
+        $later = $this->record(140, MatchMethod::CLICK_ID, $sale('3', $t + 1));
+        $this->names();
+        $ms = static fn (int $ts, string $value): string
+            => 'MS Sale,' . gmdate('Y-m-d\TH:i:s', $ts) . '+0000,' . $value . ',EUR,' . $msclkid . ',,';
+        $zone = new \DateTimeZone('America/New_York');
+        $name = '"Accumulated, ""8"""';
+        $google = static fn (int $ts, string $value, int $convId): string => 'EAIaIQ_140,,,' . $name . ','
+            . (new \DateTimeImmutable('@' . $ts))->setTimezone($zone)->format('Y-m-d\TH:i:sP')
+            . ',' . $value . ',EUR,P202-' . $convId . ',,';
+        $microsoftFile = new ExportOptions(Format::MICROSOFT, 30, $this->now);
+        $googleFile = new ExportOptions(Format::GOOGLE, 30, $this->now);
+
+        [$lines, $summary] = $this->file($microsoftFile);
+        self::assertSame([$ms($t + 1, '3'), $ms($t, '1'), $ms($t + 2, '2')], array_slice($lines, 2));
+        self::assertSame(3, $summary->rows);
+        self::assertSame($lines, $this->file($microsoftFile)[0]);
+        [$lines] = $this->file($googleFile);
+        self::assertSame(
+            [$google($t + 1, '3', $later), $google($t, '1', $first), $google($t + 2, '2', $second)],
+            array_slice($lines, 1)
+        );
+        self::assertSame($lines, $this->file($googleFile)[0]);
+
+        $this->repo->softDelete($first, self::USER);
+        self::assertSame(
+            [$ms($t + 1, '3'), $ms($t + 2, '2')],
+            array_slice($this->file($microsoftFile)[0], 2),
+            'a deleted conversion still holds its second'
+        );
+        self::assertSame(
+            [$google($t + 1, '3', $later), $google($t + 2, '2', $second)],
+            array_slice($this->file($googleFile)[0], 1),
+            'a deleted conversion still holds its second'
+        );
+    }
+
+    /**
      * Whose click is asked only of the visits in the file's range: a click
      * re-clicked within it is the account's whatever its first visit, and
      * another account's re-clicked click is still another account's.
