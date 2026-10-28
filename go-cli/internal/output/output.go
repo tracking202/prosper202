@@ -41,6 +41,7 @@ var friendlyHeaders = map[string]string{
 	"click_conv_rate":      "Conv % of clicks",
 	"breakeven_cpc":        "Breakeven CPC",
 	"margin":               "Margin",
+	"payout_net":           "Profit at payout",
 }
 
 // metricOrder is the fixed business sequence for metric columns so the row
@@ -49,7 +50,7 @@ var metricOrder = []string{
 	"geo", "device", "name", "keyword",
 	"total_clicks", "total_click_throughs", "total_leads", "conv_rate", "click_conv_rate",
 	"total_income", "total_cost", "total_net", "roi", "epc", "cpa", "avg_cpc",
-	"breakeven_cpc", "margin", "verdict", "bucket", "reason",
+	"payout_net", "breakeven_cpc", "margin", "verdict", "bucket", "reason",
 	"matched_rule", "status", "destination", "criteria",
 }
 
@@ -663,6 +664,11 @@ func renderObjectCSV(obj map[string]interface{}) {
 	if err := writer.Error(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error finalizing CSV output:", err)
 	}
+}
+
+// FormatNumber is a number as the table shows it.
+func FormatNumber(v float64) string {
+	return trimLongDecimal(formatValue(v))
 }
 
 // formatValue renders a value for human display, rounding floats to 2 decimals.

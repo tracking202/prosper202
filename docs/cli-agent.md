@@ -310,6 +310,8 @@ The commands that compute from a breakdown say what their answer covers:
 
 `losers`, `winners`, `crosstab` and `campaign optimize` always carry `truncated` in `--json`, `false` when nothing was left out.
 
+`report losers`, `report winners`, `report crosstab` and `campaign optimize` (its offers' `epc`) list the breakdown's figures unchanged under its names (`total_cost`, `avg_cpc`, `total_net`, `epc`, …), so they can be compared with `report breakdown` field by field; a sub-cent CPC is not rounded in `--json`. With `--payout`, losers and winners add `payout_net` (sales × payout − `total_cost`, what they classify and sort on): read that for profit at your stated value, and `total_net` for profit at the recorded revenue.
+
 Narrow any report with the Analyze pages' filters, which combine:
 
 ```bash

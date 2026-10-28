@@ -73,17 +73,17 @@ var campaignOptimizeCmd = &cobra.Command{
 		type cand struct {
 			name string
 			epc  float64
+			row  map[string]interface{} // the breakdown's row, whose epc is listed as the server sent it
 		}
 		var best []cand
 		for _, o := range offers {
 			if fmt.Sprintf("%v", normalizeID(o["id"])) == id {
 				continue
 			}
-			oc := toFloat(o["total_clicks"])
-			if oc <= 0 {
+			if toFloat(o["total_clicks"]) <= 0 {
 				continue
 			}
-			best = append(best, cand{fmt.Sprintf("%v", o["name"]), toFloat(o["total_income"]) / oc})
+			best = append(best, cand{fmt.Sprintf("%v", o["name"]), toFloat(o["epc"]), o})
 		}
 		for i := 0; i < len(best); i++ {
 			for j := i + 1; j < len(best); j++ {
@@ -111,7 +111,8 @@ var campaignOptimizeCmd = &cobra.Command{
 
 		rows := make([]map[string]interface{}, 0, len(best))
 		for _, b := range best {
-			rows = append(rows, map[string]interface{}{"name": b.name, "epc": round(b.epc, 3)})
+			// Rounded to 3 decimals here, a $0.0004 EPC read 0 where `report breakdown` shows it.
+			rows = append(rows, map[string]interface{}{"name": b.name, "epc": b.row["epc"]})
 		}
 		render(pageJSON(rows, map[string]interface{}{"truncated": offersCut}))
 		if offersCut {

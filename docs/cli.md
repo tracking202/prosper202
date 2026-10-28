@@ -1182,6 +1182,12 @@ The commands built on a breakdown say the same:
 - `report losers`, `report winners` and `campaign optimize` classify or rank every row: they read page after page, 500 rows a request, up to the 5000 with the most clicks (`campaign optimize`: the most revenue). Their `--json` always has `truncated`; `true` means the answer covers only those 5000, and a table's note says so.
 - `report crosstab` asks the server for the `--limit-rows` (default 20; `0` for up to 5000) row values with the highest `--metric`, ranked over every row, and reads every column value of each, up to 5000. `"truncated": true` means rows remain past `--limit-rows` or a row's columns past 5000; the note says which.
 
+`report losers`, `report winners`, `report crosstab` and `campaign optimize` (its offers' `epc`) read these rows, and
+a figure they list under a breakdown column's name (`total_cost`, `avg_cpc`, `total_net`, `epc`, …) is the breakdown's
+as the server sent it: a $0.00125 CPC is 0.00125 in `--json` and `--csv`, and only the table rounds it, as it does for
+every report. A figure a command computes has a name of its own: with `--payout`, losers and winners add `payout_net`
+(sales × payout − `total_cost`, what the rows are classified and sorted on) beside the breakdown's `total_net`.
+
 ### Analytics shorthand
 
 ```bash

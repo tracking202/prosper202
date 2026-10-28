@@ -43,7 +43,8 @@ func crosstabRowDimensions() []string {
 var reportCrosstabCmd = &cobra.Command{
 	Use:   "crosstab",
 	Short: "Two-dimension breakdown (e.g. traffic source × country) for one metric",
-	Long: "Pivots one metric across two dimensions by fanning out a breakdown per row.\n" +
+	Long: "Pivots one metric across two dimensions by fanning out a breakdown per row. Each cell is that breakdown's\n" +
+		"figure for the column, as `report breakdown` shows it.\n" +
 		"Rows: the --limit-rows with the highest --metric over every row; columns: up to 5000. truncated: true says more remain.\n" +
 		"Example: report crosstab --rows ppc_account --cols country --metric profit --aff-campaign-id 90008",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -102,7 +103,8 @@ var reportCrosstabCmd = &cobra.Command{
 			for _, cr := range colRows {
 				colName := fmt.Sprintf("%v", cr["name"])
 				colSet[colName] = true
-				out[colName] = round(toFloat(cr[metric]), 2)
+				// The breakdown's figure as the server sent it: rounded to 2 decimals, a $0.00125 avg_cpc read 0.
+				out[colName] = cr[metric]
 			}
 			matrix = append(matrix, out)
 		}
