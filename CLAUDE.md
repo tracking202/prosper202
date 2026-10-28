@@ -1812,6 +1812,31 @@ refused with a `LogicException`, never served stale. Before relying on "the
 reads after the lock see what it holds", find the transaction's first read,
 not the lock.
 
+### 37. A row a batch skips is the first row of the next batch
+The company-linking sweep took 2,000 of an account's customers with a
+company string and no company, in no order, and skipped those whose string
+`canonicalName()` reduces to nothing (a tab, a no-break space). A skip wrote
+nothing, so the next run's select answered the same 2,000 first, and an
+account with more than 2,000 of them never had another customer linked —
+each run a success that linked 0. The skip was right; what it left was the
+select's answer for next time. Every row a batch takes has to leave the
+batch's selection — written to what the select excludes (here `''`, a
+"none" every reader of the column already had, #25), or walked past by a
+cursor on the key the select orders by — and a row the batch cannot act on
+for a reason it does not know is an error, not a skip (an entity id of 0
+was skipped the same way and would have been taken again forever, #11). Ask
+of every `continue` in a loop over a `LIMIT`ed read: does the next run's
+read take this row again, and what waits behind it?
+
+A cursor is a claim about an index, and the server may not share it.
+`WHERE user_id = ? AND company_id IS NULL AND customer_id > ? ORDER BY
+customer_id` has `(user_id, company_id)` to serve it, primary key implied;
+MariaDB 10.11 chose `merged_into` instead — `merged_into_customer_id IS
+NULL` is true of nearly every customer of every account, and that index
+also yields id order — and read 102,000 rows to return 2,000 (measured).
+The select names its index. Read the plan a cursor gets (`ANALYZE`, not
+`EXPLAIN`) on a table holding other accounts' rows before calling it cheap.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
