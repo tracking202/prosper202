@@ -525,6 +525,12 @@ Claude Desktop and Cursor take the same command in their MCP settings:
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.
+- A redirector's rules are one tool, `rotator_set_rules` (`p202 rotator
+  set-rules`): it takes the whole rule set as a JSON list, as `rotator_get`
+  answers it under `data.rules`, and the install writes it in one
+  transaction, in the order given. There are no tools for one rule; a rule
+  is added, changed, moved or removed by sending the set without or with it.
+  `dry_run: true` answers what would change.
 - `p202 mcp tools` lists the tools as JSON. `p202 mcp call <tool> --input
   '<json>'` runs one as the app would (`--input -` reads the JSON from stdin).
 - An error comes back as the same JSON envelope as below, naming CLI flags
@@ -539,8 +545,9 @@ My Account › Personal Settings › API keys; remove it there to disconnect. It
 licence. One call there reads at most 1 MB of the install's answers, so its list
 tools take no `all`: page with `limit` and `offset`. It also decodes at most
 80,000 JSON values from them (a megabyte of real rows holds fewer), and takes at
-most 1,000 in a call's arguments; past either, the call is refused with how to
-ask for less.
+most 1,000 in a call's arguments (5,000 in `rotator_set_rules`, whose rules are
+one document: about 150 rules as `rotator_get` answers them); past either, the
+call is refused with how to ask for less.
 
 To improve the connector, the hosted server records which tools the app calls, the names (not the
 values) of their arguments, whether they work, with the error when one fails (quoted values taken

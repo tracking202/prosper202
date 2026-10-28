@@ -9,6 +9,25 @@ import (
 	"testing"
 )
 
+func TestJSONDuplicateKeyNamesTheKeyGivenTwice(t *testing.T) {
+	for in, want := range map[string]string{
+		`{"a":1,"a":2}`:                           "x.a",
+		`[{"a":1},{"b":{"c":1,"c":2}}]`:           "x.1.b.c",
+		`{"r":[{"k":[1,{"z":1}]},{"k":1,"k":2}]}`: "x.r.1.k",
+		`{"a":{"a":1},"b":[{"a":1},{"a":1}]}`:     "",
+		`[1,"a",null,true]`:                       "",
+		`"text"`:                                  "",
+	} {
+		got, err := jsonDuplicateKey([]byte(in), "x")
+		if err != nil || got != want {
+			t.Errorf("%s: %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if got, _ := jsonDuplicateKey([]byte(`[{"a":1,"a":2}]`), ""); got != "0.a" {
+		t.Errorf("no prefix: %q, want 0.a", got)
+	}
+}
+
 func TestDecodeOneJSONRefusesAnythingAfterTheFirstValue(t *testing.T) {
 	for _, in := range []string{
 		`[{"event_id":"a"}][{"event_id":"b"}]`,

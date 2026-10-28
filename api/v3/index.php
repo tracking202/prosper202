@@ -717,10 +717,16 @@ try {
             $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get(PathId::of($ctx)));
             $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules(PathId::of($ctx)));
         }, [$setupSection]);
-        $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $payload, $rotators) {
+        // A rule set that leaves out a rule removes it: the page's save asks
+        // for remove_rotator_rule then (ajax/rotator.php), and so does this.
+        $mayRemoveRules = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'remove_rotator_rule');
+        };
+        $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $payload, $queryParams, $rotators, $mayRemoveRules) {
             $r->post('',                       fn() => ['_status' => 201] + $idempotent('rotators', $payload, fn() => $crud($rotators)->create($payload)));
             $r->put('/{id}',                   fn($ctx) => $crud($rotators)->update(PathId::of($ctx), $payload));
             $r->post('/{id}/rules',            fn($ctx) => $idempotent('rotators/' . PathId::of($ctx) . '/rules', $payload, fn() => $crud($rotators)->createRule(PathId::of($ctx), $payload)));
+            $r->put('/{id}/rules',             fn($ctx) => $crud($rotators)->setRules(PathId::of($ctx), $payload, writeDryRunRequested($queryParams), $mayRemoveRules));
             $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($rotators)->updateRule(PathId::of($ctx), PathId::of($ctx, 'ruleId'), $payload));
         }, [$setupSection]);
         $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
@@ -1315,6 +1321,7 @@ try {
         $r->post('/uploads', $writePreview);
     });
     $writePreviewRouter->post('/system/retention/delete-before', $writePreview);
+    $writePreviewRouter->put('/rotators/{id}/rules', $writePreview);
     // ── Staged writes ───────────────────────────────────────────────
     // `?staged=1` on an operator-surface write records it as a proposal
     // (server-issued change id) instead of executing it; a person applies
@@ -1355,6 +1362,7 @@ try {
         $r->put('/{id}', $stageable);
         $r->delete('/{id}', $stageable);
         $r->post('/{id}/rules', $stageable);
+        $r->put('/{id}/rules', $stageable);
         $r->put('/{id}/rules/{ruleId}', $stageable);
         $r->delete('/{id}/rules/{ruleId}', $stageable);
     });
@@ -1432,6 +1440,12 @@ try {
     if ($match === null) {
         Bootstrap::errorResponse('Not found', 404);
         exit;
+    }
+    // A PATCH reaches every PUT route (Router::match), and a rule set is
+    // replaced whole: a PATCH naming one rule would remove the others.
+    if ($method === 'PATCH' && preg_match('#^/rotators/[^/]+/rules$#', $path) === 1) {
+        throw new HttpException('A rule set is replaced whole: send it with PUT, listing every rule the redirector is to have. '
+            . 'PUT /rotators/{id}/rules/{ruleId} changes one rule.', 405);
     }
 
     // Central scope enforcement: every authenticated endpoint requires

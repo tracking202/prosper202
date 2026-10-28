@@ -60,6 +60,17 @@ const hostedAnswerValues = 80_000
 // landing_page_code, the one that takes a list, at most 100 offers.
 const hostedArgumentValues = 1_000
 
+// hostedDocumentArgumentValues is hostedArgumentValues for a tool that takes
+// a JSON document (mcpToolSpec.JSON), which goes to its command as one flag's
+// text (TestMCPRuleSetArgumentIsJSON), not a flag an item. A call of 5,000
+// values of rule set allocated 5.5 MB, one of 1,000 list items 5.1
+// (TestHostedCallTakesARuleSetAsLargeAsRotatorGetAnswers). A set of 100 rules
+// with a criterion and two destinations each is 3,303 values, and 55,128
+// characters as rotator_get answers it, about the most that answer holds
+// under mcpMaxResultChars; at hostedArgumentValues a hosted call could send
+// back 30 of those rules.
+const hostedDocumentArgumentValues = 5_000
+
 type mcpKind string
 
 const (
@@ -134,6 +145,10 @@ type mcpToolSpec struct {
 	// server do not cover (AiConnect::READ_AREAS in api/v3), so that server
 	// does not offer it (mcpCatalog.HostedExcludes).
 	NotHosted bool
+	// JSON names string flags whose value is a JSON document, with the
+	// schema the tool takes it as: a model sends the structure itself,
+	// which the call writes back as the flag's text.
+	JSON map[string]mcpProperty
 	// HostedOmit lists flags the hosted server leaves out of the tool, beyond
 	// Omit: a hosted call reads a bounded amount of the install's answers,
 	// so a flag that reads every page can only be refused there. The
@@ -243,10 +258,20 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "aff_network_create", Command: []string{"aff-network", "create"}, Title: "Create a category", Kind: mcpCreate},
 	{Name: "text_ad_list", Command: []string{"text-ad", "list"}, Title: "List text ads", Kind: mcpRead, HostedOmit: mcpEveryPage},
 
-	// Rotators
+	// Rotators. The rules are one declarative set (PUT /rotators/{id}/rules):
+	// a model edits what rotator_get answers and sends it all back, which
+	// the server writes in one transaction or not at all. No per-rule tools.
 	{Name: "rotator_list", Command: []string{"rotator", "list"}, Title: "List rotators", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "rotator_get", Command: []string{"rotator", "get"}, Title: "Get a rotator and its rules", Kind: mcpRead, Args: []mcpArg{idArg("id", "Rotator id (from rotator_list).", true)}},
 	{Name: "rotator_stats", Command: []string{"rotator", "stats"}, Title: "Rotator performance", Kind: mcpRead, Args: []mcpArg{idArg("id", "Rotator id (from rotator_list).", true)}, Omit: rareFilters},
+	{Name: "rotator_create", Command: []string{"rotator", "create"}, Title: "Create a rotator", Kind: mcpCreate, Required: []string{"name"},
+		Note: "Its default is where a visitor no rule matches goes; set its rules with rotator_set_rules."},
+	{Name: "rotator_update", Command: []string{"rotator", "update"}, Title: "Update a rotator", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Rotator id (from rotator_list).", true)}},
+	{Name: "rotator_delete", Command: []string{"rotator", "delete"}, Title: "Delete a rotator", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Rotator id (from rotator_list); or give ids for several.", false)},
+		Note: "Links that use it stop redirecting. " + deleteNote},
+	{Name: "rotator_set_rules", Command: []string{"rotator", "set-rules"}, Title: "Set a rotator's rules", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Rotator id (from rotator_list).", true)},
+		Omit: []string{"file"}, Required: []string{"rules"}, JSON: map[string]mcpProperty{"rules": rotatorRulesSchema()},
+		Note: "Call it with dry_run: true first and show the user what would change."},
 
 	// Clicks and conversions
 	{Name: "click_list", Command: []string{"click", "list"}, Title: "List clicks", Kind: mcpRead, HostedOmit: mcpEveryPage},
@@ -267,13 +292,63 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "system_info", Command: []string{"system", "info"}, Title: "Install information", Kind: mcpRead, NotHosted: true},
 }
 
+// rotatorRulesSchema is rotator_set_rules' rules: a rule set as rotator_get
+// answers it under data.rules. It names every key RotatorsController writes,
+// and each `id`; the other keys GET answers (rotator_id, rule_id,
+// auto_monetizer) are left to the server, which takes them back with the
+// values it holds, so the objects stay open to them
+// (TestRotatorRulesSchemaIsTheControllers holds the two to each other).
+func rotatorRulesSchema() mcpProperty {
+	criterion := mcpProperty{
+		Type: "object",
+		Properties: map[string]mcpProperty{
+			"id":        {Description: "Keeps this criterion."},
+			"type":      {Type: "string", Enum: []string{"country", "region", "city", "isp", "ip", "platform", "device", "browser"}},
+			"statement": {Type: "string", Enum: []string{"is", "is_not"}},
+			"value": {Type: "string", Description: "Comma-separated, or ALL. Countries as Name(CC), e.g. United States(US); " +
+				"devices lower case (desktop, mobile, tablet, bot); ip single addresses."},
+		},
+		Required: []string{"type", "value"},
+	}
+	destination := mcpProperty{
+		Type:        "object",
+		Description: "One of redirect_url, redirect_campaign (campaign_list) and redirect_lp (landing_page_list).",
+		Properties: map[string]mcpProperty{
+			"id":                {Description: "Keeps this destination."},
+			"redirect_url":      {Type: "string"},
+			"redirect_campaign": {},
+			"redirect_lp":       {},
+			"weight":            {Description: "0 to 100, on each destination of a split test."},
+			"name":              {Type: "string"},
+		},
+	}
+	return mcpProperty{
+		Type: "array",
+		Description: "Every rule, in the order tried (the first active rule whose criteria all match sends the visitor). " +
+			"Send rotator_get's data.rules, edited: a rule with its id is kept, one without is added, one left out is removed.",
+		Items: &mcpProperty{
+			Type: "object",
+			Properties: map[string]mcpProperty{
+				"id":        {Description: "Keeps this rule (its clicks stay its own)."},
+				"rule_name": {Type: "string"},
+				"splittest": {Description: "1 splits visitors between the destinations by weight; 0 (new rules) has one destination."},
+				"status":    {Description: "1 active (new rules), 0 paused."},
+				"criteria":  {Type: "array", Description: "At least one; all must match.", Items: &criterion},
+				"redirects": {Type: "array", Items: &destination},
+			},
+			Required: []string{"rule_name", "criteria", "redirects"},
+		},
+	}
+}
+
 // mcpInstructions is the server's instructions to the model.
 const mcpInstructions = "Prosper202 is a self-hosted tracker and analytics app for affiliate and paid-traffic marketing. " +
 	"These tools read and change this user's own Prosper202 install through its API; the user's role there, and this connection's access, decide what is allowed.\n" +
 	"- Find ids with the list tools (campaign_list, tracker_list, ppc_account_list, ...) before a get, update or delete.\n" +
 	"- Report tools take period (today, yesterday, last7, last30, thismonth, ...) or time_from and time_to, and filters such as aff_campaign_id or ppc_account_id.\n" +
 	"- An error comes back as JSON with a category, a message and usually a hint. Messages and hints name CLI commands and flags (`p202 campaign list`, --aff-campaign-id); the matching tool is campaign_list and the argument aff_campaign_id.\n" +
-	"- A delete runs without a further question once the tool call is approved; pass dry_run: true first and show the user what it would remove."
+	"- A delete runs without a further question once the tool call is approved; pass dry_run: true first and show the user what it would remove.\n" +
+	"- A rotator's rules are changed as one set: read them with rotator_get, edit the list, and send all of it back with rotator_set_rules (dry_run: true first)."
 
 // mcpStagedInstructions is added when the server only proposes changes.
 const mcpStagedInstructions = "\n- This connection only proposes changes: a write returns a change id (chg_...) and changes nothing. " +
@@ -303,12 +378,19 @@ type mcpSchema struct {
 	AdditionalProperties bool                   `json:"additionalProperties"`
 }
 
+// mcpProperty is one argument's schema, or a part of a JSON argument's
+// (mcpToolSpec.JSON). A part with no Type takes any JSON value: GET answers
+// some fields as a number and others as text or null, and a value read
+// with GET is to go back as it came.
 type mcpProperty struct {
-	Type        string       `json:"type"`
-	Description string       `json:"description,omitempty"`
-	Pattern     string       `json:"pattern,omitempty"`
-	Enum        []string     `json:"enum,omitempty"`
-	Items       *mcpProperty `json:"items,omitempty"`
+	Type                 string                 `json:"type,omitempty"`
+	Description          string                 `json:"description,omitempty"`
+	Pattern              string                 `json:"pattern,omitempty"`
+	Enum                 []string               `json:"enum,omitempty"`
+	Items                *mcpProperty           `json:"items,omitempty"`
+	Properties           map[string]mcpProperty `json:"properties,omitempty"`
+	Required             []string               `json:"required,omitempty"`
+	AdditionalProperties *bool                  `json:"additionalProperties,omitempty"`
 }
 
 // mcpParam says how one tool argument becomes command-line words.
@@ -316,12 +398,14 @@ type mcpParam struct {
 	property   string
 	flag       string // "" for a positional
 	position   int
-	kind       string // string, boolean, integer, number, array
+	kind       string // string, boolean, integer, number, array, json
 	required   bool
 	positional bool
 	// pattern and form: an *_id flag's values (mcpIDFlagPattern).
 	pattern *regexp.Regexp
 	form    string
+	// schema: a json argument's (mcpToolSpec.JSON).
+	schema *mcpProperty
 }
 
 type mcpCatalog struct {
@@ -422,6 +506,14 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 			err = fmt.Errorf("tool %s: flag --%s has type %s, which no tool argument maps to", s.Name, f.Name, f.Value.Type())
 			return
 		}
+		var schema *mcpProperty
+		if js, isJSON := s.JSON[f.Name]; isJSON {
+			if kind != "string" || (js.Type != "array" && js.Type != "object") {
+				err = fmt.Errorf("tool %s: --%s is a JSON argument, which a string flag takes as an array or an object", s.Name, f.Name)
+				return
+			}
+			kind, schema = "json", &js
+		}
 		prop := strings.ReplaceAll(f.Name, "-", "_")
 		if seen[prop] {
 			err = fmt.Errorf("tool %s: argument %s is both a positional and a flag", s.Name, prop)
@@ -429,7 +521,7 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 		}
 		seen[prop] = true
 		flags[prop] = f
-		p := mcpParam{property: prop, flag: f.Name, kind: kind, required: required[f.Name]}
+		p := mcpParam{property: prop, flag: f.Name, kind: kind, required: required[f.Name], schema: schema}
 		if kind == "string" && strings.HasSuffix(prop, "_id") {
 			p.pattern, p.form = mcpIDFlagPattern(prop, s.Kind)
 		}
@@ -438,6 +530,11 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 	for name := range required {
 		if c.LocalFlags().Lookup(name) == nil || omit[name] {
 			return nil, nil, fmt.Errorf("tool %s: required flag --%s is not one the tool takes", s.Name, name)
+		}
+	}
+	for name := range s.JSON {
+		if c.LocalFlags().Lookup(name) == nil || omit[name] {
+			return nil, nil, fmt.Errorf("tool %s: JSON flag --%s is not one the tool takes", s.Name, name)
 		}
 	}
 	return params, flags, err
@@ -501,6 +598,10 @@ func (s mcpToolSpec) tool(root *cobra.Command) (mcpTool, error) {
 		info := describeFlag(flags[p.property], false)
 		if info.Required && !p.required {
 			schema.Required = append(schema.Required, p.property)
+		}
+		if p.kind == "json" {
+			schema.Properties[p.property] = *p.schema
+			continue
 		}
 		prop := mcpProperty{Type: p.kind, Description: mcpText(info.Usage)}
 		if p.pattern != nil {
@@ -796,6 +897,28 @@ func mcpValueWords(s mcpToolSpec, names []string, p mcpParam, raw json.RawMessag
 			}
 		}
 		return []string{flagWord(n.String())}, nil
+	case "json":
+		// The structure itself, written back compact as the flag's text;
+		// the command and the server check what is inside.
+		var value interface{}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		if err := dec.Decode(&value); err != nil {
+			return nil, wrong("JSON")
+		}
+		_, isList := value.([]interface{})
+		_, isObject := value.(map[string]interface{})
+		if (p.schema.Type == "array" && !isList) || (p.schema.Type == "object" && !isObject) {
+			return nil, wrong("a JSON " + p.schema.Type)
+		}
+		if dup, err := jsonDuplicateKey(raw, p.property); err == nil && dup != "" {
+			return nil, mcpArgError(s, names, "%s: %s is given twice; only one would be written", s.Name, dup)
+		}
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, raw); err != nil {
+			return nil, wrong("JSON")
+		}
+		return []string{flagWord(compact.String())}, nil
 	case "array":
 		var items []json.RawMessage
 		if err := json.Unmarshal(raw, &items); err != nil {
