@@ -127,7 +127,7 @@ eq "$(subs | subfield "${PREFIX}recent" status)" active 'still active until the 
 
 say "3. one cron run"
 cron
-grep -q 'LTV maintenance: subscriptions 1 to past_due, 2 to canceled, 3 customer rollups refreshed' "$WORK/cron.out" \
+grep -q 'LTV maintenance: subscriptions 1 to past_due, 2 to canceled, 3 customer rollups refreshed, 1 announced as subscription.changed (2 that took effect more than 7 days ago not announced)' "$WORK/cron.out" \
     && ok 'the run says what it moved' || bad "the run's line: $(grep -o 'LTV maintenance[^<]*' "$WORK/cron.out")"
 LIST=$(subs)
 eq "$(printf '%s' "$LIST" | subfield "${PREFIX}current" status)" active 'the current one is active'

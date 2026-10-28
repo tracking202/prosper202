@@ -31,6 +31,7 @@ final class LtvMaintenanceIntegrationTest extends TestCase
     private const TABLES = [
         '202_customers', '202_subscriptions', '202_revenue_events', '202_personalization_tokens',
         '202_offer_transitions', '202_offer_recommendations', '202_companies', '202_conversion_logs',
+        '202_ltv_webhooks', '202_ltv_webhook_deliveries',
     ];
 
     private static ?\mysqli $db = null;
@@ -303,6 +304,8 @@ final class LtvMaintenanceIntegrationTest extends TestCase
         $now = time();
         $c = self::customer(self::USER, 10.0, 1);
         $s = self::subscription($c, 'active', $now - 5 * self::DAY, 10.0);
+        (new \Prosper202\Ltv\MysqlWebhookRepository(self::conn()))
+            ->create(self::USER, 'https://hooks.example/all', ['*']);
         $renewal = self::connect();
         $renewalConn = new Connection($renewal);
         $proc = null;
@@ -347,9 +350,11 @@ final class LtvMaintenanceIntegrationTest extends TestCase
         self::assertTrue($waiting, 'the sweep waited on the renewal\'s lock: ' . $out);
 
         $report = json_decode($out, true, 8, JSON_THROW_ON_ERROR);
-        self::assertSame([0, 0], [$report['past_due'], $report['canceled']], $out);
+        self::assertSame([0, 0, 0], [$report['past_due'], $report['canceled'], $report['announced']], $out);
         self::assertSame('active', self::sub($s)['status']);
         self::assertSame('10.00000', self::rollups($c)['mrr']);
+        $queued = self::row('SELECT COUNT(*) AS n FROM 202_ltv_webhook_deliveries')['n'];
+        self::assertSame('0', $queued, 'nothing announced');
     }
 
     public function testABacklogIsSweptInBatchesAndADeadlineLeavesTheRestForTheNextRun(): void

@@ -8014,7 +8014,8 @@ paths:
       summary: Create or update a subscription
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
         an `idempotency_key` field instead) and have no `dry_run` preview. Keyed by the provider's subscription id;
-        queues a `subscription.changed` webhook.
+        queues a `subscription.changed` webhook (`action` `upsert`), as the hourly sweep does when it moves a
+        subscription that stopped renewing to `past_due`.
       operationId: ltvUpsertSubscription
       requestBody:
         required: true
@@ -8101,7 +8102,9 @@ paths:
       - LTV
       summary: Record a subscription event
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+        an `idempotency_key` field instead) and have no `dry_run` preview. An event that changes the subscription
+        queues a `subscription.changed` webhook (`action` the event type); the hourly sweep queues the same event
+        with `action` `cancel` when it cancels a subscription that stopped renewing.
       operationId: ltvSubscriptionEvent
       parameters:
       - name: ref

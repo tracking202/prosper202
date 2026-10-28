@@ -17,7 +17,11 @@ use Prosper202\Database\Connection;
  *   by default before 1.9.79) would otherwise put every subscription that
  *   lapsed in the last years into this quarter's churn. Each batch's
  *   customers have their cached mrr and active_subscription_count recomputed
- *   in the batch's transaction.
+ *   in the batch's transaction. Each status it writes queues the
+ *   subscription.changed webhook event the API's change of that status
+ *   queues, in the same transaction, when the change took effect within
+ *   EVENT_WINDOW_SECONDS: an install upgraded with years of lapsed
+ *   subscriptions announces the last week's, not every one.
  * - RECONCILE: the customer rollups (order_count, total_revenue,
  *   refunded_amount, mrr, active_subscription_count) recomputed from the
  *   revenue ledger and the subscriptions, for the customers active in the
@@ -45,7 +49,7 @@ use Prosper202\Database\Connection;
  * after it run. The reconcile starts from the first customer each run.
  *
  * @phpstan-type Report array{
- *     jobs: list<string>, past_due: int, canceled: int, swept_customers: int,
+ *     jobs: list<string>, past_due: int, canceled: int, swept_customers: int, announced: int, unannounced: int,
  *     reconciled: int, checked: int, full: bool, transitions: int, recommendation_conversions: int,
  *     companies_linked: int, company_strings: int, tokens_purged: int,
  *     more: list<string>, failed: array<string, string>
@@ -78,6 +82,19 @@ final class LtvMaintenance
 
     /** Days past the grace period a past_due subscription is canceled. */
     public const CANCEL_AFTER_DAYS = 30;
+
+    /**
+     * A status change the sweep writes queues its subscription.changed event
+     * only when it took effect this recently. The webhook dispatcher sends
+     * nothing queued longer ago than this (WebhookDispatcher::MAX_AGE_SECONDS),
+     * so a sweep that had always run would have announced no older change
+     * either; without it, an install's first sweep queued one event for every
+     * subscription that ever lapsed, ahead of every live event.
+     */
+    public const EVENT_WINDOW_SECONDS = WebhookDispatcher::MAX_AGE_SECONDS;
+
+    /** What the API's change of each status the sweep writes queues as its action. */
+    public const EVENT_ACTIONS = ['past_due' => 'upsert', 'canceled' => 'cancel'];
 
     /** The reconcile's window: customers active this recently. */
     public const ACTIVE_WINDOW_SECONDS = 172800;
@@ -174,6 +191,8 @@ final class LtvMaintenance
             'past_due' => 0,
             'canceled' => 0,
             'swept_customers' => 0,
+            'announced' => 0,
+            'unannounced' => 0,
             'reconciled' => 0,
             'checked' => 0,
             'full' => $this->full,
@@ -273,58 +292,97 @@ final class LtvMaintenance
                     $byUser[(int) $row['user_id']]['subs'][] = (int) $row['subscription_id'];
                     $byUser[(int) $row['user_id']]['customers'][(int) $row['customer_id']] = true;
                 }
-                [$pastDue, $canceled, $customers] = $this->conn->transaction(
-                    function () use ($byUser, $status, $lapsedAt, $cancelAt, $now): array {
-                        $pastDue = 0;
-                        $canceled = 0;
-                        $customers = 0;
-                        foreach ($byUser as $userId => $ids) {
-                            $subs = $ids['subs'];
-                            $in = self::placeholders(count($subs));
-                            // The row is asked again: a renewal since the read moved it on.
-                            $stmt = $this->conn->prepareWrite(
-                                "UPDATE 202_subscriptions
-                                 SET status = 'canceled', canceled_at = {$cancelAt}, updated_at = ?
-                                 WHERE user_id = ? AND subscription_id IN ({$in})
-                                   AND status = ? AND {$cancelAt} < ?"
-                            );
-                            $this->conn->bind(
-                                $stmt,
-                                'ii' . str_repeat('i', count($subs)) . 'si',
-                                [$now, $userId, ...$subs, $status, $now]
-                            );
-                            $canceled += $this->conn->executeUpdate($stmt);
-                            if ($status === 'active') {
-                                $stmt = $this->conn->prepareWrite(
-                                    "UPDATE 202_subscriptions
-                                     SET status = 'past_due', updated_at = ?
-                                     WHERE user_id = ? AND subscription_id IN ({$in})
-                                       AND status = 'active' AND {$lapsedAt} < ?"
-                                );
-                                $this->conn->bind(
-                                    $stmt,
-                                    'ii' . str_repeat('i', count($subs)) . 'i',
-                                    [$now, $userId, ...$subs, $now]
-                                );
-                                $pastDue += $this->conn->executeUpdate($stmt);
-                            }
-                            $customers += $this->refreshSubscriptionRollups(
-                                $userId,
-                                array_keys($ids['customers']),
-                                $now
-                            );
-                        }
-
-                        return [$pastDue, $canceled, $customers];
-                    }
+                [$pastDue, $canceled, $customers, $announced, $unannounced] = $this->conn->transaction(
+                    fn (): array => $this->sweepBatch($byUser, $status, $lapsedAt, $cancelAt, $now)
                 );
                 $report['past_due'] += $pastDue;
                 $report['canceled'] += $canceled;
                 $report['swept_customers'] += $customers;
+                $report['announced'] += $announced;
+                $report['unannounced'] += $unannounced;
             } while (count($rows) === $this->batch);
         }
 
         return true;
+    }
+
+    /**
+     * One batch, inside its transaction: each account's rows locked and
+     * asked again (a renewal since the read moved one on, and a locking read
+     * sees it), moved, announced, and their customers' rollups refreshed.
+     * Answers [past_due, canceled, customers refreshed, announced, too old
+     * to announce].
+     *
+     * @param array<int, array{subs: list<int>, customers: array<int, true>}> $byUser
+     * @return array{0: int, 1: int, 2: int, 3: int, 4: int}
+     */
+    private function sweepBatch(array $byUser, string $status, string $lapsedAt, string $cancelAt, int $now): array
+    {
+        $counts = [0, 0, 0, 0, 0];
+        $webhooks = new MysqlWebhookRepository($this->conn);
+        foreach ($byUser as $userId => $ids) {
+            $subs = $ids['subs'];
+            $stmt = $this->conn->prepareWrite(
+                "SELECT subscription_id, customer_id, {$lapsedAt} AS lapsed_at, {$cancelAt} AS cancel_at
+                 FROM 202_subscriptions
+                 WHERE user_id = ? AND subscription_id IN (" . self::placeholders(count($subs)) . ")
+                   AND status = ? AND {$lapsedAt} < ?
+                 FOR UPDATE"
+            );
+            $this->conn->bind($stmt, 'i' . str_repeat('i', count($subs)) . 'si', [$userId, ...$subs, $status, $now]);
+            // new status => [subscription id, customer id, the moment it took effect]
+            $to = ['canceled' => [], 'past_due' => []];
+            foreach ($this->conn->fetchAll($stmt) as $row) {
+                $canceling = (int) $row['cancel_at'] < $now;
+                $to[$canceling ? 'canceled' : 'past_due'][] = [
+                    (int) $row['subscription_id'],
+                    (int) $row['customer_id'],
+                    (int) ($canceling ? $row['cancel_at'] : $row['lapsed_at']),
+                ];
+            }
+            $set = [
+                'canceled' => "status = 'canceled', canceled_at = {$cancelAt}",
+                'past_due' => "status = 'past_due'",
+            ];
+            foreach ($to as $newStatus => $changes) {
+                if ($changes === []) {
+                    continue;
+                }
+                $changed = array_column($changes, 0);
+                $stmt = $this->conn->prepareWrite(
+                    "UPDATE 202_subscriptions SET {$set[$newStatus]}, updated_at = ?
+                     WHERE user_id = ? AND subscription_id IN (" . self::placeholders(count($changed)) . ')
+                       AND status = ?'
+                );
+                $this->conn->bind(
+                    $stmt,
+                    'ii' . str_repeat('i', count($changed)) . 's',
+                    [$now, $userId, ...$changed, $status]
+                );
+                $written = $this->conn->executeUpdate($stmt);
+                if ($written !== count($changed)) {
+                    // Locked above, so each still matches; an event for a row not moved would be false.
+                    throw new \RuntimeException('The sweep locked ' . count($changed) . ' subscriptions to move to '
+                        . $newStatus . ' and moved ' . $written);
+                }
+                $counts[$newStatus === 'canceled' ? 1 : 0] += $written;
+                foreach ($changes as [$subscriptionId, $customerId, $effectiveAt]) {
+                    if ($effectiveAt < $now - self::EVENT_WINDOW_SECONDS) {
+                        $counts[4]++;
+                        continue;
+                    }
+                    $webhooks->enqueue($userId, 'subscription.changed', [
+                        'subscription_id' => $subscriptionId,
+                        'customer_id' => $customerId,
+                        'action' => self::EVENT_ACTIONS[$newStatus],
+                    ]);
+                    $counts[3]++;
+                }
+            }
+            $counts[2] += $this->refreshSubscriptionRollups($userId, array_keys($ids['customers']), $now);
+        }
+
+        return $counts;
     }
 
     /**
@@ -561,7 +619,12 @@ final class LtvMaintenance
         $parts = [];
         if (in_array(self::SWEEP, $jobs, true)) {
             $parts[] = 'subscriptions ' . (int) $report['past_due'] . ' to past_due, ' . (int) $report['canceled']
-                . ' to canceled, ' . (int) $report['swept_customers'] . ' customer rollups refreshed';
+                . ' to canceled, ' . (int) $report['swept_customers'] . ' customer rollups refreshed, '
+                . (int) $report['announced'] . ' announced as subscription.changed'
+                . ($report['unannounced'] > 0
+                    ? ' (' . (int) $report['unannounced'] . ' that took effect more than '
+                        . intdiv(self::EVENT_WINDOW_SECONDS, 86400) . ' days ago not announced)'
+                    : '');
         }
         if (in_array(self::RECONCILE, $jobs, true)) {
             $parts[] = 'rollups ' . (int) $report['reconciled'] . ' of ' . (int) $report['checked']
