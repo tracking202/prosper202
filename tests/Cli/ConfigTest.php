@@ -172,4 +172,79 @@ class ConfigTest extends TestCase
         $config->set('url', 'https://example.com///');
         $this->assertSame('https://example.com', $config->getUrl());
     }
+
+    /** ~/.p202/config.json as the Go CLI writes it. */
+    private function writeGoConfig(array $data): string
+    {
+        mkdir($this->tmpDir . '/.p202', 0700, true);
+        $path = $this->tmpDir . '/.p202/config.json';
+        file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT));
+
+        return $path;
+    }
+
+    /**
+     * Both CLIs read ~/.p202/config.json. The Go CLI keeps the server under
+     * profiles.<active_profile>, and folds this CLI's top-level url and
+     * api_key into that profile on its next save, clearing them — after
+     * which this CLI read no url and no key at all.
+     */
+    public function testTheGoCliActiveProfileIsReadFromTheSharedFile(): void
+    {
+        $this->writeGoConfig([
+            'active_profile' => 'prod',
+            'profiles' => [
+                'default' => ['url' => 'https://staging.example', 'api_key' => 'staging-key-123456'],
+                'prod' => ['url' => 'https://prod.example/', 'api_key' => 'prod-key-1234567890'],
+            ],
+        ]);
+
+        $config = new Config();
+        $this->assertSame('https://prod.example', $config->getUrl());
+        $this->assertSame('prod-key-1234567890', $config->getApiKey());
+        $this->assertSame('prod', $config->profileName());
+    }
+
+    public function testAWriteGoesToTheActiveProfileAndLeavesTheOthers(): void
+    {
+        $path = $this->writeGoConfig([
+            'active_profile' => 'prod',
+            'profiles' => [
+                'default' => ['url' => 'https://staging.example', 'api_key' => 'staging-key-123456', 'tags' => ['x']],
+                'prod' => ['url' => 'https://prod.example', 'api_key' => 'prod-key-1234567890'],
+            ],
+        ]);
+
+        $config = new Config();
+        $config->set('url', 'https://new.example');
+        $config->save();
+
+        $saved = json_decode((string) file_get_contents($path), true);
+        $this->assertSame('https://new.example', $saved['profiles']['prod']['url']);
+        $this->assertSame('prod-key-1234567890', $saved['profiles']['prod']['api_key']);
+        $this->assertSame(
+            ['url' => 'https://staging.example', 'api_key' => 'staging-key-123456', 'tags' => ['x']],
+            $saved['profiles']['default'],
+            'another profile is untouched'
+        );
+        $this->assertArrayNotHasKey('url', $saved, 'no top-level copy for the Go CLI to fold over the profile');
+        $this->assertSame('https://new.example', (new Config())->getUrl());
+    }
+
+    public function testAProfileFileWithNoActiveProfileUsesDefault(): void
+    {
+        $this->writeGoConfig(['profiles' => ['default' => ['url' => 'https://d.example', 'api_key' => 'k']]]);
+        $this->assertSame('https://d.example', (new Config())->getUrl());
+        $this->assertSame('default', (new Config())->profileName());
+    }
+
+    public function testAFileWithoutProfilesKeepsTheTopLevelKeys(): void
+    {
+        $path = $this->tmpDir . '/.p202/config.json';
+        $config = new Config();
+        $config->set('url', 'https://legacy.example');
+        $config->save();
+        $this->assertSame(['url' => 'https://legacy.example'], json_decode((string) file_get_contents($path), true));
+        $this->assertNull((new Config())->profileName());
+    }
 }

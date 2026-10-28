@@ -332,6 +332,10 @@ final class LtvTables
      * (click_id, transaction_id) already gates replays); api/import events
      * dedup on the caller-supplied idempotency_key. MySQL unique keys ignore
      * NULLs, so rows without the respective key are unaffected.
+     * idempotency_key is utf8mb4_bin: the caller chose it, so `Key-A` and
+     * `key-a` are two requests, and under the table's case-insensitive
+     * collation the second was answered as a replay of the first and its
+     * revenue dropped (CLAUDE.md #17).
      */
     public static function revenueEvents(): SchemaDefinition
     {
@@ -351,7 +355,7 @@ final class LtvTables
                 `click_id` bigint(20) unsigned DEFAULT NULL,
                 `external_ref` varchar(255) DEFAULT NULL,
                 `transaction_id` varchar(255) DEFAULT NULL,
-                `idempotency_key` varchar(191) DEFAULT NULL,
+                `idempotency_key` varchar(191) COLLATE utf8mb4_bin DEFAULT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`event_id`),
                 UNIQUE KEY `uniq_conv` (`conv_id`),
@@ -365,7 +369,8 @@ final class LtvTables
 
     /**
      * Product catalog, upserted on ingest (external_product_id is the
-     * merchant-side id, e.g. a Shopify variant id).
+     * merchant-side id, e.g. a Shopify variant id). The merchant chose the
+     * id, so it is compared exactly (utf8mb4_bin), as external_sub_id is.
      */
     public static function products(): SchemaDefinition
     {
@@ -374,7 +379,7 @@ final class LtvTables
             "CREATE TABLE IF NOT EXISTS `" . TableRegistry::PRODUCTS . "` (
                 `product_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
                 `user_id` mediumint(8) unsigned NOT NULL,
-                `external_product_id` varchar(191) NOT NULL,
+                `external_product_id` varchar(191) COLLATE utf8mb4_bin NOT NULL,
                 `sku` varchar(191) DEFAULT NULL,
                 `name` varchar(255) DEFAULT NULL,
                 `price` decimal(14,5) DEFAULT NULL,
@@ -417,7 +422,10 @@ final class LtvTables
     /**
      * Subscription lifecycle. mrr is the amount normalized to a monthly figure
      * at write time. billing_interval is deliberately not named `interval`
-     * (MySQL reserved word).
+     * (MySQL reserved word). external_sub_id is the billing system's id
+     * (Stripe's sub_… ids are case-sensitive), so it is compared exactly
+     * (utf8mb4_bin): under the table collation two subscriptions whose ids
+     * differ only in case were upserted into one row.
      */
     public static function subscriptions(): SchemaDefinition
     {
@@ -427,7 +435,7 @@ final class LtvTables
                 `subscription_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
                 `user_id` mediumint(8) unsigned NOT NULL,
                 `customer_id` bigint(20) unsigned NOT NULL,
-                `external_sub_id` varchar(191) NOT NULL,
+                `external_sub_id` varchar(191) COLLATE utf8mb4_bin NOT NULL,
                 `plan_name` varchar(255) DEFAULT NULL,
                 `amount` decimal(14,5) NOT NULL DEFAULT '0.00000',
                 `currency` char(3) NOT NULL DEFAULT 'USD',

@@ -5,7 +5,11 @@
 #   app  — (default) base plus the application and its composer dependencies
 #          baked in, for deployments that build straight from git with no bind
 #          mount (Coolify, any production docker compose host).
-FROM php:8.3-apache AS base
+#
+# Pinned to a patch release, not php:8.3-apache: without --pull, a host with
+# the moving tag cached keeps building on the PHP it pulled first. Dependabot
+# proposes each 8.3 patch (.github/dependabot.yml).
+FROM php:8.3.36-apache AS base
 
 # git/unzip for Composer; libmemcached for the optional memcached extension
 # used by 202-config/connect.php. Dev libs stay installed because the built
@@ -32,6 +36,15 @@ RUN a2enmod rewrite \
         echo '    Options -Indexes +FollowSymLinks'; \
         echo '    AllowOverride FileInfo Options=FollowSymLinks'; \
         echo '    Require all granted'; \
+        echo '</Directory>'; \
+        echo '# 202-config/temp holds attribution export CSVs and upgrade zips,'; \
+        echo '# served only through the authenticated download endpoints. Its'; \
+        echo '# own .htaccess needs AllowOverride AuthConfig, which the block'; \
+        echo '# above does not grant, so the deny is made here, where it holds'; \
+        echo '# whatever the override set.'; \
+        echo '<Directory /var/www/html/202-config/temp>'; \
+        echo '    AllowOverride None'; \
+        echo '    Require all denied'; \
         echo '</Directory>'; \
         echo '# Deny dotfiles (.env, .git, ...) but keep /.well-known/ for ACME'; \
         echo '<LocationMatch "/\.(?!well-known/)">'; \

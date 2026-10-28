@@ -9,6 +9,8 @@ declare(strict_types=1);
 
 include_once dirname(__DIR__) . '/connect.php';
 
+use Prosper202\Database\Connection;
+
 if (!isset($db) || !($db instanceof mysqli)) {
     die("Error: Database connection not available\n");
 }
@@ -85,28 +87,31 @@ try {
     if (!$result) {
         throw new Exception('Failed to check existing events: ' . $db->error);
     }
-    $existing = (int)$result->fetch_assoc()['c'];
+    // A failed fetch read as 0 would seed a second copy of every event.
+    $existing = (int) (p202FetchRow($result, 'SELECT COUNT(*) AS c FROM `202_forecast_events`')['c'] ?? 0);
     if ($existing > 0) {
         echo "Table already contains {$existing} events — skipping seed data.\n";
         $dml = [];
     }
 
-    $db->begin_transaction();
-    $inTransaction = true;
-
-    foreach ($dml as $statement) {
-        $runStatement($statement);
-    }
-
-    $db->commit();
-    $inTransaction = false;
+    // Connection::transaction() does the checked begin, the checked commit and
+    // the rollback-on-throw; hand-rolling those here is how the unchecked
+    // begin_transaction() got in. run_ltv_backfill.php uses the same shape.
+    (new Connection($db))->transaction(static function () use ($dml, $runStatement): void {
+        foreach ($dml as $statement) {
+            $runStatement($statement);
+        }
+    });
 
     echo "\nMigration completed successfully!\n";
 
     // Verify table creation
     echo "\nVerifying table creation...\n";
     $result = $db->query("SHOW TABLES LIKE '202_forecast_events'");
-    if ($result && $result->num_rows > 0) {
+    if ($result === false) {
+        throw new Exception('Failed to verify the table: ' . p202FailedQueryMessage($db->errno, $db->error));
+    }
+    if ($result->num_rows > 0) {
         echo "  ✓ 202_forecast_events\n";
     } else {
         echo "  ✗ 202_forecast_events - NOT FOUND\n";
@@ -115,18 +120,19 @@ try {
     // Show seed data summary
     echo "\nChecking seeded events...\n";
     $result = $db->query("SELECT event_name, COUNT(*) as occurrences FROM 202_forecast_events GROUP BY event_name ORDER BY event_name");
+    if ($result === false) {
+        throw new Exception('Failed to read the seeded events: ' . p202FailedQueryMessage($db->errno, $db->error));
+    }
 
-    if ($result && $result->num_rows > 0) {
+    if ($result->num_rows > 0) {
         echo "Seeded events:\n";
         while ($row = $result->fetch_assoc()) {
             echo "  {$row['event_name']}: {$row['occurrences']} occurrence(s)\n";
         }
     }
 
-} catch (Exception $e) {
-    if (!empty($inTransaction)) {
-        $db->rollback();
-    }
+} catch (Throwable $e) {
+    // Connection::transaction() has already rolled back if the seed failed.
     echo "\nMigration failed: " . $e->getMessage() . "\n";
     exit(1);
 }

@@ -8,6 +8,10 @@ namespace Prosper202\DataEngine;
  * Registry of the single-dimension grouped reports. The SQL fragments are
  * preserved from the legacy per-report methods; only their duplication was
  * removed.
+ *
+ * A text ad or landing page is named only within the click's own account
+ * (`ref.user_id = 2st.user_id`): a click naming another account's reads as
+ * naming none, and is counted in the report's unnamed row (CLAUDE.md #27).
  */
 final class GroupedReportRegistry
 {
@@ -28,7 +32,7 @@ final class GroupedReportRegistry
             ),
             'textad' => new GroupedReportDefinition(
                 labelSelect: '`text_ad_name`',
-                joins: ' LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id) ',
+                joins: ' LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id AND 202_text_ads.user_id = 2st.user_id) ',
                 groupBy: 'text_ad_name',
             ),
             'referer' => new GroupedReportDefinition(
@@ -40,7 +44,7 @@ final class GroupedReportRegistry
             'ip' => new GroupedReportDefinition(
                 labelSelect: 'IFNULL(' . $inet6Ntoa . '(2i6.ip_address),2i.ip_address) as ip_address',
                 joins: ' LEFT JOIN 202_ips AS 2i on (2st.ip_id = 2i.ip_id)'
-                    . ' LEFT JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci) ',
+                    . IpAddressSql::join('2i', '2i6'),
                 groupBy: 'ip_address',
             ),
             'country' => new GroupedReportDefinition(
@@ -67,7 +71,7 @@ final class GroupedReportRegistry
             ),
             'landingpage' => new GroupedReportDefinition(
                 labelSelect: 'landing_page_nickname',
-                joins: ' LEFT JOIN 202_landing_pages on (2st.landing_page_id = 202_landing_pages.landing_page_id) ',
+                joins: ' LEFT JOIN 202_landing_pages on (2st.landing_page_id = 202_landing_pages.landing_page_id AND 202_landing_pages.user_id = 2st.user_id) ',
                 groupBy: 'landing_page_nickname',
             ),
             'device' => new GroupedReportDefinition(

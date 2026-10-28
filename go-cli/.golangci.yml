@@ -1,0 +1,69 @@
+# Static analysis for the p202 CLI.
+#
+# The point of this config is CLAUDE.md #1 in its Go form — a fallible call
+# whose error is dropped — not style. Checks that only suggest a nicer
+# spelling are off, so a finding here means something is actually wrong and
+# the job stays worth reading.
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    # The CLI's error contract (CLAUDE.md, go-cli section) says exit codes and
+    # hints are resolved with errors.As through the wrap chain, so a %v where
+    # a %w belongs silently turns a 401 into a generic exit 1. errorlint is
+    # that rule, mechanized.
+    - errorlint
+    # An unclosed response body leaks a connection per call — the kind of
+    # thing that only shows up under load.
+    - bodyclose
+    # Returning nil after checking err != nil: the error is swallowed and the
+    # caller proceeds on bad data.
+    - nilerr
+
+  settings:
+    errcheck:
+      # Calls whose error is genuinely nothing to act on. Everything else
+      # must be handled or explicitly assigned to _ with a reason.
+      exclude-functions:
+        # Closing a response body after the bytes are read: the request is
+        # already done and there is no recovery.
+        - (io.ReadCloser).Close
+        - (net/http.ResponseWriter).Write
+        # Diagnostics. A failed write to stderr cannot be reported anywhere.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        # An interactive prompt: an unreadable answer is an empty answer,
+        # which every caller already treats as "decline".
+        - fmt.Scanln
+
+    staticcheck:
+      # Keep the correctness checks (SA*), drop the "could be written more
+      # idiomatically" quickfixes (QF*) and style (ST*).
+      checks:
+        - all
+        - -QF1002
+        - -QF1003
+        - -QF1012
+        - -ST1000
+        - -ST1003
+        - -ST1020
+        - -ST1021
+        - -ST1022
+
+  exclusions:
+    rules:
+      # Test doubles write to a ResponseWriter constantly; a dropped error
+      # there fails the test on its own.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

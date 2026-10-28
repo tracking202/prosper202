@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 namespace Prosper202\Repository\InMemory;
 
+use Prosper202\Repository\Mysql\MysqlTrackingRepository;
 use Prosper202\Repository\TrackingRepositoryInterface;
 use RuntimeException;
 
 final class InMemoryTrackingRepository implements TrackingRepositoryInterface
 {
-    private const MAX_VALUE_LENGTH = 350;
-
     /** @var array<string, int> */
     private array $keywords = [];
     /** @var array<string, int> */
@@ -31,61 +30,72 @@ final class InMemoryTrackingRepository implements TrackingRepositoryInterface
     private array $utms = [];
     private int $nextId = 1;
 
+    #[\Override]
     public function findOrCreateKeyword(string $name): int
     {
         if ($name === '') {
             return 0;
         }
+        $name = MysqlTrackingRepository::storedKeyword($name);
 
         return $this->keywords[$name] ??= $this->nextId++;
     }
 
+    #[\Override]
     public function findOrCreateC1(string $value): int
     {
-        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
+        $value = MysqlTrackingRepository::storedValue($value);
 
         return $this->c1[$value] ??= $this->nextId++;
     }
 
+    #[\Override]
     public function findOrCreateC2(string $value): int
     {
-        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
+        $value = MysqlTrackingRepository::storedValue($value);
 
         return $this->c2[$value] ??= $this->nextId++;
     }
 
+    #[\Override]
     public function findOrCreateC3(string $value): int
     {
-        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
+        $value = MysqlTrackingRepository::storedValue($value);
 
         return $this->c3[$value] ??= $this->nextId++;
     }
 
+    #[\Override]
     public function findOrCreateC4(string $value): int
     {
-        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
+        $value = MysqlTrackingRepository::storedValue($value);
 
         return $this->c4[$value] ??= $this->nextId++;
     }
 
+    #[\Override]
     public function findOrCreateVariable(string $value, int $ppcVariableId): int
     {
-        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
+        $value = MysqlTrackingRepository::storedValue($value);
         $key = $ppcVariableId . '|' . $value;
 
         return $this->variables[$key] ??= $this->nextId++;
     }
 
+    #[\Override]
     public function findOrCreateVariableSet(string $variables): int
     {
+        MysqlTrackingRepository::variableIds($variables);
+
         return $this->variableSets[$variables] ??= $this->nextId++;
     }
 
+    #[\Override]
     public function findOrCreateCustomVar(string $name, string $data): int
     {
-        $data = substr($data, 0, self::MAX_VALUE_LENGTH);
+        $data = MysqlTrackingRepository::storedValue($data);
 
-        if (!preg_match('/^[a-zA-Z0-9_]+$/', $name)) {
+        if (preg_match('/\A[a-zA-Z0-9_]+\z/', $name) !== 1) {
             throw new RuntimeException('Invalid custom variable name: ' . $name);
         }
 
@@ -94,9 +104,10 @@ final class InMemoryTrackingRepository implements TrackingRepositoryInterface
         return $this->customVars[$key] ??= $this->nextId++;
     }
 
+    #[\Override]
     public function findOrCreateUtm(string $value, string $type): int
     {
-        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
+        $value = MysqlTrackingRepository::storedValue($value);
 
         $allowed = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'];
         if (!in_array($type, $allowed, true)) {

@@ -4,8 +4,8 @@ declare(strict_types=1);
 error_reporting(E_ALL);
 ini_set('display_errors', '1');
 
-include_once(str_repeat("../", 1) . '202-config/connect.php');
-include_once(str_repeat("../", 1) . '202-config/class-dataengine.php');
+require_once __DIR__ . '/../202-config/connect.php';
+require_once __DIR__ . '/../202-config/class-dataengine.php';
 
 set_time_limit(0);
 
@@ -15,29 +15,63 @@ try {
  RollingCurl code Authored by Josh Fraser (www.joshfraser.com)
  */
 
+    // A failed statement ends the job: logged where it fails, printed by the
+    // catch below, and nothing after it claimed or marked.
     $query = "SELECT * FROM 202_dataengine_job WHERE processed = '0' and processing != '1'";
     $result = $db->query($query);
-    $row = $result->fetch_assoc();
+    if ($result === false) {
+        error_log('DataEngine Job: ' . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+        throw new \Prosper202\Database\Exceptions\QueryException('the windows to rebuild could not be read');
+    }
+    $row = p202FetchRow($result, $query);
 
-    if ($result->num_rows) {
+    if ($row !== null) {
         if (! $row['processing']) {
-            $snippet = "AND 2c.user_id = " . 1;
+            // The server calls itself: on the install's stored domain (user
+            // 1's — never the session's: this URL is public, and every
+            // signed-in user sets their own domain, so a session-dependent
+            // read let any of them choose the host fetched below) when there
+            // is one, else on the listener that served this request, pinned
+            // to its address so the call never leaves this machine whatever
+            // name the request claimed (SelfCall says why). Read before the
+            // window is claimed, so a read that fails cannot strand it.
+            $storedDomain = p202StoredTrackingDomain(1);
+            $base = \Prosper202\DataEngine\SelfCall::base($storedDomain, $_SERVER, dirname(__DIR__));
+            // Every option the calls are made with: nothing here may add to
+            // or override them (a redirect followed would leave the pin).
+            $selfCallOptions = \Prosper202\DataEngine\SelfCall::curlOptions($storedDomain, $_SERVER);
 
             $mysql['click_time_from'] = $db->real_escape_string((string)$row['time_from']);
             $mysql['click_time_to'] = $db->real_escape_string((string)$row['time_to']);
-            $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "'";
-            $db->query($sql);
+            // Atomic compare-and-swap claim: the SELECT above is not a lock, so
+            // two overlapping cron runs can both read processing=0 for the same
+            // window. Only the run whose UPDATE actually flips processing 0->1
+            // (affected_rows === 1) may aggregate the hour; the loser bails out
+            // instead of double-processing the window into the DataEngine.
+            $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "' AND processing = '0'";
+            if (!$db->query($sql)) {
+                error_log('DataEngine Job: ' . p202FailedQueryMessage($db->errno, $db->error)
+                    . ' [errno ' . $db->errno . ']');
+                throw new \Prosper202\Database\Exceptions\QueryException(
+                    'window ' . $mysql['click_time_from'] . '-' . $mysql['click_time_to'] . ' could not be claimed'
+                );
+            }
+            // 202_dataengine_job has no PRIMARY/UNIQUE key, so a duplicated
+            // window legitimately flips more than one row. Require >= 1 (we
+            // won the claim) rather than exactly 1 — bailing out after having
+            // already set processing='1' would strand the window forever,
+            // because the release UPDATEs live below this point.
+            if ($db->affected_rows < 1) {
+                return;
+            }
 
             $urls = [];
             for ($i = $mysql['click_time_from']; $i < $mysql['click_time_to']; $i += 3599) {
                 $nextval = $i + 3599;
-                $urls[] = 'http://' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/dej.php?s=' . $i . '&e=' . $nextval;
+                $urls[] = $base . '202-cronjobs/dej.php?s=' . $i . '&e=' . $nextval;
             }
 
 
-
-            $callback = null;
-            $custom_options = null;
 
             // make sure the rolling window isn't greater than the # of urls
             $rolling_window = 7;
@@ -46,13 +80,7 @@ try {
             $master = curl_multi_init();
             $curl_arr = [];
 
-            // add additional curl options here
-            $std_options = [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_MAXREDIRS => 5
-            ];
-            $options = ($custom_options) ? ($std_options + $custom_options) : $std_options;
+            $options = $selfCallOptions;
 
             // start the first batch of requests
             for ($i = 0; $i < $rolling_window; $i++) {
@@ -63,6 +91,7 @@ try {
             }
 
             $failed = 0;
+            $firstFailure = '';
             do {
                 while (($execrun = curl_multi_exec($master, $running)) == CURLM_CALL_MULTI_PERFORM);
                 if ($execrun != CURLM_OK)
@@ -74,6 +103,15 @@ try {
                         // request failed -- record it so the job is NOT marked processed
                         // and this hour's aggregation is retried on the next run.
                         $failed++;
+                        if ($firstFailure === '') {
+                            $redirect = (string) ($info['redirect_url'] ?? '');
+                            $firstFailure = ' The first: ' . $info['url'] . ' answered HTTP ' . (int) $info['http_code']
+                                . ($redirect === '' ? '' : ', redirecting to ' . $redirect
+                                    . (\Prosper202\DataEngine\SelfCall::followsRedirects($options)
+                                        ? ' (beyond the redirects followed)'
+                                        : ' (a call pinned to this server follows no redirect; store a tracking domain)'))
+                                . '.';
+                        }
                     }
 
                     // start a new request (it's important to do this before removing the old
@@ -100,9 +138,18 @@ try {
                 // Release the processing lock but leave processed = '0' so the next run
                 // retries this window instead of permanently losing the aggregation.
                 $sql = "UPDATE 202_dataengine_job SET processing = '0' WHERE time_from = '" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "'";
-                error_log("DataEngine Job: {$failed} of " . count($urls) . " aggregation requests failed for window {$mysql['click_time_from']}-{$mysql['click_time_to']}; left unprocessed for retry.");
+                error_log("DataEngine Job: {$failed} of " . count($urls) . " aggregation requests failed for window {$mysql['click_time_from']}-{$mysql['click_time_to']}; left unprocessed for retry." . $firstFailure);
             }
-            $db->query($sql);
+            if (!$db->query($sql)) {
+                // Neither marked nor released: the window stays claimed, and
+                // this job takes no claimed window again.
+                error_log('DataEngine Job: ' . p202FailedQueryMessage($db->errno, $db->error)
+                    . ' [errno ' . $db->errno . ']');
+                throw new \Prosper202\Database\Exceptions\QueryException(
+                    'window ' . $mysql['click_time_from'] . '-' . $mysql['click_time_to'] . ' could not be '
+                    . ($failed === 0 ? 'marked processed' : 'released') . '; it stays claimed (processing = 1)'
+                );
+            }
         }
     }
 } catch (Exception $e) {

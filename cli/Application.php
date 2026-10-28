@@ -5,13 +5,52 @@ declare(strict_types=1);
 namespace P202Cli;
 
 use Symfony\Component\Console\Application as ConsoleApplication;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
 
+/**
+ * The legacy PHP CLI, bin/p202.
+ *
+ * Two command-line tools answer to `p202`: this one, and the Go CLI in
+ * go-cli/ (documentation/cli/10-go-cli.md), which is the primary one: it has
+ * the command set the documentation describes, with profiles, staged writes,
+ * dry-run deletes and agent-readable errors, none of which this one has; this
+ * one covers a subset, with Symfony-style `noun:verb` names. Nothing here
+ * said which was which, so the name, the --version line and the head of
+ * `list` now say it, and point at the Go CLI.
+ * bin/p202 stays where it is: scripts call it by that path.
+ */
 class Application extends ConsoleApplication
 {
+    public const NAME = 'p202 legacy PHP CLI (bin/p202) - Prosper202';
+
+    public const VERSION = '1.0.0';
+
+    /** Where the full command set is. */
+    public const GO_CLI_POINTER = 'The full command set is the Go CLI: go-cli/ (build with `make -C go-cli build`), '
+        . 'documented in documentation/cli/10-go-cli.md.';
+
     public function __construct()
     {
-        parent::__construct('p202 - Prosper202 CLI', '1.0.0');
+        parent::__construct(self::NAME, self::VERSION);
         $this->registerCommands();
+    }
+
+    /**
+     * The --version line and the head of `list` and the bare command:
+     * which CLI this is, and where the other one is.
+     */
+    #[\Override]
+    public function getLongVersion(): string
+    {
+        return parent::getLongVersion() . "\n" . self::GO_CLI_POINTER;
+    }
+
+    /** With no input given, argv is read with snake_case option names as their kebab-case spelling. */
+    #[\Override]
+    public function run(?InputInterface $input = null, ?OutputInterface $output = null): int
+    {
+        return parent::run($input ?? new KebabCaseArgvInput(), $output);
     }
 
     private function registerCommands(): void
@@ -28,11 +67,13 @@ class Application extends ConsoleApplication
         // --- Clicks ---
         $this->add(new Commands\ClickListCommand());
         $this->add(new Commands\ClickGetCommand());
+        $this->add(new Commands\ClickConversionsCommand());
 
         // --- Conversions ---
         $this->add(new Commands\ConversionListCommand());
         $this->add(new Commands\ConversionGetCommand());
         $this->add(new Commands\ConversionCreateCommand());
+        $this->add(new Commands\EventSendCommand());
         $this->add(new Commands\ConversionDeleteCommand());
 
         // --- Reports ---
@@ -68,9 +109,15 @@ class Application extends ConsoleApplication
         $this->add(new Commands\AttributionModelCreateCommand());
         $this->add(new Commands\AttributionModelUpdateCommand());
         $this->add(new Commands\AttributionModelDeleteCommand());
-        $this->add(new Commands\AttributionSnapshotListCommand());
+        $this->add(new Commands\AttributionBreakdownCommand());
+        $this->add(new Commands\AttributionJourneyCommand());
+        $this->add(new Commands\AttributionQueueCommand());
         $this->add(new Commands\AttributionExportListCommand());
-        $this->add(new Commands\AttributionExportScheduleCommand());
+        $this->add(new Commands\AttributionExportGetCommand());
+        $this->add(new Commands\AttributionExportCreateCommand());
+        $this->add(new Commands\AttributionExportDownloadCommand());
+        $this->add(new Commands\AttributionExportRetryCommand());
+        $this->add(new Commands\AttributionExportDeleteCommand());
 
         // --- Users ---
         $this->add(new Commands\UserListCommand());
@@ -84,8 +131,23 @@ class Application extends ConsoleApplication
         $this->add(new Commands\UserApiKeyListCommand());
         $this->add(new Commands\UserApiKeyCreateCommand());
         $this->add(new Commands\UserApiKeyDeleteCommand());
+        $this->add(new Commands\UserIdentityKeyGetCommand());
+        $this->add(new Commands\UserIdentityKeyRotateCommand());
         $this->add(new Commands\UserPreferencesGetCommand());
         $this->add(new Commands\UserPreferencesUpdateCommand());
+
+        // --- App measurement (Android installs; registrations are managed with the Go CLI's `p202 app`) ---
+        $this->add(new Commands\AppInstallListCommand());
+        $this->add(new Commands\AppInstallGetCommand());
+        $this->add(new Commands\AppInstallTokenCommand());
+        $this->add(new Commands\AppReportCommand());
+        $this->add(new Commands\AppNotificationsCommand());
+        $this->add(new Commands\AppLinkCommand());
+        // Play Integrity: the status, the mode, and the service-account credential.
+        $this->add(new Commands\AppIntegrityStatusCommand());
+        $this->add(new Commands\AppIntegrityModeCommand());
+        $this->add(new Commands\AppIntegrityCredentialSetCommand());
+        $this->add(new Commands\AppIntegrityCredentialClearCommand());
 
         // --- System ---
         $this->add(new Commands\SystemHealthCommand());
@@ -115,8 +177,12 @@ class Application extends ConsoleApplication
                     'aff_network_id' => 'Affiliate network ID',
                     'aff_campaign_cloaking' => 'Enable cloaking (0|1)',
                     'aff_campaign_rotate' => 'Enable URL rotation (0|1)',
+                    'payout_mode' => 'How conversions set a click\'s value (replace|accumulate)',
+                    'identity_signals' => 'Link clicks into multi-touch journeys (1|0)',
                 ],
-                'required' => ['aff_campaign_name', 'aff_campaign_url'],
+                // Must match CampaignsController::fields() required flags, or
+                // client-side validation passes and the server 422s anyway.
+                'required' => ['aff_campaign_name', 'aff_campaign_url', 'aff_campaign_payout', 'aff_network_id'],
                 'listParams' => ['filter[aff_network_id]' => 'Filter by affiliate network'],
             ],
             [
@@ -158,7 +224,7 @@ class Application extends ConsoleApplication
                     'rotator_id' => 'Rotator ID',
                     'click_cpc' => 'Cost per click',
                     'click_cpa' => 'Cost per action',
-                    'click_cloaking' => 'Enable cloaking (0|1)',
+                    'click_cloaking' => 'Cloaking: -1 the campaign\'s setting (the default), 0 off, 1 on',
                 ],
                 'required' => ['aff_campaign_id'],
                 'listParams' => [

@@ -324,6 +324,42 @@ final class AuthClassTest extends TestCase
         $this->assertFalse(AUTH::check_csrf_token());
     }
 
+    /**
+     * The comparison every token guard goes through, with the submitted value
+     * handed in (a Setup delete link's `?token=`). A blanked session token
+     * with nothing submitted is the request the inline copies let through:
+     * `hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))`
+     * is hash_equals('', ''), which is true.
+     */
+    public function testCsrfTokenMatchesFailsClosedOnEveryEmptyOrNonStringSide(): void
+    {
+        $_SESSION['token'] = 'a-valid-token';
+        $this->assertTrue(AUTH::csrf_token_matches('a-valid-token'));
+        $this->assertFalse(AUTH::csrf_token_matches('forged'));
+        $this->assertFalse(AUTH::csrf_token_matches('a-valid-toke'), 'a prefix is not the token');
+        $this->assertFalse(AUTH::csrf_token_matches(''));
+        $this->assertFalse(AUTH::csrf_token_matches(null));
+        // ?token[]=… arrives as an array; (string) of it is 'Array' and a warning.
+        $this->assertFalse(AUTH::csrf_token_matches(['a-valid-token']));
+
+        foreach (['blanked' => '', 'false' => false, 'null' => null, 'an int' => 0, 'an array' => ['x']] as $what => $stored) {
+            $_SESSION['token'] = $stored;
+            $this->assertFalse(AUTH::csrf_token_matches(''), "a session token that is $what, nothing submitted");
+            $this->assertFalse(AUTH::csrf_token_matches(null), "a session token that is $what, no field at all");
+            $this->assertFalse(AUTH::csrf_token_matches('0'), "a session token that is $what, '0' submitted");
+        }
+        unset($_SESSION['token']);
+        $this->assertFalse(AUTH::csrf_token_matches(''), 'no session token, nothing submitted');
+
+        // check_csrf_token() is this comparison on $_POST['token'].
+        $_SESSION['token'] = 'a-valid-token';
+        $_POST['token'] = ['a-valid-token'];
+        $this->assertFalse(AUTH::check_csrf_token(), 'token[] posted');
+        $_SESSION['token'] = '';
+        unset($_POST['token']);
+        $this->assertFalse(AUTH::check_csrf_token(), 'a blanked session token and no posted token');
+    }
+
     public function testClientIpReturnsValidForwardedIp(): void
     {
         $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.23';
@@ -363,6 +399,32 @@ final class AuthClassTest extends TestCase
         $mockDb = $this->createMockDb(); // fetch_assoc() returns null -> 0 failures
 
         $this->assertFalse(AUTH::is_rate_limited($mockDb, 'someone', '203.0.113.9'));
+    }
+
+    /**
+     * Both counts ask for failures alone (login_success 0): a sign-in whose
+     * password was right but which could not be completed (2) is not a
+     * guess. SignInLogIntegrationTest counts real rows.
+     */
+    public function testIsRateLimitedCountsOnlyFailedAttempts(): void
+    {
+        $prepared = [];
+        $mockDb = $this->createMockDb();
+        $stmt = $mockDb->prepare('');
+        $counting = $this->createMock(\mysqli::class);
+        $counting->method('prepare')->willReturnCallback(static function (string $sql) use (&$prepared, $stmt) {
+            $prepared[] = $sql;
+            return $stmt;
+        });
+
+        $this->assertFalse(AUTH::is_rate_limited($counting, 'someone', '203.0.113.9'));
+        $this->assertCount(2, $prepared, 'the per-IP count, then the per-user count');
+        foreach ($prepared as $sql) {
+            $this->assertMatchesRegularExpression(
+                '/\bWHERE login_success = 0 AND (ip_address|user_name) = \? AND login_time >= \?$/',
+                $sql
+            );
+        }
     }
 
     public function testLoginAuditSnapshotKeepsSafeFieldsOnly(): void

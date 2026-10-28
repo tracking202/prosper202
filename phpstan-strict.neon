@@ -1,0 +1,38 @@
+# PHPStan at its strictest, over the code held to the modern-PHP standard.
+#
+# phpstan.neon.dist runs the repo's custom rules over the whole tree at
+# level 0 with a baseline; this one runs PHPStan's own checks at level max
+# over the files listed here, with no baseline and nothing ignored, so a
+# finding in them fails CI rather than joining a list. A file is added here
+# once it passes.
+parameters:
+    level: max
+    phpVersion: 80300
+    # The constants version.php and the config define at run time.
+    bootstrapFiles:
+        - phpstan-legacy-stubs.php
+    paths:
+        - 202-config/Repository
+        - 202-config/Click/ClickExit.php
+        - 202-config/Click/ClickPathReads.php
+        - 202-config/Click/ClickRecord.php
+        - 202-config/Click/ClickRecordBuilder.php
+        - 202-config/Click/ClickRepositoryInterface.php
+        - 202-config/Click/ClickRequest.php
+        - 202-config/Click/DynamicBid.php
+        - 202-config/Click/LatestVisit.php
+        - 202-config/Click/MysqlClickRepository.php
+        - 202-config/Click/OfferRoute.php
+        - 202-config/Click/PublicId.php
+        - 202-config/Click/RotatorRoute.php
+        - 202-config/Click/StoredAddressIds.php
+        - 202-config/Database/Connection.php
+        - 202-config/User/InstallAccount.php
+        - 202-config/User/SignInRecord.php
+        - tracking202/Report/ReportFiltersDidNotFit.php
+    # getCache(), setCache() and systemHash(), which LookupRepositoryFactory
+    # calls: read for their signatures, not analysed.
+    scanFiles:
+        - 202-config/functions-shared.php
+    checkMissingOverrideMethodAttribute: true
+    reportUnmatchedIgnoredErrors: true

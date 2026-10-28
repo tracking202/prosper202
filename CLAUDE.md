@@ -1,12 +1,138 @@
 # CLAUDE.md
 
 ## Project
-Prosper202 — PHP 8.3 affiliate tracking platform with REST API v3 (mysqli, PSR-4) and Symfony Console CLI.
+Prosper202 — PHP 8.3 self-hosted campaign tracking and marketing analytics platform (clicks, conversions, attribution, app measurement, customer LTV) with REST API v3 (mysqli, PSR-4) and Symfony Console CLI.
+
+## Branches: every version has its own, and master takes only finished versions
+- **All work for a new version is pull-requested into the branch named for
+  that version**, never into master. The name is the version exactly as
+  `202-config/version.php` spells it: `1.9.77`, with no `v` (the `v` is the
+  release tag's, `v1.9.77`, so a branch and its tag never share a name).
+  A feature or fix branch opens its PR against the version branch its
+  `version.php` names.
+- **When the version is done, the version branch is merged into master**, in
+  one PR from the version branch to master. The release owner then tags
+  master `v<version>` (RELEASING.md). Nothing else is merged into master.
+- **A new version starts from master after the previous one is merged and
+  tagged**: branch the version branch from master, and make its first commit
+  the `version.php` bump. A version that is already tagged is frozen (#33),
+  so work that finds `version.php` naming a tagged version belongs to the
+  next one.
+- **If the version branch does not exist on the remote yet**, it has to be
+  created from master before the first PR can target it (`git ls-remote
+  --heads origin` lists the branches). A session limited to pushing one
+  branch asks for it rather than creating it.
+- **CI runs on a PR into a version branch as on one into master**: no
+  workflow filters `pull_request` by its base branch, and `pr-checks.yml`'s
+  `branches: ["*"]` matches any name without a `/`. Keep version branch
+  names free of `/` (`release/1.9.77` would not match). Agent Evals and the
+  upgrade-equals-install check run on pushes to master only, so the PR is
+  where they run for a version branch: read them there before merging.
 
 ## Error patterns to avoid
 
 ### 1. Unchecked return values after fallible calls
 `$stmt->execute()` can return false without throwing. Every execute() must be checked: `if (!$stmt->execute()) { $stmt->close(); throw ...; }`. Same applies to `$db->query()`, `json_encode()`, and any call that signals failure via return value rather than exception. This is especially critical inside transactions — an unchecked failure means partial operations get committed.
+
+The list is not just `execute()`, and writing this rule down did not stop the
+same shape shipping three more times. The ones that actually bit:
+`$stmt->get_result()` (false reads as an **empty result set**, so a batch loop
+exits and the job reports success), `$stmt->store_result()` (false leaves
+`num_rows` at 0, which reads as "not found"), `$conn->prepare()` (false skips
+whatever the statement guarded, in silence), and Go's `json.Marshal` assigned
+to `_` (renders nothing, exits 0). When a false return is
+*indistinguishable from a legitimate empty answer*, the failure is silent by
+construction — that is the tell, not the function name.
+`UncheckedGetResultTest` now holds every `get_result()`/`store_result()` in
+the tree to "tested for false in the next statement, and refused"
+(`StatementHelpers::resultOf()` in api/v3); legacy pages that predate it are
+listed and must only shrink.
+
+Testing for false is half of it; what the false *becomes* is the other.
+`AUTH::accountTimezone()` tested every step and answered `null` for a failed
+read — the same `null` as "no account row" — and its caller had a plausible
+use for `null` (keep the zone the session took at sign-in), so a database
+error had every report page count "today" in a stale zone with nothing said,
+while the test listed it as graceful. A fallback that reads like an answer is
+the silent case again; it throws now.
+
+The admin pages' `_mysqli_query()` was the same false with nothing said at
+all: an `@` (which silenced nothing; the report modes this app sets raise no
+warning for a failed query) and a bare `return`. A call standing alone as a
+statement lost the failure outright: the remember-me sign-in stored no key
+and set its cookie anyway, and a failed read of the account's secret was
+read as "no secret", so a new one was minted over the stored one and every
+remembered browser of the account was signed out. It logs every failure now
+(`p202LogFailedQuery()`: the caller, MySQL's errno and words, the statement
+with its quoted values taken out, since some carry a secret — and MySQL's
+words too, which repeat a value as sent, its quotes unescaped: `Duplicate
+entry 'O'Brien' for key …`, so redacting the statement alone left the value
+in the line, found by review; and where a quoted value ends depends on the
+session's `sql_mode` — under `NO_BACKSLASH_ESCAPES` `'x\'` is whole, and
+read with escapes the next value was kept — so the line keeps only what a
+reading with escapes and one without both leave in), and
+`MysqliQueryResultIsNotDiscardedTest` refuses a call whose answer is thrown
+away. The next sweep read the other 81: 12 used the answer before any
+test or never read it (a failed ownership check was `->num_rows` on false,
+an \Error; a refused write set `$add_success = true`), and 17 tested it
+only to fold the failure into an answer (a failed preferences read showed
+AutoCron and MaxMind as off; a failed reset-key lookup said "no key was
+found"). `MysqliQueryResultIsTestedTest` now holds every result to a test
+for failure in the next condition that refuses there — throws, a call
+declared `never`, the legacy API's database error, the page's
+`$error[...]` — and lists each fold that remains, with the answer it gives
+and why. A bare `return` or `continue` in the failure branch is a fold: it
+hands the failure on as an answer. So is `if (_mysqli_query($sql)) { … }`
+with no `else`, which the first draft counted as tested because the call
+sat in the condition (found by review): the redirector removal nested three
+of them, and a refused second delete stopped it half way with nothing said.
+A call in a condition is tested only where the branch its false takes
+refuses (#21: naming a thing is not being guarded by it). And a refusal
+that only says so — `$error[...]`, a 'bad' flash — carries on past the
+if, so `if ($r === false) { $error['db'] = …; } $r->fetch_assoc();` read
+the false it had just reported (found by review): such a branch counts
+only when nothing reads the result on the path it goes on to, after the
+if or from the top of a loop around it (#22). The test itself has to run
+whenever the assignment did: the first draft took the first appearance in
+source order, so a test inside one branch of an `if`, or in an `elseif`,
+vouched for the other branch's use of the false (found by review).
+
+`$db->query()` is the same false under another name, and the check read
+only `_mysqli_query()`: 116 more results in 41 files went untested. Among
+them `PROSPER202::prosper202_version()` answered `'1.0.2'` for any failed
+read of `202_version`, not only a missing table, so one database error sent
+every page to the upgrade, and inside the ladder would have started it again
+from its first rung; and the redirector's rule save skipped its rule writes
+when the rotator's `UPDATE` failed and then died on a TypeError. The check
+reads every `->query(` from its receiver now (`$db`, `$this->db`, `$db?->`;
+any other receiver is reported), less a class's own `query()`. A fold still
+asks who is on the other end: on the click path the visitor goes on (a
+session that refuses its `sql_mode` reads as an outage, and a failed rollup
+of a click already recorded is logged), and a write that has landed is not
+answered as failed (#13). The v3 API answered every 500 with nothing logged
+at all; it writes `p202UncaughtLogLine()` now.
+
+The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
+logged and answered false, the click path's showed the error page and died
+— and of `record_mysql_error()`, the cached reads, `setCache()` and five
+more, drifted the same way: one name failed one way on a report page and
+another on a redirect, and a test standing in for one had to say which
+(#9). There is one copy of each now, in `functions-shared.php`, which both
+load first. `_mysqli_query()` logs and answers false everywhere, and the
+caller acts on the false; `memcache_mysql_fetch_assoc()` and its list twin
+throw a `QueryException` for a failed query instead of the `false` and `[]`
+that read as "no row" (on the click path the uncaught handler makes that
+the error page). What still differs between the two is asked of
+`p202OnTheClickPath()` where it matters. A function both bootstraps need
+goes there, never into each.
+
+A status line is a return value too. `dej.php` rolls up one hour for
+`process_dataengine_job.php`, which marks the hour processed when every call
+answers 200; it caught a failed rollup, printed `Error: …` into the body and
+answered 200, so the hour was marked done with nothing rolled up and never
+tried again. Whoever reads the result reads the status, not the prose: an
+endpoint another process calls answers its failure in the status
+(`DataEngineHourAnswersItsFailureTest`).
 
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.
@@ -17,8 +143,162 @@ Config constants, DB connections, and other resources must be initialized before
 ### 4. Silent data loss on malformed input
 Never use `json_decode(...) ?? []` or similar fallbacks that silently discard bad input. Malformed JSON, invalid formats, and parse failures must produce explicit errors. The user needs to know their input was rejected, not silently ignored.
 
+`empty()` is the same fallback spelled as a presence test. `empty('0')` is
+true, so `if (!empty($params['period']))` read period=0 as "no period" and
+the LTV reads answered 200 over the default window as though it were the one
+asked for; the same test made `campaign_id=0` on GET /conversions no filter
+(every campaign's conversions), `cursor=0` page one, and a `customer_ref` of
+`"0"` (a real id where a system counts from 0) no customer. Presence is
+`isset()`/`array_key_exists()` plus an explicit comparison with the value
+that means "none" (`''`, `null`); whatever remains is read, or refused naming
+the parameter. `ForbidFalsyRequestParamTestRule` reports a truthiness test
+(`empty()`, `?:`, `!`, a bare condition, `&&`/`||`, `== false`) of an
+element of `$params`, `$payload` or a request superglobal in `api/`. The
+name is the whole heuristic: a value copied into another variable, put
+through `trim()` first, or read outside `api/` (a repository handed the
+payload) is not seen.
+
+That sentence used to end "a flag is not a value, so `(bool)` and
+`filter_var(…, FILTER_VALIDATE_BOOL)` are how one says so", and the advice
+was the bug. `(bool) "false"` is true, as is every
+non-empty string, so a sync job sent `"force_update": "false"` overwrote the
+target's differing records and `"skip_errors": "false"` carried on past the
+errors it was meant to stop at; `!empty($payload['is_required'])` in the
+field repository made `"false"` a required field. Saying "this is a flag"
+does not read one. `Api\V3\Support\RequestFlag::param()` takes true/false,
+1/0 and their strings and refuses the rest naming the field;
+`ForbidBoolCastOfRequestParamRule` reports `(bool)`, `boolval()` and a
+`filter_var(…, FILTER_VALIDATE_BOOL)` without `FILTER_NULL_ON_FAILURE` (which
+reads `"abc"` as false) of an element of `$params`, `$queryParams`, `$payload`
+or a request superglobal in `api/`. Outside `api/` the rule cannot see, so
+the field repository now takes `is_required` as a `bool` and throws on
+anything else, rather than reading it a second way.
+
+The quietest form is a handler that reads the keys it knows and never looks
+at the rest. The CRUD base `continue`d past any key that was not a writable
+field and past any `null`, and cast whatever `is_numeric()` let through, so a
+typo'd field, a field the resource does not write, a `null` meant to clear
+one, `"1.5"` for an id and a 60-character name for a VARCHAR(50) all
+answered 200 with less (or something else) stored, or a strict-mode 500 —
+and a dozen hand-written handlers
+did the same with their own bodies. Every handler now hands its body to
+`PayloadKeys::refuseUnknown()` before anything reads it, or to the base's
+`validatePayload()`; `PayloadHandlersRefuseUnknownKeysTest` holds every
+handler that takes `$payload` to that, and `ControllerFieldsMatchSchemaTest`
+holds each field's `nullable`, `range` and `max_length` to its column. A key
+a handler consumes itself (a campaign's links, an app's `store_link`) is
+removed before the rest reaches the base, or the base refuses it. Read-only
+keys are the one exception that is not "refuse": a body read with GET must go
+back whole, so they are accepted with the record's own value and refused with
+any other — and every client that builds a body from *another* record
+(`p202 import`, `sync`, `SyncEngine`) has to leave them out.
+
+A cast is the same fallback spelled as a conversion. `(int) "12abc"` is 12 and
+`(int) "2026-10-07"` is 2026, so `click_id: "12abc"` recorded a conversion on
+click 12, `conv_time: "2026-10-07"` dated it in 1970, `source_customer_id:
+"12abc"` merged customer 12, and the lists' `max(1, min(500, (int) …))` made
+`limit=abc` one row and `limit=1000` 500 rows that read as all of them.
+`Api\V3\Support\QueryInt::param()`/`required()` read a whole number or
+answer a 422 naming it and its range; `ForbidNumericCastOfRequestParamRule`
+reports `(int)`, `(float)`, `intval()` and `floatval()` of an element of
+`$params`, `$queryParams` or a request superglobal in `api/` (35 sites before
+the sweep, 0 after). It does not look at `$payload`: the CRUD hooks receive
+the body under that name after the base class validated it, so the name
+cannot say whether a value was read — a hand-read body field is still the
+author's to read with `QueryInt` (`StrictIntegerBodyFieldsTest` holds the
+ones that exist).
+
+The same drop lived one level down. With every top-level key refused, the
+objects and lists inside a body were still read by hand, for the keys the
+reader knew, and cast: on POST /conversions a line item's `unit_pirce`
+stored the line at 0 and a unit price of `"abc"` stored 0,
+`customer_crm.frist_name` was dropped, a customer's `aliases.0.tpye` made a
+custom alias, `"events": "revenue.recorded"` (a string, not a list)
+subscribed a webhook to every event, and `"prune_denylist": "campaigns"`
+protected nothing from a sync prune — each answered 2xx. A nested value goes
+through `PayloadKeys::objectErrors()`, `listErrors()` or `valueListErrors()`
+(field keys name its place: `items.0.unit_pirce`) inside a
+`PayloadKeys::refuse()` statement before anything reads it, with its values
+held to what their columns hold (`LtvBody` for the LTV shapes).
+`NestedBodyValuesAreCheckedTest` reports a structure use of `$payload['K']`
+— an index into it, `foreach`, `?? []`, `(array)`, an array function's
+argument — with no such check first: in the function, through every caller
+of a private helper, or through the handlers registered for a repository
+that reads it. The name is the heuristic again: a value copied into another
+variable first, one passed on whole with no structure use, and a body under
+another name (`$data` in MysqlConversionRepository, `$entry` in the sync
+profile reader) are not seen, so a handler that hands a nested value on is
+still the author's to check. Free-form is a decision, not a default: an
+object keyed by the account's own names (`custom_fields`) or stored as sent
+(an integration's `config`) is registered with why, and its values are still
+read strictly.
+
+A drop can also wait for a lookup. POST /conversions read `items` strictly
+and then, inside the repository, dropped them when no customer resolved —
+documented, and still a 201 for a sale whose line items were stored nowhere.
+A check that can only be made after a lookup (does any customer resolve?)
+belongs where the lookup is, before the write: the API asks the repository to
+refuse (`ltv_requires_customer`, a 422 naming `items`), and a path with
+nobody to answer (a pixel, where refusing would lose the conversion too)
+keeps what it can and logs what it dropped. "Permissive for forward
+compatibility" is the same drop when the future already has a spelling:
+webhook event names were checked only for their form so later versions'
+events would need no edit, while `*` already subscribed to those — so
+`revenue.recoded` made a hook that received nothing, answered 201. Ask what
+the permissive check buys that the explicit escape hatch does not.
+
+A form that posts every field rewrites every field, and a select posts its
+first option when none is selected. Personal settings listed
+`DateTimeZone::listIdentifiers()`, which leaves out the backward-compatible
+name a renamed zone keeps (`Europe/Kiev`, `Europe/Kyiv` since 2022): an
+account holding one rendered with nothing selected, and saving the page to
+change an email moved it to `Africa/Abidjan` — measured live — while the
+API refused the same account's GET body back. Every select on a form that
+saves a stored value must offer that value, selected, even when it is not
+among the choices a new value may take; and the writer and the reader of one
+value accept the same set (`AccountZone::isZone()`, held by
+`AccountZoneTest`).
+
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
+
+The pre-login pages are the sharp instance. `install.php` and `202-login.php`
+checked the session token on their POST; `upgrade.php` — the same
+no-login-yet situation, one directory over — did not, and the repair
+RELEASING.md gives for a stranded branch deployment (wind `202_version` back,
+open that page) is exactly when the gap was open.
+`tests/Auth/PreLoginPostRequiresTokenTest` now pins all three, and
+`tests/live/upgrade-csrf.sh` proves it over HTTP. The wider number was 74
+files reading `$_POST` and 27 checking a token. The sweep is closed: of the
+body readers that called no guard, one wrote — the update banner's snooze,
+posted by `fetch()`, which the jQuery prefilter that attaches the token never
+sees (a prefilter is a guard only for the transport it hooks).
+`PostReadersCheckTokenTest` now fails on any served file that reads `$_POST`
+or `$_REQUEST` and calls no guard, unless it is listed with the reason it
+needs none; the list only shrinks. It asks per file, so a second handler in a
+guarded file is the per-area tests' to hold.
+
+The guards themselves were the other half. Twenty-nine sites compared the
+token inline as `hash_equals((string) ($_SESSION['token'] ?? ''), (string)
+($_POST['token'] ?? ''))` (and Setup › Mobile Apps kept a second token of its
+own), and `hash_equals('', '')` is true: a session whose
+token was blanked let a token-less POST through, while the pages that called
+`AUTH::check_csrf_token()` refused it — #5 again, the sibling that did not
+get the fix. Every guard now goes through `AUTH::csrf_token_matches()`, which
+refuses an empty or non-string token on either side;
+`SessionTokenComparedOnlyByAuthTest` refuses a comparison of the session
+token anywhere else. Failing closed has a cost to pay in the same change: a
+session holding an unusable token would be refused on every form until
+sign-out, so `connect.php` seeds a new one whenever the token is not a
+non-empty string (`tests/live/session-token-reseed.sh`).
+
+Turning a user off is the same sweep. The sign-in and the remember-me
+cookie ask for `user_active = 1`; the API key lookups on v1, v2 and v3
+asked only `user_deleted = 0`, so a user switched off in Account › Users
+kept reading and writing with every key they held, under their role.
+`ApiKeyAuthPathScopeTest` now holds every authentication path to refusing a
+deactivated user (and `DeactivatedUserKeyInstanceTest` proves it over HTTP).
+When a state means "this person may not act", list every way a person acts.
 
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
@@ -26,13 +306,1976 @@ DELETE/204 responses return empty arrays. Rendering an empty array produces no o
 ### 7. bind_param type string mismatches
 When building `bind_param($types, ...)` with many parameters, count types against values one-by-one. Integer timestamps bound as 's' work due to MySQL coercion but indicate sloppy code and can cause subtle issues with strict modes.
 
+### 8. Assumed closure, reference, and capture semantics
+A by-reference `use (&$x)` on an outer closure does **not** propagate into
+arrow functions (`fn() => $x`) defined inside it — arrow functions capture
+by value at definition time. This shipped a staged-write dispatcher that
+swapped `$payload` by reference while every arrow-function route handler
+kept the value captured at route registration, so applying a staged change
+executed the wrong body (and, when the applier sent one, wrote it while the
+audit record still showed the reviewed payload). Any claim about capture,
+reference, or evaluation-order semantics must be **executed** before it is
+relied on — a ten-line `php -r` scratch script settles it in under a minute.
+Never assert the mechanism in a comment on the strength of reading a
+signature one level up: the comment then reads as verified fact to every
+later reviewer, including yourself. This specific shape is now enforced by
+`ForbidArrowFnByRefCaptureRule`; when adding a rule for a pattern on this
+list, put it in `202-config/PHPStan/Rules/` and register it in
+`phpstan.neon.dist` — a rule that is not registered never runs.
+
+The write half shipped too: `$this->guard(fn () => CpcUpdate::labels(…,
+$ownership))` handed a captured copy to `labels()`'s `array &$errors`, so the
+refusal of another account's campaign id landed in the arrow function's copy
+and the request answered 200 — found by the instance test, not by reading.
+`ForbidByRefArgumentFromCaptureRule` reports a captured variable (arrow
+function, or a closure's by-value `use`) passed to a by-reference parameter
+and never read again in that body; a callee it cannot resolve is not seen,
+so a function that reports through a reference is called outside a closure.
+
+### 9. Tests that mock the seam under test
+When the new code *is* the wiring — a dispatcher, an adapter, a callback
+that re-enters the router — a unit test that injects a fake for that wiring
+proves only the surrounding bookkeeping. The staged-changes tests passed a
+stub dispatch closure and asserted the controller handed it the right
+method, path, and body; it always did. The defect was that the real closure
+could not deliver that body. If the thing you wrote is the seam, exercise
+the real path at least once: an integration test, or a live request against
+a running instance.
+
+A fake connection is a mock of the server, and it accepts SQL the server
+refuses. The CRUD lists probed for a time column with `SHOW COLUMNS FROM t
+LIKE ?`, which MariaDB 10.11 will not prepare (measured); the unit fake
+prepared it, so every `updated_since` and `deleted_since` on a list was a
+500 in production while its tests were green, and every server-side
+re-sync after the first failed with it. The table name was interpolated,
+so `StaticSqlSchemaTest` could not see the statement either. SQL that
+reaches a server only through a builder needs one run against a real
+server before it ships (`ListTimeFiltersIntegrationTest`).
+
+A stand-in for a function with two copies has to answer as the copy it
+stands in for. The error page's runner gave both `record_mysql_error()`s a
+`_mysqli_query()` that answered false, which connect2.php's never does (it
+calls the error page again): the test held a "the server refused the row"
+branch that cannot run on the click path, where a refused row re-entered
+the page and logged the server's words about it. The runner now gives each
+definition its own file's `_mysqli_query()` wherever the answer matters.
+There is one definition now (`functions-shared.php`, below in #1), and the
+runner runs it under each bootstrap.
+
+### 10. Calling a capability done without an end-to-end pass
+Aggregate green suites are not coverage of the path you just wrote — the
+PHP, Go, and eval suites were all green while nothing exercised staged
+apply. Before reporting a user-facing capability as complete, run it end to
+end the way a user will (see the live-instance recipe under Development
+environment notes; if an instance is already up in the session, there is no
+excuse to skip this), and add a case under
+`tests/fixtures/agent-eval/cases/` when the capability is agent-facing.
+When reporting status, say which paths were actually exercised rather than
+citing suite totals.
+
+### 11. Fail-open defaults on a security value
+`if ($scopes === []) { $scopes[] = '*'; }` — one fallback served two cases: a
+key with *no* scope (legitimately full access) and a key whose scope column
+was **unreadable** (`[]`, `[null]`, JSON truncated by a partial write). The
+second silently removed the key's attenuation entirely. A value that cannot
+be parsed must never resolve to the most-permissive interpretation; resolve
+it to something that satisfies nothing, and name it in the error so the
+corrupt row is findable. Whenever a default stands in for a missing value,
+ask separately what happens to a *malformed* one.
+
+The same pattern reappeared two functions away, in
+`apiKeyScopeColumnExists()`: it returned `false` for a failed `prepare`, a
+failed `execute` and a false `get_result` — the same value as "the column is
+not there" — so `fromRequest()` selected without the column and
+`parseScopes('')` turned the absent value into `['*']`. One transient database
+error promoted every scoped key to full access. **A predicate that answers a
+question must not answer it when it does not know**; throw, or return a
+tri-state. `false` is an answer, not an error.
+
+Two amplifiers, both of which turned this from a blip into a breach:
+
+- **Caching does not preserve a bug's blast radius — it multiplies it.** The
+  probe was memoized for performance, which converted a one-request failure
+  into a wrong answer for the life of the connection. Before adding a cache,
+  ask what the cached value costs if it is *wrong*, not just what it saves
+  when right. (Cache on the object, not `spl_object_id()`: ids are reused
+  after free, so a reconnect can inherit a freed connection's answer. A
+  `WeakMap` keyed by the connection cannot.) A cache is outside the
+  transaction too: moving `rtr.php`'s click writes into one put the site URL
+  lookup inside it, and that lookup caches the id of a row it inserts at
+  once, so a rollback left memcached naming a row that no longer existed and
+  every later click to the URL stored the dangling id for 7 days (found by
+  the adversarial review, reproduced live). Writes made inside a transaction
+  wait for its commit (`p202WithHeldCacheWrites()`). The same lookup is a
+  SELECT and then an INSERT with no unique key behind it (the install
+  partitions `202_site_urls` by its id, and a partitioned table's unique keys
+  must include that id), so concurrent first clicks on one new URL can store
+  it twice; each click names a valid row. That is left as it is, and written
+  at the lookup. Fixing a lookup does not fix the answers it already cached:
+  the IPv6 address lookup joined `202_ips_v6` to `202_ips` as numbers and
+  could answer an IPv4 visitor's row, and the corrected join kept the old
+  key, so every wrong id the old code had cached was still served for its 30
+  days (found by review, reproduced). When a lookup's answer changes, change
+  its key subject (`ip6-id`), and pin the old key unserved in a test. Nor
+  does it fix the same join elsewhere: Analyze › IPs and the group report
+  kept the numeric join until review found them, and on MariaDB no test
+  could tell (it happens to compare that join as text).
+  `Ipv6RowJoinIsGuardedTest` now holds every join of `202_ips_v6`, and
+  every comparison of an `ip_id` with an `ip_address` in the tree's SQL,
+  in whatever clause it is written.
+  A cache's namespace is a claim about whose values it holds:
+  `systemHash()` was the host and address, while every value it names is a
+  database's, so two installs on one host sharing a memcached read each
+  other's tracker rows and lookup ids. It names the install now, by its
+  directory and its database; the first fix named the database alone, and
+  fell back to the shared namespace wherever the database settings were not
+  in scope (found by review) — a fallback is a namespace too
+  (`SystemHashNamesTheDatabaseTest`). A namespace is also a claim about
+  when: the click path's ids are cached for 30 days, and an upgrade can
+  change which rows stand or what a lookup answers, so the namespace carries
+  the code's version too (`LookupRepositoryFactory::cacheNamespace()`) and
+  each upgrade starts cold.
+- **"Cheap and clearly right" is a claim, not an exemption.** That memoization
+  was added mid-session with exactly that justification and no thought about
+  its failure mode. The size of a change bounds how long the review takes, not
+  whether it gets one.
+
+An absent value is the same trap when nothing ever sets it. Whose clicks a
+report page reads hangs on `$_SESSION['publisher']`, which no code writes, so
+"absent" is every session there is. The engine, Analyze and the Overview read
+absence as "this account's"; the Visitors list, Spy and the click breakdown
+read it as "may see everything" (`!empty(...)`, written to silence a notice
+on what had been `!$_SESSION['publisher']`), and every signed-in user was
+shown every account's visitors and any account's conversions by id — and the
+Overview chart had no account condition at all. Measured live, then fixed:
+the rule is `DataScope::userId()`, and `PublisherSessionReadsTest` lists
+every other read of the key with what it decides. When a flag's *absence*
+is the common case, find every reader and check they agree on what absence
+means; a notice-silencing rewrite preserves whichever meaning was there.
+
+A switch whose absence has a meaning needs a second answer for a value it
+cannot read. `p202_consent` withheld the visitor's signals only for `0`, so
+`false`, `off`, `00` and a list gave consent, while `campaignAllows()` twenty
+lines below read anything but `1` as off: #5 inside one class. Present, it
+gives consent only as `1` now, on the tracking link and on the landing page
+(`IdentitySignalsTest`, `identity-landing.spec.js`).
+
+State found where this install's own state would be is the same question.
+`ServerStateStore` renamed the pre-1.9.75 shared temp directory into a new
+instance's place, on the theory that it was that instance's pre-upgrade
+state; nothing in it says whose it is, so another install's idempotency
+record replayed here and its staged DELETE was listed to apply against this
+database. Data whose owner cannot be shown resolves to "not ours": leave it,
+and say how the owner carries it over.
+
+### 12. A guard is only as good as the layer that delivers the input
+The server rejected an explicitly empty API-key scope. It never fired, because
+the CLI dropped the field before building the request, so the server saw
+"omitted" and applied its documented default of full access. Validation added
+at one layer is dead code if the layer above discards or rewrites the input.
+When adding a check, trace an actual bad value from the outermost entry point
+and confirm it *reaches* the check — this is #5 across layers rather than
+across sibling call sites.
+
+The guard can also sit below a layer that ends the request first. The click
+path's outage fallback (`if (!$db)` in dl.php, lp.php and off.php: send the
+visitor to the URL kept in memcache) did not run from 1.8.4 to 1.9.78: the
+bootstrap connected unguarded under `MYSQLI_REPORT_STRICT`, so a refused
+connection threw before any script reached its check, and dl.php built its
+repositories on the connection above its check as well — every request a
+500, the fallback's own fixes in between made to code that could not run.
+`tests/live/outage-fallback.sh` takes the database away from one server and
+runs the path.
+
+### 13. Retry seams must know whether the write landed
+An exception says nothing about whether the database changed. `Controller::create()`
+inserts, then runs `afterCreate()`, `get()` and `recordChange()` with the row
+already committed, so a throw from any of those looked identical to a
+validation failure — and both retry seams (idempotency reservations, staged
+apply) offered a retry that duplicated the record. Wrapping creates in a
+transaction was *not* the fix: `bulkUpsert()` already wraps `create()` in one
+and mysqli's `begin_transaction()` inside an active transaction implicitly
+commits the outer. The code that knows says so instead: handlers wrap their
+post-write steps and rethrow `WriteCommittedException`, and the seams refuse
+the retry. Any code that decides "safe to run this again" needs a fact, not an
+inference from an exception type.
+
+That implicit commit was silent wherever it happened: a nested transaction
+committed the outer one's work so far, and the outer's rollback then undid
+only what came after. `Connection::transaction()` now refuses to begin inside
+another on the same handle (a `LogicException`, before anything is written),
+so a value it returns has committed; work that belongs to the caller's
+transaction goes through `joinTransaction()`, which refuses when none is
+open. A transaction opened anywhere else is one the refusal cannot see, so
+Connection is the only place one begins or ends
+(`TransactionsBeginOnlyInConnectionTest`).
+
+### 14. Safety flags must survive process and reset boundaries
+`--staged` promises a write becomes a proposal. The interactive shell resets
+the whole flag tree between commands and re-applied only the flags someone
+remembered to list, and `p202 exec` runs each profile in a child process that
+inherits nothing — so `p202 shell --staged -c 'campaign delete 42 --force'`
+performed the delete. A flag whose whole purpose is to withhold an action must
+be re-checked at every boundary that rebuilds state; grep for the reset and
+the subprocess spawn, not just the flag definition.
+
+And at every route that receives it. `?dry_run=1` was read only for a
+DELETE and by the few writes that preview; on every other POST, PUT or PATCH
+it was ignored and the write ran — `PUT /system/retention?dry_run=1`, the
+spelling the route's own error message recommended, changed the setting. A
+flag that withholds an action is refused where it cannot be honoured, never
+ignored: the dispatcher answers 422 unless the route is on the list of
+writes that preview, and `DryRunRoutesTest` holds that list to the handlers
+that read the flag.
+
+### 15. A discriminator folded into the storage key can never be checked
+An idempotency key exists to make a retry safe. Every one of the three
+call sites hashed the request body into the *scope* — the value the record's
+filename is derived from — so a key reused with a changed body addressed a
+different file, found nothing there, and executed: the exact duplicate the
+key was sent to prevent, and the comments called that "a fresh create, not a
+conflict" as though it were a feature. Whenever the point of a stored value
+is to detect that two requests differ, the thing being compared belongs
+*inside* the record as a fingerprint, never in the key that locates it. The
+general shape: if X is part of the lookup path, no lookup can ever tell you
+that X changed. Ask of any cache, dedup table, or lock name — what
+difference is this supposed to catch, and can it still see it?
+
+Widening a scope has a second-order cost that has to be paid in the same
+change: records that used to be spread across one file per request now share
+one, read and rewritten under a lock on every call. Shard by the same value
+the lookup keys on (here the key itself, so the same key still lands in the
+same file) and bound what a shard retains, or the correctness fix ships a
+latency regression.
+
+The same failure without a hash: a key that *locates* a record nobody then
+compares the request with. `POST /ltv/revenue` found the event its
+`idempotency_key` had recorded, a subscription renewal the event under its key
+or transaction id, `POST /conversions` the row its transaction id names — and
+each answered the first record (`duplicate: true`, `changed: false`) to a
+request stating another amount, customer or line items. A second charge sent
+under the first one's key, or a corrected payout under the same transaction
+id, was dropped with a 2xx. Where the stored record holds what the request
+stated, the record is the fingerprint: compare the request with it
+(`RevenueReplay`), refuse a difference naming the key and what differs, and
+decide field by field what absence means — a fixed default (no items, a
+purchase) is compared, a moving one (now, the account's currency, the
+campaign's payout) only when sent. A client that pre-reads to skip duplicates
+(`p202 conversion import`) makes the same lookup and owes the same comparison.
+
+### 16. On a public endpoint, identity is what the attacker cannot choose
+Every value a security decision keys on must be split into what the peer
+proved and what the request merely *claimed*. Two instances shipped in one
+feature: the receiver's rate limiter keyed buckets on `AUTH::client_ip()`,
+which honors `X-Forwarded-For` — one curl loop with random headers both
+dodges the limit and mints unbounded bucket files (key on `REMOTE_ADDR`;
+the XFF-aware value is for display); and the postback dedupe hash covered
+only fields an attacker can copy out of thin air (network, transaction,
+leg), so a forgery arriving first claimed the UNIQUE slot and the genuine
+signed postback was answered `duplicate: true` and dropped — the dedupe
+must cover the full body, so only a byte-identical retry collapses. The
+same review asks the report question: aggregates over rows anyone can
+insert must default to counting only rows that passed verification, with
+the unverified visible in separate columns — "stored and flagged" is not a
+trust decision, the read path makes one whether it means to or not.
+
+The Host header is the same kind of claim, and what decides whether it may
+be used is who receives the result. In the requester's own response (a
+redirect back to the host it asked for, a cookie it keeps for that host) a
+forged Host harms only the forger, so `TrackingBaseUrl::forRequest()` takes
+it, validated. In anything sent to someone else it is an attack:
+`202-lost-pass.php` built the reset link from `SERVER_NAME`, which is the
+Host header under Apache's default and under nginx's catch-all (connect.php
+maps `_` to it), so a stranger who knew a username and email could have the
+owner emailed a genuine key on a link to the stranger's host. The link is
+now the stored tracking domain (`PasswordResetLink`), with no link at all
+when none is stored. Before taking a host, a scheme or a path from the
+request, ask who will follow the URL.
+
+A claim shown to a person is the same split. The AI-connect consent page
+said an app was "verified there as claude.ai" of a domain the approval link
+carried, and nothing signs that link: anyone could start a connection of
+their own and send a signed-in owner a link naming Claude, and the owner's
+Allow gave the access to whoever started it. The page shows the name and
+site as the link's words now, and says who gets the access
+(`AiConnectTest::testTheApprovalPageVouchesForNothingTheLinkSays`).
+
+A fallback names an address too, and the same question decides it.
+`getTrackingDomain()` fell back to `SERVER_NAME` and `SERVER_PORT` — where the
+server listens, which behind a reverse proxy or a published container port
+nobody else reaches — so every link a page showed on an install with no
+tracking domain was dead; and the same helper built the URLs the dataengine
+cron fetches from itself, where the request's Host would have had the server
+fetch a host the caller chose. One value cannot serve both readers: a URL
+handed back to the requester takes the host the requester used
+(`TrackingBaseUrl::domainForResponse()`), a URL the server fetches or sends
+on takes the stored domain or the server's own name
+(`p202TrackingBaseUrl()`). `RequestHostSourceTest` lists every
+`getTrackingDomain()` caller with why its URL goes back to the requester.
+
+A path in a directory anyone can write is a claim of the same kind: the
+name says whose it is, and anyone could have made it. The API state store's
+default directory is a hash of the database host and name in the system temp
+dir, and it was used whoever made it — another local user who made it first
+decided what the install read (measured: a planted `Idempotency-Key` record
+replayed its response, a planted staged DELETE was listed to apply). What is
+proved is the directory's owner and mode, read with `lstat()` so a symbolic
+link is not followed into someone else's choice; `ServerStateStore` now uses
+the directory only when this process's user owns it alone.
+`TempDirPathsTest` lists every path the served tree builds in the temp dir
+with what makes it safe there.
+
+### 17. A key derived from an identity must be injective
+When a value exists to tell two things apart, every transform between the
+thing and the comparison has to preserve the distinction. Two instances
+shipped in one feature, both found only by reading:
+`ServerStateStore::slug()` turns a rate-limit bucket into a filename with
+`preg_replace('/[^a-z0-9._-]+/', '-', ...)`, which collapses every run of
+`:` — so `2001:db8::1` and `2001:db8:1::`, both canonical addresses that
+`REMOTE_ADDR` really produces, shared one bucket and one ceiling, and a
+flood from one peer answered 429 to the other; and the report's identity
+was `CONCAT_WS('|', protocol, ad_network_id, transaction_id, ...)` over
+fields no validator constrains the characters of, so a postback naming
+`acme.skadnetwork|A9F3` / `B7C2` and one naming `acme.skadnetwork` /
+`A9F3|B7C2` counted as one.
+
+The second is the sharper lesson, because the codebase already had the
+answer: `PostbackReceiver::dedupeHash()` length-prefixes every field and
+its comment says why — "with a plain joining character, an ad-network-id
+containing that character could collide with a different (network, id)
+pair". The guard existed, one file away, and the sibling was written with
+a bare delimiter anyway. Ask of any composite key, bucket name, cache key
+or `CONCAT_WS`: can two different inputs produce this same string? If a
+sanitizer, a truncation, a case fold or a delimiter sits between the value
+and the comparison, the answer is usually yes.
+
+The collation is the transform nobody writes down. Every table defaults to
+`utf8mb4_general_ci`, so a UNIQUE key over a value someone else chose folds
+case: `tx:A-1` and `tx:a-1` on one click were one ledger key, and the
+second sale was answered `duplicate` with its money dropped; LTV's
+idempotency key and external subscription/product ids did the same.
+`UniqueKeyCollationTest` now requires every text column in a UNIQUE or
+PRIMARY key to declare `COLLATE utf8mb4_bin` or to be listed with the
+reason folding is right — and a column's collation lives in the upgrade
+too, not only the table definition (the reconciler compares names and
+nullability, not collations).
+
+The width is a transform too, and its unit is part of it. The c1-c4, UTM
+and variable values were cut at 350 bytes before every lookup, for
+VARCHAR(350) columns, which count characters: a value of 88 emoji lost its
+end, and two values sharing their first 350 bytes were one row (found by
+review; the column, measured, takes 350 four-byte characters).
+`StoredCutsMatchTheirColumnsTest` holds each cut to its column's width in
+its column's unit, characters for a VARCHAR and bytes for a TEXT.
+
+This differs from #15: there the discriminator was *inside* the lookup
+path, so no lookup could see it change. Here the mapping itself is
+many-to-one, so two things that should differ never get the chance to.
+
+### 18. A guard that runs after the framework already normalized its input
+`assertUsableAppId()` rejected anything that was not a positive App Store
+id, and it never once saw a bad value. It ran from `beforeCreate()`, and
+`Controller::create()` calls `validatePayload()` — which casts every `'i'`
+field — *before* it calls the hook. So `1e20` was stored as
+7766279631452241920, `'99999999999999999999'` as `PHP_INT_MAX`, `1.5` as
+1, each answered 201 with an id the caller never sent, and the global
+UNIQUE key taken by a garbage number. The same shape sat two files away in
+the conversion-values controller, where the mis-scoped rule is then served
+to a device in another app's runtime schema.
+
+This is #12 seen from the inside: the layer that discarded the input was
+not a different service or a CLI, it was the base class on the same
+request path, three stack frames up, doing something entirely reasonable.
+A validation hook cannot see the raw request unless it is given it. When
+you add a check, find where the value it inspects came from — if a
+framework hook hands it to you, assume it has already been normalized, and
+prove otherwise by feeding a malformed value in at the outermost entry
+point (the decoded request body, not the hook's argument) and watching
+where it lands.
+
+### 19. A class name is not a contract, and a container is not a component
+CSS has no undefined-symbol error. `class="p202-flash p202-flash--warn"`
+renders as an ordinary `<div>`: the modifier was never written into any
+stylesheet, so it styles nothing, warns nothing, and looks in the source
+exactly like the modifiers that do exist. Two of these shipped in one
+feature — the second found only by diffing every `p202-*` token in the
+markup against the selectors in `202-css/`. That diff is now
+`ComponentClassIsConsumedTest`, which fails when a class in markup is
+named by no stylesheet rule and no script. A class that only a script
+selects on (`p202-copy-label`) counts as consumed: the test asks whether
+*anything* acts on the class, not whether it is styled.
+
+The half a checker cannot see is the one above it. `.p202-empty` is
+defined, so this passes:
+
+```html
+<div class="p202-empty"><h2>Nothing received yet</h2><p>…</p></div>
+```
+
+and it still renders wrong, because the component's typography lives in
+`.p202-empty__title`, not in the container — the `<h2>` comes out at
+browser-default heading size, louder than every panel title on the page.
+Reaching for a component means reaching for its parts. The rule at the top
+of `p202-components.css` says where they are: `202-account/ui-kit.php`
+renders every component in every state, so read the kit's markup for the
+component you want and copy its shape, rather than putting your own
+elements inside its container and assuming the container carries the
+styling.
+
+One wave later the same reach went the other way. `.p202-help` *reads* like
+a name for muted helper text; it is the help-**icon** component —
+`inline-flex`, `cursor: help`, one `<i>` inside, exactly as the kit shows
+it. Six sentences went into it on the new page, and two more had been
+sitting in the previous wave's page since it shipped. A flex container
+makes every child a flex item and **discards the whitespace between them**,
+so `Choose <em>Custom Date</em> to set these.` rendered as `ChooseCustom
+Dateto set these.` — valid markup, a class that exists, every static test
+green, and a broken sentence. The general shape: *inline content placed in
+a layout container loses the spaces around its tags*, and nothing that
+reads source can see it. `checks.flexContainersKeepTheirSpaces` in
+`tests/browser/lib/checks.js` is that one measured in the browser — a flex
+container with no `gap` whose children mix text and elements. The sibling
+lesson is that a class name is not a synonym: before using one for
+something that is not what the kit shows it doing, read its rule.
+
+An installer-written config persists across upgrades, including any class it
+defines. `202-config.php` can carry a `DB` class with `getConnection()` alone;
+the current sample having `getConnectionro()` does not add it to that file.
+Check an optional config method before calling it, and exercise a retained
+config as well as the current sample (`DatabaseConfigCompatibilityTest`).
+The guard first went into `connect.php` alone while the Spy query still
+called `getConnectionro()` itself; the replica is now read only through
+`ConnectionFactory::readConnectionOf()`, and the test refuses a call or a
+callable naming the method anywhere else.
+
+A message rendered where the page does not land is not said. Settings'
+forms post back to `administration.php#section`; the flashes rendered at the
+top of the page and the browser scrolled to the section, so the AutoCron
+refusal sat 650px above a 1280x800 screen (1,700px on a phone) and an owner
+refused three times saw nothing. `p202-ui.js` now moves
+`[data-p202-flashes]` into the panel the fragment names. The browser pass
+measures it at two sizes that scroll: at the harness's 1280x1000 the page
+does not, and the old placement passed there. A check of where something
+shows needs a viewport where it could fail to.
+
+### 20. A checker only sees the syntax it follows
+
+The upgrade-ladder guard walked tokens for `T_IF` `(` … `)` `{`, so `elseif`,
+the alternative syntax (`if (…): … endif;`), a braceless body, a ternary, a
+`while`, and `switch`/`case` were all spellings of the forbidden gate that it
+reported as **absent** — six silent passes, each measured by planting it. That
+is #11 in a checker rather than a predicate: a scanner that cannot see a
+construct must not answer "no such construct".
+
+Two ways out, in that order. **Ask the question in a form that has no
+structure to miss**: the invariant here was "`$prosper202_version` is never
+compared equal to the code version", which is a property of the token stream,
+not of any statement — scanning every token for the comparison and never
+looking at statement shape has nothing left to evade it. Where that is
+impossible, **forbid the construct you cannot read and name it**: a `case` arm
+carries no comparison token at all, so the arms are not parsed, the `switch`
+subject is banned outright and the message says to teach both scans before
+writing one. A ban is only a ban if it reads the whole construct, though —
+the first draft of that one checked the single token after `switch (`, which
+`switch ((string) $v)` and `match (($v))` both walk straight past. Search the
+balanced subject, and cover the mirror image (`case $v:`, `$v => …`) where
+the version is the arm and the thing it is compared against is the subject.
+
+Then prove it. Plant the defect in *every* spelling, and run the same plants
+against the version you are replacing — "this closes a hole" is then a
+measurement with a before and an after, not a claim. Note which direction a
+hole falls in: the same `elseif` blindness that let a forbidden gate through
+also made a correctly gated call read as ungated in a sibling test, a false
+*failure*. Only one of those two directions is silent, and it is the one worth
+hunting.
+
+The list of shapes a checker reads has to come from the grammar, not from
+memory. `PreLoginPostRequiresTokenTest`'s use classifier knew assignment,
+compound assignment, `++`, element write, `list()`, `&` and a positional
+argument — the shapes that came to mind — and PHP writes a variable in more
+ways than that: a named argument (`f(name: $x)`, a `:` before the variable
+where the classifier looked for `(` or `,`), a `foreach` target (`as $x`,
+`=> $x`), a `catch` target, keyed destructuring (`['k' => $x] = …`), a
+`global`/`static` declaration, and then the writes that never name the
+variable at all — `$$name`, `${'name'}`, `$GLOBALS['name']` (the pages run
+at file scope, where that is the same variable — the one the first sweep of
+this list still missed), `extract()`, `eval()`, an `include` — which no
+scan for the variable's token can see and which the scanned range now
+refuses outright. Enumerate from the language reference
+before writing the classifier, plant every shape on the list, and refuse by
+name the ones that cannot be read.
+
+Beside the variable is not around the expression. The classifier read the
+token before the variable and the token after it, and `weaken(($error))`
+showed it a `(` on each side, which it called a read — while PHP passes the
+parenthesized variable by reference exactly as it passes the bare one, and
+`[($e)] = …` and `list(($e)) = …` assign it. The same lens found the element
+shapes: `weaken($csrf_ok[0])`, `$csrf_ok[0]++`, `[$csrf_ok[0]] = …`,
+`foreach (… as $csrf_ok[0])` and `$csrf_ok[0][0] = …` each read as a read,
+and each turns a `false` result into a truthy array, so the work runs. What
+is done to a variable is done to the expression it roots, and the tokens to
+read are the ones beside that expression: gather its index chain and the
+redundant parentheses around it first, then classify from the edges. The
+parentheses to cross are the ones nothing owns — after another `(`, a `,`,
+a `[`, a `:` or a `=>` — and never a callee's or a keyword's, because
+crossing `weaken(` puts the callee beside the extent and reads the argument
+as a read, the silent direction. Every spelling was executed before it was
+listed; the ones the grammar refuses (`($x) = …`, `&($x)`, `as ($x)`) are
+parse errors, and the docblock says so rather than guarding against them.
+When a classifier keys on adjacency, ask what the language lets sit
+between the variable and the thing that acts on it.
+
+The same blindness, one token wide: `RollupWritersAreMarkedTest` read each
+string literal alone, so the cron job's
+`explode(',', '202_clicks,202_clicks_advance,…')` and its
+``"DELETE FROM `$table`"`` were neither a write naming a summed table nor a
+bare table name, and the job that deleted every click table passed as
+writing none — the rollup kept sums for deleted clicks. A string is what PHP
+assembles: the scan now joins literals across `.`, reads interpolations and
+heredocs, resolves class constants through the file's imports, and reports
+a write whose table it cannot read as `unread` instead of as no write.
+Measured on 25 planted spellings: the old scan saw 8.
+
+### 21. Naming a thing is not being guarded by it
+
+`versionsComparedIn()` reported which versions a gate's condition compares
+against, and every check downstream read that as "the block runs only at those
+versions". Those are different questions and `||` is the gap between them:
+`if ($prosper202_version == '1.9.75' || $force)` names 1.9.75 and runs at every
+other version too. Planted as the stronger `|| true` on the real reconcile
+gate, twelve structural checks stayed green — including the one whose entire
+subject is "every reconcile call sits inside a version gate".
+
+The first fix walked the condition's boolean structure and allowed `&&`,
+reasoning that a conjunct can only narrow. True, and beside the point: the
+same reviewer then planted `== '1.9.75' && $enabled` and showed that a gate
+carries **two** obligations — admit the versions it names, and admit no others
+— and that narrowing breaks the first. A false flag keeps 1.9.75 installs out
+of the 1.9.75 rung, so they sit at 1.9.75 forever and nothing ever converges
+them. One direction of the invariant had been checked and called done. No
+token scan can prove a conjunct always true, so the answer was subtraction: a
+gate is a disjunction of version equalities, or it is not a gate.
+
+The same round killed a cast allowance justified in a comment as
+"value-preserving". Executed, `(bool) $prosper202_version == '1.9.75'` is true
+for every non-empty stored version and `(int) … == 1` matches every 1.x —
+"value-preserving" was a claim about seven cast operators, none of which had
+been run.
+
+The shape to carry away: when an invariant reads *only X* **and** *all X*, a
+check enforcing one of those halves looks exactly like a check enforcing both.
+Write both halves down before writing the check, and ask of every relaxation
+which half it relaxes.
+
+The general shape is not confined to conditions: whenever one check extracts a
+value from an expression and another treats that value as a constraint, ask
+what else the expression admits. *Contains x* and *implies x* read the same in
+a grep and are not the same claim.
+
+Two smaller forms of the same error shipped in the fix for this one, both
+found by the same reviewer within the hour:
+
+- **A greedy `.*` turns "is" into "contains".** `/^version_compare\(.*'>'\)$/`
+  was written to say the condition *is* that call, and it accepted
+  `version_compare(…, '<') || version_compare(…, '>')` — a guard that fires
+  for every version but the current one. Anchors do not make a pattern exact
+  when what sits between them can swallow an operator.
+- **Assertions compose only if they name the same thing.** The guard was
+  asserted to contain an `UPDATE` and to contain an `_upgrade_query(` call.
+  Both held while the call received a different variable, so the write never
+  ran. Two true statements about different parts of a block are not one
+  statement about the block; when the claim is "this value reaches that
+  call", follow the value.
+
+The same shape shipped again one PR later, in `PreLoginPostRequiresTokenTest`:
+the token guard was asserted to *precede* the protected work, and the helper
+to *contain* `hash_equals(`. `$error = false;` between the guard and the work
+passed the first; `hash_equals(…); return true;` passed the second — 22 of 24
+planted defects, against a test whose docblock said "guarded". When the claim
+is "this result decides that", execute it where the code is pure enough
+(both helpers were), and otherwise prove the branch the work sits under and
+that nothing between the guard and the branch can change what it tests.
+
+And its form, one round later: the same test asserted that `name="token"`
+appeared somewhere in the file, which said nothing about which form carried
+it — below `</form>`, in a second form, disabled, or inside `<!-- -->`, it
+was on the page and not in the submission, and the live pass scraped the
+first token it found and posted it by hand, so it would have stayed green
+too. The claim was "the form that posts carries the token"; the check has
+to find that form, bound it, and read the input inside it, and the live
+pass has to submit the form's own fields rather than a token it found
+anywhere on the page. And its value, the round after that: "the escaper's
+first argument contains `$_SESSION['token']`" accepted
+`'prefix' . $_SESSION['token']`, which the server's `hash_equals()` refuses
+on every submission — a login page nobody can log in through, green in CI.
+Parse the expression the claim is about and accept the spellings you can
+name; a substring test of an expression is #21 every time.
+
+Two more, one review later, both about what a call *is*. The ladder's walk
+credited `$logger->_upgrade_query($sql)` and `Log\_upgrade_query($sql)` as
+the query that wrote the version, and the page test found its guard by the
+substring `AUTH::check_csrf_token(`, which `MyAUTH::check_csrf_token(`
+contains: a name is not a call site. A callee is the token *and what
+precedes it* — `->`, `?->`, `::`, `new` and `function` each make the same
+final token something else, `Other\name` is another function — and an
+unqualified name is the global one only in a file that declares no
+namespace and imports no function, which both tests now assert (a `use
+function Other\version_compare;` at the top of the ladder rebound the
+downgrade guard's comparison with every check green). The other direction
+is as silent: PHP 8 reads `\name` as one token (`T_NAME_FULLY_QUALIFIED`),
+not `T_STRING`, and names functions and methods without regard to case, so
+the discarded-result floor never saw `\_mysqli_query($sql);` or
+`_MYSQLI_QUERY($sql);`; `SourceScan::callableName()` reads every spelling
+of a global call, for each scan that names one. And bounding the
+guard call was not reading it: `install_csrf_ok($expected, $submitted)`
+was shown to decide the work and executed on token pairs, and never asked
+what the page hands it — `install_csrf_ok($_POST['token'],
+$_POST['token'])` accepts every non-empty token and left everything green.
+That is #12 seen from the call site: the arguments are now parsed as the
+session token and the posted token, in that order, read where they are or
+through a variable assigned exactly that once, directly in the block,
+untouched to the call and alias-free. One review later the same substring
+found the *work*: `MyUPGRADE::upgrade_databases(` satisfied the marker for
+the protected operation, so a page calling a lookalike class read as
+guarded while the real operation went unwatched — the guard had been fixed
+and the three work sites, found the same way two screens down, had not.
+One helper now reads guard and work alike. When a check says "X is
+called", ask what X is called *with*, and whether the thing named is the
+thing meant; and when one site read by name is fixed, every site read by
+name is the sweep.
+
+### 22. "Somewhere in the block" is not an order
+
+`reconcileSuccessRanges()` found the reconcile assignment anywhere in the
+step and then credited every `if ($ok) {` from the step's start;
+`persistsThatReachAQuery()` built its variable-to-statement map over the
+whole step and then credited every `_upgrade_query($sql)` from it. Both
+answered a question about order — *is the guard below the assignment, is
+the value at the call the one that was assigned* — with a lookup that had
+thrown the order away, so a guard above its assignment, a `$ok = true;`
+between the two, and `$sql = "UPDATE …"; $sql = "SELECT …";
+_upgrade_query($sql);` all read as correct. Planted, fourteen shapes
+passed. When a check's claim is "A guards B" or "A reaches B", it is a
+claim about sequence *and* about nothing changing in between, and a check
+that matches A and B separately and joins them by name proves neither
+half. Walk the range once in source order, carry the value forward, drop it
+at the first appearance you cannot read (the check does not tell a read
+from a write, and says so), and refuse by line anything else — the loud
+direction. Twin of #15: there the discriminator was folded into the key;
+here the order was.
+
+Its sibling, one review later, in the check that replaced the unordered one:
+the seed of the error flag was found *anywhere* after the guard and credited
+though it sat inside a conditional that could skip it, and any whole
+assignment in the failure branch counted as a seed whatever it assigned —
+`$error = [];` there leaves the flag empty and the work reachable. Where a
+value is set and what it is set to are both part of "A guards B". A
+statement the invariant depends on has to be shown to run on every path
+(directly in the block, first in its own statement, not the body of a
+braceless `if`) and to assign what the invariant needs; and the work has to
+sit inside the block whose entry the guard assumes, because outside the
+POST block a GET runs it with no token asked for. And the position that
+matters is the *act's*, not the value's: the ladder check located the
+`UPDATE 202_version` literal and asked whether *it* sat in the success
+branch, so a literal assigned inside the branch and handed to
+`_upgrade_query()` after its closing brace read as guarded, and one assigned
+above the branch and queried inside it read as unguarded. The write is the
+call; anchor on the call. Two more of the same family, one review later: a
+scan for writes that stopped at the branch's `if` keyword left the condition
+unread, and `if (($error = false) === false && !$error)` carries the accepted
+conjunct while resetting the flag inside it — a condition is code, so scan to
+the brace; and a value carried across statements was carried through braces
+as if they were not there, so an assignment inside a nested condition was
+credited at a call after it — a hold lives in the block that set it, and
+leaving the block drops it, because the block may not have run.
+
+The last two rounds of this were the *other half* of "A guards B": not only
+must B never run when A said no, B must run whenever A said yes. A persist
+accepted anywhere inside the success branch — in a nested condition, or
+behind `$enabled && _upgrade_query(…)` — leaves a successful reconcile
+without its version write, and the rung is stuck; and a seed scan that
+returned at the first good write left `$error['user'] = …; $error = [];`
+unread. Both halves need the same treatment: the act must run on every path
+through the branch (directly inside it, in a shape that evaluates it
+unconditionally), and a scan that accepts a write has to read the rest of
+the block for the one that undoes it.
+
+One more, the round after: "runs whenever the block runs" was read as
+*directly inside the braces, first in its statement*, and a statement after
+a closing brace passed — as if the branch that brace closed could not have
+left. `if ($skip) { return false; }` above the guard, or above the persist
+inside it, is a path on which a successful reconcile never records its
+version, and the check called both unconditional. A jump is the third thing
+"runs on every path" has to read, after depth and order; the check cannot
+tell where one lands (a `break` in a nested loop, a `return` in a closure),
+so every return, exit, throw, break, continue and goto above the statement
+is refused by line, and `goto` is refused for the whole file, because PHP
+lets one enter an `if` from anywhere in the same scope and no brace-bounded
+range can see it come in.
+
+And depth is not position: `if ($enabled) $ok = reconcile();` sits at the
+step's brace depth and runs only when `$enabled` is true. The assignment
+check counted braces while the guard check, two screens down in the same
+file, already asked the whole question — first in its statement, at the
+block's depth, nothing above it that leaves — through one helper. When an
+invariant says "runs whenever the block runs", ask it with that helper at
+every site, not with a fresh depth loop that answers a smaller question.
+The very next review found the site that sentence had missed: the walk that
+carries a `$sql = "UPDATE …"` to its call recorded the hold by depth, so
+`if ($enabled) $sql = …; _upgrade_query($sql);` was credited too. "Every
+site" is a list to be enumerated from the code — every place that decides a
+statement ran — not recalled; the sweep after a finding has to grep for the
+mechanism (here, every depth counter) rather than for the symptom.
+
+The range is not the scope. Every scan above vouches for a variable by
+finding its own token between two points in a block, and PHP's scope is the
+function, not the block. Codex planted `$error_alias =& $error;` above the
+guard and `$error_alias = false;` inside the scanned interval: the interval
+never names `$error`, the guard's result was rewritten, and every check
+stayed green. A closure's `use (&$x)`, a `foreach` by reference and a
+`global` declaration paired with a function that declares the same name
+(called in the range as a bare call, which names nothing) do the same, and
+the constructs that name no variable at all — `$$name`, `extract()`,
+`eval()`, an `include` — both write inside the range where they sit and make
+the alias from anywhere in the same function, so refusing them in the range
+was half a refusal. Both tests now refuse each of these where it is made,
+file-wide, for every name a scan vouches for (the ladder's held persist
+variables included), and the unnamed constructs outright; an include outside
+every function body is the ladder's one exception, and one above the range
+is the pages', which load their configuration that way. Every shape was
+executed against a local before it was listed — which is how `$GLOBALS`
+turned out to be the one that does not reach a method's local; it is refused
+anyway, because the scan cannot read for the `global` declaration that would
+make it. When a check vouches that a variable is untouched between two
+points, ask what can touch it *without naming it there*, and look for that
+over the whole scope.
+
+A reference has two ends, and the fix for the paragraph above read one.
+`$alias =& $error;` puts the `&` before the guarded name, which is what the
+check looked for; `$error =& $alias;` binds the same two slots with the
+guarded name on the left and nothing before it but whitespace, and the
+reviewer planted that one within the hour. Executed, every spelling
+tokenizes as `=` then `&`, and the reverse alias flips every page and the
+ladder rung exactly as the forward one did. A construct that binds two
+names has to be read from both of them: when a check looks for a
+variable's part in a relation, ask which other positions the grammar lets
+that variable occupy in the same relation, and plant each.
+
+### 23. Versions compared as text
+
+`$logs['version'] >= $version` on the 1-click upgrade page compared two
+version strings with a relational operator, and PHP compares those as text,
+character by character: `"1.9.8" >= "1.9.76"` is true, so every install was
+shown the 1.9.8 and 1.9.9 release notes as "what changed". It read correctly
+and rendered plausibly — a list of notes — which is why it survived the move
+to the new shell. `version_compare()` is the comparison; a version that really
+is a counter (a goal's version number) is cast to `int`, which also tells the
+reader it is one. `ForbidVersionRelationalCompareRule` reports `<`, `>`, `<=`,
+`>=` and `<=>` on any operand *named* as a version — variable, property, array
+key, constant, function or method — that PHPStan cannot prove is a number.
+The name is the whole heuristic: a version held in `$v` or `$latest` is not
+seen, so a comparison of values that came out of `202_version`, a feed or a
+`changelog()` entry needs `version_compare()` whatever it is called. Equality
+is not covered either, and is not safe in general: `"1.9" == "1.90"` is true,
+because both are numeric strings.
+
+### 24. A validation in a hydration path fails the batch, not the record
+`ExportWebhook`'s constructor ran the SSRF guard. That constructor is also the
+row-hydration path: the export cron's `findPending()` maps every pending row
+through it, so one stored `http://` webhook — or one transient DNS failure —
+threw out of the first call and stranded *every* pending export on every tick,
+including jobs with no webhook at all. The guard was right; its placement
+converted a single bad record into a total outage of the queue. Rejecting bad
+input belongs at the write boundary, where a caller is present to be told, and
+again at the point of use, where it can fail one item. A constructor that
+doubles as `fromDatabaseRow()` is neither: it runs over data that is already
+stored, in a loop, with nobody to answer. Before adding a check, ask who is on
+the other end of the throw and how many unrelated records share the call.
+
+The same question applies to any guard whose failure mode is silence. The
+webhook crons pin curl to an address `OutboundUrlGuard` approved, but an
+unbracketed IPv6 literal makes the `CURLOPT_RESOLVE` entry unparseable; curl
+discards it, resolves the host itself, and the DNS-rebinding hole the pin
+exists to close is open again — with the pinning code still sitting there
+looking correct. A guard that can be dropped without an error needs a test that
+asserts the guard's *output*, not just that the call was made.
+
+The same pin was dropped a second way, by the environment rather than the
+code. libcurl honours `https_proxy`/`HTTPS_PROXY`, and through a proxy curl
+sends `CONNECT host:443` and the *proxy* resolves the name, so
+`CURLOPT_RESOLVE` is ignored without a word. Measured: with a proxy in the
+environment the proxy received the CONNECT; with `CURLOPT_PROXY => ''` and
+`CURLOPT_NOPROXY => '*'` it received nothing. The attribution export sender
+set that pair and the LTV webhook guard did not, and nothing compared them.
+When two implementations of one protection exist, a test that pins them to
+the same option set is what stops one from quietly lacking a line the other
+learned; `OutboundUrlGuardTest` does that for the two webhook senders.
+
+And a third way, by the caller. The report rebuild's call to this server was
+pinned to the listener's own address (`DataEngine\SelfCall`), and the cron
+merged its own defaults in front of the pin — `[FOLLOWLOCATION => true,
+MAXREDIRS => 5] + $pin`, where the left side of `+` wins. A pin covers one
+name and port; a redirect to any other is resolved by DNS. Measured: an
+app answering with a redirect built from the claimed Host sent the call to
+the outside listener, whose `200` marked the hour processed with nothing
+aggregated. The pin now returns every option the call is made with, and the
+test holds its caller to setting nothing but the URL. Ask of any pin what
+else is merged into its options, and in which order.
+
+Making a read fail loudly changes every caller of it, including the ones
+that run *because something already failed*. 1acfd84 made the account
+time-zone read throw instead of answering null (right: CLAUDE.md #11), and
+`record_mysql_error()` — the database error page — called it first thing, so
+a failing database turned the error page into an uncaught fatal and the
+error was never recorded. CI's fresh database found it; locally the suite
+passed because a reused database still had the table. An error path must not
+ask the failing dependency again, and its test should not depend on whether
+the dependency happens to be healthy: the runner now records every statement
+the page asks the connection, and the page may ask none. That held for the
+body and not for the page: the runner stubbed the admin footer, which reads
+the account's dash email and the cron ping's tracking domain, and the dash
+email read called `fetch_assoc()` on the false a lost connection answers —
+a fatal after the alert, found by tracing a review question. The error page
+draws the footer without its reads (`template_bottom(false)`), and the
+runner draws the real one.
+
+The error page's own write is the same question asked of the connection's
+state. `record_mysql_error()` inserted its row on the connection that had
+just failed, inside whatever transaction the caller had open, and die()
+ended the request: the row went with the rollback at disconnect, and the
+page told the operator the error "has been recorded" over nothing (measured
+under `begin_transaction()` and `autocommit(false)`, both definitions).
+And the row's lookups went through `_mysqli_query()`, whose click-path copy
+calls `record_mysql_error()` when a statement fails: on a dead connection
+the error page recursed through itself until memory ran out, writing tens
+of thousands of log lines in one request. An error path ends the caller's transaction before it
+writes anything of its own, and anything it calls that can fail lands back
+in it at most once (`p202RecordMysqlErrorRow()`; the runner's `txn`,
+`autocommit_off`, `gone` and `lookup_fails` scenarios). The fix first kept
+the page's "it has been recorded" for the case where recording failed
+(found by review): the page's sentence is a status line too, and it
+follows what the recorder answers. And the page read the error from the
+connection, which a caller that has rolled back has already cleared: the
+rotator writer's failure was filed with a blank error and its message in the
+statement column (Get Links and the redirector breakdown did the same). A
+caller that caught the failure names it (`record_mysql_error()`'s third
+argument). Two of Get Links' five calls were fixed and three found a round
+later; `ErrorPageAfterRollbackNamesTheFailureTest` now holds every call made
+after a rollback, or in a catch block (a rollback made inside a call, as
+`Connection::transaction()` makes one, is not there to scan), to naming the
+failure. Its first draft read only the files that say "rollback", so the
+redirector breakdown, which only catches, passed a planted two-argument
+call: a scan's file filter is a claim about where the construct can be.
+
+### 25. A writer's "none" must be the reader's "none"
+The redirects tell a rotator rule redirect's kind by `redirect_campaign !=
+null`. The setup page writes NULL in the parts a redirect does not use; the
+API wrote `0`. MySQL hands the row back as strings, and in PHP 8 `'0' != null`
+is **true** (null compares as `''`), so every URL or landing-page redirect made
+through the API read as a campaign with no campaign, and each visitor its rule
+matched got `302` with an empty `Location`. Every unit test was green: the
+writer stored what it meant, and the reader read what it was written for —
+the defect was the sentinel each side assumed the other used. Two writers of
+one table is the tell. Before adding a writer, find every reader of the
+columns it leaves unused and check which value they test for "absent" (`!=
+null`, `empty()`, `> 0`, `=== ''`), and write that one; when the readers
+disagree, make the reader accept every "none" the writers produce, since rows
+already written will not change. An end-to-end request through the real
+reader (here, a click that matches the rule) is what finds it; reading either
+file alone cannot.
+
+The same split hid a whole Overview table. `DataEngine::doSummary()` writes
+`''` for a missing value (0 in an int column, under the app's empty
+`sql_mode`), but every rollup is now `INSERT … SELECT` (`ClickRollupSql`),
+which never reaches it and writes the LEFT JOIN's NULL; the Overview's
+advanced-landing-page tables asked for `aff_campaign_id IS FALSE`, which NULL
+is not, so no advanced landing page click the rollup wrote was ever listed
+there. In SQL the "none" tests that
+miss NULL are `IS FALSE`, `= 0`, `= ''` and `NOT IN (…)`; on a column a
+LEFT JOIN fills, ask for `IS NULL OR = 0`, and seed tests with the NULL the
+writer actually writes — the account-scope test seeded `0` and stayed green.
+
+Written down, it shipped again three times in one feature: the API's
+"No traffic source" filter, the pages' report filter and the summary form
+each asked `ppc_network_id IS NULL` of a rollup whose older rows hold 0.
+They ask `NoTrafficSource::condition()` now, and `NoTrafficSourceTest`
+refuses the literal and any file handling the sentinel without it. When a
+rule is a spelling, one function should own the spelling.
+
+Two writers of one *row* is the same tell from the other side. A redirector
+re-click rewrote its click with `REPLACE`, which deletes the row and inserts
+another: every column the statement did not name went back to its default —
+the customer a conversion had linked, the reviewed flag, the public id every
+cl.php and pci.php link already handed out carried, the landing URL
+(measured). `REPLACE` is a write only where the statement owns every column
+of the row; a rewrite names what it changes (`INSERT … ON DUPLICATE KEY
+UPDATE` of its own columns), and the test is a row another writer has
+touched. `ClickRowsWrittenOnlyByTheWriterTest` holds a click's rows to one
+writer, `MysqlClickRepository`.
+
+A "none" that is also a lookup key finds every row that has none. A direct
+link's click without cloaking is stored with public id 0, and off.php looked
+the visitor's last click up by its public id: `click_id_public = '0'` matched
+each of the account's clicks stored without one, and the first was moved into
+the offer's campaign (measured live). Read a key the way its writer means it
+before using it (`ClickId::parse()` refuses 0), and treat "none" as no key.
+The first fix read the ids exactly in five click scripts and left pci.php,
+cl.php, record.php, record_adv.php, pb.php and px.php comparing them as text,
+where `pci=0` marked one of those clicks as gone and `cl.php?pci=0` served
+another account's offer URL (found by review, measured on the old code).
+`PublicIdsAreComparedAsNumbersTest` now refuses a public id compared with a
+quoted value anywhere in the served tree (the setup pages and the WordPress
+plugin's calls had six more: `12abc` opened, rewrote or made a page on record
+12), and `ClickPathReads` answers nothing for an id below 1 without asking.
+
+A stamp every caller writes is read as proof of one of them. Each tier of
+`202-cronjobs/index.php` stamped `202_cronjob_logs`, and every signed-in
+page's footer pings that file as it loads, so "the cron job last ran" meant
+"anyone ran it": Settings refused AutoCron as unneeded because of the ping its
+own page had just sent, on installs with no cron job at all, and the tile,
+`health.php`, `GET /system/info` and `p202 system cron` reported a cron job
+that did not exist. The ping is marked (`Prosper202\Cron\CronRun`), the one
+write is a scheduler's, and `PagePingIsNotACronRunTest` lists every file that
+names the table with what it reads. When a record answers "did X happen",
+list who else writes it. A scheduler is still anyone: the cron's address
+needs no sign-in, so a stranger requesting it once a minute kept Settings
+refusing AutoCron. A record anyone can write is advice, never a gate:
+Settings now says why it left AutoCron off and takes the owner's word that
+the run was not their cron job's (`tests/live/autocron-switch.sh`).
+
+### 26. A boundary stands in for a predicate only where its order holds
+Automatic click deletion was to delete clicks older than N days. It took
+`MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
+below the *oldest* expired click — so it deleted almost nothing it promised,
+and, since a redirect reads `click_time` before it allocates the id and a
+rotator re-click gives an old id a new row, it could take a newer click with
+a smaller id. Measured live with a 30-day setting: the old job deleted two
+clicks recorded that day and kept all fourteen expired ones. An id range is a
+cheap stand-in for a time range only where ids are allocated in time order,
+and nothing here guarantees that: select the rows the predicate names, by an
+index on the predicate's own column, and act on their keys. The same job's
+hand-kept list of click tables had drifted five tables behind the schema;
+`ClickRetentionCoversEveryClickTableTest` now holds it to the table
+definitions. And a delete is a write the derived sums must hear about —
+`RollupDirty::clicksDeleted()` marks them in the deleting transaction.
+
+The fix moved one of the class's two deletions and left the other: the
+scheduled "delete click data from before <date>" still stored `MAX(click_id)`
+of the clicks at or before the day and deleted the ids below it, in the same
+file, under a docblock that explained why ids are not time. Measured live: a
+deletion "from before Oct 7" deleted a click re-clicked on Oct 7 and kept one
+from Oct 4. It stores the day's time now (`user_delete_data_before`), deletes
+and previews by the automatic deletion's own query, and honours an id an
+install already stored — rows already written will not change (#25). A fix
+to one consumer of a stand-in is a sweep of every consumer of it, starting
+with the ones beside it. The same form computed the day's midnight with
+`strtotime($day . ' ' . date('T'))`, today's abbreviation: "IST" is Israel's
+to PHP, so India and Ireland were cut hours off, and any day across a DST
+change an hour off (#29); a day is `DateTimeImmutable::createFromFormat('!Y-m-d',
+$day, $zone)`.
+
+The same re-click is the other half of this: a click id names one row per
+visit, so a read of "the click" that takes no order takes whichever visit
+the database returns first, usually the first (a re-click's offer URL
+carried the first visit's `[[cpc]]`). `LatestVisit` holds the order, and
+`SingleClickReadsNameTheirVisitTest` holds every read of one click's
+`202_clicks` row to it or to a listed reason; the conversion, pixel, goal
+and install reads are listed until it is decided which visit a conversion
+credits. Only `click_id` and `user_id` are the same on every visit's row.
+A read of many clicks counts each once only where every alias of
+`202_clicks` it sums is ANDed with `LatestVisit::isLatest()`; about thirty
+were converted by hand, and `ClickRowCountsTakeTheLatestVisitTest` now holds
+every `SUM`, `COUNT` and `AVG` over the table to it or to a listed function
+(a count that is per visit by design).
+
+### 27. A stored id is a claim about ownership that nothing re-checked
+A click names its campaign, traffic source and landing page by id; a
+conversion takes its click's campaign id; a landing page names a campaign, a
+campaign a category. Until 229df10 no write checked that the named record was
+the writer's own, and the rows those writes made are still in installs. Every
+read that joins the named table on its id alone therefore trusts a claim
+nobody verified — and the reads that did were not only name leaks
+(`report breakdown`, GET /conversions and the attribution and LTV reports
+named another account's campaign; the LTV recommender handed another account's
+offer URL to this account's customer). A conversion on such a click was
+recorded at the other account's payout, in its payout mode; an install was
+refused as `foreign_click` because the other account's campaign was linked to
+its own app, with that registration's id in the reason; a category CPC update
+or conversion reset chose which of this account's clicks to touch by the
+other account's campaign row. The scope check on the *driving* row (`WHERE
+c.user_id = ?`) was there every time, and read as if it covered the joins.
+
+The rule that holds: a row of another account named by id reads as naming
+nothing — `AND ref.user_id = row.user_id` in the ON clause, as
+`ReportsController::dimensionJoin()` does — so the row is still counted and the
+name, the payout or the setting simply is not there. `AccountScopedJoinTest`
+walks the tree's SQL for joins, comma joins and subqueries onto any table the
+schema gives a user_id, and refuses by name what it cannot read.
+
+What that floor does not see, and still needs the question asked by hand:
+a *lookup* rather than a join (`SELECT payout_mode … FROM 202_aff_campaigns
+WHERE aff_campaign_id = ?` with an id read from a click — that is how the
+payout one shipped, two calls away from any join); a table owned through its
+parent, which has no user_id to tie (traffic-source variables reached
+through an account's `ppc_network_id`, rotator rules through a rotator); and
+SQL a runtime builder assembles, which the test runs only for the builders
+it names. Whenever an id read from one row selects another row, ask whose
+the second row is, and whether anything the answer decides — a name, a
+payout, a setting, which rows a bulk write touches — would differ if it were
+someone else's.
+
+The tracking path has a fourth shape the floor does not model: a request
+that names two records *independently* — an offer and a click (`off.php`'s
+`acip` and `pci`), a rotator and a click (`offrtr.php`'s `rpi` and the
+subid cookie) — and then writes one into the other. Neither row is the
+driving row of the other; each was looked up by its own public id, so no
+join exists to tie. Measured: any account's `acip` or `rpi` moved any
+click, named by a sequential id or a public id two random digits wide,
+into that account's campaign at its payout, or its rotator. When a script
+takes two ids from one request, compare their owners before the write.
+The click scripts now ask it where the write is made: a click leaving its
+landing page goes through `MysqlClickRepository::recordExit()`, which takes
+the account and refuses another account's click, offer or rotator (lp.php
+had no check, and marked whatever click its cookie named). The account
+handed in is the other record's — the offer's, the rotator's, the landing
+page's — never the click's own, which compares the click with itself and
+can refuse nothing (off.php's first draft did, behind a read that happened
+to tie them). And
+`ClickRowsWrittenOnlyByTheWriterTest` holds every other rewrite of a click's
+rows to a list that says why its clicks are the account's own.
+
+Tying a join is not the end of the change: the joined row is now NULL where
+it used to be another account's, and every consumer of the joined columns
+has to be read for what NULL does there. Measured in the legacy pages'
+round: Group Overview grouped a redirector by the click's own id but keyed
+its tree by the joined row's, so the foreign group and the none group both
+arrived with an empty id and one replaced the other — the redirector level
+showed 1 of 4 clicks (it already did for a redirector removed since); the
+legacy API counted its "[no text ad]" row by `text_ad_id = 0`, so a click on
+a foreign ad, grouped there, was counted nowhere; and Get Links, finding no
+landing page for a link that names one, fell through to building a direct
+link the link was never made as. Group by the expression you select, count
+a none row by the same NULL the join produced, and give a row whose record
+is not the account's no action rather than a different one.
+
+The tracking path's reads were the floor's last list of untied joins. They
+go through `ClickPathReads` now, prepared and tied, and an id the click
+copies from a tracker (its campaign, text ad, traffic source account,
+redirector) comes back 0 where the joined row is another account's, the
+"none" a tracker naming nothing always gave, so every consumer already reads
+it. The read is where the account is decided: a writer handed an id another
+account's read produced cannot tell it apart from its own.
+
+### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
+17305ee made the API answer money as numbers rather than mysqli's decimal
+strings — right at the edge, and every PHP suite stayed green. It broke four
+readers no PHP suite runs: `p202 conversion import` decoded the click ledger's
+`amount` into a Go `string`, so every row on a click that already had a
+conversion failed with "cannot unmarshal number"; the CLI's tables rounded
+the new floats to two decimals, so a $0.00125 CPC that used to show `0.0013`
+showed `0.00`; an eval case and two instance suites compared `'0.15000'`. The
+import's own tests passed throughout, because their fake server still sent
+strings — #9, with the fake frozen at the old contract. And one of the
+instance assertions had turned vacuous rather than red:
+`assertNotSame('0.33333', $click['click_cpc'])` ("a dry run writes nothing")
+passes for every float, so it would have stayed green with the write made.
+A type change makes negative assertions against the old type pass forever;
+that is the silent direction.
+
+What found them was running the eval suite and the `@group instance` suites
+against an instance built from the branch — which only the Agent Evals
+workflow does, and only on a pull request or master, so a branch without a
+PR never runs them. Before pushing a change to what an answer *is* (a type,
+a null, a field's presence), stand up an instance and run both; then sweep
+the readers by the field name: Go structs and their test fakes, the
+reference agent and eval checks, the instance suites, `tests/live/`, and the
+display layer, where a type decides how a value renders.
+`TestStructsDecodeAPIMoneyAsJSONNumber` (go-cli/cmd) is the floor for the
+Go half: a struct field under a money name must be `json.Number`, which
+reads a number and an older server's numeric string alike. It does not see
+a non-money field, a reader that decodes into a map (those take either type
+but format differently), or any reader outside go-cli.
+
+### 29. One offset stands in for a zone's history
+The report engine put the account's zone in force with `SET time_zone` to
+its offset *today*, rounded to whole hours, and grouped by
+`FROM_UNIXTIME()`. India's +05:30 ran at +06:00 all year; every click on the
+far side of a daylight-saving change from today was an hour out; MariaDB
+refused the unsigned `'5:00'` east of UTC, so the setting held only to the
+west; and it stayed on the connection for the rest of the request, where
+the cron's attribution export grouped days in it. A zone is a list of
+offsets with the instants they start (`LocalTime::offsets()`); any
+conversion that takes one offset and applies it to a range — a session
+setting, a cached `getOffset(new DateTime())`, a fixed `+ 19800` — is wrong
+for every row outside the moment it was read. Convert each row by the
+offset in force at its own instant (`LocalTime::secondsSql()` /
+`datetimeSql()`), in the account's zone passed in, never the connection's.
+`SessionZoneSqlTest` refuses SQL that sets or reads the connection's zone;
+it cannot see PHP that does the same with one offset, which is this entry's
+job.
+
+The zone itself was read two ways. The pages took only a name PHP lists;
+the API took anything `new DateTimeZone()` accepts, so a stored `+05:30` was
+UTC on every report page and a fixed +05:30 in GET /reports/* and the LTV
+cohorts (measured live: `"timezone":"+05:30"`) -- the offset this entry
+forbids, let in by a parser. `AccountZone::normalize()` is the one rule now
+(a listed name, spelled as listed; anything else is UTC), AUTH asks it, and
+`SetTimezoneReadsTheAccountIntegrationTest` holds the pages and the API to
+one answer per stored value. A reader that parses the column itself is not
+seen: `dl.php` hands a row's zone straight to `date_default_timezone_set()`
+and the data engine the session's copy. When one stored value is parsed in
+more than one place, the parsers are one function, or they disagree on the
+inputs nobody tried.
+
+### 30. A transform applied where a value is stored moves every comparison with it
+Privacy mode stores a click's address masked (/24, /48). The click filter's
+"don't count my own clicks" check compared the click's stored address row
+with the sign-in's — and the sign-in address is an operator's record, kept
+as it arrived under every setting. Under privacy the two could never be
+equal: a click from the very address the owner had just signed in from was
+counted, measured live. Nothing failed; a comparison simply stopped matching,
+which is the silent direction. Masking the other side would have made them
+equal and wrong: a mask is many-to-one (#17), so every visitor in the
+owner's /24 — an office, a carrier's block — would have read as the owner
+and been filtered. Where the untransformed value is still in hand (the click
+path holds the arrived address in memory), compare before the transform;
+where it is not (the duplicate-click check, whose day of memory privacy
+lets keep only the masked address, so a /24 is one visitor), the comparison
+is on the transformed key, and that is a decision to write down where the
+check lives, not something to find in a report.
+
+The same change shipped the second shape of this: the mask governed the
+click path because that is where it was written, and the two app intakes,
+which store a device's address too, kept it as it arrived under every
+setting. Nothing listed where an address is written, so nothing could ask.
+`StoredAddressWritesTest` now holds every SQL write of an address column to
+the storage helper or a listed reason, and `StoredVisitorIpSourceTest` every
+call into the address index, tree-wide. Whenever a value is masked, hashed,
+case-folded, truncated or canonicalized on its way into storage, find every
+comparison against the stored value and ask which side of the transform the
+other operand is on — and every other writer of the same kind of value, and
+whether it was given the transform at all.
+
+The setting that decides the mask had the same blind spot one level up. The
+click path's bootstrap reads the privacy setting before any endpoint knows
+whose link was clicked, so it read the one row it could name — the
+install's — and every endpoint then acted under it: an account set to
+`all` under an install set to `disabled` had its visitors stored unmasked
+and given every click cookie, measured live. A value read before the
+subject it governs is known is a value about some other subject, and
+nothing about it looks wrong. The click path now holds back until an
+endpoint names the owner (`p202ApplyOwnerPrivacy()`; before that the answer
+is `all`, logged, never the install's), and `OwnerPrivacyAppliedFirstTest`
+holds every endpoint to naming it before it stores an address or sets a
+cookie. The same sweep found three cookies the setting had never governed
+at all — the `p202vid` visitor cookie, the click cookies the landing-page
+script writes on the operator's own page, and go.php's 202v cookies — each
+set under every setting, the install's included: a guard on the setters
+you know about does not reach a cookie another path writes (#5). List
+every place the guarded act happens before trusting the guard.
+
+Making the two sides comparable is not the end of it either. The pixels'
+"this visitor's last click" fallback looked an unmasked address up among
+masked rows, which under privacy never matched; fixed to compare masked
+with masked, it matched the whole /24, and since privacy sets no cookie,
+every pixel there reached it — measured live, a sale from `.40` was credited
+to the click `.30` had made. A fix that makes a dormant comparison match
+again across a many-to-one transform has to decide what several matches
+mean before it ships: `LastClickFromAddress` answers a masked address only
+when one click in the window matches it.
+
+### 31. A copied value is stale from the moment its source changes
+A click's report row (202_dataengine) copies two values from Setup, not from
+the click: its account's traffic source and its campaign's category. The
+rollup's `ON DUPLICATE KEY UPDATE` refreshed fourteen of its forty-two
+columns — `ppc_network_id` and `text_ad_id` not among them — and nothing
+re-rolled a moved account's older clicks, so after an account moved to
+another source the API's breakdown (which groups by the row's copy) put six
+of seven clicks under the old source while the Overview (which looks the
+account's source up) put all seven under the new one; and rows rolled up
+before #27's joins were tied kept another account's source for good. A
+denormalized copy needs both halves: every re-derivation writes every
+column it derives (`ClickRollupSql::refreshedColumns()`, pinned by
+`ClickRollupSqlTest`), and every writer of the source queues the copies
+for re-derivation (`RollupRefresh`, from the Setup pages and the API). When
+adding a column to a derived table, or a writer to a table one is derived
+from, find the other half. Rows already stale in an install heal only when
+they are re-rolled; nothing re-rolls them by itself.
+
+### 32. A shortcut that returns early skips the work the old path did after
+Every rollup is an `INSERT … SELECT` (`ClickRollupSql`), and
+`DataEngine::doQuery()` returns at once when the query answers `true`. The
+rows were right; but `doSummary()`, the code that return skips, was also
+where a rebuild window in `202_dataengine_job` was marked done. `getSummary()` still marked the window `processing` before the query,
+so the cron job's rebuild without curl took its first window, never finished
+it, and never took another — and it read `user_id = 1` while the curl path
+read every account. Nothing failed: the reports simply never got the
+rebuilt history. When a change makes a function skip code it used to run —
+an early return, a fast path, a branch on a new result type — list every
+side effect of the skipped code (flags, counters, cache writes, the "done"
+mark) and move each one to where the new path still runs it;
+`ClickUpgradeIntegrationTest` holds this one.
+
+Moving a write later is the same skip, seen from whoever read it. A latency
+change moved `dl.php`'s click rows after the redirect, and the redirect
+URL's placeholders (`[[c1]]`, `[[t202kw]]`, `[[country]]`) are filled by
+`replaceTrackerPlaceholders()`, which reads them back from those rows: on a
+direct link they are blank now (measured: `c1=&kw=` from a click carrying
+`c1=hello`), while `rtr.php`, whose rows were still written first, filled
+them. Before moving a write, find every reader of what it writes in the same
+request; `MysqlClickRepository` resolves the rotator's URL inside the click's
+transaction, after the rows, for that reason. An endpoint that redirects
+before its rows exist (`dl.php`, `record_simple.php`) fills the URL from the
+values it holds (`replaceClickPlaceholders()`), and the read-back is for one
+whose rows are written. The read-back's first pass had the opposite fault:
+it filled tokens before reading the click, from values no caller passed, and
+`round((float) null, 2)` is a 0 that reads like a cost, so `[[cpc]]` was 0 on
+every path while `[[cpc2]]`, left for the second pass, was right
+(`ClickUrlTokensInstanceTest`).
+
+### 33. A tagged version's upgrade step is frozen
+`upgrade_needed()` compares the stored version with the code's, and the
+ladder runs only when they differ. v1.9.76 was tagged at this branch's merge
+base; the branch kept `version.php` at 1.9.76 and put a new column into the
+1.9.75 → 1.9.76 step. An install already on the released 1.9.76 stores
+1.9.76, so nothing differs, the step never runs, and every reader of the
+column fails: measured by installing from the tag and serving the branch —
+`GET /system/retention` answered 500 and `upgrade.php` sent the operator
+to sign in. A schema change after a version is tagged takes a new version
+and a step gated on the tagged one. `UpgradeLadderTest` pins the current and
+prior versions but cannot see tags (CI's clone is shallow), and a session's
+clone often has none either — `git tag` printed nothing here while the
+remote held `v1.9.76` — so before touching the ladder ask the remote
+(`git ls-remote --tags origin 'v*'`); when `version.php`'s version is
+already there, bump it. Prove an upgrade by installing from the latest tag,
+not only from an older one.
+
+And from the oldest one, through the script CI runs. The 1.9.77 step reused
+`_upgrade_measurement_tables()`, which logged every ALTER it applied as
+`Prosper202 upgrade: reconciled …`; `tests/live/upgrade-equals-install.sh`
+reads any `Prosper202 upgrade` line in the server log as a step that did not
+converge, so the step's own work failed the check on every upgrade it ran.
+That workflow runs on a pull request and on master only, so the branch had
+never run it. The ladder's error log carries only what a step could not do
+(`ScheduledDeletionUpgradeIntegrationTest` holds the 1.9.76 rung to logging
+nothing), and a ladder change runs the script locally before it is pushed
+(see the development notes for PHP 7.4 here).
+
+### 34. A lock error ends the transaction, not the statement
+Bulk-upsert wrote up to 100 rows in one `transaction()` and caught each row's
+throwable inside the callback, answered it as that row's error, and went on.
+A deadlock is not a row's: the server rolls the whole transaction back, so
+the rows before it were answered `created` with nothing stored, and the
+statements after it on the handle ran outside any transaction and committed
+one by one (measured on MariaDB 10.11). A catch inside a transaction that
+carries on has to know the transaction is still there: undo the one step
+with `Connection::withSavepoint()`, and pass a lock error up to whatever
+owns the transaction (a ROLLBACK TO that fails leaves it rollback-only, and
+Connection refuses to commit it). `CatchInsideTransactionPassesItOnTest`
+refuses a catch written in a `transaction()`/`joinTransaction()` callback
+that neither rethrows nor ends the request, unless it catches only types a
+database failure never is. It reads the callback's own text: a catch in a
+function the callback calls, or one that rethrows only part of what it
+caught, is not seen.
+
+The retry needed the same care. A deadlock is safe to run again at once; a
+lock wait timeout means another writer held the lock for the whole timeout
+(50 seconds by default), and three more attempts made one request wait
+about 200 seconds, past any proxy. And what a retry decides by has to be a
+fact the server set: `isMysqlError()` matched the errno tag anywhere in the
+message and the English words anywhere too, so `Duplicate entry 'Deadlock
+found'` read as a deadlock. An errno, where an exception carries one (a
+`mysqli_sql_exception`'s code, the ` [errno N]` Connection puts last), is
+the whole answer; words are read only from an exception that carries
+neither.
+
+A failure after part of a batch committed is #13 at the scale of a request:
+the bulk-upsert answered 500, which left its `Idempotency-Key` unspent, and
+the same rows sent again under it stored the committed hundred twice. Once
+anything may stand, every row is answered and the answer kept under the
+key; a commit the server did not confirm is `unconfirmed`, never
+`retryable`.
+
+### 35. A cleanup chosen by another row than its write removes what nothing replaces
+A click has one report row, at its latest visit, so a rollup writes the
+latest visit's row and deletes the click's rows at earlier visits. The first
+version chose what to delete by the earlier visit: a rebuild of an hour that
+held a re-click's first visit and not its latest deleted the click's row
+there and wrote none, since the latest visit was outside the window, and the
+click was gone from every report until something rolled up its latest hour
+(measured). A write and the cleanup that goes with it are one claim, "this
+row replaces those", and both have to select by the same predicate:
+`ClickRollupSql::deleteEarlierVisits()` takes the insert's own condition and
+`LatestVisit::isLatest()`, so a window that writes nothing of a click removes
+nothing of it. Ask of every "write, then remove the rest" whether the rest is
+chosen by what was written or by something that also holds when nothing was.
+
+The predicate's cost is the other half. "No visit of this click is later"
+was first a `NOT EXISTS` over `202_clicks` by `click_id`. Installs partition
+that table weekly by `click_time`, and a lookup by a column outside the
+partition key is one probe per partition (158 on the measured install): a
+30-day report went from about 1 s to over 80 s. The latest visit is now
+recorded in `202_click_latest_visits` and read by its primary key (about
+2 s). The same layout decided the cleanup's join order: left to the server,
+the delete began from the records and read every recorded click's rows, and
+an hour's rebuild took 6 s rather than 0.1 s, so the order is fixed with
+`STRAIGHT_JOIN`. Time a query on a partitioned table on the layout the
+installer makes, not on the unpartitioned tables a test creates.
+
+A table the upgrade makes is also a table the code reads before the upgrade
+has run: the files are deployed first, and the click path does not wait for
+the upgrade. Every per-click rollup in that window failed on the missing
+table and was logged and dropped, and nothing re-rolls a click whose rollup
+failed, so the window's clicks were missing from every report for good. A
+failed rollup now queues its hour for the cron job
+(`ClickRollupSql::queueRetry()`), which runs nothing while an upgrade is
+needed and rolls the hour up once it has run. When a change adds a table, trace each of its readers
+through the window between deploy and upgrade, and give each a path that
+converges once the table exists.
+
+A read converges by itself, and still has to say why it failed. The API's
+report reads of the new table answered 500 "Internal server error" in the
+window, the legacy reports "Database error", and `/system/health` answered
+healthy (measured: four v3 routes and the legacy reports; the click and
+conversion paths queued and lost nothing). A failure that would answer a
+bare 5xx while the schema is not the code's version now answers 503 naming
+the upgrade (`Bootstrap::pendingUpgrade()`,
+`UpgradePendingAnswerServedIntegrationTest`). The first draft put that in
+the dispatcher's last catches and called it every 5xx: the Android intake,
+the Apple receiver and an `AuthException` answered from ways out of their
+own (found by review). A claim about every answer is a list of the ways
+out, read from the code: `ServerFailureAnswersAreListedTest` lists each
+answer that can be a 5xx with what it says in the window, and a committed
+write keeps its 500 (#13).
+The walk the upgrade starts has the same question one level down: a click
+whose repair always fails held back every click after it, for good (#24's
+batch); one that has failed for an hour of runs is stepped over, counted
+and named (`ReClickBackfill`, `tests/live/reclick-backfill-cron.sh` through
+the real cron job).
+
+### 36. A lock does not move the snapshot
+The ledger's click lock read the click's values with the locking read itself,
+which answers the row as it is. Re-click crediting split it: lock the first
+row, then a plain `SELECT` of the latest visit. Under REPEATABLE READ a plain
+read answers from the transaction's snapshot, which begins at its first plain
+read, not at the lock or at `BEGIN` (measured on MariaDB 10.11: neither a
+locking read, an INSERT, an `INSERT … SELECT` nor a SELECT naming no table
+starts one). A caller that read first (a delete reads the conversion to find
+its click, the goals engine its own rows) read the click as it was before a
+re-click committed while it waited, and valued the conversion under the
+previous visit's campaign (found by review, reproduced with two connections).
+
+The first fix read the click with share locks, which made that one read
+current and left every other read after the lock as stale as before: the
+conversions the recompute reads (`loadRows()`; the click was left
+`click_lead = 0` under a counted $9 sale), the reversals a delete voids (left
+standing, a $10 refund of a sale that is gone), the revenue generation a void
+is keyed by (a revived conversion's void was dropped as a repeat, and the
+customer kept $10 of a deleted conversion), and the lead `ensureManaged()`
+carries in (a second baseline, and the delete failed on the duplicate key).
+Locking one read is a fix for one read. What makes every read after a lock
+current is a snapshot younger than the lock, so the lock comes before the
+transaction's first plain read: the delete finds its click before its
+transaction begins, the goals engine and the install paths lock the install
+row and then the click first, and the install settlers read their key
+outside. `Connection` notes each transaction's first plain read
+(`snapshotTaken()`), and `lockClick()` refuses a click asked for after it and
+reads a click locked first again without a second lock.
+`LedgerReadsAfterTheLockIntegrationTest` holds a click's lock, writes, and has
+a child process delete while it waits: each of the four failed against the
+code before.
+
+The share locks were their own lesson: a locking read locks whatever its plan
+scans. On re-clicks they held the gaps two re-clicks insert into (468 of 1,200
+visits lost to deadlocks, against 0 to 3 without); the lead read's plan went
+through the `click_lead` index, whose lock covered every lead in the
+partition; and a join to `202_clicks_rotator` held its gap on a click with no
+route row, so every new redirector click's route waited for the conversion's
+commit. Measure a locking read on the path it runs on, joins included.
+
+What the refusal does not see: a statement run on the raw handle
+(`writeConnection()`), which Connection never classifies; a read
+`isPlainRead()` does not recognise from its text (it knows `SELECT` and
+`WITH` with a `FROM` and no locking clause at the end), which leaves the
+snapshot unnoted and the lock allowed, the silent direction; a lock other
+than a click's, where "lock, then read" needs the same question asked by
+hand; and a SELECT the server answers without a snapshot (information_schema
+on MariaDB), which it counts as one, the loud direction. The record of a
+lock held (`holdLock()`) is the transaction's own, not the server's: it
+trusts that a callback never carries on past a lock error (#34, held by its
+check) and that `ROLLBACK TO SAVEPOINT` keeps the row locks taken after the
+savepoint, as InnoDB documents (not measured on MariaDB). And the refusal
+moves a contract onto callers: `supersedeGoalRow()`,
+`retireGoalRowInTransaction()` and `reviveGoalRowInTransaction()` read their
+row before they lock, so each works only for a caller that locked the click
+first, and a transaction that asks for a second click after reading is
+refused with a `LogicException`, never served stale. Before relying on "the
+reads after the lock see what it holds", find the transaction's first read,
+not the lock.
+
+## Go CLI errors must be agent-actionable (`go-cli/`)
+
+The CLI is built for AI agents as much as humans. An agent reads a failure
+once and must know what to do next without guessing, so every error path in
+`go-cli/cmd/` follows this contract (plumbing lives in `cmd/cli_errors.go`,
+`cmd/root.go`, and `internal/api/client.go`):
+
+1. **Categorize input errors.** Bad flags, missing values, unsupported
+   names: return `validationError(...)`, never a bare `fmt.Errorf`. The
+   category prints as `Error [validation]:` and sets exit code 1. API
+   failures already carry `auth`/`network`/`server`/`validation` from
+   `api.APIError`/`api.RequestError`.
+2. **Wrap with `%w`, never `%v`.** Exit codes and hints are resolved with
+   `errors.As` through the wrap chain; `fmt.Errorf("fetching: %v", err)`
+   would turn a 401 (exit 2) into a generic exit 1.
+3. **Attach a next step whenever the message alone leaves a choice.**
+   `validationError(...).WithHint("...")` for new errors, `withHint(err,
+   "...")` for wrapped ones. A good hint names the command that produces
+   the right value (`p202 tracker list`), the flag to change, or the
+   ordering to follow. Lists of valid values belong in the message itself.
+   Errors without a specific hint fall back to `Run <command> --help`.
+4. **Add class-wide hints in `api.HintFor`,** not per call site, when a
+   whole failure class has one remedy (401 key check, 404 use `list`, 409
+   update instead of create, 429 back off, 5xx `p202 system health`).
+5. **Never print errors yourself.** Return them; `Execute` prints the
+   `Error [category]: ... / Hint: ...` lines, or under `--json`/`--ndjson`
+   a single `{"error": {category, message, hint, exit_code, command,
+   http_status, field_errors}}` envelope on stderr. Stdout stays empty on
+   failure so scripts never mistake an error for data.
+6. **Test the contract, not just the message.** For a new error path
+   assert `exitCodeForError(err)` and, when a hint was added,
+   `hintFor(err)` (see `cmd/cli_errors_test.go` and the forecast hint
+   tests for the pattern).
+
+Flags are written in kebab-case everywhere text shows them (help, hints,
+errors, docs, examples), in both CLIs; the snake_case spelling is accepted as
+an alias and never shown. `scripts/check-flag-spelling.py` (PR checks) holds
+tracked text to it, and `canonicalFlags()` rewrites flag names an error builds
+from API field names. In the PHP CLI an option for an API field is named and
+read through `OptionName`, `KebabCaseArgvInput` takes the alias, and
+`FlagsAreKebabCaseTest` refuses an underscore in an option name.
+
+When adding a command, run it once with a wrong flag and once against a
+dead URL under `--json` and read the envelopes as an agent would: if either
+leaves you unsure what to do next, the error needs a hint. The user-facing
+contract is documented in `documentation/cli/10-go-cli.md` under "Errors";
+keep it in sync.
+
+A command is found by reading `p202 commands --brief` — every command on one
+line with the UI page it does, about 6,000 tokens, held to a budget by
+`TestCommandsBriefIsTheCatalogAnAgentReads` — or by `p202 search`, which
+matches words: it finds a command only when the asker uses words its text
+uses. "spy" found nothing (Spy was a
+word in one flag's help), "live clicks" found goal outcomes, and "real-time
+traffic" found `click list` through `--show real` — the filter for human
+clicks — and offered that as the line to run. `searchTasks`
+(`cmd/search_tasks.go`) gives each task its exact command line, the web UI
+pages that do it and the words people use for it; a command that does what a
+page does belongs there. `TestEveryUIMenuLabelHasASearchTask` reads the
+menus and fails on a page with no entry, and
+`TestSearchFindsTheEvalAsksCommand` searches every agent-eval ask for its
+command, with `searchKnownMisses` listing the rest with why — a list that
+only shrinks. Write a phrase from the task, never from an ask: a phrase
+lifted from an ask teaches that one ask and inflates the measure. Search
+hands back candidates with `coverage` and `good_match`, as `cf cli search`
+does, and fails only when nothing matches or when the query names in full a
+page no command does: a refusal is an answer, and "is the server up" reached
+the upgrade entry through a synonym and a prefix and was told the CLI cannot
+do what `system health` does. `--quiet`, which prints a bare path a script
+will run, prints one only for a confident match. There is no fuzzy matching,
+because the askers are agents and agents spell: on the eval asks it fired on
+20 of 40 and never on a typo, turning "came" into name and "tmp" into tcp and
+counting each towards `good_match`. A word no command knows is reported
+(`unknown_terms`) rather than guessed at; it says the commands lack the word,
+which is not the same as lacking the capability (on 40 sealed agent tasks it
+named a word in 6 the CLI does under another name and in none of the 4 it
+cannot do). Inflections fold only
+onto a word the index has (`lemmaOf`). The ranking's own
+measurements, and why a model reading the catalog beats it, are in
+`cmd/search_rank.go`'s header.
+
+## Development environment notes (sandboxed/CI sessions)
+
+Findings from working on this repo in network-restricted agent sandboxes.
+Check here before burning time on tooling failures.
+
+- **`composer install` can fail with "Could not authenticate against
+  github.com".** Proxied sandboxes often serve anonymous *git* reads of
+  public GitHub repos but not Composer's authenticated dist downloads
+  (codeload/API). Retrying, `--prefer-source`, and global
+  `preferred-install` overrides do not help when the phar downloads
+  themselves are blocked. Result: `vendor/` ends up partially populated
+  (no `vendor/bin/`, empty `vendor/phpunit/...`).
+- **Workaround that works:** run `composer dump-autoload --dev` (the PSR-4
+  maps in `composer.json` cover `Api\V3\`, `Prosper202\`, `Tests\`, etc.,
+  and most runtime deps usually did land in `vendor/`), then run tests with
+  the standalone PHPUnit 9 phar: download
+  `https://phar.phpunit.de/phpunit-9.phar` (phar.phpunit.de is reachable)
+  and run `php phpunit-9.phar --bootstrap vendor/autoload.php tests/...`.
+  The phar provides PHPUnit's own classes; the project autoloader provides
+  everything else.
+- **Expect ~76 environmental test errors on a partial vendor/:** suites
+  needing Symfony Console (`tests/Cli/*`), Slim
+  (`tests/Attribution/Api/*`), a live DB singleton, or memcache error out
+  with "class not found"-style messages. They are not regressions — run the
+  suites relevant to your change (e.g. `tests/Api tests/User tests/Crud
+  tests/Rotator tests/Conversion tests/Report tests/Upgrade tests/Click
+  tests/Install` all pass without those deps) and say explicitly which
+  suites could not run.
+- **The PHP CLI (`bin/p202`) can be made to run on a partial vendor/**, which
+  is the only way to exercise a `cli/Commands/*` change end to end. Symfony
+  Console lands but three of its dependencies come down empty: clone
+  `symfony/service-contracts`, `symfony/deprecation-contracts` and
+  `symfony/string` at the versions in `composer.lock` and copy each into its
+  `vendor/symfony/<pkg>/` directory, then add the `Symfony\Contracts\Service\`
+  and `Symfony\Component\String\` PSR-4 mappings to BOTH
+  `vendor/composer/autoload_psr4.php` and `autoload_static.php` (as with
+  uap-php, `dump-autoload` will not pick them up). `deprecation-contracts`
+  ships its `trigger_deprecation()` as a *files* autoload entry and the
+  partial install generates no `autoload_files.php`, so run the CLI as
+  `php -d auto_prepend_file=vendor/symfony/deprecation-contracts/function.php
+  bin/p202 ...`. The CLI keeps its own config (`config:set-url` /
+  `config:set-key`), not `P202_API_URL`/`P202_API_KEY`.
+- **`docs/` matches a gitignore pattern** even though `docs/cli-agent.md`,
+  `docs/cli.md`, and `docs/openapi.yaml` are tracked. `git add docs/<file>`
+  on the tracked files works but prints an "ignored paths" warning (exit
+  1); use `git add -f` or ignore the warning after confirming the files
+  staged with `git status`.
+- **`docs/openapi.yaml` is read as YAML only by `scripts/check-openapi-yaml.py`**
+  (the ladder's `openapi` tier and the OpenAPI Spec workflow). Every PHP test
+  that pairs the spec with the router reads it line by line, so a plain-scalar
+  description containing `: ` made the file unparseable for every OpenAPI tool
+  with all of them green. Write a description that holds a colon as a `>-`
+  block or quote it.
+- **A Go test that reads a file outside `go-cli/` reads it through
+  `repoPath()`** (`go-cli/cmd/repo_paths_test.go`), and the file goes in
+  `.github/workflows/go-cli.yml`'s `paths:`, both lists. The workflow runs
+  only when a listed path changes, so a test reading an unlisted file stays
+  green while the file breaks it — until an unrelated CLI change runs it and
+  fails for a reason that change did not cause. Four test files read the
+  API's controllers, the preference rules, the link tokens and the agent
+  guide that way, unlisted; `TestRepoFilesTriggerTheGoWorkflow` now holds every
+  `repoPath()` to a trigger and refuses a hand-built `"..", ".."` path.
+- **Go commands must run from `go-cli/`** (`cd go-cli && go vet ./... && go
+  test ./...`); the repo root is not a Go module. The forecast package's
+  acceptance suites take ~40s; `-short` skips them.
+- **Click endpoints 500 on a partial vendor/**: `ua-parser/uap-php` is a
+  runtime dependency of the tracking path (`tracking202/redirect/*.php` →
+  `PLATFORMS::parseUserAgentInfo`), and the failed composer install leaves
+  its directory empty. Fix locally: `git clone --depth 1 --branch v3.10.0
+  https://github.com/ua-parser/uap-php <scratch>` then copy into
+  `vendor/ua-parser/uap-php/`, and add the `UAParser\` PSR-4 mapping to
+  BOTH `vendor/composer/autoload_psr4.php` and `autoload_static.php`
+  (`dump-autoload` won't pick it up — the package is missing from
+  installed.json, and the static map takes precedence). The tag ships
+  `resources/regexes.php`, so full composer installs (CI) need none of
+  this.
+- **`php -S` caches bytecode for 2 seconds, so an edit-then-request probe can
+  test the code you just replaced.** The web SAPI here runs with
+  `opcache.enable=On` and `opcache.revalidate_freq=2`; the CLI does not
+  (`enable_cli=Off`), so `php -l` and PHPUnit always see the new file while the
+  server may not. Forcing a failure into a method and immediately curling the
+  page returned the *old* behaviour and read as "the fix does not work" — the
+  fix was fine. Put a few seconds of real work (or `php -r 'usleep(3500000);'`)
+  between the write and the request, or restart the server. A full live-pass
+  script is slow enough not to hit this; a one-shot probe is not.
+- **A live local instance is achievable end to end**: install
+  `mariadb-server` via apt, start `mariadbd --user=mysql` manually, create
+  a DB/user, then run `tests/fixtures/agent-eval/ci/install-instance.sh`
+  (headless web installer; prints the REST API key) and seed with
+  `tests/fixtures/agent-eval/seed.sh`. Reports stay empty until the
+  dataengine cron runs — the seeder triggers `202-cronjobs/dej.php` itself.
+- **This sandbox's PHP is 8.4; CI runs 8.3, and `php -S` differs between
+  them.** Before 8.4 the built-in server treats any request path containing
+  a `.` as a static file and never resolves its directory index, so
+  `/.well-known/skadnetwork/report-attribution/` is a 404 (logged
+  `- Success`) on 8.3 and fine on 8.4. `install-instance.sh` therefore serves
+  through `tests/fixtures/agent-eval/ci/router.php` and probes the receiver
+  URL after installing. To run CI's PHP here without touching the system
+  `php`: `apt-get download php8.3-cli php8.3-common php8.3-mysql
+  php8.3-mbstring php8.3-curl php8.3-xml php8.3-gd php8.3-zip` into the
+  scratchpad, `dpkg -x` each, and run `usr/bin/php8.3 -n -d
+  extension_dir=usr/lib/php/20230831 -d extension=mysqlnd -d extension=mysqli
+  ...` (a shim named `php` on PATH makes `install-instance.sh` use it). The
+  static builds on dl.static-php.dev ship without mysqli.
+- **phpstan is now configured and runs in CI** (`phpstan.neon.dist` +
+  `phpstan-baseline.neon`, job `phpstan` in `.github/workflows/php-lint.yml`).
+  In a sandbox where `composer install` failed there is no `vendor/bin/`, but
+  the official phar works: download
+  `https://github.com/phpstan/phpstan/releases/download/<version>/phpstan.phar`
+  and run `php phpstan.phar analyse -c phpstan.neon.dist --no-progress`.
+  Expect ~6 `class.notFound` errors for `cli/` on a partial vendor — PHPStan
+  discovers symbols through composer's package metadata, so a package cloned
+  into `vendor/` by hand is invisible to it even after patching the
+  autoloader. Add `scanDirectories: [vendor/<pkg>]` in a scratch config that
+  `includes:` the dist file to confirm a clean run; do not commit that.
+- **The PHPUnit 9 phar takes ONE path argument; extra paths are silently
+  ignored.** `php phpunit-9.phar ... tests/A/FooTest.php tests/Schema/` ran
+  only `FooTest` and reported OK, and the schema suite it appeared to include
+  never executed — noticed only because 4 tests ran where 9 were expected.
+  Run one path per invocation, and compare the test count against what the
+  paths should contain before believing an OK line.
+- **`tests/Schema/StaticSqlSchemaTest.php` checks SQL against the schema** by
+  preparing every statically-known v3 statement on a real server — MySQL is
+  the only thing that knows whether a column exists, so no SQL parser is
+  involved. It is `@group integration`, so it is excluded from a default
+  `phpunit` run; invoke it with `--group integration` and a database it may
+  install a fresh schema into (it drops and recreates tables), e.g.
+  `P202_TEST_DB_HOST=127.0.0.1 P202_TEST_DB_NAME=p202_sqlcheck ... --group
+  integration tests/Schema/`. Point it at a scratch database, never the one
+  a live instance is using.
+- **`go test`, `go vet` and golangci-lint run in CI** via
+  `.github/workflows/go-cli.yml`; `go-cli/.golangci.yml` scopes the linters to
+  dropped errors rather than style. Run `golangci-lint run ./...` from
+  `go-cli/` before pushing.
+
+- **`git checkout <file>` restores from the index, not from your working
+  copy.** Proving a new test is not vacuous means planting a defect and
+  reverting it, and that revert silently deleted an afternoon of unstaged work
+  in five files. The only symptom was the "clean" re-run still failing. Copy
+  the file to the scratchpad and copy it back, or stage everything first — and
+  always re-run the suite after the restore, which is what caught it.
+
+- **One page shell, one chrome.** Every page renders on Bootstrap 5.3 with
+  the Prosper202 theme and component layer: `template_top()` for pages behind
+  the login, `info_top()` (`202-config/functions-standalone-ui.php`) for the
+  standalone ones — sign-in, password reset, installer, upgrader, 404,
+  `_die()`. The classic Bootstrap 3 / Flat UI shell is gone (U8), and so is
+  the `'ui'` option that chose it: `template_top()` throws on an option key it
+  does not know, so a leftover `['ui' => 'v2']` fails where it is written. A
+  Bootstrap 3, Flat UI or Font Awesome 4 class renders as nothing, and
+  `NoLegacyBootstrapClassesTest` refuses one anywhere in the served tree. The
+  chrome (`202-config/template.php`, `tracking202/_config/top.php`,
+  `tracking202/_config/sub-menu.php`) is framework-neutral markup styled by
+  `202-css/p202-chrome.css` — keep Bootstrap classes out of it; scope
+  page-family styles with the `p202-section-*` / `p202-sub-*` body classes
+  instead. Every third-party file
+  is an entry in `202-config/assets.php` with its SHA-384, referenced by id
+  from `p202_shell_assets()` or emitted with `p202_asset_tag()`; nothing in the
+  tree loads a script or stylesheet from an external host except Highcharts at
+  a pinned version and two hosted-service loaders listed in
+  `ShellIsolationTest`.
+  Four structural tests guard this (`AssetManifestTest`, `ShellIsolationTest`,
+  `NoLegacyBootstrapClassesTest`, `ComponentClassIsConsumedTest` under
+  `tests/Api/V3/`), and `202-account/ui-kit.php` shows every component —
+  copy a component's markup from the kit, parts included (error pattern #19).
+  What those cannot see — layout, theme, and the JavaScript a request never
+  runs — is covered by the browser passes in `tests/browser/` (local, not CI:
+  `node tests/browser/run.js`, see its README). Reach for one whenever a claim
+  is about a rendered pixel or an event handler: a belief about which flex
+  property made a row wrap survived a review and a push, and one measurement
+  settled it. Its `lib/checks.js` holds the per-page baseline, so adding a
+  page to a family costs a line. Two of those checks exist because a page
+  looked right in the markup and wrong on screen:
+  `flexContainersKeepTheirSpaces` (see error pattern #19) and
+  `currentSubMenuItemIsVisible`, which caught a chrome script that only
+  scrolled the current entry into view below 767px — the Analyze strip
+  overflows a 1280px desktop, so the current page's own entry was clipped.
+  Set `--cdn` (`P202_CDN_MIRROR`) when running it here, or every
+  `tracking202` page throws `Highcharts is not defined` from the blocked
+  vendor CDN and reads as a page defect.
+  The standard's first rule
+  is that the app decides what it can and says so: a form shows the common
+  case, everything else sits under a closed `.p202-disclosure` labelled
+  Advanced, and a value the app can find (platform from a store link, the
+  name from the store, HTTPS from the install URL) is never asked for. See
+  `documentation/features/ui-standard.md`.
+- **`pgrep -f` / `pkill -f` with a pattern that also appears in your own
+  command line matches your own shell and kills it (exit 144).** This happened
+  three times in one session, including once with the `[i]nstall` bracket
+  trick, because the same command later invoked the script by name. Kill by
+  port (`fuser -k 8098/tcp`) or by a pid you looked up in a separate command.
+- **A worktree whose `vendor/` is a symlink to the main checkout tests the
+  main checkout's code.** Composer's generated maps hold paths relative to
+  `vendor/`'s real location, so every `Prosper202\` and `Api\V3\` class
+  resolved to the other tree and a fix in the worktree read as not working.
+  Copy `vendor/` (`cp -a`), do not link it.
+- **This sandbox's PHP reads the system's zone database**
+  (`timezone_version_get()` is `0.system`), and Ubuntu 24.04 ships the
+  backward-compatible names (`US/Eastern`, `Europe/Kiev`) in
+  `tzdata-legacy`, which is not installed: here they are not zones at all,
+  while PHP's own builds list them under `DateTimeZone::ALL_WITH_BC`. Test zone handling with a name this
+  build has in `ALL_WITH_BC` but not in `listIdentifiers()`
+  (`America/Montreal`), and do not conclude from a refusal here what a
+  production build does.
+- **`php -S` here has no memory limit.** This sandbox's CLI `php.ini` sets
+  `memory_limit = -1`, and the built-in server reads it, so a request that
+  needs 376 MB answers 200 here and dies at the 128 MB a production PHP
+  request gets by default. POST /conversions/uploads was measured previewing
+  440,000 lines "in about 8 seconds" this way and shipped holding every line;
+  at 128 MB it answered 500 (`Allowed memory size of 134217728 bytes
+  exhausted`). Measure a size a route accepts on a server started with
+  `php -d memory_limit=128M -S …`, and size the answer too: a list the input
+  can grow is listed up to a bound, with counts for the rest.
+- **`tests/live/upgrade-equals-install.sh` runs here.** It installs 1.9.55
+  on PHP 7.4, which Ubuntu 24.04 does not carry; `ppa.launchpadcontent.net`
+  is reachable, so add `ondrej/php` for noble with its key
+  (`14AA40EC0831756756D7F66C4F4EA0AAE5267A6C`, from keyserver.ubuntu.com)
+  under `signed-by`, and `apt-get install php7.4-cli php7.4-mysql
+  php7.4-mbstring php7.4-curl php7.4-xml php7.4-json` — `php` stays 8.3. The
+  shallow clone lacks the origin commit: `git fetch --depth=1 origin
+  45897876895372162e83209167e750e078d3e3e5`. Run it as a TCP user granted on
+  `p202\_uei\_%` (`P202_DB_USER`, `P202_DB_PASS`, `P202_ORIGIN_PHP=php7.4`);
+  here the server is MariaDB 10.11 and in CI MySQL 8.0, so read CI's run too.
+
+## Closing the loop on mistakes
+
+<learn_from_mistakes>
+
+**A mistake is not finished when it is fixed. It is finished when it cannot
+recur silently.** Every bug found here — by a reviewer, by CI, by a review
+bot, or by yourself — ends in one of three artefacts, chosen in this order:
+
+1. **A machine check, if the pattern is mechanically detectable.** Always
+   prefer this: prose is advisory, a check is not. Two homes exist —
+   - a **PHPStan rule** in `202-config/PHPStan/Rules/`, registered in
+     `phpstan.neon.dist` (see error pattern #8; an unregistered rule never
+     runs), for anything expressible over the syntax tree — capture
+     semantics, `bind_param` arity, forbidden call shapes;
+   - a **structural test** under `tests/`, for anything that is really a
+     question about the codebase rather than one file: `UncheckedExecuteTest`,
+     `DuplicateGlobalClassTest`, `ScopeCoverageTest`, `ComponentClassIsConsumedTest`,
+     `ApiKeyAuthPathScopeTest`, `StaticSqlSchemaTest` are all this shape —
+     they walk the tree or the schema and assert an invariant holds
+     everywhere.
+2. **An entry in "Error patterns to avoid"** when the pattern needs judgement
+   a checker cannot apply — a fail-open default, a validation stranded behind
+   a layer that discards its input. Write the *failure mode*, not the fix: the
+   next reader needs to recognise the shape in code that looks nothing like
+   the original.
+3. **Both**, when a rule catches the common case but not all of it. The rule
+   is the floor; the entry says what the floor does not cover.
+
+Two obligations that are easy to skip:
+
+- **A regression test is not a substitute for either.** It proves this bug is
+  gone; it does nothing for the next instance of the same shape elsewhere.
+  Grep for every analogous site (error pattern #5) and decide whether a check
+  can cover them all. The `p202-sweep` skill in `.claude/skills/p202-sweep/`
+  is that sweep as a procedure: state the invariant as a predicate over one
+  site, fan it across the tree, settle the uncertain cases by executing rather
+  than reading, and land the result as a rule or structural test.
+- **Meet the bar for a new check before adding it** — clean against the whole
+  tree first, then exercised against every shape and call form it claims to
+  cover. A rule that fires on correct code gets disabled, and then the pattern
+  is unguarded *and* nobody notices. See "Verify your assumptions" below.
+
+When a mistake is worth recording but fits none of the above — a process
+failure rather than a code one — it belongs in "Verify your assumptions".
+
+</learn_from_mistakes>
+
+## Verify your assumptions
+
+<verify_assumptions>
+
+**Before stating something as fact, know how you know it.** Nearly every wrong
+conclusion recorded here came from an assumption that was never checked — not
+from bad code. The failure mode is always the same: something is *inferred*
+(from reading code, from a green local run, from a plausible-looking output)
+and then *reported* as though it were established.
+
+Three habits, in order of how often they would have helped:
+
+- **Execute the mechanism, do not reason about it.** Reading a signature, a
+  config, or a comment yields an argument; running it yields a fact. Both are
+  useful, but only the second settles anything. A ten-line `php -r` or a
+  throwaway probe takes a minute. Real examples that a minute would have
+  caught: assuming one `bind()` signature existed when the codebase had two
+  shapes across eleven definitions; asserting in a comment that `is_dir()`
+  caches a negative stat, which it does not; and error pattern #8 above, the
+  arrow-function capture bug that started this list.
+- **Never report what you have not checked.** "Tests pass" means the suite you
+  ran, in the environment you ran it in. It is not a claim about CI, and
+  saying so after pushing without looking is how a red build gets announced as
+  green. State the scope: which suites, which environment, what could not run.
+- **A surprising result is a signal to investigate, not to conclude.** When
+  output disagrees with expectation, the first hypothesis should be that the
+  *check* is wrong, not the code. Eight concurrent workers producing three
+  distinct lines was interleaved stdout, not split brain; a probe that changed
+  nothing had been aimed at the wrong directory; a test that passed against a
+  "reverted" fix had a revert that silently did not apply.
+
+- **A performance fix must be shown to return the same answer, not just to run
+  faster.** A day-grouped report was made to scan only the newest `limit + 1`
+  days, justified in a code comment, the OpenAPI spec and the guide with three
+  phrasings of "the days it cuts are days the LIMIT would have thrown away".
+  Executed, a tenant with six populated days spread over seven hundred returned
+  six groups before and two after — and low-volume accounts are exactly the ones
+  that hit it. The optimization was defensible; asserting its safety in three
+  places without running the sparse case was not, and prose that denies a
+  behaviour change reads as verified fact to the next reviewer. Before claiming
+  an optimization is invisible, construct the input where the shortcut and the
+  full computation could disagree and run both.
+
+- **Answering a reviewer is reporting.** A P2 was declined here with "the
+  1-click pages only call `upgrade_databases()` once the feed advertises a
+  newer version", cited to a file and line, recalled from a path read earlier
+  and never reopened. That gate is real but lives in a different function
+  (`functions.php`'s `update_needed()`); `202-account/auto-upgrade.php`'s POST
+  handler checks a CSRF token and nothing else, so the reviewer was right and
+  the decline was wrong. The reply then became a code comment and a test's
+  failure message, where it read as established fact to everyone after. Open
+  the file before you answer, and where a claim about reachability decides
+  something, execute the path.
+
+The rest of this section is the same principle applied to checks — the places
+where a check quietly fails to check what it appears to.
+
+- **Assert that a planted defect actually landed.** The standard way to prove a
+  test is not vacuous is to revert the fix and watch it fail. A `str.replace`
+  that silently matched nothing made a good test look worthless — the revert
+  never happened and the test passed against the code it was supposed to
+  fail. Print a marker (`assert old in s`, then re-grep the file) before
+  believing the run.
+- **A case that two checks refuse proves neither.** The exit writer's
+  refusal cases named another account's rotator with this account's rule,
+  and another rotator's rule with no redirect of its own: the rule check,
+  then the redirect check, refused them first, so removing the rotator's
+  owner check, and then the rule check, left every test green. Build each
+  refusal case so the check it names is the only one it trips (every other
+  record it names is the right one), and plant the removal of each check.
+- **A backup is only a backup where you will read it back.** A plant harness
+  copied each file to a fixed scratch path (`plant/keep`) before planting a
+  defect, and that path
+  already existed as a directory from earlier work: `cp file keep` copied the
+  file *into* it, the restore `cp keep file` failed, and the harness printed
+  "RESTORE FAILED" and went on to the next plant — nine defects stacked in
+  four files, each later backup overwriting the earlier one with an
+  already-planted copy. Nothing was committed, and every plant had to be
+  reversed by hand. Back up to a fresh `mktemp` path, check the copy with
+  `cmp` before planting, and stop the run at the first failed restore. And
+  count a plant as caught only when a named test fails: two "caught" plants
+  were a compile error (an unused variable, a missing import), which proves
+  nothing about the test.
+- **A heuristic tuned on a set is measured on a set it never saw.** The search
+  ranker was tuned against the UI's page names, the agent-eval asks and a
+  "held-out" set that had been looked at while tuning; it scored 39 of 39,
+  28 of 40 and 14 of 20 first, and a MiniSearch prototype scored 18 of 20 on
+  that held-out set. On 30 phrasings written and hashed before tuning began
+  and opened only at the end, the same ranker put the right command first
+  for 16, the prototype for 10, and the scorer being replaced for 14; its
+  confidence flag was right 92 times in 97 on the tuned sets and 13 in 19 on
+  the sealed one. Write the evaluation set first, record its hash, do not
+  read it while tuning, and report the sealed numbers as the result. A set
+  that has been opened is a development set from then on: the next
+  measurement needs a new one. The next change was measured on a set an
+  agent wrote, labelled and hashed before any search ran on it, and it
+  refuted a sentence already in the docs: that a word no command knows
+  "usually means the capability does not exist" (it named a word in 6 tasks
+  the CLI does under another name and in none of the 4 it cannot do). Write
+  the claim after the measurement, not before.
+- **Assert that a probe perturbed the target.** To force a post-commit failure
+  I created a directory where a state file goes — in the wrong one of three
+  `/tmp/p202-api-v3-state-*` directories, picked with `head -1`. The request
+  succeeded and it read as "not reproducible". Confirm the thing you broke is
+  the thing under test (check mtime, or that the process reads that path).
+- **Concurrent processes must not share a stdout you intend to count.** Eight
+  parallel workers printing one line each produced concatenated and blank
+  lines, which read as three distinct values and "split brain". Redirect each
+  to its own file before counting; interleaving is not data.
+- **A narrow race needs its window widened, not more attempts.** Launching
+  more workers never hit the adoption-rename race. Inserting a deliberate
+  sleep between the guard and the rename reproduced it on the first try, and
+  demonstrated the fix. Scratch-only: never commit the sleep.
+- **"Not succeeded" is not "refused".** The live pass's session-less replay
+  asserted that `Success!` was absent from the body and `202_version`
+  unchanged — both true of a 500 thrown before the guard ran. Planted (a
+  cookie-less POST answering 500 and exiting), the pass stayed 16/16 green
+  with the guard never reached. A negative assertion plus an unchanged side
+  effect is satisfied by every failure there is; a refusal has to be
+  asserted positively — the status the page answers with and the sentence
+  the guard itself writes — and the sibling cases already did, one screen
+  up. A scenario that expects a failure is the same trap: the error page's
+  `lookup_fails` runs passed on `Call to undefined function` (the runner
+  had not lifted the logger its real `_mysqli_query()` calls), which the
+  recorder's catch logged as the failure to record the scenario expected.
+  Assert which failure.
+- **A new lint rule is not done when it fires on the bug you wrote it for.**
+  Run it against the whole clean tree first (a rule with false positives is
+  worse than no rule — one draft produced 194), then plant a defect in *every*
+  shape and call form it claims to cover. Extending BindParamArityRule to the
+  `bind()` wrapper needed four: variadic instance, array-taking, static
+  namespaced, static global. The first "it works" run exercised one of them.
+  Derive shapes from the callee's own signature rather than a hardcoded class
+  list — the codebase had eleven `bind()` methods in two shapes.
+- **A claim about the tree is not a claim about CI until CI says so.** After
+  pushing, read the run: a workflow that is still `in_progress` has not passed.
+  Where a difference between environments is plausible (this sandbox runs on a
+  partial `vendor/`), measure the exposure rather than waiting to find out —
+  e.g. instrument a new rule to report every site it *declines* to analyse; if
+  that count is zero, fuller symbol resolution cannot surface new findings.
+- **Local green is not CI green when the runtime version differs.** The
+  eval harness passed here three times on PHP 8.4 and failed in CI on 8.3,
+  because `php -S` changed its path rules between the two; an hour went to
+  the MySQL 8.0 service that the two setups also did not share. Before
+  suspecting the component that differs most visibly, diff the versions of
+  everything on the path (`php -v` against the workflow's `php-version`),
+  and read the server log the job uploads — the 404 was on its first page.
+  The database is the same trap: this sandbox runs MariaDB and CI MySQL 8.0,
+  and `SHOW CREATE TABLE` spells an unsigned int `int(10) unsigned` on one
+  and `int unsigned` on the other (MySQL dropped display widths in 8.0.19),
+  so an upgrade test that asserted the MariaDB spelling passed here and
+  failed in CI. Assert a column's shape with a pattern that admits both, or
+  read `information_schema.COLUMNS` instead of the DDL text.
+- **A tier that reports PASS with no output did not run.** Putting the
+  scratchpad's `bin/` on PATH to reach a `phpcs` shim also put a stub `php`
+  there — left over from an old cron-clock experiment, and one that echoes and
+  exits 0. Every PHP tier then "passed": phpstan reported PASS on an empty
+  analysis, and only the unit tier's floor on its test count ("ran only 0
+  tests") said anything was wrong, which is what exposed it. Two habits: give a
+  scratch shim its own directory rather than a shared `bin/`, and give every
+  tier a floor — a PHPStan run with no result line is now a `could not run`,
+  which the stub interpreter itself was used to prove.
+- **A macOS end-to-end pass cannot see a case bug.** Git tracks
+  `tracking202/Redirect/` beside `tracking202/redirect/`; macOS's default
+  filesystem merges them, so a release zip built on a Mac put every click
+  endpoint under `Redirect/`. That zip installed, seeded and tracked clicks
+  perfectly — on the Mac — and would have served `dl.php` as a 404 on every
+  Linux host. It surfaced only when the same build ran in an Ubuntu container
+  and its file list was diffed against the Mac's. `package-release.sh` now
+  refuses a case-insensitive staging directory and `release-tree.php verify`
+  checks every shipped file's exact path, but the general rule stands: when a
+  result will run on Linux, produce it on Linux (a container is enough) before
+  calling it verified, and compare artifacts across platforms rather than
+  trusting that "it built" means "it built the same thing".
+- **Local green is not CI green when the environment carries ambient state.**
+  A `--scope` check placed after `api.NewFromConfig()` passed here only
+  because this sandbox has a URL configured; CI has none, so the config error
+  won and the flag was never examined. Run CLI tests with an empty `HOME`
+  (`goenv=$(go env GOENV); gopath=$(go env GOPATH); gomodcache=$(go env GOMODCACHE); gocache=$(go env GOCACHE); rc=1; if tmp=$(mktemp -d); then if HOME="$tmp" GOENV="$goenv" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" go test ./cmd/...; then rc=0; else rc=$?; fi; rm -rf "$tmp"; fi; [ "$rc" -eq 0 ]`) before pushing anything that touches
+  a command which builds a client. Flag validation belongs *before* the
+  client is built anyway.
+  A reused scratch database is the same trap: `ClickFiltersIntegrationTest`
+  read the device types `ReportDepthIntegrationTest` had seeded an hour
+  earlier, passed here, and failed at setUp on CI's fresh one — the schema
+  installer creates that table empty. Run a new scratch-DB integration test
+  alone against a database created for the run before pushing it.
+
+</verify_assumptions>
+
 ## Review discipline
+- Keep comments short: add one only when it records something the code cannot say. No narrative docblocks, no history.
 - Review every file individually. Batch scanning causes context overload and misses real bugs.
 - Read the file first, then think about what each line does, especially error paths.
 - After writing code, re-read it as a skeptic looking for the failure mode, not as the author expecting it to work.
 - When fixing a pattern (e.g., unchecked execute), grep the entire codebase for every instance — don't fix one and assume the rest are fine.
+- Deleting CSS is a code change, not housekeeping. Before removing a rule as
+  superseded, grep its selector against the markup: two content rules went out
+  with the old navbar in wave 0 (`.advertise`, the home page's offer iframe,
+  which fell back to a 300px default inside a full-width panel, and the
+  `small` override of Flat UI Pro's 2.067 line-height), and neither element is
+  anywhere near the chrome. Run the whole removed set through a usage sweep,
+  and measure the survivors in a browser rather than reasoning about cascade.
+- Per-file reading cannot catch a defect that lives in the *relationship* between two files: a handler and its dispatcher can each read correctly while the runtime binding between them is wrong. For cross-file mechanisms, execute the path instead of reading it.
+- Never report work as complete or merge-ready on the strength of tests that don't exercise the new path. State what was actually run and what could not be.
 
 ## Before committing
+- Run the verification ladder and report its scope report verbatim:
+  `.claude/skills/p202-verify/scripts/verify.sh --changed`. The skill at
+  `.claude/skills/p202-verify/` explains which tiers your change needs and how
+  to recover a tier on a partial `vendor/`. A tier it reports as `SKIP` did not
+  run; never fold a skip into a claim that tests pass.
 - Always perform a full deploy-quality code review of the staged changes before committing. Treat every commit as if it ships to production.
 - Walk each changed file individually (per the Review discipline above), tracing error paths and the failure modes in the "Error patterns to avoid" list.
 - Confirm the code lints/compiles and that any relevant tests pass. If tests or static analysis can't be run in the environment, say so explicitly rather than implying they passed.

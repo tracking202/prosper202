@@ -84,7 +84,7 @@ func runShell(cmd *cobra.Command, args []string) error {
 func verifyShellAccess() error {
 	client, err := api.NewFromConfig()
 	if err != nil {
-		return fmt.Errorf("shell requires a configured API key: %w", err)
+		return withHint(fmt.Errorf("shell requires a configured API key: %w", err), "Run `p202 config set-url <url>` and `p202 config set-key <key>` first.")
 	}
 
 	if !client.SupportsCapability("shell") {
@@ -92,7 +92,7 @@ func verifyShellAccess() error {
 		if capErr := client.CapabilitiesError(); capErr != nil {
 			return fmt.Errorf("could not verify shell access: %w", capErr)
 		}
-		return fmt.Errorf("shell access is not enabled for this API key. Contact support to upgrade your plan")
+		return validationError("shell access is not enabled for this API key").WithHint("Contact support to enable shell access, or run commands directly (`p202 <command>`) instead of the shell.")
 	}
 	return nil
 }
@@ -157,7 +157,7 @@ func runInteractive(state *shell.State) error {
 // If jsonOutput is set, emits JSONL (one JSON object per command). Returns
 // an error if any command fails and stopOnError is true.
 func runBatch(commands []string, state *shell.State, stopOnError bool) error {
-	anyFailed := false
+	var failures []error // every failed command's error, built-ins included
 	activeProfile := currentProfileName()
 	for _, cmdStr := range commands {
 		cmdStr = strings.TrimSpace(cmdStr)
@@ -181,12 +181,12 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 		}
 		if handled {
 			if builtinErr != nil {
-				anyFailed = true
+				failures = append(failures, builtinErr)
 				if !jsonOutput {
 					fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", cmdStr, builtinErr)
 				}
 				if stopOnError {
-					return fmt.Errorf("stopped on error: %v", builtinErr)
+					return fmt.Errorf("stopped on error: %w", builtinErr)
 				}
 			}
 			if exit {
@@ -200,7 +200,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 
 		output, err := executeShellCommand(cmdStr)
 		if err != nil {
-			anyFailed = true
+			failures = append(failures, err)
 			if jsonOutput {
 				emitBatchResult(cmdStr, output, err)
 			} else {
@@ -208,7 +208,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 				fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", cmdStr, err)
 			}
 			if stopOnError {
-				return fmt.Errorf("stopped on error: %v", err)
+				return fmt.Errorf("stopped on error: %w", err)
 			}
 			continue
 		}
@@ -221,7 +221,12 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 		storeResult(state, output)
 	}
 
-	if anyFailed {
+	if len(failures) > 0 {
+		if refused := licenceRefusal(failures...); refused != nil {
+			// Every failed command met the install's 402: say so with the
+			// licence category, exit 6 and the trial hint, not a generic failure.
+			return fmt.Errorf("one or more commands failed: %w", refused)
+		}
 		return fmt.Errorf("one or more commands failed")
 	}
 	return nil
@@ -258,7 +263,14 @@ func emitBatchResult(command string, output []byte, err error) {
 			result["output"] = strings.TrimSpace(string(output))
 		}
 	}
-	line, _ := json.Marshal(result)
+	line, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		// Never drop a batch record silently: a consumer counting JSONL lines
+		// against commands would misread the run as having fewer results.
+		fmt.Fprintf(os.Stderr, "Error encoding result for %q: %v\n", command, marshalErr)
+		fmt.Printf("{\"command\":%q,\"success\":false,\"error\":\"result could not be encoded\"}\n", command)
+		return
+	}
 	fmt.Println(string(line))
 }
 
@@ -324,14 +336,21 @@ func handleBuiltin(line string, state *shell.State, currentProfile string) (bool
 			if cmdStr == "" {
 				return true, "", false, fmt.Errorf("syntax error: assignment to $%s requires a command", varName)
 			}
-			output, err := executeShellCommand(cmdStr)
+			output, err := executeShellCommandWith(cmdStr, true)
 			if err != nil {
 				printOutput(output) // partial output produced before the error
 				return true, "", false, err
 			}
-			if value, ok := normalizeValue(output); ok {
-				state.Set(varName, value)
+			value, ok := normalizeValue(output)
+			if !ok {
+				// Captured as JSON above, so empty stdout is unambiguous here: a
+				// void operation (delete, revoke) that reports success on stderr
+				// and has no result to store. An empty result SET is {"data":[]}
+				// and lands in state.Set below. Silently leaving $name unset
+				// would let the user believe the result was captured.
+				return true, "", false, fmt.Errorf("command produced no output to capture; $%s was not set", varName)
 			}
+			state.Set(varName, value)
 			printOutput(output)
 			return true, "", false, nil
 		}
@@ -387,7 +406,7 @@ Batch mode (for AI agents):
 func switchProfile(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", fmt.Errorf("profile name is required")
+		return "", validationError("profile name is required")
 	}
 
 	cfg, err := configpkg.Load()
@@ -395,7 +414,7 @@ func switchProfile(name string) (string, error) {
 		return "", err
 	}
 	if _, exists := cfg.Profiles[name]; !exists {
-		return "", fmt.Errorf("profile %q not found. available: %s", name, strings.Join(cfg.ProfileNames(), ", "))
+		return "", validationError("profile %q not found. available: %s", name, strings.Join(cfg.ProfileNames(), ", "))
 	}
 
 	// Shell access is granted per API key, so switching profiles must pass
@@ -424,6 +443,21 @@ func currentProfileName() string {
 // produced before the failure is returned alongside the error; the caller
 // decides how to surface it (printing it here would corrupt JSONL output).
 func executeShellCommand(line string) ([]byte, error) {
+	return executeShellCommandWith(line, false)
+}
+
+// executeShellCommandWith runs a shell line, optionally forcing JSON output.
+//
+// forceJSON exists for `$name = <command>`. In the session's default table
+// mode a list with zero rows writes NOTHING to stdout — renderTable sends
+// "No results." to stderr — so an empty capture is indistinguishable from a
+// void operation that has no result at all. Forcing JSON removes the
+// ambiguity at the source rather than making the assignment guess: an empty
+// result set becomes {"data":[]} and is stored, while a genuine void
+// operation still writes nothing and is reported. Variables hold JSON
+// anyway ($name pretty-prints the stored value), so this is also the format
+// the capture is for.
+func executeShellCommandWith(line string, forceJSON bool) ([]byte, error) {
 	tokens, err := shell.TokenizeLine(line)
 	if err != nil {
 		return nil, fmt.Errorf("parse error: %w", err)
@@ -434,7 +468,7 @@ func executeShellCommand(line string) ([]byte, error) {
 
 	// Prevent recursive shell invocation
 	if tokens[0] == "shell" {
-		return nil, fmt.Errorf("cannot run shell from within shell")
+		return nil, validationError("cannot run shell from within shell")
 	}
 
 	// Save session-level state. Cobra retains parsed flag values and their
@@ -443,15 +477,41 @@ func executeShellCommand(line string) ([]byte, error) {
 	// whole tree to defaults, then re-apply the session's persistent flags.
 	savedJSON := jsonOutput
 	savedCSV := csvOutput
+	savedTable := tableOutput
+	savedCompact, savedSource, savedImplicit := compactJSON, outputSource, outputImplicit
 	savedProfile := profileName
 	savedGroup := groupName
+	// --staged is a safety promise, not a display preference: losing it in
+	// the reset would make `p202 shell --staged` execute the writes it said
+	// it would only propose. PersistentPreRunE reads this variable on every
+	// Execute(), so it has to be restored like the others.
+	savedStaged := stagedWrites
+	// The command path the top-level error envelope and its hint name.
+	// PersistentPreRunE re-stamps this for every inner command, so without
+	// restoring it a failing `p202 shell` reports the LAST command the batch
+	// ran and points an agent at that command's --help instead of its own.
+	savedCommandPath := activeCommandPath
 	sessionOverride := configpkg.GetActiveOverride()
 
 	resetAllFlags(rootCmd)
-	jsonOutput = savedJSON
-	csvOutput = savedCSV
+	// A format the session did not ask for by flag (agent, P202_OUTPUT,
+	// config) is derived again per command, so that command's --table wins.
+	if !savedImplicit {
+		jsonOutput = savedJSON
+		csvOutput = savedCSV
+		tableOutput = savedTable
+	}
+	// A capture is JSON whatever the session's format: set here, before
+	// Execute(), it reads to resolveOutputMode as an explicit --json, so
+	// neither P202_OUTPUT, config nor agent detection re-derives it. The
+	// other formats are cleared, or a --csv session would make every
+	// capture a "--json and --csv" conflict.
+	if forceJSON {
+		jsonOutput, csvOutput, tableOutput = true, false, false
+	}
 	profileName = savedProfile
 	groupName = savedGroup
+	stagedWrites = savedStaged
 	// PersistentPreRunE sets the active override from the --profile flag,
 	// which would clobber "use <profile>". Route the session's profile
 	// through the flag variable so the executed command actually uses it.
@@ -467,10 +527,15 @@ func executeShellCommand(line string) ([]byte, error) {
 	})
 
 	// Restore session-level state the command's own flags may have modified.
+	activeCommandPath = savedCommandPath
 	jsonOutput = savedJSON
 	csvOutput = savedCSV
+	tableOutput = savedTable
+	compactJSON, outputSource, outputImplicit = savedCompact, savedSource, savedImplicit
 	profileName = savedProfile
 	groupName = savedGroup
+	stagedWrites = savedStaged
+	api.SetStagedMode(savedStaged)
 	configpkg.SetActiveOverride(sessionOverride)
 
 	if cmdErr != nil {
@@ -499,12 +564,19 @@ func captureStdout(fn func()) []byte {
 		done <- buf
 	}()
 
-	fn()
-
-	os.Stdout = oldStdout
-	_ = w.Close()
-	captured := <-done
-	_ = r.Close()
+	// Restore through a defer: if fn panics, leaving os.Stdout pointing at this
+	// pipe would silence every later command in the session and leak the reader
+	// goroutine. The panic still propagates after the restore runs.
+	var captured []byte
+	func() {
+		defer func() {
+			os.Stdout = oldStdout
+			_ = w.Close()
+			captured = <-done
+			_ = r.Close()
+		}()
+		fn()
+	}()
 	return captured
 }
 
@@ -537,11 +609,15 @@ func normalizeValue(output []byte) (json.RawMessage, bool) {
 	return json.RawMessage(quoted), true
 }
 
-// storeResult saves command output as the $_ variable.
+// storeResult saves command output as the $_ variable. A command that produced
+// no output sets $_ to null rather than leaving the previous command's value in
+// place, which would misreport stale data as the last result.
 func storeResult(state *shell.State, output []byte) {
 	if value, ok := normalizeValue(output); ok {
 		state.SetLast(value)
+		return
 	}
+	state.SetLast(json.RawMessage("null"))
 }
 
 func init() {

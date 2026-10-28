@@ -1,0 +1,281 @@
+name: Agent Evals
+
+# Behavioral snapshot evals for an AI agent operating a Prosper202 instance:
+# stand up a throwaway instance (real web installer, driven headlessly), seed
+# the deterministic fixture, and run `p202 eval run` — exit code 5 fails the
+# job. By default the deterministic reference agent plays the agent, so this
+# gates the whole pipeline (installer, fixture, runner, grading) with no
+# model dependency; dispatch the workflow with your own agent_cmd/judge_cmd
+# to evaluate a real agent. Rubric lines are graded only when a judge_cmd
+# is dispatched; otherwise they report needs_judge, which does not fail the
+# job — the deterministic graders gate fully on their own.
+
+on:
+  pull_request:
+    paths:
+      - 'go-cli/**'
+      - 'api/**'
+      - '202-config/**'
+      - 'tracking202/**'
+      - '202-account/**'
+      - 'tests/fixtures/agent-eval/**'
+      - 'tests/live/**'
+      - '.github/workflows/agent-evals.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'go-cli/**'
+      - 'api/**'
+      - '202-config/**'
+      - 'tracking202/**'
+      - '202-account/**'
+      - 'tests/fixtures/agent-eval/**'
+      - 'tests/live/**'
+      - '.github/workflows/agent-evals.yml'
+  workflow_dispatch:
+    inputs:
+      agent_cmd:
+        description: >-
+          Shell command for the agent under test (reads $P202_EVAL_ASK,
+          drives the `p202` on PATH, prints its reply). Defaults to the
+          deterministic reference agent.
+        required: false
+        default: ''
+      judge_cmd:
+        description: >-
+          Optional rubric judge (JSON on stdin, PASS/FAIL verdict line on
+          stdout). Without it, rubric cases report needs_judge.
+        required: false
+        default: ''
+
+jobs:
+  agent-evals:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: prosper202
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The `runner` context is not available in a job-level env block (it
+      # expands to empty there), so publish the path from a step instead.
+      - name: Set the server-state directory
+        run: echo "P202_SERVER_STATE_DIR=${{ runner.temp }}/p202-state" >> "$GITHUB_ENV"
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.3'
+          # See php-unit.yml for why the procedural `memcache` extension is disabled.
+          extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25'   # matches go-cli/go.mod
+          cache-dependency-path: go-cli/go.sum
+
+      - name: Cache Composer downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.composer/cache
+            ~/.cache/composer
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Configure Composer authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${GITHUB_TOKEN}" ]; then
+            composer config -g github-oauth.github.com "${GITHUB_TOKEN}"
+          fi
+
+      - name: Install PHP dependencies
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+        run: composer install --prefer-dist --no-interaction --no-progress --no-dev
+
+      - name: Build the p202 CLI
+        working-directory: go-cli
+        run: go build -o p202 .
+
+      - name: Wait for MySQL
+        run: |
+          for _ in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
+              echo "MySQL is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL did not become ready in time" >&2
+          exit 1
+
+      # The install calls my.tracking202.com (licence check on every signed-in
+      # page, plus a few feeds). Production rejects unknown licence keys (since
+      # 2026-10-09) and CI's key is made up, so for this job only, resolve
+      # my.tracking202.com to a local HTTPS stub whose throwaway certificate is
+      # trusted by the runner's CA store: TLS verification stays fully on, no
+      # product code knows about it (.github/ is not in release zips), and CI
+      # stops sending traffic to production.
+      - name: Stub my.tracking202.com (CI only, verified TLS)
+        run: bash tests/fixtures/agent-eval/ci/licence-stub.sh start "${{ runner.temp }}/p202-stub"
+
+      - name: Install a throwaway instance (headless web installer)
+        id: install
+        env:
+          P202_DB_HOST: 127.0.0.1
+          P202_DB_PORT: '3306'
+          P202_DB_NAME: prosper202
+          P202_DB_USER: root
+          P202_DB_PASS: root
+          P202_HTTP_PORT: '8000'
+          P202_EVAL_RUNTIME_DIR: ${{ runner.temp }}/p202-eval
+          # Known to the pre-login pass below, which signs in with it; a
+          # throwaway instance on a disposable service container.
+          P202_ADMIN_PASS: eval-ci-${{ github.run_id }}
+        run: |
+          mkdir -p "$P202_EVAL_RUNTIME_DIR"
+          KEY=$(tests/fixtures/agent-eval/ci/install-instance.sh)
+          echo "::add-mask::$KEY"
+          echo "P202_EVAL_API_KEY=$KEY" >> "$GITHUB_ENV"
+
+      - name: Prove the upgrade page refuses a POST without the session token
+        # tests/live/upgrade-csrf.sh drives the real page over HTTP: it winds
+        # 202_version back, POSTs with no token, a wrong token and from a
+        # session-less client (each refused, the version untouched), then with
+        # the page's own token (the ladder runs), and leaves the instance at
+        # the code version. The service container is disposable, which is what
+        # the override tells tests/live/guard.sh.
+        env:
+          P202_BASE: http://127.0.0.1:8000
+          P202_DB: prosper202
+          P202_DB_HOST: 127.0.0.1
+          P202_DB_PORT: '3306'
+          P202_DB_USER: root
+          P202_DB_PASS: root
+          P202_DB_ALLOW_DESTRUCTIVE: yes-i-mean-it
+        run: bash tests/live/upgrade-csrf.sh
+
+      - name: Prove the pre-login pages refuse what they must (setup wizard lock included)
+        # tests/live/prelogin-pages.sh drives sign-in, the password reset
+        # pair, the license-key page, the setup wizard on this installed
+        # instance (its lock, and the legacy-format update, which swaps in a
+        # legacy 202-config.php and puts the original bytes back on exit),
+        # the 404, the retired 202-Mobile addresses and the feed pages. It
+        # changes the admin's password and ClickServer key and restores both.
+        env:
+          P202_BASE: http://127.0.0.1:8000
+          P202_DB: prosper202
+          P202_DB_HOST: 127.0.0.1
+          P202_DB_PORT: '3306'
+          P202_DB_USER: root
+          P202_DB_PASS: root
+          P202_DB_ALLOW_DESTRUCTIVE: yes-i-mean-it
+          P202_USER: evalci
+          P202_PASS: eval-ci-${{ github.run_id }}
+          P202_SERVER_LOG: ${{ runner.temp }}/p202-eval/php-server.log
+        run: bash tests/live/prelogin-pages.sh
+
+      - name: Configure the CLI
+        run: |
+          go-cli/p202 config set-url http://127.0.0.1:8000
+          go-cli/p202 config set-key "$P202_EVAL_API_KEY"
+          go-cli/p202 config test --json
+
+      - name: Prove the Go CLI licence gate end to end
+        # tests/live/cli-licence-gate.sh sets the install's ClickServer key to
+        # values the stub above answers differently (paid, unpaid, no such
+        # key, a refused key, an outage, a gateway's own 404, a 'paid' that is
+        # not a boolean) and drives api/v3 with the Go CLI's User-Agent, the
+        # PHP CLI's and curl's, then the built CLI itself: 402 + category
+        # licence + exit 6 only for the Go CLI and only on the service's own
+        # "not paid"; allowed on every answer that is not the service's.
+        # Restores the key and drops the cache entries it wrote. Before the
+        # seed, so the fixture is read by evals exactly as seeded.
+        env:
+          P202_BASE: http://127.0.0.1:8000
+          P202_API_KEY: ${{ env.P202_EVAL_API_KEY }}
+          P202_DB: prosper202
+          P202_DB_HOST: 127.0.0.1
+          P202_DB_PORT: '3306'
+          P202_DB_USER: root
+          P202_DB_PASS: root
+          P202_DB_ALLOW_DESTRUCTIVE: yes-i-mean-it
+          P202_BIN: go-cli/p202
+          P202_LICENCE_STUB: '1'
+        run: bash tests/live/cli-licence-gate.sh
+
+      - name: Seed the eval fixture
+        run: P202_BIN=go-cli/p202 tests/fixtures/agent-eval/seed.sh
+
+      - name: Run the eval suite
+        env:
+          AGENT_CMD: ${{ github.event.inputs.agent_cmd }}
+          JUDGE_CMD: ${{ github.event.inputs.judge_cmd }}
+        run: |
+          set -o pipefail
+          if [ -z "$AGENT_CMD" ]; then
+            AGENT_CMD="$GITHUB_WORKSPACE/tests/fixtures/agent-eval/reference-agent.sh"
+          fi
+          JUDGE_ARGS=()
+          if [ -n "$JUDGE_CMD" ]; then
+            JUDGE_ARGS=(--judge-cmd "$JUDGE_CMD")
+          fi
+          go-cli/p202 eval run \
+            --cases tests/fixtures/agent-eval/cases/ \
+            --agent-cmd "$AGENT_CMD" \
+            "${JUDGE_ARGS[@]}" \
+            --json | tee eval-results.json
+
+      - name: Run the integration suites that need a running instance
+        # `@group instance` suites (tests/integration-suites.php --instance)
+        # speak HTTP to an instance, so they run here rather than in the
+        # database-only integration job — after the eval suite, because they
+        # create the entities they click and a case must read the fixture
+        # alone. Each must report OK with at least one test: a suite that
+        # skipped did not run.
+        env:
+          P202_BASE: http://127.0.0.1:8000
+          P202_API_KEY: ${{ env.P202_EVAL_API_KEY }}
+        run: |
+          mapfile -t SUITES < <(php tests/integration-suites.php --instance)
+          if [ "${#SUITES[@]}" -lt 1 ]; then
+            echo "tests/integration-suites.php --instance selected nothing" >&2
+            exit 1
+          fi
+          # This job installs with --no-dev, so PHPUnit comes as the phar
+          # (PHPUnit 9, as composer.json pins); the suites load by path.
+          curl -sSfL https://phar.phpunit.de/phpunit-9.phar -o "$RUNNER_TEMP/phpunit-9.phar"
+          for suite in "${SUITES[@]}"; do
+            php "$RUNNER_TEMP/phpunit-9.phar" --configuration phpunit.ci.xml --group integration --no-coverage "$suite" | tee phpunit-instance.out
+            grep -qE '^OK \([1-9][0-9]* tests?' phpunit-instance.out
+          done
+
+      - name: Upload results and server log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-eval-results
+          path: |
+            eval-results.json
+            ${{ runner.temp }}/p202-eval/php-server.log
+          if-no-files-found: ignore
+
+      - name: Stop the my.tracking202.com stub
+        if: always()
+        run: bash tests/fixtures/agent-eval/ci/licence-stub.sh stop "${{ runner.temp }}/p202-stub"

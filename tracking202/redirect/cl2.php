@@ -3,11 +3,13 @@ declare(strict_types=1);
 
 use Tracking202\Redirect\RedirectHelper;
 
+// Goes on when the database is out of reach: it never reads the database.
+$p202OutageFallback = true;
 require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 
 $url = RedirectHelper::getStringParam('q');
 if ($url === null) {
-    RedirectHelper::redirect('/202-404.php');
+    RedirectHelper::redirect(p202InstallPath('202-404.php'));
 }
 
 $referrer = RedirectHelper::getStringParam('r') ?? '';

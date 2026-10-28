@@ -6,9 +6,15 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Support\ServerStateStore;
+use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\QueryInt;
+use Prosper202\Click\ReClickBackfill;
+use Prosper202\Database\Connection;
 
 class SystemController
 {
+    use StatementHelpers;
+
     public function __construct(private readonly \mysqli $db)
     {
     }
@@ -29,8 +35,16 @@ class SystemController
 
     public function version(): array
     {
+        // A version that cannot be read is a 500, not 'unknown': that is what
+        // an install without a version row answers.
         $result = $this->db->query("SELECT version FROM 202_version LIMIT 1");
-        $row = $result ? $result->fetch_assoc() : null;
+        if ($result === false) {
+            throw new DatabaseException('Version query failed [errno ' . $this->db->errno . ']');
+        }
+        $row = $result->fetch_assoc();
+        if ($row === false) {
+            throw new DatabaseException('Version fetch failed');
+        }
 
         return [
             'data' => [
@@ -70,10 +84,13 @@ class SystemController
         }
         $dbName = (string)$dbRow['db'];
 
+        // One prepared statement re-bound per table, instead of re-preparing
+        // the identical query on every iteration. (bind/execute close the
+        // statement themselves before throwing, so no finally-close here.)
+        $stmt = $this->prepare(
+            "SELECT TABLE_ROWS as cnt FROM information_schema.TABLES WHERE table_schema = ? AND table_name = ?"
+        );
         foreach ($tables as $table => $label) {
-            $stmt = $this->prepare(
-                "SELECT TABLE_ROWS as cnt FROM information_schema.TABLES WHERE table_schema = ? AND table_name = ?"
-            );
             $this->bind($stmt, 'ss', $dbName, $table);
             $this->execute($stmt, 'Stats query failed');
             $result = $stmt->get_result();
@@ -82,16 +99,22 @@ class SystemController
                 throw new DatabaseException('Stats query failed');
             }
             $row = $result->fetch_assoc();
-            $stmt->close();
             $stats[] = ['table' => $table, 'label' => $label, 'rows_estimate' => (int)($row['cnt'] ?? 0)];
         }
+        $stmt->close();
 
         $result = $this->db->query(
             "SELECT SUM(data_length + index_length) as size
             FROM information_schema.TABLES
             WHERE table_schema = DATABASE()"
         );
-        $sizeRow = $result ? $result->fetch_assoc() : ['size' => 0];
+        if ($result === false) {
+            throw new DatabaseException('Database size query failed [errno ' . $this->db->errno . ']');
+        }
+        $sizeRow = $result->fetch_assoc();
+        if (!is_array($sizeRow)) {
+            throw new DatabaseException('Database size fetch failed');
+        }
 
         return [
             'data' => [
@@ -104,22 +127,26 @@ class SystemController
 
     public function cronStatus(): array
     {
+        // A read that fails is a 500: answered as no jobs, `p202 system cron`
+        // would report cron as never having run.
         $result = $this->db->query('SELECT cronjob_type, cronjob_time FROM 202_cronjobs ORDER BY cronjob_type');
+        if ($result === false) {
+            throw new DatabaseException('Cron jobs query failed [errno ' . $this->db->errno . ']');
+        }
         $jobs = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $row['last_run_human'] = date('Y-m-d H:i:s', (int)$row['cronjob_time']);
-                $jobs[] = $row;
-            }
+        while ($row = $result->fetch_assoc()) {
+            $row['last_run_human'] = date('Y-m-d H:i:s', (int)$row['cronjob_time']);
+            $jobs[] = $row;
         }
 
         $result = $this->db->query('SELECT id, last_execution_time FROM 202_cronjob_logs ORDER BY id DESC LIMIT 20');
+        if ($result === false) {
+            throw new DatabaseException('Cron log query failed [errno ' . $this->db->errno . ']');
+        }
         $logs = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $row['time_human'] = date('Y-m-d H:i:s', (int)$row['last_execution_time']);
-                $logs[] = $row;
-            }
+        while ($row = $result->fetch_assoc()) {
+            $row['time_human'] = date('Y-m-d H:i:s', (int)$row['last_execution_time']);
+            $logs[] = $row;
         }
 
         return ['data' => ['jobs' => $jobs, 'recent_logs' => $logs]];
@@ -127,7 +154,7 @@ class SystemController
 
     public function errors(array $params): array
     {
-        $limit = max(1, min(100, (int)($params['limit'] ?? 20)));
+        $limit = QueryInt::param($params, 'limit', 20, 1, 100, 'errors, newest first');
         $stmt = $this->prepare(
             'SELECT mysql_error_id, mysql_error_time, mysql_error_text AS mysql_error_message, mysql_error_sql '
             . 'FROM 202_mysql_errors ORDER BY mysql_error_id DESC LIMIT ?'
@@ -152,29 +179,40 @@ class SystemController
     public function dataengineStatus(): array
     {
         $result = $this->db->query('SELECT time_from, time_to, processing, processed FROM 202_dataengine_job ORDER BY time_from DESC LIMIT 20');
+        if ($result === false) {
+            throw new DatabaseException('Data engine jobs query failed [errno ' . $this->db->errno . ']');
+        }
         $jobs = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $row['time_from_human'] = date('Y-m-d H:i:s', (int)$row['time_from']);
-                $row['time_to_human'] = date('Y-m-d H:i:s', (int)$row['time_to']);
-                if ((int)$row['processed'] === 1) {
-                    $row['status'] = 'completed';
-                } elseif ((int)$row['processing'] === 1) {
-                    $row['status'] = 'processing';
-                } else {
-                    $row['status'] = 'pending';
-                }
-                $jobs[] = $row;
+        while ($row = $result->fetch_assoc()) {
+            $row['time_from_human'] = date('Y-m-d H:i:s', (int)$row['time_from']);
+            $row['time_to_human'] = date('Y-m-d H:i:s', (int)$row['time_to']);
+            if ((int)$row['processed'] === 1) {
+                $row['status'] = 'completed';
+            } elseif ((int)$row['processing'] === 1) {
+                $row['status'] = 'processing';
+            } else {
+                $row['status'] = 'pending';
             }
+            $jobs[] = $row;
         }
 
+        // Not 0 when unread: 0 pending hours reads as reports up to date.
         $result = $this->db->query('SELECT COUNT(*) as cnt FROM 202_dirty_hours WHERE processed = 0');
-        $dirtyRow = $result ? $result->fetch_assoc() : ['cnt' => 0];
+        if ($result === false) {
+            throw new DatabaseException('Dirty hours query failed [errno ' . $this->db->errno . ']');
+        }
+        $dirtyRow = $result->fetch_assoc();
+        if (!is_array($dirtyRow)) {
+            throw new DatabaseException('Dirty hours fetch failed');
+        }
 
         return [
             'data' => [
                 'recent_jobs'        => $jobs,
                 'pending_dirty_hours' => (int)$dirtyRow['cnt'],
+                // How far the cron job has brought the clicks re-clicked
+                // before 1.9.79 to one visit each; null once it is done.
+                'reclick_backfill'   => (new ReClickBackfill(new Connection($this->db)))->progress(),
             ],
         ];
     }
@@ -244,33 +282,6 @@ class SystemController
                 ],
             ],
         ];
-    }
-
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
-        }
-        return $stmt;
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line -- local ref-safe wrapper
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line -- local checked-execution wrapper
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
-        }
     }
 
     private function intEnv(string $name, int $default): int

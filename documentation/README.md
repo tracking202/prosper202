@@ -6,6 +6,7 @@
 ### Documentation
 
 - [Introduction](00-introduction.md)
+- [Deploying Prosper202 on Coolify](deploying-on-coolify.md)
 
 ### Setting Up Prosper202 Pro
 
@@ -17,7 +18,7 @@
 - [Step 4 - Landing Pages](setting-up-prosper202-pro/05-step-4.md)
 - [Step 5 - Text Ads](setting-up-prosper202-pro/06-step-5.md)
 - [Step 6 - Redirector / Split Test](setting-up-prosper202-pro/07-step-6.md)
-- [Step 7 - Landing Page Codes](setting-up-prosper202-pro/08-step-7.md)
+- [Step 7 - Landing Page Codes](setting-up-prosper202-pro/08-step-7.md) ([earlier edition](setting-up-prosper202-pro/999-step-7-landing-page-codes.md))
 - [Step 8 - Tracking Link](setting-up-prosper202-pro/09-step-8.md)
 - [Step 9 - Conversion Tracking](setting-up-prosper202-pro/10-step-9.md)
 - [Step 10 - Final Step](setting-up-prosper202-pro/11-step-10.md)
@@ -38,9 +39,18 @@
 - [Text Ads](api/08-text-ads.md)
 - [Clicks](api/09-clicks.md)
 - [Conversions](api/10-conversions.md)
+- [Update: past clicks' CPC, subids, revenue reports](api/26-update.md)
+- [Setup: landing-page code, pixels and postbacks, traffic-source variables and pixels](api/27-setup.md)
 - [Reports](api/11-reports.md)
 - [Rotators](api/12-rotators.md)
 - [Attribution](api/13-attribution.md)
+- [LTV: customers, revenue, subscriptions, products, custom fields, companies, webhooks](api/20-ltv.md)
+- [App measurement: registry and Apple postbacks (SKAdNetwork, AdAttributionKit)](api/19-app-measurement.md)
+- [App SDK wire contract](api/21-app-sdk-contract.md)
+- [Goals: definitions, versions, campaign payouts, evaluation](api/22-goals.md)
+- [Web events: `event=` on pixels and postbacks, `POST /events`, `p202.track()`, traffic-source notification](api/23-events.md)
+- [Android installs: the store link, the intake, match states, postbacks](api/24-android-installs.md)
+- [Android SDK: installs, events, customer id, Play Integrity](api/25-android-sdk.md)
 - [Forecast Events](api/18-forecast-events.md)
 - [Users](api/14-users.md)
 - [System](api/15-system.md)
@@ -51,8 +61,10 @@
 ### CLI Reference
 
 - [Go CLI (p202)](cli/10-go-cli.md) — cross-platform binary with multi-profile, sync, and diff
+- [Forecasting Guide](cli/11-forecasting.md) — how `p202 forecast` works, with worked examples: bands, ensemble, coherent metrics, seasonality, level shifts, transient masking
+- [What the UI does, through the API and `p202`](cli/12-ui-parity.md) — every web page, the REST route and the `p202` command that does the same, and what still needs the browser
 
-A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 list` to see its commands); it does not yet have a dedicated reference page here.
+A legacy PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 list` to see its commands): a subset of the Go CLI's, with `noun:verb` names, kept for the scripts that call it by that path. Its `--version` line and `list` say it is the legacy CLI and point back to the Go CLI reference above; it reads the Go CLI's active profile from `~/.p202/config.json`. It has no reference page of its own.
 
 ### Tutorials and Guides
 
@@ -73,14 +85,17 @@ A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 l
 - [Advanced Attribution Engine](tutorials-and-guides/14-advanced-attribution-engine.md)
 - [Advanced Attribution Troubleshooting](tutorials-and-guides/15-advanced-attribution-troubleshooting.md)
 - [Advanced Attribution Scaling](tutorials-and-guides/16-advanced-attribution-scaling.md)
+- [Building AI Agents on Prosper202](tutorials-and-guides/17-building-agents-on-prosper202.md)
 - [PPC Tokens](tutorials-and-guides/999-ppc-tokens.md)
 - [Prosper202 Tokens](tutorials-and-guides/999-prosper202-tokens.md)
 - [Dynamic CPC Bids](tutorials-and-guides/999-dynamic-cpc-bids.md)
 
 ### Features
 
-- [Advanced Attribution Engine Rollout](features/advanced-attribution-engine.md)
-- [Multi-Touch Journeys](features/multi-touch-journeys.md)
+- [Multi-touch Attribution Engine](features/advanced-attribution-engine.md)
+- [The Prosper202 UI Standard](features/ui-standard.md)
+- [Visitor identity](features/visitor-identity.md) — how clicks are linked to one person, with first-party signals only
+- [Measurement rewrite plan](features/measurement-rewrite-plan.md) — app measurement (iOS and Android), goals, the conversion ledger and multi-touch attribution: the design, what was built, and the release gate
 
 ### Partnering With Us
 
@@ -93,6 +108,3 @@ A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 l
 - [Resources](tools--resources/00-resources.md)
 - [Common Network SubID Parameters](tools--resources/999-common-network-subid-parameters.md)
 
-### Runbooks
-
-- [Multi-touch Attribution QA Runbook](runbooks/multi-touch-qa.md) – outlines schema/toggle validation, purge/backfill procedures, and the hourly attribution maintenance cron.

@@ -1,0 +1,265 @@
+name: Adversarial Review
+
+# A second reviewer on the diffs that have historically shipped defects.
+#
+# claude-code-review.yml already runs one general review on every PR. This one
+# is narrower and deliberately different: a different model, an adversarial
+# prompt scoped to the failure shapes recorded in CLAUDE.md, and only on paths
+# that touch auth, scopes, idempotency, staged writes, the click path, or the
+# static-analysis rules themselves.
+#
+# The point is disagreement. Two models running the same prompt is redundancy;
+# two models running different prompts is coverage. Agreement between them on
+# a finding is high signal. Set REVIEW_MODEL below to a model other than the
+# one claude-code-review.yml uses, or the second run adds little.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+    paths:
+      - 'api/**'
+      # The primary login and account surfaces: throttling, session setup,
+      # password verification and change. Left out of the first version,
+      # which advertised an auth review and silently skipped the login page.
+      - '202-account/**'
+      - '202-Mobile/**'
+      - '202-login.php'
+      - '202-lost-pass.php'
+      - '202-pass-reset.php'
+      - 'api-key-required.php'
+      # API-key lifecycle: the appstore page writes clickserver_api_key behind
+      # a CSRF check (REST API keys are generated and removed in
+      # 202-account/account.php, covered above).
+      - '202-appstore/**'
+      # The cron endpoints authenticate requests against a user's
+      # install_hash and release keys or data to external services (dni.php
+      # returns the database API key, daily-email.php sends the user's email
+      # and metrics). Three rounds of review each found one more of these,
+      # so the whole directory is in rather than a list that will be short
+      # again next month.
+      - '202-cronjobs/**'
+      - 'cli/**'
+      - 'go-cli/**'
+      - '202-config/**'
+      - 'tracking202/**'
+      - 'tests/fixtures/agent-eval/**'
+      - 'phpstan.neon.dist'
+      # Not this workflow file: the Claude app refuses its token to a workflow
+      # that differs from master's copy, so a PR changing it is never reviewed
+      # by it (and would only ever show the "did not run" failure below).
+
+concurrency:
+  group: adversarial-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  adversarial-review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The publish step comments with this token. The model is given no tool
+      # that writes (see claude_args below): it returns a verdict and a
+      # report, and plain steps publish the verdict and keep the report.
+      pull-requests: write
+      issues: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Adversarial review
+        id: review
+        uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Stated, not left to the default: the full output holds the review,
+          # and the job log is public.
+          show_full_output: false
+          allowed_bots: 'claude'
+          # Pin this to a different model from the one the general review runs,
+          # otherwise the second opinion is the same opinion. The flag is
+          # omitted entirely when the variable is unset: `--model` with an
+          # empty value is a hard CLI error ("option '--model <model>'
+          # argument missing"), not a fallback to the default.
+          #
+          # --json-schema makes the verdict data rather than prose: the action
+          # fails the step when the run ends without it, so a review that
+          # produced nothing is red, not a green tick nobody can read behind.
+          #
+          # The model reads code it must not trust, and the action hands its
+          # shell a token that can write to the repository. So the tools are
+          # an allowlist: --setting-sources user keeps settings committed in
+          # the PR's tree (a .claude/settings.json granting Bash) from loading;
+          # the only commands allowed are the two read-only gh calls that show
+          # the PR, and anything else asking for permission is refused in a
+          # headless run. The deny list names the GitHub write tools anyway, so
+          # no settings source can grant them back.
+          claude_args: >-
+            ${{ vars.ADVERSARIAL_REVIEW_MODEL && format('--model {0}', vars.ADVERSARIAL_REVIEW_MODEL) || '' }}
+            --setting-sources user
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --disallowedTools "mcp__github_comment__update_claude_comment,mcp__github_inline_comment__create_inline_comment,Bash(gh api:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh issue:*),Bash(git push:*)"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["BLOCKING","NON-BLOCKING","CLEAN"]},"findings":{"type":"integer","minimum":0,"description":"How many findings the report lists"},"report":{"type":"string","minLength":1}},"required":["verdict","findings","report"],"additionalProperties":false}'
+          prompt: |
+            You are the second reviewer on ${{ github.repository }} PR
+            ${{ github.event.pull_request.number }}. A general review already
+            ran. Do not repeat it. Your job is to try to break this diff.
+
+            You can read files and run `gh pr diff` and `gh pr view` for this
+            PR; nothing else that runs commands or writes is available.
+
+            Read CLAUDE.md first, in full. Its "Error patterns to avoid"
+            section is a list of defects that actually shipped in this
+            repository. Treat it as the rubric.
+
+            Review every changed file individually. Batch scanning misses real
+            bugs. For each file, trace the error paths, not the happy path.
+
+            Ask these questions of the diff, and answer each one with a file
+            and line or with "not applicable to this diff":
+
+            1. Is there a fallible call whose return value is unchecked?
+               Not just execute(). get_result(), store_result(), prepare(),
+               and json.Marshal all signal failure with a value that is
+               indistinguishable from a legitimate empty answer. That
+               indistinguishability is the tell.
+            2. Does any default, fallback, or predicate resolve an unknown or
+               malformed value to the most permissive interpretation? A
+               predicate that answers a question must not answer it when it
+               does not know. false is an answer, not an error.
+            3. Is a guard added at one layer while a layer above it can
+               discard, omit, or rewrite the input before it arrives?
+            4. Is a security or validation pattern applied here that has
+               analogous call sites elsewhere which this diff does not touch?
+               Name them.
+            5. Does any flag whose purpose is to withhold an action survive
+               every boundary that rebuilds state? Check subprocess spawns and
+               flag-tree resets, not just the flag definition.
+            6. Does any retry, idempotency, or dedup mechanism fold the thing
+               it is meant to compare into the key it looks up by? If X is
+               part of the lookup path, no lookup can tell you X changed.
+            7. Does a new or changed cache multiply the blast radius of a
+               wrong value? Ask what the cached value costs if it is wrong,
+               not what it saves when right.
+            8. Do the tests exercise the real seam, or do they inject a fake
+               for the thing under test? If the new code IS the wiring, a
+               stubbed dispatcher proves only the bookkeeping.
+            9. Does the PR description claim a capability is complete without
+               naming an end-to-end run that exercised it? Aggregate green
+               suites are not coverage of the path this diff wrote.
+            10. If this diff adds a PHPStan rule: is it registered in
+                phpstan.neon.dist, and is there evidence it was run against
+                the whole clean tree and against a planted defect in every
+                call shape it claims to cover?
+
+            Report only findings you can point at with a file and line. For
+            each one give the failure mode, not a style note. If you cannot
+            find anything under a heading, say so rather than padding.
+
+            Return the result as structured output, not as a comment: you
+            cannot post to GitHub. The workflow publishes only the verdict and
+            the number of findings; the report goes to the maintainers alone.
+            `verdict` is BLOCKING, NON-BLOCKING, or CLEAN. `findings` is how
+            many findings the report lists. `report` is the whole review in
+            Markdown: your answer to each of the ten questions, every finding
+            with its file and line and failure mode, and one sentence saying
+            which of the ten questions you could not evaluate from the diff
+            alone.
+
+      # The report can say how a defect could be used, and this repository
+      # is public, so it goes nowhere the public can read: not in a comment,
+      # not in the job summary, and not in a step's env or script, which the
+      # job log prints. It is read from the action's execution file and
+      # encrypted to the maintainers' key, pinned here by fingerprint; the
+      # Claude app runs only this file as master has it, and a PR that swaps
+      # .github/review-findings-key.asc fails the encryption instead.
+      # Maintainers: `gh run download <run> -n review-findings`, then
+      # `gpg -d adversarial-review.md.asc`.
+      - name: Encrypt the findings
+        id: findings
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          # Set only when Claude actually ran: empty when the action skipped,
+          # as it does with success on a PR that changes this workflow file.
+          CONCLUSION: ${{ steps.review.outputs.conclusion }}
+          REVIEW_KEY_FPR: BAB7BE5D3B34F59E9BD75C719878332A6782CC78
+        run: |
+          set -euo pipefail
+          if [ -z "$CONCLUSION" ]; then
+            echo "::error::the adversarial review did not run, so this PR was not reviewed (see the 'Adversarial review' step log; on a PR that changes this workflow file the Claude app refuses to run it)"
+            exit 1
+          fi
+          result=$(jq -cs 'flatten | map(select(type == "object" and .type == "result")) | last | .structured_output // empty' "$EXECUTION_FILE")
+          verdict=$(jq -r '.verdict // empty' <<<"$result")
+          case "$verdict" in
+            BLOCKING|NON-BLOCKING|CLEAN) ;;
+            *) echo "::error::the review returned no usable verdict (got '${verdict}')"; exit 1 ;;
+          esac
+          findings=$(jq -r '.findings // empty' <<<"$result")
+          if ! [[ "$findings" =~ ^[0-9]+$ ]]; then
+            echo "::error::the review returned no finding count"
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --quiet --import .github/review-findings-key.asc
+          mkdir -p "$RUNNER_TEMP/review-findings"
+          jq -r '.report' <<<"$result" | gpg --batch --yes --quiet --trust-model always --armor \
+            --encrypt --recipient "$REVIEW_KEY_FPR" --output "$RUNNER_TEMP/review-findings/adversarial-review.md.asc"
+          echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
+          echo "findings=${findings}" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the encrypted findings with the run
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: review-findings
+          path: ${{ runner.temp }}/review-findings
+          if-no-files-found: error
+          retention-days: 30
+
+      # One comment per PR, rewritten on each push, so the latest verdict is
+      # the one on the page; the same text goes to the job summary. Neither
+      # holds the report. BLOCKING fails the check. No status check is
+      # required on master, so a red one flags the PR without stopping a
+      # merge.
+      - name: Publish the verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERDICT: ${{ steps.findings.outputs.verdict }}
+          FINDINGS: ${{ steps.findings.outputs.findings }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          marker='<!-- adversarial-review -->'
+          body=$(mktemp)
+          {
+            echo "$marker"
+            echo "## Adversarial review: ${VERDICT}"
+            echo
+            echo "For ${HEAD_SHA}: ${FINDINGS} finding(s). The report is encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
+            echo
+            echo "Rewritten on every push; the check fails on BLOCKING."
+          } > "$body"
+          cat "$body" >> "$GITHUB_STEP_SUMMARY"
+
+          # Only this workflow's own comment is rewritten: a comment anyone
+          # else starts with the marker is not ours to edit.
+          existing=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" | head -n 1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${existing}" -F body=@"$body" > /dev/null
+          else
+            gh pr comment "$PR" -R "$REPO" --body-file "$body"
+          fi
+
+          if [ "$VERDICT" = BLOCKING ]; then
+            echo "::error::adversarial review: BLOCKING (the report is in this run's review-findings artifact, encrypted)"
+            exit 1
+          fi

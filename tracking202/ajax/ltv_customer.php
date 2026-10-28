@@ -5,6 +5,12 @@ include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
+// Draw the window ltv.php drew, not whatever the stored one says by now: a
+// second tab may have stored another (ReportView). ltv.js sends the view
+// with every request under tracking202/ajax/.
+require_once(substr(__DIR__, 0, -17) . '/202-config/functions-report-prefs.php');
+$reportView = p202_report_view_begin();
+
 //set the timezone for the user, for entering their dates.
 AUTH::set_timezone($_SESSION['user_timezone']);
 
@@ -46,8 +52,8 @@ try {
             try {
                 $crm->erase($userId, $customerId);
                 echo p202_ltv_ui_styles()
-                    . '<a href="#" class="ltv-back" onclick="ltvNav(\'report\'); return false;">'
-                    . '<i class="fa fa-angle-left"></i> Back to Customer LTV</a>'
+                    . '<a href="#" class="btn btn-link btn-sm px-0 mb-2" onclick="ltvNav(\'report\'); return false;">'
+                    . '<i class="bi bi-chevron-left"></i> Back to Customer LTV</a>'
                     . p202_ltv_flash('success', 'Customer erased: personal data, aliases, custom fields and '
                         . 'personalization tokens removed. Revenue totals were kept for reporting integrity.');
                 return;
@@ -193,7 +199,7 @@ try {
 
 <?php echo p202_ltv_ui_styles(); ?>
 
-<a href="#" class="ltv-back" onclick="ltvNav('report'); return false;"><i class="fa fa-angle-left"></i> Back to Customer LTV</a>
+<a href="#" class="btn btn-link btn-sm px-0 mb-2" onclick="ltvNav('report'); return false;"><i class="bi bi-chevron-left"></i> Back to Customer LTV</a>
 
 <?php if ($customer === null) { ?>
     <?php echo p202_ltv_flash('warn', 'Customer not found.'); ?>
@@ -248,11 +254,11 @@ $cfValue = static function (array $field) use ($fromPost, $customer): string {
 
 <?php if ($mode === 'edit') { ?>
     <!-- ================= EDIT MODE ================= -->
-    <div class="ltv-page-head">
-        <span class="ltv-avatar"><?php echo $esc($avatarInitial); ?></span>
-        <div>
-            <div class="ltv-page-title">Edit <?php echo $esc($displayName); ?></div>
-            <div class="ltv-page-sub">Customer #<?php echo (int) $customer['customer_id']; ?></div>
+    <div class="p202-page-header">
+        <span class="p202-page-header__icon"><?php echo $esc($avatarInitial); ?></span>
+        <div class="p202-page-header__text">
+            <div class="p202-page-header__title">Edit <?php echo $esc($displayName); ?></div>
+            <div class="p202-page-header__desc">Customer #<?php echo (int) $customer['customer_id']; ?></div>
         </div>
     </div>
 
@@ -261,57 +267,57 @@ $cfValue = static function (array $field) use ($fromPost, $customer): string {
         <input type="hidden" name="customer_id" value="<?php echo (int) $customer['customer_id']; ?>" />
         <input type="hidden" name="action" value="save" />
 
-        <div class="ltv-cols">
+        <div class="d-grid gap-3 mb-3" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));">
             <?php echo p202_ltv_card_open('Profile'); ?>
-                <div class="ltv-card-body">
-                    <div class="ltv-def"><div class="ltv-def-label">Customer Ref
-                            <small>Identity key — managed via aliases, not editable.</small></div>
-                        <div class="ltv-def-value"><?php echo $esc($customer['primary_ref'] ?? ''); ?></div></div>
-                    <div class="ltv-def"><div class="ltv-def-label">First Name</div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="crm[first_name]" maxlength="100" value="<?php echo $esc($crmValue('first_name')); ?>"></div></div>
-                    <div class="ltv-def"><div class="ltv-def-label">Last Name</div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="crm[last_name]" maxlength="100" value="<?php echo $esc($crmValue('last_name')); ?>"></div></div>
-                    <div class="ltv-def"><div class="ltv-def-label">Email</div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="email" maxlength="255" value="<?php echo $esc($emailValue); ?>"></div></div>
-                    <div class="ltv-def"><div class="ltv-def-label">Phone</div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="crm[phone]" maxlength="50" value="<?php echo $esc($crmValue('phone')); ?>"></div></div>
-                    <div class="ltv-def"><div class="ltv-def-label">Company</div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="crm[company]" maxlength="255" value="<?php echo $esc($crmValue('company')); ?>"></div></div>
+                <div class="p202-panel__body">
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Customer Ref
+                            <small class="d-block">Identity key — managed via aliases, not editable.</small></div>
+                        <div class="col-sm-8 text-break"><?php echo $esc($customer['primary_ref'] ?? ''); ?></div></div>
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">First Name</div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="crm[first_name]" maxlength="100" value="<?php echo $esc($crmValue('first_name')); ?>"></div></div>
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Last Name</div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="crm[last_name]" maxlength="100" value="<?php echo $esc($crmValue('last_name')); ?>"></div></div>
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Email</div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="email" maxlength="255" value="<?php echo $esc($emailValue); ?>"></div></div>
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Phone</div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="crm[phone]" maxlength="50" value="<?php echo $esc($crmValue('phone')); ?>"></div></div>
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Company</div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="crm[company]" maxlength="255" value="<?php echo $esc($crmValue('company')); ?>"></div></div>
                 </div>
             <?php echo p202_ltv_card_close(); ?>
             <?php echo p202_ltv_card_open('Address'); ?>
-                <div class="ltv-card-body">
-                    <div class="ltv-def"><div class="ltv-def-label">Address Line 1</div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="crm[address_line1]" maxlength="255" value="<?php echo $esc($crmValue('address_line1')); ?>"></div></div>
-                    <div class="ltv-def"><div class="ltv-def-label">Address Line 2</div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="crm[address_line2]" maxlength="255" value="<?php echo $esc($crmValue('address_line2')); ?>"></div></div>
-                    <div class="ltv-def"><div class="ltv-def-label">City</div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="crm[city]" maxlength="100" value="<?php echo $esc($crmValue('city')); ?>"></div></div>
-                    <div class="ltv-def"><div class="ltv-def-label">Region / State</div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="crm[region]" maxlength="100" value="<?php echo $esc($crmValue('region')); ?>"></div></div>
-                    <div class="ltv-def"><div class="ltv-def-label">Postal Code</div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="crm[postal_code]" maxlength="20" value="<?php echo $esc($crmValue('postal_code')); ?>"></div></div>
-                    <div class="ltv-def"><div class="ltv-def-label">Country <small>2-letter code</small></div>
-                        <div class="ltv-def-value"><input type="text" class="ltv-input" name="crm[country]" maxlength="2" value="<?php echo $esc($crmValue('country')); ?>"></div></div>
+                <div class="p202-panel__body">
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Address Line 1</div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="crm[address_line1]" maxlength="255" value="<?php echo $esc($crmValue('address_line1')); ?>"></div></div>
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Address Line 2</div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="crm[address_line2]" maxlength="255" value="<?php echo $esc($crmValue('address_line2')); ?>"></div></div>
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">City</div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="crm[city]" maxlength="100" value="<?php echo $esc($crmValue('city')); ?>"></div></div>
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Region / State</div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="crm[region]" maxlength="100" value="<?php echo $esc($crmValue('region')); ?>"></div></div>
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Postal Code</div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="crm[postal_code]" maxlength="20" value="<?php echo $esc($crmValue('postal_code')); ?>"></div></div>
+                    <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Country <small>2-letter code</small></div>
+                        <div class="col-sm-8 text-break"><input type="text" class="form-control form-control-sm" name="crm[country]" maxlength="2" value="<?php echo $esc($crmValue('country')); ?>"></div></div>
                 </div>
             <?php echo p202_ltv_card_close(); ?>
         </div>
 
         <?php if ($fieldDefinitions !== []) { ?>
             <?php echo p202_ltv_card_open('Custom Fields'); ?>
-                <div class="ltv-card-body">
+                <div class="p202-panel__body">
                     <?php foreach ($fieldDefinitions as $field) {
                         $key = (string) $field['field_key'];
                         $label = (string) ($field['label'] ?? $key);
                         $type = (string) $field['field_type'];
                         $value = $cfValue($field);
                     ?>
-                        <div class="ltv-def">
-                            <div class="ltv-def-label"><?php echo $esc($label); ?>
-                                <small><?php echo $esc($type); ?></small></div>
-                            <div class="ltv-def-value">
+                        <div class="row g-2 py-2 border-bottom">
+                            <div class="col-sm-4 text-secondary"><?php echo $esc($label); ?>
+                                <small class="d-block"><?php echo $esc($type); ?></small></div>
+                            <div class="col-sm-8 text-break">
                                 <?php if ($type === 'boolean') { ?>
-                                    <select class="ltv-select" name="cf[<?php echo $esc($key); ?>]">
+                                    <select class="form-select form-select-sm" name="cf[<?php echo $esc($key); ?>]">
                                         <option value="" <?php if ($value === '') { echo 'selected'; } ?>>&mdash;</option>
                                         <option value="1" <?php if ($value === '1') { echo 'selected'; } ?>>Yes</option>
                                         <option value="0" <?php if ($value === '0') { echo 'selected'; } ?>>No</option>
@@ -320,14 +326,14 @@ $cfValue = static function (array $field) use ($fromPost, $customer): string {
                                     $options = is_string($field['options'] ?? null) ? json_decode((string) $field['options'], true) : ($field['options'] ?? []);
                                     $options = is_array($options) ? $options : [];
                                 ?>
-                                    <select class="ltv-select" name="cf[<?php echo $esc($key); ?>]">
+                                    <select class="form-select form-select-sm" name="cf[<?php echo $esc($key); ?>]">
                                         <option value="" <?php if ($value === '') { echo 'selected'; } ?>>&mdash;</option>
                                         <?php foreach ($options as $option) { ?>
                                             <option value="<?php echo $esc($option); ?>" <?php if ($value === (string) $option) { echo 'selected'; } ?>><?php echo $esc($option); ?></option>
                                         <?php } ?>
                                     </select>
                                 <?php } else { ?>
-                                    <input type="text" class="ltv-input" name="cf[<?php echo $esc($key); ?>]"
+                                    <input type="text" class="form-control form-control-sm" name="cf[<?php echo $esc($key); ?>]"
                                         value="<?php echo $esc($value); ?>"
                                         <?php if ($type === 'date') { echo 'placeholder="YYYY-MM-DD"'; } ?>
                                         <?php if ($type === 'number') { echo 'placeholder="e.g. 42.5"'; } ?>>
@@ -340,9 +346,9 @@ $cfValue = static function (array $field) use ($fromPost, $customer): string {
         <?php } ?>
 
         <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 16px;">
-            <button type="button" class="ltv-btn ltv-btn-primary" onclick="ltvCustomerSave();">Save Changes</button>
-            <button type="button" class="ltv-btn" onclick="ltvCustomerView(<?php echo (int) $customer['customer_id']; ?>);">Cancel</button>
-            <span class="ltv-note">Emptying a field clears its stored value.</span>
+            <button type="button" class="btn btn-sm btn-primary" onclick="ltvCustomerSave();">Save Changes</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="ltvCustomerView(<?php echo (int) $customer['customer_id']; ?>);">Cancel</button>
+            <span class="form-text">Emptying a field clears its stored value.</span>
         </div>
     </form>
 
@@ -370,33 +376,33 @@ $addressParts = array_filter([
 $customerStatus = (string) ($customer['status'] ?? 'active');
 ?>
 
-<div class="ltv-page-head">
-    <span class="ltv-avatar"><?php echo $esc($avatarInitial); ?></span>
-    <div>
-        <div class="ltv-page-title"><?php echo $esc($displayName); ?>
+<div class="p202-page-header">
+    <span class="p202-page-header__icon"><?php echo $esc($avatarInitial); ?></span>
+    <div class="p202-page-header__text">
+        <div class="p202-page-header__title"><?php echo $esc($displayName); ?>
             <?php if ($customerStatus !== 'active') { ?>
                 <?php echo p202_ltv_status_pill($customerStatus); ?>
             <?php } ?>
             <?php echo p202_ltv_pill('Engagement ' . (int) $engagementScore . '/100',
                 $engagementScore >= 70 ? 'green' : ($engagementScore >= 40 ? 'blue' : 'gray')); ?>
         </div>
-        <div class="ltv-page-sub">Customer #<?php echo (int) $customer['customer_id']; ?></div>
+        <div class="p202-page-header__desc">Customer #<?php echo (int) $customer['customer_id']; ?></div>
     </div>
-    <div class="ltv-page-actions">
-        <button type="button" class="ltv-btn" onclick="ltvCustomerEdit(<?php echo (int) $customer['customer_id']; ?>);">
-            <i class="fa fa-pencil"></i> Edit
+    <div class="p202-page-header__actions">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="ltvCustomerEdit(<?php echo (int) $customer['customer_id']; ?>);">
+            <i class="bi bi-pencil"></i> Edit
         </button>
-        <button type="button" class="ltv-btn" onclick="ltvCustomerMerge(<?php echo (int) $customer['customer_id']; ?>);" title="Merge another customer record into this one">
-            <i class="fa fa-compress"></i> Merge
+        <button type="button" class="btn btn-secondary btn-sm" onclick="ltvCustomerMerge(<?php echo (int) $customer['customer_id']; ?>);" title="Merge another customer record into this one">
+            <i class="bi bi-arrows-collapse"></i> Merge
         </button>
-        <button type="button" class="ltv-btn ltv-btn-danger" onclick="ltvCustomerErase(<?php echo (int) $customer['customer_id']; ?>);" title="Erase personal data (GDPR); revenue totals are kept">
-            <i class="fa fa-eraser"></i> Erase
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="ltvCustomerErase(<?php echo (int) $customer['customer_id']; ?>);" title="Erase personal data (GDPR); revenue totals are kept">
+            <i class="bi bi-eraser"></i> Erase
         </button>
     </div>
 </div>
 
 <!-- Lifetime rollups -->
-<div class="ltv-stats">
+<div class="p202-tiles">
     <?php echo p202_ltv_stat('Lifetime Revenue', '$' . $money($customer['total_revenue'] ?? 0),
         ((float) ($customer['refunded_amount'] ?? 0)) > 0 ? '$' . $money($customer['refunded_amount']) . ' refunded' : ''); ?>
     <?php echo p202_ltv_stat('Orders', number_format((int) ($customer['order_count'] ?? 0))); ?>
@@ -410,29 +416,29 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
 </div>
 
 <!-- Profile + identity -->
-<div class="ltv-cols">
+<div class="d-grid gap-3 mb-3" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));">
     <?php echo p202_ltv_card_open('Profile'); ?>
-        <div class="ltv-card-body">
-            <div class="ltv-def"><div class="ltv-def-label">Customer Ref</div>
-                <div class="ltv-def-value"><?php echo $esc($customer['primary_ref'] ?? ''); ?></div></div>
-            <div class="ltv-def"><div class="ltv-def-label">Email</div>
-                <div class="ltv-def-value"><?php echo $esc($customer['email'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></div></div>
-            <div class="ltv-def"><div class="ltv-def-label">Phone</div>
-                <div class="ltv-def-value"><?php echo $esc($customer['phone'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></div></div>
-            <div class="ltv-def"><div class="ltv-def-label">Company</div>
-                <div class="ltv-def-value"><?php echo $esc($customer['company'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></div></div>
-            <div class="ltv-def"><div class="ltv-def-label">Address</div>
-                <div class="ltv-def-value"><?php echo $addressParts !== [] ? $esc(implode(', ', $addressParts)) : '<span class="ltv-dim">—</span>'; ?></div></div>
-            <div class="ltv-def"><div class="ltv-def-label">Acquisition Click</div>
-                <div class="ltv-def-value"><?php echo !empty($customer['first_click_id']) ? '#' . (int) $customer['first_click_id'] : '<span class="ltv-dim">—</span>'; ?></div></div>
+        <div class="p202-panel__body">
+            <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Customer Ref</div>
+                <div class="col-sm-8 text-break"><?php echo $esc($customer['primary_ref'] ?? ''); ?></div></div>
+            <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Email</div>
+                <div class="col-sm-8 text-break"><?php echo $esc($customer['email'] ?? '') ?: '<span class="text-secondary">—</span>'; ?></div></div>
+            <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Phone</div>
+                <div class="col-sm-8 text-break"><?php echo $esc($customer['phone'] ?? '') ?: '<span class="text-secondary">—</span>'; ?></div></div>
+            <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Company</div>
+                <div class="col-sm-8 text-break"><?php echo $esc($customer['company'] ?? '') ?: '<span class="text-secondary">—</span>'; ?></div></div>
+            <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Address</div>
+                <div class="col-sm-8 text-break"><?php echo $addressParts !== [] ? $esc(implode(', ', $addressParts)) : '<span class="text-secondary">—</span>'; ?></div></div>
+            <div class="row g-2 py-2 border-bottom"><div class="col-sm-4 text-secondary">Acquisition Click</div>
+                <div class="col-sm-8 text-break"><?php echo !empty($customer['first_click_id']) ? '#' . (int) $customer['first_click_id'] : '<span class="text-secondary">—</span>'; ?></div></div>
             <?php foreach (($customer['custom_fields'] ?? []) as $key => $value) { ?>
-                <div class="ltv-def">
-                    <div class="ltv-def-label"><?php echo $esc($key); ?></div>
-                    <div class="ltv-def-value"><?php
+                <div class="row g-2 py-2 border-bottom">
+                    <div class="col-sm-4 text-secondary"><?php echo $esc($key); ?></div>
+                    <div class="col-sm-8 text-break"><?php
                         if (is_bool($value)) {
                             echo $value ? 'Yes' : 'No';
                         } else {
-                            echo $esc($value ?? '') ?: '<span class="ltv-dim">—</span>';
+                            echo $esc($value ?? '') ?: '<span class="text-secondary">—</span>';
                         }
                     ?></div>
                 </div>
@@ -440,15 +446,15 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
         </div>
     <?php echo p202_ltv_card_close(); ?>
     <?php echo p202_ltv_card_open('Linked Identities'); ?>
-        <div class="ltv-table-wrap">
-            <table class="ltv-table">
+        <div class="p202-table-wrap">
+            <table class="table p202-table">
                 <thead>
                     <tr><th>Type</th><th>Value</th><th>Linked</th><th></th></tr>
                 </thead>
                 <tbody>
                     <?php if (($customer['aliases'] ?? []) === []) { ?>
                         <tr><td colspan="4">
-                            <?php echo p202_ltv_empty('fa-link', 'No aliases recorded'); ?>
+                            <?php echo p202_ltv_empty('bi-link-45deg', 'No aliases recorded'); ?>
                         </td></tr>
                     <?php } ?>
                     <?php foreach (($customer['aliases'] ?? []) as $alias) { ?>
@@ -457,7 +463,7 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
                             <td><?php echo $esc(mb_strimwidth((string) ($alias['alias_value'] ?? ''), 0, 60, '…')); ?></td>
                             <td><?php echo $when($alias['created_at'] ?? 0); ?></td>
                             <td class="num">
-                                <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-danger"
+                                <button type="button" class="btn btn-sm btn-outline-danger"
                                     onclick="ltvAliasDelete(<?php echo (int) $customer['customer_id']; ?>, <?php echo (int) ($alias['alias_id'] ?? 0); ?>);"
                                     title="Unlink this identity">&times;</button>
                             </td>
@@ -467,8 +473,8 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
             </table>
         </div>
         <form id="ltv-alias-form" onsubmit="return false;">
-            <div class="ltv-toolbar" style="padding-bottom: 12px; border-top: 1px solid #f0f1f2; padding-top: 12px;">
-                <select class="ltv-select ltv-input-sm" id="ltv-alias-type">
+            <div class="p202-toolbar p202-panel__filter border-top py-3">
+                <select class="form-select form-select-sm" id="ltv-alias-type">
                     <?php
                     // From the repo constant so new alias types appear here
                     // automatically; subid stays excluded — those are minted by
@@ -480,27 +486,27 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
                         <option value="<?php echo $esc($aliasType); ?>"><?php echo $esc($aliasType); ?></option>
                     <?php } ?>
                 </select>
-                <input type="text" class="ltv-input ltv-input-sm ltv-grow" id="ltv-alias-value" maxlength="255" placeholder="Identity value (hash, id, ...)">
-                <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvAliasAdd(<?php echo (int) $customer['customer_id']; ?>);"><i class="fa fa-plus"></i> Link Identity</button>
+                <input type="text" class="form-control form-control-sm flex-grow-1" id="ltv-alias-value" maxlength="255" placeholder="Identity value (hash, id, ...)">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="ltvAliasAdd(<?php echo (int) $customer['customer_id']; ?>);"><i class="bi bi-plus-lg"></i> Link Identity</button>
             </div>
         </form>
     <?php echo p202_ltv_card_close(); ?>
 </div>
 
 <!-- Suggested next offer + engagement -->
-<div class="ltv-cols">
+<div class="d-grid gap-3 mb-3" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));">
     <?php echo p202_ltv_card_open('Suggested Next Offer'); ?>
-        <div class="ltv-card-body">
+        <div class="p202-panel__body">
         <?php if ($nextOffer === null) { ?>
-            <?php echo p202_ltv_empty('fa-lightbulb-o', 'Not enough data yet to suggest an offer',
+            <?php echo p202_ltv_empty('bi-lightbulb', 'Not enough data yet to suggest an offer',
                 'No usable purchase history, tracked browsing, or recent account conversions.'); ?>
         <?php } else { ?>
             <p style="margin: 2px 0 0;">
-                <span class="ltv-strong" style="font-size: 14px;"><?php echo $esc($nextOffer['name']); ?></span>
-                <span class="ltv-dim" style="font-size: 12px;">campaign #<?php echo (int) $nextOffer['campaign_id']; ?></span><br>
+                <span class="fw-bold" style="font-size: 14px;"><?php echo $esc($nextOffer['name']); ?></span>
+                <span class="text-secondary" style="font-size: 12px;">campaign #<?php echo (int) $nextOffer['campaign_id']; ?></span><br>
                 <?php $why = $nextOffer['why'] ?? null; ?>
                 <?php if (is_array($why) && ($why['basis'] ?? '') === 'transition') { ?>
-                    <span class="ltv-note">
+                    <span class="form-text">
                         Based on <?php echo (int) $why['direct_transitions']; ?> direct
                         and <?php echo (int) $why['eventual_transitions']; ?> eventual follow-on purchase(s)
                         from campaign(s) #<?php echo $esc(implode(', #', array_map(strval(...), (array) $why['based_on_campaigns']))); ?>
@@ -510,20 +516,20 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
                         } ?>
                     </span>
                 <?php } elseif (is_array($why) && ($why['basis'] ?? '') === 'engagement') { ?>
-                    <span class="ltv-note">
+                    <span class="form-text">
                         They've been browsing this offer but haven't bought:
                         <?php echo (int) ($why['clicks'] ?? 0); ?> tracked visit(s), last seen
                         <?php echo $esc(date('M j, Y', (int) ($why['last_engaged_at'] ?? 0))); ?>.
                     </span>
                 <?php } else { ?>
-                    <span class="ltv-note">No purchase or browsing signal for this customer yet &mdash; showing the account's top-converting live campaign of the last <?php echo (int) (is_array($why) ? ($why['window_days'] ?? 180) : 180); ?> days they haven't bought.</span>
+                    <span class="form-text">No purchase or browsing signal for this customer yet &mdash; showing the account's top-converting live campaign of the last <?php echo (int) (is_array($why) ? ($why['window_days'] ?? 180) : 180); ?> days they haven't bought.</span>
                 <?php } ?>
                 <?php if ($nextOfferShown !== null) { ?>
-                    <br><span class="ltv-note">Shown to this customer <?php echo (int) $nextOfferShown['shown']; ?> time(s)
+                    <br><span class="form-text">Shown to this customer <?php echo (int) $nextOfferShown['shown']; ?> time(s)
                     since <?php echo $esc(date('M j, Y', $nextOfferShown['first_at'])); ?>.</span>
                 <?php } ?>
                 <?php if (is_array($why) && !empty($why['suppressed_campaigns'])) { ?>
-                    <br><span class="ltv-note">Paused after repeated exposure without purchase:
+                    <br><span class="form-text">Paused after repeated exposure without purchase:
                     campaign #<?php echo $esc(implode(', #', array_map(strval(...), (array) $why['suppressed_campaigns']))); ?>.</span>
                 <?php } ?>
             </p>
@@ -531,21 +537,21 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
         </div>
     <?php echo p202_ltv_card_close(); ?>
     <?php echo p202_ltv_card_open('Engagement', 'last 90 days'); ?>
-        <div class="ltv-table-wrap">
-            <table class="ltv-table ltv-table-hover">
+        <div class="p202-table-wrap">
+            <table class="table p202-table table-hover">
                 <thead>
                     <tr><th>Campaign</th><th>Landing Page</th><th class="num">Views</th><th class="num">Conv.</th><th>Last Seen</th></tr>
                 </thead>
                 <tbody>
                     <?php if ($engagement === []) { ?>
                         <tr><td colspan="5">
-                            <?php echo p202_ltv_empty('fa-mouse-pointer', 'No tracked browsing in this window'); ?>
+                            <?php echo p202_ltv_empty('bi-cursor', 'No tracked browsing in this window'); ?>
                         </td></tr>
                     <?php } ?>
                     <?php foreach ($engagement as $row) { ?>
                         <tr>
                             <td><?php echo $esc($row['campaign_name'] ?? ('#' . ($row['campaign_id'] ?? ''))); ?></td>
-                            <td><?php echo $esc($row['landing_page'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></td>
+                            <td><?php echo $esc($row['landing_page'] ?? '') ?: '<span class="text-secondary">—</span>'; ?></td>
                             <td class="num"><?php echo number_format((int) ($row['clicks'] ?? 0)); ?></td>
                             <td class="num"><?php echo number_format((int) ($row['conversions'] ?? 0)); ?></td>
                             <td><?php echo $when($row['last_seen'] ?? 0); ?></td>
@@ -556,10 +562,10 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
         </div>
 
         <?php if ($engagementEvents !== []) { ?>
-            <div class="ltv-card-head" style="padding-top: 6px;"><span class="ltv-card-title">Instrumented Events</span>
-                <span class="ltv-card-sub">last 90 days</span></div>
-            <div class="ltv-table-wrap">
-                <table class="ltv-table ltv-table-hover">
+            <div class="p202-panel__head" style="padding-top: 6px;"><span class="p202-panel__title">Instrumented Events</span>
+                <span class="p202-panel__sub">last 90 days</span></div>
+            <div class="p202-table-wrap">
+                <table class="table p202-table table-hover">
                     <thead>
                         <tr><th>Event</th><th class="num">Value</th><th>Source</th><th>When</th></tr>
                     </thead>
@@ -594,8 +600,8 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
 <!-- Subscriptions -->
 <?php if (($customer['subscriptions'] ?? []) !== []) { ?>
 <?php echo p202_ltv_card_open('Subscriptions'); ?>
-    <div class="ltv-table-wrap">
-        <table class="ltv-table ltv-table-hover">
+    <div class="p202-table-wrap">
+        <table class="table p202-table table-hover">
             <thead>
                 <tr>
                     <th>Plan</th>
@@ -614,12 +620,12 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
                             <?php echo $esc(($sub['plan_name'] ?? '') !== '' && $sub['plan_name'] !== null ? $sub['plan_name'] : ($sub['external_sub_id'] ?? '')); ?>
                         </td>
                         <td><?php echo p202_ltv_status_pill((string) ($sub['status'] ?? '')); ?></td>
-                        <td class="num">$<?php echo $money($sub['amount'] ?? 0); ?> <span class="ltv-dim">/
+                        <td class="num">$<?php echo $money($sub['amount'] ?? 0); ?> <span class="text-secondary">/
                             <?php echo ((int) ($sub['billing_interval_count'] ?? 1)) > 1 ? (int) $sub['billing_interval_count'] . ' ' : ''; ?><?php echo $esc($sub['billing_interval'] ?? 'month'); ?></span></td>
                         <td class="num">$<?php echo $money($sub['mrr'] ?? 0); ?></td>
                         <td><?php echo $when($sub['started_at'] ?? 0); ?></td>
                         <td><?php echo $when($sub['current_period_end'] ?? 0); ?></td>
-                        <td><?php echo !empty($sub['canceled_at']) ? $when($sub['canceled_at']) : '<span class="ltv-dim">—</span>'; ?></td>
+                        <td><?php echo !empty($sub['canceled_at']) ? $when($sub['canceled_at']) : '<span class="text-secondary">—</span>'; ?></td>
                     </tr>
                 <?php } ?>
             </tbody>
@@ -631,8 +637,8 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
 <!-- Purchase history -->
 <?php echo p202_ltv_card_open('Purchase History',
     'most recent ' . count($customer['recent_events'] ?? []) . ' events'); ?>
-    <div class="ltv-table-wrap">
-        <table class="ltv-table ltv-table-hover">
+    <div class="p202-table-wrap">
+        <table class="table p202-table table-hover">
             <thead>
                 <tr>
                     <th>Date</th>
@@ -646,7 +652,7 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
             <tbody>
                 <?php if (($customer['recent_events'] ?? []) === []) { ?>
                     <tr><td colspan="6">
-                        <?php echo p202_ltv_empty('fa-shopping-bag', 'No revenue recorded yet'); ?>
+                        <?php echo p202_ltv_empty('bi-bag', 'No revenue recorded yet'); ?>
                     </td></tr>
                 <?php } ?>
                 <?php foreach (($customer['recent_events'] ?? []) as $event) {
@@ -662,9 +668,9 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
                             default => 'green', // purchase, one_time
                         }); ?></td>
                         <td><?php echo $esc($event['source'] ?? ''); ?>
-                            <?php if (!empty($event['conv_id'])) { ?><span class="ltv-dim" style="font-size: 12px;">(conv #<?php echo (int) $event['conv_id']; ?>)</span><?php } ?>
+                            <?php if (!empty($event['conv_id'])) { ?><span class="text-secondary" style="font-size: 12px;">(conv #<?php echo (int) $event['conv_id']; ?>)</span><?php } ?>
                         </td>
-                        <td class="num <?php echo $amount < 0 ? 'ltv-neg' : ''; ?>">
+                        <td class="num <?php echo $amount < 0 ? 'text-danger-emphasis' : ''; ?>">
                             <?php echo ($amount < 0 ? '-$' : '$') . $money(abs($amount)); ?>
                         </td>
                         <td>
@@ -672,20 +678,20 @@ $customerStatus = (string) ($customer['status'] ?? 'active');
                                 <?php // No SKU line items — a subscription-sourced event shows its plan. ?>
                                 <?php echo ($event['plan_name'] ?? null) !== null && $event['plan_name'] !== ''
                                     ? $esc($event['plan_name'])
-                                    : '<span class="ltv-dim">—</span>'; ?>
+                                    : '<span class="text-secondary">—</span>'; ?>
                             <?php } else { ?>
                                 <?php foreach ($event['items'] as $item) { ?>
                                     <div>
                                         <?php echo $esc(($item['product_name'] ?? '') !== '' && $item['product_name'] !== null
                                             ? $item['product_name']
                                             : ($item['sku'] ?? 'product #' . ($item['product_id'] ?? '?'))); ?>
-                                        <span class="ltv-dim">&times;<?php echo number_format((float) ($item['quantity'] ?? 1), (fmod((float) ($item['quantity'] ?? 1), 1.0) === 0.0) ? 0 : 2); ?></span>
+                                        <span class="text-secondary">&times;<?php echo number_format((float) ($item['quantity'] ?? 1), (fmod((float) ($item['quantity'] ?? 1), 1.0) === 0.0) ? 0 : 2); ?></span>
                                         &mdash; $<?php echo $money($item['amount'] ?? 0); ?>
                                     </div>
                                 <?php } ?>
                             <?php } ?>
                         </td>
-                        <td><?php echo $esc(mb_strimwidth((string) ($event['transaction_id'] ?? ''), 0, 30, '…')) ?: '<span class="ltv-dim">—</span>'; ?></td>
+                        <td><?php echo $esc(mb_strimwidth((string) ($event['transaction_id'] ?? ''), 0, 30, '…')) ?: '<span class="text-secondary">—</span>'; ?></td>
                     </tr>
                 <?php } ?>
             </tbody>

@@ -4,143 +4,144 @@ declare(strict_types=1);
 
 namespace Prosper202\Repository\Cached;
 
-use Closure;
+use Prosper202\Repository\Cache\CachedIds;
+use Prosper202\Repository\Cache\IdCache;
 use Prosper202\Repository\LocationRepositoryInterface;
 use Prosper202\Repository\Mysql\MysqlLocationRepository;
 
-final class CachedLocationRepository implements LocationRepositoryInterface
+/**
+ * Keys on the value as it is stored, so a name past its column and its cut
+ * form share one entry, as they share one row.
+ */
+final readonly class CachedLocationRepository implements LocationRepositoryInterface
 {
-    private const TTL = 2592000;
-
     /**
-     * @param Closure(string): mixed $cacheGet  getCache($key)
-     * @param Closure(string, mixed, int): void $cacheSet  setCache($key, $value, $ttl)
+     * A day, not the ids' month: the click path keeps one entry per referring
+     * or requested host, and most hosts are seen once. A host seen every day
+     * costs one indexed read a day.
      */
+    private const DOMAIN_TTL = 86400;
+
+    private CachedIds $ids;
+
     public function __construct(
         private LocationRepositoryInterface $inner,
-        private Closure $cacheGet,
-        private Closure $cacheSet,
-        private string $systemHash,
+        IdCache $cache,
+        string $namespace,
     ) {
+        $this->ids = new CachedIds($cache, $namespace);
     }
 
+    #[\Override]
     public function findOrCreateCountry(string $name, string $code): int
     {
-        $key = md5('country-id' . $code . $this->systemHash);
+        $code = MysqlLocationRepository::storedCountryCode($code);
 
-        $cached = ($this->cacheGet)($key);
-        if ($cached !== false) {
-            return (int) $cached;
-        }
-
-        $id = $this->inner->findOrCreateCountry($name, $code);
-        ($this->cacheSet)($key, $id, self::TTL);
-
-        return $id;
+        return $this->ids->remember(
+            'country-id' . $code,
+            fn (): int => $this->inner->findOrCreateCountry($name, $code)
+        );
     }
 
+    #[\Override]
     public function findOrCreateCity(string $name, int $countryId): int
     {
-        $key = md5('city-id' . $name . '|' . $countryId . $this->systemHash);
+        $name = MysqlLocationRepository::storedName($name);
 
-        $cached = ($this->cacheGet)($key);
-        if ($cached !== false) {
-            return (int) $cached;
-        }
-
-        $id = $this->inner->findOrCreateCity($name, $countryId);
-        ($this->cacheSet)($key, $id, self::TTL);
-
-        return $id;
+        return $this->ids->remember(
+            'city-id' . $name . '|' . $countryId,
+            fn (): int => $this->inner->findOrCreateCity($name, $countryId)
+        );
     }
 
+    #[\Override]
     public function findOrCreateRegion(string $name, int $countryId): int
     {
-        $key = md5('region-id' . $name . '|' . $countryId . $this->systemHash);
+        $name = MysqlLocationRepository::storedName($name);
 
-        $cached = ($this->cacheGet)($key);
-        if ($cached !== false) {
-            return (int) $cached;
-        }
-
-        $id = $this->inner->findOrCreateRegion($name, $countryId);
-        ($this->cacheSet)($key, $id, self::TTL);
-
-        return $id;
+        return $this->ids->remember(
+            'region-id' . $name . '|' . $countryId,
+            fn (): int => $this->inner->findOrCreateRegion($name, $countryId)
+        );
     }
 
+    #[\Override]
     public function findOrCreateIsp(string $name): int
     {
-        $key = md5('isp-id' . $name . $this->systemHash);
+        $name = MysqlLocationRepository::storedName($name);
 
-        $cached = ($this->cacheGet)($key);
-        if ($cached !== false) {
-            return (int) $cached;
-        }
-
-        $id = $this->inner->findOrCreateIsp($name);
-        ($this->cacheSet)($key, $id, self::TTL);
-
-        return $id;
+        return $this->ids->remember(
+            'isp-id' . $name,
+            fn (): int => $this->inner->findOrCreateIsp($name)
+        );
     }
 
+    /**
+     * An IPv6 address has its own subject: the lookup that wrote 'ip-id'
+     * entries joined 202_ips_v6 to 202_ips as numbers and could answer an
+     * IPv4 visitor's row, so none of its IPv6 entries is trusted.
+     */
+    #[\Override]
     public function findOrCreateIp(string $address): int
     {
         if ($address === '') {
             return 0;
         }
+        $subject = MysqlLocationRepository::isIpv6($address) ? 'ip6-id' : 'ip-id';
 
-        $key = md5('ip-id' . $address . $this->systemHash);
-
-        $cached = ($this->cacheGet)($key);
-        if ($cached !== false) {
-            return (int) $cached;
-        }
-
-        $id = $this->inner->findOrCreateIp($address);
-        ($this->cacheSet)($key, $id, self::TTL);
-
-        return $id;
+        return $this->ids->remember(
+            $subject . $address,
+            fn (): int => $this->inner->findOrCreateIp($address)
+        );
     }
 
+    #[\Override]
     public function findOrCreateSiteDomain(string $url): int
     {
-        $host = MysqlLocationRepository::extractDomainHost($url);
-
+        $host = MysqlLocationRepository::storedDomainHost($url);
         if ($host === '') {
             return 0;
         }
 
-        $key = md5('domain-id' . $host . $this->systemHash);
-
-        $cached = ($this->cacheGet)($key);
-        if ($cached !== false) {
-            return (int) $cached;
-        }
-
-        $id = $this->inner->findOrCreateSiteDomain($url);
-        ($this->cacheSet)($key, $id, self::TTL);
-
-        return $id;
+        return $this->ids->remember(
+            'domain-id' . $host,
+            fn (): int => $this->inner->findOrCreateSiteDomain($url),
+            self::DOMAIN_TTL
+        );
     }
 
+    #[\Override]
     public function findOrCreateSiteUrl(string $url): int
     {
         if ($url === '') {
             return 0;
         }
+        $url = MysqlLocationRepository::storedSiteUrl($url);
 
-        $key = md5('url-id' . $url . $this->systemHash);
-
-        $cached = ($this->cacheGet)($key);
-        if ($cached !== false) {
-            return (int) $cached;
-        }
-
-        $id = $this->inner->findOrCreateSiteUrl($url);
-        ($this->cacheSet)($key, $id, self::TTL);
-
-        return $id;
+        return $this->ids->remember(
+            'url-id' . $url,
+            fn (): int => $this->inner->findOrCreateSiteUrl($url)
+        );
     }
 
+    /**
+     * The URL's row from the database alone, its domain through the cache:
+     * the domain is shared by every click to it, the URL is not.
+     */
+    #[\Override]
+    public function findOrCreateClickSiteUrl(string $url): int
+    {
+        if ($url === '') {
+            return 0;
+        }
+        $url = MysqlLocationRepository::storedSiteUrl($url);
+
+        return $this->inner->findOrCreateSiteUrlInDomain($this->findOrCreateSiteDomain($url), $url);
+    }
+
+    #[\Override]
+    public function findOrCreateSiteUrlInDomain(int $domainId, string $url): int
+    {
+        return $this->inner->findOrCreateSiteUrlInDomain($domainId, $url);
+    }
 }

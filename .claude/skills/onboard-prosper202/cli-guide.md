@@ -21,11 +21,11 @@ full flag list; add `--json` for machine-parseable output.
 ## Preferences
 `p202 user prefs update <user_id> [flags]`
 
-- `--user_tracking_domain` — tracking domain
-- `--user_account_currency` — 3-letter currency code
-- `--user_daily_email` — `on`/`off`
-- `--user_slack_incoming_webhook` — Slack webhook URL
-- `--ipqs_api_key` — IPQS fraud key
+- `--user-tracking-domain` — tracking domain
+- `--user-account-currency` — 3-letter currency code
+- `--user-daily-email` — the hour to send it, `00`-`23` in the user's time zone, or `never`
+- `--user-slack-incoming-webhook` — Slack webhook URL
+- `--ipqs-api-key` — IPQS fraud key
 
 `p202 user prefs get <user_id>` reads them back.
 
@@ -34,15 +34,17 @@ Each supports `create` and `--json`. Required flags in **bold**.
 
 | Resource | Key flags |
 |----------|-----------|
-| `ppc-network` | **`--ppc_network_name`** |
-| `ppc-account` | **`--ppc_account_name`**, `--ppc_network_id`, `--ppc_account_default` |
-| `aff-network` | **`--aff_network_name`**, `--aff_network_postback_url`, `--aff_network_postback_append`, `--dni_network_id` |
-| `campaign` | **`--aff_campaign_name`**, **`--aff_campaign_url`**, `--aff_network_id`, `--aff_campaign_payout`, `--aff_campaign_cpc`, `--aff_campaign_currency`, `--aff_campaign_url_2..5`, `--aff_campaign_postback_url` |
-| `landing-page` | **`--landing_page_url`**, `--aff_campaign_id`, `--landing_page_nickname`, `--landing_page_type`, `--leave_behind_page_url` |
-| `tracker` | **`--aff_campaign_id`**, `--ppc_account_id`, `--landing_page_id`, `--text_ad_id`, `--rotator_id`, `--click_cpc`, `--click_cpa` |
+| `ppc-network` | **`--ppc-network-name`** |
+| `ppc-account` | **`--ppc-account-name`**, `--ppc-network-id`, `--ppc-account-default` |
+| `aff-network` | **`--aff-network-name`**, `--aff-network-postback-url`, `--aff-network-postback-append`, `--dni-network-id` |
+| `campaign` | **`--aff-campaign-name`**, **`--aff-campaign-url`**, `--aff-network-id`, `--aff-campaign-payout`, `--aff-campaign-cpc`, `--aff-campaign-currency`, `--aff-campaign-url-2..5`, `--aff-campaign-postback-url` |
+| `landing-page` | **`--landing-page-url`**, `--aff-campaign-id`, `--landing-page-nickname`, `--landing-page-type`, `--leave-behind-page-url` |
+| `tracker` | **`--aff-campaign-id`**, `--ppc-account-id`, `--landing-page-id`, `--text-ad-id`, `--rotator-id`, `--click-cpc`, `--click-cpa` |
 
 ## Tracker URL
-- `p202 tracker get-url <id>` — tracking URL for an existing tracker.
+- `p202 tracker get-url <id>` — tracking URL for an existing tracker. Add
+  `--t202kw '{keyword}'` (and `--c1`..`--c4`, `--utm_*`, `--t202ref`, `--t202b`)
+  with the traffic source's macros, as the Get Links boxes take them.
 - `p202 tracker create-with-url [tracker flags]` — create and return the URL in one call.
 
 ## Reporting

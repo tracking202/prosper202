@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use RuntimeException;
 
 /**
@@ -65,7 +66,7 @@ final class MysqlCompanyRepository
 
         if ($domain === '' || strlen($domain) > 191
             || preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/', $domain) !== 1) {
-            throw new RuntimeException('domain must be a bare hostname like example.com');
+            throw new LtvInputException('domain', 'domain must be a bare hostname like example.com');
         }
 
         return $domain;
@@ -91,7 +92,7 @@ final class MysqlCompanyRepository
     {
         $name = self::canonicalName($name);
         if ($name === '') {
-            throw new RuntimeException('Company name must not be empty');
+            throw new LtvInputException('company', 'Company name must not be empty');
         }
         $now = $now ?? time();
 
@@ -123,7 +124,7 @@ final class MysqlCompanyRepository
     {
         $name = self::canonicalName($name);
         if ($name === '') {
-            throw new RuntimeException('Company name must not be empty');
+            throw new LtvInputException('name', 'Company name must not be empty');
         }
         // Friendly fast-path message with the existing id; the unique key
         // below still catches the race this check cannot.
@@ -383,10 +384,14 @@ final class MysqlCompanyRepository
     public function update(int $userId, int $companyId, array $changes): void
     {
         if (!array_key_exists('name', $changes) && !array_key_exists('domain', $changes)) {
-            throw new RuntimeException('Nothing to update — supply name and/or domain');
+            throw new LtvInputException(
+                'name',
+                'Nothing to update — supply name and/or domain',
+                'Send name, domain or both'
+            );
         }
         if ($this->get($userId, $companyId) === null) {
-            throw new RuntimeException('Company not found');
+            throw new RecordNotFoundException('Company not found');
         }
 
         $newName = null;
@@ -394,7 +399,7 @@ final class MysqlCompanyRepository
         if (array_key_exists('name', $changes)) {
             $newName = self::canonicalName((string) $changes['name']);
             if ($newName === '') {
-                throw new RuntimeException('Company name must not be empty');
+                throw new LtvInputException('name', 'Company name must not be empty');
             }
             $normalized = self::normalizeName($newName);
             $dupStmt = $this->conn->prepareWrite(
@@ -495,12 +500,19 @@ final class MysqlCompanyRepository
     public function merge(int $userId, int $sourceCompanyId, int $targetCompanyId): void
     {
         if ($sourceCompanyId === $targetCompanyId) {
-            throw new RuntimeException('Cannot merge a company into itself');
+            throw new LtvInputException('source_company_id', 'Cannot merge a company into itself');
         }
         $source = $this->get($userId, $sourceCompanyId);
         $target = $this->get($userId, $targetCompanyId);
-        if ($source === null || $target === null) {
-            throw new RuntimeException('Both companies must exist and belong to this account');
+        if ($target === null) {
+            throw new RecordNotFoundException('Company not found');
+        }
+        if ($source === null) {
+            throw new LtvInputException(
+                'source_company_id',
+                'source_company_id ' . $sourceCompanyId . ' not found for this account',
+                'No such company in this account (see `p202 ltv companies`)'
+            );
         }
 
         $now = time();
@@ -522,7 +534,7 @@ final class MysqlCompanyRepository
                 $locked[(int) $row['company_id']] = $row;
             }
             if (!isset($locked[$sourceCompanyId], $locked[$targetCompanyId])) {
-                throw new RuntimeException('Company was merged or deleted concurrently; retry the merge');
+                throw new LtvConflictException('Company was merged or deleted concurrently; retry the merge');
             }
             $targetName = (string) $locked[$targetCompanyId]['name'];
 
@@ -572,18 +584,47 @@ final class MysqlCompanyRepository
         $this->conn->transaction(function () use ($userId, $companyId): void {
         $company = $this->lockCompanyRow($userId, $companyId);
         if ($company === null) {
-            throw new RuntimeException('Company not found');
+            throw new RecordNotFoundException('Company not found');
         }
 
+        // Refused by what the company holds, not by anything sent: a 409,
+        // as a product a line item names is.
+        $refusal = $this->deleteRefusal($userId, $companyId, (string) $company['name']);
+        if ($refusal !== null) {
+            throw new LtvConflictException($refusal);
+        }
+
+        $stmt = $this->conn->prepareWrite(
+            'DELETE FROM 202_companies WHERE company_id = ? AND user_id = ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$companyId, $userId]);
+        $this->conn->executeUpdate($stmt);
+        });
+    }
+
+    /**
+     * Why delete() would refuse this company, or null when it would not:
+     * attached customers (the right operation is a merge), or customers
+     * whose company STRING matches but who are not yet stamped (removing the
+     * entity would only have the linking sweep re-create it). delete() asks
+     * this under the company row's lock; the delete preview asks it without
+     * one, so its answer can be overtaken by a concurrent attach — the
+     * delete re-asks and is the arbiter.
+     */
+    public function deleteRefusal(int $userId, int $companyId, string $companyName): ?string
+    {
         $countStmt = $this->conn->prepareWrite(
             'SELECT COUNT(*) AS c FROM 202_customers WHERE company_id = ? AND user_id = ?'
         );
         $this->conn->bind($countStmt, 'ii', [$companyId, $userId]);
         $count = $this->conn->fetchOne($countStmt);
-        if (((int) ($count['c'] ?? 0)) > 0) {
-            throw new RuntimeException(
-                'Company still has ' . (int) $count['c'] . ' attached customer(s); merge it into another company instead'
-            );
+        if ($count === null) {
+            // COUNT(*) always yields a row; none means the read failed, and
+            // "no attached customers" must not stand in for "unknown".
+            throw new QueryException('COUNT(*) over 202_customers returned no row');
+        }
+        if ((int) $count['c'] > 0) {
+            return 'Company still has ' . (int) $count['c'] . ' attached customer(s); merge it into another company instead';
         }
 
         // Unstamped legacy rows may hold UNCANONICAL strings (pre-fix
@@ -597,7 +638,7 @@ final class MysqlCompanyRepository
              GROUP BY company"
         );
         $this->conn->bind($strayStmt, 'i', [$userId]);
-        $targetNormalized = self::normalizeName((string) $company['name']);
+        $targetNormalized = self::normalizeName($companyName);
         $strayCount = 0;
         foreach ($this->conn->fetchAll($strayStmt) as $strayRow) {
             if (self::normalizeName((string) $strayRow['company']) === $targetNormalized) {
@@ -605,18 +646,11 @@ final class MysqlCompanyRepository
             }
         }
         if ($strayCount > 0) {
-            throw new RuntimeException(
-                'Company has ' . $strayCount . ' customer(s) pending entity linking;'
-                . ' run the maintenance cron (202-cronjobs/ltv_maintenance.php) and retry'
-            );
+            return 'Company has ' . $strayCount . ' customer(s) pending entity linking;'
+                . ' run the maintenance cron (202-cronjobs/ltv_maintenance.php) and retry';
         }
 
-        $stmt = $this->conn->prepareWrite(
-            'DELETE FROM 202_companies WHERE company_id = ? AND user_id = ?'
-        );
-        $this->conn->bind($stmt, 'ii', [$companyId, $userId]);
-        $this->conn->executeUpdate($stmt);
-        });
+        return null;
     }
 
     /**

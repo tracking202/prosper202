@@ -1,63 +1,52 @@
 <?php
 declare(strict_types=1);
 
-use Prosper202\Attribution\AttributionServiceFactory;
-use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/functions-tracking202api.php');
 
-$settingsService = AttributionServiceFactory::createSettingsService();
-
 //get the aff_camapaign_id
 $mysql['user_id'] = 1;
 $mysql['click_id'] = 0;
 $mysql['cid'] = 0;
 $mysql['use_pixel_payout'] = 0;
-$advertiserId = null;
 
-//grab the cid
-if(array_key_exists('cid',$_GET) && is_numeric($_GET['cid'])) {
-	$mysql['cid']= $db->real_escape_string((string)$_GET['cid']);
+//grab the cid (the campaign whose own cookie names the click)
+$campaignIdFromRequest = p202ParseClickId($_GET['cid'] ?? null) ?? 0;
+$mysql['cid'] = (string) $campaignIdFromRequest;
+
+// The click: the subid parameter, the campaign's cookie, the general cookie
+// (p202ClickIdFromRequest). A value that is present and not an exact click
+// id is refused rather than cast ("123.9" is not click 123) and rather than
+// falling back to the IP lookup below.
+$requestedClick = p202ClickIdFromRequest($_GET, $_COOKIE, $campaignIdFromRequest);
+if ($requestedClick['malformed'] !== null) {
+    error_log('upx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
+    exit;
 }
-    
-// grab the subid
-if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
-    $mysql['click_id'] = $db->real_escape_string((string)$_GET['subid']);
-} elseif (array_key_exists('sid', $_GET) && is_numeric($_GET['sid'])) {
-    $mysql['click_id'] = $db->real_escape_string((string)$_GET['sid']);
-} else { // no subid found get from cookie or fingerprint
-       
-    // see if it has the cookie in the campaign id, then the general match, then do whatever we can to grab SOMETHING to tie this lead to
-    if (isset($_COOKIE['tracking202subid_a_' . $mysql['cid']]) && is_numeric($_COOKIE['tracking202subid_a_' . $mysql['cid']]) && $mysql['cid'] != '0') {
-        $mysql['click_id'] = $db->real_escape_string((string) $_COOKIE['tracking202subid_a_' . $mysql['cid']]);
-    } else
-        if (isset($_COOKIE['tracking202subid']) && is_numeric($_COOKIE['tracking202subid'])) {
-            $mysql['click_id'] = $db->real_escape_string((string) $_COOKIE['tracking202subid']);
-        } else {
-            // ok grab the last click from this ip_id
-            $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
+if ($requestedClick['click_id'] !== null) {
+    $mysql['click_id'] = (string) $requestedClick['click_id'];
+} else { // nothing named a click: fall back to this address's last click
+            // The visitor's last click by the address the click path stored
+            // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR: among the
+            // first account's clicks, stored under its setting, which is the
+            // install's (p202ApplyOwnerPrivacy()).
+            p202ApplyOwnerPrivacy($mysql['user_id']);
             $daysago = time() - 2592000; // 30 days ago
-            $click_sql1 = "	SELECT 	202_clicks.click_id
-					FROM 		202_clicks
-					LEFT JOIN	202_clicks_advance USING (click_id)
-					LEFT JOIN 	202_ips USING (ip_id) 
-					WHERE 	202_ips.ip_address='" . $mysql['ip_address'] . "'
-					AND		202_clicks.user_id='" . $mysql['user_id'] . "'  
-					AND		202_clicks.click_time >= '" . $daysago . "'
-					ORDER BY 	202_clicks.click_id DESC 
-					LIMIT 		1";
-            
-            $click_result1 = $db->query($click_sql1) or record_mysql_error($db, $click_sql1);
-            $click_row1 = $click_result1->fetch_assoc();
+            $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
+                new \Prosper202\Database\Connection($db),
+                p202StoredVisitorIp(),
+                (int) $mysql['user_id'],
+                $daysago,
+                !trackingEnabled()
+            );
 
-            if ($click_row1) {
-                $mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
-                $mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id'] ?? '');
+            if ($click_row1 !== null) {
+                $mysql['click_id'] = (string) $click_row1['click_id'];
+                $mysql['ppc_account_id'] = (string) $click_row1['ppc_account_id'];
             }
-        }
 }
 
 if(!$mysql['click_id']){
@@ -67,56 +56,28 @@ if(!$mysql['click_id']){
 // integer click_id for safe SQL interpolation
 $clickId = (int) $mysql['click_id'];
 
-$site_urls=" LEFT JOIN `202_clicks_site` AS 2cs ON (2c.click_id=2cs.click_id)
-                     LEFT JOIN `202_site_urls` AS 2su ON (2cs.click_referer_site_url_id=2su.site_url_id) ";
-
-//get c1-c4 values etc
-$cvar_sql ="
-SELECT 
-	2cid.click_id,
-	2c.user_id,
-	2c.aff_campaign_id,
-	2c.click_payout,
-	2c.click_cpc,
-	2c.click_lead,
-	2c.click_time,
-	2c1.c1,
-	2c2.c2,
-	2c3.c3,
-	2c4.c4,
-	2kw.keyword,
-	2g.gclid,
-	2us.utm_source,
-	2um.utm_medium,
-	2uca.utm_campaign,
-	2ut.utm_term,
-	2uco.utm_content,
-	2trc.click_cpa,
-    2su.site_url_address
-FROM `202_clicks_tracking` AS 2cid
-LEFT JOIN `202_clicks_advance` AS 2ca USING (`click_id`)
-LEFT JOIN `202_google` AS 2g USING (`click_id`)
-LEFT JOIN `202_clicks` AS 2c USING (`click_id`)
-LEFT JOIN `202_tracking_c1` AS 2c1 USING (`c1_id`)
-LEFT JOIN `202_tracking_c2` AS 2c2 USING (`c2_id`)
-LEFT JOIN `202_tracking_c3` AS 2c3 USING (`c3_id`)
-LEFT JOIN `202_tracking_c4` AS 2c4 USING (`c4_id`)
-LEFT JOIN `202_utm_source` AS 2us USING (`utm_source_id`)
-LEFT JOIN `202_utm_medium` AS 2um USING (`utm_medium_id`)
-LEFT JOIN `202_utm_campaign` AS 2uca USING (`utm_campaign_id`)
-LEFT JOIN `202_utm_term` AS 2ut USING (`utm_term_id`)
-LEFT JOIN `202_utm_content` AS 2uco USING (`utm_content_id`)
-LEFT JOIN `202_keywords` AS 2kw ON (2ca.`keyword_id` = 2kw.`keyword_id`)
-LEFT JOIN `202_cpa_trackers` AS 2cpa USING (`click_id`)
-LEFT JOIN `202_trackers` AS 2trc ON (2cpa.`tracker_id_public` = 2trc.`tracker_id_public`)".$site_urls."
-WHERE 2c.`click_id` = {$clickId}
-LIMIT 1";
-
+// The click's latest visit, which the conversion credits (p202PostbackClickSql()).
+$cvar_sql = p202PostbackClickSql($clickId);
 $cvar_sql_result = $db->query($cvar_sql);
-$cvar_sql_row = $cvar_sql_result ? $cvar_sql_result->fetch_assoc() : null;
+if ($cvar_sql_result === false) {
+    record_mysql_error($db, $cvar_sql);
+}
+$cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
 if (!$cvar_sql_row) {
     p202RespondJsonError(404, 'Click data not found');
 }
+// The traffic source and cost, whose pixels announce it: the first visit's,
+// when it is the same account's (p202ClickSourceSql()).
+$source_sql = p202ClickSourceSql($clickId, (int) $cvar_sql_row['user_id']);
+$source_result = $db->query($source_sql);
+if ($source_result === false) {
+    record_mysql_error($db, $source_sql);
+}
+$source_row = p202FetchRow($source_result, $source_sql);
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this click's account's (p202ApplyOwnerPrivacy()), before
+// the conversion stores the address.
+p202ApplyOwnerPrivacy($cvar_sql_row['user_id'] ?? null);
 $mysql['t202kw'] = $db->real_escape_string((string) ($cvar_sql_row['keyword'] ?? ''));
 $mysql['c1'] = $db->real_escape_string((string) ($cvar_sql_row['c1'] ?? ''));
 $mysql['c2'] = $db->real_escape_string((string) ($cvar_sql_row['c2'] ?? ''));
@@ -130,12 +91,12 @@ $mysql['utm_term'] = $db->real_escape_string((string) ($cvar_sql_row['utm_term']
 $mysql['utm_content'] = $db->real_escape_string((string) ($cvar_sql_row['utm_content'] ?? ''));
 $mysql['click_user_id'] = $db->real_escape_string((string) ($cvar_sql_row['user_id'] ?? ''));
 $mysql['campaign_id'] = $db->real_escape_string((string) ($cvar_sql_row['aff_campaign_id'] ?? ''));
-$advertiserId = p202ResolveAdvertiserId($db, (int) $mysql['campaign_id']);
 $mysql['payout'] = $db->real_escape_string((string) ($cvar_sql_row['click_payout'] ?? '0'));
-$mysql['cpc'] = $db->real_escape_string((string) ($cvar_sql_row['click_cpc'] ?? '0'));
+$mysql['cpc'] = $db->real_escape_string((string) ($source_row['click_cpc'] ?? '0'));
 $mysql['click_cpa'] = $db->real_escape_string((string) ($cvar_sql_row['click_cpa'] ?? ''));
 $mysql['click_lead'] = $db->real_escape_string((string) ($cvar_sql_row['click_lead'] ?? '0'));
 $mysql['click_time'] = $db->real_escape_string((string) ($cvar_sql_row['click_time'] ?? '0'));
+$mysql['ppc_account_id'] = $db->real_escape_string((string) ($source_row['ppc_account_id'] ?? ''));
 $mysql['referer'] = urlencode((string) $db->real_escape_string((string) ($cvar_sql_row['site_url_address'] ?? '')));
 
 if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
@@ -165,87 +126,9 @@ $tokens = [
     "referer" => $mysql['referer']
 ];
 
-$account_id_sql="SELECT 202_clicks.ppc_account_id
-				 FROM 202_clicks
-				 WHERE click_id={$clickId}";
-
-$account_id_result = $db->query($account_id_sql);
-$account_id_row = $account_id_result ? $account_id_result->fetch_assoc() : null;
-$mysql['ppc_account_id'] = $db->real_escape_string($account_id_row['ppc_account_id'] ?? '');
-//$mysql['ppc_account_id']=1; //commenut out in live
-if($mysql['ppc_account_id']){
-	$pixel_sql='SELECT 202_ppc_account_pixels.pixel_code,202_ppc_account_pixels.pixel_type_id FROM 202_ppc_account_pixels WHERE 202_ppc_account_pixels.ppc_account_id='.$mysql['ppc_account_id'];
-	//"SELECT 202_ppc_account_pixels.pixel_code,202_ppc_account_pixels.pixel_type_id FROM 202_ppc_account_pixels LEFT JOIN 202_clicks ON 202_clicks.ppc_account_id=202_ppc_account_pixels.ppc_account_id WHERE 202_ppc_account_pixels.ppc_account_id=".$mysql['ppc_account_id'];
-    
-	$pixel_result = $db->query($pixel_sql);
-	if ($pixel_result && $pixel_result->num_rows > 0) {
-		while ($pixel_result_row = $pixel_result->fetch_assoc()) {
-			//$pixel_result_row = memcache_mysql_fetch_assoc($pixel_sql);
-			$mysql['pixel_type_id'] = $db->real_escape_string($pixel_result_row['pixel_type_id']);
-			if ($mysql['pixel_type_id'] == 5) {
-				$mysql['pixel_code'] = stripslashes((string) $pixel_result_row['pixel_code']);
-			}else{
-				$mysql['pixel_code'] = $db->real_escape_string($pixel_result_row['pixel_code']);
-			}
-
-			//get the list of pixel urls
-		    if($mysql['pixel_type_id'] != 5) $pixel_urls = explode(' ',(string) $mysql['pixel_code']);
-		   
-			switch ($mysql['pixel_type_id']) {
-				case 1:
-					foreach($pixel_urls as $pixel_url){
-					  if(!empty($pixel_url)) {
-					    $pixel_url=replaceTokens($pixel_url,$tokens);
-					    echo "<img src='{$pixel_url}' height='0' width='0' style='display:none' />\n";
-					  }
-					}
-
-					break;
-				case 2:
-			        foreach($pixel_urls as $pixel_url){
-					  if(!empty($pixel_url)) {
-					    $pixel_url=replaceTokens($pixel_url,$tokens);
-					    echo "<iframe src='{$pixel_url}' height='0' width='0'></iframe>\n";
-					  }
-					}
-
-					break;
-				case 3:
-			        foreach($pixel_urls as $pixel_url){
-					  if(!empty($pixel_url)) {
-					   $pixel_url=replaceTokens($pixel_url,$tokens);
-					   echo "<script async src='{$pixel_url}'></script>\n";
-					  }
-					}
-			
-					break;
-				case 4:
-		        	foreach($pixel_urls as $pixel_url){
-					  if(!empty($pixel_url)) {
-					    $pixel_url=replaceTokens($pixel_url,$tokens);
-					    getUrl($pixel_url, 'GET', 10, [], [], P202_POSTBACK_USER_AGENT, 5);
-					  }
-					}
-					break;
-
-				case 5:
-					echo replaceTokens($mysql['pixel_code'],$tokens);
-
-					break;
-				
-			}
-		}
-	}
-}
-
 if (is_numeric($mysql['click_id'])) {
 
 	$conv_time = time();
-	$click_time_raw = (int) ($cvar_sql_row['click_time'] ?? 0);
-	$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time_raw));
-	$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', (int) $conv_time));
-	$diff = $click_time_to_date->diff($conv_time_to_date);
-	$time_difference = $diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec';
 	$mysql['conv_time'] = $conv_time;
 
 		if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
@@ -258,6 +141,22 @@ if (is_numeric($mysql['click_id'])) {
 		? (string) ($_GET['amount'] ?? '0')
 		: (string) ($cvar_sql_row['click_payout'] ?? '0');
 
+	// An event (plan §2.2): stored on the click and evaluated by its goals,
+	// which record what they reach and tell the traffic source; the
+	// browser pixels of that notification are this response. A campaign
+	// without goals records its plain conversion below, as always.
+	try {
+		$webEvent = p202RecordWebEvent($db, $clickId, $_GET, ['browser' => true]);
+	} catch (\Throwable $webEventError) {
+		error_log('upx: event recording failed for click ' . $clickId . ': ' . $webEventError->getMessage());
+		p202RespondJsonError(500, 'Failed to record event');
+	}
+	if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
+		p202RespondWebEvent($webEvent, 'upx', true);
+		exit;
+	}
+	$eventName = $webEvent['event_name'] ?? null;
+
 	// Atomic + idempotent: locks the click, dedupes on transaction id, and
 	// applies the click update and conversion_logs insert in one transaction.
 	$conversionResult = ['conv_id' => 0, 'duplicate' => false];
@@ -266,15 +165,19 @@ if (is_numeric($mysql['click_id'])) {
 		$db,
 		[
 			'click_id'        => $clickId,
-			'campaign_id'     => (string) ($cvar_sql_row['aff_campaign_id'] ?? '0'),
 			'user_id'         => (string) ($cvar_sql_row['user_id'] ?? '0'),
-			'click_time'      => $click_time_raw,
 			'conv_time'       => $conv_time,
-			'time_difference' => $time_difference,
-			'ip'              => $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '',
+			'ip'              => p202StoredVisitorIp(),
 			'pixel_type'      => 3,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
 			'click_payout'    => $click_payout_for_log,
+			'event_name'      => $eventName,
+			// Without a transaction id a reloaded pixel cannot be told apart
+			// from a repeat, so it converts the click once; the writer checks
+			// click_lead under the click lock (as gpx.php does).
+			'once_per_click'  => p202ExtractTransactionId($_GET) === '',
+            // Server postbacks queued with the row, sent below (as gpb.php).
+            'notify_traffic_source' => true,
 		],
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,
@@ -287,41 +190,25 @@ if (is_numeric($mysql['click_id'])) {
 		error_log('upx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
 	}
 	$conversionId = $conversionResult['conv_id'];
-
-        if ($conversionId > 0 && !$conversionResult['duplicate']) {
-                $scope = [
-                        'user_id' => (int) $mysql['click_user_id'],
-                        'campaign_id' => (int) $mysql['campaign_id'],
-                ];
-                if ($advertiserId !== null) {
-                        $scope['advertiser_id'] = $advertiserId;
-                }
-
-                if ($settingsService->isMultiTouchEnabled($scope)) {
-                        try {
-                                $journeyRepository = new ConversionJourneyRepository($db);
-                                $journeyRepository->persistJourney(
-                                        conversionId: $conversionId,
-                                        userId: (int) $mysql['click_user_id'],
-                                        campaignId: (int) $mysql['campaign_id'],
-                                        conversionTime: (int) $mysql['conv_time'],
-                                        primaryClickId: (int) $mysql['click_id'],
-                                        primaryClickTime: (int) $mysql['click_time']
-                                );
-                        } catch (Throwable $journeyError) {
-                                error_log('Failed to persist conversion journey for conv_id ' . $conversionId . ': ' . $journeyError->getMessage());
-                        }
-                }
-        }
-
-	// Rebuild attribution snapshots so the attribution page reflects changes immediately
-	try {
-		$jobRunner = AttributionServiceFactory::createJobRunner();
-		$userId = (int) $mysql['click_user_id'];
-		$endTime = time();
-		$startTime = $endTime - 86400;
-		$jobRunner->runForUser($userId, $startTime, $endTime);
-	} catch (Throwable $e) {
-		error_log('Attribution rebuild after upx conversion failed: ' . $e->getMessage());
+	if ($conversionId > 0) {
+		p202LinkConversionIdentity($db, $clickId, $_GET);
+        // The server postbacks queued with the conversion: sent now, retried
+        // by the worker if this fails, and sent again by a reload of a
+        // conversion already recorded if still due.
+        p202SendQueuedPostbacks($db, $conversionId);
 	}
+
+	// Tell the traffic source after recording, and only about a conversion
+	// that was newly recorded: the pixel used to fire first, so a reload of
+	// the page notified the network again and a failed write notified it of
+	// a conversion this install never kept.
+	if ($conversionId > 0 && !$conversionResult['duplicate'] && ($conversionResult['reverses_conv_id'] ?? 0) === 0 && $mysql['ppc_account_id']) {
+		$tokens['transactionid'] = $conversionResult['transaction_id'] !== ''
+			? $conversionResult['transaction_id']
+			: $conversionResult['dedupe_key'];
+		$tokens['payout'] = $conversionResult['payout'];
+        // Markup only: the type-4 postbacks go out through the outbox above.
+        echo p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens, null, false)['markup'];
+	}
+
 }

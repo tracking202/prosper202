@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Prosper202\Ltv;
 
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
+use Prosper202\Report\LocalTime;
 use RuntimeException;
 
 /**
@@ -18,34 +20,50 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
     /**
      * Acquisition breakdowns join the customer's first click to a dimension
      * table. All columns here are code-owned constants, never user input.
+     * A dimension row is joined only from the click's own account: a click
+     * names its campaign, traffic source and landing page by id, and nothing
+     * stopped a tracker naming another account's before the API checked
+     * linked ids (229df10). Such a customer drops out of the breakdown, as a
+     * click with no campaign does from GET /reports/breakdown.
+     *
+     * The first click is read at its latest visit (a redirector re-click's
+     * row; breakdown() asks for it), as the spend beside it is: once, under
+     * that visit's campaign, traffic source and landing page.
      */
     private const ACQUISITION_BREAKDOWNS = [
         'campaign' => [
-            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id
-                       INNER JOIN 202_aff_campaigns ref ON ref.aff_campaign_id = ck.aff_campaign_id',
+            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id AND ck.user_id = c.user_id
+                       INNER JOIN 202_aff_campaigns ref ON ref.aff_campaign_id = ck.aff_campaign_id AND ref.user_id = ck.user_id',
             'id' => 'ref.aff_campaign_id',
             'name' => 'ref.aff_campaign_name',
             'spend_col' => 'aff_campaign_id',
         ],
         'ppc_account' => [
-            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id
-                       INNER JOIN 202_ppc_accounts ref ON ref.ppc_account_id = ck.ppc_account_id',
+            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id AND ck.user_id = c.user_id
+                       INNER JOIN 202_ppc_accounts ref ON ref.ppc_account_id = ck.ppc_account_id AND ref.user_id = ck.user_id',
             'id' => 'ref.ppc_account_id',
             'name' => 'ref.ppc_account_name',
             'spend_col' => 'ppc_account_id',
         ],
         'landing_page' => [
-            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id
-                       INNER JOIN 202_landing_pages ref ON ref.landing_page_id = ck.landing_page_id',
+            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id AND ck.user_id = c.user_id
+                       INNER JOIN 202_landing_pages ref ON ref.landing_page_id = ck.landing_page_id AND ref.user_id = ck.user_id',
             'id' => 'ref.landing_page_id',
             'name' => 'ref.landing_page_url',
             'spend_col' => 'landing_page_id',
         ],
     ];
 
-    private const CUSTOMER_SORTS = [
+    /**
+     * The orders GET /ltv/customers takes (`sort`, `dir`). Public so the
+     * controller names them when it refuses another; the Go CLI's
+     * ltvCustomerSorts and sortDirections are held to these lists
+     * (TestLtvListsAreTheServers).
+     */
+    public const CUSTOMER_SORTS = [
         'total_revenue', 'order_count', 'last_activity_time', 'first_seen_time', 'mrr',
     ];
+    public const SORT_DIRECTIONS = ['ASC', 'DESC'];
 
     /**
      * Actionable customer segments. Each is a self-contained WHERE fragment
@@ -67,6 +85,21 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
 
     public function __construct(private Connection $conn)
     {
+    }
+
+    /** The segments customers() filters by. @return list<string> */
+    public static function customerSegments(): array
+    {
+        return array_keys(self::CUSTOMER_SEGMENTS);
+    }
+
+    /**
+     * What breakdown() (and predict()'s `by`) groups by: the acquisition
+     * dimensions, and product. @return list<string>
+     */
+    public static function breakdowns(): array
+    {
+        return [...array_keys(self::ACQUISITION_BREAKDOWNS), 'product'];
     }
 
     public function summary(LtvQuery $query): array
@@ -94,8 +127,20 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
         $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            return [];
+        }
 
-        return $row ?? [];
+        // Numbers, not the DECIMAL and SUM() strings mysqli hands back
+        // ("80.57000", and "2" for an order count).
+        foreach (['customers', 'total_orders', 'repeat_customers', 'purchasing_customers', 'active_subscriptions'] as $count) {
+            $row[$count] = (int) $row[$count];
+        }
+        foreach (['total_revenue', 'refunded_amount', 'avg_ltv', 'aov', 'repeat_rate', 'mrr'] as $amount) {
+            $row[$amount] = (float) $row[$amount];
+        }
+
+        return $row;
     }
 
     public function customers(
@@ -107,10 +152,20 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         ?string $search = null,
         ?string $segment = null
     ): array {
+        // Refused, never replaced: an unknown sort read as total_revenue and
+        // an unknown direction as DESC, so `sort=revenue` came back ranked by
+        // revenue-the-default and read as the order asked for (CLAUDE.md #4).
+        // LtvController refuses both first, naming the parameter.
         if (!in_array($sortBy, self::CUSTOMER_SORTS, true)) {
-            $sortBy = 'total_revenue';
+            throw new LtvInputException(
+                'sort',
+                'Invalid sort: ' . $sortBy . ' (expected ' . implode(', ', self::CUSTOMER_SORTS) . ')'
+            );
         }
-        $sortDir = strtoupper($sortDir) === 'ASC' ? 'ASC' : 'DESC';
+        $sortDir = strtoupper($sortDir);
+        if (!in_array($sortDir, self::SORT_DIRECTIONS, true)) {
+            throw new LtvInputException('dir', 'Invalid dir: ' . $sortDir . ' (expected ASC or DESC)');
+        }
 
         [$joins, $where, $types, $binds] = $this->buildCustomerScope($query);
 
@@ -128,7 +183,8 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $segment = $segment !== null ? trim($segment) : '';
         if ($segment !== '') {
             if (!isset(self::CUSTOMER_SEGMENTS[$segment])) {
-                throw new RuntimeException(
+                throw new LtvInputException(
+                    'segment',
                     'Invalid segment: ' . $segment . ' (expected ' . implode(', ', array_keys(self::CUSTOMER_SEGMENTS)) . ')'
                 );
             }
@@ -167,7 +223,8 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
             return $this->productBreakdown($query, $limit, $offset);
         }
         if (!isset(self::ACQUISITION_BREAKDOWNS[$breakdownType])) {
-            throw new RuntimeException(
+            throw new LtvInputException(
+                'by',
                 'Invalid breakdown type: ' . $breakdownType . ' (expected campaign, ppc_account, landing_page or product)'
             );
         }
@@ -180,24 +237,26 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         // acquired customer, ltv_cac = revenue returned per ad dollar. The
         // spend subquery renders before the scope joins, so its binds come
         // first.
-        $spendWhere = 'user_id = ?';
+        $latest = LatestVisit::isLatest('ck');
+        $spendWhere = 'sc.user_id = ? AND '
+            . LatestVisit::isLatest('sc');
         $spendTypes = 'i';
         $spendBinds = [$query->userId];
         if ($query->timeFrom !== null) {
-            $spendWhere .= ' AND click_time >= ?';
+            $spendWhere .= ' AND sc.click_time >= ?';
             $spendTypes .= 'i';
             $spendBinds[] = $query->timeFrom;
         }
         if ($query->timeTo !== null) {
-            $spendWhere .= ' AND click_time <= ?';
+            $spendWhere .= ' AND sc.click_time <= ?';
             $spendTypes .= 'i';
             $spendBinds[] = $query->timeTo;
         }
         $spendJoin = "LEFT JOIN (
-                SELECT {$bd['spend_col']} AS dim_id, SUM(click_cpc) AS spend
-                FROM 202_clicks
+                SELECT sc.{$bd['spend_col']} AS dim_id, SUM(sc.click_cpc) AS spend
+                FROM 202_clicks sc
                 WHERE {$spendWhere}
-                GROUP BY {$bd['spend_col']}
+                GROUP BY sc.{$bd['spend_col']}
             ) sp ON sp.dim_id = {$bd['id']}";
 
         $sql = "SELECT
@@ -219,9 +278,9 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
             {$bd['join']}
             {$spendJoin}
             {$joins}
-            {$where}
+            {$where} AND {$latest}
             GROUP BY {$bd['id']}, {$bd['name']}, sp.spend
-            ORDER BY total_revenue DESC
+            ORDER BY total_revenue DESC, {$bd['id']} ASC
             LIMIT ? OFFSET ?";
 
         $binds = array_merge($spendBinds, $binds, [$limit, $offset]);
@@ -239,35 +298,54 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
      * since acquisition. Shows how fast LTV pays back — the number that
      * decides how aggressively acquisition can be financed.
      *
+     * The months are $timezone's calendar months (LocalTime): the window used
+     * to start at date()'s first of the month, in whatever zone the PHP
+     * process ran, while the rows were grouped by FROM_UNIXTIME() in the
+     * database session's zone, so a customer acquired near a month's edge
+     * could be counted in the window and grouped into the month before it —
+     * an extra, partial cohort the window never asked for.
+     *
+     * @param string $timezone the account's zone (a name PHP knows)
      * @return list<array<string, mixed>> newest cohort first; keys
      *         cohort_month (Y-m), customers, m0..m4, m5_plus,
      *         total_revenue, ltv_per_customer
      */
-    public function cohorts(int $userId, int $months = 6, ?int $now = null): array
+    public function cohorts(int $userId, int $months = 6, ?int $now = null, string $timezone = 'UTC'): array
     {
         $months = max(1, min(24, $months));
         $now = $now ?? time();
-        $windowStart = strtotime(date('Y-m-01', $now) . ' -' . ($months - 1) . ' months');
+        $windowStart = (new \DateTimeImmutable('@' . $now))
+            ->setTimezone(new \DateTimeZone($timezone))
+            ->modify('first day of this month')
+            ->setTime(0, 0, 0)
+            ->modify('-' . ($months - 1) . ' months')
+            ->getTimestamp();
 
-        // Bucket = whole months between acquisition and the revenue event
-        // (clamped at 0: idempotent imports can carry occurred_at slightly
-        // before first_seen). LEFT JOIN keeps zero-revenue cohorts visible.
-        $bucket = 'GREATEST(TIMESTAMPDIFF(MONTH, FROM_UNIXTIME(c.first_seen_time), FROM_UNIXTIME(re.occurred_at)), 0)';
+        // Bucket = whole months between acquisition and the revenue event, on
+        // the account's wall clock (clamped at 0: idempotent imports can
+        // carry occurred_at slightly before first_seen). LEFT JOIN keeps
+        // zero-revenue cohorts visible.
+        $firstSeen = LocalTime::datetimeSql('c.first_seen_time', $timezone, $now);
+        $occurred = LocalTime::datetimeSql('re.occurred_at', $timezone, $now);
         $stmt = $this->conn->prepareRead(
-            "SELECT DATE_FORMAT(FROM_UNIXTIME(c.first_seen_time), '%Y-%m') AS cohort_month,
-                    COUNT(DISTINCT c.customer_id) AS customers,
-                    COALESCE(SUM(CASE WHEN {$bucket} = 0 THEN re.amount END), 0) AS m0,
-                    COALESCE(SUM(CASE WHEN {$bucket} = 1 THEN re.amount END), 0) AS m1,
-                    COALESCE(SUM(CASE WHEN {$bucket} = 2 THEN re.amount END), 0) AS m2,
-                    COALESCE(SUM(CASE WHEN {$bucket} = 3 THEN re.amount END), 0) AS m3,
-                    COALESCE(SUM(CASE WHEN {$bucket} = 4 THEN re.amount END), 0) AS m4,
-                    COALESCE(SUM(CASE WHEN {$bucket} >= 5 THEN re.amount END), 0) AS m5_plus,
-                    COALESCE(SUM(re.amount), 0) AS total_revenue
-             FROM 202_customers c
-             LEFT JOIN 202_revenue_events re
-                    ON re.customer_id = c.customer_id AND re.user_id = c.user_id
-             WHERE c.user_id = ? AND c.merged_into_customer_id IS NULL
-               AND c.first_seen_time >= ?
+            "SELECT DATE_FORMAT(t.first_seen_local, '%Y-%m') AS cohort_month,
+                    COUNT(DISTINCT t.customer_id) AS customers,
+                    COALESCE(SUM(CASE WHEN t.bucket = 0 THEN t.amount END), 0) AS m0,
+                    COALESCE(SUM(CASE WHEN t.bucket = 1 THEN t.amount END), 0) AS m1,
+                    COALESCE(SUM(CASE WHEN t.bucket = 2 THEN t.amount END), 0) AS m2,
+                    COALESCE(SUM(CASE WHEN t.bucket = 3 THEN t.amount END), 0) AS m3,
+                    COALESCE(SUM(CASE WHEN t.bucket = 4 THEN t.amount END), 0) AS m4,
+                    COALESCE(SUM(CASE WHEN t.bucket >= 5 THEN t.amount END), 0) AS m5_plus,
+                    COALESCE(SUM(t.amount), 0) AS total_revenue
+             FROM (
+                 SELECT c.customer_id, re.amount, {$firstSeen} AS first_seen_local,
+                        GREATEST(TIMESTAMPDIFF(MONTH, {$firstSeen}, {$occurred}), 0) AS bucket
+                 FROM 202_customers c
+                 LEFT JOIN 202_revenue_events re
+                        ON re.customer_id = c.customer_id AND re.user_id = c.user_id
+                 WHERE c.user_id = ? AND c.merged_into_customer_id IS NULL
+                   AND c.first_seen_time >= ?
+             ) t
              GROUP BY cohort_month
              ORDER BY cohort_month DESC"
         );
@@ -275,9 +353,15 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
 
         $rows = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
+            // Numbers, not the DECIMAL columns' strings, as ltv_per_customer
+            // already was.
             $customers = (int) $row['customers'];
+            $row['customers'] = $customers;
+            foreach (['m0', 'm1', 'm2', 'm3', 'm4', 'm5_plus', 'total_revenue'] as $money) {
+                $row[$money] = (float) $row[$money];
+            }
             $row['ltv_per_customer'] = $customers > 0
-                ? round(((float) $row['total_revenue']) / $customers, 5)
+                ? round($row['total_revenue'] / $customers, 5)
                 : 0.0;
             $rows[] = $row;
         }
@@ -363,6 +447,22 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $rows = [];
         foreach ($this->breakdown($query, $breakdownType, 100, 0) as $row) {
             $customers = (int) ($row['customers'] ?? 0);
+            // Defensive net: every breakdown now supplies aov/repeat_rate/mrr
+            // (product included), but a future breakdown that doesn't must fall
+            // back to the account projection rather than project a bogus 0.0.
+            $hasProjectionInputs = array_key_exists('aov', $row) && array_key_exists('repeat_rate', $row);
+            if (!$hasProjectionInputs) {
+                $prediction = $account;
+                $prediction['basis'] = 'account_fallback';
+                $prediction['fallback_reason'] = "'{$breakdownType}' breakdown does not supply per-cohort aov/repeat_rate";
+                $rows[] = [
+                    'id' => $row['id'] ?? null,
+                    'name' => $row['name'] ?? null,
+                    'customers' => $customers,
+                    'prediction' => $prediction,
+                ];
+                continue;
+            }
             if ($customers >= self::MIN_COHORT_SIZE) {
                 // Cohort projection: the COHORT's own MRR (a campaign with no
                 // subscribers must not display the account-wide subscriber
@@ -463,44 +563,91 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
             ? "\n            INNER JOIN 202_customers c ON c.customer_id = re.customer_id AND c.user_id = li.user_id AND c.merged_into_customer_id IS NULL" . $cfJoins
             : '';
 
-        $where = ['li.user_id = ?'];
-        $types = $cfTypes . 'i';
-        $binds = array_merge($cfBinds, [$query->userId]);
+        $pcWhere = ['li.user_id = ?', 'li.product_id IS NOT NULL'];
+        $pcTypes = $cfTypes . 'i';
+        $pcBinds = array_merge($cfBinds, [$query->userId]);
         if ($query->timeFrom !== null) {
-            $where[] = 're.occurred_at >= ?';
-            $types .= 'i';
-            $binds[] = $query->timeFrom;
+            $pcWhere[] = 're.occurred_at >= ?';
+            $pcTypes .= 'i';
+            $pcBinds[] = $query->timeFrom;
         }
         if ($query->timeTo !== null) {
-            $where[] = 're.occurred_at <= ?';
-            $types .= 'i';
-            $binds[] = $query->timeTo;
+            $pcWhere[] = 're.occurred_at <= ?';
+            $pcTypes .= 'i';
+            $pcBinds[] = $query->timeTo;
         }
-        $whereClause = 'WHERE ' . implode(' AND ', $where);
+        $pcWhereClause = 'WHERE ' . implode(' AND ', $pcWhere);
 
+        // Per-product subscriber MRR. Subscriptions carry no product_id, so a
+        // subscription's MRR is attributed to the product(s) it bills for (the
+        // products on its events' line items), split EVENLY across the distinct
+        // products of a multi-product (bundle) subscription. This is additive —
+        // summing product mrr over all products reconciles to total active MRR
+        // for subscriptions that have at least one product line item (a
+        // subscription with no product line items cannot be attributed and is
+        // omitted). Active subscriptions only, current-state (no report-window
+        // filter), matching mrr() and the acquisition breakdown's SUM(c.mrr).
+        // One placeholder: user_id.
+        $mrrSubquery = "LEFT JOIN (
+                    WITH sub_prod AS (
+                        SELECT DISTINCT s.subscription_id, s.mrr, li_s.product_id
+                        FROM 202_subscriptions s
+                        INNER JOIN 202_revenue_events re_s
+                            ON re_s.subscription_id = s.subscription_id AND re_s.user_id = s.user_id
+                        INNER JOIN 202_revenue_line_items li_s
+                            ON li_s.event_id = re_s.event_id AND li_s.product_id IS NOT NULL
+                        WHERE s.user_id = ? AND s.status = 'active'
+                    )
+                    SELECT sp.product_id, SUM(sp.mrr / cnt.n) AS mrr
+                    FROM sub_prod sp
+                    INNER JOIN (
+                        SELECT subscription_id, COUNT(*) AS n FROM sub_prod GROUP BY subscription_id
+                    ) cnt ON cnt.subscription_id = sp.subscription_id
+                    GROUP BY sp.product_id
+                ) pm ON pm.product_id = pc.product_id";
+
+        // pc is one row per (product, customer): grouping the events by
+        // re.customer_id yields the per-customer distinct-order count that
+        // repeat_rate needs. A merged customer's events were repointed to the
+        // survivor at merge time, so the stored customer_id is already correct.
         $sql = "SELECT
-                p.product_id AS id,
+                pc.product_id AS id,
                 COALESCE(p.name, p.sku, p.external_product_id) AS name,
                 p.sku,
-                COUNT(DISTINCT re.customer_id) AS customers,
-                COUNT(DISTINCT CASE WHEN re.event_type IN ('purchase','renewal','one_time')
-                                    THEN re.event_id END) AS orders,
-                COALESCE(SUM(li.quantity), 0) AS units,
-                COALESCE(SUM(li.amount), 0) AS total_revenue,
-                CASE WHEN COUNT(DISTINCT re.customer_id) > 0
-                     THEN SUM(li.amount) / COUNT(DISTINCT re.customer_id)
-                     ELSE 0 END AS avg_revenue_per_customer
-            FROM 202_revenue_line_items li
-            INNER JOIN 202_revenue_events re ON re.event_id = li.event_id
-            INNER JOIN 202_products p ON p.product_id = li.product_id{$customerJoin}
-            {$whereClause}
-            GROUP BY p.product_id, name, p.sku
-            ORDER BY total_revenue DESC
+                COUNT(*) AS customers,
+                COALESCE(SUM(pc.cust_orders), 0) AS orders,
+                COALESCE(SUM(pc.cust_units), 0) AS units,
+                COALESCE(SUM(pc.cust_revenue), 0) AS total_revenue,
+                CASE WHEN COUNT(*) > 0 THEN SUM(pc.cust_revenue) / COUNT(*) ELSE 0 END AS avg_revenue_per_customer,
+                CASE WHEN SUM(pc.cust_orders) > 0 THEN SUM(pc.cust_revenue) / SUM(pc.cust_orders) ELSE 0 END AS aov,
+                CASE WHEN SUM(CASE WHEN pc.cust_orders >= 1 THEN 1 ELSE 0 END) > 0
+                     THEN SUM(CASE WHEN pc.cust_orders >= 2 THEN 1 ELSE 0 END)
+                          / SUM(CASE WHEN pc.cust_orders >= 1 THEN 1 ELSE 0 END)
+                     ELSE 0 END AS repeat_rate,
+                COALESCE(MAX(pm.mrr), 0) AS mrr
+            FROM (
+                SELECT
+                    li.product_id,
+                    re.customer_id,
+                    COUNT(DISTINCT CASE WHEN re.event_type IN ('purchase','renewal','one_time')
+                                        THEN re.event_id END) AS cust_orders,
+                    SUM(li.quantity) AS cust_units,
+                    SUM(li.amount) AS cust_revenue
+                FROM 202_revenue_line_items li
+                INNER JOIN 202_revenue_events re ON re.event_id = li.event_id{$customerJoin}
+                {$pcWhereClause}
+                GROUP BY li.product_id, re.customer_id
+            ) pc
+            INNER JOIN 202_products p ON p.product_id = pc.product_id
+            {$mrrSubquery}
+            GROUP BY pc.product_id, name, p.sku
+            ORDER BY total_revenue DESC, pc.product_id ASC
             LIMIT ? OFFSET ?";
 
-        $binds[] = $limit;
-        $binds[] = $offset;
-        $types .= 'ii';
+        // Bind order follows SQL text: pc's cf-join + WHERE binds, then the MRR
+        // subquery's user_id, then LIMIT/OFFSET.
+        $binds = array_merge($pcBinds, [$query->userId, $limit, $offset]);
+        $types = $pcTypes . 'iii';
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);

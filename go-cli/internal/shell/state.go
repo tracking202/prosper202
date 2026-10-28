@@ -70,12 +70,12 @@ func (s *State) FormatVarsList() string {
 	}
 	var b strings.Builder
 	for _, name := range s.Names() {
-		raw := s.vars[name]
-		preview := string(raw)
-		if len(preview) > 80 {
-			preview = preview[:77] + "..."
+		preview := strings.ReplaceAll(string(s.vars[name]), "\n", " ")
+		// Truncate by runes, not bytes: API payloads carry non-ASCII names, and a
+		// byte cut through a multi-byte rune emits a replacement character.
+		if r := []rune(preview); len(r) > 80 {
+			preview = string(r[:77]) + "..."
 		}
-		preview = strings.ReplaceAll(preview, "\n", " ")
 		fmt.Fprintf(&b, "$%s = %s\n", name, preview)
 	}
 	return b.String()

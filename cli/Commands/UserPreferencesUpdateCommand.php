@@ -20,22 +20,16 @@ class UserPreferencesUpdateCommand extends BaseCommand
         parent::configure();
         $this->setDescription('Update user preferences')
             ->addArgument('user_id', InputArgument::REQUIRED, 'User ID')
-            ->addOption('user_tracking_domain', null, InputOption::VALUE_REQUIRED, 'Tracking domain')
-            ->addOption('user_account_currency', null, InputOption::VALUE_REQUIRED, 'Currency (3-letter code)')
-            ->addOption('user_slack_incoming_webhook', null, InputOption::VALUE_REQUIRED, 'Slack webhook URL')
-            ->addOption('user_daily_email', null, InputOption::VALUE_REQUIRED, 'Daily email: on/off')
-            ->addOption('ipqs_api_key', null, InputOption::VALUE_REQUIRED, 'IPQS fraud detection API key');
+            ->addOption('user-tracking-domain', null, InputOption::VALUE_REQUIRED, 'Tracking domain')
+            ->addOption('user-account-currency', null, InputOption::VALUE_REQUIRED, 'Currency (3-letter code)')
+            ->addOption('user-slack-incoming-webhook', null, InputOption::VALUE_REQUIRED, 'Slack webhook URL')
+            ->addOption('user-daily-email', null, InputOption::VALUE_REQUIRED, 'Daily email: on/off')
+            ->addOption('ipqs-api-key', null, InputOption::VALUE_REQUIRED, 'IPQS fraud detection API key');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $body = [];
-        foreach (['user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email', 'ipqs_api_key'] as $f) {
-            $val = $input->getOption($f);
-            if ($val !== null) {
-                $body[$f] = $val;
-            }
-        }
+        $body = $this->collectOptions($input, ['user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email', 'ipqs_api_key']);
         if (empty($body)) {
             $output->writeln('<error>Provide at least one preference to update</error>');
             return Command::FAILURE;

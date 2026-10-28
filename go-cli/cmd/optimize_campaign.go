@@ -35,10 +35,18 @@ var campaignOptimizeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := refuseMaskedFigures(sumRaw, "p202 campaign optimize"); err != nil {
+			return err
+		}
 		var sum struct {
 			Data map[string]interface{} `json:"data"`
 		}
-		_ = json.Unmarshal(sumRaw, &sum)
+		// A discarded parse error left sum.Data nil, and every metric below
+		// coerced to 0 — the command then reported a campaign with real traffic
+		// as having no clicks, leads or revenue.
+		if err := json.Unmarshal(sumRaw, &sum); err != nil {
+			return fmt.Errorf("parsing summary report for campaign %s: %w", id, err)
+		}
 		s := sum.Data
 		clicks := toFloat(s["total_clicks"])
 		leads := toFloat(s["total_leads"])
@@ -94,8 +102,8 @@ var campaignOptimizeCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Recommendation: this offer is losing money. Highest-EPC alternative for this traffic is %q (EPC $%.3f, vs $%.3f here).\n",
 				top.name, top.epc, epc)
 			fmt.Fprintf(os.Stderr, "Next: create a rotator defaulting to the salvage offer, keep converting geos on this one:\n")
-			fmt.Fprintf(os.Stderr, "  p202 rotator create --name \"Salvage\" --default_campaign <salvage_id>\n")
-			fmt.Fprintf(os.Stderr, "  p202 rotator rule-create <rid> --rule_name \"US\" --country US --redirect-campaign %s\n\n", id)
+			fmt.Fprintf(os.Stderr, "  p202 rotator create --name \"Salvage\" --default-campaign <salvage_id>\n")
+			fmt.Fprintf(os.Stderr, "  p202 rotator rule-create <rid> --rule-name \"US\" --country US --redirect-campaign %s\n\n", id)
 		} else if net >= 0 {
 			fmt.Fprintln(os.Stderr, "Recommendation: profitable — scale the winning sources (`report winners`).")
 		}

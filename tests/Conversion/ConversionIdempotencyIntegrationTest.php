@@ -86,6 +86,17 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         self::$db->query('TRUNCATE TABLE 202_conversion_logs');
         self::$db->query('TRUNCATE TABLE 202_clicks');
         self::$db->query('TRUNCATE TABLE 202_clicks_spy');
+        // Campaign 7, which every click here belongs to, in the mode these
+        // cases are written for: replace, where an id-less conversion is
+        // never deduplicated. Another suite on the same database (the goals
+        // tests make campaign 7 accumulate) must not decide it: in
+        // accumulate mode an id-less payable row is the campaign's one plain
+        // conversion per click, and the repeat case reads as a duplicate.
+        self::$db->query('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = 7');
+        if (self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id = 7, user_id = 1, aff_network_id = 1, aff_campaign_name = 'c7',
+                aff_campaign_url = 'http://x', aff_campaign_payout = 10, aff_campaign_time = 1, aff_campaign_foreign_payout = 10, payout_mode = 'replace'") !== true) {
+            self::fail('campaign 7 fixture: ' . self::$db->error);
+        }
     }
 
     private function insertClick(int $clickId, float $payout = 10.0, int $campaignId = 7): void
@@ -108,6 +119,7 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
             'pixel_type'      => 3,
             'user_agent'      => 'IntegrationTest/1.0',
             'click_payout'    => (string) $payout,
+            'once_per_click'  => false,
         ];
     }
 
@@ -160,25 +172,57 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         self::assertSame(2, (int) $res->fetch_assoc()['c'], 'Empty transaction ids must be stored as NULL');
     }
 
-    public function testUniqueKeyRejectsDuplicateTransactionIdAtDbLevel(): void
+    /**
+     * gpb.php and upx.php used to call the writer without once_per_click, so
+     * a retried id-less postback or a reloaded universal pixel recorded a
+     * second conversion (a NULL transaction id never collides on the UNIQUE
+     * key). With the flag the second hit finds the click already a lead under
+     * its lock and records nothing.
+     */
+    public function testOncePerClickRecordsOneIdlessConversion(): void
+    {
+        $this->insertClick(1005);
+        $log = $this->log(1005);
+        $log['once_per_click'] = true;
+
+        $first = p202RecordConversion(self::$db, $log, '', true, '10.0', '');
+        $retry = p202RecordConversion(self::$db, $log, '', true, '10.0', '');
+
+        self::assertFalse($first['duplicate']);
+        self::assertGreaterThan(0, $first['conv_id']);
+        self::assertTrue($retry['duplicate'], 'the retry is reported as a duplicate');
+        self::assertSame(0, $retry['conv_id']);
+        self::assertSame(1, $this->conversionCount(1005), 'an id-less retry must not record a second conversion');
+    }
+
+    public function testUniqueKeyRejectsADuplicateLedgerKeyAtDbLevel(): void
     {
         $this->insertClick(1002);
         $db = self::$db;
+        $row = "click_id=1002, campaign_id=7, user_id=1, click_time=1, conv_time=1, time_difference='', ip='', pixel_type=1, user_agent='', deleted=0, source='postback'";
 
-        $ok = $db->query("INSERT INTO 202_conversion_logs SET click_id=1002, transaction_id='X1', campaign_id=7, click_payout=1, user_id=1, click_time=1, conv_time=1, time_difference='', ip='', pixel_type=1, user_agent='', deleted=0");
+        $ok = $db->query("INSERT INTO 202_conversion_logs SET $row, click_payout=1, transaction_id='X1', dedupe_key='tx:X1'");
         self::assertTrue($ok);
 
-        // Second insert with the same (click_id, transaction_id) must violate the
-        // UNIQUE backstop even if application-level dedup were bypassed. Depending
-        // on the mysqli_report mode this surfaces either as a false return or a
-        // thrown exception — both must carry ER_DUP_ENTRY (1062).
+        // The backstop is UNIQUE (click_id, dedupe_key) — the key every path
+        // builds through DedupeKey — and it holds even if the application's
+        // own lookup were bypassed. Depending on the mysqli_report mode this
+        // surfaces as a false return or a thrown exception; both carry
+        // ER_DUP_ENTRY (1062) naming the key.
         try {
-            $dup = $db->query("INSERT INTO 202_conversion_logs SET click_id=1002, transaction_id='X1', campaign_id=7, click_payout=1, user_id=1, click_time=1, conv_time=1, time_difference='', ip='', pixel_type=1, user_agent='', deleted=0");
-            self::assertFalse($dup, 'The UNIQUE (click_id, transaction_id) key must reject a duplicate');
+            $dup = $db->query("INSERT INTO 202_conversion_logs SET $row, click_payout=1, transaction_id='X1', dedupe_key='tx:X1'");
+            self::assertFalse($dup, 'The UNIQUE (click_id, dedupe_key) key must reject a duplicate');
             self::assertSame(1062, $db->errno, 'MySQL ER_DUP_ENTRY expected');
+            self::assertStringContainsString('uniq_click_dedupe', $db->error);
         } catch (\mysqli_sql_exception $e) {
             self::assertSame(1062, $e->getCode(), 'MySQL ER_DUP_ENTRY expected');
+            self::assertStringContainsString('uniq_click_dedupe', $e->getMessage());
         }
+
+        // The transaction id itself is no longer unique per click: a reversal
+        // carries the id of the sale it reverses, under its own key.
+        $reversal = $db->query("INSERT INTO 202_conversion_logs SET $row, click_payout=-1, transaction_id='X1', dedupe_key='rev:1:1', reverses_conv_id=1");
+        self::assertTrue($reversal, 'a reversal row shares its sale\'s transaction id');
     }
 
     public function testMissingSourceClickWritesNoOrphanConversion(): void
@@ -210,11 +254,165 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         self::assertSame('1', (string) $click['click_lead'], 'V3 create must flag the source click');
     }
 
+    /**
+     * Sales whose ids differ past the fifteenth digit are different sales,
+     * and a body the ledger cannot key or hold is refused naming the field.
+     * (string) made the JSON integers 12345678901234567891 and
+     * 12345678901234567892 one id, "1.2345678901235E+19", so the second was
+     * answered duplicate and dropped; an id past 255 bytes was a 500; and
+     * under the empty sql_mode this suite runs with (connect2.php's default)
+     * a payout of 1234567 was stored as 999999.99999 and answered 201.
+     */
+    public function testV3CreateKeysEachSaleExactlyAndRefusesWhatTheLedgerCannotHold(): void
+    {
+        $this->insertClick(1400);
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+        $create = static fn (string $json): array => $controller->create(json_decode($json, true));
+
+        $first = $create('{"click_id":1400,"transaction_id":"12345678901234567891","payout":5}');
+        $second = $create('{"click_id":1400,"transaction_id":"12345678901234567892","payout":5}');
+        $third = $create('{"click_id":1400,"transaction_id":9223372036854775807,"payout":5}');
+        self::assertArrayNotHasKey('duplicate', $second, 'a different id is a different sale');
+        self::assertSame(
+            ['12345678901234567891', '12345678901234567892', '9223372036854775807'],
+            [$first['data']['transaction_id'], $second['data']['transaction_id'], $third['data']['transaction_id']]
+        );
+        self::assertSame(3, $this->conversionCount(1400));
+
+        $refused = [
+            '{"click_id":1400,"transaction_id":12345678901234567893,"payout":5}' => 'transaction_id',
+            '{"click_id":1400,"transaction_id":"' . str_repeat('x', 256) . '","payout":5}' => 'transaction_id',
+            '{"click_id":1400,"transaction_id":"T-BIG","payout":1234567}' => 'payout',
+        ];
+        foreach ($refused as $json => $field) {
+            try {
+                $create($json);
+                self::fail(substr($json, 0, 80) . ' was recorded');
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                self::assertSame([$field], array_keys($e->getFieldErrors()), substr($json, 0, 80));
+            }
+        }
+        self::assertSame(3, $this->conversionCount(1400), 'nothing was written for a refused body');
+    }
+
     public function testV3ControllerCreateThrowsNotFoundForMissingClick(): void
     {
         $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
 
         $this->expectException(\Api\V3\Exception\NotFoundException::class);
         $controller->create(['click_id' => 888888, 'transaction_id' => 'V3-X']);
+    }
+
+    public function testV3CreateSaysWhenItMatchedAnExistingConversion(): void
+    {
+        $this->insertClick(1200);
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+
+        $new = $controller->create(['click_id' => 1200, 'transaction_id' => 'V3-FLAG', 'payout' => 5.0]);
+        $again = $controller->create(['click_id' => 1200, 'transaction_id' => 'V3-FLAG', 'payout' => 5.0]);
+
+        self::assertArrayNotHasKey('duplicate', $new, 'a new conversion carries no duplicate flag');
+        self::assertTrue($again['duplicate'] ?? null, 'a repeat says it matched an existing conversion');
+        self::assertSame((int) $new['data']['conv_id'], (int) $again['data']['conv_id']);
+        self::assertSame($new['data'], $again['data'], 'and serves that conversion unchanged');
+        self::assertSame(1, $this->conversionCount(1200));
+    }
+
+    /**
+     * A conversion whose ledger key belongs to a deleted row is refused with
+     * a 409 naming that row, writes nothing, and leaves the request's
+     * Idempotency-Key free: it used to read the deleted row back, answer
+     * 500 "write completed" and spend the key.
+     */
+    public function testV3RepeatOfADeletedConversionIsRefusedAndSpendsNoKey(): void
+    {
+        $this->insertClick(1300);
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+        $convId = (int) $controller->create(['click_id' => 1300, 'transaction_id' => 'V3-GONE', 'payout' => 5.0])['data']['conv_id'];
+        $controller->delete($convId);
+        $before = self::$db->query('SELECT click_lead, click_payout FROM 202_clicks WHERE click_id=1300')->fetch_assoc();
+
+        $stateDir = sys_get_temp_dir() . '/p202-conv-gone-' . bin2hex(random_bytes(4));
+        mkdir($stateDir, 0700, true);
+        $payload = ['click_id' => 1300, 'transaction_id' => 'V3-GONE', 'payout' => 5.0];
+        \Api\V3\RequestContext::setHeaders(['Idempotency-Key' => 'v3-gone-1']);
+        try {
+            $wrapped = new \Api\V3\Support\IdempotentCreate(new \Api\V3\Support\ServerStateStore($stateDir), 1);
+            $answers = [];
+            foreach ([1, 2] as $attempt) {
+                try {
+                    $wrapped('conversions', $payload, fn (): array => (new \Api\V3\Controllers\ConversionsController(self::$db, 1))->create($payload));
+                    $answers[] = 'recorded';
+                } catch (\Throwable $e) {
+                    $answers[] = $e;
+                }
+            }
+            $store = new \Api\V3\Support\ServerStateStore($stateDir);
+            $state = $store->reserveIdempotent(
+                \Api\V3\Support\ServerStateStore::idempotencyScopeForUser(1),
+                'v3-gone-1',
+                \Api\V3\Support\ServerStateStore::idempotencyFingerprint('create:conversions', $payload)
+            )['state'];
+        } finally {
+            \Api\V3\RequestContext::reset();
+            $files = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($stateDir, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::CHILD_FIRST
+            );
+            foreach ($files as $file) {
+                $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
+            }
+            rmdir($stateDir);
+        }
+
+        foreach ($answers as $i => $answer) {
+            self::assertInstanceOf(\Api\V3\Exception\ConflictException::class, $answer, 'attempt ' . ($i + 1) . ' is a 409, the same each time');
+            self::assertStringContainsString('Conversion ' . $convId . ' on click 1300 had transaction id "V3-GONE" and was deleted', $answer->getMessage());
+            self::assertSame(['conv_id' => $convId, 'click_id' => 1300, 'deleted' => true], $answer->getDetails());
+        }
+        self::assertSame('claimed', $state, 'nothing was written, so the Idempotency-Key is not spent');
+        self::assertSame(1, $this->conversionCount(1300), 'no second row');
+        self::assertSame($before, self::$db->query('SELECT click_lead, click_payout FROM 202_clicks WHERE click_id=1300')->fetch_assoc(), 'the click is untouched');
+    }
+
+    public function testV3RepeatOfADeletedReversalOrPlainConversionIsRefused(): void
+    {
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+
+        // A reversal is its own row (rev:<sale>:<ref>); deleted, the same
+        // reversal is not recorded again.
+        $this->insertClick(1400);
+        $controller->create(['click_id' => 1400, 'transaction_id' => 'V3-SALE', 'payout' => 5.0]);
+        $reversal = (int) $controller->create(['click_id' => 1400, 'transaction_id' => 'V3-SALE', 'status' => 'reversed'])['data']['conv_id'];
+        $controller->delete($reversal);
+        try {
+            $controller->create(['click_id' => 1400, 'transaction_id' => 'V3-SALE', 'status' => 'reversed']);
+            self::fail('the deleted reversal must not be recorded again');
+        } catch (\Api\V3\Exception\ConflictException $e) {
+            self::assertStringContainsString('Conversion ' . $reversal . ' was this reversal on click 1400 and was deleted', $e->getMessage());
+        }
+
+        // An accumulating campaign's id-less conversion is its one plain
+        // conversion (key "conversion"); deleted, it is not recorded again.
+        self::$db->query('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = 9');
+        if (self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id = 9, user_id = 1, aff_network_id = 1, aff_campaign_name = 'c9',
+                aff_campaign_url = 'http://x', aff_campaign_payout = 4, aff_campaign_time = 1, aff_campaign_foreign_payout = 4, payout_mode = 'accumulate'") !== true) {
+            self::fail('campaign 9 fixture: ' . self::$db->error);
+        }
+        try {
+            $this->insertClick(1500, 0.0, 9);
+            $plain = (int) $controller->create(['click_id' => 1500])['data']['conv_id'];
+            $controller->delete($plain);
+            try {
+                $controller->create(['click_id' => 1500]);
+                self::fail('the deleted plain conversion must not be recorded again');
+            } catch (\Api\V3\Exception\ConflictException $e) {
+                self::assertStringContainsString('Conversion ' . $plain . " was click 1500's one conversion without a transaction id", $e->getMessage());
+            }
+            self::assertSame(1, $this->conversionCount(1500));
+        } finally {
+            self::$db->query('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = 9');
+        }
+        self::assertSame(2, $this->conversionCount(1400), 'the sale and the one reversal');
     }
 }

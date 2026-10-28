@@ -1,7 +1,17 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
+	"regexp"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
+	"p202/internal/api"
+	configpkg "p202/internal/config"
 )
 
 // Exit codes for automation compatibility.
@@ -14,6 +24,7 @@ const (
 	ExitNetwork        = 3 // connection timeout, DNS failure
 	ExitServer         = 4 // API returned 5xx
 	ExitPartialFailure = 5 // bulk operation with some successes and some failures
+	ExitLicence        = 6 // the install requires a Pro licence for the CLI (HTTP 402)
 )
 
 // CLIError is a structured error for CLI-level failures.
@@ -23,30 +34,104 @@ type CLIError struct {
 	Category string // "validation", "auth", "network", "server", "partial_failure"
 	Message  string
 	ExitCode int
+	// Hint is the recovery step an operator or agent should take next. It
+	// is printed after the message and carried in the JSON error envelope.
+	Hint string
+	// Cause is the underlying error, when there is one: errors.Is and
+	// errors.As reach it through Unwrap, while the category, exit code and
+	// hint stay this error's.
+	Cause error
 }
 
 func (e *CLIError) Error() string {
 	return e.Message
 }
 
+// Unwrap returns the underlying error (nil when there is none).
+func (e *CLIError) Unwrap() error {
+	return e.Cause
+}
+
 func (e *CLIError) CategoryName() string {
 	return e.Category
+}
+
+// HintText implements api.Hinted so HintFor surfaces the hint.
+func (e *CLIError) HintText() string {
+	return e.Hint
+}
+
+// WithHint attaches a recovery hint and returns the error for chaining:
+//
+//	return validationError("--tracker is required").WithHint("run `p202 tracker list` to find ids")
+func (e *CLIError) WithHint(format string, args ...interface{}) *CLIError {
+	e.Hint = canonicalFlags(fmt.Sprintf(format, args...))
+	return e
+}
+
+// hintedError wraps any error with a recovery hint while preserving the
+// wrapped error's category and exit code (errors.As sees through it).
+type hintedError struct {
+	err  error
+	hint string
+}
+
+func (e *hintedError) Error() string    { return e.err.Error() }
+func (e *hintedError) Unwrap() error    { return e.err }
+func (e *hintedError) HintText() string { return e.hint }
+
+// withHint attaches a recovery hint to an existing error (typically one
+// that wraps an API error with %w). Returns nil for a nil error.
+func withHint(err error, format string, args ...interface{}) error {
+	if err == nil {
+		return nil
+	}
+	return &hintedError{err: err, hint: canonicalFlags(fmt.Sprintf(format, args...))}
 }
 
 // validationError creates a CLI validation error (bad input, missing flags, etc.).
 func validationError(format string, args ...interface{}) *CLIError {
 	return &CLIError{
 		Category: "validation",
-		Message:  fmt.Sprintf(format, args...),
+		Message:  canonicalFlags(fmt.Sprintf(format, args...)),
 		ExitCode: ExitValidation,
 	}
+}
+
+// licenceRefusal returns the first of errs when every non-nil one is the
+// install's licence refusal (category licence), and nil when any other
+// failure is among them or there is none. A command that aggregates several
+// requests reports licence/exit 6 and the trial hint only when a licence is
+// what every failure needs; one refused profile beside an unreachable one is
+// not fixed by a trial, so that run keeps its generic error.
+func licenceRefusal(errs ...error) error {
+	var refused error
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		if api.ErrorCategory(err) != "licence" {
+			return nil
+		}
+		if refused == nil {
+			refused = err
+		}
+	}
+	return refused
+}
+
+// licenceRefusalError is the refusal as a parent sees it from child
+// processes that all exited ExitLicence: the same category, exit code and
+// hint the children printed.
+func licenceRefusalError(message string) error {
+	return &api.APIError{Status: http.StatusPaymentRequired, Category: "licence", Message: message}
 }
 
 // partialFailureError creates an error indicating a bulk operation had some failures.
 func partialFailureError(format string, args ...interface{}) *CLIError {
 	return &CLIError{
 		Category: "partial_failure",
-		Message:  fmt.Sprintf(format, args...),
+		Message:  canonicalFlags(fmt.Sprintf(format, args...)),
 		ExitCode: ExitPartialFailure,
 	}
 }
@@ -60,24 +145,19 @@ func errString(err error) string {
 }
 
 // exitCodeForError returns the appropriate exit code for an error.
-// Falls back to ExitValidation (1) for unrecognized errors.
+// Falls back to ExitValidation (1) for unrecognized errors. Wrapped errors
+// (fmt.Errorf with %w, withHint) keep the code of the error they wrap, so
+// "fetching data: API error (401)" still exits 2, not 1.
 func exitCodeForError(err error) int {
 	if err == nil {
 		return ExitOK
 	}
-	if cliErr, ok := err.(*CLIError); ok {
+	var cliErr *CLIError
+	if errors.As(err, &cliErr) {
 		return cliErr.ExitCode
 	}
 
-	category := ""
-	type categorized interface {
-		CategoryName() string
-	}
-	if c, ok := err.(categorized); ok {
-		category = c.CategoryName()
-	}
-
-	switch category {
+	switch api.ErrorCategory(err) {
 	case "auth":
 		return ExitAuth
 	case "network":
@@ -86,7 +166,161 @@ func exitCodeForError(err error) int {
 		return ExitServer
 	case "partial_failure":
 		return ExitPartialFailure
+	case "licence":
+		return ExitLicence
 	default:
 		return ExitValidation
 	}
+}
+
+// activeCommandPath is the full path ("p202 forecast") of the command that
+// ran, recorded by the root PersistentPreRun so error output can name it;
+// recoverCommandContext fills it in when Cobra fails before that runs.
+var activeCommandPath string
+
+// errorEnvelope builds the machine-readable error record emitted on stderr
+// under --json/--ndjson: everything an agent needs to decide what to do next
+// without parsing prose.
+func errorEnvelope(err error) map[string]interface{} {
+	env := map[string]interface{}{
+		"message":   canonicalFlags(err.Error()),
+		"exit_code": exitCodeForError(err),
+	}
+	if category := api.ErrorCategory(err); category != "" {
+		env["category"] = category
+	} else {
+		env["category"] = "validation"
+	}
+	if hint := hintFor(err); hint != "" {
+		env["hint"] = hint
+	}
+	if activeCommandPath != "" {
+		env["command"] = activeCommandPath
+	}
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		env["http_status"] = apiErr.Status
+		if len(apiErr.FieldErrors) > 0 {
+			env["field_errors"] = apiErr.FieldErrors
+		}
+	}
+	return map[string]interface{}{"error": env}
+}
+
+// unknownInputHint answers Cobra's and pflag's errors for a command or
+// flag that does not exist: the caller guessed a name, so point at the
+// list and at search, which finds a command by what it does.
+func unknownInputHint(err error) string {
+	msg := err.Error()
+	path := strings.TrimSpace(activeCommandPath)
+	if path == "" {
+		path = "p202"
+	}
+	switch {
+	case strings.HasPrefix(msg, "unknown command "):
+		return fmt.Sprintf("Run `%s --help` for its commands, or `p202 search <what you want to do>` to find one by task (`p202 commands --json` lists them all).", path)
+	case strings.HasPrefix(msg, "unknown flag: "), strings.HasPrefix(msg, "unknown shorthand flag: "):
+		return fmt.Sprintf("Run `%s --help` for the flags it accepts, or `p202 search <what you want to do>` to find the command that has the one you need.", path)
+	}
+	return ""
+}
+
+// hintFor returns the recovery hint for an error: an explicit hint attached
+// by the command or the API layer, else a generic pointer to --help for
+// validation errors from a known command.
+func hintFor(err error) string {
+	return canonicalFlags(rawHintFor(err))
+}
+
+// snakeFlagToken matches a flag spelled in snake_case; Go's regexp has no
+// lookbehind, so the character before it is captured.
+var snakeFlagToken = regexp.MustCompile(`(^|[^A-Za-z0-9_-])--([a-z0-9]+(?:_[a-z0-9]+)+)`)
+
+// canonicalFlags spells each flag of this CLI written in snake_case as --help does.
+func canonicalFlags(s string) string {
+	if !strings.Contains(s, "_") {
+		return s
+	}
+	known := knownFlagNames()
+	return snakeFlagToken.ReplaceAllStringFunc(s, func(m string) string {
+		i := strings.Index(m, "--")
+		name := strings.ReplaceAll(m[i+2:], "_", "-")
+		if !known[name] {
+			return m
+		}
+		return m[:i+2] + name
+	})
+}
+
+// flagRoot is rootCmd, set in init: naming rootCmd here would be an
+// initialization cycle.
+var flagRoot *cobra.Command
+
+func knownFlagNames() map[string]bool {
+	known := map[string]bool{}
+	if flagRoot == nil {
+		return known
+	}
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		add := func(f *pflag.Flag) { known[f.Name] = true }
+		c.Flags().VisitAll(add)
+		c.PersistentFlags().VisitAll(add)
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(flagRoot)
+	return known
+}
+
+func rawHintFor(err error) string {
+	if hint := api.HintFor(err); hint != "" {
+		return siblingCommandHint(hint)
+	}
+	if hint := unknownInputHint(err); hint != "" {
+		return hint
+	}
+	// An unconfigured CLI fails before any flag matters, so pointing at the
+	// command's --help sends an agent the wrong way: name the setup.
+	if errors.Is(err, configpkg.ErrNoURL) {
+		return "Point the CLI at your install: `p202 config set-url https://tracker.example.com`, then `p202 config set-key <key>` with a REST API key (made on the UI's Personal Settings page). `p202 config test` checks both."
+	}
+	if errors.Is(err, configpkg.ErrNoAPIKey) {
+		return "Set a REST API key: `p202 config set-key <key>` (made on the UI's Personal Settings page; omit <key> to be prompted without echo). `p202 config test` checks it."
+	}
+	if activeCommandPath != "" && exitCodeForError(err) == ExitValidation && api.ErrorCategory(err) != "auth" {
+		return fmt.Sprintf("Run `%s --help` for the flags this command accepts.", strings.TrimSpace(activeCommandPath))
+	}
+	return ""
+}
+
+// siblingCommandHint names the command a class-wide hint leaves as "the
+// matching `... list`" (or `... update`): the failing command's sibling, when
+// the tree has one under that name. `p202 campaign get 9` that answers 404
+// says `p202 campaign list`; a command whose group has no such sibling keeps
+// the generic words rather than naming a command that does not exist.
+func siblingCommandHint(hint string) string {
+	if activeCommandPath == "" || !strings.Contains(hint, "`... ") {
+		return hint
+	}
+	parts := strings.Fields(activeCommandPath)
+	if len(parts) < 3 {
+		return hint
+	}
+	group, rest, err := rootCmd.Find(parts[1 : len(parts)-1])
+	if err != nil || group == nil || len(rest) != 0 {
+		return hint
+	}
+	for _, verb := range []string{"list", "update"} {
+		for _, sub := range group.Commands() {
+			if sub.Name() == verb {
+				named := "`" + sub.CommandPath() + "`"
+				hint = strings.ReplaceAll(hint, "the matching `... "+verb+"`", named)
+				hint = strings.ReplaceAll(hint, "`... "+verb+"`", named)
+				break
+			}
+		}
+	}
+	return hint
 }

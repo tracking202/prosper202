@@ -1,29 +1,10 @@
 <?php
 
 include_once(__DIR__ . '/functions-upgrade.php');
-
-// Add ipAddress function
-function ipAddress($ip_address): stdClass
-{
-    $ip = new stdClass;
-    if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-        $ip->address = $ip_address;
-        if (filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            $ip->type = 'ipv4';
-        } else {
-            $ip->type = 'ipv6';
-        }
-    } else {
-        $ip->type = 'invalid';
-        $ip->address = '127.0.0.1'; // fallback
-    }
-    
-    // Skip the tracking check for now to avoid dependency issues
-    $ip->address = @inet_ntop(inet_pton($ip->address)); //format ip address in standard form
-    return $ip;
-}
-
-//our own die, that will display the them around the error message
+// The functions the click path's bootstrap shares (_mysqli_query(),
+// ipAddress(), get_absolute_url()).
+require_once __DIR__ . '/mysql-error-args.php';
+require_once __DIR__ . '/functions-shared.php';
 
 // Add prosper_log function
 function prosper_log($category, $message): void {
@@ -31,58 +12,17 @@ function prosper_log($category, $message): void {
     error_log("[Prosper202][$category] $message");
 }
 
-function get_absolute_url(): string
-{
-	$absolutepath = substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
-	$absolutepath = str_replace('\\', '/', $absolutepath);
-	return $absolutepath;
-}
-
 
 function _die($message): never
 {
-
+	// $message is markup its callers build (a heading, a sentence, a link);
+	// it is shown in a standalone card as it always was.
 	info_top();
-	echo '<div class="main col-xs-7"><center><img src="' . get_absolute_url() . '202-img/prosper202.png"></center>';
-	echo $message;
-	echo '</div>';
+	echo p202_standalone_card(), '<div class="p202-standalone__message">', $message, '</div>', p202_standalone_card_end();
 	info_bottom();
 	die();
 }
 
-
-//our own function for controling mysqls and monitoring then.
-/**
- * Execute a MySQL query.
- *
- * Supports two calling conventions:
- * - _mysqli_query($sql) - uses global $db
- * - _mysqli_query($db, $sql) - uses provided $db
- *
- * @param \mysqli|string $db_or_sql Database connection or SQL query
- * @param string|null $sql SQL query (if first param is db connection)
- * @return \mysqli_result|bool
- */
-function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
-{
-	// Support both calling conventions:
-	//   _mysqli_query($sql)         — 1 arg, uses global $db
-	//   _mysqli_query($db, $sql)    — 2 args, uses provided $db
-	if ($sql === null) {
-		$sql = $db_or_sql;
-		global $db;
-	} else {
-		$db = $db_or_sql;
-	}
-
-	if ($db instanceof \mysqli) {
-		$result = @$db->query($sql);
-	} else {
-		$connection = $db->getConnection();
-		$result = @$connection->query($sql);
-	}
-	return $result;
-}
 
 function salt_user_pass($user_pass): string
 {
@@ -122,28 +62,26 @@ if (!function_exists('array_any')) {
 
 function is_installed(): bool
 {
-	// Skip the check only for API key setup
-	if (str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')) {
-		return false;
-	}
-
 	$database = DB::getInstance();
 	$db = $database->getConnection();
 
-	//if a user account already exists, this application is installed
+	// Installed means an account exists in 202_users. Only a missing table (1146)
+	// answers "not installed"; any other failure is treated as installed.
 	try {
-		$user_sql = "SELECT COUNT(*) AS cnt FROM 202_users";
-		$user_result = $db->query($user_sql);
-		if ($user_result) {
-			$row = $user_result->fetch_assoc();
-			$user_result->free();
-			return ((int) $row['cnt']) > 0;
-		}
-	} catch (mysqli_sql_exception) {
-		// Table doesn't exist yet, return false
-		return false;
+		$user_result = $db->query("SELECT COUNT(*) AS cnt FROM 202_users");
+	} catch (mysqli_sql_exception $e) {
+		// 1146 = table does not exist.
+		return $e->getCode() !== 1146;
 	}
-	return false;
+	if ($user_result === false) {
+		return $db->errno !== 1146;
+	}
+	$row = $user_result->fetch_assoc();
+	$user_result->free();
+	if (!is_array($row) || !isset($row['cnt'])) {
+		return true;
+	}
+	return ((int) $row['cnt']) > 0;
 }
 
 function upgrade_needed(): bool
@@ -159,82 +97,8 @@ function upgrade_needed(): bool
 	}
 }
 
-function info_top(): void
-{
-	$wp202 = getWallpaper();
-?>
-
-	<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
-	<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
-
-	<head>
-
-		<title>Prosper202 ClickServer</title>
-		<meta http-equiv="X-UA-Compatible" content="IE=edge" />
-		<meta name="description" content="description" />
-		<meta name="keywords" content="keywords" />
-		<meta name="copyright" content="202, Inc" />
-		<meta name="author" content="202, Inc" />
-		<meta name="MSSmartTagsPreventParsing" content="TRUE" />
-
-		<meta http-equiv="Content-Script-Type" content="text/javascript" />
-		<meta http-equiv="Content-Style-Type" content="text/css" />
-		<meta http-equiv="imagetoolbar" content="no" />
-
-		<link rel="shortcut icon" href="../202-img/favicon.gif" type="image/ico" />
-		<!-- Loading Bootstrap -->
-		<link
-			href="<?php echo get_absolute_url(); ?>202-css/css/bootstrap.min.css"
-			rel="stylesheet" />
-		<!-- Loading Flat UI -->
-		<link
-			href="<?php echo get_absolute_url(); ?>202-css/css/flat-ui-pro.min.css"
-			rel="stylesheet" />
-		<!-- Loading Custom CSS -->
-		<link href="<?php echo get_absolute_url(); ?>202-css/custom.min.css"
-			rel="stylesheet" />
-		<!-- Load JS here -->
-		<script src="https://dp5k1x6z3k332.cloudfront.net/jquery-1.11.2.min.js"></script>
-		<script type="text/javascript"
-			src="https://dp5k1x6z3k332.cloudfront.net/jquery-ui.min.js"></script>
-		<script src="https://dp5k1x6z3k332.cloudfront.net/bootstrap.min.js"></script>
-		<script type='text/javascript'>
-			var googletag = googletag || {};
-			googletag.cmd = googletag.cmd || [];
-			(function() {
-				var e = document.createElement("script");
-				e.async = true;
-				e.type = "text/javascript";
-				var t = "https:" == document.location.protocol;
-				e.src = (t ? "https:" : "http:") + "//www.googletagservices.com/tag/js/gpt.js";
-				var n = document.getElementsByTagName("script")[0];
-				n.parentNode.insertBefore(e, n)
-			})()
-		</script>
-
-		<script type='text/javascript'>
-			googletag.cmd.push(function() {
-				googletag.defineSlot("/1006305/P202_CS_Login_Page_288x200", [288, 200], "div-gpt-ad-1398648278789-0").addService(googletag.pubads());
-				googletag.pubads().enableSingleRequest();
-				googletag.enableServices()
-			})
-		</script>
-	</head>
-
-	<body>
-		<a href="<?php echo $wp202['wallpaperUrl']; ?>" target="_blank"
-			style="background-image: url(<?php echo $wp202['wallpaperImg']; ?>); -webkit-background-size: cover; -moz-background-size: cover; -o-background-size: cover; background-size: cover; background-repeat: no-repeat; background-position: center; background-attachment: fixed; position: absolute; display: block; z-index: -1; height: 100%; width: 100%"></a>
-
-		<div class="container">
-		<?php }
-	function info_bottom()
-	{ ?>
-		</div>
-	</body>
-
-	</html>
-
-<?php }
+// info_top() and info_bottom(), the standalone shell: 202-config/functions-standalone-ui.php (U7).
+require_once __DIR__ . '/functions-standalone-ui.php';
 
 	function check_email_address($email)
 	{
@@ -326,6 +190,34 @@ function info_top(): void
 		}
 
 		return $targetPath;
+	}
+
+	/**
+	 * Where an update may write a file from its archive, or false: the entry
+	 * confined by resolve_update_target_path() (no `..`, no absolute path,
+	 * its directory resolving inside the base), and the file itself never a
+	 * symlink — an existing one or a dangling one, which file_exists() calls
+	 * absent and fopen() would follow — nor a path that resolves outside.
+	 *
+	 * One implementation for the three places an update writes files
+	 * (auto-upgrade.php, auto-upgrade-premium.php, and the auto-update
+	 * here): the first had none of the realpath and symlink checks, and the
+	 * other two checked a symlink only when the file existed (#165, #173).
+	 */
+	function resolve_update_write_path(string $basePath, string $entryName)
+	{
+		$candidate = resolve_update_target_path($basePath, $entryName);
+		if ($candidate === false || is_link($candidate)) {
+			return false;
+		}
+		if (file_exists($candidate)) {
+			$resolvedFilePath = realpath($candidate);
+			$resolvedBase = rtrim($basePath, DIRECTORY_SEPARATOR);
+			if ($resolvedFilePath === false || strpos($resolvedFilePath, $resolvedBase . DIRECTORY_SEPARATOR) !== 0) {
+				return false;
+			}
+		}
+		return $candidate;
 	}
 
 
@@ -445,6 +337,10 @@ function info_top(): void
 
 						if ($calcVersion == $version) {
 							//Auto upgrade without user confirmation
+                            // A client that gives up (a proxy's read timeout, a closed tab) must not
+                            // stop the download, the file swap or the ladder halfway.
+                            ignore_user_abort(true);
+                            set_time_limit(0);
 							$GetUpdate = @getData($link);
 							if ($GetUpdate) {
 								$FilesUpdated = false;
@@ -482,24 +378,11 @@ function info_top(): void
 														continue;
 													}
 													$file_ext = pathinfo($thisFileName, PATHINFO_EXTENSION);
-													$targetFile = resolve_update_target_path($basePath, $thisFileName);
+													// Confined, and never through a symlink.
+													$targetFile = resolve_update_write_path($basePath, $thisFileName);
 													if ($targetFile === false) {
-														$log .= 'Skipped invalid update file path: ' . $thisFileName . '. ';
+														$log .= 'Skipped unsafe update file path: ' . $thisFileName . '. ';
 														continue;
-													}
-
-													// Prevent writing through symlinks or outside the base path
-													if (file_exists($targetFile)) {
-														if (is_link($targetFile)) {
-															$log .= 'Skipped symlink during update: ' . $thisFileName . '. ';
-															continue;
-														}
-														$resolvedFilePath = realpath($targetFile);
-														$resolvedBase = rtrim($basePath, DIRECTORY_SEPARATOR);
-														if ($resolvedFilePath === false || ($resolvedFilePath !== $resolvedBase && strpos($resolvedFilePath, $resolvedBase . DIRECTORY_SEPARATOR) !== 0)) {
-															$log .= 'Skipped unsafe update file path: ' . $thisFileName . '. ';
-															continue;
-														}
 													}
 
 													if ($updateThis = @fopen($targetFile, 'wb')) {
@@ -599,24 +482,37 @@ function info_top(): void
 	{
 		// Set default values
 		$set = 'P1D';
-		$add = 'day';
 		
 		switch ($type) {
 			case 'days':
 				$set = 'P1D';
-				$add = 'day';
 				break;
 
 			case 'hours':
 				$set = 'PT1H';
-				$add = 'hour';
 				break;
 		}
 
+		// Stepped through the account's zone, the page's default
+		// (AUTH::set_timezone()), whose days and hours the chart's groups
+		// are (DataEngine::getChart()). The callers pass DateTime('@…'),
+		// which is UTC: the points were UTC days and hours, so the chart of
+		// an account east of UTC started on the day before its window, and
+		// an hourly chart west of UTC had no point for the first hours of
+		// its window, whose clicks were drawn nowhere.
+		$zone = new \DateTimeZone(date_default_timezone_get());
+		$fromdate = (clone $fromdate)->setTimezone($zone);
+		$todate = (clone $todate)->setTimezone($zone);
+
+        // The window's last second is its end: a DatePeriod leaves out its
+        // end, so this ends on the window's last day or hour. It ended a
+        // whole day or hour after the window's last second, which put one
+        // more point on the chart than the window has: today drawn as Oct 07
+        // and Oct 08, and by hour a last point at the midnight after it.
 		return new \DatePeriod(
 			$fromdate,
 			new \DateInterval($set),
-			$todate->modify('+1 ' . $add)
+			$todate->modify('+1 second')
 		);
 	}
 
@@ -632,33 +528,6 @@ function info_top(): void
 		$ext = substr((string) $str, $i + 1, $l);
 
 		return $ext;
-	}
-
-	function getPath($path)
-	{
-		$url = "http" . (!empty($_SERVER['HTTPS']) ? "s" : "") .
-			"://" . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-		$dirs = explode('/', trim((string) preg_replace('/\/+/', '/', (string) $path), '/'));
-		foreach ($dirs as $key => $value)
-			if (empty($value))  unset($dirs[$key]);
-		$parsedUrl = parse_url($url);
-		$pathUrl = explode('/', trim($parsedUrl['path'], '/'));
-		foreach ($pathUrl as $key => $value)
-			if (empty($value))  unset($pathUrl[$key]);
-		$count = count($pathUrl);
-		foreach ($dirs as $dir)
-			if ($dir === '..')
-				if ($count > 0)
-					array_pop($pathUrl);
-				else
-					throw new Exception('Wrong Path');
-			else if ($dir !== '.')
-				if (preg_match('/^(\w|\d|\.| |_|-)+$/', $dir)) {
-					$pathUrl[] = $dir;
-					++$count;
-				} else
-					throw new Exception('Not Allowed Char');
-		return $parsedUrl['scheme'] . '://' . $parsedUrl['host'] . '/' . implode('/', $pathUrl);
 	}
 
 	function formatOffset($offset)
@@ -713,7 +582,8 @@ function info_top(): void
 
 		$ch = curl_init();
 		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/delete-ad/' . $user . '/' . $key);
-		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+		curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($ch, CURLOPT_POST, true);
 		curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -766,7 +636,8 @@ function info_top(): void
 
 		$ch = curl_init();
 		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/ads/wallpapers/extern');
-		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+		curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($ch, CURLOPT_POST, true);
 		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);

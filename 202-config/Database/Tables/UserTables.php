@@ -140,6 +140,7 @@ final class UserTables
                 `lpo_status` varchar(16) NOT NULL DEFAULT '',
                 `lpo_bridge_config` text DEFAULT NULL,
                 `lpo_ctx_kw` tinyint(1) NOT NULL DEFAULT '1',
+                `user_delete_data_before` int(10) unsigned DEFAULT NULL,
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
@@ -230,6 +231,7 @@ final class UserTables
                 `user_id` mediumint(8) unsigned NOT NULL,
                 `api_key` varchar(250) NOT NULL DEFAULT '',
                 `scope` text DEFAULT NULL,
+                `label` varchar(100) DEFAULT NULL,
                 `created_at` int(10) NOT NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

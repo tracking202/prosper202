@@ -1,0 +1,671 @@
+<?php
+declare(strict_types=1);
+include_once(str_repeat("../", 1).'202-config/connect.php');
+
+/**
+ * The UI kit: every component of the Prosper202 standard in every state, on
+ * the v2 (Bootstrap 5.3) shell. Admin-only. Reviewers check a change here,
+ * Playwright takes its reference screenshots here, and an agent looks here
+ * before inventing a class. When a component gains a state, add it here.
+ *
+ * The figures on this page are examples, not the install's data.
+ */
+
+AUTH::require_user();
+
+if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
+	header('location: ' . get_absolute_url() . '202-account/');
+	exit;
+}
+
+$base = get_absolute_url();
+
+template_top('UI Kit');
+
+$sections = [
+	'tokens' => 'Tokens',
+	'type' => 'Type',
+	'buttons' => 'Buttons',
+	'forms' => 'Forms',
+	'pills' => 'Pills',
+	'tiles' => 'Tiles',
+	'table' => 'Table',
+	'reports' => 'Report partials',
+	'panel' => 'Panel &amp; list',
+	'states' => 'Empty &amp; flash',
+	'code' => 'Code &amp; strip',
+	'overlays' => 'Overlays',
+	'standalone' => 'Standalone',
+];
+?>
+
+<div class="p202-page-header">
+	<div class="p202-page-header__icon"><i class="bi bi-palette2"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">UI kit</h1>
+		<p class="p202-page-header__desc">Every component of the Prosper202 standard in every state, on the Bootstrap 5 shell. Use the account menu to switch the theme.</p>
+	</div>
+	<div class="p202-page-header__actions">
+		<a class="btn btn-secondary" href="<?php echo $base; ?>202-account/docs.php?doc=ui-standard"><i class="bi bi-book"></i> Read the standard</a>
+	</div>
+</div>
+
+<nav class="nav p202-tabs p202-tabs--compact" aria-label="Kit sections">
+	<?php foreach ($sections as $anchor => $label) { ?>
+		<a class="nav-link<?php echo $anchor === 'tokens' ? ' active' : ''; ?>" href="#<?php echo $anchor; ?>"><?php echo $label; ?></a>
+	<?php } ?>
+</nav>
+
+<section class="p202-section" id="tokens">
+	<h2 class="p202-section__title">Tokens</h2>
+	<p class="text-secondary">The palette is Bootstrap's own variables, redefined in <code>202-css/p202-theme.css</code> for light and dark. Body content uses Bootstrap classes and the component layer; it never reads the tokens directly.</p>
+	<div class="row g-3">
+		<?php
+		$swatches = [
+			['Accent', 'var(--p202-accent)', '#fff'],
+			['Accent soft', 'var(--bs-primary-bg-subtle)', 'var(--bs-primary-text-emphasis)'],
+			['Ink', 'var(--bs-body-color)', 'var(--bs-body-bg)'],
+			['Muted', 'var(--bs-secondary-color)', 'var(--bs-body-bg)'],
+			['Hairline', 'var(--bs-border-color)', 'var(--bs-body-color)'],
+			['Surface', 'var(--p202-surface)', 'var(--bs-body-color)'],
+			['Ground', 'var(--bs-body-bg)', 'var(--bs-body-color)'],
+			['Success', 'var(--bs-success)', '#fff'],
+			['Warning', 'var(--bs-warning)', '#fff'],
+			['Danger', 'var(--bs-danger)', '#fff'],
+		];
+		foreach ($swatches as [$name, $bg, $fg]) { ?>
+			<div class="col-6 col-sm-4 col-md-3 col-lg-2">
+				<div class="rounded-3 border p-3" style="background: <?php echo $bg; ?>; color: <?php echo $fg; ?>; min-height: 72px;">
+					<strong><?php echo $name; ?></strong>
+					<div class="small font-monospace opacity-75"><?php echo htmlspecialchars($bg, ENT_QUOTES, 'UTF-8'); ?></div>
+				</div>
+			</div>
+		<?php } ?>
+	</div>
+</section>
+
+<section class="p202-section" id="type">
+	<h2 class="p202-section__title">Type</h2>
+	<div class="row g-4">
+		<div class="col-md-7">
+			<h1>Heading one, Lato 700</h1>
+			<h2>Heading two for a section</h2>
+			<h3>Heading three for a card</h3>
+			<h4>Heading four for a group</h4>
+			<p>Body text at 15px. Prosper202 tracks every click, lead and sale so a campaign's real return is one report away. Links look <a href="#type">like this</a>, and <strong>strong</strong> text carries the weight.</p>
+			<p class="text-secondary small">Secondary text at 13px, for hints, descriptions and metadata.</p>
+			<p><code>code_like_a_field_name</code> and <kbd>Ctrl</kbd> + <kbd>C</kbd>.</p>
+		</div>
+		<div class="col-md-5">
+			<div class="p202-panel">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Numbers</h3></div>
+				<div class="p202-panel__body">
+					<p class="mb-1">Digits that line up use <code>tabular-nums</code>, right-aligned in tables and tiles:</p>
+					<div class="font-monospace text-end" style="font-variant-numeric: tabular-nums;">1,412<br>$8,912.40<br>94.1%</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section class="p202-section" id="buttons">
+	<h2 class="p202-section__title">Buttons</h2>
+	<p class="text-secondary">One primary button per form. Danger is reserved for destructive actions that confirm. Secondary is the quiet default.</p>
+	<div class="p202-toolbar mb-3">
+		<button type="button" class="btn btn-primary">Register app</button>
+		<button type="button" class="btn btn-secondary">Cancel</button>
+		<button type="button" class="btn btn-outline-primary">Preview schema</button>
+		<button type="button" class="btn btn-danger">Delete</button>
+		<button type="button" class="btn btn-outline-danger">Rotate token…</button>
+		<button type="button" class="btn btn-link">Show account-wide defaults</button>
+	</div>
+	<div class="p202-toolbar mb-3">
+		<button type="button" class="btn btn-primary btn-sm">Small primary</button>
+		<button type="button" class="btn btn-secondary btn-sm"><i class="bi bi-download"></i> With icon</button>
+		<button type="button" class="btn btn-primary" disabled>Disabled</button>
+		<button type="button" class="btn btn-primary" disabled><span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Saving…</button>
+		<div class="btn-group" role="group" aria-label="Resolution">
+			<button type="button" class="btn btn-outline-primary active">By day</button>
+			<button type="button" class="btn btn-outline-primary">By hour</button>
+		</div>
+	</div>
+</section>
+
+<section class="p202-section" id="forms">
+	<h2 class="p202-section__title">Forms</h2>
+	<p class="text-secondary">The common case is the whole form; everything else waits under Advanced. A value the app can find is never asked for, and a decision it makes is shown with a way to change it.</p>
+	<div class="row g-4">
+		<div class="col-md-6">
+			<form class="p202-panel" action="#forms" method="get" onsubmit="return false;">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Register an app</h3><span class="p202-panel__sub">one field for the common case</span></div>
+				<div class="p202-panel__body">
+					<div class="mb-3">
+						<label class="form-label" for="kit-app-url">App Store link or ID <span class="text-danger">*</span></label>
+						<input type="text" class="form-control" id="kit-app-url" value="https://apps.apple.com/us/app/summit-run/id990077001">
+						<div class="form-text">Paste the App Store link. The name and platform are picked up for you.</div>
+						<div class="p202-decided mt-2"><i class="bi bi-check2-circle"></i> Summit Run · iOS · App Store ID 990077001 <a href="#forms">change</a></div>
+					</div>
+					<details class="p202-disclosure mb-3" data-p202-remember="ui-kit-register-advanced">
+						<summary>Advanced <span class="p202-disclosure__hint">notes, development postbacks, platform</span></summary>
+						<div class="p202-disclosure__body">
+							<div class="mb-3">
+								<label class="form-label" for="kit-notes">Notes</label>
+								<textarea class="form-control" id="kit-notes" rows="2" placeholder="Optional, up to 500 characters"></textarea>
+							</div>
+							<div class="form-check mb-3">
+								<input class="form-check-input" type="checkbox" id="kit-dev">
+								<label class="form-check-label" for="kit-dev">Accept development postbacks</label>
+								<div class="form-text">Off until you are testing with Xcode or TestFlight builds. Applies to postbacks already stored, and is withdrawn when you turn it off.</div>
+							</div>
+							<div class="mb-1">
+								<span class="form-label d-block" id="kit-platform-label">Platform</span>
+								<div class="d-flex gap-3" role="group" aria-labelledby="kit-platform-label">
+									<div class="form-check"><input class="form-check-input" type="radio" name="kit_platform" id="kit-platform-ios" checked><label class="form-check-label" for="kit-platform-ios">iOS</label></div>
+									<div class="form-check"><input class="form-check-input" type="radio" name="kit_platform" id="kit-platform-android" disabled><label class="form-check-label" for="kit-platform-android">Android · not supported yet</label></div>
+								</div>
+								<div class="form-text">Set from the link you pasted; change it only if the link was wrong.</div>
+							</div>
+						</div>
+					</details>
+					<div class="p202-form-actions">
+						<button type="button" class="btn btn-secondary">Cancel</button>
+						<button type="submit" class="btn btn-primary">Register app</button>
+					</div>
+				</div>
+			</form>
+			<div class="p202-panel mt-4">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Field states</h3><span class="p202-panel__sub">every control the standard uses</span></div>
+				<div class="p202-panel__body">
+					<div class="mb-3">
+						<label class="form-label" for="kit-app-name">App name <span class="text-danger">*</span></label>
+						<input type="text" class="form-control is-invalid" id="kit-app-name" value="">
+						<div class="form-text">Shown in reports.</div>
+						<div class="invalid-feedback">App name is required.</div>
+					</div>
+					<div class="mb-3">
+						<label class="form-label" for="kit-kind">Kind</label>
+						<select class="form-select" id="kit-kind">
+							<option>Fine value (0–63)</option>
+							<option>Coarse value</option>
+						</select>
+						<div class="form-text">Fine is the default; most schemas use it.</div>
+					</div>
+					<div class="form-check form-switch mb-3">
+						<input class="form-check-input" type="checkbox" role="switch" id="kit-switch" checked>
+						<label class="form-check-label" for="kit-switch">Active</label>
+					</div>
+					<div class="input-group">
+						<span class="input-group-text">Days</span>
+						<input type="number" class="form-control" id="kit-days" value="30" min="0" max="3650">
+						<button class="btn btn-secondary" type="button">Preview pruning</button>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="col-md-6">
+			<div class="p202-panel">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Filter row</h3><span class="p202-panel__sub">select menus and text filters in one line</span></div>
+				<div class="p202-panel__body">
+					<div class="row g-2">
+						<div class="col-sm-4"><label class="form-label" for="kit-f-app">App</label><select class="form-select form-select-sm" id="kit-f-app"><option>All apps</option><option>Summit Run</option></select></div>
+						<div class="col-sm-4"><label class="form-label" for="kit-f-sig">Signature</label><select class="form-select form-select-sm" id="kit-f-sig"><option>Verified only</option><option>All</option><option>Invalid</option></select></div>
+						<div class="col-sm-4"><label class="form-label" for="kit-f-net">Ad network</label><input type="text" class="form-control form-control-sm" id="kit-f-net" placeholder="acme.skadnetwork"></div>
+					</div>
+					<div class="p202-form-actions">
+						<button type="button" class="btn btn-secondary btn-sm">Reset</button>
+						<button type="button" class="btn btn-primary btn-sm">Apply</button>
+					</div>
+				</div>
+				<div class="p202-panel__body">
+					<div class="mb-2"><span class="form-label d-block">Date range</span>
+						<div class="p202-toolbar">
+							<input type="date" class="form-control form-control-sm" id="kit-from" value="2026-09-04" style="max-width: 170px;">
+							<span class="text-secondary">to</span>
+							<input type="date" class="form-control form-control-sm" id="kit-to" value="2026-09-11" style="max-width: 170px;">
+							<select class="form-select form-select-sm" id="kit-preset" style="max-width: 150px;"><option>Last 7 days</option><option>Today</option><option>Last 30 days</option></select>
+						</div>
+					</div>
+					<div class="p202-skeleton mt-3" style="height: 14px; width: 60%;" aria-hidden="true"></div>
+					<div class="p202-skeleton mt-2" style="height: 14px; width: 40%;" aria-hidden="true"></div>
+					<div class="form-text mt-2">A loading state is a skeleton in place, never a spinner in a blank page.</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section class="p202-section" id="pills">
+	<h2 class="p202-section__title">Pills</h2>
+	<p class="text-secondary">Status, never decoration. Five tones, plus a link that regroups a table.</p>
+	<div class="p202-toolbar">
+		<span class="p202-pill">neutral · 990077001</span>
+		<span class="p202-pill p202-pill--accent">accent · 5 rules</span>
+		<span class="p202-pill p202-pill--good">good · valid</span>
+		<span class="p202-pill p202-pill--warn">warning · development</span>
+		<span class="p202-pill p202-pill--bad">danger · invalid</span><a href="#pills" class="p202-pill">link</a>
+		<span class="badge text-bg-primary rounded-pill">Bootstrap badge</span>
+		<span class="badge text-bg-secondary rounded-pill">12</span>
+	</div>
+</section>
+
+<section class="p202-section" id="tiles">
+	<h2 class="p202-section__title">Tiles</h2>
+	<div class="p202-tiles">
+		<div class="p202-tile"><div class="p202-tile__label">Postbacks</div><div class="p202-tile__value">1,412</div><div class="p202-tile__sub">all signatures</div></div>
+		<div class="p202-tile is-good"><div class="p202-tile__label">Installs</div><div class="p202-tile__value">1,204</div><div class="p202-tile__sub">verified</div></div>
+		<div class="p202-tile"><div class="p202-tile__label">Re-downloads</div><div class="p202-tile__value">96</div></div>
+		<div class="p202-tile is-bad"><div class="p202-tile__label">Losses</div><div class="p202-tile__value">58</div><div class="p202-tile__sub">did not win</div></div>
+		<div class="p202-tile"><div class="p202-tile__label">Decoded revenue</div><div class="p202-tile__value">$8,912</div></div>
+		<div class="p202-tile is-muted"><div class="p202-tile__label">Undecoded</div><div class="p202-tile__value">140</div><div class="p202-tile__sub">no matching rule</div></div>
+	</div>
+</section>
+
+<section class="p202-section" id="table">
+	<h2 class="p202-section__title">Table</h2>
+	<div class="p202-table-toolbar">
+		<div class="p202-toolbar">
+			<a href="#table" class="p202-pill p202-pill--accent">Day</a><a href="#table" class="p202-pill">App</a><a href="#table" class="p202-pill">Ad network</a><a href="#table" class="p202-pill">Country</a>
+		</div>
+		<div class="p202-table-toolbar__aside">
+			<a href="#table" class="btn btn-secondary btn-sm"><i class="bi bi-file-earmark-spreadsheet"></i> Download to excel</a>
+		</div>
+	</div>
+	<div class="p202-table-wrap">
+		<table class="table table-hover p202-table">
+			<thead><tr><th>Day</th><th class="num">Postbacks</th><th class="num">Installs</th><th class="num">Re-downloads</th><th class="num">Losses</th><th class="num">Revenue</th><th>Signature</th></tr></thead>
+			<tbody>
+				<tr><td>2026-09-10</td><td class="num">212</td><td class="num">181</td><td class="num">14</td><td class="num">9</td><td class="num">$1,304.00</td><td><span class="p202-pill p202-pill--good">valid</span></td></tr>
+				<tr class="p202-table__link-row"><td>2026-09-11</td><td class="num">98</td><td class="num">84</td><td class="num">7</td><td class="num">3</td><td class="num">$612.00</td><td><span class="p202-pill p202-pill--warn">development</span></td></tr>
+				<tr><td>2026-09-12</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">$0.00</td><td><span class="p202-pill">unverifiable</span></td></tr>
+				<tr class="p202-table__totals"><td>Totals for report</td><td class="num">310</td><td class="num">265</td><td class="num">21</td><td class="num">12</td><td class="num">$1,916.00</td><td></td></tr>
+			</tbody>
+		</table>
+	</div>
+	<nav class="mt-3" aria-label="Pages">
+		<ul class="pagination pagination-sm mb-0">
+			<li class="page-item disabled"><a class="page-link" href="#table" tabindex="-1" aria-disabled="true">‹</a></li>
+			<li class="page-item active" aria-current="page"><a class="page-link" href="#table">1</a></li>
+			<li class="page-item"><a class="page-link" href="#table">2</a></li>
+			<li class="page-item"><a class="page-link" href="#table">3</a></li>
+			<li class="page-item"><a class="page-link" href="#table">›</a></li>
+		</ul>
+	</nav>
+</section>
+
+<section class="p202-section" id="reports">
+	<h2 class="p202-section__title">Report partials</h2>
+	<p class="text-secondary">Rendered by the shared partials in <code>202-config/functions-ui-partials.php</code>, not written by hand: <code>p202_date_range()</code>, <code>p202_report_filter_bar()</code> with <code>p202_report_filters()</code>, and <code>p202_data_table()</code>. A report page calls them rather than copying this markup.</p>
+
+	<?php
+	$kitAction = $base . '202-account/ui-kit.php';
+	$kitLists = [
+		'ppc_network_id' => ['1' => 'Google Ads', '2' => 'Meta', '3' => 'TikTok'],
+		'aff_campaign_id' => [
+			'EVAL Offer Network' => ['11' => 'EVAL Campaign A', '12' => 'EVAL Campaign B'],
+			'Second Network' => ['21' => 'Summer promo'],
+		],
+		'ppc_account_id' => ['101' => 'Main account', '102' => 'Test account'],
+		'aff_network_id' => ['7' => 'EVAL Offer Network', '8' => 'Second Network'],
+		'landing_page_id' => ['31' => 'Quiz page', '32' => 'Advertorial'],
+		'text_ad_id' => ['41' => 'Headline A'],
+		'country_id' => ['US' => 'United States', 'GB' => 'United Kingdom', 'DE' => 'Germany'],
+		'region_id' => ['1' => 'California', '2' => 'Texas'],
+		'isp_id' => ['1' => 'Comcast', '2' => 'Vodafone'],
+		'device_id' => ['1' => 'Desktop', '2' => 'Mobile', '3' => 'Tablet'],
+		'browser_id' => ['1' => 'Chrome', '2' => 'Safari'],
+		'platform_id' => ['1' => 'Windows', '2' => 'iOS', '3' => 'Android'],
+	];
+	?>
+
+	<div class="row g-4">
+		<div class="col-12">
+			<div class="p202-panel">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Date range</h3><span class="p202-panel__sub">a preset, a custom window, and a window the server refused</span></div>
+				<div class="p202-panel__body">
+					<form class="p202-toolbar mb-3" method="get" action="#reports" onsubmit="return false;" id="kit-range-preset-form">
+						<?php echo p202_date_range(['range' => 'last7', 'from' => '2026-09-04', 'to' => '2026-09-11', 'id' => 'kit-range-preset']); ?>
+					</form>
+					<form class="p202-toolbar mb-3" method="get" action="#reports" onsubmit="return false;" id="kit-range-custom-form">
+						<?php echo p202_date_range(['range' => P202_RANGE_CUSTOM, 'from' => '2026-08-01', 'to' => '2026-08-31', 'id' => 'kit-range-custom', 'max' => '2026-09-25']); ?>
+					</form>
+					<form class="p202-toolbar" method="get" action="#reports" onsubmit="return false;" id="kit-range-error-form">
+						<?php echo p202_date_range(['range' => P202_RANGE_CUSTOM, 'from' => '2026-09-11', 'to' => '2026-09-04', 'id' => 'kit-range-error', 'error' => 'The start date is after the end date.']); ?>
+					</form>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-12">
+			<div class="p202-panel">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Filter bar, nothing set</h3><span class="p202-panel__sub">the common case in one row; the rest under Advanced, closed</span></div>
+				<div class="p202-panel__body">
+					<?php echo p202_report_filter_bar([
+						'action' => $kitAction,
+						'id' => 'kit-filters',
+						'hidden' => ['view' => 'report'],
+						'range' => ['range' => 'last7', 'from' => '2026-09-18', 'to' => '2026-09-25'],
+						'filters' => p202_report_filters(['user_pref_show' => 'real', 'user_pref_limit' => '50'], $kitLists),
+						'reset' => $kitAction . '#reports',
+						'note' => 'Last 7 days of real clicks from every traffic source, 50 rows.',
+						'aside' => '<a class="btn btn-secondary btn-sm" href="#reports"><i class="bi bi-file-earmark-spreadsheet"></i> Download to CSV</a>',
+					]); ?>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-12">
+			<div class="p202-panel">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Filter bar, filtered</h3><span class="p202-panel__sub">an Advanced filter set, a value the list no longer has, a suggestion field, and a server error</span></div>
+				<div class="p202-panel__body">
+					<?php
+					$kitFiltered = p202_report_filters([
+						'ppc_network_id' => '2',
+						'aff_campaign_id' => '99',
+						'user_pref_show' => 'leads',
+						'country_id' => 'GB',
+						'user_pref_limit' => '50',
+						'ip' => '203.0.113.300',
+					], $kitLists, ['ppc_network_id', 'aff_campaign_id', 'user_pref_show', 'country_id', 'device_id', 'ip', 'user_pref_limit']);
+					foreach ($kitFiltered as $index => $kitFilter) {
+						if ($kitFilter['name'] === 'ip') {
+							$kitFiltered[$index]['error'] = '203.0.113.300 is not an IP address.';
+						}
+					}
+					$kitFiltered[] = [
+						'name' => 'keyword',
+						'label' => 'Keyword',
+						'type' => 'suggest',
+						'value' => '',
+						'advanced' => true,
+						'placeholder' => 'Start typing',
+						'suggestions' => ['running shoes', 'trail running', 'marathon plan'],
+						'hint' => 'Suggestions are the keywords this account has seen.',
+					];
+					echo p202_report_filter_bar([
+						'action' => $kitAction,
+						'id' => 'kit-filtered',
+						'range' => ['range' => P202_RANGE_CUSTOM, 'from' => '2026-08-01', 'to' => '2026-08-31'],
+						'filters' => $kitFiltered,
+						'reset' => $kitAction . '#reports',
+					]);
+					?>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-lg-7">
+			<h3 class="p202-section__title">Sortable table with totals</h3>
+			<?php echo p202_data_table(
+				[
+					['key' => 'keyword', 'label' => 'Keyword'],
+					['key' => 'clicks', 'label' => 'Clicks', 'num' => true],
+					['key' => 'leads', 'label' => 'Leads', 'num' => true],
+					['key' => 'revenue', 'label' => 'Revenue', 'num' => true],
+					['key' => 'status', 'label' => 'Status', 'sort' => false],
+				],
+				[
+					['keyword' => 'running shoes', 'clicks' => ['text' => '1,412', 'sort' => 1412], 'leads' => ['text' => '94', 'sort' => 94], 'revenue' => ['text' => '$1,304.00', 'sort' => 1304], 'status' => ['html' => '<span class="p202-pill p202-pill--good">converting</span>']],
+					['keyword' => 'Marathon plan', 'clicks' => ['text' => '98', 'sort' => 98], 'leads' => ['text' => '7', 'sort' => 7], 'revenue' => ['text' => '$612.00', 'sort' => 612], 'status' => ['html' => '<span class="p202-pill">steady</span>']],
+					['keyword' => 'trail running', 'clicks' => ['text' => '310', 'sort' => 310], 'leads' => ['text' => '0', 'sort' => 0], 'revenue' => ['text' => '$0.00', 'sort' => 0], 'status' => ['html' => '<span class="p202-pill p202-pill--bad">no leads</span>']],
+				],
+				[
+					'id' => 'kit-sortable',
+					'caption' => 'Keywords, sortable by any column but Status',
+					'sortable' => true,
+					'totals' => ['keyword' => 'Totals for report', 'clicks' => '1,820', 'leads' => '101', 'revenue' => '$1,916.00', 'status' => ''],
+				]
+			); ?>
+			<p class="form-text">Click a heading, or tab to it and press Enter. The totals row stays last.</p>
+		</div>
+		<div class="col-lg-5">
+			<h3 class="p202-section__title">Server-ordered, and empty</h3>
+			<?php echo p202_data_table(
+				[
+					['key' => 'day', 'label' => 'Day'],
+					['key' => 'clicks', 'label' => 'Clicks', 'num' => true],
+				],
+				[
+					['day' => '2026-09-12', 'clicks' => '212'],
+					['day' => '2026-09-11', 'clicks' => '98'],
+				],
+				['id' => 'kit-ordered', 'caption' => 'Clicks per day, newest first', 'sorted' => ['key' => 'day', 'dir' => 'descending']]
+			); ?>
+			<div class="mt-3">
+				<?php echo p202_data_table(
+					[
+						['key' => 'country', 'label' => 'Country'],
+						['key' => 'clicks', 'label' => 'Clicks', 'num' => true],
+					],
+					[
+						['country' => 'Canada', 'clicks' => ['text' => '41', 'sort' => 41]],
+						['country' => 'Germany', 'clicks' => ['text' => '7', 'sort' => 7]],
+						['country' => 'United States', 'clicks' => ['text' => '260', 'sort' => 260]],
+					],
+					['id' => 'kit-presorted', 'caption' => 'Clicks per country, A to Z, sortable', 'sortable' => true, 'sorted' => ['key' => 'country', 'dir' => 'ascending']]
+				); ?>
+				<p class="form-text">Sortable and delivered in order: the first click on Country reverses it.</p>
+			</div>
+			<div class="mt-3">
+				<?php echo p202_data_table(
+					[['key' => 'day', 'label' => 'Day'], ['key' => 'clicks', 'label' => 'Clicks', 'num' => true]],
+					[],
+					['empty' => ['icon' => 'bi-inbox', 'title' => 'No clicks in this range', 'body' => 'Widen the range, or check that the tracking link is live.', 'action' => 'Get a tracking link', 'href' => '#reports']]
+				); ?>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section class="p202-section" id="panel">
+	<h2 class="p202-section__title">Panel &amp; list</h2>
+	<div class="row g-4">
+		<div class="col-lg-6">
+			<div class="p202-panel">
+				<div class="p202-panel__head">
+					<h3 class="p202-panel__title">Your apps</h3>
+					<span class="p202-pill">2 apps</span>
+					<div class="p202-panel__aside"><input type="search" class="form-control form-control-sm" id="kit-list-filter" placeholder="Filter apps…" aria-label="Filter apps"></div>
+				</div>
+				<div class="p202-panel__body">
+					<ul class="p202-list">
+						<li class="p202-list__item is-active">
+							<span class="p202-list__name">Summit Run</span>
+							<span class="p202-pill">iOS · 990077001</span>
+							<span class="p202-pill p202-pill--accent">5 rules</span>
+							<span class="p202-list__actions"><a class="p202-list__action" href="#panel">open</a><a class="p202-list__action" href="#panel">edit</a><a class="p202-list__action p202-list__action--danger" href="#panel">remove</a></span>
+							<span class="p202-list__meta">last postback 2 h ago</span>
+						</li>
+						<li class="p202-list__item">
+							<span class="p202-list__name">EVAL Offer Network</span>
+							<span class="p202-pill">1 category</span>
+							<span class="p202-list__actions"><a class="p202-list__action" href="#panel">edit</a><a class="p202-list__action p202-list__action--danger" href="#panel">remove</a></span>
+							<ul class="p202-list__children">
+								<li class="p202-list__item"><span class="p202-list__name">EVAL Campaign A</span><span class="p202-pill p202-pill--good">$12.50</span><span class="p202-list__actions"><a class="p202-list__action" href="#panel">link</a><a class="p202-list__action" href="#panel">edit</a><a class="p202-list__action" href="#panel">copy</a><a class="p202-list__action p202-list__action--danger" href="#panel">remove</a></span></li>
+								<li class="p202-list__item"><span class="p202-list__name">EVAL Campaign B</span><span class="p202-pill p202-pill--good">$4.00</span><span class="p202-list__actions"><a class="p202-list__action" href="#panel">link</a><a class="p202-list__action" href="#panel">edit</a><a class="p202-list__action" href="#panel">copy</a><a class="p202-list__action p202-list__action--danger" href="#panel">remove</a></span></li>
+							</ul>
+						</li>
+					</ul>
+				</div>
+			</div>
+			<div class="p202-panel mt-4">
+				<div class="p202-panel__head">
+					<h3 class="p202-panel__title">Ads for campaigns</h3>
+					<span class="p202-pill p202-pill--accent">3</span>
+				</div>
+				<div class="p202-panel__body p202-panel__body--scroll">
+					<ul class="p202-list p202-list--grouped">
+						<li class="p202-list__item">
+							<div class="p202-list__group"><span class="p202-list__group-label">EVAL Offer Network › EVAL Campaign A</span><span class="p202-pill">2</span></div>
+							<ul class="p202-list__children">
+								<li class="p202-list__item"><span class="p202-list__name">Spring promo</span><span class="p202-list__actions"><a class="p202-list__action" href="#panel">edit</a><a class="p202-list__action" href="#panel">copy</a><a class="p202-list__action p202-list__action--danger" href="#panel">remove</a></span><span class="p202-list__meta">Big savings on every order this week</span></li>
+								<li class="p202-list__item is-active"><span class="p202-list__name">Free shipping</span><span class="p202-list__actions"><a class="p202-list__action" href="#panel">edit</a><a class="p202-list__action" href="#panel">copy</a><a class="p202-list__action p202-list__action--danger" href="#panel">remove</a></span><span class="p202-list__meta">Free shipping, no minimum</span></li>
+							</ul>
+						</li>
+						<li class="p202-list__item">
+							<div class="p202-list__group"><span class="p202-list__group-label">EVAL Offer Network › EVAL Campaign B</span><span class="p202-pill">1</span></div>
+							<ul class="p202-list__children">
+								<li class="p202-list__item"><span class="p202-list__name">Brand</span><span class="p202-list__actions"><a class="p202-list__action" href="#panel">edit</a><a class="p202-list__action" href="#panel">copy</a><a class="p202-list__action p202-list__action--danger" href="#panel">remove</a></span><span class="p202-list__meta">The original, since 2019</span></li>
+							</ul>
+						</li>
+					</ul>
+				</div>
+			</div>
+		</div>
+		<div class="col-lg-6">
+			<div class="p202-page-header mb-3">
+				<div class="p202-page-header__icon"><i class="bi bi-phone"></i></div>
+				<div class="p202-page-header__text">
+					<h2 class="p202-page-header__title">Mobile App Attribution</h2>
+					<p class="p202-page-header__desc">The page header, as every page opens: icon, title, one line.</p>
+				</div>
+			</div>
+			<div class="p202-panel">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Getting started</h3><span class="p202-panel__sub">a checklist panel</span></div>
+				<div class="p202-panel__body">
+					<div class="form-check"><input class="form-check-input" type="checkbox" id="kit-c1" checked disabled><label class="form-check-label text-decoration-line-through text-secondary" for="kit-c1">Both receivers answer over HTTPS</label></div>
+					<div class="form-check"><input class="form-check-input" type="checkbox" id="kit-c2" checked disabled><label class="form-check-label text-decoration-line-through text-secondary" for="kit-c2">Register the app you advertise</label></div>
+					<div class="form-check"><input class="form-check-input" type="checkbox" id="kit-c3" disabled><label class="form-check-label" for="kit-c3">Add conversion-value rules</label></div>
+					<div class="form-check"><input class="form-check-input" type="checkbox" id="kit-c4" disabled><label class="form-check-label" for="kit-c4">Add the Info.plist keys and configure the SDK</label></div>
+				</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section class="p202-section" id="states">
+	<h2 class="p202-section__title">Empty states &amp; flashes</h2>
+	<div class="row g-4">
+		<div class="col-lg-5">
+			<div class="p202-empty">
+				<i class="bi bi-inbox p202-empty__icon"></i>
+				<strong class="p202-empty__title">No apps registered yet</strong>
+				<div>Register the app you advertise so its postbacks are claimed and decoded.</div>
+				<div class="p202-empty__action"><button type="button" class="btn btn-primary btn-sm">Register an app</button></div>
+			</div>
+		</div>
+		<div class="col-lg-7">
+			<div class="alert alert-info p202-flash" role="status"><i class="bi bi-info-circle"></i><div class="p202-flash__body"><strong>No postbacks in this date range yet.</strong> Apple sends the first postback 24 to 48 hours after an install.</div></div>
+			<div class="alert alert-success p202-flash" role="status"><i class="bi bi-check-circle"></i><div class="p202-flash__body">Registered. Postbacks that arrived before today have been claimed.</div></div>
+			<div class="alert alert-warning p202-flash" role="status"><i class="bi bi-exclamation-triangle"></i><div class="p202-flash__body">Apple requires HTTPS on port 443. This install answers on <code>http://</code>.</div></div>
+			<div class="alert alert-danger p202-flash alert-dismissible" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body">This App Store id is already registered.</div><button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>
+		</div>
+	</div>
+</section>
+
+<section class="p202-section" id="code">
+	<h2 class="p202-section__title">Code &amp; strip</h2>
+	<div class="row g-4">
+		<div class="col-lg-6">
+			<label class="form-label">Simple global postback URL</label>
+			<div class="p202-code mb-3">
+				<pre class="p202-code__value"><?php echo htmlspecialchars($base, ENT_QUOTES, 'UTF-8'); ?>tracking202/static/gpb.php?amount=&amp;subid=</pre>
+				<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php echo htmlspecialchars($base . 'tracking202/static/gpb.php?amount=&subid=', ENT_QUOTES, 'UTF-8'); ?>"><i class="bi bi-clipboard"></i> Copy</button>
+			</div>
+			<label class="form-label">Schema token</label>
+			<div class="p202-code">
+				<pre class="p202-code__value p202-code__value--masked" id="kit-token" data-p202-value="3f9a1c2e8b7d4f6a0e1c2b3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6c21e">3f9a•••••••••••••••••••••••••••••••••••••••••••••••••••••••••c21e</pre>
+				<button type="button" class="btn btn-secondary btn-sm" data-p202-reveal="#kit-token">Reveal</button>
+				<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="3f9a1c2e8b7d4f6a0e1c2b3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6c21e">Copy</button>
+				<button type="button" class="btn btn-outline-danger btn-sm">Rotate…</button>
+			</div>
+			<label class="form-label mt-3">A long snippet <span class="text-body-secondary">(<code>p202-code__value--long</code>: scrolls in its own box)</span></label>
+			<?php
+			$kitLongSnippet = "<?php\n// Tracking202 PHP Redirection\n" . str_repeat("// ---------------------------------------------------------\n", 18) . "header('location: ' . \$tracking202outbound);\n?>";
+			?>
+			<div class="p202-code">
+				<pre class="p202-code__value p202-code__value--long"><?php echo htmlspecialchars($kitLongSnippet, ENT_QUOTES, 'UTF-8'); ?></pre>
+				<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php echo htmlspecialchars($kitLongSnippet, ENT_QUOTES, 'UTF-8'); ?>"><i class="bi bi-clipboard"></i> Copy</button>
+			</div>
+		</div>
+		<div class="col-lg-6">
+			<div class="p202-strip">
+				<div class="p202-strip__row"><span class="p202-pill p202-pill--good">Ready</span><span class="p202-strip__label">SKAdNetwork receiver</span><span class="p202-strip__value">https://track.example.com/.well-known/skadnetwork/report-attribution/</span><span class="p202-strip__aside"><button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="https://track.example.com/.well-known/skadnetwork/report-attribution/">Copy</button></span></div>
+				<div class="p202-strip__row"><span class="p202-pill p202-pill--bad">Not reachable</span><span class="p202-strip__label">AdAttributionKit receiver</span><span class="p202-strip__value">https://track.example.com/.well-known/appattribution/report-attribution/</span><span class="p202-strip__aside"><button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="https://track.example.com/.well-known/appattribution/report-attribution/">Copy</button></span></div>
+				<div class="p202-strip__row"><span class="p202-pill p202-pill--warn">Stale</span><span class="p202-strip__label">Attribution rebuild cron</span><span class="p202-strip__value">last ran 31 h ago</span></div>
+				<div class="p202-strip__note">Checked from your browser just now · <a href="#code">Re-check</a></div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section class="p202-section" id="overlays">
+	<h2 class="p202-section__title">Overlays</h2>
+	<p class="text-secondary">Bootstrap's own dropdown, modal, tooltip, popover and toast, with the theme applied.</p>
+	<div class="p202-toolbar">
+		<div class="dropdown">
+			<button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Grouped by: Day</button>
+			<ul class="dropdown-menu">
+				<li><a class="dropdown-item active" href="#overlays">Day</a></li>
+				<li><a class="dropdown-item" href="#overlays">App</a></li>
+				<li><a class="dropdown-item" href="#overlays">Ad network</a></li>
+				<li><hr class="dropdown-divider"></li>
+				<li><a class="dropdown-item" href="#overlays">Conversion type</a></li>
+			</ul>
+		</div>
+		<button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#kit-modal">Remove app…</button>
+		<span>Help icon <a href="#overlays" class="p202-help" data-bs-toggle="tooltip" title="Postbacks whose Apple signature verified."><i class="bi bi-question-circle"></i></a></span>
+		<button type="button" class="btn btn-link" data-bs-toggle="popover" data-bs-placement="bottom" data-bs-title="Verified only" data-bs-content="Counts include only postbacks whose Apple signature verified. Change the Signature filter to see the rest.">Popover</button>
+		<button type="button" class="btn btn-secondary" id="kit-toast-btn">Show toast</button>
+	</div>
+
+	<div class="modal fade" id="kit-modal" tabindex="-1" aria-labelledby="kit-modal-title" aria-hidden="true">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="kit-modal-title">Remove Summit Run?</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<p>Postbacks already claimed by this app keep their owner. Development trust is withdrawn.</p>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep it</button>
+					<button type="button" class="btn btn-danger" data-bs-dismiss="modal">Remove app</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="toast-container position-fixed bottom-0 start-0 p-3">
+		<div id="kit-toast" class="toast" role="status" aria-live="polite" aria-atomic="true">
+			<div class="toast-header"><i class="bi bi-check-circle text-success me-2"></i><strong class="me-auto">Registered</strong><button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button></div>
+			<div class="toast-body">Summit Run is registered. Postbacks that arrived earlier have been claimed.</div>
+		</div>
+	</div>
+	<script>
+		document.getElementById('kit-toast-btn').addEventListener('click', function () {
+			if (window.bootstrap) {
+				window.bootstrap.Toast.getOrCreateInstance(document.getElementById('kit-toast')).show();
+			}
+		});
+	</script>
+</section>
+
+<section class="p202-section" id="standalone">
+	<h2 class="p202-section__title">Standalone</h2>
+	<p class="text-secondary">The pages before a login — sign in, the password reset, the installer, the upgrader, the 404 — render through <code>info_top()</code>: no chrome, one centred column (<code>.p202-standalone__column</code>, <code>--wide</code> for the installer) of Bootstrap cards over the partner wallpaper. Open <a href="<?php echo $base; ?>202-404.php">the 404 page</a> in a signed-out window to see one whole.</p>
+	<div class="row g-4">
+		<div class="col-md-6">
+			<div class="p202-standalone__column mx-auto">
+				<section class="card p202-standalone__card"><div class="card-body">
+					<h1 class="p202-standalone__title">Sign in</h1>
+					<p class="p202-standalone__desc">to your Prosper202 ClickServer</p>
+					<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body">Your username or password is incorrect.</div></div>
+					<div class="mb-3"><label class="form-label" for="kit-sa-user">Username</label><input type="text" class="form-control" id="kit-sa-user" value="admin"></div>
+					<button type="button" class="btn btn-primary w-100">Sign in</button>
+				</div></section>
+			</div>
+		</div>
+		<div class="col-md-6">
+			<div class="p202-standalone__column mx-auto">
+				<section class="card p202-standalone__card"><div class="card-body"><div class="p202-standalone__message">
+					<h6>Already Upgraded</h6>
+					<small>A <code>_die()</code> message: a heading and a sentence its caller wrote, with <a href="#standalone">a link</a> onward.</small>
+				</div></div></section>
+				<p class="p202-standalone__foot">Prosper202 ClickServer &middot; <a href="#standalone">Help</a></p>
+			</div>
+		</div>
+	</div>
+</section>
+
+<?php template_bottom(); ?>

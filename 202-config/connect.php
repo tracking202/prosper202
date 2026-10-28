@@ -2,8 +2,35 @@
 
 declare(strict_types=1);
 
+if (!function_exists('p202_cli_fail')) {
+    /**
+     * A command-line run (a cron job, a worker) that cannot go on: say why on
+     * stderr and exit non-zero.
+     *
+     * On the web every early stop below answers with a page or a redirect.
+     * On the command line a redirect is a header nobody reads and die() is
+     * exit status 0, so a cron run against a database that needs an upgrade
+     * printed nothing and reported success — the attribution worker looked
+     * like an idle one with an empty backlog (measurement plan §8.1). Every
+     * stop in this file goes through here first when PHP_SAPI is the CLI;
+     * tests/Cron/CronEntryPointsFailLoudlyTest holds that, and
+     * tests/live/cron-needs-upgrade.sh runs every cron job against a database
+     * wound back a version.
+     */
+    function p202_cli_fail(string $message): void
+    {
+        if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+            return;
+        }
+        $script = basename((string) ($_SERVER['SCRIPT_FILENAME'] ?? $_SERVER['PHP_SELF'] ?? 'prosper202'));
+        fwrite(STDERR, 'Prosper202 (' . $script . '): ' . $message . PHP_EOL);
+        exit(1);
+    }
+}
+
 // Load centralized version configuration
 if (!file_exists(__DIR__ . '/version.php')) {
+    p202_cli_fail('202-config/version.php is missing; this copy of Prosper202 is incomplete. Deploy the release again.');
     die('Critical: Version file missing');
 }
 require_once(__DIR__ . '/version.php');
@@ -21,14 +48,11 @@ ini_set('session.cookie_lifetime', '0'); // session cookie — expires when brow
 //  - Secure:    only sent over HTTPS. Gated on the request actually being HTTPS so
 //               plain-HTTP installs (local/dev, TLS-terminating proxies that don't
 //               forward the flag) keep working.
-// This mirrors getSecureStatus() (functions-tracking202.php); we can't call that
-// helper here because it isn't loaded until after the session must be started.
-$_request_is_https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
-    || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
-    || (!empty($_SERVER['HTTP_X_FORWARDED_SSL']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_SSL']) === 'on')
-    || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443)
-    || (isset($_SERVER['HTTP_X_FORWARDED_PORT']) && (int) $_SERVER['HTTP_X_FORWARDED_PORT'] === 443)
-    || (isset($_SERVER['REQUEST_SCHEME']) && strtolower((string) $_SERVER['REQUEST_SCHEME']) === 'https');
+// The answer is p202_request_is_https(), which the setup wizard's session
+// (functions-standalone-ui.php) and getSecureStatus() share, so no page
+// decides the flag differently.
+require_once __DIR__ . '/request-https.php';
+$_request_is_https = p202_request_is_https($_SERVER);
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 ini_set('session.cookie_secure', $_request_is_https ? '1' : '0');
@@ -79,16 +103,20 @@ if (!function_exists('withWritableSession')) {
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
 
-// Messaging API configuration (Intercom-style messenger).
-// Central server contract: 202-config/Messaging/CENTRAL-API.md
-// Both values are overridable via environment variables so a developer can point
-// the app at the local mock server (202-config/Messaging/mock-server.php) without
-// editing tracked config, e.g. MESSAGING_API_URL=http://127.0.0.1:8787/messaging
+// The portal: product analytics (POST <MESSAGING_API_URL>/track, contract in
+// 202-config/Messaging/CENTRAL-API.md) and the chat pass the chat box takes to
+// the chat service (CHAT_PASS_URL, 202-account/ajax/chat-pass.php). Each is
+// overridable from the environment so a developer can point the app at a
+// local stub without editing tracked config, e.g.
+// CHAT_PASS_URL=http://127.0.0.1:8787/api/v3/chat/pass (http only on loopback).
 if (!defined('MESSAGING_API_URL')) {
     DEFINE('MESSAGING_API_URL', getenv('MESSAGING_API_URL') ?: 'https://my.tracking202.com/api/v3/messaging');
 }
+if (!defined('CHAT_PASS_URL')) {
+    DEFINE('CHAT_PASS_URL', getenv('CHAT_PASS_URL') ?: 'https://my.tracking202.com/api/v3/chat/pass');
+}
 if (!defined('MESSAGING_SYNC_THROTTLE')) {
-    DEFINE('MESSAGING_SYNC_THROTTLE', (int) (getenv('MESSAGING_SYNC_THROTTLE') ?: 20)); // seconds between per-user network syncs
+    DEFINE('MESSAGING_SYNC_THROTTLE', (int) (getenv('MESSAGING_SYNC_THROTTLE') ?: 20)); // seconds between per-user analytics deliveries
 }
 
 //fix for nginx with no server name set. SERVER_NAME does not exist under CLI
@@ -112,7 +140,9 @@ $p202_display_errors = (PHP_SAPI !== 'cli' && getenv('APP_ENV') === 'production'
 @ini_set('display_errors', $p202_display_errors);
 @ini_set('error_reporting', '6135');
 // @ini_set('safe_mode', 'Off'); // Removed in PHP 5.4
-@ini_set('set_time_limit', '0');
+// (There was an @ini_set('set_time_limit', '0') here. set_time_limit is a
+// function, not an ini key, so it never did anything; the pages that need no
+// time limit — the upgrade paths, the cron — call set_time_limit(0) themselves.)
 
 if (!class_exists('Memcache')) {
     class Memcache
@@ -183,28 +213,10 @@ foreach ($navigation as $key => $row) {
     }
 }
 
-//get the real ip
-$_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
-    !empty($_SERVER['HTTP_CF_CONNECTING_IP']) => $_SERVER['HTTP_CF_CONNECTING_IP'],
-    !empty($_SERVER['HTTP_X_CLUSTER_CLIENT_IP']) => $_SERVER['HTTP_X_CLUSTER_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_SUCURI_CLIENTIP']) => $_SERVER['HTTP_X_SUCURI_CLIENTIP'],
-    !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
-    !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && ($_SERVER['SERVER_ADDR'] != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
-    // REMOTE_ADDR does not exist under CLI (cron workers)
-    default => $_SERVER['REMOTE_ADDR'] ?? '',
-};
-
-
-$tempip = explode(",", (string) $_SERVER['HTTP_X_FORWARDED_FOR']);
-$_SERVER['HTTP_X_FORWARDED_FOR'] = trim($tempip[0]);
-
-// Store the IP address temporarily, we'll pass it to ipAddress() after functions.php is included
-$temp_ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
-
 if (file_exists(ROOT_PATH  . '202-config.php')) {
     include_once(ROOT_PATH  . '202-config.php');
 } else {
+    p202_cli_fail(ROOT_PATH . '202-config.php is missing: Prosper202 is not installed here. Open 202-config/setup-config.php on the site to install it.');
     header('location: setup-config.php');
     die();
 }
@@ -212,14 +224,6 @@ include_once(ROOT_PATH  . '202-config.php');
 
 if (!defined('TRACKING202_JSON_ARCHITECTURE_ENABLED')) {
     define('TRACKING202_JSON_ARCHITECTURE_ENABLED', false);
-}
-
-if (!defined('TRACKING202_STATIC_FILTER_SSR_MAX_OPTIONS')) {
-    define('TRACKING202_STATIC_FILTER_SSR_MAX_OPTIONS', 1500);
-}
-
-if (!defined('TRACKING202_STATIC_FILTER_SSR_MAX_BYTES')) {
-    define('TRACKING202_STATIC_FILTER_SSR_MAX_BYTES', 65536);
 }
 
 if (!function_exists('tracking202NormalizeBooleanFlag')) {
@@ -258,32 +262,6 @@ if (!function_exists('tracking202JsonArchitectureEnabled')) {
     }
 }
 
-if (!function_exists('tracking202StaticFilterSsrEnabled')) {
-    function tracking202StaticFilterSsrEnabled(): bool
-    {
-        // Deliberately ignores the ?tracking_json_mode override. Enabling static-filter
-        // SSR runs six extra GROUP BY queries (country/region/isp/device/browser/platform)
-        // on every display_calendar() page, and 202_locations_region and 202_locations_isp
-        // are large. A query-string parameter any logged-in user can set must not be able
-        // to turn that on, so this reads the deploy-time constant only.
-        return (bool) TRACKING202_JSON_ARCHITECTURE_ENABLED;
-    }
-}
-
-if (!function_exists('tracking202StaticFilterSsrMaxOptions')) {
-    function tracking202StaticFilterSsrMaxOptions(): int
-    {
-        return (int) TRACKING202_STATIC_FILTER_SSR_MAX_OPTIONS;
-    }
-}
-
-if (!function_exists('tracking202StaticFilterSsrMaxBytes')) {
-    function tracking202StaticFilterSsrMaxBytes(): int
-    {
-        return (int) TRACKING202_STATIC_FILTER_SSR_MAX_BYTES;
-    }
-}
-
 // Composer dependencies provide the PSR-4 classes used by tracking, install,
 // and the API. A missing vendor/ almost always means the app was deployed from
 // a raw git clone without running `composer install`. Fail loudly with guidance
@@ -291,6 +269,7 @@ if (!function_exists('tracking202StaticFilterSsrMaxBytes')) {
 // in the request (CLAUDE.md #4: no silent fallbacks).
 $autoloadPath = ROOT_PATH . 'vendor/autoload.php';
 if (!file_exists($autoloadPath)) {
+    p202_cli_fail('vendor/autoload.php is missing: run `composer install --no-dev` in ' . ROOT_PATH . '.');
     http_response_code(500);
     die('<h2>Prosper202: dependencies are missing</h2>'
         . '<p>The <code>vendor/</code> folder was not found, so required libraries '
@@ -305,12 +284,38 @@ require_once $autoloadPath;
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
-// Now that functions.php is included, we can use ipAddress()
-$ip_address = ipAddress($temp_ip_address);
+if (!function_exists('p202PageUncaught')) {
+    /**
+     * A failure nothing on a signed-in page caught. A database failure (the
+     * cached reads throw one rather than answer "no row") is the database
+     * error page, recorded, as on the click path (p202ClickPathUncaught());
+     * anything else is logged, under a 500 either way. Not set on the
+     * command line, where a cron job's stderr and exit status are its answer.
+     */
+    function p202PageUncaught(\Throwable $e): void
+    {
+        if (!headers_sent()) {
+            http_response_code(500);
+        }
+        if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
+            record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . p202UncaughtAt($e), $e->getMessage());
+        }
+        error_log(p202UncaughtLogLine('Uncaught on a page', $e));
+    }
+}
+if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+    set_exception_handler('p202PageUncaught');
+}
+// The visitor's address (VisitorIp: the one reader of the forwarding
+// headers), once the autoloader and functions-shared.php's ipAddress() are
+// loaded. Under the CLI (cron workers) there is no REMOTE_ADDR and it is ''.
+// Never masked: on these pages it is the operator's own address, which the
+// sign-in log keeps as it arrived.
+$ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER), false);
+include_once(CONFIG_PATH . '/functions-ui.php');
 include_once(CONFIG_PATH . '/template.php');
 
 include_once(CONFIG_PATH . '/functions-auth.php');
-include_once(CONFIG_PATH . '/class-filterengine.php');
 
 include_once(CONFIG_PATH . '/functions-tracking202api.php');
 include_once(CONFIG_PATH . '/l10n.php');
@@ -319,9 +324,7 @@ include_once(CONFIG_PATH . '/Role.class.php');
 include_once(CONFIG_PATH . '/User.class.php');
 include_once(CONFIG_PATH . '/Slack.class.php');
 include_once(CONFIG_PATH . '/Messaging/MessagingService.class.php');
-include_once(CONFIG_PATH . '/functions-timeframe.php');
 include_once(CONFIG_PATH . '/functions-db.php');
-include_once(CONFIG_PATH . '/functions-indexes.php');
 include_once(CONFIG_PATH . '/functions-icons.php');
 include_once(CONFIG_PATH . '/functions-api.php');
 include_once(CONFIG_PATH . '/functions-utils.php');
@@ -357,31 +360,9 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
     }
 }
 
-function setCache($key, $value, $exp = null)
-{
-    global $whatCache, $memcache;
-    switch ($whatCache) {
-        case 'memcache':
-            return $memcache->set($key, $value, false, $exp);
 
-        case 'memcached':
-            return $memcache->set($key, $value, $exp);
-    }
-}
-
-// ipAddress() function has been moved to functions.php - using that implementation instead
-// to avoid duplicate function declaration errors
-
-function inet6_ntoa($ip)
-{
-    return @inet_ntop($ip);
-}
-
-function inet6_aton($ip)
-{
-    return @inet_pton($ip);
-}
-
+// inet6_ntoa() is in functions-tracking202.php, loaded above, so code that
+// renders an address (HtmlReportFormatter) can be loaded without this file.
 
 try {
     $database = DB::getInstance();
@@ -394,8 +375,8 @@ try {
         $error = $db ? $db->connect_error : 'DB object is null';
         throw new Exception("MySQL Connection Error ({$errno}): {$error}");
     }
-    // Initialize $dbro as well
-    $dbro = $database->getConnectionro();
+    // Retained 202-config.php files may expose only the primary connection.
+    $dbro = \Prosper202\Database\ConnectionFactory::readConnectionOf($database);
     if ($dbro === null || $dbro->connect_error) {
         $errno = $dbro ? $dbro->connect_errno : 'N/A';
         $error = $dbro ? $dbro->connect_error : 'DB RO object is null';
@@ -406,6 +387,7 @@ try {
 } catch (Exception $e) {
     // Capture the specific exception message
     $db_error_msg = $e->getMessage();
+    p202_cli_fail('cannot connect to the database named in 202-config.php: ' . $db_error_msg);
 
     _die("<h6>Error establishing a database connection</h6>
 			<p><small>This either means that the username and password information in your <code>202-config.php</code> file is incorrect or we can't contact the database server. This could mean your host's database server is down.</small></p>
@@ -455,11 +437,18 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
     //	include_once(ROOT_PATH . '/202-cronjobs/index.php'); 
 }
 
-//set token to prevent CSRF attacks
-if (!isset($_SESSION['token'])) {
+//set token to prevent CSRF attacks. A token that is set but not usable
+//(blanked, false, an array) is seeded again: every guard
+//(AUTH::csrf_token_matches()) refuses one, by the same AUTH::csrf_token_usable(),
+//so keeping it would refuse every form this session posts until sign-out.
+//128 bits from the CSPRNG, as p202_standalone_wizard_token() mints the
+//pre-login pages' token; the md5 of uniqid() this replaced took 31 bits from
+//the CSPRNG (random_int up to mt_getrandmax()) and the rest from the clock
+//and lcg_value().
+if (!AUTH::csrf_token_usable($_SESSION['token'] ?? null)) {
     withWritableSession(static function (): void {
-        if (!isset($_SESSION['token'])) {
-            $_SESSION['token'] = md5(uniqid((string) random_int(0, mt_getrandmax()), true));
+        if (!AUTH::csrf_token_usable($_SESSION['token'] ?? null)) {
+            $_SESSION['token'] = bin2hex(random_bytes(16));
         }
     });
 }
@@ -482,7 +471,13 @@ if ($skip_upgrade == false) {
     if (is_installed() == true) {
 
         //if we need upgrade, and its not already on the upgrade screen, redirect to the upgrade screen
-        if ((upgrade_needed() == true) and (($navigation[1] != '202-config') and ($navigation[2] != 'upgrade.php'))) {
+        // A command-line run has no request path: its navigation is empty,
+        // and reading a segment it does not have printed a warning ahead of
+        // the reason below.
+        if ((upgrade_needed() == true) and ((($navigation[1] ?? '') != '202-config') and (($navigation[2] ?? '') != 'upgrade.php'))) {
+            p202_cli_fail('the database needs an upgrade: its schema is version ' . PROSPER202::prosper202_version()
+                . ' and this code is version ' . PROSPER202::php_version()
+                . '. Nothing was run. Open 202-config/upgrade.php on the site (signed in) to upgrade it; cron jobs run again once it has.');
             header('location: ' . get_absolute_url() . '202-config/upgrade.php');
             die();
         }
@@ -495,6 +490,7 @@ switch ($navigation[1]) {
     case "alerts202":
     case "stats202":
         if (@ini_get('safe_mode')) {
+            p202_cli_fail('PHP safe_mode is on; turn it off to run this.');
             header('location: ' . get_absolute_url() . '202-account/disable-safe-mode.php');
             die();
         }
@@ -511,9 +507,17 @@ if (!str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php')) {
 if (!isset($_SESSION['ipv6']) || !$_SESSION['ipv6']) {
     $sql = "select inet6_ntoa(0x00000000000000000000000000000001) as ipv6";
     $result = $db->query($sql);
+    // Every server version.php accepts has INET6_NTOA: a failure is the
+    // database's, not "no IPv6", which the pages would have read for the
+    // rest of the request.
+    if ($result === false) {
+        p202_cli_fail('the database refused the IPv6 probe: '
+            . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+        record_mysql_error($db, $sql);
+    }
 
-    withWritableSession(static function () use ($result): void {
-        $_SESSION['ipv6'] = $result ? 'ipv6' : '';
+    withWritableSession(static function (): void {
+        $_SESSION['ipv6'] = 'ipv6';
     });
 }
 
@@ -526,25 +530,30 @@ if (isset($_SESSION['ipv6']) && $_SESSION['ipv6'] != '') {
 }
 
 $user_sql = "SET session sql_mode= ''";
-$user_results = $db->query($user_sql);
+// The pages' SQL is written for the empty sql_mode: under the server's
+// default (strict on MySQL 8) some of their writes are refused or stored
+// differently.
+if ($db->query($user_sql) === false) {
+    p202_cli_fail('the database refused the session\'s sql_mode: '
+        . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+    record_mysql_error($db, $user_sql);
+}
 
 function updateBlazerCache(&$mysql, $blazerCacheType = '')
 {
     global $db;
 
-    switch ($blazerCacheType) {
-        case 'ac':
-            $bc_results = ($db->query("SELECT DISTINCT tracker_id_public from 202_trackers WHERE aff_campaign_id = 1"));
+    if ($blazerCacheType != 'ac') {
+        return;
+    }
+    $bc_results = $db->query("SELECT DISTINCT tracker_id_public from 202_trackers WHERE aff_campaign_id = 1");
+    if ($bc_results === false) {
+        throw new \Prosper202\Database\Exceptions\QueryException('MySQL query failed: '
+            . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+    }
 
-            while ($bc_row = $bc_results->fetch_assoc()) {
-                $bc_key = "td_" . $bc_row['tracker_id_public'];
-                setCache($bc_key, $mysql['aff_campaign_url']);
-            }
-            break;
-
-        default:
-            # code...
-
-            break;
+    while ($bc_row = $bc_results->fetch_assoc()) {
+        $bc_key = "td_" . $bc_row['tracker_id_public'];
+        setCache($bc_key, $mysql['aff_campaign_url']);
     }
 }

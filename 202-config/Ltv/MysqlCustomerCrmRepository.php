@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
-use RuntimeException;
+use Prosper202\Database\Exceptions\QueryException;
+use Prosper202\Identity\CustomerId;
+use Prosper202\Identity\IdentityGraph;
+use Prosper202\Identity\IdentitySignal;
+use Prosper202\Identity\SignalType;
 
 /**
  * API-side customer CRUD: detail reads, CRM upserts, aliasing, merge and
@@ -17,6 +21,30 @@ final class MysqlCustomerCrmRepository
     private const CRM_COLUMNS = [
         'first_name', 'last_name', 'phone', 'company',
         'address_line1', 'address_line2', 'city', 'region', 'postal_code', 'country',
+    ];
+
+    /**
+     * The per-customer rows erase() deletes outright, in the order it
+     * deletes them, each keyed (customer_id, user_id). One list for the
+     * erasure and its preview (erasurePreview()), so the preview cannot
+     * report a table the erasure no longer touches, or miss one it does.
+     * Personalization tokens hold sealed PII snapshots, so erasure reaches
+     * them too.
+     */
+    private const ERASED_TABLES = [
+        'customer-aliases' => '202_customer_aliases',
+        'personalization-tokens' => '202_personalization_tokens',
+        'customer-field-values' => '202_customer_field_values',
+    ];
+
+    /**
+     * The per-customer rows erase() keeps: money stays for revenue
+     * integrity, and none of these rows carries personal data once the
+     * customer record is anonymized.
+     */
+    private const KEPT_TABLES = [
+        'revenue-events' => '202_revenue_events',
+        'subscriptions' => '202_subscriptions',
     ];
 
     public function __construct(
@@ -140,34 +168,41 @@ final class MysqlCustomerCrmRepository
         // ONE transaction end to end: a payload rejected part-way through —
         // invalid email, unknown custom field, alias conflict — must roll a
         // freshly created customer/alias back with it instead of leaving a
-        // committed partial record. Connection::transaction does not nest,
-        // so every step below runs in in-transaction mode.
+        // committed partial record. Connection::transaction() refuses to
+        // nest, so every step below runs in this one.
         return $this->conn->transaction(function () use ($userId, $payload, $now): int {
-            $customerId = $this->resolveTarget($userId, $payload, $now, true);
+            $customerId = $this->resolveTarget($userId, $payload, $now);
 
             $this->applyCrmFields($userId, $customerId, $payload, $now);
             $this->syncCompanyLink($userId, $customerId, $payload, $now);
 
             if (isset($payload['aliases'])) {
                 if (!is_array($payload['aliases'])) {
-                    throw new RuntimeException('aliases must be an array of {type, value}');
+                    throw new LtvInputException('aliases', 'aliases must be an array of {type, value}');
                 }
-                foreach ($payload['aliases'] as $alias) {
+                foreach ($payload['aliases'] as $index => $alias) {
                     if (!is_array($alias) || trim((string) ($alias['value'] ?? '')) === '') {
-                        throw new RuntimeException('Each alias requires a non-empty value');
+                        throw new LtvInputException("aliases.{$index}.value", 'Each alias requires a non-empty value');
                     }
-                    $owner = $this->customers->addAlias(
-                        $userId,
-                        $customerId,
-                        (string) ($alias['type'] ?? 'custom'),
-                        (string) $alias['value'],
-                        $now
-                    );
+                    try {
+                        $owner = $this->customers->addAlias(
+                            $userId,
+                            $customerId,
+                            (string) ($alias['type'] ?? 'custom'),
+                            (string) $alias['value'],
+                            $now
+                        );
+                    } catch (LtvInputException $e) {
+                        // The alias's field, at its place in the body.
+                        throw new LtvInputException("aliases.{$index}." . $e->field, $e->getMessage());
+                    }
                     if ($owner !== $customerId) {
                         // First-writer-wins: surfacing beats silent re-pointing.
-                        throw new RuntimeException(
+                        throw new LtvInputException(
+                            "aliases.{$index}.value",
                             'Alias "' . $alias['value'] . '" already belongs to customer ' . $owner
-                            . '; use POST /ltv/customers/' . $customerId . '/merge to combine records'
+                                . '; use POST /ltv/customers/' . $customerId . '/merge to combine records',
+                            'Already mapped to customer ' . $owner
                         );
                     }
                 }
@@ -188,15 +223,24 @@ final class MysqlCustomerCrmRepository
     public function merge(int $userId, int $sourceId, int $targetId): void
     {
         if ($sourceId === $targetId) {
-            throw new RuntimeException('Cannot merge a customer into itself');
+            throw new LtvInputException('source_customer_id', 'Cannot merge a customer into itself');
         }
-        if (!$this->customers->customerBelongsToUser($sourceId, $userId)
-            || !$this->customers->customerBelongsToUser($targetId, $userId)) {
-            throw new RuntimeException('Both customers must exist and belong to this account');
+        if (!$this->customers->customerBelongsToUser($targetId, $userId)) {
+            throw new RecordNotFoundException('Customer not found');
+        }
+        if (!$this->customers->customerBelongsToUser($sourceId, $userId)) {
+            throw new LtvInputException(
+                'source_customer_id',
+                'source_customer_id ' . $sourceId . ' not found for this account',
+                'No such customer in this account (see `p202 ltv customers`)'
+            );
         }
         $terminalTarget = $this->customers->followMergePointer($targetId);
         if ($terminalTarget === $sourceId) {
-            throw new RuntimeException('Target already merges into source; merge the other way around');
+            throw new LtvInputException(
+                'source_customer_id',
+                'Target already merges into source; merge the other way around'
+            );
         }
 
         $now = time();
@@ -220,13 +264,15 @@ final class MysqlCustomerCrmRepository
                 $locked[(int) $row['customer_id']] = $row;
             }
             if (!isset($locked[$sourceId], $locked[$terminalTarget])) {
-                throw new RuntimeException('Both customers must exist and belong to this account');
+                throw new LtvConflictException(
+                    'A customer of this merge was removed by a concurrent request; nothing was merged'
+                );
             }
             if ($locked[$sourceId]['merged_into_customer_id'] !== null) {
-                throw new RuntimeException('Source customer was already merged by a concurrent request');
+                throw new LtvConflictException('Source customer was already merged by a concurrent request');
             }
             if ($locked[$terminalTarget]['merged_into_customer_id'] !== null) {
-                throw new RuntimeException('Target customer was merged concurrently; retry the merge');
+                throw new LtvConflictException('Target customer was merged concurrently; retry the merge');
             }
 
             // Custom-field values first: target's existing value wins on
@@ -262,6 +308,25 @@ final class MysqlCustomerCrmRepository
                 }
                 $this->conn->executeUpdate($stmt);
             }
+
+            // 202_offer_recommendations also carries customer_id but cannot use
+            // the plain repoint above: it has UNIQUE (user_id, customer_id,
+            // campaign_id, surface), so source and target can both hold a row
+            // for the same campaign+surface. Move what fits, then drop the
+            // leftovers — without this the source's rows were orphaned beyond
+            // the reach of stampRecommendationConversions() and the target's
+            // fatigue budget silently reset.
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE IGNORE 202_offer_recommendations SET customer_id = ? WHERE customer_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'iii', [$terminalTarget, $sourceId, $userId]);
+            $this->conn->executeUpdate($stmt);
+
+            $stmt = $this->conn->prepareWrite(
+                'DELETE FROM 202_offer_recommendations WHERE customer_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'ii', [$sourceId, $userId]);
+            $this->conn->executeUpdate($stmt);
 
             // The target absorbs the source's acquisition and recency BEFORE
             // the source is zeroed: the merged revenue must attribute to the
@@ -328,30 +393,24 @@ final class MysqlCustomerCrmRepository
     public function erase(int $userId, int $customerId): void
     {
         if (!$this->customers->customerBelongsToUser($customerId, $userId)) {
-            throw new RuntimeException('Customer not found for this account');
+            throw new RecordNotFoundException('Customer not found for this account');
         }
 
         $now = time();
         $this->conn->transaction(function () use ($userId, $customerId, $now): void {
-            $stmt = $this->conn->prepareWrite(
-                'DELETE FROM 202_customer_aliases WHERE customer_id = ? AND user_id = ?'
-            );
-            $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
-            $this->conn->executeUpdate($stmt);
+            // The identity graph links clicks by a keyed hash of the same
+            // aliases, so it is reached before they go.
+            $this->eraseIdentitySignals($userId, $customerId);
 
-            // Personalization tokens hold sealed PII snapshots — erasure must
-            // reach them too.
-            $stmt = $this->conn->prepareWrite(
-                'DELETE FROM 202_personalization_tokens WHERE customer_id = ? AND user_id = ?'
-            );
-            $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
-            $this->conn->executeUpdate($stmt);
-
-            $stmt = $this->conn->prepareWrite(
-                'DELETE FROM 202_customer_field_values WHERE customer_id = ? AND user_id = ?'
-            );
-            $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
-            $this->conn->executeUpdate($stmt);
+            // Aliases, personalization tokens (sealed PII snapshots) and
+            // custom-field values go outright; see ERASED_TABLES.
+            foreach (self::ERASED_TABLES as $table) {
+                $stmt = $this->conn->prepareWrite(
+                    "DELETE FROM {$table} WHERE customer_id = ? AND user_id = ?"
+                );
+                $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+                $this->conn->executeUpdate($stmt);
+            }
 
             $stmt = $this->conn->prepareWrite(
                 "UPDATE 202_customers
@@ -365,6 +424,100 @@ final class MysqlCustomerCrmRepository
             $this->conn->bind($stmt, 'iii', [$now, $customerId, $userId]);
             $this->conn->executeUpdate($stmt);
         });
+    }
+
+    /**
+     * What erase() would do to one customer, without doing it: per table,
+     * how many of the customer's rows it deletes (ERASED_TABLES) and how
+     * many it keeps (KEPT_TABLES). Read-only; the caller has already
+     * checked the customer belongs to the account.
+     *
+     * @return list<array{resource: string, action: string, count: int}>
+     */
+    public function erasurePreview(int $userId, int $customerId): array
+    {
+        $cascade = [];
+        foreach ([[self::ERASED_TABLES, 'delete'], [self::KEPT_TABLES, 'kept']] as [$tables, $action]) {
+            foreach ($tables as $resource => $table) {
+                $stmt = $this->conn->prepareRead(
+                    "SELECT COUNT(*) AS c FROM {$table} WHERE customer_id = ? AND user_id = ?"
+                );
+                $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+                $row = $this->conn->fetchOne($stmt);
+                if ($row === null) {
+                    // COUNT(*) always yields a row; none means the read
+                    // failed, and a preview must not report it as zero.
+                    throw new QueryException('COUNT(*) over ' . $table . ' returned no row');
+                }
+                $cascade[] = ['resource' => $resource, 'action' => $action, 'count' => (int) $row['c']];
+            }
+        }
+
+        return $cascade;
+    }
+
+    /**
+     * Remove the identity graph's record of an erased customer's ids.
+     *
+     * A customer id reaches the graph as a CUSTOMER signal whose value is the
+     * alias in its canonical "type:value" form (CustomerId), stored only as
+     * the account's keyed hash of it. Each alias is hashed the same way and
+     * its signal row and the observations that name it are deleted and the
+     * merges it caused lose the hash, so the id no longer maps to a visitor key and no later
+     * click can join the erased customer's journeys through it. The visitor
+     * keys the signal once merged stay merged: they are pseudonymous click
+     * links that carry nothing of the customer.
+     *
+     * An account whose identity keys were never minted has no signals to
+     * reach; the keys are read, never minted here.
+     */
+    private function eraseIdentitySignals(int $userId, int $customerId): void
+    {
+        $stmt = $this->conn->prepareWrite('SELECT hash_key FROM 202_identity_keys WHERE user_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'i', [$userId]);
+        $keys = $this->conn->fetchOne($stmt);
+        if ($keys === null) {
+            return;
+        }
+        $hashKey = (string) $keys['hash_key'];
+
+        $stmt = $this->conn->prepareWrite(
+            'SELECT alias_type, alias_value FROM 202_customer_aliases WHERE customer_id = ? AND user_id = ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+        $type = SignalType::CUSTOMER->value;
+        foreach ($this->conn->fetchAll($stmt) as $alias) {
+            $canonical = CustomerId::canonical((string) $alias['alias_value'], (string) $alias['alias_type']);
+            if ($canonical === null) {
+                continue;
+            }
+            $hash = IdentityGraph::hash($hashKey, new IdentitySignal(SignalType::CUSTOMER, $canonical));
+
+            $stmt = $this->conn->prepareWrite(
+                'DELETE FROM 202_identity_signals WHERE user_id = ? AND signal_type = ? AND signal_hash = ?'
+            );
+            $this->conn->bind($stmt, 'iss', [$userId, $type, $hash]);
+            $this->conn->executeUpdate($stmt);
+
+            // Observations carry no account column; the hash is keyed by
+            // this account's secret, so no other account's row shares it.
+            $stmt = $this->conn->prepareWrite(
+                'DELETE FROM 202_identity_observations WHERE signal_type = ? AND signal_hash = ?'
+            );
+            $this->conn->bind($stmt, 'ss', [$type, $hash]);
+            $this->conn->executeUpdate($stmt);
+
+            // A merge row is the worker's to-do list (requeued_at IS NULL
+            // re-queues the conversions it moved), so it stays; only the
+            // hash that names the customer goes, replaced by a marker no
+            // HMAC can equal.
+            $stmt = $this->conn->prepareWrite(
+                "UPDATE 202_identity_merges SET signal_hash = 'erased'
+                 WHERE user_id = ? AND signal_type = ? AND signal_hash = ?"
+            );
+            $this->conn->bind($stmt, 'iss', [$userId, $type, $hash]);
+            $this->conn->executeUpdate($stmt);
+        }
     }
 
     /**
@@ -405,21 +558,32 @@ final class MysqlCustomerCrmRepository
     }
 
     /**
+     * The customer an upsert body names, created when it is new, inside
+     * upsert()'s transaction.
+     *
      * @param array<string, mixed> $payload
      */
-    private function resolveTarget(int $userId, array $payload, int $now, bool $inTransaction = false): int
+    private function resolveTarget(int $userId, array $payload, int $now): int
     {
         $explicitId = isset($payload['customer_id']) ? (int) $payload['customer_id'] : 0;
         if ($explicitId > 0) {
             if (!$this->customers->customerBelongsToUser($explicitId, $userId)) {
-                throw new RuntimeException('customer_id ' . $explicitId . ' not found for this account');
+                throw new LtvInputException(
+                    'customer_id',
+                    'customer_id ' . $explicitId . ' not found for this account',
+                    'No such customer in this account (see `p202 ltv customers`)'
+                );
             }
             return $this->customers->followMergePointer($explicitId);
         }
 
         $ref = trim((string) ($payload['customer_ref'] ?? ''));
         if ($ref === '') {
-            throw new RuntimeException('customer_id or customer_ref is required');
+            throw new LtvInputException(
+                'customer_ref',
+                'customer_id or customer_ref is required',
+                'Identify the customer: your id for them (customer_ref), or customer_id'
+            );
         }
         $refType = isset($payload['customer_ref_type']) ? (string) $payload['customer_ref_type'] : 'custom';
         $crm = [];
@@ -432,13 +596,8 @@ final class MysqlCustomerCrmRepository
         // stampCompany: false — upsert() runs syncCompanyLink right after,
         // which performs the same attachment once.
         $resolve = fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now, false);
-        if ($inTransaction) {
-            return $resolve();
-        }
 
-        return $this->conn->transaction(
-            $resolve
-        );
+        return $this->conn->joinTransaction($resolve);
     }
 
     /**
@@ -473,7 +632,7 @@ final class MysqlCustomerCrmRepository
         if (array_key_exists('email', $payload)) {
             $email = $payload['email'] !== null ? trim((string) $payload['email']) : '';
             if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
-                throw new RuntimeException('email is not a valid address');
+                throw new LtvInputException('email', 'email is not a valid address');
             }
             $sets[] = 'email = ?';
             $types .= 's';
@@ -564,7 +723,7 @@ final class MysqlCustomerCrmRepository
         $customFields = null;
         if (isset($payload['custom_fields'])) {
             if (!is_array($payload['custom_fields'])) {
-                throw new RuntimeException('custom_fields must be an object of field_key => value');
+                throw new LtvInputException('custom_fields', 'custom_fields must be an object of field_key => value');
             }
             $customFields = $payload['custom_fields'];
         }
@@ -582,19 +741,27 @@ final class MysqlCustomerCrmRepository
             foreach ($customFields as $key => $value) {
                 $field = $this->fields->findByKey($userId, (string) $key);
                 if ($field === null) {
-                    throw new RuntimeException(
-                        'Unknown custom field "' . $key . '"; define it first via POST /ltv/fields'
+                    throw new LtvInputException(
+                        'custom_fields.' . $key,
+                        'Unknown custom field "' . $key . '"; define it first via POST /ltv/fields',
+                        'No such field: `p202 ltv fields list` lists them, POST /ltv/fields defines one'
                     );
                 }
                 // setValue() deletes blank values, so a blank on a required
                 // field would silently clear it — reject before that happens.
                 if (!empty($field['is_required'])
                     && ($value === null || (is_string($value) && trim($value) === ''))) {
-                    throw new RuntimeException(
+                    throw new LtvInputException(
+                        'custom_fields.' . $key,
                         'Custom field "' . (string) $field['field_key'] . '" is required and cannot be cleared'
                     );
                 }
-                $this->fields->setValue($userId, $customerId, $field, $value);
+                try {
+                    $this->fields->setValue($userId, $customerId, $field, $value);
+                } catch (LtvInputException $e) {
+                    // The value's place in the body.
+                    throw new LtvInputException('custom_fields.' . $key, $e->getMessage());
+                }
             }
         }
 
@@ -610,9 +777,10 @@ final class MysqlCustomerCrmRepository
         $stored = $this->fields->fieldIdsWithValue($userId, $customerId);
         foreach ($required as $field) {
             if (!in_array((int) $field['field_id'], $stored, true)) {
-                throw new RuntimeException(
+                throw new LtvInputException(
+                    'custom_fields.' . (string) $field['field_key'],
                     'Custom field "' . (string) $field['field_key']
-                    . '" is required; supply it in custom_fields'
+                        . '" is required; supply it in custom_fields'
                 );
             }
         }

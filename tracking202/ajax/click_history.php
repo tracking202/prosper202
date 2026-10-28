@@ -1,29 +1,50 @@
 <?php
 
 declare(strict_types=1);
+
+/**
+ * The click history: Visitors (a page of the window, POSTed with an offset)
+ * and Spy (?spy=1: the last 24 hours; with since/since_id, only the clicks
+ * newer than the newest one shown, as bare rows). Drawn on the v2 shell by
+ * 202-js/p202-overview.js; the filters are the user's report preferences,
+ * which the page applied from its URL. A row with conversions opens their
+ * breakdown (click_conversions.php) in the modal drawn below the table.
+ */
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
+require_once(substr(__DIR__, 0, -17) . '/202-config/functions-ui-overview.php');
 
 AUTH::require_user();
+
+// Draw the view the page rendered, not whatever the stored filters say by
+// now (ReportView); a request that carries none reads the stored ones.
+$reportView = p202_report_view_begin();
 
 $incremental = false;
 $isSpy = (isset($_GET['spy']) && $_GET['spy'] == 1);
 
-// Shared SQL — identical for spy and non-spy paths
-$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name,
+// Shared SQL — identical for spy and non-spy paths. A campaign, traffic
+// source and its account, landing page or text ad is named only when it is
+// the click's own account's (CLAUDE.md #27): a click naming another
+// account's is still listed, with that name blank. The conversion count is
+// every row of the click, as the breakdown it opens lists them
+// (ClickBreakdown::forClick()).
+$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, " . \Prosper202\DataEngine\IpAddressSql::address('2i', '2i6') . " AS ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name,
 2su.site_url_address AS referer,2sd.site_domain_host AS referer_host,
 2cl.site_url_address AS landing,2cld.site_domain_host AS landing_host,
 2co.site_url_address AS outbound,2cod.site_domain_host AS outbound_host,
 2cc.site_url_address AS cloaking,2ccd.site_domain_host AS cloaking_host,
-2credir.site_url_address AS redirect,2credird.site_domain_host AS redirect_host
+2credir.site_url_address AS redirect,2credird.site_domain_host AS redirect_host,
+(SELECT COUNT(*) FROM 202_conversion_logs AS cvl WHERE cvl.click_id = 2c.click_id) AS conversion_rows
 FROM 202_dataengine AS 2c
 LEFT JOIN 202_clicks_record USING (click_id)
 LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id)
-LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id)
-LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id)
-LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id)
-LEFT JOIN 202_landing_pages ON (202_landing_pages.landing_page_id = 2c.landing_page_id)
-LEFT JOIN 202_text_ads AS 2ta ON (2c.text_ad_id = 2ta.text_ad_id)
+LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2c.user_id)
+LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2c.user_id)
+LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id AND 2pn.user_id = 2c.user_id)
+LEFT JOIN 202_landing_pages ON (202_landing_pages.landing_page_id = 2c.landing_page_id AND 202_landing_pages.user_id = 2c.user_id)
+LEFT JOIN 202_text_ads AS 2ta ON (2c.text_ad_id = 2ta.text_ad_id AND 2ta.user_id = 2c.user_id)
 LEFT JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id)
+" . \Prosper202\DataEngine\IpAddressSql::join('2i', '2i6') . "
 LEFT JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id)
 LEFT JOIN 202_browsers AS 2b ON (2c.browser_id = 2b.browser_id)
 LEFT JOIN 202_platforms AS 2p ON (2c.platform_id = 2p.platform_id)
@@ -100,14 +121,10 @@ $click_sql = $query['click_sql'];
 $query_db = ($isSpy && $dbro instanceof mysqli) ? $dbro : $db;
 $click_result = $query_db->query($click_sql) or record_mysql_error($click_sql);
 
-// For incremental spy mode, output just the new rows and exit early
+// For incremental spy mode, output just the new rows and exit early. The
+// newest-click marker is a hidden row, so a table body parses it.
 if ($incremental) {
 	AUTH::set_timezone($_SESSION['user_timezone']);
-	if ($click_result->num_rows == 0) {
-		// No new rows — output just the time marker
-		echo '<span id="spy-latest-time" data-time="' . (int)$since . '" data-id="' . (int)$since_id . '"></span>';
-		exit;
-	}
 	$html = [];
 	$latestTime = (int)$since;
 	$latestId = (int)($since_id ?? 0);
@@ -118,141 +135,97 @@ if ($incremental) {
 			$latestTime = $ct;
 			$latestId = $ci;
 		}
-		$tr_attrs = 'class="new-click" style="display:none;" data-click-time="' . (int)$click_row['click_time'] . '" data-click-id="' . htmlentities((string)($click_row['click_id'] ?? ''), ENT_QUOTES, 'UTF-8') . '"';
+		$tr_attrs = '';
 		include __DIR__ . '/click_history_row.php';
 	}
-	echo '<span id="spy-latest-time" data-time="' . $latestTime . '" data-id="' . $latestId . '"></span>';
+	echo '<tr hidden data-p202-spy-latest data-time="' . $latestTime . '" data-id="' . $latestId . '"></tr>';
 	exit;
 }
-
-$html['from'] = htmlentities((string)$query['from'], ENT_QUOTES, 'UTF-8');
-$html['to'] = htmlentities((string)$query['to'], ENT_QUOTES, 'UTF-8');
-$html['rows'] = htmlentities((string)$query['rows'], ENT_QUOTES, 'UTF-8');
-$html['order'] = htmlentities((string)($_POST['order'] ?? ''), ENT_QUOTES, 'UTF-8');
-?>
-<div class="row" style="margin-top: 10px;">
-	<div class="col-xs-6">
-		<span class="infotext"><?php printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>', $html['from'], $html['to'], $html['rows']);  ?></span>
-	</div>
-	<div class="col-xs-6 text-right">
-		<a class="btn btn-default btn-xs" target="_new" href="<?php echo get_absolute_url(); ?>tracking202/visitors/download/">
-			<i class="fa fa-download"></i> Export to Excel
-		</a>
-	</div>
-</div>
-<?php
 
 //set the timezone for the user, to display dates in their timezone
 AUTH::set_timezone($_SESSION['user_timezone']);
 
-//start displaying the data
+$empty = $isSpy
+	? ['icon' => 'bi-broadcast', 'title' => 'No clicks in the last 24 hours', 'body' => 'New clicks appear here within a few seconds of arriving. Send traffic through a tracking link to see them.', 'action' => 'Get tracking links', 'href' => get_absolute_url() . 'tracking202/setup/get_trackers.php']
+	: p202_overview_empty(get_absolute_url(), 'No clicks match these filters');
+
+if ($click_result->num_rows == 0) {
+	echo '<div class="p202-empty">'
+		. '<i class="bi ' . $empty['icon'] . ' p202-empty__icon"></i>'
+		. '<strong class="p202-empty__title">' . htmlspecialchars($empty['title'], ENT_QUOTES, 'UTF-8') . '</strong>'
+		. '<div>' . htmlspecialchars($empty['body'], ENT_QUOTES, 'UTF-8') . '</div>'
+		. '<div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="' . htmlspecialchars($empty['href'], ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($empty['action'], ENT_QUOTES, 'UTF-8') . '</a></div>'
+		. '</div>';
+	exit;
+}
+
+if (!$isSpy) {
+	printf(
+		'<p class="text-secondary small mb-2">Clicks <strong>%s&ndash;%s</strong> of <strong>%s</strong>, newest first</p>',
+		htmlentities((string)$query['from'], ENT_QUOTES, 'UTF-8'),
+		htmlentities((string)$query['to'], ENT_QUOTES, 'UTF-8'),
+		htmlentities(number_format((int)$query['rows']), ENT_QUOTES, 'UTF-8')
+	);
+}
 ?>
-<div class="row">
-	<div class="col-xs-12" style="margin-top: 10px;">
-		<table class="table table-bordered" id="stats-table">
-			<thead>
-				<tr>
-					<th>Subid</th>
-					<th style="text-align:left; padding-left:10px;">Date</th>
-					<th>User Agent</th>
-					<th>GEO</th>
-					<th>ISP/Carrier</th>
-					<th>Click</th>
-					<th>IP</th>
-					<th>PPC Account</th>
-					<th>Offer / LP</th>
-					<th>Referer</th>
-					<th>Text Ad</th>
-					<th>Links</th>
-					<th>Keyword</th>
-				</tr>
-			</thead>
-			<tbody>
+<div class="p202-table-wrap">
+	<table class="table table-hover p202-table" id="stats-table">
+		<caption class="visually-hidden"><?php echo $isSpy ? 'Clicks from the last 24 hours, newest first' : 'Clicks in the chosen window, newest first'; ?></caption>
+		<thead>
+			<tr>
+				<th scope="col" class="num">Subid</th>
+				<th scope="col">Date</th>
+				<th scope="col">User agent</th>
+				<th scope="col">Geo</th>
+				<th scope="col">ISP/Carrier</th>
+				<th scope="col">Click</th>
+				<th scope="col">IP</th>
+				<th scope="col">Traffic source</th>
+				<th scope="col">Offer / LP</th>
+				<th scope="col">Referer</th>
+				<th scope="col">Text ad</th>
+				<th scope="col">Links</th>
+				<th scope="col">Keyword</th>
+			</tr>
+		</thead>
+		<tbody>
+			<?php
+			$spyLatestTime = 0; // the newest click shown, for Spy's next poll
+			$spyLatestId = 0;
+			$html = [];
 
-				<?php
-
-				$spyLatestTime = 0; // Track latest click_time for incremental fetching
-				$spyLatestId = 0;
-				$new = true; // Initialize new clicks flag for spy animation
-
-				//if there is no clicks to display let them know :(
-				if ($click_result->num_rows == 0) {
-				?>
-				<tr><td colspan="13" style="padding: 0;">
-					<div class="empty-state"><i class="fa fa-mouse-pointer" style="font-size:40px; display:block; margin-bottom:12px; color:#c4c9cf;"></i>
-						<strong>No clicks match your filters</strong>
-						<?php echo $isSpy
-							? 'The spy view only shows click activity from the past 24 hours &mdash; check back as new traffic arrives.'
-							: 'Try widening the date range above, or clearing your filters.'; ?>
-					</div>
-				</td></tr>
-				<?php
+			// Row rendering is shared with the incremental Spy path.
+			while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
+				$ct = (int)$click_row['click_time'];
+				$ci = (int)$click_row['click_id'];
+				if ($ct > $spyLatestTime || ($ct === $spyLatestTime && $ci > $spyLatestId)) {
+					$spyLatestTime = $ct;
+					$spyLatestId = $ci;
 				}
-
-				//now display all the clicks — row rendering delegated to click_history_row.php
-				while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
-					// Track latest time and click_id for spy incremental fetching
-					$ct = (int)$click_row['click_time'];
-					$ci = (int)$click_row['click_id'];
-					if ($ct > $spyLatestTime || ($ct === $spyLatestTime && $ci > $spyLatestId)) {
-						$spyLatestTime = $ct;
-						$spyLatestId = $ci;
-					}
-
-					// Determine <tr> attributes for spy new-click animation
-					$diff = time() - $click_row['click_time'];
-					if (($diff > 5) and ($new == true)) {
-						$new = false;
-					}
-					if (($diff <= 5) and ($new == true)) {
-						$tr_attrs = 'class="new-click" style="display:none;"';
-					} else {
-						$tr_attrs = '';
-					}
-
-					include __DIR__ . '/click_history_row.php';
-				}
-
-				?>
-			</tbody>
-		</table>
-		<script type="text/javascript">
-			//tooltips int
-			$("[data-toggle=tooltip]").tooltip({
-				html: true
-			});
-		</script>
-<?php if ($isSpy && $spyLatestTime > 0) { ?>
-		<span id="spy-latest-time" data-time="<?php echo $spyLatestTime; ?>" data-id="<?php echo $spyLatestId; ?>"></span>
-<?php } ?>
-	</div>
+				$tr_attrs = '';
+				include __DIR__ . '/click_history_row.php';
+			}
+			?>
+		</tbody>
+	</table>
 </div>
-
-<?php if (($query['pages'] > 1) and (($_GET['spy'] ?? '') != 1)) { ?>
-	<div class="row">
-		<div class="col-xs-12 text-center">
-			<div class="pagination" id="table-pages">
-				<ul>
-					<?php if ($query['offset'] > 0) {
-						printf(' <li class="previous"><a class="fui-arrow-left" onclick="loadContent(\'%stracking202/ajax/click_history.php\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $query['offset'] - 1, $html['order'] ?? '');
-					}
-
-					for ($i = 0; $i < $query['pages']; $i++) {
-						if (($i >= $query['offset'] - 10) and ($i < $query['offset'] + 11)) {
-							$class = '';
-							if ($query['offset'] == $i) {
-								$class = 'class="active"';
-							}
-							printf(' <li %s><a onclick="loadContent(\'%stracking202/ajax/click_history.php\',\'%s\',\'%s\');">%s</a></li>', $class, get_absolute_url(), $i, $html['order'] ?? '', $i + 1);
-						}
-					}
-
-					if ($query['offset'] < $query['pages'] - 1) {
-						printf(' <li class="next"><a class="fui-arrow-right" onclick="loadContent(\'%stracking202/ajax/click_history.php\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $query['offset'] + 1, $html['order'] ?? '');
-					}
-					?>
-				</ul>
+<div class="modal fade" id="p202-click-conversions" tabindex="-1" aria-labelledby="p202-click-conversions-title" aria-hidden="true">
+	<div class="modal-dialog modal-xl modal-dialog-scrollable">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h5 class="modal-title" id="p202-click-conversions-title">Conversions on this click</h5>
+				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 			</div>
+			<div class="modal-body" data-p202-breakdown-body aria-live="polite"></div>
 		</div>
 	</div>
+</div>
+<?php if ($isSpy && $spyLatestTime > 0) { ?>
+	<div hidden data-p202-spy-latest data-time="<?php echo $spyLatestTime; ?>" data-id="<?php echo $spyLatestId; ?>"></div>
 <?php } ?>
+<?php
+// Server-side pages: the table holds one page of the window, so it is not
+// sorted in the browser (that would reorder this page and nothing else).
+if (!$isSpy) {
+	echo p202_overview_pagination((int)$query['pages'], (int)$query['offset'], 'Pages of clicks', $reportView);
+}

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Cli\Commands;
 
+use P202Cli\Commands\AttributionBreakdownCommand;
 use P202Cli\Commands\AttributionModelCreateCommand;
 use P202Cli\Commands\AttributionModelUpdateCommand;
 use P202Cli\Commands\CrudCommands;
@@ -32,7 +33,7 @@ class CrudCommandsTest extends TestCase
                 'widget_size' => 'Size in inches',
             ],
             ['widget_name'],
-            ['filter[color]' => 'Filter by color']
+            ['filter[color]' => 'Filter by color', 'filter[size_class]' => 'Filter by size class']
         );
 
         // Commands need to be registered in an Application to have their helpers set up
@@ -86,6 +87,52 @@ class CrudCommandsTest extends TestCase
         $def = $cmd->getDefinition();
 
         $this->assertTrue($def->hasOption('filter[color]'));
+        $this->assertTrue($def->hasOption('filter[size-class]'));
+        $this->assertFalse($def->hasOption('filter[size_class]'));
+    }
+
+    /**
+     * Fields and list parameters are given as the API names them: each is an
+     * option in kebab-case, and the request carries the API's name.
+     */
+    public function testOptionsAreKebabCaseAndTheRequestCarriesTheApiNames(): void
+    {
+        $client = new class ('http://localhost', 'test-key') extends \P202Cli\ApiClient {
+            /** @var list<array{string, string, array<string, mixed>}> */
+            public array $calls = [];
+
+            public function get(string $path, array $params = []): array
+            {
+                $this->calls[] = ['GET', $path, $params];
+                return ['data' => []];
+            }
+
+            public function post(string $path, array $body = []): array
+            {
+                $this->calls[] = ['POST', $path, $body];
+                return ['data' => []];
+            }
+
+            public function put(string $path, array $body = []): array
+            {
+                $this->calls[] = ['PUT', $path, $body];
+                return ['data' => []];
+            }
+        };
+        $property = new \ReflectionProperty(\P202Cli\Commands\BaseCommand::class, 'client');
+        foreach ($this->commands as $command) {
+            $property->setValue($command, $client);
+        }
+
+        (new CommandTester($this->app->find('widget:create')))->execute(['--widget-name' => 'W', '--widget-size' => '3', '--json' => true]);
+        (new CommandTester($this->app->find('widget:update')))->execute(['id' => '4', '--widget-color' => 'red', '--json' => true]);
+        (new CommandTester($this->app->find('widget:list')))->execute(['--filter[size-class]' => 'L', '--json' => true]);
+
+        $this->assertSame([
+            ['POST', 'widgets', ['widget_name' => 'W', 'widget_size' => '3']],
+            ['PUT', 'widgets/4', ['widget_color' => 'red']],
+            ['GET', 'widgets', ['limit' => '50', 'offset' => '0', 'filter[size_class]' => 'L']],
+        ], $client->calls);
     }
 
     public function testListCommandHasJsonOption(): void
@@ -120,9 +167,9 @@ class CrudCommandsTest extends TestCase
         $cmd = $this->app->find('widget:create');
         $def = $cmd->getDefinition();
 
-        $this->assertTrue($def->hasOption('widget_name'));
-        $this->assertTrue($def->hasOption('widget_color'));
-        $this->assertTrue($def->hasOption('widget_size'));
+        $this->assertTrue($def->hasOption('widget-name'));
+        $this->assertTrue($def->hasOption('widget-color'));
+        $this->assertTrue($def->hasOption('widget-size'));
     }
 
     public function testCreateCommandRequiredOptionsMarkedCorrectly(): void
@@ -131,14 +178,14 @@ class CrudCommandsTest extends TestCase
         $def = $cmd->getDefinition();
 
         // Required fields have '(required)' in their description
-        $nameOpt = $def->getOption('widget_name');
+        $nameOpt = $def->getOption('widget-name');
         $this->assertStringContainsString('(required)', $nameOpt->getDescription());
 
         // Non-required fields do not
-        $colorOpt = $def->getOption('widget_color');
+        $colorOpt = $def->getOption('widget-color');
         $this->assertStringNotContainsString('(required)', $colorOpt->getDescription());
 
-        $sizeOpt = $def->getOption('widget_size');
+        $sizeOpt = $def->getOption('widget-size');
         $this->assertStringNotContainsString('(required)', $sizeOpt->getDescription());
     }
 
@@ -154,12 +201,12 @@ class CrudCommandsTest extends TestCase
         $tester = new CommandTester($cmd);
 
         $status = $tester->execute([
-            '--widget_name' => '   ',
+            '--widget-name' => '   ',
         ]);
 
         $this->assertSame(Command::FAILURE, $status);
         $this->assertStringContainsString(
-            'Missing required option: --widget_name',
+            'Missing required option: --widget-name',
             $tester->getDisplay()
         );
     }
@@ -181,9 +228,9 @@ class CrudCommandsTest extends TestCase
         $cmd = $this->app->find('widget:update');
         $def = $cmd->getDefinition();
 
-        $this->assertTrue($def->hasOption('widget_name'));
-        $this->assertTrue($def->hasOption('widget_color'));
-        $this->assertTrue($def->hasOption('widget_size'));
+        $this->assertTrue($def->hasOption('widget-name'));
+        $this->assertTrue($def->hasOption('widget-color'));
+        $this->assertTrue($def->hasOption('widget-size'));
     }
 
     public function testUpdateCommandHasJsonOption(): void
@@ -252,7 +299,7 @@ class CrudCommandsTest extends TestCase
 
         // Create command should not mark anything as required
         $createCmd = $app->find('simple:create');
-        $nameOpt = $createCmd->getDefinition()->getOption('simple_name');
+        $nameOpt = $createCmd->getDefinition()->getOption('simple-name');
         $this->assertStringNotContainsString('(required)', $nameOpt->getDescription());
 
         // List command should only have limit, offset, and json
@@ -272,13 +319,13 @@ class CrudCommandsTest extends TestCase
 
         $tester = new CommandTester($app->find('attribution:model:create'));
         $status = $tester->execute([
-            '--model_name' => 'Linear',
-            '--model_type' => 'linear',
-            '--weighting_config' => '{"touches":',
+            '--model-name' => 'Linear',
+            '--model-type' => 'linear',
+            '--weighting-config' => '{"touches":',
         ]);
 
         $this->assertSame(Command::FAILURE, $status);
-        $this->assertStringContainsString('Invalid --weighting_config JSON', $tester->getDisplay());
+        $this->assertStringContainsString('Invalid --weighting-config JSON', $tester->getDisplay());
     }
 
     public function testAttributionUpdateRejectsInvalidWeightingConfigJson(): void
@@ -290,10 +337,174 @@ class CrudCommandsTest extends TestCase
         $tester = new CommandTester($app->find('attribution:model:update'));
         $status = $tester->execute([
             'id' => '12',
-            '--weighting_config' => '{invalid}',
+            '--weighting-config' => '{invalid}',
         ]);
 
         $this->assertSame(Command::FAILURE, $status);
-        $this->assertStringContainsString('Invalid --weighting_config JSON', $tester->getDisplay());
+        $this->assertStringContainsString('Invalid --weighting-config JSON', $tester->getDisplay());
+    }
+
+    /**
+     * The server caps a lookback at 365 days and a breakdown at 1000 rows;
+     * the CLI refuses past either before it builds a client, rather than
+     * round-tripping for a 422.
+     */
+    public function testAttributionLookbackOverAYearIsRefusedLocally(): void
+    {
+        foreach (['attribution:model:create' => new AttributionModelCreateCommand(), 'attribution:model:update' => new AttributionModelUpdateCommand()] as $name => $command) {
+            $app = new Application('test', '1.0');
+            $app->add($command);
+            $tester = new CommandTester($app->find($name));
+            $args = $name === 'attribution:model:create'
+                ? ['--model-name' => 'Linear', '--model-type' => 'linear', '--lookback-days' => '400']
+                : ['id' => '12', '--lookback-days' => '400'];
+            $status = $tester->execute($args);
+
+            $this->assertSame(Command::FAILURE, $status, $name);
+            $this->assertStringContainsString('Invalid --lookback-days: a whole number of days from 1 to 365', $tester->getDisplay(), $name);
+        }
+    }
+
+    public function testAttributionExportNamesTheOptionItRefuses(): void
+    {
+        $app = new Application('test', '1.0');
+        $app->add(new \P202Cli\Commands\AttributionExportCreateCommand());
+        $tester = new CommandTester($app->find('attribution:export:create'));
+
+        $this->assertSame(Command::FAILURE, $tester->execute(['--time-from' => 'yesterday']));
+        $this->assertStringContainsString('--time-from must be a whole number (unix seconds)', $tester->getDisplay());
+    }
+
+    public function testAttributionBreakdownLimitOverTheServersIsRefusedLocally(): void
+    {
+        foreach (['1001', '0', '12abc'] as $limit) {
+            $app = new Application('test', '1.0');
+            $app->add(new AttributionBreakdownCommand());
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--limit' => $limit]);
+
+            $this->assertSame(Command::FAILURE, $status, $limit);
+            $this->assertStringContainsString('Invalid --limit: a whole number of rows from 1 to 1000', $tester->getDisplay(), $limit);
+        }
+    }
+
+    public function testAttributionBreakdownOffsetMustBeAWholeNumber(): void
+    {
+        foreach (['-1', '1.5', 'abc', '01'] as $offset) {
+            $app = new Application('test', '1.0');
+            $app->add(new AttributionBreakdownCommand());
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--offset' => $offset]);
+
+            $this->assertSame(Command::FAILURE, $status, $offset);
+            $this->assertStringContainsString('Invalid --offset: a whole number, 0 or more', $tester->getDisplay(), $offset);
+        }
+    }
+
+    /**
+     * Forwarding --offset is the feature: a valid value reaches the
+     * attribution/reports/breakdown query, with --limit, unchanged.
+     */
+    public function testAttributionBreakdownForwardsAValidOffset(): void
+    {
+        foreach (['0', '1000', '2000'] as $offset) {
+            $client = new class ('http://localhost', 'test-key') extends \P202Cli\ApiClient {
+                /** @var list<array{string, array<string, string>}> */
+                public array $calls = [];
+
+                public function get(string $path, array $params = []): array
+                {
+                    $this->calls[] = [$path, $params];
+
+                    return ['data' => [], 'meta' => ['groups' => 0, 'offset' => (int) ($params['offset'] ?? 0)]];
+                }
+            };
+            $command = new class ($client) extends AttributionBreakdownCommand {
+                public function __construct(private readonly \P202Cli\ApiClient $fake)
+                {
+                    // An anonymous subclass doesn't inherit the #[AsCommand] name.
+                    parent::__construct('attribution:breakdown');
+                }
+
+                protected function client(): \P202Cli\ApiClient
+                {
+                    return $this->fake;
+                }
+            };
+            $app = new Application('test', '1.0');
+            $app->add($command);
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--limit' => '1000', '--offset' => $offset, '--json' => true]);
+
+            $this->assertSame(Command::SUCCESS, $status, $offset);
+            $this->assertCount(1, $client->calls, $offset);
+            [$path, $params] = $client->calls[0];
+            $this->assertSame('attribution/reports/breakdown', $path);
+            $this->assertSame($offset, $params['offset'] ?? null, 'offset reaches the query');
+            $this->assertSame('1000', $params['limit'] ?? null);
+        }
+    }
+
+    public function testAttributionBreakdownCohortIsConversionOrClick(): void
+    {
+        foreach (['clicks', 'Click', 'conv', ''] as $cohort) {
+            $app = new Application('test', '1.0');
+            $app->add(new AttributionBreakdownCommand());
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--cohort' => $cohort]);
+
+            $this->assertSame(Command::FAILURE, $status, $cohort);
+            $this->assertStringContainsString('Invalid --cohort: conversion or click', $tester->getDisplay(), $cohort);
+        }
+    }
+
+    public function testAttributionBreakdownForwardsTheCohort(): void
+    {
+        foreach (['conversion', 'click'] as $cohort) {
+            $client = new class ('http://localhost', 'test-key') extends \P202Cli\ApiClient {
+                /** @var list<array{string, array<string, string>}> */
+                public array $calls = [];
+
+                public function get(string $path, array $params = []): array
+                {
+                    $this->calls[] = [$path, $params];
+
+                    return ['data' => [], 'meta' => ['groups' => 0, 'cohort' => $params['cohort'] ?? 'conversion']];
+                }
+            };
+            $command = new class ($client) extends AttributionBreakdownCommand {
+                public function __construct(private readonly \P202Cli\ApiClient $fake)
+                {
+                    parent::__construct('attribution:breakdown');
+                }
+
+                protected function client(): \P202Cli\ApiClient
+                {
+                    return $this->fake;
+                }
+            };
+            $app = new Application('test', '1.0');
+            $app->add($command);
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--cohort' => $cohort, '--keys' => '7,0,12', '--period' => 'last30', '--json' => true]);
+
+            $this->assertSame(Command::SUCCESS, $status, $cohort);
+            $this->assertCount(1, $client->calls, $cohort);
+            $this->assertSame($cohort, $client->calls[0][1]['cohort'] ?? null, 'cohort reaches the query');
+            $this->assertSame('7,0,12', $client->calls[0][1]['keys'] ?? null, 'keys reach the query');
+        }
+    }
+
+    public function testAttributionBreakdownKeysAreAListOfUpToAThousand(): void
+    {
+        foreach (['', '7,,8', '7, 8', ',7', implode(',', range(1, 1001))] as $keys) {
+            $app = new Application('test', '1.0');
+            $app->add(new AttributionBreakdownCommand());
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--keys' => $keys]);
+
+            $this->assertSame(Command::FAILURE, $status, $keys);
+            $this->assertStringContainsString('Invalid --keys', $tester->getDisplay(), $keys);
+        }
     }
 }

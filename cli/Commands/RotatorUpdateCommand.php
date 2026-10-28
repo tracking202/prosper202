@@ -21,20 +21,14 @@ class RotatorUpdateCommand extends BaseCommand
         $this->setDescription('Update a rotator')
             ->addArgument('id', InputArgument::REQUIRED, 'Rotator ID')
             ->addOption('name', null, InputOption::VALUE_REQUIRED, 'Rotator name')
-            ->addOption('default_url', null, InputOption::VALUE_REQUIRED, 'Default URL')
-            ->addOption('default_campaign', null, InputOption::VALUE_REQUIRED, 'Default campaign ID')
-            ->addOption('default_lp', null, InputOption::VALUE_REQUIRED, 'Default landing page ID');
+            ->addOption('default-url', null, InputOption::VALUE_REQUIRED, 'Default URL')
+            ->addOption('default-campaign', null, InputOption::VALUE_REQUIRED, 'Default campaign ID')
+            ->addOption('default-lp', null, InputOption::VALUE_REQUIRED, 'Default landing page ID');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $body = [];
-        foreach (['name', 'default_url', 'default_campaign', 'default_lp'] as $f) {
-            $val = $input->getOption($f);
-            if ($val !== null) {
-                $body[$f] = $val;
-            }
-        }
+        $body = $this->collectOptions($input, ['name', 'default_url', 'default_campaign', 'default_lp']);
         if (empty($body)) {
             $output->writeln('<error>Provide at least one field to update</error>');
             return Command::FAILURE;

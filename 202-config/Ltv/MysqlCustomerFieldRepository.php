@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use RuntimeException;
 
 /**
@@ -35,6 +36,42 @@ final class MysqlCustomerFieldRepository
     }
 
     /**
+     * One definition by id, with the columns list() returns; null when the
+     * account has no such field.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function get(int $userId, int $fieldId): ?array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT field_id, field_key, label, field_type, options, is_required, sort_order, created_at, updated_at
+             FROM 202_customer_fields WHERE field_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$fieldId, $userId]);
+
+        return $this->conn->fetchOne($stmt);
+    }
+
+    /**
+     * How many customers hold a value for the field: the rows delete()
+     * removes with the definition, counted with the same predicate.
+     */
+    public function valueCount(int $userId, int $fieldId): int
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT COUNT(*) AS c FROM 202_customer_field_values WHERE field_id = ? AND user_id = ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$fieldId, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            // COUNT(*) always yields a row; none means the read failed.
+            throw new QueryException('COUNT(*) over 202_customer_field_values returned no row');
+        }
+
+        return (int) $row['c'];
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     public function findByKey(int $userId, string $fieldKey): ?array
@@ -57,19 +94,19 @@ final class MysqlCustomerFieldRepository
     {
         $key = strtolower(trim((string) ($payload['field_key'] ?? '')));
         if ($key === '' || preg_match('/^[a-z0-9_]{1,64}$/', $key) !== 1) {
-            throw new RuntimeException('field_key must be 1-64 chars of a-z, 0-9 and underscore');
+            throw new LtvInputException('field_key', 'field_key must be 1-64 chars of a-z, 0-9 and underscore');
         }
         $label = trim((string) ($payload['label'] ?? $key));
         $type = strtolower(trim((string) ($payload['field_type'] ?? 'text')));
         if (!in_array($type, self::FIELD_TYPES, true)) {
-            throw new RuntimeException('field_type must be one of: ' . implode(', ', self::FIELD_TYPES));
+            throw new LtvInputException('field_type', 'field_type must be one of: ' . implode(', ', self::FIELD_TYPES));
         }
 
         $options = null;
         if ($type === 'select') {
             $optionList = $payload['options'] ?? null;
             if (!is_array($optionList) || $optionList === []) {
-                throw new RuntimeException('select fields require a non-empty options array');
+                throw new LtvInputException('options', 'select fields require a non-empty options array');
             }
             $options = json_encode(array_values(array_map(strval(...), $optionList)));
             if ($options === false) {
@@ -78,7 +115,11 @@ final class MysqlCustomerFieldRepository
         }
 
         if ($this->findByKey($userId, $key) !== null) {
-            throw new RuntimeException('A field with key "' . $key . '" already exists');
+            throw new LtvInputException(
+                'field_key',
+                'A field with key "' . $key . '" already exists',
+                'Already defined: `p202 ltv fields list` lists the fields; PATCH /ltv/fields/{id} changes one'
+            );
         }
 
         $now = time();
@@ -93,13 +134,31 @@ final class MysqlCustomerFieldRepository
             $label,
             $type,
             $options,
-            !empty($payload['is_required']) ? 1 : 0,
+            self::requiredFlag($payload) ? 1 : 0,
             max(0, (int) ($payload['sort_order'] ?? 0)),
             $now,
             $now,
         ]);
 
         return $this->conn->executeInsert($stmt);
+    }
+
+    /**
+     * is_required as the flag the API read it as (LtvController hands over a
+     * bool). !empty() took any non-empty value as true, so "false" made the
+     * field required; a value that is not a bool is refused here rather than
+     * guessed at.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private static function requiredFlag(array $payload): bool
+    {
+        $flag = $payload['is_required'] ?? false;
+        if (!is_bool($flag)) {
+            throw new LtvInputException('is_required', 'is_required must be true or false');
+        }
+
+        return $flag;
     }
 
     /**
@@ -126,10 +185,10 @@ final class MysqlCustomerFieldRepository
         }
         if (array_key_exists('options', $payload)) {
             if ((string) $field['field_type'] !== 'select') {
-                throw new RuntimeException('options apply only to select fields');
+                throw new LtvInputException('options', 'options apply only to select fields');
             }
             if (!is_array($payload['options']) || $payload['options'] === []) {
-                throw new RuntimeException('select fields require a non-empty options array');
+                throw new LtvInputException('options', 'select fields require a non-empty options array');
             }
             $encoded = json_encode(array_values(array_map(strval(...), $payload['options'])));
             if ($encoded === false) {
@@ -142,7 +201,7 @@ final class MysqlCustomerFieldRepository
         if (array_key_exists('is_required', $payload)) {
             $sets[] = 'is_required = ?';
             $types .= 'i';
-            $binds[] = !empty($payload['is_required']) ? 1 : 0;
+            $binds[] = self::requiredFlag($payload) ? 1 : 0;
         }
         if (array_key_exists('sort_order', $payload)) {
             $sets[] = 'sort_order = ?';
@@ -150,7 +209,11 @@ final class MysqlCustomerFieldRepository
             $binds[] = max(0, (int) $payload['sort_order']);
         }
         if ($sets === []) {
-            throw new RuntimeException('No updatable properties supplied');
+            throw new LtvInputException(
+                'label',
+                'No updatable properties supplied',
+                'Send label, options, is_required or sort_order (field_key and field_type cannot change)'
+            );
         }
 
         $sets[] = 'updated_at = ?';
@@ -271,10 +334,20 @@ final class MysqlCustomerFieldRepository
      */
     private function coerce(string $fieldType, string $fieldKey, mixed $optionsJson, mixed $value): array
     {
+        // custom_fields is keyed by the account's own field keys, so its
+        // keys are checked against the definitions (applyCustomFields());
+        // each value is one value. An object or a list was cast to the
+        // text "Array", which a text field stored (CLAUDE.md #4).
+        if (!is_scalar($value)) {
+            throw new LtvInputException(
+                "custom_fields.{$fieldKey}",
+                "Field {$fieldKey} expects one value, not an object or a list"
+            );
+        }
         switch ($fieldType) {
             case 'number':
                 if (!is_numeric($value)) {
-                    throw new RuntimeException("Field {$fieldKey} expects a number");
+                    throw new LtvInputException("custom_fields.{$fieldKey}", "Field {$fieldKey} expects a number");
                 }
                 return [null, (float) $value, null];
 
@@ -284,7 +357,7 @@ final class MysqlCustomerFieldRepository
                 }
                 $normalized = strtolower(trim((string) $value));
                 if (!in_array($normalized, ['0', '1', 'true', 'false', 'yes', 'no'], true)) {
-                    throw new RuntimeException("Field {$fieldKey} expects a boolean");
+                    throw new LtvInputException("custom_fields.{$fieldKey}", "Field {$fieldKey} expects a boolean");
                 }
                 return [null, in_array($normalized, ['1', 'true', 'yes'], true) ? 1.0 : 0.0, null];
 
@@ -294,7 +367,10 @@ final class MysqlCustomerFieldRepository
                 }
                 $parsed = strtotime(trim((string) $value));
                 if ($parsed === false) {
-                    throw new RuntimeException("Field {$fieldKey} expects a date (unix timestamp or parseable string)");
+                    throw new LtvInputException(
+                        "custom_fields.{$fieldKey}",
+                        "Field {$fieldKey} expects a date (unix timestamp or parseable string)"
+                    );
                 }
                 return [null, null, $parsed];
 
@@ -302,21 +378,27 @@ final class MysqlCustomerFieldRepository
                 $text = trim((string) $value);
                 $options = is_string($optionsJson) ? json_decode($optionsJson, true) : $optionsJson;
                 if (!is_array($options) || !in_array($text, array_map(strval(...), $options), true)) {
-                    throw new RuntimeException("Field {$fieldKey} value must be one of its configured options");
+                    throw new LtvInputException(
+                        "custom_fields.{$fieldKey}",
+                        "Field {$fieldKey} value must be one of its configured options"
+                    );
                 }
                 return [$text, null, null];
 
             case 'email':
                 $text = trim((string) $value);
                 if (filter_var($text, FILTER_VALIDATE_EMAIL) === false) {
-                    throw new RuntimeException("Field {$fieldKey} expects a valid email address");
+                    throw new LtvInputException(
+                        "custom_fields.{$fieldKey}",
+                        "Field {$fieldKey} expects a valid email address"
+                    );
                 }
                 return [$text, null, null];
 
             case 'url':
                 $text = trim((string) $value);
                 if (filter_var($text, FILTER_VALIDATE_URL) === false) {
-                    throw new RuntimeException("Field {$fieldKey} expects a valid URL");
+                    throw new LtvInputException("custom_fields.{$fieldKey}", "Field {$fieldKey} expects a valid URL");
                 }
                 return [$text, null, null];
 
@@ -324,7 +406,10 @@ final class MysqlCustomerFieldRepository
             default:
                 $text = trim((string) $value);
                 if (strlen($text) > 1000) {
-                    throw new RuntimeException("Field {$fieldKey} value exceeds 1000 characters");
+                    throw new LtvInputException(
+                        "custom_fields.{$fieldKey}",
+                        "Field {$fieldKey} value exceeds 1000 characters"
+                    );
                 }
                 return [$text, null, null];
         }

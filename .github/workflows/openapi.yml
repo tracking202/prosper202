@@ -1,0 +1,40 @@
+name: OpenAPI Spec
+
+# docs/openapi.yaml is the API's published contract, and nothing read it as
+# YAML: the PHP tests that pair it with the router (RouteInventory and the
+# coverage tests beside it) read it line by line. A description written as a
+# plain scalar containing ": " made the whole file unparseable for every
+# OpenAPI tool, and every check stayed green. The script also refuses a key
+# given twice in one mapping, which a YAML loader otherwise resolves to the
+# last one without a word: in a spec, a path or field that silently replaces
+# another.
+
+on:
+  push:
+    paths:
+      - 'docs/openapi.yaml'
+      - 'scripts/check-openapi-yaml.py'
+      - '.github/workflows/openapi.yml'
+  pull_request:
+    paths:
+      - 'docs/openapi.yaml'
+      - 'scripts/check-openapi-yaml.py'
+      - '.github/workflows/openapi.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  parse:
+    name: Spec parses as YAML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The version the ladder's openapi tier names when it is missing
+      # locally (.claude/skills/p202-verify/scripts/verify.sh).
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml==6.0.2
+
+      - name: Check docs/openapi.yaml
+        run: python3 scripts/check-openapi-yaml.py docs/openapi.yaml

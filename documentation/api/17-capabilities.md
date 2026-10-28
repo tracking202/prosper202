@@ -48,6 +48,14 @@ API version and feature detection.
       "force_update": true,
       "server_fk_remap": true
     },
+    "features": {
+      "api_key_scopes": true,
+      "create_idempotency": true,
+      "delete_dry_run": true,
+      "response_sanitization": true,
+      "staged_writes": true,
+      "report_breakdowns": ["campaign", "aff_network", "ppc_account", "ppc_network", "landing_page", "keyword", "country", "city", "region", "browser", "platform", "device", "isp", "text_ad"]
+    },
     "limits": {
       "max_bulk_rows": 500,
       "max_job_concurrency": 5,
@@ -57,11 +65,18 @@ API version and feature detection.
         "bulk_upsert_per_minute": 60
       }
     },
+    "shell": true,
+    "cli": true,
     "server": {
       "build": "1.9.58",
       "commit": "abc1234",
       "environment": "production",
       "timezone_support": "named-timezone"
+    },
+    "principal": {
+      "user_id": 1,
+      "roles": ["super user"],
+      "scopes": ["*"]
     }
   }
 }
@@ -72,17 +87,35 @@ API version and feature detection.
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `api_version` | string | API version this server implements. |
-| `entity_support` | object | Map of entity → object of supported operations. Each value is an object of booleans keyed by `list`, `get`, `create`, `update`, `delete`, and `bulk_upsert`. Entity keys are hyphenated: `aff-networks`, `ppc-networks`, `ppc-accounts`, `campaigns`, `landing-pages`, `text-ads`, `trackers`. |
+| `entity_support` | object | Map of entity → object of supported operations. Each value is an object of booleans keyed by `list`, `get`, `create`, `update`, `delete`, and `bulk_upsert`. Entity keys are hyphenated: `aff-networks`, `ppc-networks`, `ppc-accounts`, `campaigns`, `landing-pages`, `text-ads`, `forecast-events`, `trackers`, `apps`, `app-skan-encodings` (no `bulk_upsert`), `app-postbacks` (read-only: `list` and `get`), and `goals` (no `bulk_upsert`; `delete` archives). `features.goals` lists the goal `scopes`, the `subjects` evaluated, and the `evaluator_format` of the shared vectors; `features.events` the most events per request and per click, the most properties per event, and the goal tokens a traffic source's pixel can carry. |
 | `sync_features` | object | Booleans for supported sync capabilities: `diff`, `sync_plan`, `async_jobs`, `incremental`, `prune`, `force_update`, `server_fk_remap`. |
+| `features.api_key_scopes` | boolean | Scoped API keys can be minted (the `scope` column exists — fresh installs and 1.9.75+). Scope *enforcement* always runs; unscoped keys are full-access. See [API Key Scopes](00-api-integrations.md#api-key-scopes). |
+| `features.create_idempotency` | boolean | `Idempotency-Key` honored on single POST creates across the operator surface (retries replay instead of duplicating). |
+| `features.delete_dry_run` | boolean | `?dry_run=1` on DELETE previews the delete without performing it; unsupported endpoints reject rather than fall through. See [Delete Dry-Run](00-api-integrations.md#delete-dry-run). |
+| `features.response_sanitization` | boolean | Visitor-authored strings (keyword/city/region/ISP/browser/platform/device names) are stripped of control and bidirectional characters and length-capped at serialization. |
+| `features.staged_writes` | boolean | `?staged=1` on an operator-surface write records it as a proposal with a server-issued change id; `/staged-changes` lists, applies, and discards, with validation re-run at apply time. See [Staged Writes](00-api-integrations.md#staged-writes). |
+| `features.app_platforms` | array | The platforms the app registry (`/apps`, the `apps` scope area) takes a registration for (`ios`, `android`). `p202 app` commands require it. See [App measurement](19-app-measurement.md). |
+| `features.app_postbacks` | array | The platform-signed postback protocols this server receives, verifies and stores (`skadnetwork`, `adattributionkit`): Apple's SKAdNetwork receiver at `/.well-known/skadnetwork/report-attribution/` and AdAttributionKit receiver at `/.well-known/appattribution/report-attribution/`, served under `/apps/postbacks`, `/apps/report` and `/apps/verify`, decoded through `/apps/skan-encodings`, and the public `GET /apps/schema` (selected by the `X-P202-App-Token` header) that app builds fetch at runtime. See [App measurement](19-app-measurement.md). |
+| `features.report_breakdowns` | array | The dimensions `GET /reports/breakdown` accepts as `breakdown`, read from the report controller's own map. The Go CLI checks a dimension it does not know against this list before refusing it. |
 | `limits.max_bulk_rows` | integer | Maximum rows per bulk-upsert request. |
 | `limits.max_job_concurrency` | integer | Maximum concurrent async jobs. |
 | `limits.max_job_events_page` | integer | Maximum job events returned per page. |
 | `limits.rate_limits.sync_per_minute` | integer | Allowed sync requests per minute. |
 | `limits.rate_limits.bulk_upsert_per_minute` | integer | Allowed bulk-upsert requests per minute. |
+| `shell` | boolean | The install's ClickServer API key (the account owner's, `202_users.p202_customer_api_key`) is valid, as my.tracking202.com last answered: what `p202 shell` needs. Cached per key for an hour; when my.tracking202.com cannot answer, the last known result is used, and with none this is `false`; an unanswered check is not asked again for 60 seconds. A user with no key reads `false`. |
+| `cli` | boolean | Whether this install serves the Go CLI (`p202`): the key's account has an active Prosper202 ClickServer Pro subscription (a trial counts). While it is `false`, every Go CLI request other than the API root, `/capabilities` and `/system/*` is answered **402** with `category: licence` (exit code 6 in the CLI; the message links the 7-day trial). The server tells the Go CLI apart by the User-Agent it sends, so this is a licensing prompt rather than an access control: the same API key keeps answering curl, the PHP CLI and the web app whatever the value. It **fails open**: only my.tracking202.com's own answer decides (valid and paid, valid and unpaid, or no such key): an allow is remembered per key for an hour, a refusal for five minutes, so a customer who starts the trial is served within five minutes; an unreachable server, an error page, malformed JSON or a `paid` that is not a boolean is "unknown", and unknown allows the CLI whatever an earlier answer was. An unanswered check is not asked again for 60 seconds. A sub-user with no key of their own is judged by the account owner's key (the lowest active, undeleted user on the same `install_hash` who holds one, the web app's own rule); a user with no `install_hash` reads as unknown. A failed key lookup or any error in the check also reads `true`, so a broken install never locks its CLI. |
 | `server.build` | string | Server build/version string. |
 | `server.commit` | string | Git commit the server was built from. |
 | `server.environment` | string | Deployment environment (e.g. `production`). |
-| `server.timezone_support` | string | Timezone capability, e.g. `named-timezone` or `fallback-only`. |
+| `server.timezone_support` | string | `named-timezone`: every report reads hours, days, weeks and months in the account's own time zone (the user's `user_timezone`), daylight saving and half-hour offsets included — `/reports/*`, `/ltv/cohorts`, `/attribution/reports/breakdown?group_by=day` and the report pages alike. The server converts from PHP's zone database, so this holds whatever the database server knows about zones, and it is the only value this server sends. Older servers probed MySQL's zone tables and could send `fallback-only` (their daypart and weekpart then counted UTC hours) or `unknown`. |
+| `principal.user_id` | integer | The user the calling key acts as. |
+| `principal.roles` | array | That user's role names (`super user`, `admin`, …). |
+| `principal.scopes` | array | The key's scopes: `*` is full access; `read`, `write`, `stage` and `<area>:<action>` narrow it (see [API Key Scopes](00-api-integrations.md#api-key-scopes)). |
+
+`principal` is the calling key's own facts, so any valid key reads it whatever
+its scope. It is how a key holder learns which account it is and what it may
+do without already knowing its user id; `p202 whoami` and `p202 config test`
+show it. A server without the block predates it.
 
 ## Use Cases
 

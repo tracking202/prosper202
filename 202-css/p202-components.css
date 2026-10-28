@@ -1,0 +1,1196 @@
+/*
+ * Prosper202 component layer for the v2 (Bootstrap 5.3) shell.
+ *
+ * The recurring pieces Bootstrap does not have, each a thin class on top of
+ * Bootstrap primitives so it inherits the theme tokens and the dark theme:
+ *
+ *   .p202-page-header   title, one-line description, optional icon and action
+ *   .p202-tabs          the in-page tab strip (a .nav.nav-tabs restyled)
+ *   .p202-panel         a titled card with a count and a filter slot
+ *   .p202-tile          a KPI tile (label, number, sub-line, tone)
+ *   .p202-pill          a status pill in five tones
+ *   .p202-table         the report table (uppercase headers, totals row);
+ *                       .p202-sort is a sortable column's header button
+ *   .p202-list          the side-panel list (name, pills, actions, children)
+ *   .p202-empty         an empty state with one next action
+ *   .p202-code          a read-only code box with a Copy button
+ *   .p202-strip         stacked status rows (pill, label, value)
+ *   .p202-flash         an alert with an icon
+ *   .p202-skeleton      a loading placeholder
+ *   .p202-disclosure    the "Advanced" part of a form, closed by default
+ *   .p202-decided       a note where the app decided something, with a change link
+ *   .p202-standalone    the pre-login page: one column of cards, no chrome
+ *
+ * 202-account/ui-kit.php renders every one of them in every state; look there
+ * before inventing a class, and add the new state there when you add one.
+ */
+
+/* ---------- Page header ---------- */
+
+.p202-page-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.p202-page-header__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: var(--bs-primary-bg-subtle);
+    color: var(--p202-accent-text);
+    font-size: 20px;
+}
+
+.p202-page-header__text {
+    flex: 1 1 260px;
+    min-width: 0;
+}
+
+.p202-page-header__title {
+    margin: 0;
+    font-size: 1.375rem;
+    font-weight: 900;
+    line-height: 1.2;
+    color: var(--bs-heading-color);
+    text-wrap: balance;
+}
+
+.p202-page-header__desc {
+    margin: 0.2rem 0 0;
+    color: var(--bs-secondary-color);
+    font-size: 0.9375rem;
+}
+
+.p202-page-header__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-left: auto;
+}
+
+/* ---------- Tabs ---------- */
+
+.p202-tabs {
+    --bs-nav-tabs-border-width: 0;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--bs-border-color);
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin-bottom: 1rem;
+}
+
+.p202-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.p202-tabs .nav-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 0.9rem;
+    margin-bottom: -1px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 6px 6px 0 0;
+    color: var(--bs-secondary-color);
+    font-size: 0.875rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.p202-tabs .nav-link:hover,
+.p202-tabs .nav-link:focus {
+    color: var(--bs-body-color);
+    background: var(--bs-secondary-bg);
+    border-bottom-color: transparent;
+}
+
+.p202-tabs .nav-link.active {
+    color: var(--p202-accent-text);
+    background: transparent;
+    border-bottom-color: var(--p202-accent);
+}
+
+.p202-tabs .nav-link .bi {
+    font-size: 0.85em;
+    opacity: 0.8;
+}
+
+.p202-tabs--compact .nav-link {
+    padding: 0.4rem 0.7rem;
+    font-size: 0.8125rem;
+}
+
+/* ---------- Panel ---------- */
+
+.p202-panel {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 10px;
+    background: var(--p202-surface);
+    box-shadow: var(--bs-box-shadow-sm);
+}
+
+.p202-panel__head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid var(--bs-border-color);
+    background: var(--bs-secondary-bg);
+    border-radius: 10px 10px 0 0;
+}
+
+.p202-panel__title {
+    margin: 0;
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--bs-heading-color);
+}
+
+.p202-panel__sub {
+    color: var(--bs-secondary-color);
+    font-size: 0.8125rem;
+}
+
+.p202-panel__aside {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.p202-panel__body {
+    padding: 1rem;
+}
+
+.p202-panel__body + .p202-panel__body {
+    border-top: 1px solid var(--bs-border-color);
+}
+
+.p202-panel__filter {
+    padding: 0.75rem 1rem 0;
+}
+
+/* ---------- Tiles ---------- */
+
+.p202-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.p202-tile {
+    min-width: 0;
+    padding: 0.8rem 0.95rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 10px;
+    background: var(--p202-surface);
+    box-shadow: var(--bs-box-shadow-sm);
+}
+
+.p202-tile__label {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--bs-secondary-color);
+    line-height: 1.25;
+}
+
+.p202-tile__value {
+    margin-top: 0.15rem;
+    font-size: 1.375rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--bs-heading-color);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.p202-tile__sub {
+    margin-top: 0.15rem;
+    font-size: 0.75rem;
+    color: var(--bs-secondary-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.p202-tile.is-good .p202-tile__value {
+    color: var(--bs-success-text-emphasis);
+}
+
+.p202-tile.is-bad .p202-tile__value {
+    color: var(--bs-danger-text-emphasis);
+}
+
+.p202-tile.is-muted .p202-tile__value {
+    color: var(--bs-secondary-color);
+}
+
+/* ---------- Pills ---------- */
+
+.p202-pill {
+    display: inline-block;
+    padding: 0.1rem 0.6rem;
+    border-radius: 999px;
+    background: var(--bs-tertiary-bg);
+    color: var(--bs-secondary-color);
+    font-size: 0.71875rem;
+    font-weight: 700;
+    line-height: 1.6;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.p202-pill--accent {
+    background: var(--bs-primary-bg-subtle);
+    color: var(--bs-primary-text-emphasis);
+}
+
+.p202-pill--good {
+    background: var(--bs-success-bg-subtle);
+    color: var(--bs-success-text-emphasis);
+}
+
+.p202-pill--warn {
+    background: var(--bs-warning-bg-subtle);
+    color: var(--bs-warning-text-emphasis);
+}
+
+.p202-pill--bad {
+    background: var(--bs-danger-bg-subtle);
+    color: var(--bs-danger-text-emphasis);
+}
+
+/* A pill that navigates: the report groupings are links so they still switch
+   with JavaScript off. The pill shape is the affordance, so the browser's
+   underline only makes it look like prose; hover and focus move it toward the
+   accent instead, which changes nothing about its size and so cannot make the
+   row it sits in reflow. */
+a.p202-pill {
+    text-decoration: none;
+}
+
+a.p202-pill:hover,
+a.p202-pill:focus-visible {
+    background: var(--bs-primary-bg-subtle);
+    color: var(--bs-primary-text-emphasis);
+}
+
+/* ---------- Table ---------- */
+
+.p202-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 10px;
+    background: var(--p202-surface);
+}
+
+.p202-table {
+    --bs-table-bg: transparent;
+    --bs-table-hover-bg: var(--bs-secondary-bg);
+    margin: 0;
+    font-size: 0.84375rem;
+}
+
+.p202-table > thead > tr > th {
+    padding: 0.6rem 0.7rem;
+    border-bottom: 1px solid var(--p202-line-strong);
+    background: var(--bs-secondary-bg);
+    color: var(--bs-secondary-color);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.p202-table > tbody > tr > td {
+    padding: 0.55rem 0.7rem;
+    vertical-align: middle;
+}
+
+.p202-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.p202-table > tbody > tr.p202-table__totals > td {
+    background: var(--bs-secondary-bg);
+    font-weight: 700;
+    border-top: 1px solid var(--p202-line-strong);
+}
+
+.p202-table__link-row {
+    cursor: pointer;
+}
+
+/* A sortable column's header (p202_data_table(), sortable). The label is a
+   button so the sort is reachable from the keyboard; tablesort.js listens on
+   the <th>, which the click reaches by bubbling. The arrow says the order
+   from aria-sort, which p202-ui.js keeps in step with the rows. Inline, not
+   flex: a flex label would drop the spaces in a multi-word heading. */
+.p202-sort {
+    display: inline;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    cursor: pointer;
+}
+
+.p202-sort::after {
+    content: "\2195";
+    display: inline-block;
+    margin-left: 0.3em;
+    opacity: 0.35;
+}
+
+.p202-table th[aria-sort="ascending"] > .p202-sort::after {
+    content: "\2191";
+    opacity: 1;
+}
+
+.p202-table th[aria-sort="descending"] > .p202-sort::after {
+    content: "\2193";
+    opacity: 1;
+}
+
+.p202-table th[aria-sort] {
+    color: var(--bs-body-color);
+}
+
+.p202-sort:focus-visible {
+    outline: none;
+    border-radius: 4px;
+    box-shadow: 0 0 0 0.2rem var(--bs-focus-ring-color);
+}
+
+.p202-table-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin-bottom: 0.6rem;
+}
+
+.p202-table-toolbar__aside {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* ---------- List ---------- */
+
+/* One divided list, not a stack of cards: a row per item with a hairline
+   between rows, children drawn as a tree under their parent, and actions in
+   the row's quiet colour until they are pointed at. Every page that uses the
+   list gets this from the same markup — the kit shows it. */
+
+.p202-list {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.p202-list__item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.6rem;
+    padding: 0.7rem 0.5rem;
+    border-radius: 8px;
+    transition: background-color 0.15s ease;
+}
+
+.p202-list > .p202-list__item + .p202-list__item {
+    border-top: 1px solid var(--bs-border-color);
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+
+.p202-list__item:not(:has(> .p202-list__children)):hover {
+    background: var(--bs-tertiary-bg);
+}
+
+.p202-list__item.is-active {
+    background: var(--bs-primary-bg-subtle);
+    box-shadow: inset 3px 0 0 var(--p202-accent);
+}
+
+.p202-list__name {
+    flex: 1 1 140px;
+    min-width: 0;
+    font-weight: 700;
+    color: var(--bs-body-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.p202-list__meta {
+    flex-basis: 100%;
+    font-size: 0.75rem;
+    color: var(--bs-secondary-color);
+}
+
+.p202-list__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+    margin-left: auto;
+}
+
+/* A remove button sits in its own <form>, which the flex row makes a block
+   (whatever its d-inline says). Inline inside it, the button would sit on
+   the form's text baseline and drop below the links beside it; as a block
+   it is exactly as tall as they are. */
+.p202-list__actions > form {
+    margin: 0;
+}
+
+.p202-list__actions > form > .p202-list__action {
+    display: block;
+}
+
+.p202-list__action {
+    display: inline-block;
+    font-family: inherit;
+    padding: 0.2rem 0.5rem;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--bs-secondary-color);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.4;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.p202-list__action:hover,
+.p202-list__action:focus-visible {
+    background: var(--bs-primary-bg-subtle);
+    color: var(--p202-accent-text);
+    text-decoration: none;
+}
+
+.p202-list__action:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 0.2rem var(--bs-focus-ring-color);
+}
+
+.p202-list__action--danger:hover,
+.p202-list__action--danger:focus-visible {
+    background: var(--bs-danger-bg-subtle);
+    color: var(--bs-danger-text-emphasis);
+}
+
+.p202-list__children {
+    flex-basis: calc(100% + 0.5rem);
+    display: flex;
+    flex-direction: column;
+    /* Out into the parent's right padding, so a child's actions line up
+       under its parent's. The basis has to grow as well: a negative margin
+       alone does not widen a flex item whose basis is 100%. */
+    margin: 0.2rem -0.5rem 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+/* A child row hangs off a tree line: the vertical runs the height of every
+   child but the last, which stops at its own middle, and a short arm meets
+   the name. */
+.p202-list__children > .p202-list__item {
+    position: relative;
+    padding: 0.4rem 0.5rem 0.4rem 1.75rem;
+}
+
+.p202-list__children > .p202-list__item::before,
+.p202-list__children > .p202-list__item::after {
+    content: "";
+    position: absolute;
+    left: 0.6rem;
+    border-color: var(--bs-border-color);
+    border-style: solid;
+    border-width: 0;
+    pointer-events: none;
+}
+
+.p202-list__children > .p202-list__item::before {
+    top: 0;
+    bottom: 0;
+    border-left-width: 1.5px;
+}
+
+.p202-list__children > .p202-list__item:last-child::before {
+    bottom: 50%;
+}
+
+.p202-list__children > .p202-list__item::after {
+    top: 50%;
+    width: 0.7rem;
+    border-top-width: 1.5px;
+}
+
+.p202-list__children .p202-list__name {
+    font-weight: 500;
+}
+
+/* Grouped: for long lists (every text ad an account has). A flat run of
+   sections, each a label pinned to the top of the scrolling panel while its
+   rows pass under it, then one line per row — name, the meta beside it,
+   actions — with no tree lines, because the label already says where the
+   rows belong. */
+
+.p202-list--grouped > .p202-list__item {
+    display: block;
+    padding: 0;
+    border-radius: 0;
+}
+
+.p202-list--grouped > .p202-list__item + .p202-list__item {
+    border-top: 0;
+    margin-top: 0.5rem;
+}
+
+.p202-list__group {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.5rem 0.4rem;
+    border-bottom: 1px solid var(--bs-border-color);
+    background: var(--p202-surface);
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--bs-secondary-color);
+}
+
+.p202-list__group-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.p202-list--grouped .p202-list__children {
+    margin: 0;
+}
+
+.p202-list--grouped .p202-list__children > .p202-list__item {
+    flex-wrap: nowrap;
+    padding: 0.4rem 0.5rem;
+    /* Square, or the divider above each row bends at its corners. */
+    border-radius: 0;
+}
+
+.p202-list--grouped .p202-list__children > .p202-list__item::before,
+.p202-list--grouped .p202-list__children > .p202-list__item::after {
+    content: none;
+}
+
+.p202-list--grouped .p202-list__children > .p202-list__item + .p202-list__item {
+    border-top: 1px solid var(--bs-border-color-translucent);
+}
+
+.p202-list--grouped .p202-list__children .p202-list__name {
+    flex: 0 1 auto;
+    max-width: 45%;
+}
+
+.p202-list--grouped .p202-list__meta {
+    order: 1;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.p202-list--grouped .p202-list__actions {
+    order: 2;
+    flex-shrink: 0;
+}
+
+/* A panel body that scrolls on its own once its list outgrows the screen,
+   so the form beside it stays in reach. No top padding: a pinned group label
+   sits flush with the panel head. */
+.p202-panel__body--scroll {
+    max-height: min(70vh, 44rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: 0;
+}
+
+/* ---------- Empty state ---------- */
+
+.p202-empty {
+    padding: 1.75rem 1rem;
+    border: 1px dashed var(--p202-line-strong);
+    border-radius: 10px;
+    background: var(--bs-secondary-bg);
+    text-align: center;
+    color: var(--bs-secondary-color);
+}
+
+.p202-empty__icon {
+    display: block;
+    margin: 0 auto 0.5rem;
+    font-size: 2.25rem;
+    line-height: 1;
+    color: var(--bs-tertiary-color);
+}
+
+.p202-empty__title {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-weight: 700;
+    color: var(--bs-body-color);
+}
+
+.p202-empty__action {
+    margin-top: 0.85rem;
+}
+
+/* ---------- Code box and copy ---------- */
+
+.p202-code {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.p202-code__value {
+    /* Two separate jobs, measured at 400px in a 300px row:
+       flex-wrap above is what lets the buttons drop to their own line at all
+       — without it a schema token had 94px of the row while Reveal/Copy/
+       Rotate took 182px, which reads as broken. The 16rem basis sets the
+       width below which that happens, so a SHORT value gets its own row too
+       rather than being squeezed beside the buttons (105px with `auto`,
+       the full row with this). A long value would wrap on content alone;
+       a short one would not. */
+    flex: 1 1 16rem;
+    min-width: 0;
+    margin: 0;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    background: var(--bs-tertiary-bg);
+    color: var(--bs-body-color);
+    font-family: var(--p202-font-mono);
+    font-size: 0.78125rem;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.p202-code__value--masked {
+    letter-spacing: 0.08em;
+    /* A mask is dots: its length says nothing, so clip it rather than let
+       word-break stack a 64-character token into a column eight lines tall
+       on a phone. Reveal removes this class, and the real value wraps under
+       the rule above as usual. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.p202-copy.is-copied,
+.p202-copy.is-copied:hover {
+    color: var(--bs-success-text-emphasis);
+    border-color: var(--bs-success-border-subtle);
+    background: var(--bs-success-bg-subtle);
+}
+
+/* ---------- Status strip ---------- */
+
+.p202-strip {
+    padding: 0.2rem 0.85rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 10px;
+    background: var(--bs-secondary-bg);
+}
+
+.p202-strip__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.75rem;
+    padding: 0.55rem 0;
+}
+
+.p202-strip__row + .p202-strip__row {
+    border-top: 1px solid var(--bs-border-color);
+}
+
+.p202-strip__label {
+    font-weight: 700;
+}
+
+.p202-strip__value {
+    flex: 1 1 200px;
+    min-width: 0;
+    color: var(--bs-secondary-color);
+    font-family: var(--p202-font-mono);
+    font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.p202-strip__aside {
+    margin-left: auto;
+    display: flex;
+    gap: 0.35rem;
+}
+
+.p202-strip__note {
+    padding: 0.4rem 0 0.55rem;
+    font-size: 0.75rem;
+    color: var(--bs-secondary-color);
+}
+
+/* ---------- Flash ---------- */
+
+.p202-flash {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+}
+
+.p202-flash .bi {
+    flex-shrink: 0;
+    margin-top: 0.15rem;
+}
+
+.p202-flash__body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* ---------- Help icon ---------- */
+
+.p202-help {
+    display: inline-flex;
+    align-items: center;
+    color: var(--bs-secondary-color);
+    font-size: 0.9em;
+    vertical-align: middle;
+    cursor: help;
+    text-decoration: none;
+}
+
+.p202-help:hover,
+.p202-help:focus {
+    color: var(--p202-accent-text);
+}
+
+/* ---------- Forms ---------- */
+
+.p202-form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    padding-top: 0.75rem;
+}
+
+.p202-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.p202-section {
+    margin-top: 1.5rem;
+}
+
+.p202-section__title {
+    margin: 0 0 0.6rem;
+    font-size: 0.9375rem;
+    font-weight: 700;
+}
+
+/* ---------- Disclosure ("Advanced") and decided notes ---------- */
+
+.p202-disclosure {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    background: var(--bs-secondary-bg);
+}
+
+.p202-disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.85rem;
+    border-radius: 8px;
+    color: var(--bs-secondary-color);
+    font-size: 0.875rem;
+    font-weight: 700;
+    list-style: none;
+    cursor: pointer;
+}
+
+.p202-disclosure > summary::-webkit-details-marker {
+    display: none;
+}
+
+.p202-disclosure > summary::before {
+    content: "";
+    width: 0.45rem;
+    height: 0.45rem;
+    margin: 0 0.2rem 0.15rem 0.15rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+}
+
+.p202-disclosure[open] > summary::before {
+    transform: rotate(45deg);
+    margin-bottom: 0.3rem;
+}
+
+.p202-disclosure > summary:hover,
+.p202-disclosure[open] > summary {
+    color: var(--bs-body-color);
+}
+
+.p202-disclosure[open] > summary {
+    border-bottom: 1px solid var(--bs-border-color);
+    border-radius: 8px 8px 0 0;
+}
+
+.p202-disclosure > summary:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 0.25rem var(--bs-focus-ring-color);
+}
+
+.p202-disclosure__hint {
+    margin-left: auto;
+    color: var(--bs-tertiary-color);
+    font-size: 0.75rem;
+    font-weight: 400;
+}
+
+.p202-disclosure__body {
+    padding: 0.85rem;
+}
+
+.p202-decided {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    color: var(--bs-secondary-color);
+    font-size: 0.78125rem;
+}
+
+.p202-decided .bi {
+    color: var(--bs-success-text-emphasis);
+}
+
+.p202-decided a {
+    font-weight: 700;
+}
+
+/* ---------- Loading ---------- */
+
+.p202-skeleton {
+    display: block;
+    min-height: 1em;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--bs-tertiary-bg) 25%, var(--bs-secondary-bg) 50%, var(--bs-tertiary-bg) 75%);
+    background-size: 200% 100%;
+    animation: p202-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes p202-shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .p202-skeleton {
+        animation: none;
+    }
+
+    .p202-list__item,
+    .p202-list__action,
+    .p202-disclosure > summary::before {
+        transition: none;
+    }
+}
+
+@media (max-width: 575px) {
+    /* A phone has no room for name, headline and actions on one line: the
+       meta drops below the name, as it does in the ungrouped list. */
+    .p202-list--grouped .p202-list__children > .p202-list__item {
+        flex-wrap: wrap;
+    }
+
+    .p202-list--grouped .p202-list__children .p202-list__name {
+        flex: 1 1 0;
+        max-width: none;
+    }
+
+    .p202-list--grouped .p202-list__meta {
+        order: 3;
+        flex-basis: 100%;
+    }
+
+    .p202-page-header__actions {
+        margin-left: 0;
+        flex-basis: 100%;
+    }
+
+    .p202-page-header__actions .btn {
+        flex: 1 1 auto;
+    }
+
+    .p202-form-actions .btn {
+        flex: 1 1 auto;
+    }
+}
+
+/* U6: Account ------------------------------------------------------------ */
+
+/* A document rendered from Markdown (202-account/docs.php): the renderer's
+   own elements, set in the theme's tokens so the page reads in both themes.
+   The classic page hard-coded #333 text on white. */
+.p202-doc {
+    max-width: 60rem;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+}
+
+.p202-doc h1,
+.p202-doc h2,
+.p202-doc h3 {
+    margin: 1.75rem 0 0.75rem;
+    font-weight: 700;
+    color: var(--bs-body-color);
+}
+
+.p202-doc h1 {
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--p202-accent);
+    font-size: 1.5rem;
+}
+
+.p202-doc h2 {
+    padding-left: 0.6rem;
+    border-left: 4px solid var(--p202-accent);
+    font-size: 1.25rem;
+}
+
+.p202-doc h3 {
+    font-size: 1.05rem;
+}
+
+.p202-doc > :first-child {
+    margin-top: 0;
+}
+
+.p202-doc pre {
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    background: var(--bs-secondary-bg);
+}
+
+/* A wide table scrolls inside its own box rather than taking the page. */
+.p202-doc .doc-table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    margin: 1rem 0 1.5rem;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.p202-doc .doc-table th,
+.p202-doc .doc-table td {
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--bs-border-color);
+    text-align: left;
+    vertical-align: top;
+}
+
+.p202-doc .doc-table th {
+    background: var(--bs-secondary-bg);
+    font-weight: 700;
+}
+
+/* U4: Setup ---------------------------------------------------------------
+   A many-line snippet (a landing page's redirect script, the universal
+   pixel) scrolls inside its own box rather than pushing the next snippet
+   off the screen. The kit shows it under "Code & strip". */
+
+.p202-code__value--long {
+    max-height: 18rem;
+    overflow-y: auto;
+}
+
+/* A radio group's <legend> is its label: Bootstrap's reboot sizes a legend
+   like a heading, so one styled as a label came out twice the size of the
+   labels around it ("Send visitors to", "Cost" on Get Links). */
+legend.form-label {
+    font-size: inherit;
+    line-height: inherit;
+}
+
+/* U3: Analyze */
+
+/* A server-sorted column's heading (p202_data_table(), `href`): a link that
+   looks like the sort button it stands in for. */
+a.p202-sort {
+    text-decoration: none;
+}
+
+a.p202-sort:hover {
+    color: var(--bs-body-color);
+}
+
+/* A group heading inside a report table: the custom-variable report's
+   "traffic source · variable" rows, each over the values under it. */
+.p202-table > tbody > tr.p202-table__group > th {
+    padding: 0.5rem 0.7rem;
+    border-top: 1px solid var(--p202-line-strong);
+    background: var(--bs-tertiary-bg);
+    font-size: 0.8125rem;
+    font-weight: 700;
+}
+
+/* U7: Standalone ----------------------------------------------------------
+ *
+ * .p202-standalone is the page a person reaches before there is a login, or
+ * outside the app's chrome: info_top() in 202-config/functions-standalone-ui.php
+ * puts it on <body>. One centred column (__column, --wide for the installer)
+ * over the partner wallpaper (__wallpaper), the logo on top (__brand), then
+ * Bootstrap cards (__card) whose heading is __title with one line of __desc,
+ * and a quiet footer (__foot). __message holds a _die() message, which its
+ * callers write as a heading and a sentence.
+ */
+
+.p202-standalone {
+    min-height: 100vh;
+    background-color: var(--bs-tertiary-bg);
+}
+
+.p202-standalone__wallpaper {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    display: block;
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+.p202-standalone__main {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 2.5rem 1rem;
+    /* The column takes clicks; the wallpaper behind it takes the rest. */
+    pointer-events: none;
+}
+
+.p202-standalone__column {
+    width: 100%;
+    max-width: 26rem;
+    pointer-events: auto;
+}
+
+.p202-standalone__column--wide {
+    max-width: 46rem;
+}
+
+.p202-standalone__brand {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1rem;
+}
+
+.p202-standalone__brand img {
+    max-width: 12rem;
+    height: auto;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--bs-border-radius-lg);
+    background-color: rgba(255, 255, 255, 0.92);
+}
+
+.p202-standalone__card {
+    margin-bottom: 1rem;
+    box-shadow: var(--bs-box-shadow);
+}
+
+.p202-standalone__title {
+    margin-bottom: 0.25rem;
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.p202-standalone__desc {
+    margin-bottom: 1rem;
+    color: var(--bs-secondary-color);
+}
+
+.p202-standalone__message h6 {
+    margin-bottom: 0.5rem;
+    font-size: 1.125rem;
+    font-weight: 700;
+}
+
+.p202-standalone__message small {
+    font-size: inherit;
+}
+
+.p202-standalone__ad {
+    /* The sign-in page's 288x200 placement; empty when nothing is served. */
+    width: 288px;
+    max-width: 100%;
+    margin: 0 auto 1rem;
+}
+
+.p202-standalone__foot {
+    margin: 0;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--bs-border-radius);
+    background-color: var(--bs-body-bg);
+    color: var(--bs-secondary-color);
+    font-size: 0.8125rem;
+    text-align: center;
+}

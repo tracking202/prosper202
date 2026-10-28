@@ -92,7 +92,7 @@ func TestReportBreakdownCanonicalFlagsStillWork(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	if _, _, err := executeCommand("report", "breakdown", "--breakdown", "device", "--sort_dir", "ASC"); err != nil {
+	if _, _, err := executeCommand("report", "breakdown", "--breakdown", "device", "--sort-dir", "ASC"); err != nil {
 		t.Fatalf("report breakdown canonical flags error: %v", err)
 	}
 	if got := gotParams.Get("breakdown"); got != "device" {
@@ -156,7 +156,7 @@ func TestReportBreakdownConfigDefaultUsedWhenNoFlag(t *testing.T) {
 	}
 }
 
-// rotator rule-update should accept the rule id via --rule_id as an alternative
+// rotator rule-update should accept the rule id via --rule-id as an alternative
 // to the second positional arg, matching the flag-flexible style of rule-delete.
 
 func TestRotatorRuleUpdateAcceptsRuleIdFlag(t *testing.T) {
@@ -173,8 +173,8 @@ func TestRotatorRuleUpdateAcceptsRuleIdFlag(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	if _, _, err := executeCommand("rotator", "rule-update", "4", "--rule_id", "15", "--status", "0"); err != nil {
-		t.Fatalf("rule-update --rule_id error: %v", err)
+	if _, _, err := executeCommand("rotator", "rule-update", "4", "--rule-id", "15", "--status", "0"); err != nil {
+		t.Fatalf("rule-update --rule-id error: %v", err)
 	}
 	if gotMethod != http.MethodPut {
 		t.Errorf("method = %q, want PUT", gotMethod)
@@ -198,8 +198,8 @@ func TestRotatorRuleUpdateAcceptsBothPositionalAndFlag(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	if _, _, err := executeCommand("rotator", "rule-update", "4", "15", "--rule_id", "15", "--status", "0"); err != nil {
-		t.Fatalf("rule-update with both positional and --rule_id error: %v", err)
+	if _, _, err := executeCommand("rotator", "rule-update", "4", "15", "--rule-id", "15", "--status", "0"); err != nil {
+		t.Fatalf("rule-update with both positional and --rule-id error: %v", err)
 	}
 	if !strings.HasSuffix(gotPath, "/rotators/4/rules/15") {
 		t.Errorf("path = %q, want suffix %q", gotPath, "/rotators/4/rules/15")

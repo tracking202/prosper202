@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tracking202\Report\Json;
 
+use Prosper202\Report\CampaignDataMask;
 use UserPrefs;
 
 final class FlatReportPayloadBuilder
@@ -83,15 +84,13 @@ final class FlatReportPayloadBuilder
 
     /**
      * @param array<int, array<string, mixed>> $reportData
-     * @param array<string, mixed> $userPreferences
      * @return array<string, mixed>
      */
     public static function build(
         string $reportType,
         array $reportData,
         int $foundRows,
-        ReportDispatchRequest $request,
-        array $userPreferences = []
+        ReportDispatchRequest $request
     ): array {
         $definition = self::REPORTS[$reportType] ?? null;
         if ($definition === null) {
@@ -121,7 +120,6 @@ final class FlatReportPayloadBuilder
                 'publisher' => !empty($_SESSION['publisher']),
                 'campaignDataRestricted' => $campaignDataRestricted,
             ],
-            'dependentFilters' => DependentFilterPayloadBuilder::build($request, $userPreferences),
         ];
     }
 
@@ -402,13 +400,10 @@ final class FlatReportPayloadBuilder
 
     private static function campaignDataRestricted(): bool
     {
-        global $userObj;
-
-        return (bool) (
-            $userObj
-            && !$userObj->hasPermission('access_to_campaign_data')
-            && empty($_SESSION['publisher'])
-        );
+        // One decision for every report surface; see CampaignDataMask. The
+        // metric cells above are still built here because this payload wraps
+        // each value in a {display, tone} cell rather than a raw row.
+        return CampaignDataMask::hidden();
     }
 
     /**

@@ -101,14 +101,12 @@ try {
             'reportType' => $request->reportType,
             'offset' => $request->offset,
             'order' => $request->order,
-            'includeDependentFilters' => $request->includeDependentFilters,
         ],
         'report' => FlatReportPayloadBuilder::build(
             $request->reportType,
             $reportData,
             (int) $dataEngine->foundRows(),
-            $request,
-            $userRow
+            $request
         ),
         'supportedOrderTokens' => ReportDispatchRequest::supportedOrderTokens(),
     ]);

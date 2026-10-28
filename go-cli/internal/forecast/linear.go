@@ -43,20 +43,9 @@ func linearForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 	slope := (n*sumXY - sumX*sumY) / denominator
 	intercept := (sumY - slope*sumX) / n
 
-	// Compute residual standard deviation for confidence bounds.
-	sumResidSq := 0.0
-	for i, p := range s {
-		predicted := intercept + slope*xs[i]
-		diff := p.V - predicted
-		sumResidSq += diff * diff
-	}
-	residStd := 0.0
-	if n > 2 {
-		residStd = math.Sqrt(sumResidSq / (n - 2))
-	}
-
 	// Project forward. Each prediction's x derives from its own timestamp,
 	// so anchor gaps after masked trailing days are handled exactly.
+	// Bounds are attached by Run via conformal prediction.
 	anchor := anchorTime(s, cfg)
 	preds := make([]Prediction, cfg.Horizon)
 	for i := 0; i < cfg.Horizon; i++ {
@@ -65,7 +54,6 @@ func linearForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 		preds[i] = Prediction{T: t, Value: val}
 	}
 
-	addBounds(preds, residStd, cfg.ConfidenceLevel, anchorOffset(s, cfg))
 	return preds, slope, nil
 }
 

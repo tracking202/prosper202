@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Support;
 
 use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\RemoteApiException;
 
 class RemoteApiClient
 {
@@ -97,9 +98,13 @@ class RemoteApiClient
             }
 
             $pagination = $resp['pagination'] ?? [];
-            $total = (int)($pagination['total'] ?? count($rows));
+            $total = isset($pagination['total']) ? (int)$pagination['total'] : null;
             $offset += $limit;
-            if ($offset >= $total || count($page) === 0) {
+            if (count($page) < $limit) {
+                // Short page — no more rows regardless of what total claims.
+                break;
+            }
+            if ($total !== null && $offset >= $total) {
                 break;
             }
         }
@@ -120,11 +125,6 @@ class RemoteApiClient
             $url .= '?' . http_build_query($query);
         }
 
-        $ch = curl_init($url);
-        if ($ch === false) {
-            throw new DatabaseException('Failed to initialize remote request');
-        }
-
         $headers = [
             'Accept: application/json',
             'Content-Type: application/json',
@@ -137,25 +137,73 @@ class RemoteApiClient
             $headers[] = $name . ': ' . $value;
         }
 
+        $json = null;
+        if ($body !== null) {
+            $json = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if ($json === false) {
+                throw new DatabaseException('Failed to encode remote request body');
+            }
+        }
+
+        [$status, $responseBody] = $this->send(strtoupper($method), $url, $headers, $json);
+
+        $decoded = json_decode($responseBody, true);
+
+        // An error status is the remote's answer, kept with its status and
+        // message (RemoteApiException): a 409 conflict and a 500 outage
+        // must not both read as "Internal server error" to the sync job.
+        if ($status >= 400) {
+            $message = is_array($decoded) && is_scalar($decoded['message'] ?? null)
+                ? (string) $decoded['message']
+                : 'Remote API error ' . $status;
+            $fieldErrors = is_array($decoded['field_errors'] ?? null) ? $decoded['field_errors'] : [];
+            throw new RemoteApiException($status, $message, $fieldErrors, strtoupper($method), ltrim($path, '/'));
+        }
+
+        // Redirects are not followed, and a proxy/maintenance page served with
+        // a 2xx status must not masquerade as an empty dataset — callers diff
+        // and prune against these results, so silence here means data loss.
+        if ($status >= 300) {
+            throw new DatabaseException('Remote API returned unexpected status ' . $status);
+        }
+
+        if (trim($responseBody) === '') {
+            return []; // 204-style empty success body
+        }
+        if (!is_array($decoded)) {
+            throw new DatabaseException('Remote API returned invalid JSON (status ' . $status . ')');
+        }
+
+        return $decoded;
+    }
+
+    /**
+     * One HTTP exchange: the status and the body as received. What they mean
+     * is request()'s to decide; this is only the transport.
+     *
+     * @param list<string> $headers
+     * @return array{int, string}
+     */
+    protected function send(string $method, string $url, array $headers, ?string $body): array
+    {
+        $ch = curl_init($url);
+        if ($ch === false) {
+            throw new DatabaseException('Failed to initialize remote request');
+        }
+
         curl_setopt_array($ch, [
-            CURLOPT_CUSTOMREQUEST => strtoupper($method),
+            CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_TIMEOUT => 60,
             CURLOPT_HTTPHEADER => $headers,
         ]);
-
         if ($body !== null) {
-            $json = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            if ($json === false) {
-                curl_close($ch);
-                throw new DatabaseException('Failed to encode remote request body');
-            }
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
         }
 
         $responseBody = curl_exec($ch);
-        if ($responseBody === false) {
+        if (!is_string($responseBody)) {
             $err = curl_error($ch);
             curl_close($ch);
             throw new DatabaseException('Remote request failed: ' . $err);
@@ -164,16 +212,6 @@ class RemoteApiClient
         $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
 
-        $decoded = json_decode($responseBody, true);
-        if (!is_array($decoded)) {
-            $decoded = [];
-        }
-
-        if ($status >= 400) {
-            $message = (string)($decoded['message'] ?? ('Remote API error ' . $status));
-            throw new DatabaseException($message);
-        }
-
-        return $decoded;
+        return [$status, $responseBody];
     }
 }

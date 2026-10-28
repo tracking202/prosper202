@@ -6,6 +6,8 @@ $lpip = $_GET['lpip'] ?? '';
 if (!is_numeric($lpip)) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
+// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
+$p202OutageFallback = true;
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
@@ -31,33 +33,13 @@ if ($usedCachedRedirect==true) {
 			if ($getUrl) {
 
 				$new_url = str_replace("[[subid]]", "p202", $getUrl);
+				// No click is recorded: the install token expands empty (plan §5.1).
+				$new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
 
-				//c1 sring replace for cached redirect
-				if(isset($_GET['c1']) && $_GET['c1'] != ''){
-					$new_url = str_replace("[[c1]]", $_GET['c1'], $new_url);
-				}	else {
-					$new_url = str_replace("[[c1]]", "p202c1", $new_url);
-				}
-
-				//c2 sring replace for cached redirect
-				if(isset($_GET['c2']) && $_GET['c2'] != ''){
-					$new_url = str_replace("[[c2]]", $_GET['c2'], $new_url);
-				}	else {
-					$new_url = str_replace("[[c2]]", "p202c2", $new_url);
-				}
-				
-				//c3 sring replace for cached redirect
-				if(isset($_GET['c3']) && $_GET['c3'] != ''){
-					$new_url = str_replace("[[c3]]", $_GET['c3'], $new_url);
-				}	else {
-					$new_url = str_replace("[[c3]]", "p202c3", $new_url);
-				}
-
-				//c4 sring replace for cached redirect
-				if(isset($_GET['c4']) && $_GET['c4'] != ''){
-					$new_url = str_replace("[[c4]]", $_GET['c4'], $new_url);
-				}	else {
-					$new_url = str_replace("[[c4]]", "p202c4", $new_url);
+				// c1-c4 as sent, or p202<name> for one not sent: a list (c1[]=x) is none
+				foreach (['c1', 'c2', 'c3', 'c4'] as $token) {
+					$sent = \Prosper202\Click\ClickRequest::text($_GET, $token);
+					$new_url = str_replace("[[$token]]", $sent !== '' ? rawurlencode($sent) : "p202$token", $new_url);
 				}
 				
 				if (isset ( $urlvars ) && $urlvars != '') {
@@ -83,38 +65,41 @@ if ($usedCachedRedirect==true) {
 			}
 		}
 	
-	die("<h2>Error establishing a database connection - please contact the webhost</h2>");
+	p202Unavailable();
 }
 
-$mysql['landing_page_id_public'] = $db->real_escape_string($lpip);
-$tracker_sql = "SELECT 202_landing_pages.user_id,
-						202_landing_pages.landing_page_id,
-						202_landing_pages.landing_page_id_public,
-						202_landing_pages.aff_campaign_id,
-						202_aff_campaigns.aff_campaign_rotate,
-						202_aff_campaigns.aff_campaign_url,
-						202_aff_campaigns.aff_campaign_url_2,
-						202_aff_campaigns.aff_campaign_url_3,
-						202_aff_campaigns.aff_campaign_url_4,
-						202_aff_campaigns.aff_campaign_url_5,
-						202_aff_campaigns.aff_campaign_payout,
-						202_aff_campaigns.aff_campaign_cloaking
-				FROM    202_landing_pages, 202_aff_campaigns
-				WHERE   202_landing_pages.landing_page_id_public='".$mysql['landing_page_id_public']."'
-				AND     202_aff_campaigns.aff_campaign_id = 202_landing_pages.aff_campaign_id";
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+// The landing page's id exactly: compared as text, MySQL read 1e3 as 1000.
+$lpPublicId = \Prosper202\Click\PublicId::parse($lpip);
+if ($lpPublicId === null) {
+    die();
+}
+$lpReads = \Prosper202\Repository\LookupRepositoryFactory::reads($db);
+try {
+    $tracker_row = $lpReads->landingPageOffer($lpPublicId);
+} catch (\Throwable $lpReadError) {
+    record_mysql_error($db, 'reading landing page ' . $lpip, $lpReadError->getMessage());
+}
 
-if (!$tracker_row) { die(); }
+if ($tracker_row === null) {
+    // No campaign of the page's account: an outage sends nobody anywhere
+    // either, whatever an earlier read kept (another account's campaign,
+    // before this read was tied to the account). Deleted, not written
+    // empty: a write would keep an entry for every id anyone sends.
+    if ($memcacheWorking) {
+        $memcache->delete(md5('lp_' . $lpip . systemHash()));
+    }
+    die();
+}
 
-if ($memcacheWorking) {  
-
-	$url = $tracker_row['aff_campaign_url']."&subid=p202";
-	$tid = $lpip;
-
-	$getKey = $memcache->get(md5('lp_'.$tid.systemHash()));
-	if($getKey === false){
-		$setUrl = setCache(md5('lp_'.$tid.systemHash()), $url, 0);
-	}
+// The URL a MySQL outage redirects to (read above): kept equal to the
+// campaign's current URL, not the one it had at its first click.
+if ($memcacheWorking) {
+	\Prosper202\Click\FallbackRedirectUrl::refresh(
+		md5('lp_'.$lpip.systemHash()),
+		\Prosper202\Click\FallbackRedirectUrl::withSubid($tracker_row['aff_campaign_url'] ?? ''),
+		static fn(string $key): mixed => $memcache->get($key),
+		static fn(string $key, string $url): mixed => setCache($key, $url, 0),
+	);
 }
 
 //grab the GET variables from the LANDING PAGE
@@ -129,20 +114,20 @@ if ($landing_page_query !== '') {
 	parse_str($landing_page_query, $_GET);
 }
 
-if (!empty($_GET['t202id'])) {
-	//grab tracker data if avaliable
-	$mysql['tracker_id_public'] = $db->real_escape_string((string)$_GET['t202id']);
-
-	$tracker_sql2 = "SELECT  text_ad_id,
-							ppc_account_id,
-							click_cpc,
-							click_cloaking
-					FROM    202_trackers
-					WHERE   tracker_id_public='".$mysql['tracker_id_public']."'";   
-	
-	$tracker_row2 = memcache_mysql_fetch_assoc($db, $tracker_sql2);
-	if ($tracker_row2) {
-		$tracker_row = array_merge($tracker_row,$tracker_row2);
+// The tracker the landing page was reached through, when it is the landing
+// page's account's: its cloaking setting decides this click's.
+$lpTrackerId = \Prosper202\Click\PublicId::parse($_GET['t202id'] ?? null);
+if ($lpTrackerId !== null) {
+    try {
+        $tracker_row2 = $lpReads->accountTracker((int) $tracker_row['user_id'], $lpTrackerId);
+    } catch (\Throwable $lpReadError) {
+        record_mysql_error($db, 'reading tracker ' . $lpTrackerId, $lpReadError->getMessage());
+    }
+    if ($tracker_row2 !== null) {
+        $tracker_row = array_merge($tracker_row, array_intersect_key(
+            $tracker_row2,
+            array_flip(['text_ad_id', 'ppc_account_id', 'click_cpc', 'click_cloaking'])
+        ));
 	}
 }
 
@@ -151,66 +136,59 @@ if (!empty($_GET['t202id'])) {
 //get mysql variables 
 $mysql['user_id'] = $db->real_escape_string((string) $tracker_row['user_id']);
 $mysql['aff_campaign_id'] = $db->real_escape_string((string) $tracker_row['aff_campaign_id']);
-$mysql['ppc_account_id'] = $db->real_escape_string((string) $tracker_row['ppc_account_id']);
-$mysql['click_cpc'] = $db->real_escape_string((string) $tracker_row['click_cpc']);
 $mysql['click_payout'] = $db->real_escape_string((string) $tracker_row['aff_campaign_payout']);
 $mysql['click_time'] = time();
 
 $mysql['landing_page_id'] = $db->real_escape_string((string) $tracker_row['landing_page_id']);
-$mysql['text_ad_id'] = $db->real_escape_string((string) $tracker_row['text_ad_id']);
 
-//now gather variables for the clicks record db
-//click_id is needed to build click_id_public below, so resolve it first
-$click_id = $_COOKIE['tracking202subid_a_'.$tracker_row['aff_campaign_id']] ?? '';
-//lets determine if cloaking is on
-$cloaking_on = false;
-if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking on
-	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
-	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1)) //if no tracker but but by default campaign has cloaking on
-) {
-	$cloaking_on = true;
-	$mysql['click_cloaking'] = 1;
-	//if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
-	$click_id_public = random_int(1,9) . $click_id . random_int(1,9);
-	$mysql['click_id_public'] = $db->real_escape_string($click_id_public);
-} else {
-	$mysql['click_cloaking'] = 0;
-}
-
+// The tracker's setting, or the campaign's when the landing page was reached
+// without one or it leaves the decision to the campaign (ClickCloaking).
+$cloaking_on = \Prosper202\Click\ClickCloaking::isOn($tracker_row);
 
 if ($cloaking_on == true) {
 
-	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/lpc.php?lpip=' . $tracker_row['landing_page_id_public'];
-	$click_cloaking_site_url_id = INDEXES::get_site_url_id($db, $cloaking_site_url);
-	$mysql['click_cloaking_site_url_id'] = $db->real_escape_string((string) $click_cloaking_site_url_id);         
-	
+	$cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/lpc.php?lpip=' . $tracker_row['landing_page_id_public'];
 }
 
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
 
-$mysql['click_id'] = $db->real_escape_string($click_id);
-$mysql['click_out'] = 1;
+// The visitor's click on the landing page's campaign, by its cookie, marked as
+// leaving for the offer only when it is the landing page's account's: the
+// cookie is the visitor's to set, and named any account's click. Another
+// account's click, or none, is no click here, as a missing cookie always was.
+$lpClickId = \Prosper202\Click\ClickId::parse(
+    getCookie202('tracking202subid_a_' . $tracker_row['aff_campaign_id'])
+);
+if ($lpClickId !== null) {
+    $lpRecorded = false;
+    try {
+        $lpClicks = new \Prosper202\Click\MysqlClickRepository(
+            \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+        );
+        $lpRecorded = $lpClicks->recordExit(
+            new \Prosper202\Click\ClickExit((int) $tracker_row['user_id'], $lpClickId, cloaking: $cloaking_on ? 1 : 0)
+        );
+    } catch (\Throwable $lpWriteError) {
+        record_mysql_error(
+            $db,
+            'recording click ' . $lpClickId . ' leaving its landing page',
+            $lpWriteError->getMessage()
+        );
+    }
+    if ($lpRecorded) {
+        (new DataEngine())->setDirtyHour((string) $lpClickId);
+    } else {
+        $lpClickId = null;
+    }
+}
+$mysql['click_id'] = $lpClickId === null ? '' : (string) $lpClickId;
 
-
-$update_sql = "
-	UPDATE
-		202_clicks_record
-	SET
-		click_out='".$mysql['click_out']."',
-		click_cloaking='".$mysql['click_cloaking']."'
-	WHERE
-		click_id='".$mysql['click_id']."'";
-$click_result = $db->query($update_sql) or record_mysql_error($db);
-//delay_sql($db, $update_sql);
-
-//set dirty hour
-$de = new DataEngine();
-$data=($de->setDirtyHour($mysql['click_id']));
-
-$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
-
-$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
-$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string) $click_redirect_site_url_id);
+$redirect_site_url = replaceTrackerPlaceholders(
+    $db,
+    $redirect_site_url,
+    $mysql['click_id'],
+    (int) $tracker_row['user_id']
+);
 
 
 

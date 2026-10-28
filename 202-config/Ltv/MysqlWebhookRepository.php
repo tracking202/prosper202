@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Validation\OutboundUrlGuard;
 use RuntimeException;
 
 /**
@@ -18,11 +19,15 @@ use RuntimeException;
 final class MysqlWebhookRepository
 {
     /**
-     * Known event names — a documentation/UI listing, NOT a validation
-     * allowlist. Validation is well-formedness only (assertEventName), so a
-     * webhook registered with the '*' wildcard receives events added by
-     * future versions without re-registration, and new emitters need no
-     * repository edits.
+     * The events this install sends: every name an emitter passes
+     * (LtvController::enqueueEvent(), EventBridge::emit()/emitIfEnabled()),
+     * which WebhookEventsAreKnownTest holds it to, and the names a webhook may
+     * subscribe to (create() refuses any other). It was a listing only, with
+     * well-formedness the only check, so `revenue.recoded` made a hook that
+     * subscribed to nothing and answered 201 (CLAUDE.md #4). A subscriber
+     * that wants the events later versions add registers '*', which is
+     * stored as subscribe-all and needs no edit here; a new emitter adds its
+     * name here.
      */
     public const KNOWN_EVENTS = [
         'customer.updated',
@@ -40,55 +45,17 @@ final class MysqlWebhookRepository
     }
 
     /**
-     * SSRF guard, applied at registration AND again at dispatch (DNS can
-     * change between the two): https only, resolvable host, and no
-     * private/loopback/link-local/reserved addresses.
+     * Dispatch-time SSRF guard: delegates to the one implementation in
+     * OutboundUrlGuard. Kept as a named entry point for the cron and the tests;
+     * the body it used to carry was a line-for-line copy that could (and did)
+     * drift from the attribution crons' checks.
      *
-     * Returns the VALIDATED addresses so the dispatcher can pin its
-     * connection to one of them (CURLOPT_RESOLVE) — without pinning, a
-     * DNS-rebinding host could answer the guard with a public IP and give
-     * curl's second lookup a private one.
-     *
-     * @return list<string> the validated IPs for the URL's host
-     * @throws RuntimeException with the reason when the URL is not allowed
+     * @return list<string> the validated IPs for the URL's host, for curlOptions()
+     * @throws \Prosper202\Validation\OutboundUrlException
      */
     public static function assertUrlAllowed(string $url): array
     {
-        $parts = parse_url($url);
-        if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https' || empty($parts['host'])) {
-            throw new RuntimeException('webhook_url must be a valid https:// URL');
-        }
-        if (isset($parts['port']) && !in_array((int) $parts['port'], [443, 8443], true)) {
-            throw new RuntimeException('webhook_url port must be 443 or 8443');
-        }
-
-        $host = (string) $parts['host'];
-        $ips = [];
-        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
-            $ips = [$host];
-        } else {
-            $records = @dns_get_record($host, DNS_A + DNS_AAAA);
-            if (is_array($records)) {
-                foreach ($records as $record) {
-                    if (!empty($record['ip'])) {
-                        $ips[] = (string) $record['ip'];
-                    }
-                    if (!empty($record['ipv6'])) {
-                        $ips[] = (string) $record['ipv6'];
-                    }
-                }
-            }
-        }
-        if ($ips === []) {
-            throw new RuntimeException('webhook_url host does not resolve');
-        }
-        foreach ($ips as $ip) {
-            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
-                throw new RuntimeException('webhook_url resolves to a private or reserved address');
-            }
-        }
-
-        return array_values($ips);
+        return OutboundUrlGuard::assertAllowed($url, 'webhook_url');
     }
 
     /**
@@ -114,33 +81,90 @@ final class MysqlWebhookRepository
     }
 
     /**
-     * Well-formedness rule for event names (not a membership check): a
-     * namespaced lowercase slug such as "conversion.recorded". Deliberately
-     * permissive about WHICH events exist so future emitters and versions
-     * need no repository edits — see KNOWN_EVENTS for the current listing.
+     * One endpoint with the columns list() returns — never the secret, which
+     * leaves the server once, at creation. Null when the account has none.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function get(int $userId, int $webhookId): ?array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT webhook_id, webhook_url, subscribed_events, status, created_at, updated_at
+             FROM 202_ltv_webhooks WHERE webhook_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$webhookId, $userId]);
+
+        return $this->conn->fetchOne($stmt);
+    }
+
+    /**
+     * The endpoint's queued and past deliveries by status — the rows
+     * delete() removes with it, counted with the same predicate.
+     *
+     * @return array<string, int> status => count (only statuses present)
+     */
+    public function deliveryCounts(int $userId, int $webhookId): array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT status, COUNT(*) AS c FROM 202_ltv_webhook_deliveries
+             WHERE webhook_id = ? AND user_id = ? GROUP BY status ORDER BY status'
+        );
+        $this->conn->bind($stmt, 'ii', [$webhookId, $userId]);
+        $counts = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $counts[(string) $row['status']] = (int) $row['c'];
+        }
+
+        return $counts;
+    }
+
+    /**
+     * Well-formedness rule for event names: a namespaced lowercase slug such
+     * as "conversion.recorded". What enqueue() checks of an emitter's name
+     * (which emitters may send is KNOWN_EVENTS, held by a test); create()
+     * also requires the name to be one of KNOWN_EVENTS.
      *
      * @throws RuntimeException when the name is not a namespaced slug
      */
     private static function assertEventName(string $event): void
     {
         if (preg_match('/^[a-z0-9_]+(\.[a-z0-9_-]+)+$/', $event) !== 1) {
-            throw new RuntimeException('Event name must be namespaced lowercase slug, e.g. conversion.recorded');
+            throw new LtvInputException(
+                'events',
+                'Event name must be namespaced lowercase slug, e.g. conversion.recorded'
+            );
         }
+    }
+
+    /**
+     * Why a subscription name is refused, or null when it is one this install
+     * sends: a name it never sends would make a hook that receives nothing.
+     */
+    public static function unknownEventReason(string $event): ?string
+    {
+        if (in_array($event, self::KNOWN_EVENTS, true)) {
+            return null;
+        }
+
+        return '"' . $event . '" is not an event this install sends (' . implode(', ', self::KNOWN_EVENTS)
+            . '); "*" subscribes to every event, including ones later versions add';
     }
 
     /**
      * Register a webhook endpoint. Returns [webhook_id, secret] — the secret
      * is generated server-side and shown once.
      *
-     * @param list<string> $events well-formed event names (see KNOWN_EVENTS
-     *        for the current listing), or ['*'] to subscribe to every current
-     *        AND future event — stored as '', which enqueue() already treats
-     *        as subscribe-all. [] defaults to KNOWN_EVENTS.
+     * @param list<string> $events names from KNOWN_EVENTS, or ['*'] to
+     *        subscribe to every current AND future event — stored as '',
+     *        which enqueue() already treats as subscribe-all. [] defaults to
+     *        KNOWN_EVENTS. Any other name is refused, nothing written.
      * @return array{webhookId: int, secret: string}
      */
     public function create(int $userId, string $url, array $events): array
     {
-        self::assertUrlAllowed($url);
+        // Write boundary: syntactic check only, no DNS (see OutboundUrlGuard).
+        // The cron re-runs the full check and pins the connection at delivery.
+        OutboundUrlGuard::assertWellFormed($url, 'webhook_url');
 
         $events = array_values(array_unique(array_map(strval(...), $events)));
         if ($events === []) {
@@ -148,12 +172,19 @@ final class MysqlWebhookRepository
         }
         if (in_array('*', $events, true)) {
             if ($events !== ['*']) {
-                throw new RuntimeException("The '*' wildcard cannot be combined with individual event names");
+                throw new LtvInputException(
+                    'events',
+                    "The '*' wildcard cannot be combined with individual event names"
+                );
             }
             $subscribedEvents = '';
         } else {
             foreach ($events as $event) {
                 self::assertEventName($event);
+                $unknown = self::unknownEventReason($event);
+                if ($unknown !== null) {
+                    throw new LtvInputException('events', $unknown);
+                }
             }
             $subscribedEvents = implode(',', $events);
         }
@@ -261,6 +292,41 @@ final class MysqlWebhookRepository
         return $this->conn->fetchAll($stmt);
     }
 
+    /** The states a delivery is in (the column's enum). */
+    public const DELIVERY_STATUSES = ['pending', 'delivered', 'failed'];
+
+    /**
+     * The delivery log the API serves: recentDeliveries()'s columns plus
+     * the last attempt's response body or error ("curl: …", "blocked: …",
+     * stored truncated to 1,000 bytes), optionally one status only, newest
+     * first. Never the payload, never the endpoint's secret.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function deliveries(int $userId, int $webhookId, int $limit, ?string $status = null): array
+    {
+        if ($status !== null && !in_array($status, self::DELIVERY_STATUSES, true)) {
+            throw new LtvInputException(
+                'status',
+                'Delivery status must be one of: ' . implode(', ', self::DELIVERY_STATUSES)
+            );
+        }
+        $sql = 'SELECT delivery_id, event_name, status, attempts, last_status_code, last_response_body,
+                       next_attempt_at, created_at, updated_at
+                FROM 202_ltv_webhook_deliveries
+                WHERE webhook_id = ? AND user_id = ?' . ($status !== null ? ' AND status = ?' : '') . '
+                ORDER BY delivery_id DESC
+                LIMIT ?';
+        $stmt = $this->conn->prepareRead($sql);
+        if ($status !== null) {
+            $this->conn->bind($stmt, 'iisi', [$webhookId, $userId, $status, max(1, $limit)]);
+        } else {
+            $this->conn->bind($stmt, 'iii', [$webhookId, $userId, max(1, $limit)]);
+        }
+
+        return $this->conn->fetchAll($stmt);
+    }
+
     /**
      * Dispatch-side: atomically claim ONE due delivery before posting it.
      * The single-row conditional UPDATE (bump next_attempt_at past now) is
@@ -326,11 +392,17 @@ final class MysqlWebhookRepository
         }
 
         $stmt = $this->conn->prepareWrite(
+            // `attempts = attempts + 1` MUST come last: MySQL evaluates
+            // single-table UPDATE assignments left to right and later
+            // expressions see already-updated columns. With the increment
+            // first, `attempts + 1` below read old+1, so the status test was
+            // really old+2 — abandoning delivery one attempt early (5 of the
+            // 6 MAX_ATTEMPTS) and marking the endpoint dead prematurely.
             "UPDATE 202_ltv_webhook_deliveries
-             SET attempts = attempts + 1,
-                 status = IF(attempts + 1 >= ?, 'failed', 'pending'),
+             SET status = IF(attempts + 1 >= ?, 'failed', 'pending'),
                  next_attempt_at = ? + (POW(2, LEAST(attempts + 1, 10)) * 60),
-                 last_status_code = ?, last_response_body = ?, updated_at = ?
+                 last_status_code = ?, last_response_body = ?, updated_at = ?,
+                 attempts = attempts + 1
              WHERE delivery_id = ?"
         );
         $this->conn->bind($stmt, 'iiisii', [
