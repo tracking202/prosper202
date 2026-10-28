@@ -382,6 +382,11 @@ func runTsoRepairAll(cmd *cobra.Command, c *api.Client, report tsoReport, force 
 			e.PpcNetworkID, tsoUserIDs(e.NamedBy))))
 	}
 	if len(shown) == 0 {
+		encoded, err := json.Marshal(map[string]interface{}{"data": map[string]interface{}{"repaired": []json.RawMessage{}, "skipped": skipped}})
+		if err != nil {
+			return fmt.Errorf("encoding the answer: %w", err)
+		}
+		render(encoded)
 		output.Success("No traffic source can be moved without naming its user (%d ambiguous). Nothing was sent.", len(skipped))
 		return nil
 	}
