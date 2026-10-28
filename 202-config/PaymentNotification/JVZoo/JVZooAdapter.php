@@ -7,6 +7,7 @@ namespace Prosper202\PaymentNotification\JVZoo;
 use Prosper202\Click\ClickId;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\AccountSecrets;
 use Prosper202\PaymentNotification\ClickField;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
@@ -93,20 +94,15 @@ final class JVZooAdapter implements ProviderAdapter
 
     public function storedSecrets(Connection $conn): array
     {
-        $stmt = $conn->prepareRead(
-            'SELECT user_id, ' . JVZooKey::COLUMN . ' AS secret_key FROM 202_users_pref'
-            . ' WHERE ' . JVZooKey::COLUMN . " <> '' ORDER BY user_id"
-        );
         $secrets = [];
-        foreach ($conn->fetchAll($stmt) as $row) {
-            $column = is_string($row['secret_key']) ? $row['secret_key'] : null;
+        foreach (AccountSecrets::stored($conn, JVZooKey::COLUMN) as $accountId => $column) {
             $key = JVZooKey::stored($column);
             if ($key !== null) {
-                $secrets[(int) $row['user_id']] = [$key];
+                $secrets[$accountId] = [$key];
             } elseif (JVZooKey::unreadable($column)) {
                 error_log(sprintf(
                     'JVZoo notification: account %d\'s stored JVZIPN secret key is not a key; it verifies nothing',
-                    (int) $row['user_id']
+                    $accountId
                 ));
             }
         }
