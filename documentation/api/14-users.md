@@ -34,7 +34,8 @@ Admin or Super user role; only the Super user role carries the
 - **Roles**: Super user (role 1) is never granted; Admin (role 2) is granted
   only by a Super user; user 1's roles are fixed.
 - **Removing a user** needs the Super user role, and never removes user 1 or
-  the caller.
+  the caller. A browser the user is signed in on is signed out at its next
+  request, as for a user switched off.
 
 A refusal is `403` with the rule in `message`. Before these rules, an Admin
 key could grant itself Super user, mint a full-access key for user 1 and set
@@ -77,7 +78,7 @@ API keys are masked after the first 8 characters in list responses. The full key
 | `user_fname` | string | No | First name, at most 50 characters |
 | `user_lname` | string | No | Last name, at most 50 characters |
 | `user_timezone` | string | No | A PHP time zone name such as `America/New_York`, as Personal settings offers them (default: UTC); anything else is `422` |
-| `user_active` | integer | No | `1` can sign in and use its API keys (default), `0` cannot (its keys answer `401`); any other value is `422` rather than read as `0` |
+| `user_active` | integer | No | `1` can sign in and use its API keys (default), `0` cannot: its keys answer `401`, and a browser it is signed in on is signed out at its next request, its remember-me keys revoked. Any other value is `422` rather than read as `0` |
 
 ## Preference Fields
 
