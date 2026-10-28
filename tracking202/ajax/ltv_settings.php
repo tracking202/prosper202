@@ -209,6 +209,11 @@ try {
                             $revival = $webhooksRepo->revive($userId, $reviveId, true, time());
                         } catch (\Prosper202\Ltv\RecordNotFoundException) {
                             throw new \RuntimeException('That webhook is not one of this account\'s.');
+                        } catch (\Prosper202\Ltv\LtvConflictException) {
+                            // revive() waited for a dispatcher run still sending, and changed nothing.
+                            throw new \RuntimeException('Webhook #' . $reviveId . ' was not revived: webhook'
+                                . ' deliveries are being sent right now. Nothing was changed; Revive it again'
+                                . ' in a minute.');
                         }
                         $notice = $revival['revived']
                             ? 'Webhook #' . $reviveId . ' is active again; ' . $revival['requeued']

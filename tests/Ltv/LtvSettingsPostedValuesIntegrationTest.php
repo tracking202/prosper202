@@ -145,6 +145,30 @@ final class LtvSettingsPostedValuesIntegrationTest extends TestCase
         self::assertSame(1, self::rows('202_ltv_webhooks', self::DEAD_HOOK_IS . "'active'"), $page);
     }
 
+    /**
+     * A revival waits for a dispatcher run still sending, and then gives up
+     * having changed nothing (MysqlWebhookRepository::revive()): the page
+     * says so in its own words. The run is this test holding its lock; the
+     * page waits REVIVE_LOCK_WAIT_SECONDS for it.
+     */
+    public function testAReviveBehindARunStillSendingSaysNothingChanged(): void
+    {
+        $conn = new \Prosper202\Database\Connection(self::$db ?? throw new \LogicException());
+        $name = \Prosper202\Ltv\WebhookDispatcher::lockName($conn);
+        self::q("SELECT GET_LOCK('" . $name . "', 0)");
+        try {
+            $page = self::post(['action' => 'revive_webhook', 'webhook_id' => (string) self::DEAD_HOOK]);
+        } finally {
+            self::q("SELECT RELEASE_LOCK('" . $name . "')");
+        }
+        self::assertStringContainsString(
+            'Webhook #' . self::DEAD_HOOK . ' was not revived: webhook deliveries are being sent right now.'
+                . ' Nothing was changed; Revive it again in a minute.',
+            $page
+        );
+        self::assertSame(1, self::rows('202_ltv_webhooks', self::DEAD_HOOK_IS . "'dead'"), 'still dead');
+    }
+
     public function testAFieldAndAnIntegrationAreDeletedOnlyByTheirExactIds(): void
     {
         $this->assertEachNotIdIsRefused(
