@@ -85,6 +85,9 @@ final class AccountScopedJoinTest extends TestCase
     private const DIRTY_MARKS = 'marks the hours a changed click or conversion sits in, for whichever account owns them: the account read is the row\'s own (its journey meta row by conv_id, the credit\'s model by model_id), and it is the one marked';
     private const RUNTIME_CHECKED = 'built per dimension at runtime; testRuntimeBuiltSqlIsTied() runs the builder for every dimension and scans what it returns';
     private const JOIN_REWRITE = 'str_replace() arguments that turn dimensionJoin()\'s INNER JOIN into a LEFT JOIN for the group report; the join itself is testRuntimeBuiltSqlIsTied()\'s';
+    private const GROUP_LEAVES = 'the group report\'s innermost groups, a derived table: its WHERE is'
+        . ' filtered()\'s, which begins `de.user_id = ?` with the account, and its joins are dimensionJoin()\'s,'
+        . ' which testRuntimeBuiltSqlIsTied() runs';
     private const NOT_SQL = 'an exception message ("has no name join"), not SQL';
     private const CALLER_SCOPE = 'the caller\'s click scope over 202_dataengine (the report\'s own user filter); the rows it selects are one click\'s conversions';
     private const INSTALL_REGISTRATION = 'an install\'s registration: InstallIntake::insert() writes registration_id and user_id together from one registration, and no statement updates either';
@@ -296,6 +299,8 @@ final class AccountScopedJoinTest extends TestCase
         ],
         'api/v3/Controllers/ReportsController.php' => [
             'no table after JOIN | ? | INNER JOIN' => self::JOIN_REWRITE,
+            'subquery with runtime text before its WHERE | 202_dataengine'
+                . ' | implode("\n ", $joins)' => self::GROUP_LEAVES,
             'no table after JOIN | ? | LEFT JOIN' => self::JOIN_REWRITE,
             'table built at runtime | {$bd[\'table\']} | INNER JOIN {{$bd[\'table\']}} ref ON {$on}' => self::RUNTIME_CHECKED,
         ],

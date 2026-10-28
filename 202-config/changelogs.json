@@ -35,7 +35,8 @@
       "Changed: A pixel that names no click guesses it from the visitor's IP address only for an account with Match conversions by IP address on (Personal Settings, under Advanced). New accounts start with it off; accounts from before 1.9.79 keep it on, and choosing Off there stops the guesses. A visitor your privacy setting holds back is never matched by IP address",
       "Fixed: The global and universal pixels guess a click from the IP address among the clicks of the account whose campaign the pixel names, not the first account's",
       "New: A report breakdown from the API or the CLI says when it has more rows than it returned, and the CLI's losers, winners, crosstab and campaign optimize read every page they need instead of the first 50 rows",
-      "Fixed: An LTV subscription that stops renewing is marked past due once its period and grace days are over, and canceled 30 days later, by the cron job every hour; nothing a default install ran did it, so it stayed active and counted in MRR. After the upgrade the ones that lapsed meanwhile are moved, oldest first, and one canceled long ago counts in churn only if its cancel date falls in the last 90 days"
+      "Fixed: An LTV subscription that stops renewing is marked past due once its period and grace days are over, and canceled 30 days later, by the cron job every hour; nothing a default install ran did it, so it stayed active and counted in MRR. After the upgrade the ones that lapsed meanwhile are moved, oldest first, and one canceled long ago counts in churn only if its cancel date falls in the last 90 days",
+      "Fixed: The group report (GET /reports/groups, p202 report groups) answers EPC, CPC, conversion rate, ROI and CPA to the decimals the summary and the breakdown answer them to; it answered them unrounded, so the same traffic showed two figures"
     ]
   },
   "1.9.78": {

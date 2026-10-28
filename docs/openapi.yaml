@@ -2508,7 +2508,9 @@ paths:
       summary: Group Overview
       description: Traffic grouped by up to four breakdown dimensions, nested, every group with
         its totals. A group is the sum of its children; the clicks a level has no value for are
-        its child with `id` and `name` null, listed last. More than 5,000 innermost groups is a 422.
+        its child with `id` and `name` null, listed last. Every group's metrics, and the totals,
+        are computed as /reports/breakdown and /reports/summary compute them, from the group's own
+        rows and to the same decimals. More than 5,000 innermost groups is a 422.
       operationId: reportGroups
       parameters:
         - name: by
