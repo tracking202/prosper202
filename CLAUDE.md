@@ -485,7 +485,13 @@ old install's staged DELETE of campaign 1 deleted the new install's campaign
 1 (measured live). The install's id, minted with its schema (`InstallId`),
 names the directory now, and `StateStoresNameTheInstallTest` holds every
 store the served tree builds to `ServerStateStore::forInstall()`. Before
-keying state on where something lives, ask what can replace it there.
+keying state on where something lives, ask what can replace it there. The
+fix named the default directory and left `P202_SERVER_STATE_DIR` used as
+named — the directory the Coolify stack sets, on the deployments that
+reinstall most — so the bug stayed there; each install has a directory of
+its own inside it now, and the same test holds the store to never writing
+the operator's directory bare. A fix to a default reaches every setting that
+replaces it, or it is #5 again.
 
 ### 12. A guard is only as good as the layer that delivers the input
 The server rejected an explicitly empty API-key scope. It never fired, because

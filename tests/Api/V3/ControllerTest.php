@@ -296,7 +296,8 @@ final class ControllerTest extends TestCase
         mkdir($stateDir, 0700, true);
         putenv('P202_SERVER_STATE_DIR=' . $stateDir);
 
-        [$ctrl] = $this->createControllerWithDb();
+        // The install's id, which names its directory in the state dir.
+        [$ctrl] = $this->createControllerWithDb(['202_deployment_secrets' => ['secret_value' => str_repeat('1', 64)]]);
         RequestContext::setHeaders(['Idempotency-Key' => 'bulk-request-hash-1']);
 
         try {
@@ -322,6 +323,7 @@ final class ControllerTest extends TestCase
         } finally {
             RequestContext::reset();
             putenv('P202_SERVER_STATE_DIR');
+            exec('rm -rf ' . escapeshellarg($stateDir));
         }
     }
 

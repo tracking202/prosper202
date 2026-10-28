@@ -493,24 +493,25 @@ Empty response body.
 
 Idempotency records, staged changes, sync jobs and their audit, sync
 manifests, rate-limit buckets and metrics live in a directory on the server,
-not in the database: `P202_SERVER_STATE_DIR` when it is set, otherwise
-`p202-api-v3-state-<database>-<install>` in the system temp directory, where
-`<database>` is a hash of the database host and name, so two instances on one
-host keep their own, and `<install>` a hash of the install's id, so a database
-installed again keeps none of its predecessor's. A process that runs without
-the configuration in scope uses `p202-api-v3-state-unscoped` and logs that it
-does; it used to use the pre-1.9.75 shared directory, which the next instance
-installed on the host then adopted as its own.
+not in the database: `install-<install>` inside `P202_SERVER_STATE_DIR` when
+it is set, otherwise `p202-api-v3-state-<database>-<install>` in the system
+temp directory. `<install>` is a hash of the install's id, so a database
+installed again keeps none of its predecessor's, and `<database>` a hash of
+the database host and name, so two instances on one host keep their own. A
+process that runs without the configuration in scope uses
+`p202-api-v3-state-unscoped` and logs that it does; it used to use the
+pre-1.9.75 shared directory, which the next instance installed on the host
+then adopted as its own.
 
 **The install's id** is 32 random bytes the installer stores in
 `202_deployment_secrets` (`secret_name` `install_id`); the upgrade to 1.9.79
 gives an existing install one, and so does its first API request when the
 files are deployed before the upgrade runs. It is read from the database
-whenever the directory it names is the one used (not for
-`P202_SERVER_STATE_DIR`). When it cannot be read the API answers `500` (`503`
-while the upgrade is pending) and the log says why; it never falls back to a
-directory named by the database alone, which is the name a reinstalled
-database shared with the install before it.
+whenever the API uses its state, `P202_SERVER_STATE_DIR` or not. When it
+cannot be read the API answers `500` (`503` while the upgrade is pending) and
+the log says why; it never falls back to a directory named by the database
+alone, nor to `P202_SERVER_STATE_DIR` itself: those are the names a
+reinstalled database shared with the install before it.
 
 **The pre-1.9.75 shared directory (`p202-api-v3-state`, no hash) is never
 adopted.** An instance with no directory of its own used to rename it into
@@ -520,8 +521,9 @@ and its staged changes were listed here to apply against this database. It
 is left where it is, and the server log names it once a process ("… is not
 adopted …") with the directory this instance uses. If it really holds this
 install's own staged changes and sync jobs (an upgrade from before 1.9.75),
-move it to that directory before the next request, or point
-`P202_SERVER_STATE_DIR` at it.
+move it to that directory before the next request. (Pointing
+`P202_SERVER_STATE_DIR` at it no longer reads it: the install's own directory
+inside is what is read.)
 
 **Reinstalling into a database of the same name on the same host starts
 with an empty directory.** Before 1.9.79 the directory was named by the
@@ -538,11 +540,45 @@ staged changes or sync jobs from before the upgrade, copy what it holds into
 the directory the log names; otherwise remove it (`rm -r` it, as the server's
 user).
 
-**`P202_SERVER_STATE_DIR` is used as named, for whichever install is
-there.** When the database it served is replaced — reinstalled, or restored
-from a backup — empty it first: the previous database's idempotency records
-and staged changes are still in it. (On the Coolify stack that directory is
-the `api_state` volume.)
+**Under `P202_SERVER_STATE_DIR` each install has a directory of its own**,
+`install-<install>`, made (mode `0700`) by the first request that needs it.
+(On the Coolify stack that directory is the `api_state` volume.) Before
+1.9.79 the directory was used as named, for whichever install was there, so a
+database installed again under it read the old install's records as its own,
+as the temp-dir default did. What an earlier version wrote at the directory's
+top level (`idempotency/`, `staged_changes/`, `jobs/` and the rest), and
+another install's `install-…` directory, are left where they are and never
+read; the server log names them once, when the install makes its own ("the
+API state in … is not used: …", "the API state directory … is not used: …").
+After an upgrade to 1.9.79, if the top level holds this install's own staged
+changes or sync jobs, copy what it holds into the directory the log names;
+then remove what is at the top level. Anything else you keep in the directory
+is left alone and not mentioned. An `install-…` directory another database
+sharing `P202_SERVER_STATE_DIR` uses is that database's: remove one only when
+no install uses it.
+
+The install's directory is used only when it is a real directory (not a
+symbolic link) owned by the process's own user that its group and others
+cannot write, so the web server and the CLI worker that reads the state
+(`202-cronjobs/sync-worker.php`) run as one user; a directory shared between
+two users through its group is refused. Unlike the temp dir there is no
+alternative to take: the API answers `500` and the log names the directory
+and why ("… is not used: it is owned by uid …"). A process running as root
+does not make it in a `P202_SERVER_STATE_DIR` another user owns, where the
+web server's user could not use it: run CLI workers as the web server's
+user.
+
+**Restoring the database from a backup keeps its install id**, and so the
+directory it names, which still holds what the API recorded after the backup
+was taken: a create whose `Idempotency-Key` was recorded after the backup is
+answered as done (`201`, `idempotent_replay: true`) with nothing created, and
+staged changes proposed after it are still listed to apply. After a restore,
+empty the install's directory before the first API request: under
+`P202_SERVER_STATE_DIR` all of it when no other database uses it, or
+`install-<install>`, where `<install>` is the first 12 characters of the
+SHA-1 of the `install_id` row in `202_deployment_secrets`
+(`printf %s "$id" | sha1sum | cut -c1-12`); in the temp dir,
+`p202-api-v3-state-<database>-<install>`.
 
 **The temp-dir default is used only when the server's own user owns it
 alone.** Before 1.9.79 its name could be worked out from the database host
@@ -559,8 +595,8 @@ can be used the API answers `500` and the log says so; a process running as
 root never takes an alternative (it cannot tell the web server's user from
 anyone else, and a directory of its own would be one the web tier never
 reads), so run CLI workers such as `202-cronjobs/sync-worker.php` as the web
-server's user. `P202_SERVER_STATE_DIR` is used as named: put it where only
-the server's user can write.
+server's user. `P202_SERVER_STATE_DIR` itself is the operator's, and not
+checked: put it where only the server's user can write.
 
 ## Resource Endpoints Overview
 

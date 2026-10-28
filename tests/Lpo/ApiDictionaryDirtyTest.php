@@ -76,13 +76,13 @@ final class ApiDictionaryDirtyTest extends TestCase
         putenv('P202_SERVER_STATE_DIR=' . $stateDir);
 
         try {
-            $fn(new FakeMysqliConnection());
+            $db = new FakeMysqliConnection();
+            // The install's id, which names its directory in the state dir.
+            $db->whenQueryContainsReturnRows('202_deployment_secrets', [['secret_value' => str_repeat('1', 64)]]);
+            $fn($db);
         } finally {
             putenv('P202_SERVER_STATE_DIR');
-            foreach (glob($stateDir . '/*') ?: [] as $file) {
-                @unlink($file);
-            }
-            @rmdir($stateDir);
+            exec('rm -rf ' . escapeshellarg($stateDir));
         }
     }
 

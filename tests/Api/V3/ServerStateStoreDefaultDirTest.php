@@ -252,10 +252,12 @@ final class ServerStateStoreDefaultDirTest extends TestCase
     }
 
     /**
-     * The install's id is read only for the directory it names: a store
-     * given a directory, or P202_SERVER_STATE_DIR, never asks the database.
+     * The install's id is read for the directory it names, the default one
+     * or the install's own in P202_SERVER_STATE_DIR
+     * (ServerStateStoreOperatorDirTest); a store given a directory never
+     * asks the database.
      */
-    public function testTheInstallIdIsReadOnlyForTheDirectoryItNames(): void
+    public function testTheInstallIdIsReadForEveryDirectoryItNames(): void
     {
         $GLOBALS['dbname'] = 'p202_state_test_env';
         $unreadable = static function (): string {
@@ -265,12 +267,15 @@ final class ServerStateStoreDefaultDirTest extends TestCase
         $this->createdDirs[] = $dir;
         $this->assertSame($dir, (new ServerStateStore($dir, $unreadable))->baseDir());
 
-        putenv('P202_SERVER_STATE_DIR=' . $dir);
-        $this->assertSame($dir, (new ServerStateStore(null, $unreadable))->baseDir());
-
-        putenv('P202_SERVER_STATE_DIR');
-        $this->expectException(DatabaseException::class);
-        new ServerStateStore(null, $unreadable);
+        foreach (['P202_SERVER_STATE_DIR=' . $dir, 'P202_SERVER_STATE_DIR'] as $env) {
+            putenv($env);
+            try {
+                new ServerStateStore(null, $unreadable);
+                $this->fail('a store that cannot read the install id was built with ' . $env);
+            } catch (DatabaseException $e) {
+                $this->assertSame('the install id was read', $e->getPrevious()?->getPrevious()?->getMessage());
+            }
+        }
     }
 
     /**
@@ -541,15 +546,16 @@ final class ServerStateStoreDefaultDirTest extends TestCase
         self::assertDirectoryDoesNotExist($preferred . '.1', 'nor made one of its own');
     }
 
+    /** P202_SERVER_STATE_DIR wins over the temp dir, holding the install's own directory. */
     public function testExplicitEnvOverrideWins(): void
     {
         $GLOBALS['dbname'] = 'p202_state_test_env';
         $dir = sys_get_temp_dir() . '/p202-state-env-test-' . bin2hex(random_bytes(4));
-        putenv('P202_SERVER_STATE_DIR=' . $dir);
+        putenv('P202_SERVER_STATE_DIR=' . $dir . '/');
         $this->createdDirs[] = $dir;
 
-        $store = new ServerStateStore();
-        $this->assertSame($dir, $store->baseDir());
+        $store = new ServerStateStore(null, static fn (): string => 'install-a');
+        $this->assertSame($dir . '/install-' . substr(sha1('install-a'), 0, 12), $store->baseDir());
     }
 
     /** A temp dir of its own for a child PHP, removed in tearDown. */
