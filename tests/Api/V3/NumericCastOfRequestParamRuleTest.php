@@ -10,9 +10,11 @@ use Tests\TestCase;
  * ForbidNumericCastOfRequestParamRule, run through the committed
  * phpstan.neon.dist (so an unregistered rule fails here) over a fixture tree
  * that plants a numeric cast of a query parameter in every shape the rule
- * claims to cover, beside the reads it must leave alone, and the same defect
- * in a file outside the api/ directory, which it must not report. Lines
- * ending in `// REPORT` must be reported, once each; no other line may be.
+ * claims to cover, beside the reads it must leave alone, and a file outside
+ * the api/ directory, where a request superglobal is reported (LTV Settings'
+ * Delete read `12abc` as webhook 12) and $params, a name that says nothing
+ * there, is not. Lines ending in `// REPORT` must be reported, once each; no
+ * other line may be.
  *
  * @group phpstan
  */
@@ -95,6 +97,20 @@ final class NumericCastOfRequestParamRuleTest extends TestCase
             public function notInTheApiTree(array $params): int
             {
                 return (int) $params['limit'];
+            }
+
+            /** @return list<mixed> */
+            public function aPagesPost(): array
+            {
+                $out = [];
+                $out[] = (int) ($_POST['webhook_id'] ?? 0);            // REPORT
+                $out[] = (int) $_GET['offset'];                        // REPORT
+                $out[] = intval($_REQUEST['id']);                      // REPORT
+                $out[] = (float) ($_COOKIE['ratio'] ?? 0);             // REPORT
+                $out[] = (string) ($_POST['webhook_id'] ?? '');
+                $out[] = \Prosper202\Http\PostedId::read($_POST['webhook_id'] ?? null);
+
+                return $out;
             }
         }
         PHP;
@@ -187,20 +203,24 @@ final class NumericCastOfRequestParamRuleTest extends TestCase
         $this->mkdir($root . '/api');
         $this->mkdir($root . '/lib');
         $fixture = $root . '/api/Fixture.php';
+        $outside = $root . '/lib/Outside.php';
         $this->write($fixture, self::FIXTURE);
-        $this->write($root . '/lib/Outside.php', self::OUTSIDE);
+        $this->write($outside, self::OUTSIDE);
 
         $expected = [];
-        foreach (explode("\n", (string) file_get_contents($fixture)) as $index => $line) {
-            if (str_contains($line, '// REPORT')) {
-                $expected[] = $index + 1;
+        foreach ([$fixture, $outside] as $file) {
+            foreach (explode("\n", (string) file_get_contents($file)) as $index => $line) {
+                if (str_contains($line, '// REPORT')) {
+                    $expected[realpath($file) ?: $file][] = $index + 1;
+                }
             }
         }
-        $this->assertCount(17, $expected, 'the fixture lost some of its planted defects');
+        $this->assertSame([17, 4], array_map('count', array_values($expected)), 'the fixture lost some of its planted defects');
 
         $found = $this->reportedIn($root);
-        $this->assertSame([realpath($fixture) ?: $fixture], array_keys($found), 'findings outside the api/ fixture: ' . var_export($found, true));
-        $this->assertSame($expected, array_values($found)[0], 'the rule did not report exactly the planted defects, once each');
+        ksort($expected);
+        ksort($found);
+        $this->assertSame($expected, $found, 'the rule did not report exactly the planted defects, once each');
     }
 
     public function testTheRuleIsRegisteredInTheCommittedConfig(): void

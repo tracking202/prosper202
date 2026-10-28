@@ -54,6 +54,12 @@ declare(strict_types=1);
  *                   is printed apart, and a row it writes there is lost
  */
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 [$script, $file, $shape, $scenario] = $argv + [null, null, 'db', 'page'];
 
 // Held until the end, as a web response's body is until the page ends: the

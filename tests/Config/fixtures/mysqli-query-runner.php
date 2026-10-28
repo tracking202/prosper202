@@ -15,6 +15,12 @@
 
 declare(strict_types=1);
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 require_once __DIR__ . '/lift-function.php';
 
 $functions = __DIR__ . '/../../../202-config/functions-shared.php';

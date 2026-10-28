@@ -67,33 +67,66 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 
 		if (empty($error)) {
-			$mysql['ppc_network_id'] = isset($_POST['ppc_network_id']) ? $db->real_escape_string((string)$_POST['ppc_network_id']) : '';
 			$mysql['ppc_network_name'] = $db->real_escape_string((string)$_POST['ppc_network_name']);
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 			$mysql['ppc_network_time'] = time();
 
-			if ($network_editing == true) {
-				$ppc_network_sql  = " UPDATE 202_ppc_networks SET";
-			} else {
-				$ppc_network_sql = "INSERT INTO `202_ppc_networks` SET";
-			}
-			$ppc_network_sql .= " `user_id`='" . $mysql['user_id'] . "',
-								  `ppc_network_name`='" . $mysql['ppc_network_name'] . "',
-								  `ppc_network_time`='" . $mysql['ppc_network_time'] . "'";
-			if ($network_editing == true) {
-				$ppc_network_sql  .= "WHERE ppc_network_id='" . $mysql['ppc_network_id'] . "'";
-			}
-            $ppc_network_result = _mysqli_query($ppc_network_sql);
-            if ($ppc_network_result === false) {
-                record_mysql_error($ppc_network_sql);
+            $renamedFrom = null;
+            if ($network_editing == true) {
+                // Renamed only when it is the account's own. The UPDATE named the
+                // source by its posted id alone and set user_id to the session's,
+                // so any account that reached Setup could take another's source.
+                $rawSourceId = $_POST['ppc_network_id'] ?? '';
+                $sourceId = is_string($rawSourceId) && preg_match('/\A[1-9][0-9]{0,9}\z/', $rawSourceId) === 1
+                    ? (int) $rawSourceId : 0;
+                $newName = (string) $_POST['ppc_network_name'];
+                $ownerId = (int) $_SESSION['user_id'];
+                try {
+                    $sourceConn = new \Prosper202\Database\Connection($db);
+                    $renamedFrom = $sourceConn->transaction(
+                        static function () use ($sourceConn, $sourceId, $newName, $ownerId): ?string {
+                            $owned = $sourceConn->prepareWrite('SELECT ppc_network_name FROM 202_ppc_networks'
+                                . ' WHERE ppc_network_id = ? AND user_id = ? AND ppc_network_deleted = 0 FOR UPDATE');
+                            $sourceConn->bind($owned, 'ii', [$sourceId, $ownerId]);
+                            $found = $sourceConn->fetchOne($owned);
+                            if ($found === null) {
+                                return null;
+                            }
+                            $rename = $sourceConn->prepareWrite('UPDATE 202_ppc_networks SET ppc_network_name = ?,'
+                                . ' ppc_network_time = ? WHERE ppc_network_id = ? AND user_id = ?');
+                            $sourceConn->bind($rename, 'siii', [$newName, time(), $sourceId, $ownerId]);
+                            $sourceConn->executeUpdate($rename);
+
+                            return (string) $found['ppc_network_name'];
+                        }
+                    );
+                } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+                    $what = 'UPDATE 202_ppc_networks (traffic source ' . $sourceId . ')';
+                    record_mysql_error($db, $what, $e->getMessage());
+                }
+                if ($renamedFrom === null) {
+                    $error['ppc_network_edit'] = 'That traffic source was not found on this account.'
+                        . ' Nothing was saved.';
+                }
+            } else {
+                $ppc_network_sql = "INSERT INTO `202_ppc_networks` SET `user_id`='" . $mysql['user_id'] . "',
+                                  `ppc_network_name`='" . $mysql['ppc_network_name'] . "',
+                                  `ppc_network_time`='" . $mysql['ppc_network_time'] . "'";
+                $ppc_network_result = _mysqli_query($ppc_network_sql);
+                if ($ppc_network_result === false) {
+                    record_mysql_error($ppc_network_sql);
+                }
             }
+        }
+
+        if (empty($error)) {
 			$add_success = true;
 			// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
 			// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
 			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 			if ($network_editing == true) {
 				if ($slack)
-					$slack->push('traffic_source_name_changed', ['old_name' => $_GET['edit_ppc_network_name'], 'new_name' => $_POST['ppc_network_name'], 'user' => $user_row['username']]);
+					$slack->push('traffic_source_name_changed', ['old_name' => $renamedFrom, 'new_name' => $_POST['ppc_network_name'], 'user' => $user_row['username']]);
 				//if editing true, refresh back with the edit get variable GONE GONE!
 				header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 			} else {
@@ -141,6 +174,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// The pixels the account is left with, read before anything is
 		// written: a code with no type is refused with the rest of the form.
 		$pixelRows = \Prosper202\Setup\AccountPixels::fromForm($_POST, $error);
+        // A Postback URL the server would refuse to call is refused here, as
+        // the API refuses it; what the account's pixels hold now is taken as
+        // it is.
+        $heldPostbacks = $editing
+            ? (new \Prosper202\Setup\AccountPixels(new \Prosper202\Database\Connection($db)))
+                ->storedPostbacks((int) $_SESSION['user_id'], (int) $_GET['edit_ppc_account_id'])
+            : [];
+        \Prosper202\Setup\AccountPixels::refusePostbacks($pixelRows, $heldPostbacks, $error);
 
 		if (empty($error)) {
 			//check to see if this user is the owner of the ppc network hes trying to add an account to
@@ -208,7 +249,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 								  ppc_account_time='" . $mysql['ppc_account_time'] . "'";
 
 			if ($editing == true) {
-				$ppc_account_sql  .= "WHERE ppc_account_id='" . $mysql['ppc_account_id'] . "'";
+				$ppc_account_sql  .= "WHERE ppc_account_id='" . $mysql['ppc_account_id'] . "'"
+                    . " AND user_id='" . $mysql['user_id'] . "'";
 			}
 
             $ppc_account_result = _mysqli_query($ppc_account_sql);
@@ -535,7 +577,7 @@ echo p202_setup_query_flashes([
 ], $_GET);
 if ($error) {
 	echo p202_setup_error_flashes($error, ['ppc_network_name', 'ppc_network_id', 'ppc_account_name']);
-	if (isset($error['pixel_correction_url']) || isset($error['pixel_type_id'])) {
+	if (isset($error['pixel_correction_url']) || isset($error['pixel_type_id']) || isset($error['pixel_code'])) {
 		// The pixels sit under a disclosure, so the sentence is said at the
 		// top as well as opening it (below).
 		$hasPixels = true;

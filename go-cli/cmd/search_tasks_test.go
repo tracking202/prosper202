@@ -232,15 +232,18 @@ func TestSearchFindsSpyByWhatPeopleCallIt(t *testing.T) {
 // mobile-apps-ui-001), each now second: two tasks in one ask, where the
 // other task's command comes first.
 var searchKnownMisses = map[string]string{
+	"admin-005-a-paykickstart-key-is-stored-never-repeated":                 "save a key and give the URL to paste: two tasks; system integrations first, user prefs update second",
+	"admin-006-a-jvzoo-affiliate-gets-the-affiliate-url":                    "save a key and give the URL to paste: two tasks; system integrations first, user prefs update second",
 	"attribution-003-development-postbacks-count-only-once-the-app-opts-in": "register an app and count its postbacks: two tasks; app report first, app create second",
 	"breakdown-002-no-such-transaction-is-said-not-invented":                "the expected command is a lookup step (conversion list), not the task asked",
 	"ios-sdk-001-encode-a-funnel-goal":                                      "describes the encoding's meaning, not the command; app encoding create third",
 	"ltv-004-line-items-on-a-sale-with-no-known-customer":                   "the expected command is a lookup step (click list, fourth); the task asked, recording revenue, is first",
 	"mobile-apps-ui-001-android-app-and-its-tracking-link":                  "set up an app and give its tracking link: two tasks; the tracker first, app link second",
+	"optimize-002-no-campaign-earns-more-so-nothing-is-routed":              "\"per click\" on a traffic source account puts click update-cpc first; campaign optimize second",
 	"setup-code-002-an-advanced-page-names-its-offers":                      "asks for the buttons' links; nothing says \"code\" (landing-page code fourth)",
 	"setup-code-004-a-traffic-source-variable-reaches-the-link":             "\"pass it along as adid\" names no variable; the link ranks the tracker first",
 	"setup-link-002-the-agent-knows-whose-key-it-holds":                     "\"which user does this key act as\" carries no word whoami's text uses; whoami second",
-	"setup-link-003-a-rule-that-redirects-to-a-url-delivers-the-click":      "a redirector name, an address and a URL crowd out \"add a rule\"",
+	"setup-text-ad-001-a-new-ad-goes-on-the-campaigns-link":                 "write an ad and put it on a link: two tasks, and the ad's copy crowds out \"write\"; the Text Ads page (text-ad list) first, text-ad create fourth",
 	"staged-001-apply-writes-the-reviewed-payload":                          "the task is a create with --staged; the expected command is the apply step (fourth)",
 	"triage-002-no-sale-value-given-is-not-invented":                        "\"losing money\" is not read as losers (fifth)",
 	"update-001-a-cost-set-on-one-campaign-only":                            "a campaign name and two days crowd out \"record that cost on those clicks\" (sixth)",

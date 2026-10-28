@@ -11,6 +11,12 @@
 
 declare(strict_types=1);
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 $db = mysqli_connect(

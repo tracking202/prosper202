@@ -15,7 +15,8 @@ use Prosper202\Database\Connection;
  * Every conversion row of the click is listed — counted, unpaid, superseded,
  * deleted and reversals alike — with its amount, what produced it (source)
  * and what that is (source_ref resolved to a goal and version, an upload, a
- * reversed conversion or an API key), its transaction id and time, and
+ * reversed conversion or an API key), how its click was found
+ * (match_method), its transaction id and time, and
  * whether it counts toward the click's value with the reason when it does
  * not. Which rows count is ClickValueCalculator's answer (LedgerExplainer),
  * and the click's cached value is compared with it, so a breakdown that
@@ -60,7 +61,7 @@ final class ClickBreakdown
 
         $stmt = $this->conn->prepareRead(
             'SELECT conv_id, click_id, click_payout, payable, deleted, reverses_conv_id, source, source_ref,
-                    superseded_reason, superseded_by, transaction_id, event_name, conv_time
+                    superseded_reason, superseded_by, transaction_id, event_name, conv_time, match_method
              FROM 202_conversion_logs WHERE click_id = ? ORDER BY conv_id'
         );
         $this->conn->bind($stmt, 'i', [$clickId]);
@@ -96,6 +97,7 @@ final class ClickBreakdown
                 $explanation = $verdict['reason']->explanation();
             }
             $source = ConversionSource::from((string) $r['source']);
+            $matchedBy = MatchMethod::fromStored($r['match_method'], 'conversion ' . $convId);
             $rows[] = [
                 'conv_id' => $convId,
                 'click_id' => (int) $r['click_id'],
@@ -111,6 +113,8 @@ final class ClickBreakdown
                 'source_label' => $source->label(),
                 'source_ref' => $r['source_ref'] !== null && $r['source_ref'] !== '' ? (string) $r['source_ref'] : null,
                 'linked_to' => $refs[$convId] ?? null,
+                'match_method' => $matchedBy->value,
+                'match_method_label' => $matchedBy->label(),
                 'event_name' => $r['event_name'] !== null && $r['event_name'] !== '' ? (string) $r['event_name'] : null,
                 'transaction_id' => $r['transaction_id'] !== null && $r['transaction_id'] !== '' ? (string) $r['transaction_id'] : null,
                 'reverses_conv_id' => $r['reverses_conv_id'] !== null ? (int) $r['reverses_conv_id'] : null,

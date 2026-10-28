@@ -219,7 +219,7 @@ class SystemController
 
     public function metrics(): array
     {
-        $store = new ServerStateStore();
+        $store = ServerStateStore::forInstall($this->db);
         $metrics = $store->metrics();
         $counters = is_array($metrics['counters'] ?? null) ? $metrics['counters'] : [];
 

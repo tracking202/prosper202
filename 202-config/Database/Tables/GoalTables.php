@@ -40,7 +40,10 @@ use Prosper202\Database\Schema\TableRegistry;
  *   it onto.
  * - 202_goal_events: the evidence, idempotent on (subject, event_id), with a
  *   fingerprint so a reused event id carrying different content is refused
- *   rather than silently dropped.
+ *   rather than silently dropped. `match_method` is how the request that
+ *   reported the event found its click (Conversion\Ledger\MatchMethod),
+ *   which the ledger row of an outcome it reaches carries; it is not part
+ *   of the fingerprint, so a retry by another path is the same event.
  * - 202_goal_progress: the evaluator's per-(subject, goal, version) state.
  * - 202_goal_outcomes: every time a goal was reached, whether or not the
  *   subject has a click; the funnel's source. `app_registration_id` names the
@@ -172,6 +175,7 @@ final class GoalTables
                 `occurred_at` int(10) unsigned NOT NULL,
                 `received_at` int(10) unsigned NOT NULL,
                 `fingerprint` char(64) NOT NULL,
+                `match_method` varchar(16) NOT NULL DEFAULT 'unknown',
                 PRIMARY KEY (`event_row_id`),
                 UNIQUE KEY `subject_event` (`subject_type`,`subject_id`,`event_id`),
                 KEY `user_id` (`user_id`)

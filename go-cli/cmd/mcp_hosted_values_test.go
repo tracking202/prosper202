@@ -266,6 +266,62 @@ func TestHostedCallRefusesArgumentsPastTheValueBound(t *testing.T) {
 	}
 }
 
+// rotator_set_rules sends back the set rotator_get answers, whole: a hosted
+// call takes it up to hostedDocumentArgumentValues, a set past that is
+// refused before anything is sent, and the document at its bound costs less
+// than the list arguments at theirs.
+func TestHostedCallTakesARuleSetAsLargeAsRotatorGetAnswers(t *testing.T) {
+	// 4 values for the object, id, rules and dry_run; 17 a rule.
+	set := func(n int) string {
+		rule := `{"rule_name":"r","splittest":1,"criteria":[{"type":"country","statement":"is","value":"United States(US)"}],` +
+			`"redirects":[{"redirect_url":"https://a.example/","weight":50,"name":"A"},{"redirect_url":"https://b.example/","weight":50,"name":"B"}]}`
+		return `{"id":"7","dry_run":true,"rules":[` + strings.TrimSuffix(strings.Repeat(rule+",", n), ",") + `]}`
+	}
+	fits := (hostedDocumentArgumentValues - 4) / 17
+	if n, over := api.JSONValuesOver([]byte(set(fits)), hostedDocumentArgumentValues); over || n != 4+17*fits {
+		t.Fatalf("the set of %d rules holds %d values", fits, n)
+	}
+	if fits*17+4 <= hostedArgumentValues {
+		t.Fatalf("a set of %d rules fits the bound of other arguments; the test shows nothing", fits)
+	}
+	f := &valuesInstall{answer: func(string) []byte { return []byte(`{"data":{"dry_run":true,"rotator_id":7,"rules":[],"changes":{}}}`) }}
+	f.server(t)
+	withHostedRun(t, true)
+
+	var err error
+	document := allocated(func() {
+		_, _, err = mcpExecute(t, "mcp", "call", "rotator_set_rules", "--input", set(fits))
+	})
+	if err != nil {
+		t.Fatalf("a set of %d rules: %v", fits, err)
+	}
+	if hits := f.requests(); len(hits) != 1 || hits[0] != "PUT /api/v3/rotators/7/rules?dry_run=1" {
+		t.Fatalf("a set of %d rules asked %q", fits, hits)
+	}
+
+	_, _, err = mcpExecute(t, "mcp", "call", "rotator_set_rules", "--input", set(fits+1))
+	if err == nil || exitCodeForError(err) != ExitValidation {
+		t.Fatalf("over the bound: %v", err)
+	}
+	if want := fmt.Sprintf("the arguments for rotator_set_rules hold more than %d JSON values", hostedDocumentArgumentValues); !strings.Contains(err.Error(), want) ||
+		!strings.Contains(hintFor(err), "`p202 rotator set-rules`") {
+		t.Fatalf("over the bound: %v (hint %q)", err, hintFor(err))
+	}
+	if hits := f.requests(); len(hits) != 1 {
+		t.Fatalf("a refused set reached the install: %q", hits)
+	}
+
+	offers := `{"id":"1","offer":[` + strings.TrimSuffix(strings.Repeat(`"campaign:1",`, hostedArgumentValues-3), ",") + `]}`
+	list := allocated(func() {
+		_, _, _ = mcpExecute(t, "mcp", "call", "landing_page_code", "--input", offers, "--read-only")
+	})
+	// About the same (5.5 and 5.1 MB measured); a document read item by item,
+	// as a list is, would cost several times what the list does.
+	if document > list*3/2 {
+		t.Fatalf("a set at its bound allocated %d bytes, the list arguments at theirs %d", document, list)
+	}
+}
+
 // A write tool whose answer passes the bound says the install may have made
 // the change, not how to ask for less (CLAUDE.md #13).
 func TestHostedWriteToolRefusedAfterTheWriteSaysToLookFirst(t *testing.T) {
@@ -342,5 +398,24 @@ func TestHostedRefusalWrappedByTheCommandIsStillTheRefusal(t *testing.T) {
 	}
 	if hits := f.requests(); len(hits) != 0 {
 		t.Fatalf("sent %q after the capabilities answer was refused", hits)
+	}
+}
+
+// text_ad_update reads the stored ad before its write when the type or a
+// link changes: an answer past the bound there stops the call with no PUT,
+// and the refusal says nothing was changed.
+func TestHostedTextAdUpdateRefusedAtItsReadSendsNoWrite(t *testing.T) {
+	f := &valuesInstall{answer: func(string) []byte { return tinyRows(hostedAnswerValues/2 + 100) }}
+	f.server(t)
+	withHostedRun(t, true)
+	stdout, _, err := mcpExecute(t, "mcp", "call", "text_ad_update", "--input", `{"id":"5","text_ad_type":"1"}`)
+	if !api.AnswerTooManyValues(err) || exitCodeForError(err) != ExitValidation || stdout != "" {
+		t.Fatalf("text_ad_update: %v, printed %d bytes", err, len(stdout))
+	}
+	if !strings.Contains(hintFor(err), "Nothing that changes data was sent") {
+		t.Fatalf("hint %q does not say the write was not sent", hintFor(err))
+	}
+	if hits := f.requests(); len(hits) != 1 || hits[0] != "GET /api/v3/text-ads/5" {
+		t.Fatalf("asked %q, want the one read of the ad", hits)
 	}
 }

@@ -142,8 +142,9 @@ var clickConversionsCmd = &cobra.Command{
 	Long: `Lists every conversion recorded on the click — counted, unpaid, superseded,
 deleted and reversals alike — with its amount, what produced it (source), what
 that is (a goal and version, an upload, the conversion a reversal nets, the API
-key that wrote it), its transaction id, and whether it counts toward the
-click's value, with the reason when it does not.
+key that wrote it), how its click was found (matched_by: click_id, cookie,
+visitor_id, same_ip or unknown), its transaction id, and whether it counts
+toward the click's value, with the reason when it does not.
 
 The table shows one line per conversion and ends with the click's value; --json
 and --ndjson return the API's rows unchanged, and --json adds the "click"
@@ -213,6 +214,7 @@ func renderClickConversions(data []byte) error {
 			"amount":         r["amount"],
 			"counts":         counts,
 			"source":         r["source"],
+			"matched_by":     r["match_method"],
 			"linked_to":      linked,
 			"transaction_id": r["transaction_id"],
 			"event_name":     r["event_name"],

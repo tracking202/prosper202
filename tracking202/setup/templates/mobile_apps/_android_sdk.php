@@ -98,7 +98,17 @@ $matchTone = static function (string $state): string {
                         <tr>
                             <td><?php echo $e(gmdate('M j, H:i', (int)($install['received_at'] ?? 0))); ?></td>
                             <td><span class="<?php echo $e($matchTone($state)); ?>"><?php echo $e(str_replace('_', ' ', $state)); ?></span><?php if ((int)($install['is_test'] ?? 0) === 1) { ?> <span class="p202-pill p202-pill--warn">test</span><?php } ?></td>
-                            <td class="small"><?php echo $e((string)($install['match_reason'] ?? '')); ?></td>
+                            <td class="small"><?php echo $e((string)($install['match_reason'] ?? '')); ?>
+                                <?php $settleFailures = (int)($install['settle_failures'] ?? 0);
+                                if ($state === 'pending_click' && $settleFailures > 0) {
+                                    $tries = $settleFailures === 1 ? 'on the last try'
+                                        : "$settleFailures tries in a row"; ?>
+                                    <div class="text-warning-emphasis">
+                                        Settling it failed <?php echo $tries; ?>;
+                                        it is tried again, and the server log says why.
+                                    </div>
+                                <?php } ?>
+                            </td>
                             <td><?php echo $e(str_replace('_', ' ', (string)($install['integrity_state'] ?? ''))); ?></td>
                             <td class="num"><?php echo ($install['click_id'] ?? null) === null ? '<span class="text-body-secondary">none</span>' : (int)$install['click_id']; ?></td>
                         </tr>

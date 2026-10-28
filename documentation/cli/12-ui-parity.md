@@ -34,11 +34,12 @@ record links only to the caller's own records
 | Campaigns | `/campaigns` (+ `attribution_model_id`, `app_registration_id`) | `p202 campaign …`, `campaign clone`, `campaign check-urls`, `campaign replace-url` | ✅ |
 | Landing Pages | `/landing-pages` | `p202 landing-page …` | ✅ |
 | Text Ads | `/text-ads` | `p202 text-ad …` | ✅ |
-| Redirector: redirectors, rules, criteria | `/rotators`, `/rotators/{id}/rules` | `p202 rotator …`, `rotator rule-create/update/delete`, `rotator criteria-values`, `rotator test`, `rotator trace` | ◐ criteria values that come from a hosted list for some types |
+| Redirector: redirectors, rules, criteria | `/rotators`, `/rotators/{id}/rules` (`PUT` saves the whole set, in order, as the page does) | `p202 rotator …`, `rotator set-rules`, `rotator rule-create/update/delete`, `rotator criteria-values`, `rotator test`, `rotator trace` | ◐ criteria values that come from a hosted list for some types; the auto-monetizer is set on the page only |
 | Mobile Apps (incl. goals, SKAN encodings, integrity) | `/apps/…`, `/goals/…` | `p202 app …`, `p202 goal …` | ✅ |
 | Get LP Code | `GET /landing-pages/{id}/code` (`?offers=campaign:12,rotator:3` for an advanced page) | `p202 landing-page code <id>` (`--offer`) | ✅ |
 | Get Links | `POST /trackers`, `GET /trackers/{id}/url` (`t202kw`, `c1`–`c4`, `utm_*`, the source's custom variables) | `p202 tracker create`, `tracker create-with-url`, `tracker get-url`, `tracker bulk-urls` | ✅ |
 | Postback/Pixel | `GET /conversions/postback-code` | `p202 conversion postback-url`, `p202 conversion pixel` (`--type simple\|advanced\|universal`, `--iframe`) | ✅ |
+| Offline Conversions: the download | `GET /conversions/offline-export`, `GET /conversions/offline-export/summary` | `p202 conversion offline-export` (`--summary`) | ◐ the conversion names and the fetch URLs are set on the page only: a URL's key is shown once, there |
 
 ## Overview
 
@@ -48,6 +49,7 @@ record links only to the caller's own records
 | Breakdown Analysis | `/reports/timeseries`, `/reports/breakdown` | `p202 report timeseries`, `report breakdown` | ✅ |
 | Day Parting / Week Parting | `/reports/daypart`, `/reports/weekpart` | `p202 report daypart`, `report weekpart` | ✅ |
 | Group Overview (up to four groupings, nested, with subtotals) | `GET /reports/groups?by=…` | `p202 report groups --by …` | ✅ |
+| Group Overview's Match method level (conversions by how their click was found) | `GET /conversions/match-methods`, `GET /conversions?match_method=…` | `p202 conversion match-methods`, `conversion list --match-method …` | ≈ by campaign and conversion time; the page splits by click time, with each group's clicks and cost |
 | Rotator breakdown | `GET /rotators/{id}/stats` | `p202 rotator stats` | ✅ each rule by the rule the click matched, offer-rotator clicks included, as the page counts them |
 
 ## Analyze
@@ -91,13 +93,15 @@ Every Update write previews with `?dry_run=1` (`--dry-run`).
 | Settings: login log | `/system/login-log` | `p202 system login-log` | ✅ |
 | Settings: click-data retention, delete before a date | `/system/retention`, `/system/retention/delete-before` | `p202 system retention show/set/delete-before` | ✅ |
 | Settings: ISP lookup | `/system/isp-lookup` | `p202 system isp-lookup show/enable/disable` | ✅ |
+| Settings: traffic sources in another user's account (the notice and its panel) | `/system/traffic-source-owners`, `/system/traffic-source-owners/repair`, `/system/traffic-source-owners/split` | `p202 system traffic-source-owners show/repair/split` | ✅ |
 | Settings: AutoCron, "update available" | — | — | — hosted service |
-| 3rd Party API Integrations: secrets (IPQS, ClickBank, JVZoo, Zaxaa, Slack) | `/users/{id}/preferences` | `p202 user prefs update` | ✅ |
+| 3rd Party API Integrations: secrets (IPQS, ClickBank, JVZoo, Zaxaa, Slack, PayKickstart's IPN keys) | `/users/{id}/preferences` | `p202 user prefs update` | ✅ |
 | 3rd Party API Integrations: the URLs to paste into each network | `/system/integrations` | `p202 system integrations` | ✅ |
 | 3rd Party API Integrations: DNI networks | — | — | — hosted service |
 | Attribution: models, reports, journeys, exports | `/attribution/…` | `p202 attribution …` | ✅ |
 | User Management: users, roles, keys | `/users`, `/users/{id}/roles`, `/users/{id}/api-keys` | `p202 user …`, `user role …`, `user apikey …` | ✅ |
 | 1-click upgrade | — | — | ✗ run the upgrade from the page; `p202 system info` says when one is needed |
+| GeoIP database: MaxMind account, refresh now | — | — | ✗ set up and run in Settings › GeoIP database; `p202 system info` reads its age and how the last refresh ended (`geoip_database`, `geoip_refresh`) |
 | ClickServers, VIP Perks, App Store, Hot Deals, TV202, Help | — | — | — hosted services and content |
 
 ## Not on any page

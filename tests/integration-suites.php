@@ -21,6 +21,12 @@ declare(strict_types=1);
  * IntegrationSuiteSelectionTest holds this reading to PHPUnit's own.
  */
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 $root = dirname(__DIR__);
 $wantInstance = in_array('--instance', array_slice($argv, 1), true);
 

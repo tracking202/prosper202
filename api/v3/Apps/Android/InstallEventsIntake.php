@@ -7,6 +7,7 @@ namespace Api\V3\Apps\Android;
 use Api\V3\Apps\AppRegistration;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\QuotaStore;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Database\Connection;
 use Prosper202\Goals\GoalEngine;
 use Prosper202\Goals\GoalEngineException;
@@ -184,7 +185,8 @@ final class InstallEventsIntake
         $stored = null;
         try {
             try {
-                $result = $this->engine->ingest($registration->userId, $subject, $events, $markHasEvents);
+                // The install's click is the one its signed token named.
+                $result = $this->engine->ingest($registration->userId, $subject, $events, MatchMethod::CLICK_ID, $markHasEvents);
             } catch (GoalEngineException $e) {
                 if ($e->reason === GoalEngineException::EVENT_CONFLICT || $e->reason === GoalEngineException::EVENT_CAP) {
                     $stored = 0;

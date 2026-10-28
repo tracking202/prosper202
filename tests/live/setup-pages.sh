@@ -199,6 +199,18 @@ msgs "$OUT/s-add.html"
 eq "$(Q "SELECT COUNT(*) FROM 202_ppc_networks WHERE ppc_network_name='EVAL Search Ads' AND user_id=$OWNER")" "1" "the traffic source was written"
 SRC=$(Q "SELECT ppc_network_id FROM 202_ppc_networks WHERE ppc_network_name='EVAL Search Ads'")
 
+say "traffic sources: rename"
+SRC_EDIT="$SETUP/ppc_accounts.php?edit_ppc_network_id=$SRC&edit_ppc_network_name=EVAL+Search+Ads"
+get "$SRC_EDIT" "$P"; T=$(token_of "$P")
+form_has "$P" 'id="ppc_network_name"' ppc_network_id "the rename form posts the source's id"
+has "$P" 'value="EVAL Search Ads"' "the rename form is filled"
+for name in "EVAL Search Ads Renamed" "EVAL Search Ads"; do
+  post "$SRC_EDIT" "$OUT/s-rename.html" --data-urlencode "token=$T" --data-urlencode "ppc_network_id=$SRC" --data-urlencode "ppc_network_name=$name"
+  eq "$LAST_REDIRECTS" "1" "renaming to '$name' redirects (post-redirect-get)"
+  eq "$(Q "SELECT CONCAT(user_id,'|',ppc_network_name) FROM 202_ppc_networks WHERE ppc_network_id=$SRC")" "$OWNER|$name" "the rename was saved to the same row, still the account's"
+done
+eq "$(Q 'SELECT COUNT(*) FROM 202_ppc_networks')" "1" "and no second row appeared"
+
 say "traffic sources: an account with a pixel"
 get "$SETUP/ppc_accounts.php" "$P"; T=$(token_of "$P")
 for f in ppc_network_id ppc_account_name do_edit_ppc_account 'pixel_type_id[]' 'pixel_code[]' 'pixel_id[]' token; do
@@ -460,6 +472,17 @@ RULE_ARGS=(--data-urlencode "post_rules=1" --data-urlencode "rotator_id=$ROT" --
 ajax "$AJAX/rotator.php" "$OUT/r-csrf.txt" --data-urlencode "token=wrong" "${RULE_ARGS[@]}"
 has "$OUT/r-csrf.txt" "ERROR" "saving rules with a bad token is refused"
 eq "$(Q "SELECT COUNT(*) FROM 202_rotator_rules WHERE rotator_id=$ROT")" "0" "and writes no rule"
+# The redirects read a rule with no criterion as every visitor: the save
+# refuses one, as the API's rule writes do, with nothing else in the answer.
+NO_CRITERION=(--data-urlencode "post_rules=1" --data-urlencode "rotator_id=$ROT" --data-urlencode "default_type=campaign" --data-urlencode "defaults=$CAMP"
+  --data-urlencode "data[0][rule_id]=none" --data-urlencode "data[0][rule_name]=Everyone" --data-urlencode "data[0][status]=active" --data-urlencode "data[0][split]=false"
+  --data-urlencode "data[0][redirects][0][id]=none" --data-urlencode "data[0][redirects][0][type]=url" --data-urlencode "data[0][redirects][0][value]=https://everyone.example/")
+ajax "$AJAX/rotator.php" "$OUT/r-nocrit.txt" --data-urlencode "token=$T" "${NO_CRITERION[@]}"
+eq "$(cat "$OUT/r-nocrit.txt")" "ERROR" "a rule with no criterion is refused"
+ajax "$AJAX/rotator.php" "$OUT/r-novalue.txt" --data-urlencode "token=$T" "${NO_CRITERION[@]}" \
+  --data-urlencode "data[0][criteria][0][criteria_id]=none" --data-urlencode "data[0][criteria][0][type]=country" --data-urlencode "data[0][criteria][0][statement]=is" --data-urlencode "data[0][criteria][0][value]="
+eq "$(cat "$OUT/r-novalue.txt")" "ERROR" "so is one whose criterion has no value"
+eq "$(Q "SELECT COUNT(*) FROM 202_rotator_rules WHERE rotator_id=$ROT")" "0" "and neither writes a rule"
 ajax "$AJAX/rotator.php" "$OUT/r-rules.txt" --data-urlencode "token=$T" "${RULE_ARGS[@]}"
 has "$OUT/r-rules.txt" "DONE" "saving rules with the token is accepted"
 eq "$(Q "SELECT default_campaign FROM 202_rotators WHERE id=$ROT")" "$CAMP" "the default campaign was stored"
@@ -507,6 +530,37 @@ PY
 selected_lp "$P" 'name="default_lp"' "the default's select shows the advanced landing page chosen"
 selected_lp "$P" 'data-rule-field="redirect_lp"' "the rule's redirect select shows it chosen"
 has "$P" "(advanced)" "and names it as an advanced page"
+
+# A rule an older API call stored with no criterion is listed as what the
+# redirects read it as, so it can be found.
+say "rotators: a stored rule with no criterion is listed as matching any visitor"
+mysql_q "$DB" -e "INSERT INTO 202_rotators SET user_id=$OWNER, public_id=990001, name='EVAL Legacy Redirector', default_url='https://d.example/';
+  INSERT INTO 202_rotator_rules SET rotator_id=LAST_INSERT_ID(), rule_name='EVAL Legacy Rule', splittest=0, status=1;"
+LEGACY_ROT=$(Q "SELECT id FROM 202_rotators WHERE name='EVAL Legacy Redirector'")
+get "$SETUP/rotator.php" "$OUT/r-legacy.html"
+has "$OUT/r-legacy.html" "If any visitor (no criteria)" "the list says the rule matches any visitor"
+mysql_q "$DB" -e "DELETE FROM 202_rotator_rules WHERE rotator_id=$LEGACY_ROT; DELETE FROM 202_rotators WHERE id=$LEGACY_ROT;"
+# A criterion typed as "all" is stored as ALL, the spelling every reader
+# shares (Prosper202\Rotator\Criterion): offrtr.php read only ALL as every
+# visitor, so a rule saved as "all" sent offer-link clicks to the default.
+say "rotators: a criterion typed as all is stored as ALL and listed as any visitor"
+ALL_ARGS=("${ADV_ARGS[@]/%value]=US,GB/value]=all}")
+get "$SETUP/rotator.php?rotator_id=$ROT" "$P"; T=$(token_of "$P")
+ajax "$AJAX/rotator.php" "$OUT/r-all.txt" --data-urlencode "token=$T" "${ALL_ARGS[@]}"
+has "$OUT/r-all.txt" "DONE" "a rule whose criterion is all is accepted"
+eq "$(Q "SELECT value FROM 202_rotator_rules_criteria WHERE rotator_id=$ROT")" "ALL" "and its criterion is stored as ALL"
+get "$SETUP/rotator.php" "$OUT/r-all-list.html"
+has "$OUT/r-all-list.html" "If any visitor" "the list says the rule matches any visitor"
+# ALL matches every visitor whatever the type: an IP criterion of ALL was
+# refused as "not an IP address".
+IP_ALL_ARGS=()
+for arg in "${ALL_ARGS[@]}"; do
+  [ "$arg" = "data[0][criteria][0][type]=country" ] && arg="data[0][criteria][0][type]=ip"
+  IP_ALL_ARGS+=("$arg")
+done
+ajax "$AJAX/rotator.php" "$OUT/r-ip-all.txt" --data-urlencode "token=$T" "${IP_ALL_ARGS[@]}"
+has "$OUT/r-ip-all.txt" "DONE" "an IP criterion of all is accepted"
+eq "$(Q "SELECT CONCAT(type,'|',value) FROM 202_rotator_rules_criteria WHERE rotator_id=$ROT")" "ip|ALL" "and stored as ALL"
 
 # ─── Trackers ───────────────────────────────────────────────────────────
 say "trackers: generate, list, delete"
@@ -688,6 +742,53 @@ eq "$(Q "SELECT CONCAT(rotator_id,'|',rule_id,'|',value) FROM 202_rotator_rules_
 eq "$(Q "SELECT CONCAT(rule_id,'|',redirect_url) FROM 202_rotator_rules_redirects WHERE id=$FRED")" "$FRULE|https://foreign.example/r" "and its redirect"
 eq "$(Q "SELECT CONCAT(IFNULL(default_lp,''),'|',IFNULL(default_campaign,'')) FROM 202_rotators WHERE id=$ROT")" "$BEFORE_R" "and this redirector's default did not move"
 eq "$(Q "SELECT COUNT(*) FROM 202_rotator_rules WHERE rotator_id=$ROT")" "1" "nor did its rules"
+
+# Saving a form that names another account's record by its id: refused in
+# the page's words, with the row as it was. Every other field is this
+# account's own, so the owner check is the one that refuses. The traffic
+# source rename wrote the session's user_id over the owner's (TB9B).
+row_of() { Q "SELECT * FROM $1 WHERE $2 = $3" | md5sum; }
+foreign_save() { # label table column id url sentence args...
+  local label="$1" table="$2" column="$3" id="$4" url="$5" sentence="$6" before; shift 6
+  before=$(row_of "$table" "$column" "$id")
+  get "$url" "$P"; T=$(token_of "$P")
+  post "$url" "$OUT/f-save.html" --data-urlencode "token=$T" "$@"
+  has "$OUT/f-save.html" "$sentence" "$label is refused in the page's words"
+  eq "$(row_of "$table" "$column" "$id")" "$before" "and its row is as it was"
+}
+for id in "$FSRC" "${FSRC}abc" "0$FSRC"; do
+  foreign_save "renaming another account's traffic source (ppc_network_id=$id)" 202_ppc_networks ppc_network_id "$FSRC" \
+    "$SETUP/ppc_accounts.php?edit_ppc_network_id=$FSRC&edit_ppc_network_name=x" "That traffic source was not found on this account. Nothing was saved." \
+    --data-urlencode "ppc_network_id=$id" --data-urlencode "ppc_network_name=Taken Source"
+done
+foreign_save "filing another account's traffic source account under this account's source" 202_ppc_accounts ppc_account_id "$FACC" \
+  "$SETUP/ppc_accounts.php?edit_ppc_account_id=$FACC" "You are not authorized to modify another user&#039;s traffic source account" \
+  --data-urlencode "ppc_network_id=$SRC" --data-urlencode "ppc_account_name=Taken Account" --data-urlencode "do_edit_ppc_account=1" \
+  --data-urlencode "pixel_type_id[]=" --data-urlencode "pixel_code[]=" --data-urlencode "pixel_id[]="
+foreign_save "renaming another account's category" 202_aff_networks aff_network_id "$FNET" \
+  "$SETUP/aff_networks.php?edit_aff_network_id=$FNET" "You are not authorized to edit another users network" \
+  --data-urlencode "aff_network_name=Taken Category"
+foreign_save "editing another account's campaign" 202_aff_campaigns aff_campaign_id "$FCAMP" \
+  "$SETUP/aff_campaigns.php?edit_aff_campaign_id=$FCAMP" "You are not authorized to modify another users campaign" \
+  --data-urlencode "aff_campaign_id=$FCAMP" --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_name=Taken Campaign" \
+  --data-urlencode "aff_campaign_url=https://offer.example/?sub=[[subid]]" --data-urlencode "aff_campaign_payout=1" --data-urlencode "aff_campaign_cloaking=0"
+foreign_save "editing another account's landing page" 202_landing_pages landing_page_id "$FLP" \
+  "$SETUP/landing_pages.php?edit_landing_page_id=$FLP" "You are not authorized to modify another users campaign" \
+  --data-urlencode "landing_page_id=$FLP" --data-urlencode "landing_page_type=1" --data-urlencode "aff_campaign_id=" \
+  --data-urlencode "landing_page_nickname=Taken LP" --data-urlencode "landing_page_url=https://lp.example/taken"
+foreign_save "editing another account's text ad" 202_text_ads text_ad_id "$FAD" \
+  "$SETUP/text_ads.php?edit_text_ad_id=$FAD" "You are not authorized to modify another users campaign" \
+  --data-urlencode "text_ad_id=$FAD" --data-urlencode "text_ad_type=0" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "landing_page_id=0" \
+  --data-urlencode "text_ad_name=Taken Ad" --data-urlencode "text_ad_headline=h" --data-urlencode "text_ad_description=d" --data-urlencode "text_ad_display_url=example.com"
+foreign_save "renaming another account's redirector" 202_rotators id "$FROT" \
+  "$SETUP/rotator.php" "That redirector was not found on this account. Nothing was saved." \
+  --data-urlencode "edit_rotator=1" --data-urlencode "rotator_id=$FROT" --data-urlencode "rotator_name=Taken Redirector"
+get "$SETUP/ppc_accounts.php" "$P"; T=$(token_of "$P")
+ajax "$AJAX/custom_variables.php" "$OUT/v-foreign.txt" --data-urlencode "token=$T" --data-urlencode "ppc_network_id=$FSRC" --data-urlencode "post_vars=1" \
+  --data-urlencode "vars[0][id]=false" --data-urlencode "vars[0][name]=Taken" --data-urlencode "vars[0][parameter]=taken" --data-urlencode "vars[0][placeholder]={taken}"
+eq "$LAST_CODE" "404" "saving variables on another account's traffic source is answered 404"
+has "$OUT/v-foreign.txt" "That traffic source is not yours, or it was removed." "in words"
+eq "$(Q "SELECT COUNT(*) FROM 202_ppc_network_variables WHERE ppc_network_id=$FSRC")" "0" "and gives it no variable"
 
 # Editing or copying another account's campaign opens the add form.
 get "$SETUP/aff_campaigns.php?edit_aff_campaign_id=$FCAMP" "$OUT/c-foreign-edit.html"

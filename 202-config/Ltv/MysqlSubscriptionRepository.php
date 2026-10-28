@@ -15,8 +15,8 @@ use RuntimeException;
  * customer aggregate — no drift), and the ltv_maintenance cron reconciles
  * everything anyway.
  *
- * Time-based transitions (active -> past_due -> canceled) are handled by the
- * ltv_maintenance sweep, not here.
+ * Time-based transitions (active -> past_due -> canceled) are LtvMaintenance's
+ * sweep, which the hourly cron runs, not here.
  */
 final class MysqlSubscriptionRepository
 {
@@ -599,7 +599,11 @@ final class MysqlSubscriptionRepository
         } else {
             $this->conn->bind($stmt, 'iii', [$userId, max(1, $limit), max(0, $offset)]);
         }
-        $rows = $this->conn->fetchAll($stmt);
+        // customer_ltv is null for a subscription whose customer row is gone.
+        $rows = array_map(
+            static fn (array $row): array => LtvNumbers::decimals($row, ['amount', 'mrr', 'customer_ltv']),
+            $this->conn->fetchAll($stmt)
+        );
 
         $countSql = 'SELECT COUNT(*) AS total FROM 202_subscriptions s WHERE s.user_id = ?' . $statusWhere;
         $countStmt = $this->conn->prepareRead($countSql);

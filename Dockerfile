@@ -46,6 +46,12 @@ RUN a2enmod rewrite \
         echo '    AllowOverride None'; \
         echo '    Require all denied'; \
         echo '</Directory>'; \
+        echo '# The GeoIP databases are read, never served: a refreshed GeoLite2'; \
+        echo '# file is licensed for this install alone.'; \
+        echo '<Directory /var/www/html/202-config/geo>'; \
+        echo '    AllowOverride None'; \
+        echo '    Require all denied'; \
+        echo '</Directory>'; \
         echo '# Deny dotfiles (.env, .git, ...) but keep /.well-known/ for ACME'; \
         echo '<LocationMatch "/\.(?!well-known/)">'; \
         echo '    Require all denied'; \
@@ -72,17 +78,20 @@ CMD ["apache2-foreground"]
 
 # Default stage: self-contained image with the app baked in. www-data owns the
 # tree because the app writes inside the docroot at runtime (202-config.php,
-# 202-cronjobs/cron.lock, attribution exports, auto-upgrade). vendor/ is
+# the cron locks in 202-cronjobs/, attribution exports, auto-upgrade). vendor/ is
 # installed afterwards as root on purpose — the web user only needs to read it.
 # The entrypoint sees vendor/autoload.php and skips its runtime composer
 # install, so container start stays fast.
 FROM base AS app
-# Dependencies first, in their own layer keyed on composer.json alone: a code
-# change then reuses the cached vendor layer instead of re-resolving and
-# re-downloading every package on every deploy. (No composer.lock is committed,
-# so an install is a full resolution — cache it as hard as possible.)
-COPY composer.json /var/www/html/composer.json
-RUN composer install --no-dev --no-interaction --no-scripts --no-autoloader --no-progress
+# Dependencies first, in their own layer keyed on composer.json and
+# composer.lock: a code change then reuses the cached vendor layer. The install
+# is the locked set, the one the release zip ships; without the lock composer
+# resolves whatever matches composer.json that day. validate stops the build
+# when the lock has drifted from composer.json, where install would only warn
+# and install the old set. ImageInstallsTheLockedSetTest holds this shape.
+COPY composer.json composer.lock /var/www/html/
+RUN composer validate --no-check-publish --no-check-all \
+    && composer install --no-dev --no-interaction --no-scripts --no-autoloader --no-progress
 COPY --chown=www-data:www-data . /var/www/html
 RUN composer dump-autoload --optimize --no-dev
 # Pre-create the volume mount points owned by the web user: a named volume

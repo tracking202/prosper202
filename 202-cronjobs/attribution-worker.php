@@ -19,7 +19,8 @@ declare(strict_types=1);
  * Options:
  *   --budget=N    seconds to keep processing (default 50, 1–3600)
  *   --retry-now   make every row that failed eligible again immediately
- *                 (after fixing whatever the rows' last_error names)
+ *                 (after fixing whatever the rows' last_error names), and
+ *                 every identity merge that failed or was retired
  *
  * Exit codes: 0 when the run finished (including "another worker is
  * running"), 1 on a bad option or a database failure. Over HTTP a failure
@@ -86,7 +87,13 @@ try {
     if ($retryNow) {
         $stmt = $conn->prepareWrite('UPDATE 202_attribution_pending SET retry_at = 0 WHERE retry_at > 0');
         $reset = $conn->executeUpdate($stmt);
-        echo 'attribution-worker: ' . $reset . " failed row(s) made due again\n";
+        $stmt = $conn->prepareWrite(
+            'UPDATE 202_identity_merges SET requeue_retry_at = 0, requeue_retired_at = NULL
+             WHERE requeued_at IS NULL AND (requeue_retry_at > 0 OR requeue_retired_at IS NOT NULL)'
+        );
+        $merges = $conn->executeUpdate($stmt);
+        echo 'attribution-worker: ' . $reset . ' failed row(s) and ' . $merges
+            . " failed identity merge(s) made due again\n";
     }
     $report = AttributionWorker::runExclusive($conn, $budget);
 } catch (Throwable $e) {

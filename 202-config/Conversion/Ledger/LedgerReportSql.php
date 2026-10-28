@@ -6,8 +6,8 @@ namespace Prosper202\Conversion\Ledger;
 
 /**
  * The ledger's "which rows count" in SQL, for reports that group income by
- * what generated it (Group Overview's Transaction ID and Goal / source
- * levels).
+ * what generated it (Group Overview's Transaction ID, Goal / source and
+ * Match method levels).
  *
  * ClickValueCalculator is the definition; this reads the state the
  * recompute persisted from it. A non-reversal row counts when it is
@@ -61,7 +61,7 @@ final class LedgerReportSql
      * A derived table of the counted rows of the clicks `$clickScope`
      * selects (an SQL predicate over `202_dataengine` aliased `s`), one row
      * per part: conv_id, click_id, amount, transaction_id, source,
-     * goal_id (0 unless a goal row), goal_name, primary_part.
+     * match_method, goal_id (0 unless a goal row), goal_name, primary_part.
      *
      * `$clickScope` is inlined: callers pass SQL they built from integers
      * and fixed text only.
@@ -74,7 +74,7 @@ final class LedgerReportSql
         $goalId = "IF(lp.source = '" . ConversionSource::GOAL->value . "' AND lp.source_ref REGEXP '^goal:[0-9]+:[0-9]+\$',"
             . " CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(lp.source_ref, ':', 2), ':', -1) AS UNSIGNED), 0)";
 
-        return '(SELECT lp.conv_id, lp.click_id, lp.click_payout AS amount, lp.transaction_id, lp.source,'
+        return '(SELECT lp.conv_id, lp.click_id, lp.click_payout AS amount, lp.transaction_id, lp.source, lp.match_method,'
             . " $goalId AS goal_id, lg.name AS goal_name,"
             . " IF(lp.reverses_conv_id IS NULL AND $later, 1, 0) AS primary_part"
             . ' FROM 202_conversion_logs lp'

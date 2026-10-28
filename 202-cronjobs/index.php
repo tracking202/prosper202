@@ -6,33 +6,25 @@ ini_set('display_errors', '1');
 ob_start();
 
 // Initialize variables
-$lockFile = __DIR__ . '/cron.lock';
 $logFile = __DIR__ . '/../202-config/cronjob.log';
 
 try {
     // Bootstrap before taking the lock: a run that cannot start (the
     // database needs an upgrade, 202-config.php is missing) stops inside
     // connect.php — on the command line with the reason and exit status 1 —
-    // and must not leave a lock that makes the next runs report "already
-    // running" instead.
+    // and the lock's class comes with its autoloader.
     require_once __DIR__ . '/../202-config/connect.php';
     require_once __DIR__ . '/../202-config/class-dataengine.php';
 
-    // Check for lock file to prevent concurrent runs
-    if (file_exists($lockFile)) {
-        $lockTime = filemtime($lockFile);
-        // If lock is older than 10 minutes, remove it (stale lock)
-        if (time() - $lockTime > 600) {
-            unlink($lockFile);
-        } else {
-            error_log("Cron job already running. Lock file exists: " . $lockFile);
-            exit("Cron job already running\n");
-        }
+    // One run at a time, for as long as it runs (Prosper202\Cron\CronLock):
+    // every way in (a page's ping, a scheduler, AutoCron) comes through here.
+    // A run that finds it held does nothing and records nothing.
+    $cronLock = \Prosper202\Cron\CronLock::take(\Prosper202\Cron\CronLock::path());
+    if ($cronLock === null) {
+        error_log('Cron job already running: another run holds ' . \Prosper202\Cron\CronLock::path()
+            . '; this run did nothing.');
+        exit("Cron job already running\n");
     }
-
-    // Create lock file
-    touch($lockFile);
-
 
     // Cron does not need to hold the user's session lock while it runs.
     if (session_status() === PHP_SESSION_ACTIVE) {
@@ -93,18 +85,11 @@ function getDatabaseConnection(): mysqli
             'the record of this run'
         );
     }
-
-    // Remove lock file on successful completion
-    unlink($lockFile);
 } catch (Exception $e) {
     $errorMsg = date('Y-m-d H:i:s') . " - Cronjob Error: " . $e->getMessage() . "\n";
     echo "Error: " . $e->getMessage();
     error_log($errorMsg, 3, $logFile);
 
-    // Remove lock file on error
-    if (file_exists($lockFile)) {
-        unlink($lockFile);
-    }
     // A run that stopped says so where it is read: exit 1 on the command
     // line, 500 over HTTP while nothing has been sent.
     if (PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg') {
@@ -191,6 +176,12 @@ function RunDailyCronjob()
         $last_ip_sql = "DELETE FROM 202_last_ips WHERE time < $from";
         cronQuery($db, $last_ip_sql, 'the daily clear of the last addresses');
 
+        // LTV maintenance: the customer rollups reconciled with the ledger
+        // (its 48-hour window is a daily run's, with a day to spare), the
+        // next-offer transitions, company linking and the personalization
+        // purge. The subscription sweep is the hourly tier's.
+        RunLtvMaintenance(\Prosper202\Ltv\LtvMaintenance::DAILY_JOBS, \Prosper202\Ltv\LtvMaintenance::DAILY_SECONDS);
+
         /* -------- NOW DELETE ALL THE OLD CRONJOB ENTRIES STUFF --------- */
         $mysql['cronjob_time'] = (int)$mysql['cronjob_time'] - 86400;
         $delete_sql = "DELETE FROM 202_cronjobs WHERE cronjob_time < " . $mysql['cronjob_time'] . "";
@@ -266,7 +257,18 @@ function RunHourlyCronJob()
         // spends one of an event's five attempts.
         DeliverPendingAnalytics();
 
+        // LTV subscriptions that stopped renewing: past_due once their period
+        // and grace are over, canceled 30 days later, which MRR, churn and
+        // the customers' rollups read. Last, under its own budget.
+        RunLtvMaintenance([\Prosper202\Ltv\LtvMaintenance::SWEEP], \Prosper202\Ltv\LtvMaintenance::HOURLY_SECONDS);
+
         cronQuery($db, $insert_sql, 'the hourly tier\'s record of this hour\'s run');
+
+        // The GeoIP database, refreshed with the operator's MaxMind account
+        // when a refresh is due (weekly once one has succeeded). After the
+        // hour is recorded: a download that outlasts this run's lock must not
+        // have the next run take the whole hourly tier again beside it.
+        RefreshGeoIpDatabase();
 
         echo 'Done<br>';
         ob_flush();
@@ -278,15 +280,73 @@ function RunHourlyCronJob()
 }
 
 /**
- * Hourly analytics delivery: MessagingService::deliverPending(), the run
- * 202-cronjobs/sync-messaging.php makes on its own. Its failures are logged
- * by the service; what it does not deliver stays pending for the next hour.
+ * The GeoIP database's refresh (Prosper202\GeoIp\GeoIpRefresh), run only
+ * when due: no MaxMind credentials stored is never; otherwise a week after
+ * the last check that got an answer, a day after a failure, and at once when
+ * the file is not the one the last refresh put in place (a container image
+ * redeployed over it). A failed refresh is logged and recorded on its row,
+ * which Account › Settings shows; only a database error reading or recording
+ * the row lands in the catch.
+ */
+function RefreshGeoIpDatabase(): void
+{
+    try {
+        $conn = new \Prosper202\Database\Connection(getDatabaseConnection());
+        $result = \Prosper202\GeoIp\GeoIpRefresh::forConnection($conn)->runIfDue();
+        if ($result !== null) {
+            echo 'GeoIP database: ' . htmlspecialchars($result->message, ENT_QUOTES) . '<br>';
+            flushOutput();
+        }
+    } catch (\Throwable $e) {
+        error_log('GeoIP refresh failed: ' . $e->getMessage());
+    }
+}
+
+/**
+ * LTV maintenance (Prosper202\Ltv\LtvMaintenance) for the tier that calls it,
+ * until time() + $seconds: 202-cronjobs/ltv_maintenance.php is the same run
+ * on its own, and the maintenance's named lock keeps the two apart. A job's
+ * failure is logged by the run and the jobs after it go on; work the budget
+ * did not reach is the next run's.
+ *
+ * @param list<string> $jobs
+ */
+function RunLtvMaintenance(array $jobs, int $seconds): void
+{
+    try {
+        $report = \Prosper202\Ltv\LtvMaintenance::runExclusive(
+            new \Prosper202\Database\Connection(getDatabaseConnection()),
+            time() + $seconds,
+            $jobs
+        );
+        if ($report === null) {
+            echo 'LTV maintenance: another run holds the lock; skipped<br>';
+        } elseif (\Prosper202\Ltv\LtvMaintenance::didWork($report)) {
+            $ltvSummary = \Prosper202\Ltv\LtvMaintenance::summary($report);
+            echo 'LTV maintenance: ' . htmlspecialchars($ltvSummary, ENT_QUOTES) . '<br>';
+        }
+    } catch (\Throwable $e) {
+        error_log('LTV maintenance failed: ' . $e->getMessage());
+    }
+}
+
+/**
+ * Hourly analytics delivery: MessagingService::deliverPendingExclusive(), the
+ * run 202-cronjobs/sync-messaging.php makes on its own, under the same lock,
+ * so the two never deliver at once; while that run holds it this one skips.
+ * Its failures are logged by the service; what it does not deliver stays
+ * pending for the next hour.
  */
 function DeliverPendingAnalytics(): void
 {
     try {
-        $analytics = MessagingService::deliverPending(getDatabaseConnection());
-        if ($analytics['sent'] + $analytics['more'] + $analytics['failed'] > 0) {
+        $analytics = MessagingService::deliverPendingExclusive(
+            getDatabaseConnection(),
+            \Prosper202\Cron\CronLock::path(\Prosper202\Cron\CronLock::ANALYTICS_DELIVERY_FILE)
+        );
+        if ($analytics === null) {
+            echo 'Analytics delivery: another run holds the lock; skipped<br>';
+        } elseif ($analytics['sent'] + $analytics['more'] + $analytics['failed'] > 0) {
             echo 'Analytics delivery: ' . (int) $analytics['sent'] . ' delivered, ' . (int) $analytics['more'] . ' with more pending, '
                 . (int) $analytics['failed'] . ' failed<br>';
         }
@@ -531,7 +591,10 @@ function RunSecondsCronjob()
                 new \Prosper202\Database\Connection($db),
                 20
             );
-            if ($attribution !== null && ($attribution->processed() > 0 || $attribution->backfill !== null)) {
+            $mergesNotRequeued = $attribution === null ? 0 : $attribution->mergesFailed + $attribution->mergesRetired;
+            $worthALine = $attribution !== null
+                && ($attribution->processed() > 0 || $attribution->backfill !== null || $mergesNotRequeued > 0);
+            if ($worthALine) {
                 echo 'Attribution: ' . htmlspecialchars($attribution->summary(), ENT_QUOTES) . '<br>';
             }
         } catch (\Throwable $e) {
@@ -594,6 +657,28 @@ function RunSecondsCronjob()
             }
         } catch (\Throwable $e) {
             error_log('Notification outbox failed: ' . $e->getMessage());
+        }
+
+        // LTV webhooks, the Landing Page Optimizer's pairing among them:
+        // the deliveries the /ltv writes queued (202-cronjobs/ltv_webhooks.php
+        // is the same run on its own; the dispatcher's named lock keeps the
+        // two from overlapping, and each delivery is claimed before it is
+        // sent). Last, under its own budget: a receiver that times out ends
+        // the run, not the jobs above. A delivery's failure is recorded on
+        // its row and retried with backoff; only a database error lands here.
+        try {
+            $ltvWebhooks = \Prosper202\Ltv\WebhookDispatcher::runExclusive(
+                new \Prosper202\Database\Connection($db),
+                time() + \Prosper202\Ltv\WebhookDispatcher::RUN_SECONDS
+            );
+            if ($ltvWebhooks === null) {
+                echo 'LTV webhooks: another run holds the lock; skipped<br>';
+            } elseif (\Prosper202\Ltv\WebhookDispatcher::didWork($ltvWebhooks)) {
+                $ltvSummary = \Prosper202\Ltv\WebhookDispatcher::summary($ltvWebhooks);
+                echo 'LTV webhooks: ' . htmlspecialchars($ltvSummary, ENT_QUOTES) . '<br>';
+            }
+        } catch (\Throwable $e) {
+            error_log('LTV webhooks failed: ' . $e->getMessage());
         }
 
         echo 'Done<br>';

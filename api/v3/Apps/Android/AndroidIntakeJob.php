@@ -42,7 +42,7 @@ final class AndroidIntakeJob
      *
      * @return array{
      *     integrity: array{examined: int, verdicts: array<string, int>, retrying: int, failed: int},
-     *     settle: array{examined: int, settled: array<string, int>, still_pending: int, failed: int}
+     *     settle: array{examined: int, settled: array<string, int>, still_pending: int, failed: int, retired: int}
      * }|null
      */
     public static function runExclusive(
@@ -107,7 +107,7 @@ final class AndroidIntakeJob
      *
      * @param array{
      *     integrity: array{examined: int, verdicts: array<string, int>, retrying: int, failed: int},
-     *     settle: array{examined: int, settled: array<string, int>, still_pending: int, failed: int}
+     *     settle: array{examined: int, settled: array<string, int>, still_pending: int, failed: int, retired: int}
      * } $report
      */
     public static function summary(array $report): string
@@ -123,7 +123,7 @@ final class AndroidIntakeJob
 
         return sprintf(
             "play integrity: %d examined, %s, %d retrying, %d failed\n"
-            . 'pending clicks: %d examined, settled %s, %d still pending, %d failed',
+            . 'pending clicks: %d examined, settled %s, %d still pending, %d failed, %d retired as unreadable',
             $report['integrity']['examined'],
             $verdicts === [] ? 'no verdicts' : implode(' ', $verdicts),
             $report['integrity']['retrying'],
@@ -131,7 +131,8 @@ final class AndroidIntakeJob
             $report['settle']['examined'],
             $settled === [] ? 'none' : implode(' ', $settled),
             $report['settle']['still_pending'],
-            $report['settle']['failed']
+            $report['settle']['failed'],
+            $report['settle']['retired']
         );
     }
 

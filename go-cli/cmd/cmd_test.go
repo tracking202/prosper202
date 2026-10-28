@@ -429,20 +429,7 @@ func executeCommand(args ...string) (string, string, error) {
 	stdoutBuf := new(bytes.Buffer)
 	stderrBuf := new(bytes.Buffer)
 
-	// Reset global and command flag state between test invocations.
-	resetAllFlags(rootCmd)
-	configpkg.ResetActiveOverride()
-	jsonOutput = false
-	csvOutput = false
-	tableOutput = false
-	compactJSON, outputImplicit, outputSource = false, false, sourceDefault
-	mcpToolRun = false
-	profileName = ""
-	groupName = ""
-	_ = rootCmd.PersistentFlags().Set("json", "false")
-	_ = rootCmd.PersistentFlags().Set("csv", "false")
-	_ = rootCmd.PersistentFlags().Set("profile", "")
-	_ = rootCmd.PersistentFlags().Set("group", "")
+	resetCommandState()
 
 	rootCmd.SetOut(stdoutBuf)
 	rootCmd.SetErr(stderrBuf)
@@ -488,6 +475,35 @@ func executeCommand(args ...string) (string, string, error) {
 	combinedErr := stderrBuf.String() + string(pipeErrBuf)
 
 	return combined, combinedErr, err
+}
+
+// runAsMain runs args through run(), as main does: the command, then its error printed on stderr (the JSON
+// envelope under --json). It returns what reached stdout and stderr, and the exit code.
+func runAsMain(args ...string) (stdout, stderr string, code int) {
+	stdout, stderr = captureBoth(func() {
+		resetCommandState()
+		rootCmd.SetOut(nil)
+		rootCmd.SetErr(nil)
+		code = run(args, os.Stderr)
+	})
+	return stdout, stderr, code
+}
+
+// resetCommandState resets global and command flag state between test invocations.
+func resetCommandState() {
+	resetAllFlags(rootCmd)
+	configpkg.ResetActiveOverride()
+	jsonOutput = false
+	csvOutput = false
+	tableOutput = false
+	compactJSON, outputImplicit, outputSource = false, false, sourceDefault
+	mcpToolRun = false
+	profileName = ""
+	groupName = ""
+	_ = rootCmd.PersistentFlags().Set("json", "false")
+	_ = rootCmd.PersistentFlags().Set("csv", "false")
+	_ = rootCmd.PersistentFlags().Set("profile", "")
+	_ = rootCmd.PersistentFlags().Set("group", "")
 }
 
 func TestConfigSetURL(t *testing.T) {

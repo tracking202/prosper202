@@ -44,7 +44,7 @@ final class ServedPreferences
         'facebook_ads_linked', 'user_pref_ad_settings',
         'user_ltv_customer_cparam', 'user_ltv_personalization_fields',
         'user_ltv_score_weights', 'user_ltv_rec_fatigue', 'lpo_status',
-        'lpo_ctx_kw', 'user_delete_data_before',
+        'lpo_ctx_kw', 'user_delete_data_before', 'user_pref_same_ip_fallback',
     ];
 
     /**
@@ -57,6 +57,7 @@ final class ServedPreferences
         'cb_key', 'jvzoo_ipn_secret_key', 'zaxaa_api_signature', 'ipqs_api_key',
         'revcontent_user_id', 'revcontent_user_secret',
         'user_slack_incoming_webhook', 'lpo_site_key', 'lpo_bridge_config',
+        'paykickstart_ipn_secret_keys',
     ];
 
     private function __construct()

@@ -255,6 +255,47 @@ final class ReleaseTreeTest extends TestCase
         self::assertSame([], array_values(preg_grep('/^(locked|vendor\/ has)/', $problems)), implode("\n", $problems));
     }
 
+    public function testVendorCommandHoldsAnAppDirectoryToTheLockItIsGiven(): void
+    {
+        $classLoader = realpath(self::REPO . '/vendor/composer/ClassLoader.php');
+        if ($classLoader === false) {
+            self::markTestSkipped('vendor/composer/ClassLoader.php is not installed');
+        }
+        // The Docker Image workflow's call: the image's docroot and the
+        // checkout's lock. The docroot's own lock is not the one read.
+        $lock = static fn (string $version): string
+            => json_encode(['packages' => [['name' => 'acme/lib', 'version' => $version]]], JSON_THROW_ON_ERROR);
+        $app = $this->tree([
+            'vendor/autoload.php' => "<?php\nrequire " . var_export($classLoader, true) . ";\n"
+                . "return new \\Composer\\Autoload\\ClassLoader();\n",
+            'vendor/composer/installed.php' => "<?php return " . var_export([
+                'root' => ['name' => 'acme/root', 'dev' => false],
+                'versions' => [
+                    'acme/root' => ['pretty_version' => 'dev-main', 'install_path' => '/app'],
+                    'acme/lib' => [
+                        'pretty_version' => '2.1.0', 'type' => 'library', 'install_path' => '/app/vendor/acme/lib',
+                    ],
+                ],
+            ], true) . ";\n",
+            'vendor/acme/lib/.keep' => '',
+            'composer.lock' => $lock('2.1.0'),
+        ]);
+        $locks = $this->tree(['matching.lock' => $lock('2.1.0'), 'differing.lock' => $lock('2.0.0')]);
+        $script = self::REPO . '/build/scripts/release-tree.php';
+
+        [$status, $output] = $this->runCommand([PHP_BINARY, $script, 'vendor', $app, "{$locks}/differing.lock"]);
+        self::assertSame(1, $status, $output);
+        self::assertStringContainsString('vendor/ has acme/lib 2.1.0 but composer.lock pins 2.0.0', $output);
+
+        [$status, $output] = $this->runCommand([PHP_BINARY, $script, 'vendor', $app, "{$locks}/matching.lock"]);
+        self::assertSame(0, $status, $output);
+        self::assertStringContainsString('release-tree vendor: ok', $output);
+
+        [$status, $output] = $this->runCommand([PHP_BINARY, $script, 'vendor', $app]);
+        self::assertSame(2, $status, $output);
+        self::assertStringContainsString('usage: release-tree.php vendor', $output);
+    }
+
     public function testVerifyReportsGoBinariesThatAreMissingEmptyOrNotExecutable(): void
     {
         $stage = $this->tree([

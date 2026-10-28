@@ -76,8 +76,9 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
                         if ($rotatorConn->fetchOne($owned) === null) {
                             return false;
                         }
-                        $rename = $rotatorConn->prepareWrite('UPDATE 202_rotators SET name = ? WHERE id = ?');
-                        $rotatorConn->bind($rename, 'si', [$renameName, $renameId]);
+                        $rename = $rotatorConn->prepareWrite('UPDATE 202_rotators SET name = ?'
+                            . ' WHERE id = ? AND user_id = ?');
+                        $rotatorConn->bind($rename, 'sii', [$renameName, $renameId, $renameUserId]);
                         $rotatorConn->executeUpdate($rename);
 
                         return true;
@@ -142,13 +143,13 @@ if (isset($_GET['delete_rotator_id'])) {
                         return false;
                     }
                     foreach ([
-                        'DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?',
-                        'DELETE FROM 202_rotator_rules_redirects WHERE rule_id IN (SELECT id FROM 202_rotator_rules WHERE rotator_id = ?)',
-                        'DELETE FROM 202_rotator_rules WHERE rotator_id = ?',
-                        'DELETE FROM 202_rotators WHERE id = ?',
-                    ] as $deleteSql) {
+                        ['DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?', [$deleteRotatorId]],
+                        ['DELETE FROM 202_rotator_rules_redirects WHERE rule_id IN (SELECT id FROM 202_rotator_rules WHERE rotator_id = ?)', [$deleteRotatorId]],
+                        ['DELETE FROM 202_rotator_rules WHERE rotator_id = ?', [$deleteRotatorId]],
+                        ['DELETE FROM 202_rotators WHERE id = ? AND user_id = ?', [$deleteRotatorId, $deleteUserId]],
+                    ] as [$deleteSql, $deleteParams]) {
                         $stmt = $rotatorConn->prepareWrite($deleteSql);
-                        $rotatorConn->bind($stmt, 'i', [$deleteRotatorId]);
+                        $rotatorConn->bind($stmt, str_repeat('i', count($deleteParams)), $deleteParams);
                         $rotatorConn->executeUpdate($stmt);
                     }
 
@@ -191,7 +192,8 @@ $ispEnabled = isset($user_row['maxmind_isp']) && $user_row['maxmind_isp'] == '1'
 
 $rotators = p202_setup_rows($db, "SELECT * FROM `202_rotators` WHERE `user_id`='" . $uid . "' ORDER BY `name` ASC");
 $rulesByRotator = [];
-foreach (p202_setup_rows($db, "SELECT r.* FROM 202_rotator_rules AS r INNER JOIN 202_rotators AS ro ON (ro.id = r.rotator_id) WHERE ro.user_id = '" . $uid . "' ORDER BY r.id ASC") as $rule) {
+$ruleOrder = \Prosper202\Rotator\RuleOrder::orderBy('r');
+foreach (p202_setup_rows($db, "SELECT r.* FROM 202_rotator_rules AS r INNER JOIN 202_rotators AS ro ON (ro.id = r.rotator_id) WHERE ro.user_id = '" . $uid . "' " . $ruleOrder) as $rule) {
 	$rulesByRotator[(int) $rule['rotator_id']][] = $rule;
 }
 $criteriaByRule = [];
@@ -406,7 +408,7 @@ if ($error) {
 										<?php foreach ($rules as $rule) {
 											$ruleId = (int) $rule['id'];
 											$conditions = array_map(
-												static fn (array $c): string => ($criterionTypes[$c['type']] ?? $c['type']) . ' ' . ($c['statement'] === 'is_not' ? 'is not' : 'is') . ' ' . $c['value'],
+												static fn (array $c): string => \Prosper202\Rotator\Criterion::describe((string) $c['type'], (string) $c['statement'], $c['value'], $criterionTypes),
 												$criteriaByRule[$ruleId] ?? []
 											);
 											$targets = array_map(
@@ -417,7 +419,7 @@ if ($error) {
 												<span class="p202-list__name"><?php echo p202_setup_e($rule['rule_name']); ?></span>
 												<?php if ((string) $rule['status'] === '0') { ?><span class="p202-pill p202-pill--warn">inactive</span><?php } ?>
 												<?php if ((int) $rule['splittest'] === 1) { ?><span class="p202-pill">split test</span><?php } ?>
-												<span class="p202-list__meta">If <?php echo p202_setup_e($conditions === [] ? 'no criteria' : implode(' and ', $conditions)); ?> · to <?php echo p202_setup_e($targets === [] ? 'nowhere yet' : implode(', ', $targets)); ?></span>
+												<span class="p202-list__meta">If <?php echo p202_setup_e($conditions === [] ? 'any visitor (no criteria)' : implode(' and ', $conditions)); ?> · to <?php echo p202_setup_e($targets === [] ? 'nowhere yet' : implode(', ', $targets)); ?></span>
 											</li>
 										<?php } ?>
 									</ul>

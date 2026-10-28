@@ -34,9 +34,9 @@ Once you've set all your specific filters, click set preference and it should up
 
 Prosper now supports pagination if your reporting is extensively long.
 
-## Grouping by conversion: Transaction ID and Goal / source
+## Grouping by conversion: Transaction ID, Goal / source and Match method
 
-Two of the groupings split a click by its conversions rather than by where
+Three of the groupings split a click by its conversions rather than by where
 the click came from:
 
 - **Transaction ID** gives each transaction id its own row, with the sum of
@@ -47,6 +47,15 @@ the click came from:
   together) and every other conversion a row by what produced it: Postback,
   Pixel, API, Revenue upload and so on. Tracked goals that are not paid add
   nothing, so they have no row.
+- **Match method** gives a row to each way a conversion's click was found:
+  **Click id** (the postback, pixel, API call or upload named the click),
+  **Cookie** (a tracking cookie in the visitor's browser named it),
+  **Visitor id** (the landing-page script's visitor id), **Same IP** (nothing
+  named a click, so it was the latest click from the visitor's address: a
+  guess) and **Unknown** (recorded before 1.9.79, when this was not kept).
+  Under a campaign it says how much of the campaign's income rests on
+  guesses. `p202 conversion match-methods` and `GET
+  /conversions/match-methods` count the same by conversion time.
 
 Only conversions that count toward the click's value are added: a conversion a
 later one replaced, a deleted one, and an unpaid one are left out, exactly as

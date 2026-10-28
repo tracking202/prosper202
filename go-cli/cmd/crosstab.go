@@ -43,7 +43,9 @@ func crosstabRowDimensions() []string {
 var reportCrosstabCmd = &cobra.Command{
 	Use:   "crosstab",
 	Short: "Two-dimension breakdown (e.g. traffic source × country) for one metric",
-	Long: "Pivots one metric across two dimensions by fanning out a breakdown per row.\n" +
+	Long: "Pivots one metric across two dimensions by fanning out a breakdown per row. Each cell is that breakdown's\n" +
+		"figure for the column, as `report breakdown` shows it.\n" +
+		"Rows: the --limit-rows with the highest --metric over every row; columns: up to 5000. truncated: true says more remain.\n" +
 		"Example: report crosstab --rows ppc_account --cols country --metric profit --aff-campaign-id 90008",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -64,37 +66,45 @@ var reportCrosstabCmd = &cobra.Command{
 			return validationError("--rows %q can't be used as a crosstab axis (no id filter narrows a report to one of its rows)", rowDim)
 		}
 		limitRows, _ := cmd.Flags().GetInt("limit-rows")
+		wantRows := limitRows
+		if wantRows <= 0 || wantRows > breakdownReadRows {
+			wantRows = breakdownReadRows
+		}
 
+		// The server ranks the rows by the metric over all of them; ranked
+		// here, the first page by clicks was all a ranking saw.
 		base := collectReportParams(cmd)
 		base["breakdown"] = rowDim
-		rowRows, err := fetchBreakdownRows(c, base)
+		base["sort"], base["sort_dir"] = metric, "DESC"
+		rowRows, rowsCut, err := fetchBreakdownRows(c, base, wantRows)
 		if err != nil {
 			return err
 		}
-		// Rank rows by the metric so the most significant appear first.
 		sortRowsBy(rowRows, metric, false)
-		if limitRows > 0 && len(rowRows) > limitRows {
-			rowRows = rowRows[:limitRows]
-		}
 
 		colSet := map[string]bool{}
+		colsCut := 0
 		matrix := make([]map[string]interface{}, 0, len(rowRows))
 		for _, rr := range rowRows {
 			rowID := fmt.Sprintf("%v", normalizeID(rr["id"]))
 			params := collectReportParams(cmd)
 			params["breakdown"] = colDim
 			params[rowFilter] = rowID
-			colRows, err := fetchBreakdownRows(c, params)
+			colRows, cut, err := fetchBreakdownRows(c, params, breakdownReadRows)
 			if err != nil {
 				// A row skipped here rendered as a pivot without it, which
 				// reads as that row having no traffic.
 				return fmt.Errorf("fetching %s for %s %s: %w", colDim, rowDim, rowID, err)
 			}
+			if cut {
+				colsCut++
+			}
 			out := map[string]interface{}{rowDim: rr["name"]}
 			for _, cr := range colRows {
 				colName := fmt.Sprintf("%v", cr["name"])
 				colSet[colName] = true
-				out[colName] = round(toFloat(cr[metric]), 2)
+				// The breakdown's figure as the server sent it: rounded to 2 decimals, a $0.00125 avg_cpc read 0.
+				out[colName] = cr[metric]
 			}
 			matrix = append(matrix, out)
 		}
@@ -109,11 +119,22 @@ var reportCrosstabCmd = &cobra.Command{
 		if len(opts.Fields) == 0 {
 			opts.Fields = append([]string{rowDim}, cols...)
 		}
-		out, err := json.Marshal(map[string]interface{}{"data": matrix})
+		out, err := json.Marshal(map[string]interface{}{"data": matrix, "truncated": rowsCut || colsCut > 0})
 		if err != nil {
 			return fmt.Errorf("encoding crosstab matrix: %w", err)
 		}
 		output.RenderWith(out, opts)
+		switch {
+		case rowsCut && wantRows == limitRows:
+			noteForPeople(cmd, fmt.Sprintf("Note: these are the %d %s rows with the highest %s; more remain. "+
+				"--limit-rows sets how many (one request each; 0 for up to %d).", len(rowRows), rowDim, metric, breakdownReadRows))
+		case rowsCut:
+			noteForPeople(cmd, coversFirstRowsNote(rowDim, "highest "+metric+" first"))
+		}
+		if colsCut > 0 {
+			noteForPeople(cmd, fmt.Sprintf("Note: for %d of these rows, %s has more than %d values; their columns cover the %d with the most clicks. "+
+				"Narrow the window (--period, --time-from/--time-to) or add a filter to cover every value.", colsCut, colDim, breakdownReadRows, breakdownReadRows))
+		}
 		return nil
 	},
 }
@@ -126,6 +147,6 @@ func init() {
 	enumFlag(reportCrosstabCmd, "cols", dimensionEnum(breakdownDimensions))
 	reportCrosstabCmd.Flags().String("metric", "total_net", "Metric to pivot")
 	enumFlag(reportCrosstabCmd, "metric", metricEnum(metricColumns))
-	reportCrosstabCmd.Flags().Int("limit-rows", 20, "Cap the number of rows fanned out")
+	reportCrosstabCmd.Flags().Int("limit-rows", 20, "Rows to show, highest --metric first (one request each; 0 for up to 5000)")
 	reportCmd.AddCommand(reportCrosstabCmd)
 }

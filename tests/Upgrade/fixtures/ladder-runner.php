@@ -14,6 +14,12 @@
 
 declare(strict_types=1);
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 $root = dirname(__DIR__, 3);
 require $root . '/vendor/autoload.php';
 require $root . '/202-config/mysql-error-args.php';

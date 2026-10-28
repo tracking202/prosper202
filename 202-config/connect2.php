@@ -256,11 +256,10 @@ function p202StoredVisitorIp(): string
  * account set to 'all' under an install set to 'disabled' had its visitors
  * stored unmasked and given every click cookie (measured live).
  *
- * A lookup among the first account's clicks (the pixels' and off.php's
- * by-address fallbacks, which only ever look there) applies user 1's, which
- * is the install's: those clicks were stored under it. A later call for
- * another owner replaces the setting in force; the install's is always part
- * of it.
+ * A by-address fallback (the pixels', off.php's) applies the account whose
+ * clicks it searches: those clicks were stored under its setting. A later
+ * call for another owner replaces the setting in force; the install's is
+ * always part of it.
  *
  * An owner that is not a positive integer — a row that names no account —
  * holds back: nothing says which setting governs (CLAUDE.md #11).
@@ -364,6 +363,24 @@ function p202ClickOwner(int $clickId): ?array
 }
 
 /**
+ * Whether this request's visitor may be recognised from one request to the
+ * next: given the p202vid cookie (p202ClickIdentity()), and matched to an
+ * earlier click by address when a pixel names none
+ * (p202SameIpFallbackClick()). Not under the privacy setting in force
+ * (trackingEnabled()), with consent withheld (a p202_consent other than 1)
+ * or for a campaign whose identity capture is off
+ * (RequestSignals::consentGiven()).
+ * One decision for both: a visitor held back from the cookie was still
+ * matched by address.
+ *
+ * @param array<string, mixed> $get
+ */
+function p202MayRecogniseVisitor(array $get, bool $campaignAllows): bool
+{
+    return trackingEnabled() && \Prosper202\Identity\RequestSignals::consentGiven($get, $campaignAllows);
+}
+
+/**
  * The identity signals a click request carries (ClickIdentity::fromRequest())
  * under the privacy setting in force: a visitor held back has no p202vid
  * read, minted or sent, as they are set no click cookie. It was set under
@@ -373,13 +390,13 @@ function p202ClickOwner(int $clickId): ?array
  */
 function p202ClickIdentity(array $get, bool $campaignAllows, bool $mayMint = true): \Prosper202\Identity\ClickIdentity
 {
-    $inFull = trackingEnabled();
+    $recognised = p202MayRecogniseVisitor($get, $campaignAllows);
 
     return \Prosper202\Identity\ClickIdentity::fromRequest(
         $get,
-        $inFull ? $_COOKIE : [],
+        $recognised ? $_COOKIE : [],
         $campaignAllows,
-        $mayMint && $inFull
+        $mayMint && $recognised
     );
 }
 
@@ -1218,8 +1235,18 @@ function getGeoData($ip)
         ];
     }
 
-    $reader = new Reader(CONFIG_PATH . '/geo/GeoLite2-City.mmdb');
+    // Opened per lookup, so the lookup after a refresh's rename reads the new
+    // file. One that will not open places nobody and the click goes on; the
+    // log, Settings and the health probes say why.
+    $reader = null;
     try {
+        try {
+            $reader = new Reader(\Prosper202\GeoIp\CityDatabase::PATH);
+        } catch (\Exception $e) {
+            error_log('getGeoData: the GeoIP database could not be opened (' . $e->getMessage()
+                . '); this visitor is not placed');
+            throw $e;
+        }
         $record = $reader->city($ip_address);
         $country = $record->country->name;
         $country_code = $record->country->isoCode;
@@ -1287,7 +1314,7 @@ function getGeoData($ip)
         'postal_code' => $postal
     ];
 
-    $reader->close();
+    $reader?->close();
 
     return $geoData;
 }

@@ -212,12 +212,13 @@ func TestLtvCustomersAllReadsEveryPageAt500(t *testing.T) {
 		q, _ := url.ParseQuery(r.RawQuery)
 		offset := q.Get("offset")
 		var rows []string
+		// Money as the server answers it since 1.9.79: a JSON number.
 		if offset == "0" {
-			rows = []string{`{"customer_id":1,"total_revenue":"10"}`, `{"customer_id":2,"total_revenue":"9"}`}
+			rows = []string{`{"customer_id":1,"total_revenue":10.125}`, `{"customer_id":2,"total_revenue":9}`}
 		} else {
 			// The page shifted under the read: customer 2 shows again with a
 			// new total. --all must keep one row for it, not two.
-			rows = []string{`{"customer_id":2,"total_revenue":"11"}`, `{"customer_id":3,"total_revenue":"1"}`}
+			rows = []string{`{"customer_id":2,"total_revenue":11}`, `{"customer_id":3,"total_revenue":1}`}
 		}
 		return 200, fmt.Sprintf(`{"data":[%s],"pagination":{"total":%d,"limit":500,"offset":%s}}`, strings.Join(rows, ","), total, offset)
 	})
@@ -243,6 +244,10 @@ func TestLtvCustomersAllReadsEveryPageAt500(t *testing.T) {
 	}
 	if len(out.Data) != 3 {
 		t.Errorf("rows = %d, want 3 (customer 2 once): %s", len(out.Data), stdout)
+	}
+	// The pages are decoded and encoded again: an amount stays the number it was.
+	if !strings.Contains(stdout, `"total_revenue": 10.125`) {
+		t.Errorf("customer 1's total_revenue is not the number 10.125: %s", stdout)
 	}
 }
 

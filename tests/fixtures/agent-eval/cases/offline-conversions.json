@@ -1,0 +1,37 @@
+{
+  "cases": [
+    {
+      "id": "offline-001-google-ads-upload-says-what-it-sends-and-why-not",
+      "priority": "high",
+      "state": "seeded fixture; setup fires one click through EVAL Campaign B's tracker with gclid EVAL-OFFLINE-GCLID-1 and records a $9 API conversion on it, so that conversion named its click and has a Google click id, and its click is minutes old. The seeded clicks came with no gclid",
+      "setup": [
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id') && t=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id') && curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$(p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url')&t202kw=eval%20offline&gclid=EVAL-OFFLINE-GCLID-1\"",
+        "c=$(p202 click list --limit 1 --json | jq -r '.data[0].click_id') && p202 conversion create --click-id \"$c\" --payout 9 --transaction-id \"EVAL-OFFLINE-$(date +%s%N)\" --json >/dev/null"
+      ],
+      "ask": "I want to send my conversions to Google Ads as an offline conversion import. How many of my conversions from the last 30 days would the Google Ads file hold right now, and why are the others left out?",
+      "expected": {
+        "runs_one_of": [
+          "conversion offline-export"
+        ],
+        "never_runs": [
+          "conversion create",
+          "conversion delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "p202 conversion offline-export --format google --days 30 --summary --json | jq '.data.left_out.click_too_recent >= 1 and .data.left_out_total == (.data.conversions - .data.rows)'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "6 hours"
+        ],
+        "rubric": "PASS if the reply gives how many conversions the Google Ads file would hold and why each other one is left out, as `p202 conversion offline-export --format google --summary` reports them: here the conversion on the gclid click waits because its click is under 6 hours old (a later fetch sends it), and conversions whose click came with no Google click id are left out. FAIL if it counts by hand from the conversion list, says a conversion whose click was guessed from an IP address would be sent, or records or deletes a conversion."
+      },
+      "notes": "The file decides what is sent (a named click, a platform id, a click 6 hours to 90 days old, a conversion name); an agent reports that decision rather than re-deriving it. The gclid click is minutes old in every run, so its conversion is always held back, which the check reads from the server."
+    }
+  ]
+}

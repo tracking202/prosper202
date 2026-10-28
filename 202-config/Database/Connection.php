@@ -334,6 +334,65 @@ final class Connection
     }
 
     /**
+     * Execute a read and hand its rows to $fn one at a time as the server
+     * sends them, then close the statement. fetchAll() and get_result() hold
+     * the whole result in memory; this holds one row, for a read whose size
+     * the data decides (an offline conversion file). Nothing else may run on
+     * the statement's handle until it returns.
+     *
+     * A fetch() that answers false failed, and is not the end of the rows.
+     * When $fn throws, the rows not read are discarded before the statement
+     * closes, so the handle can be used again.
+     *
+     * @param mysqli_stmt $stmt
+     * @param callable(array<string, mixed>): void $fn
+     * @return int the rows handed to $fn
+     * @throws QueryException
+     */
+    public function eachRow(object $stmt, callable $fn): int
+    {
+        $this->execute($stmt);
+        try {
+            $meta = $stmt->result_metadata();
+            if (!$meta instanceof mysqli_result) {
+                $error = self::text(static fn (): string => $stmt->error, '');
+                throw new QueryException('MySQL result_metadata failed: ' . ($error !== '' ? $error : '(not a read)'));
+            }
+            $names = [];
+            foreach ($meta->fetch_fields() as $field) {
+                $names[] = (string) $field->name;
+            }
+            $meta->free();
+            $values = array_fill(0, count($names), null);
+            $refs = [];
+            foreach (array_keys($values) as $i) {
+                $refs[] = &$values[$i];
+            }
+            if (!$stmt->bind_result(...$refs)) {
+                throw new QueryException('MySQL bind_result failed: ' . self::text(static fn (): string => $stmt->error, '(unknown)'));
+            }
+            $count = 0;
+            while (($fetched = $stmt->fetch()) !== null) {
+                if ($fetched === false) {
+                    $error = self::text(static fn (): string => $stmt->error, '');
+                    throw new QueryException('MySQL fetch failed: ' . ($error !== '' ? $error : '(unknown)'));
+                }
+                $row = [];
+                foreach ($names as $i => $name) {
+                    $row[$name] = $values[$i];
+                }
+                $fn($row);
+                $count++;
+            }
+
+            return $count;
+        } finally {
+            $stmt->free_result();
+            $stmt->close();
+        }
+    }
+
+    /**
      * Execute an INSERT statement, return the insert ID, and close.
      *
      * Falls back to the connection-level insert_id if the statement

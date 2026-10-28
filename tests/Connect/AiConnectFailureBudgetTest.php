@@ -57,7 +57,7 @@ final class AiConnectFailureBudgetTest extends TestCase
 
     public function testASourcePastItsBudgetIsRefusedBeforeTheWork(): void
     {
-        $store = new ServerStateStore();
+        $store = new ServerStateStore($this->stateDir);
         $live = AiConnect::approve($store, 7, (string) AiConnect::scopeFor('read'), str_repeat('c', 43), 'Claude');
         $this->spendTheBudget($store);
 
@@ -73,7 +73,7 @@ final class AiConnectFailureBudgetTest extends TestCase
     /** Approvals that cannot be read hold no live one: past its budget, the source is refused. */
     public function testUnreadableApprovalsLetNoSourcePastItsBudget(): void
     {
-        $store = new ServerStateStore();
+        $store = new ServerStateStore($this->stateDir);
         $live = AiConnect::approve($store, 7, (string) AiConnect::scopeFor('read'), str_repeat('c', 43), 'Claude');
         $this->spendTheBudget($store);
         $files = glob($this->stateDir . '/*/connect.json') ?: [];
@@ -89,7 +89,7 @@ final class AiConnectFailureBudgetTest extends TestCase
     /** A live code that fails past the budget gets the exchange's own answer, not a bare 429. */
     public function testAFailingLiveExchangeAnswersAsItself(): void
     {
-        $store = new ServerStateStore();
+        $store = new ServerStateStore($this->stateDir);
         $live = AiConnect::approve($store, 7, (string) AiConnect::scopeFor('read'), str_repeat('c', 43), 'Claude');
         $this->spendTheBudget($store);
 
@@ -101,7 +101,7 @@ final class AiConnectFailureBudgetTest extends TestCase
 
     public function testALiveApprovalIsExchangedEvenPastTheBudget(): void
     {
-        $store = new ServerStateStore();
+        $store = new ServerStateStore($this->stateDir);
         $live = AiConnect::approve($store, 7, (string) AiConnect::scopeFor('read'), str_repeat('c', 43), 'Claude');
         $this->spendTheBudget($store);
 
@@ -113,7 +113,7 @@ final class AiConnectFailureBudgetTest extends TestCase
 
     public function testOnlyFailuresAreCounted(): void
     {
-        $store = new ServerStateStore();
+        $store = new ServerStateStore($this->stateDir);
         $ran = false;
         for ($i = 0; $i < AiConnect::FAILURE_BUDGET * 2; $i++) {
             [$status] = $this->call($store, str_repeat('g', 43), 200, $ran);
@@ -130,7 +130,7 @@ final class AiConnectFailureBudgetTest extends TestCase
     /** A refusal the exchange throws (an unknown key) counts against the budget too. */
     public function testAThrownRefusalIsCounted(): void
     {
-        $store = new ServerStateStore();
+        $store = new ServerStateStore($this->stateDir);
         for ($i = 0; $i < AiConnect::FAILURE_BUDGET; $i++) {
             try {
                 AiConnect::tokenWithFailureBudget($store, str_repeat('t', 43), function (): array {
@@ -149,7 +149,7 @@ final class AiConnectFailureBudgetTest extends TestCase
     /** A bucket that cannot be read is logged and serves, as the other soft limits do. */
     public function testAnUnreadableBucketServes(): void
     {
-        $store = new ServerStateStore();
+        $store = new ServerStateStore($this->stateDir);
         $this->spendTheBudget($store);
         $buckets = glob($this->stateDir . '/rate_limits/*') ?: [];
         $buckets = array_values(array_filter($buckets, static fn (string $f): bool => !str_ends_with($f, '.lock')));
@@ -164,7 +164,7 @@ final class AiConnectFailureBudgetTest extends TestCase
 
     public function testTheCheckAloneCountsNothing(): void
     {
-        $store = new ServerStateStore();
+        $store = new ServerStateStore($this->stateDir);
         for ($i = 0; $i < AiConnect::FAILURE_BUDGET + 5; $i++) {
             self::assertNull($store->softIpRateLimitExceeded('probe', 1, 60, self::PEER));
         }

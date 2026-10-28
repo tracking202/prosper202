@@ -95,6 +95,11 @@ class INSTALL
         // Android install.
         \Api\V3\Apps\Android\InstallTokenKey::ensure($db);
 
+        // The install's id, which names its API state directory: a new one
+        // for every install, so a database installed again under the same
+        // name does not read its predecessor's state (InstallId).
+        \Prosper202\Database\InstallId::ensure($db);
+
         // Add publisher IDs to all existing users
         createPublisherIds();
     }

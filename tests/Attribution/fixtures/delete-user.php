@@ -12,6 +12,12 @@ declare(strict_types=1);
  * stdout: "deleted" on success; an exception's message otherwise (exit 1)
  */
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 require __DIR__ . '/../../../vendor/autoload.php';
 
 [, $userId, $exportDir] = $argv + [null, '0', ''];

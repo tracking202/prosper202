@@ -6,6 +6,7 @@ include_once(str_repeat("../", 1) . '202-config/functions-api.php');
 include_once(str_repeat("../", 1) . '202-config/functions-utils.php');
 include_once(str_repeat("../", 1) . '202-config/functions-empty.php');
 require_once __DIR__ . '/../202-config/functions-account-ui.php';
+require_once __DIR__ . '/../202-config/functions-traffic-source-owners-ui.php';
 
 AUTH::require_user();
 
@@ -26,6 +27,8 @@ AUTH::require_user();
  * only row the cron job reads; any admin's save lands there, as through
  * /api/v3/system/retention. AutoCron and ISP lookup stay on the signed-in
  * user's row, which is the one the redirects read for that user's trackers.
+ * The GeoIP database's refresh is the install's too, in 202_geoip_refresh
+ * (Prosper202\GeoIp); its MaxMind credentials are never rendered back.
  */
 
 if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
@@ -55,6 +58,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
 		p202_account_redirect('202-account/administration.php');
 	}
+}
+
+// A traffic source moved back or split from the panel:
+// TrafficSourceOwnersController's repair or split, behind the routes' checks
+// (functions-traffic-source-owners-ui.php).
+if (isset($_POST['traffic_source_repair'])) {
+    p202_ts_owners_repair_posted($db, (int) $_SESSION['user_own_id'], $_POST);
+}
+if (isset($_POST['traffic_source_split'])) {
+    p202_ts_owners_split_posted($db, (int) $_SESSION['user_own_id'], $_POST);
 }
 
 if (isset($_POST['autocron'])) {
@@ -167,6 +180,70 @@ if (isset($_POST['maxmind'])) {
     }
 
     p202_account_redirect('202-account/administration.php#maxmind');
+}
+
+// The GeoIP database's refresh (Prosper202\GeoIp): the install's MaxMind
+// account ID and licence key, which are stored and never shown again (an
+// empty box keeps the stored one), their removal, and a refresh now.
+if (isset($_POST['geoip_action'])) {
+    $geoipStore = new \Prosper202\GeoIp\RefreshStore(new \Prosper202\Database\Connection($db));
+    $geoipAction = (string) $_POST['geoip_action'];
+    try {
+        if ($geoipAction === 'save') {
+            $account = trim((string) ($_POST['geoip_account_id'] ?? ''));
+            $key = trim((string) ($_POST['geoip_license_key'] ?? ''));
+            $stored = $geoipStore->read();
+            $accountError = $account === ''
+                ? ($stored->accountIdStored() ? null : 'Enter your MaxMind account ID: the download needs it.')
+                : \Prosper202\GeoIp\Credentials::accountIdError($account);
+            $keyError = $key === ''
+                ? ($stored->licenseKeyStored() ? null : 'Enter your MaxMind licence key: the download needs it.')
+                : \Prosper202\GeoIp\Credentials::licenseKeyError($key);
+            if ($accountError !== null) {
+                $fieldErrors['geoip_account_id'] = $accountError;
+            }
+            if ($keyError !== null) {
+                $fieldErrors['geoip_license_key'] = $keyError;
+            }
+            if ($fieldErrors === []) {
+                if ($account === '' && $key === '') {
+                    p202_account_flash('info', 'Nothing was changed: the stored account ID and licence key are kept.'
+                        . ' Type a new one to replace it.');
+                } else {
+                    $geoipStore->saveCredentials($account === '' ? null : $account, $key === '' ? null : $key);
+                    p202_account_flash('ok', 'Saved. The cron job refreshes the GeoIP database within the hour, then'
+                        . ' weekly; Refresh now does it at once.');
+                }
+                p202_account_redirect('202-account/administration.php#geoip');
+            }
+        } elseif ($geoipAction === 'forget') {
+            $geoipStore->forgetCredentials();
+            p202_account_flash('ok', 'The MaxMind account ID and licence key were removed, so the GeoIP database is'
+                . ' no longer refreshed. The installed database stays.');
+            p202_account_redirect('202-account/administration.php#geoip');
+        } elseif ($geoipAction === 'refresh') {
+            // A download of tens of megabytes: let it finish if the tab closes.
+            @set_time_limit(\Prosper202\GeoIp\GeoIpRefresh::BUDGET_SECONDS + 120);
+            ignore_user_abort(true);
+            $refresh = (new \Prosper202\GeoIp\GeoIpRefresh($geoipStore, new \Prosper202\GeoIp\DatabaseInstaller()))
+                ->run();
+            $kind = match ($refresh->outcome) {
+                \Prosper202\GeoIp\RefreshResult::REFRESHED => 'ok',
+                \Prosper202\GeoIp\RefreshResult::CURRENT, \Prosper202\GeoIp\RefreshResult::BUSY => 'info',
+                default => 'bad',
+            };
+            p202_account_flash($kind, $refresh->message);
+            p202_account_redirect('202-account/administration.php#geoip');
+        } else {
+            p202_account_flash('bad', 'The GeoIP form sent an action this page does not know, so nothing was changed.');
+            p202_account_redirect('202-account/administration.php#geoip');
+        }
+    } catch (\Throwable $e) {
+        error_log('administration.php: the GeoIP refresh settings could not be read or written: ' . $e->getMessage());
+        p202_account_flash('bad', 'The GeoIP refresh settings could not be read or recorded just now; the server log'
+            . ' says why, and the panel below shows the database installed.');
+        p202_account_redirect('202-account/administration.php#geoip');
+    }
 }
 
 if (isset($_POST['database_management'])) {
@@ -453,11 +530,69 @@ $autoCronAsksToConfirm = !$autoCronOn && ($_GET['autocron'] ?? null) === 'confir
     );
 $maxmindOn = !empty($pref_row['maxmind_isp']);
 $geoDirShown = getenv('P202_GEO_DIR') ?: getTrackingDomain() . get_absolute_url() . '202-config/geo/';
+$geoipNow = time();
+$geoipDatabase = \Prosper202\GeoIp\CityDatabase::status(\Prosper202\GeoIp\CityDatabase::PATH, $geoipNow);
+try {
+    $geoipState = (new \Prosper202\GeoIp\RefreshStore(new \Prosper202\Database\Connection($db)))->read();
+} catch (\Throwable $e) {
+    // Not "no account stored": that would offer to set up what may be set up.
+    error_log('administration.php: the GeoIP refresh row could not be read: ' . $e->getMessage());
+    $geoipState = null;
+}
+$geoipPill = match ($geoipDatabase->state) {
+    \Prosper202\GeoIp\DatabaseStatus::CURRENT => '<span class="p202-pill p202-pill--good">Current</span>',
+    \Prosper202\GeoIp\DatabaseStatus::STALE => '<span class="p202-pill p202-pill--warn">Stale</span>',
+    \Prosper202\GeoIp\DatabaseStatus::MISSING => '<span class="p202-pill p202-pill--bad">Missing</span>',
+    default => '<span class="p202-pill p202-pill--bad">Unreadable</span>',
+};
+$geoipWhen = static fn (?int $at): string => $at === null ? 'never' : date('M j, Y g:ia', $at);
+$geoipLast = $geoipWhen($geoipState?->lastAttemptAt);
+$geoipLastPill = match ($geoipState?->lastOutcome) {
+    \Prosper202\GeoIp\RefreshState::REFRESHED => '<span class="p202-pill p202-pill--good">Refreshed</span>',
+    \Prosper202\GeoIp\RefreshState::CURRENT => '<span class="p202-pill p202-pill--good">Up to date</span>',
+    \Prosper202\GeoIp\RefreshState::FAILED => '<span class="p202-pill p202-pill--bad">Failed</span>',
+    default => '',
+};
+$geoipDue = $geoipState?->dueAt($geoipDatabase);
+$geoipBuilt = match (true) {
+    $geoipDatabase->builtAt !== null => gmdate('M j, Y', $geoipDatabase->builtAt) . ' · '
+        . number_format((float) $geoipDatabase->ageDays) . ' days ago',
+    $geoipDatabase->state === \Prosper202\GeoIp\DatabaseStatus::MISSING => 'unknown: there is no file',
+    default => 'unknown: the file cannot be read',
+};
+$geoipOn = $geoipState !== null && $geoipState->credentials() !== null;
+$geoipFormOpen = isset($fieldErrors['geoip_account_id']) || isset($fieldErrors['geoip_license_key'])
+    || ($geoipState !== null && !$geoipOn);
+$geoipStoredPill = '<span class="p202-pill p202-pill--good">Stored</span>';
+$geoipReplace = 'stored; type a new one to replace it';
+$geoipAccountStored = $geoipState?->accountIdStored() ? $geoipStoredPill : '';
+$geoipKeyStored = $geoipState?->licenseKeyStored() ? $geoipStoredPill : '';
+$geoipAccountHint = $geoipState?->accountIdStored() ? $geoipReplace : '123456';
+$geoipKeyHint = $geoipState?->licenseKeyStored() ? $geoipReplace : 'the key MaxMind showed you';
+$geoipAccountInvalid = p202_account_invalid($fieldErrors, 'geoip_account_id');
+$geoipKeyInvalid = p202_account_invalid($fieldErrors, 'geoip_license_key');
+$geoipForgetConfirm = 'Remove the MaxMind account ID and licence key? The installed database stays, and is no longer'
+    . ' refreshed.';
 $yesNo = static fn (bool $on, string $yes = 'Yes', string $no = 'No'): string => $on
 	? '<span class="p202-pill p202-pill--good">' . $yes . '</span>'
 	: '<span class="p202-pill p202-pill--warn">' . $no . '</span>';
 
 $user_log_result = _mysqli_query("SELECT * FROM 202_users_log ORDER BY login_id DESC LIMIT 50");
+
+// Traffic sources another user's accounts name: a notice to whoever GET
+// /system/traffic-source-owners answers, and the panel when they open it.
+$tsReview = ($_GET['traffic_sources'] ?? null) === 'review';
+$tsOwners = p202_ts_owners_read($db, (int) $_SESSION['user_own_id'], $tsReview);
+$tsPanel = null;
+if ($tsReview && $tsOwners['controller'] !== null && $tsOwners['report'] !== null) {
+    try {
+        $tsPanel = p202_ts_owners_panel($tsOwners['report'], $tsOwners['controller'], $self);
+    } catch (\Throwable $e) {
+        error_log('Account › Settings: the traffic source owners panel could not be drawn: ' . $e->getMessage());
+        $tsOwners['error'] = 'Who may move each traffic source could not be checked just now; the server log says why.'
+            . ' Reload the page to try again.';
+    }
+}
 
 template_top('Administration');
 ?>
@@ -476,6 +611,11 @@ if ($fieldErrors) {
 	$extra[] = ['kind' => 'bad', 'text' => 'That was not saved. The field below says why.'];
 }
 echo p202_account_render_flashes($extra);
+if ($tsOwners['error'] !== null) {
+    echo p202_flash('bad', $tsOwners['error']);
+} elseif ($tsOwners['report'] !== null && $tsOwners['report']['sources'] !== []) {
+    echo p202_ts_owners_notice($tsOwners['report'], $self);
+}
 ?>
 
 <div class="p202-tiles">
@@ -609,6 +749,135 @@ echo p202_account_render_flashes($extra);
 		</section>
 	</div>
 
+    <div class="col-12">
+        <section class="p202-panel" id="geoip">
+            <div class="p202-panel__head">
+                <h2 class="p202-panel__title">GeoIP database</h2>
+                <?php echo $geoipPill; ?>
+            </div>
+            <div class="p202-panel__body">
+                <p class="text-secondary">The country, region and city in reports, the rotator's location rules
+                    and privacy for European traffic all come from this file. MaxMind publishes a new GeoLite2 City
+                    database twice a week; with your own free MaxMind account, this install downloads it weekly.
+                    Without one, the file stays as it is, and visitors from address blocks handed out since it was
+                    built read as unplaced or in the wrong country.</p>
+                <div class="p202-strip mb-3">
+                    <div class="p202-strip__row">
+                        <?php echo $geoipPill; ?>
+                        <span class="p202-strip__label">Built</span>
+                        <span class="p202-strip__value"><?php echo $e($geoipBuilt); ?></span>
+                    </div>
+                    <div class="p202-strip__row">
+                        <span class="p202-strip__label">File</span>
+                        <span class="p202-strip__value" title="<?php echo $e($geoipDatabase->path); ?>"><?php
+                            echo $e($geoipDatabase->path);
+                        ?></span>
+                    </div>
+                    <?php if ($geoipState === null) { ?>
+                        <div class="p202-strip__row">
+                            <span class="p202-strip__label">Refresh</span>
+                            <span class="p202-strip__value">settings unread</span>
+                        </div>
+                    <?php } else { ?>
+                        <div class="p202-strip__row">
+                            <?php echo $yesNo($geoipOn, 'On', 'Off'); ?>
+                            <span class="p202-strip__label">Refresh</span>
+                            <span class="p202-strip__value"><?php
+                                echo $geoipOn ? 'weekly, with your MaxMind account' : 'no MaxMind account is stored';
+                            ?></span>
+                        </div>
+                        <div class="p202-strip__row">
+                            <?php echo $geoipLastPill; ?>
+                            <span class="p202-strip__label">Last refresh</span>
+                            <span class="p202-strip__value" id="geoip-last-refresh"><?php echo $e($geoipLast); ?></span>
+                        </div>
+                        <?php if ($geoipDue !== null) { ?>
+                            <div class="p202-strip__row">
+                                <span class="p202-strip__label">Next refresh</span>
+                                <span class="p202-strip__value"><?php echo $e($geoipDue <= $geoipNow
+                                    ? 'due now: the cron job\'s next hourly run'
+                                    : $geoipWhen($geoipDue)); ?></span>
+                            </div>
+                        <?php } ?>
+                    <?php } ?>
+                    <?php if ($geoipDatabase->state !== \Prosper202\GeoIp\DatabaseStatus::CURRENT) { ?>
+                        <div class="p202-strip__note"><?php echo $e((string) $geoipDatabase->reason); ?></div>
+                    <?php } ?>
+                </div>
+                <?php if ($geoipState === null) { ?>
+                    <?php echo p202_flash('bad', 'The refresh settings could not be read just now; the server log says'
+                        . ' why. Reload the page to try again.'); ?>
+                <?php } elseif ($geoipState->lastOutcome === \Prosper202\GeoIp\RefreshState::FAILED) { ?>
+                    <?php echo p202_flash('bad', 'The last refresh failed: ' . (string) $geoipState->lastError); ?>
+                <?php } ?>
+
+                <?php if ($geoipState !== null) { ?>
+                    <details class="p202-disclosure"<?php echo $geoipFormOpen ? ' open' : ''; ?>>
+                        <summary><?php echo $geoipOn ? 'Update' : 'Set up the refresh'; ?>
+                            <span class="p202-disclosure__hint">your MaxMind account ID and licence key</span></summary>
+                        <div class="p202-disclosure__body">
+                            <form method="post" action="<?php echo $e($self . '#geoip'); ?>">
+                                <?php echo p202_account_token_field(); ?>
+                                <input type="hidden" name="geoip_action" value="save">
+                                <div class="row g-3">
+                                    <div class="col-12 col-md-5">
+                                        <label class="form-label" for="geoip_account_id">Account ID
+                                            <?php echo $geoipAccountStored; ?></label>
+                                        <input type="text" class="form-control<?php echo $geoipAccountInvalid; ?>"
+                                            id="geoip_account_id" name="geoip_account_id" inputmode="numeric"
+                                            autocomplete="off" spellcheck="false"
+                                            placeholder="<?php echo $e($geoipAccountHint); ?>">
+                                        <?php echo p202_account_field_error($fieldErrors, 'geoip_account_id'); ?>
+                                    </div>
+                                    <div class="col-12 col-md-7">
+                                        <label class="form-label" for="geoip_license_key">Licence key
+                                            <?php echo $geoipKeyStored; ?></label>
+                                        <div class="input-group">
+                                            <input type="password" class="form-control<?php echo $geoipKeyInvalid; ?>"
+                                                id="geoip_license_key" name="geoip_license_key"
+                                                autocomplete="new-password" spellcheck="false"
+                                                placeholder="<?php echo $e($geoipKeyHint); ?>">
+                                            <button class="btn btn-primary" type="submit">Save</button>
+                                        </div>
+                                        <?php echo p202_account_field_error($fieldErrors, 'geoip_license_key'); ?>
+                                    </div>
+                                </div>
+                                <div class="form-text">Sign up for a free GeoLite account at
+                                    <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank"
+                                    rel="noopener">maxmind.com</a>, then make a licence key under Manage License Keys:
+                                    MaxMind shows it once. Both are stored here and never shown again.</div>
+                            </form>
+                        </div>
+                    </details>
+
+                    <?php if ($geoipOn) { ?>
+                        <div class="p202-toolbar mt-3">
+                            <form method="post" action="<?php echo $e($self . '#geoip'); ?>">
+                                <?php echo p202_account_token_field(); ?>
+                                <input type="hidden" name="geoip_action" value="refresh">
+                                <button class="btn btn-secondary btn-sm" type="submit">Refresh now</button>
+                            </form>
+                            <form method="post" action="<?php echo $e($self . '#geoip'); ?>"
+                                data-p202-confirm="<?php echo $e($geoipForgetConfirm); ?>">
+                                <?php echo p202_account_token_field(); ?>
+                                <input type="hidden" name="geoip_action" value="forget">
+                                <button class="btn btn-outline-danger btn-sm" type="submit">Remove the account</button>
+                            </form>
+                        </div>
+                    <?php } ?>
+                <?php } ?>
+
+                <div class="form-text mt-3">This product includes GeoLite2 Data created by MaxMind, available from
+                    <a href="https://www.maxmind.com" target="_blank" rel="noopener">https://www.maxmind.com</a>.</div>
+            </div>
+        </section>
+    </div>
+    <?php if ($tsPanel !== null) { ?>
+    <div class="col-12">
+        <?php echo $tsPanel['panel']; ?>
+    </div>
+    <?php } ?>
+
 	<div class="col-12">
 		<section class="p202-panel" id="logins">
 			<div class="p202-panel__head">
@@ -647,4 +916,6 @@ echo p202_account_render_flashes($extra);
 	</div>
 </div>
 
-<?php template_bottom();
+<?php
+echo $tsPanel['modals'] ?? '';
+template_bottom();

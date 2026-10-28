@@ -35,6 +35,7 @@ final class PreferenceSecretsAreNotServedIntegrationTest extends TestCase
         'user_slack_incoming_webhook' => 'https://hooks.slack.com/services/T0/B0/it-slack-secret',
         'lpo_site_key' => 'it-lpo-site-secret',
         'lpo_bridge_config' => '{"webhook_id":3,"ctx_key":"it-ctx-secret"}',
+        'paykickstart_ipn_secret_keys' => "it-pk-secret-0001\nit-pk-secret-0002",
     ];
 
     private static ?\mysqli $db = null;

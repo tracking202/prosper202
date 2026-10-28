@@ -4,17 +4,18 @@ declare(strict_types=1);
 
 namespace Prosper202\Ltv;
 
+use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
-use Prosper202\Validation\OutboundUrlGuard;
 use RuntimeException;
 
 /**
  * Outbound LTV webhooks: endpoint CRUD, SSRF validation, the delivery queue,
- * and the dispatch-side helpers used by 202-cronjobs/ltv_webhooks.php.
+ * and the dispatch-side helpers WebhookDispatcher uses.
  *
  * Enqueueing is a plain DB insert (safe inside request handling); actual HTTP
- * delivery happens ONLY in the cron dispatcher — never inline in ingest or
- * API writes.
+ * delivery happens ONLY in WebhookDispatcher, which the cron runs — never
+ * inline in ingest or API writes.
  */
 final class MysqlWebhookRepository
 {
@@ -40,22 +41,54 @@ final class MysqlWebhookRepository
     /** Max delivery attempts before a delivery is failed and the hook may die. */
     public const MAX_ATTEMPTS = 6;
 
+    /** The ports a webhook URL may name, held at saving and at sending. */
+    public const PORTS = [443, 8443];
+
+    /** The last response of a delivery held for a dead webhook (holdDelivery()). */
+    public const HELD_REASON = 'held: its webhook is dead, so it was not sent; reviving the webhook within 7 days'
+        . ' of when this was queued sends it';
+
+    /** The last response of a delivery a revival without requeue set aside (revive()). */
+    public const REVIVED_HELD_REASON = 'held: its webhook was revived for new events only, so it was not sent';
+
+    /** How long revive() waits for a dispatcher run in flight to end. */
+    public const REVIVE_LOCK_WAIT_SECONDS = 20;
+
     public function __construct(private Connection $conn)
     {
     }
 
     /**
-     * Dispatch-time SSRF guard: delegates to the one implementation in
-     * OutboundUrlGuard. Kept as a named entry point for the cron and the tests;
-     * the body it used to carry was a line-for-line copy that could (and did)
-     * drift from the attribution crons' checks.
+     * Why a webhook URL is refused where one is saved (create(), the
+     * Landing Page Optimizer's bridge config), or null: the export
+     * webhooks' rules (WebhookGuard) on one of PORTS, all but the lookup,
+     * so a resolver that stalls cannot hold a request. DeliverySender runs
+     * the whole check, lookup included, when each delivery is sent. An
+     * allowlist that does not parse admits nothing here.
      *
-     * @return list<string> the validated IPs for the URL's host, for curlOptions()
-     * @throws \Prosper202\Validation\OutboundUrlException
+     * @param string|null $allowNetworks the operator's allowlist; null reads P202_WEBHOOK_ALLOW_NETWORKS
      */
-    public static function assertUrlAllowed(string $url): array
+    public static function urlRefusal(string $url, ?string $allowNetworks = null): ?string
     {
-        return OutboundUrlGuard::assertAllowed($url, 'webhook_url');
+        try {
+            $guard = new WebhookGuard(null, $allowNetworks);
+        } catch (\UnexpectedValueException) {
+            $guard = new WebhookGuard(null, '');
+        }
+
+        return $guard->webhookRefusal(self::sendableUrl($url), self::PORTS);
+    }
+
+    /**
+     * The URL a webhook is checked and sent as. A query straight after the
+     * host (https://host?token=x) gets the root path it means: the guard's
+     * form wants a path before any "?", since a parser that does not end the
+     * host there reads https://host?@other/ as other. The stored URL is kept
+     * as it was saved; a webhook saved that way before 1.9.79 still sends.
+     */
+    public static function sendableUrl(string $url): string
+    {
+        return preg_replace('~^(https://[^/?#]*)\?~i', '$1/?', $url, 1) ?? $url;
     }
 
     /**
@@ -159,12 +192,14 @@ final class MysqlWebhookRepository
      *        which enqueue() already treats as subscribe-all. [] defaults to
      *        KNOWN_EVENTS. Any other name is refused, nothing written.
      * @return array{webhookId: int, secret: string}
+     * @throws WebhookRefused naming why the URL is refused (urlRefusal())
      */
     public function create(int $userId, string $url, array $events): array
     {
-        // Write boundary: syntactic check only, no DNS (see OutboundUrlGuard).
-        // The cron re-runs the full check and pins the connection at delivery.
-        OutboundUrlGuard::assertWellFormed($url, 'webhook_url');
+        $refused = self::urlRefusal($url);
+        if ($refused !== null) {
+            throw new WebhookRefused($refused);
+        }
 
         $events = array_values(array_unique(array_map(strval(...), $events)));
         if ($events === []) {
@@ -223,9 +258,13 @@ final class MysqlWebhookRepository
     }
 
     /**
-     * Queue one event for every active webhook subscribed to it. Plain DB
-     * inserts — the cron does the HTTP. A json_encode failure throws (never
-     * silently queue a broken payload).
+     * Queue one event for every active or dead webhook subscribed to it.
+     * Plain DB inserts — the cron does the HTTP. A dead webhook's delivery
+     * is held by the dispatcher rather than sent (holdDelivery()), so
+     * reviving the webhook sends what it missed (revive()); queued as
+     * pending like any other, it is sent after all when the webhook is
+     * revived before the dispatcher reaches it. A json_encode failure throws
+     * (never silently queue a broken payload).
      *
      * @param array<string, mixed> $payload
      */
@@ -235,7 +274,7 @@ final class MysqlWebhookRepository
 
         $stmt = $this->conn->prepareRead(
             "SELECT webhook_id FROM 202_ltv_webhooks
-             WHERE user_id = ? AND status = 'active'
+             WHERE user_id = ? AND status IN ('active', 'dead')
                AND (subscribed_events = '' OR FIND_IN_SET(?, subscribed_events) > 0)"
         );
         $this->conn->bind($stmt, 'is', [$userId, $eventName]);
@@ -348,24 +387,50 @@ final class MysqlWebhookRepository
     }
 
     /**
-     * Dispatch-side: claim due pending deliveries (joined to their endpoint).
+     * Dispatch-side: the pending deliveries due at $now (joined to their
+     * endpoint), oldest due first, after the cursor (next_attempt_at,
+     * delivery_id) of the last row a run read. A plain read: claimDelivery()
+     * decides who sends each one. The cursor lets a run step past rows it
+     * leaves due (WebhookDispatcher defers a slow webhook's) without reading
+     * them again.
      *
      * @return list<array<string, mixed>>
      */
-    public function duePending(int $limit): array
+    public function duePending(int $now, int $limit, int $afterDueAt = 0, int $afterId = 0): array
     {
         $stmt = $this->conn->prepareRead(
-            "SELECT d.delivery_id, d.webhook_id, d.user_id, d.event_name, d.payload, d.attempts,
+            "SELECT d.delivery_id, d.webhook_id, d.user_id, d.event_name, d.payload, d.attempts, d.next_attempt_at,
                     w.webhook_url, w.webhook_secret, w.status AS webhook_status
              FROM 202_ltv_webhook_deliveries d
              JOIN 202_ltv_webhooks w ON w.webhook_id = d.webhook_id
              WHERE d.status = 'pending' AND d.next_attempt_at <= ?
-             ORDER BY d.next_attempt_at ASC
+               AND (d.next_attempt_at > ? OR (d.next_attempt_at = ? AND d.delivery_id > ?))
+             ORDER BY d.next_attempt_at ASC, d.delivery_id ASC
              LIMIT ?"
         );
-        $this->conn->bind($stmt, 'ii', [time(), $limit]);
+        $this->conn->bind($stmt, 'iiiii', [$now, $afterDueAt, $afterDueAt, $afterId, $limit]);
 
         return $this->conn->fetchAll($stmt);
+    }
+
+    /**
+     * Dispatch-side: mark up to $limit deliveries queued before $queuedBefore
+     * and still waiting as failed, with $reason as their last response, and
+     * never send them. A delivery claimed by a run in flight (next_attempt_at
+     * past $now) is left to that run. The endpoint is not marked dead: it
+     * did nothing wrong. Answers how many were marked.
+     */
+    public function expireUnsent(int $now, int $queuedBefore, string $reason, int $limit): int
+    {
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_ltv_webhook_deliveries
+             SET status = 'failed', last_status_code = NULL, last_response_body = ?, updated_at = ?
+             WHERE status = 'pending' AND next_attempt_at <= ? AND created_at < ?
+             LIMIT ?"
+        );
+        $this->conn->bind($stmt, 'siiii', [substr($reason, 0, 1000), $now, $now, $queuedBefore, $limit]);
+
+        return $this->conn->executeUpdate($stmt);
     }
 
     /**
@@ -377,7 +442,10 @@ final class MysqlWebhookRepository
     public function recordAttempt(int $deliveryId, int $webhookId, bool $success, ?int $statusCode, string $responseBody): void
     {
         $now = time();
-        $truncated = substr($responseBody, 0, 1000);
+        // A receiver's body is any bytes. Cut mid-character, or not UTF-8 at
+        // all, it is refused under a strict sql_mode: the outcome would go
+        // unrecorded and the delivery be sent again once its claim lapsed.
+        $truncated = mb_strcut(mb_scrub($responseBody, 'UTF-8'), 0, 1000, 'UTF-8');
 
         if ($success) {
             $stmt = $this->conn->prepareWrite(
@@ -429,5 +497,155 @@ final class MysqlWebhookRepository
             $this->conn->bind($kill, 'ii', [$now, $webhookId]);
             $this->conn->executeUpdate($kill);
         }
+    }
+
+    /**
+     * Dispatch-side: hold a pending delivery whose webhook is dead: failed,
+     * its attempts as they were, HELD_REASON as its last response, never
+     * tried. The webhook is asked again in the same statement, so one
+     * revived since the dispatcher read the delivery is left pending
+     * (false), and the dispatcher sends it.
+     */
+    public function holdDelivery(int $deliveryId, int $now): bool
+    {
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_ltv_webhook_deliveries d
+             JOIN 202_ltv_webhooks w ON w.webhook_id = d.webhook_id AND w.user_id = d.user_id
+             SET d.status = 'failed', d.last_status_code = NULL, d.last_response_body = ?, d.updated_at = ?
+             WHERE d.delivery_id = ? AND d.status = 'pending' AND w.status = 'dead'"
+        );
+        $this->conn->bind($stmt, 'sii', [self::HELD_REASON, $now, $deliveryId]);
+
+        return $this->conn->executeUpdate($stmt) === 1;
+    }
+
+    /**
+     * Make one of the account's webhooks that is not active (dead: a
+     * delivery failed MAX_ATTEMPTS times) active again, keeping its id, URL
+     * and secret, so whatever was set up with them (the Landing Page
+     * Optimizer's pairing) goes on as it was.
+     *
+     * With $requeue, every delivery of it that was not delivered and was
+     * queued within WebhookDispatcher::MAX_AGE_SECONDS is sent: the failed
+     * ones (the one that exhausted its attempts, the ones held while it was
+     * dead) are pending again, attempts 0, due at their queueing, so the
+     * dispatcher sends them oldest first with the pending ones no run held
+     * yet, each under its own delivery id (X-P202-Delivery). The pending
+     * ones' attempts start again from 0, so the next failure does not mark
+     * it dead again at once, and each keeps its due time: a retry's backoff
+     * (at most 32 minutes) reads the same as a claim, and a claim is not
+     * shortened. A delivered one is never sent again; older ones stay
+     * failed, as the dispatcher's expiry leaves them.
+     *
+     * Without $requeue it is sent new events only: every delivery of it
+     * still pending, queued before the revival, is set aside as a dead
+     * webhook's are (holdDelivery()): failed, its attempts as they were,
+     * REVIVED_HELD_REASON as its last response, never sent.
+     *
+     * Deliveries are changed only between dispatcher runs: the revival takes
+     * the dispatcher's lock (WebhookDispatcher::betweenRuns()), waiting up to
+     * $lockWaitSeconds for a run in flight, so no delivery a run has claimed
+     * and not yet recorded is held, reset or made due under it. A run that
+     * does not end in time is an LtvConflictException, and nothing changed.
+     * The webhook's row is locked too: two revivals do not both count one
+     * delivery. An active webhook is left as it is (revived false). Another
+     * account's webhook, or none, is a RecordNotFoundException.
+     *
+     * @return array{revived: bool, requeued: int, attempts_reset: int, held: int}
+     */
+    public function revive(
+        int $userId,
+        int $webhookId,
+        bool $requeue,
+        int $now,
+        int $lockWaitSeconds = self::REVIVE_LOCK_WAIT_SECONDS
+    ): array {
+        return WebhookDispatcher::betweenRuns(
+            $this->conn,
+            $lockWaitSeconds,
+            fn (): array => $this->conn->transaction(
+                fn (): array => $this->reviveLocked($userId, $webhookId, $requeue, $now)
+            )
+        );
+    }
+
+    /** @return array{revived: bool, requeued: int, attempts_reset: int, held: int} */
+    private function reviveLocked(int $userId, int $webhookId, bool $requeue, int $now): array
+    {
+        $lock = $this->conn->prepareWrite(
+            'SELECT status FROM 202_ltv_webhooks WHERE webhook_id = ? AND user_id = ? FOR UPDATE'
+        );
+        $this->conn->bind($lock, 'ii', [$webhookId, $userId]);
+        $row = $this->conn->fetchOne($lock);
+        if ($row === null) {
+            throw new RecordNotFoundException('Webhook not found');
+        }
+        if ((string) $row['status'] === 'active') {
+            return ['revived' => false, 'requeued' => 0, 'attempts_reset' => 0, 'held' => 0];
+        }
+
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_ltv_webhooks SET status = 'active', updated_at = ? WHERE webhook_id = ? AND user_id = ?"
+        );
+        $this->conn->bind($stmt, 'iii', [$now, $webhookId, $userId]);
+        $this->conn->executeUpdate($stmt);
+
+        if (!$requeue) {
+            $stmt = $this->conn->prepareWrite(
+                "UPDATE 202_ltv_webhook_deliveries
+                 SET status = 'failed', last_status_code = NULL, last_response_body = ?, updated_at = ?
+                 WHERE webhook_id = ? AND user_id = ? AND status = 'pending'"
+            );
+            $this->conn->bind($stmt, 'siii', [self::REVIVED_HELD_REASON, $now, $webhookId, $userId]);
+            $held = $this->conn->executeUpdate($stmt);
+
+            return ['revived' => true, 'requeued' => 0, 'attempts_reset' => 0, 'held' => $held];
+        }
+
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_ltv_webhook_deliveries SET attempts = 0, updated_at = ?
+             WHERE webhook_id = ? AND user_id = ? AND status = 'pending' AND attempts > 0"
+        );
+        $this->conn->bind($stmt, 'iii', [$now, $webhookId, $userId]);
+        $reset = $this->conn->executeUpdate($stmt);
+
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_ltv_webhook_deliveries
+             SET status = 'pending', attempts = 0, next_attempt_at = created_at, updated_at = ?
+             WHERE webhook_id = ? AND user_id = ? AND status = 'failed' AND created_at >= ?"
+        );
+        $this->conn->bind($stmt, 'iiii', [
+            $now,
+            $webhookId,
+            $userId,
+            $now - WebhookDispatcher::MAX_AGE_SECONDS,
+        ]);
+        $requeued = $this->conn->executeUpdate($stmt);
+
+        return ['revived' => true, 'requeued' => $requeued, 'attempts_reset' => $reset, 'held' => 0];
+    }
+
+    /**
+     * For each of the account's webhooks, how many deliveries revive() with
+     * requeue would send: the failed ones it requeues and the pending ones it
+     * leaves to be sent (queued since the webhook died, or waiting out a
+     * retry), each queued within WebhookDispatcher::MAX_AGE_SECONDS.
+     *
+     * @return array<int, int> webhook id => count, only webhooks that have some
+     */
+    public function missedCounts(int $userId, int $now): array
+    {
+        $stmt = $this->conn->prepareRead(
+            "SELECT webhook_id, COUNT(*) AS c FROM 202_ltv_webhook_deliveries
+             WHERE user_id = ? AND status IN ('failed', 'pending') AND created_at >= ?
+             GROUP BY webhook_id"
+        );
+        $this->conn->bind($stmt, 'ii', [$userId, $now - WebhookDispatcher::MAX_AGE_SECONDS]);
+        $counts = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $counts[(int) $row['webhook_id']] = (int) $row['c'];
+        }
+
+        return $counts;
     }
 }

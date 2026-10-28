@@ -18,6 +18,11 @@
  *       in strings are not seen),
  *       every shipped tracked file at its exact path, the Go binaries
  *       present, and no group- or world-writable file.
+ *   php build/scripts/release-tree.php vendor <app directory> <lock file>
+ *       Check <app directory>/vendor is exactly the lock file's runtime set,
+ *       with no dev package: verify's vendor check on its own. The Docker
+ *       Image workflow runs it in the built image against the checkout's
+ *       composer.lock.
  *
  * Each command prints its problems and exits 1 when there are any.
  * build/scripts/package-release.sh runs prune and verify on every build.

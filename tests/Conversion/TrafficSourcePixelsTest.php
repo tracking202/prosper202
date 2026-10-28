@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
+use Prosper202\Notifications\PostbackSender;
 use Tests\Support\FakeMysqliConnection;
 
 /**
@@ -68,5 +70,45 @@ final class TrafficSourcePixelsTest extends TestCase
         self::assertSame('', $out['markup'], 'nothing is rendered where no browser will load it');
         self::assertSame(2, $out['browser_skipped']);
         self::assertSame([1, 4, 5], $out['types']);
+    }
+
+    /**
+     * Sent straight from here (no outbox), a postback the sender refuses is
+     * that postback's failure: the next one is still sent, and the log line
+     * names the pixel and the host, never the path or query.
+     */
+    public function testARefusedPostbackFailsAloneAndIsLoggedWithoutItsQuery(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows('FROM 202_ppc_account_pixels WHERE ppc_account_id = ?', [[
+            'pixel_id' => 41,
+            'pixel_code' => 'http://169.254.169.254/latest/meta-data/?key=SECRET&s=[[subid]]'
+                . ' https://s2s.test/b?s=[[subid]]',
+            'pixel_type_id' => 4,
+        ]]);
+        $fetched = [];
+        $guard = new WebhookGuard(static fn (string $host): array => ['93.184.216.34'], '');
+        $sender = new PostbackSender($guard, static function (array $options) use (&$fetched): array {
+            $fetched[] = $options[CURLOPT_URL];
+
+            return ['status' => 200, 'error' => null, 'primary_ip' => '93.184.216.34', 'redirect_url' => null];
+        });
+        $log = (string) tempnam(sys_get_temp_dir(), 'p202-pixels-log');
+        $previous = ini_set('error_log', $log);
+        try {
+            $out = TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12'], $sender->send(...), false);
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+        $logged = (string) file_get_contents($log);
+        unlink($log);
+
+        self::assertSame(['https://s2s.test/b?s=12'], $fetched);
+        self::assertSame([2, 1], [$out['server_calls'], $out['server_failures']]);
+        $line = 'traffic source postback refused for pixel 41 of ppc account 3 (http://169.254.169.254): '
+            . 'not sent: 169.254.169.254, which is a link-local address';
+        self::assertStringContainsString($line, $logged);
+        self::assertStringNotContainsString('SECRET', $logged);
+        self::assertStringNotContainsString('meta-data', $logged);
     }
 }

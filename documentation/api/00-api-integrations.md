@@ -59,12 +59,45 @@ Enforcement is central: GET/HEAD requires `<area>:read`, everything else
 `<area>:write` (`POST /sync/plan` counts as a read — it computes a diff
 without applying it). `/capabilities`, `/versions`, and the API root stay
 readable by any valid key so clients can discover what they may do. A denied
-request returns `403` with a message naming the required scope. A scoped key
+request returns `403` naming the required scope (see below). A scoped key
 cannot mint a key broader than itself, and the legacy v1/v2 APIs refuse
 scoped keys outright rather than over-granting. Requires the `scope` column
 on `202_api_keys` (fresh installs have it; the 1.9.75 upgrade backfills it —
 `features.api_key_scopes` in [capabilities](17-capabilities.md) reports
 whether scoped keys can be minted).
+
+#### A key without the scope
+
+A key keeps the scope it was made with, and its scope cannot be changed. So
+when a release lets an AI app's connection do more, every connection approved
+before it is refused there until it is approved again. The refusal says which
+scope is missing and what grants it, in its message and in fields:
+
+```json
+{
+  "error": true,
+  "message": "Insufficient API key scope for this operation: requires 'ppc-networks:write' (key has: campaigns:read). A key's scope cannot be changed: make a key whose scope includes 'ppc-networks:write' (POST /users/{id}/api-keys with a key that holds it, or a full-access key from My Account › Personal Settings › API keys) and use it instead.",
+  "status": 403,
+  "code": "insufficient_scope",
+  "required_scope": "ppc-networks:write",
+  "key_scope": "campaigns:read",
+  "key_source": "api_key",
+  "remedy": "A key's scope cannot be changed: make a key whose scope includes 'ppc-networks:write' (…) and use it instead."
+}
+```
+
+| Field | Meaning |
+| ----- | ------- |
+| `code` | `insufficient_scope`: the key's scope, not the user's role, refused it |
+| `required_scope` | The token the request needed (`text-ads:write`; `write` for a staged change whose area cannot be told) |
+| `key_scope` | The key's own scope, comma-separated |
+| `key_source` | `ai_connection` for a key an AI app's connection made (its label is `AI: <app> via mcp.tracking202.com`), `api_key` for any other, `unknown` when the key's row could not be read |
+| `connect_access` | Unless `key_source` is `api_key`: the approval page's access to choose when connecting the AI app again (`read`, `propose` or `write`; never less than the connection has now), or `null` when no connection's key can hold the scope (users, system, sync) |
+| `remedy` | What grants it: for a connection, connect the AI app again and choose that access; for any other key, a new key whose scope includes the missing token; for `unknown`, both. The message ends with it |
+
+The message keeps its first sentence as before, so a reader matching it still
+matches. A refusal for the user's role (`Admin access required.`, a missing
+permission) is a `403` with `error`, `message` and `status` only.
 
 ### Role Permissions
 
@@ -77,7 +110,7 @@ limit that user — a scope can narrow a key further, never past its role:
 | `DELETE` of each of those | its own `remove_*` — `remove_campaign`, `remove_campaign_category`, `remove_traffic_source`, `remove_traffic_source_account`, `remove_tracker`, `remove_landing_page`, `remove_text_ad`, `remove_rotator`, `remove_rotator_rule` — and `access_to_setup_section` | the Setup pages' remove buttons, `delete_tracker.php` |
 | The Update routes (`/clicks/cpc`, `/conversions/subids…`, `/conversions/uploads`), and recording one conversion (`POST /conversions`) | `access_to_update_section`; deleting subids also `delete_individual_subids` | the Update section ([Update](26-update.md)) |
 | Removing one conversion (`DELETE /conversions/{id}`) | `delete_individual_subids` and `access_to_update_section` | Update › Delete Subids |
-| `/system/version`, `/db-stats`, `/cron`, `/errors`, `/dataengine`, `/metrics`, and the rest of Account › Settings (`/system/info`, `/login-log`, `/retention`, `/isp-lookup`) | Admin, and `access_to_settings` | Account › Settings |
+| `/system/version`, `/db-stats`, `/cron`, `/errors`, `/dataengine`, `/metrics`, and the rest of Account › Settings (`/system/info`, `/login-log`, `/retention`, `/isp-lookup`), and `/system/traffic-source-owners` (its repair also asks for a user who may act on both users, as Account › Users does) | Admin, and `access_to_settings` | Account › Settings |
 | The Setup code and an account's pixels, reads included: `GET /landing-pages/{id}/code`, `GET /conversions/postback-code`, `/ppc-accounts/{id}/pixels` | `access_to_setup_section` | Get LP Code, Postback / Pixel, Traffic Sources ([Setup](27-setup.md)) |
 | A traffic source's custom variables, reads included: `/ppc-networks/{id}/variables` | `remove_traffic_source` and `access_to_setup_section` | Traffic Sources' variables dialog, shown only to a role with both |
 | Goals, reads and `/goals/validate` and `/goals/evaluate` included: every `/goals` route | `access_to_setup_section`; a write to an app's or the account's goal (create, edit, archive, re-evaluate) also `manage_attribution_models` | Setup › Campaigns (a campaign's goals) and Setup › Mobile Apps (an app's) ([Goals](22-goals.md)) |
@@ -468,6 +501,10 @@ Empty response body.
 }
 ```
 
+A `403` for the key's scope adds `code`, `required_scope`, `key_scope`,
+`key_source`, `remedy` and, for an AI connection, `connect_access`
+([A key without the scope](#a-key-without-the-scope)).
+
 ## Status Codes
 
 | Code | Meaning |
@@ -478,6 +515,7 @@ Empty response body.
 | 204 | No Content (DELETE) |
 | 400 | Bad Request |
 | 401 | Unauthorized (missing or invalid API key) |
+| 403 | Forbidden: the key's scope (`code: insufficient_scope`, naming the scope and what grants it; see [A key without the scope](#a-key-without-the-scope)) or the user's role |
 | 409 | Conflict (version/etag mismatch on update: an `If-Match` header, or a body's `version`/`etag`) |
 | 422 | Unprocessable Entity (validation errors) |
 | 429 | Too Many Requests (rate limit exceeded) |
@@ -493,13 +531,25 @@ Empty response body.
 
 Idempotency records, staged changes, sync jobs and their audit, sync
 manifests, rate-limit buckets and metrics live in a directory on the server,
-not in the database: `P202_SERVER_STATE_DIR` when it is set, otherwise
-`p202-api-v3-state-<hash>` in the system temp directory, where the hash is of
+not in the database: `install-<install>` inside `P202_SERVER_STATE_DIR` when
+it is set, otherwise `p202-api-v3-state-<database>-<install>` in the system
+temp directory. `<install>` is a hash of the install's id, so a database
+installed again keeps none of its predecessor's, and `<database>` a hash of
 the database host and name, so two instances on one host keep their own. A
 process that runs without the configuration in scope uses
 `p202-api-v3-state-unscoped` and logs that it does; it used to use the
 pre-1.9.75 shared directory, which the next instance installed on the host
 then adopted as its own.
+
+**The install's id** is 32 random bytes the installer stores in
+`202_deployment_secrets` (`secret_name` `install_id`); the upgrade to 1.9.79
+gives an existing install one, and so does its first API request when the
+files are deployed before the upgrade runs. It is read from the database
+whenever the API uses its state, `P202_SERVER_STATE_DIR` or not. When it
+cannot be read the API answers `500` (`503` while the upgrade is pending) and
+the log says why; it never falls back to a directory named by the database
+alone, nor to `P202_SERVER_STATE_DIR` itself: those are the names a
+reinstalled database shared with the install before it.
 
 **The pre-1.9.75 shared directory (`p202-api-v3-state`, no hash) is never
 adopted.** An instance with no directory of its own used to rename it into
@@ -509,18 +559,69 @@ and its staged changes were listed here to apply against this database. It
 is left where it is, and the server log names it once a process ("… is not
 adopted …") with the directory this instance uses. If it really holds this
 install's own staged changes and sync jobs (an upgrade from before 1.9.75),
-move it to that directory before the next request, or point
-`P202_SERVER_STATE_DIR` at it.
+move it to that directory before the next request. (Pointing
+`P202_SERVER_STATE_DIR` at it no longer reads it: the install's own directory
+inside is what is read.)
 
-**Reinstalling into a database of the same name on the same host keeps that
-directory**, and with it the previous install's state: a retried
-`Idempotency-Key` it recorded replays the old response, and its staged
-changes are listed to the new install's users. Before reinstalling that
-way, remove the directory (or point `P202_SERVER_STATE_DIR` somewhere new).
+**Reinstalling into a database of the same name on the same host starts
+with an empty directory.** Before 1.9.79 the directory was named by the
+database alone, so the new install took the old one's: a create sent under
+an `Idempotency-Key` the old install had answered was answered `201` with the
+old record and created nothing, and the old install's staged changes were
+listed to the new install's users and could be applied to its database. The
+earlier directory — the one named by the database alone
+(`p202-api-v3-state-<database>`, from before the upgrade to 1.9.79), or an
+earlier install's — is left where it is and never read; the server log names
+each once, when the install makes its own ("the API state directory … is
+not used: …"). If it holds this install's own
+staged changes or sync jobs from before the upgrade, copy what it holds into
+the directory the log names; otherwise remove it (`rm -r` it, as the server's
+user).
+
+**Under `P202_SERVER_STATE_DIR` each install has a directory of its own**,
+`install-<install>`, made (mode `0700`) by the first request that needs it.
+(On the Coolify stack that directory is the `api_state` volume.) Before
+1.9.79 the directory was used as named, for whichever install was there, so a
+database installed again under it read the old install's records as its own,
+as the temp-dir default did. What an earlier version wrote at the directory's
+top level (`idempotency/`, `staged_changes/`, `jobs/` and the rest), and
+another install's `install-…` directory, are left where they are and never
+read; the server log names them once, when the install makes its own ("the
+API state in … is not used: …", "the API state directory … is not used: …").
+After an upgrade to 1.9.79, if the top level holds this install's own staged
+changes or sync jobs, copy what it holds into the directory the log names;
+then remove what is at the top level. Anything else you keep in the directory
+is left alone and not mentioned. An `install-…` directory another database
+sharing `P202_SERVER_STATE_DIR` uses is that database's: remove one only when
+no install uses it.
+
+The install's directory is used only when it is a real directory (not a
+symbolic link) owned by the process's own user that its group and others
+cannot write, so the web server and the CLI worker that reads the state
+(`202-cronjobs/sync-worker.php`) run as one user; a directory shared between
+two users through its group is refused. Unlike the temp dir there is no
+alternative to take: the API answers `500` and the log names the directory
+and why ("… is not used: it is owned by uid …"). A process running as root
+does not make it in a `P202_SERVER_STATE_DIR` another user owns, where the
+web server's user could not use it: run CLI workers as the web server's
+user.
+
+**Restoring the database from a backup keeps its install id**, and so the
+directory it names, which still holds what the API recorded after the backup
+was taken: a create whose `Idempotency-Key` was recorded after the backup is
+answered as done (`201`, `idempotent_replay: true`) with nothing created, and
+staged changes proposed after it are still listed to apply. After a restore,
+empty the install's directory before the first API request: under
+`P202_SERVER_STATE_DIR` all of it when no other database uses it, or
+`install-<install>`, where `<install>` is the first 12 characters of the
+SHA-1 of the `install_id` row in `202_deployment_secrets`
+(`printf %s "$id" | sha1sum | cut -c1-12`); in the temp dir,
+`p202-api-v3-state-<database>-<install>`.
 
 **The temp-dir default is used only when the server's own user owns it
-alone.** Its name can be worked out from the database host and name, and the
-temp dir is anyone's, so another local user could make it first and put
+alone.** Before 1.9.79 its name could be worked out from the database host
+and name, and the temp dir is anyone's, so another local user could make it
+first and put
 records in it: a planted `Idempotency-Key` record replayed its response (and
 created nothing), and a planted staged change was listed to apply. The
 directory is now used only when it is a real directory (not a symbolic link)
@@ -532,8 +633,8 @@ can be used the API answers `500` and the log says so; a process running as
 root never takes an alternative (it cannot tell the web server's user from
 anyone else, and a directory of its own would be one the web tier never
 reads), so run CLI workers such as `202-cronjobs/sync-worker.php` as the web
-server's user. `P202_SERVER_STATE_DIR` is used as named: put it where only
-the server's user can write.
+server's user. `P202_SERVER_STATE_DIR` itself is the operator's, and not
+checked: put it where only the server's user can write.
 
 ## Resource Endpoints Overview
 
