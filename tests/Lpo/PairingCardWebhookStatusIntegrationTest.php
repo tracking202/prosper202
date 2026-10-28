@@ -87,7 +87,19 @@ final class PairingCardWebhookStatusIntegrationTest extends TestCase
     public static function tearDownAfterClass(): void
     {
         if (self::$db !== null) {
-            self::q('RENAME TABLE IF EXISTS 202_ltv_webhooks_lpo_card_test TO 202_ltv_webhooks');
+            // A run that died with the table renamed away: put it back, or drop
+            // the copy where the installer has made the table again (MySQL has
+            // no RENAME TABLE IF EXISTS).
+            $tables = self::$db->query('SELECT TABLE_NAME FROM information_schema.TABLES'
+                . " WHERE TABLE_SCHEMA = DATABASE()"
+                . " AND TABLE_NAME IN ('202_ltv_webhooks', '202_ltv_webhooks_lpo_card_test')");
+            self::assertInstanceOf(\mysqli_result::class, $tables);
+            $found = array_column($tables->fetch_all(), 0);
+            if (in_array('202_ltv_webhooks_lpo_card_test', $found, true)) {
+                self::q(in_array('202_ltv_webhooks', $found, true)
+                    ? 'DROP TABLE 202_ltv_webhooks_lpo_card_test'
+                    : 'RENAME TABLE 202_ltv_webhooks_lpo_card_test TO 202_ltv_webhooks');
+            }
             self::cleanUp();
             if (self::$addedPermission !== null) {
                 self::q('DELETE FROM 202_permissions WHERE permission_id = ' . self::$addedPermission);
