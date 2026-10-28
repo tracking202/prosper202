@@ -446,6 +446,32 @@ module.exports = {
     },
 
     {
+      name: 'AI connect: the approval page shows what the link says as the link\'s words, and vouches for none of it',
+      async run(ctx) {
+        const { app, ui, expect } = ctx;
+        const query = new URLSearchParams({
+          state: 'a'.repeat(43) + '.' + 'B'.repeat(43),
+          code_challenge: 'c'.repeat(43),
+          code_challenge_method: 'S256',
+          client_name: 'Claude',
+          client_domain: 'claude.ai',
+          redirect_host: 'claude.ai',
+          install: ctx.config.base + '/',
+          redirect_uri: 'https://mcp.tracking202.com/callback',
+        });
+        await app.goto('/202-account/connect-ai.php?' + query);
+        // What a person reads: rendered and visible, not the source.
+        const text = await ui.page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+        expect.ok(text.includes('calls itself \u201cClaude\u201d (claude.ai)'), 'the name and site are the link\'s');
+        expect.ok(text.includes("The app's name and site are what the link says; this page cannot check them."),
+          'and the page says it cannot check them');
+        expect.ok(text.includes('Whoever started the connection gets the access you choose'), 'and who gets the access');
+        expect.notOk(/verif/i.test(text), 'nothing on the page says verified');
+        expect.ok(await ui.page.isVisible('form[method="post"] button[type="submit"]'), 'the approval form is offered');
+      },
+    },
+
+    {
       name: 'The primary action is reachable from the keyboard',
       async run(ctx) {
         const { app, ui, expect } = ctx;

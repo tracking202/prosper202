@@ -8,15 +8,16 @@ use Api\V3\Auth;
 use Api\V3\Controllers\StagedChangesController;
 use Api\V3\Support\ServerStateStore;
 use Prosper202\Database\Tables\UserTables;
+use Prosper202\User\ServedPreferences;
 use Tests\TestCase;
 
 /**
  * `PUT /users/{id}/preferences` is stageable, and its handler answers with
- * `SELECT * FROM 202_users_pref` — the only `SELECT *` on the whole v3
- * controller surface. So the applier, who is deliberately *not* the
- * proposer, is served every column of that table, and the staged-apply
- * redactor is the only thing standing between an approver and the
- * proposer's credentials.
+ * the whole `202_users_pref` row. So the applier, who is deliberately *not*
+ * the proposer, is served every column of that table. ServedPreferences
+ * answers its secrets only as `{"stored": …}`; the staged-apply redactor is
+ * the second line between an approver and the proposer's credentials, and
+ * this holds it to the same columns.
  *
  * The sibling guard in StagedChangesControllerTest enumerates the ten fields
  * the preferences *write* surface accepts; that is a much narrower set than
@@ -28,10 +29,10 @@ use Tests\TestCase;
  *    pinned to a plausible count and to named anchor columns, so a regex
  *    that stopped matching fails rather than passing on an empty set;
  *  - classification is an allowlist of the columns known *not* to be
- *    secrets, so a NEW column is unclassified and must be redacted — adding
- *    a credential column and forgetting the needle fails here, and the only
- *    way to quiet it is for a person to state, in this file, that the column
- *    is not a secret;
+ *    secrets (ServedPreferences::SERVED), so a NEW column is unclassified
+ *    and must be redacted — adding a credential column and forgetting the
+ *    needle fails here, and the only way to quiet it is for a person to
+ *    state, on that list, that the column is not a secret;
  *  - the allowlisted columns are asserted to survive intact, so a needle
  *    broad enough to swallow ordinary preference columns (`_key` would take
  *    `user_pref_keyword`) fails too;
@@ -43,39 +44,11 @@ final class PreferenceSecretCoverageTest extends TestCase
 {
     /**
      * Columns of `202_users_pref` that are NOT credentials, and may be shown
-     * to whoever applies a staged preferences write. Everything else in the
-     * table must be redacted. Add a column here only after deciding it
-     * carries nothing secret; if it does carry a secret, add a needle to
-     * StagedChangesController::SECRET_KEY_SUBSTRINGS instead.
-     *
-     * (`cb_verified` is a flag, not the key; `revcontent_user_id` is an
-     * account id whose paired `revcontent_user_secret` is the credential;
-     * `lpo_status` and `lpo_ctx_kw` are the LPO on/off state, while
-     * `lpo_site_key` and `lpo_bridge_config` are not.)
+     * to whoever applies a staged preferences write: the ones GET serves.
+     * Everything else in the table must be redacted here as well, the
+     * second line behind ServedPreferences.
      */
-    private const NON_SECRET_COLUMNS = [
-        'user_id', 'user_pref_limit', 'user_pref_show', 'user_pref_time_from',
-        'user_pref_time_to', 'user_pref_time_predefined', 'user_pref_adv',
-        'user_pref_ppc_network_id', 'user_pref_ppc_account_id',
-        'user_pref_aff_network_id', 'user_pref_aff_campaign_id',
-        'user_pref_text_ad_id', 'user_pref_method_of_promotion',
-        'user_pref_landing_page_id', 'user_pref_country_id',
-        'user_pref_region_id', 'user_pref_device_id', 'user_pref_browser_id',
-        'user_pref_platform_id', 'user_pref_isp_id', 'user_pref_subid',
-        'user_pref_ip', 'user_pref_dynamic_bid', 'user_pref_referer',
-        'user_pref_keyword', 'user_pref_breakdown', 'user_pref_chart',
-        'user_cpc_or_cpv', 'user_keyword_searched_or_bidded',
-        'user_pref_privacy', 'user_pref_referer_data', 'user_tracking_domain',
-        'user_pref_group_2', 'user_pref_group_3', 'user_pref_group_4',
-        'user_pref_group_1', 'cache_time', 'cb_verified', 'maxmind_isp',
-        'chart_time_range', 'user_pref_cloak_referer', 'auto_cron',
-        'user_daily_email', 'user_auto_database_optimization_days',
-        'user_delete_data_clickid', 'user_account_currency',
-        'revcontent_user_id', 'facebook_ads_linked', 'user_pref_ad_settings',
-        'user_ltv_customer_cparam', 'user_ltv_personalization_fields',
-        'user_ltv_score_weights', 'user_ltv_rec_fatigue', 'lpo_status',
-        'lpo_ctx_kw', 'user_delete_data_before',
-    ];
+    private const NON_SECRET_COLUMNS = ServedPreferences::SERVED;
 
     public function testEveryCredentialColumnOfUsersPrefIsRedactedOnApply(): void
     {
@@ -94,7 +67,7 @@ final class PreferenceSecretCoverageTest extends TestCase
         self::assertSame([], $audit['leaked'], sprintf(
             'these 202_users_pref columns reach the applier verbatim: %s. Either add a needle to '
             . 'StagedChangesController::SECRET_KEY_SUBSTRINGS, or list the column in '
-            . 'PreferenceSecretCoverageTest::NON_SECRET_COLUMNS to record that it holds no credential.',
+            . 'ServedPreferences::SERVED to record that it holds no credential.',
             implode(', ', $audit['leaked'])
         ));
         self::assertSame([], $audit['over_redacted'], sprintf(
@@ -108,7 +81,7 @@ final class PreferenceSecretCoverageTest extends TestCase
         self::assertSame(
             [],
             array_values(array_diff(self::NON_SECRET_COLUMNS, $columns)),
-            'NON_SECRET_COLUMNS names columns that 202_users_pref no longer has'
+            'ServedPreferences::SERVED names columns that 202_users_pref no longer has'
         );
     }
 

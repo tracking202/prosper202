@@ -62,7 +62,7 @@ System health checks, diagnostics, and administration.
 
 ## Data Engine
 
-`GET /system/dataengine` — returns data engine job status, the count of pending dirty hours to process, and `reclick_backfill`: how far the cron job has brought the clicks re-clicked before 1.9.79 to one visit each (`percent`, `reclicked_clicks`, and a `note` saying what reports show meanwhile), or `null` when there is nothing left to bring over. When a click fails, the walk stops at it and every run tries it again: `stalled_at_click_id` names it, `failed_runs` counts the runs in a row it failed and `failing_since` says when the first was, and the `note` says the walk is stopped; all three clear once a run gets past it. A click that has failed in 10 runs in a row over at least an hour is stepped over, so it cannot hold back the clicks after it: `skipped_clicks` counts those, `last_skipped_click_id` names the latest, the server's error log names each (`p202 re-click backfill: click … stepped over`), and reports count each at every one of its visits. A walk that finished with a click stepped over still answers, with `in_progress` false, rather than `null`.
+`GET /system/dataengine` — returns data engine job status, the count of pending dirty hours to process, and `reclick_backfill`: how far the cron job has brought the clicks re-clicked before 1.9.79 to one visit each (`percent`, `reclicked_clicks`, and a `note` saying what reports show meanwhile), or `null` when there is nothing left to bring over. When a click fails, the walk stops at it and every run tries it again: `stalled_at_click_id` names it, `failed_runs` counts the runs it failed with an error of its own and `failing_since` says when the first failure was, and the `note` says the walk is stopped; all three clear once a run gets past it. A lock wait, a deadlock, a timeout, a lost connection or a server that is full or read-only stops the run the same way and counts in none, however long it lasts. A click that has failed with an error of its own in 10 runs over at least an hour is stepped over, so it cannot hold back the clicks after it: `skipped_clicks` counts those, `last_skipped_click_id` names the latest, the server's error log names each (`p202 re-click backfill: click … stepped over`), and reports count each at every one of its visits. A walk that finished with a click stepped over still answers, with `in_progress` false, rather than `null`.
 
 ## Metrics
 
@@ -302,9 +302,11 @@ minutes.
 
 The base is the one tracker links use: user 1's tracking domain (or this
 server's name) and the install's path. `secret_stored` says whether the
-caller has stored the key each notification is checked with; PayKickstart's
-`keys_stored` counts its IPN secret keys, one for each PayKickstart campaign.
-The secrets are never served — `PUT /users/{id}/preferences` sets them.
+caller has stored the key each notification is checked with (null: it needs
+none); PayKickstart's `keys_stored` counts its IPN secret keys, one for each
+PayKickstart campaign. The secrets are never served — `PUT
+/users/{id}/preferences` sets them, and its `GET` answers each only as
+`{"stored": true}` or `{"stored": false}`.
 
 PayKickstart's URL takes its **product (vendor) IPN**, which a vendor sets
 under each product's IPN Integration tab: a sale is recorded on the click the

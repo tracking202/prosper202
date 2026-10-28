@@ -838,10 +838,12 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
      *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
-     *     source?: string, reversal?: bool, reversal_ref?: string, event_name?: string|null
+     *     source?: string, reversal?: bool, reversal_ref?: string, event_name?: string|null,
+     *     conv_time?: int
      * } $opts source is the ledger source the row is recorded under
      *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
-     *     a campaign-without-goals hit's `event=`, kept on the row.
+     *     a campaign-without-goals hit's `event=`, kept on the row; conv_time
+     *     dates the row (a Unix time; now when it is left out).
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,
      *         foreign_click, campaign_mismatch, already_lead, duplicate.
@@ -895,12 +897,16 @@ if (!function_exists('p202RecordLegacyConversion')) {
 
         $usePixelPayout = (bool) ($opts['use_pixel_payout'] ?? false);
         $payout = $usePixelPayout ? (string) ($opts['payout'] ?? '0') : (string) $click['click_payout'];
+        $convTime = $opts['conv_time'] ?? time();
+        if (!is_int($convTime) || $convTime <= 0) {
+            throw new \InvalidArgumentException('p202RecordLegacyConversion: conv_time must be a positive Unix time');
+        }
         $result = p202RecordConversion(
             $db,
             [
                 'click_id'        => $clickId,
                 'user_id'         => (int) $click['user_id'],
-                'conv_time'       => time(),
+                'conv_time'       => $convTime,
                 'ip'              => (string) ($opts['ip'] ?? ''),
                 'pixel_type'      => $pixelType,
                 'user_agent'      => (string) ($opts['user_agent'] ?? ''),
