@@ -364,6 +364,55 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         self::assertSame($before, self::stored($id), 'the set as it was');
     }
 
+    /** Every problem in the set is answered in one 422, several in one rule included, each by its place. */
+    public function testEveryProblemInTheSetIsAnsweredAtOnce(): void
+    {
+        $mine = self::campaign(self::USER);
+        $theirs = self::campaign(self::OTHER);
+        $id = $this->rotator();
+        $rules = self::twoRules($mine);
+        $rules[0]['rule_name'] = '';
+        $rules[0]['status'] = 2;
+        $rules[0]['criteria'] = [
+            ['type' => 'planet', 'value' => 'Mars'],
+            ['type' => 'device', 'statement' => 'is', 'value' => 'Mobile'],
+            ['type' => 'country', 'statement' => 'isnt', 'value' => 'US'],
+            ['type' => 'ip', 'value' => '203.0.113.7'],
+        ];
+        $rules[0]['redirects'][0]['weight'] = 'lots';
+        $rules[0]['redirects'][1] = ['redirect_campaign' => $theirs, 'weight' => 30, 'name' => str_repeat('n', 256)];
+        $rules[1]['splittest'] = 'yes';
+        $rules[1]['criteria'][0]['value'] = ' , ';
+        $rules[1]['redirects'][0] = ['redirect_url' => 'ftp://x.example/'];
+
+        $expected = [
+            'rules.0.rule_name',
+            'rules.0.status',
+            'rules.0.criteria.0.type',
+            'rules.0.criteria.1.value',
+            'rules.0.criteria.2.statement',
+            'rules.0.criteria.2.value',
+            'rules.0.redirects.0.weight',
+            'rules.0.redirects.1.redirect_campaign',
+            'rules.0.redirects.1.name',
+            'rules.1.splittest',
+            'rules.1.criteria.0.value',
+            'rules.1.redirects.0.redirect_url',
+        ];
+        sort($expected);
+        foreach ([true, false] as $dryRun) {
+            try {
+                $this->set($id, $rules, $dryRun);
+                self::fail('the set was accepted');
+            } catch (ValidationException $e) {
+                $fields = array_keys($e->getFieldErrors());
+                sort($fields);
+                self::assertSame($expected, $fields, json_encode($e->getFieldErrors()) ?: '');
+            }
+        }
+        self::assertSame([], $this->rotators()->listRules($id)['data'], 'nothing was written');
+    }
+
     public function testAnIdTheRedirectorDoesNotHoldIsRefused(): void
     {
         $campaign = self::campaign(self::USER);
@@ -776,6 +825,115 @@ final class RotatorRuleSetIntegrationTest extends TestCase
             'the set\'s name, and the update\'s status'
         );
         self::assertSame(['rules' => 0, 'criteria' => 0, 'redirects' => 0], self::rowsOf((int) $extra['id']));
+    }
+
+    /**
+     * A connection that runs $then once, right after its next commit: another
+     * writer, waiting on the redirector's lock, taking it the moment the
+     * commit lets go and writing before the first writer says anything.
+     */
+    private static function committingThen(\Closure $then): \mysqli
+    {
+        $db = new class (
+            $then,
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        ) extends \mysqli {
+            private ?\Closure $then;
+
+            public function __construct(
+                \Closure $then,
+                string $host,
+                string $user,
+                string $pass,
+                string $name,
+                int $port
+            ) {
+                $this->then = $then;
+                parent::__construct($host, $user, $pass, $name, $port);
+            }
+
+            public function commit(int $flags = 0, ?string $name = null): bool
+            {
+                $committed = parent::commit($flags, $name);
+                $then = $this->then;
+                $this->then = null;
+                if ($committed && $then !== null) {
+                    $then();
+                }
+
+                return $committed;
+            }
+        };
+        $db->query("SET SESSION sql_mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
+
+        return $db;
+    }
+
+    /**
+     * A write answers the set it committed, not one another writer committed
+     * after it: the read-back is made under the redirector's lock.
+     *
+     * @return array<string, array{callable(RotatorsController, int, list<array<string, mixed>>): list<string>}>
+     */
+    public static function writesThatAnswerTheirOwnSet(): array
+    {
+        $names = static fn (array $answer): array => array_column($answer['data']['rules'], 'rule_name');
+
+        return [
+            'a rule set' => [static function (RotatorsController $rotators, int $id, array $read): array {
+                $rules = [['rule_name' => 'first writer'] + $read[0], $read[1]];
+                $answer = $rotators->setRules($id, ['rules' => $rules], false, static function (): void {
+                });
+                self::assertSame(['update', 'keep'], array_column($answer['data']['changes']['rules'], 'action'));
+
+                return array_column($answer['data']['rules'], 'rule_name');
+            }],
+            'a rule added' => [static fn (RotatorsController $rotators, int $id): array => $names(
+                $rotators->createRule($id, [
+                    'rule_name' => 'first writer',
+                    'criteria' => [['type' => 'device', 'value' => 'tablet']],
+                    'redirects' => [['redirect_url' => 'https://first.example/']],
+                ])
+            )],
+            'a rule updated' => [static fn (RotatorsController $rotators, int $id, array $read): array => $names(
+                $rotators->updateRule($id, (int) $read[0]['id'], ['rule_name' => 'first writer'])
+            )],
+        ];
+    }
+
+    /**
+     * @dataProvider writesThatAnswerTheirOwnSet
+     * @param callable(RotatorsController, int, list<array<string, mixed>>): list<string> $write
+     */
+    public function testAWriteAnswersTheSetItCommittedNotTheNextWritersSet(callable $write): void
+    {
+        $id = $this->rotator();
+        $this->set($id, self::twoRules(self::campaign(self::USER)));
+        $read = $this->rotators()->listRules($id)['data'];
+        $sets = [];
+        $next = function () use ($id, &$sets): void {
+            $sets[] = array_column($this->rotators()->listRules($id)['data'], 'rule_name');
+            $this->set($id, [[
+                'rule_name' => 'second writer',
+                'criteria' => [['type' => 'country', 'value' => 'ALL']],
+                'redirects' => [['redirect_url' => 'https://second.example/']],
+            ]]);
+        };
+        $first = self::committingThen($next);
+        try {
+            $answered = $write(new RotatorsController($first, self::USER), $id, $read);
+        } finally {
+            $first->close();
+        }
+
+        self::assertCount(1, $sets, 'the second writer ran after the first one committed');
+        self::assertSame($sets[0], $answered, 'the first writer answers the set it committed');
+        self::assertContains('first writer', $answered);
+        self::assertSame(['second writer'], array_column($this->rotators()->listRules($id)['data'], 'rule_name'));
     }
 
     public function testValuesAreStoredAsThePageStoresThem(): void

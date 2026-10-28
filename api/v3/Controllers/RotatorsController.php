@@ -604,127 +604,189 @@ class RotatorsController
                 $heldRedirects[(string) $entry['id']] = $entry;
             }
         }
+        // Every entry's problems, each field's, before any is refused.
+        $errors = [];
+        $messages = [];
+        $refuse = static function (string $message, array $fields) use (&$errors, &$messages): void {
+            $messages[] = $message;
+            $errors += $fields;
+        };
         $out = ['criteria' => null, 'redirects' => null];
         if (array_key_exists('criteria', $payload) && $payload['criteria'] !== null) {
             if (!is_array($payload['criteria']) || !array_is_list($payload['criteria'])) {
-                throw new ValidationException('criteria must be an array', ['criteria' => 'Expected an array of objects']);
-            }
-            $out['criteria'] = [];
-            foreach ($payload['criteria'] as $i => $c) {
-                $at = "criteria.$i";
-                if (!is_array($c)) {
-                    throw new ValidationException('Each criterion must be an object', [$at => 'Expected {"type", "statement", "value"}']);
-                }
-                $type = $c['type'] ?? null;
-                $statement = $c['statement'] ?? 'is';
-                $value = $c['value'] ?? null;
-                if (!is_string($type) || !in_array($type, self::CRITERIA_TYPES, true)) {
-                    throw new ValidationException('Unknown criterion type', ["$at.type" => 'One of ' . implode(', ', self::CRITERIA_TYPES) . '; the redirects ignore any other, so the rule would never match']);
-                }
-                if (!is_string($statement) || !in_array($statement, ['is', 'is_not'], true)) {
-                    throw new ValidationException('Unknown criterion statement', ["$at.statement" => 'is or is_not']);
-                }
-                $values = [];
-                foreach ((is_string($value) || is_int($value)) ? explode(',', (string) $value) : [] as $part) {
-                    $part = trim($part);
-                    if ($part !== '') {
-                        $values[] = $part === 'all' ? 'ALL' : $part;
+                $refuse('criteria must be an array', ['criteria' => 'Expected an array of objects']);
+            } else {
+                $out['criteria'] = [];
+                foreach ($payload['criteria'] as $i => $c) {
+                    $at = "criteria.$i";
+                    if (!is_array($c)) {
+                        $refuse('Each criterion must be an object', [$at => 'Expected {"type", "statement", "value"}']);
+                        continue;
+                    }
+                    $before = count($errors);
+                    $criterion = self::criterion($c, $at, $refuse);
+                    if ($criterion !== null && count($errors) === $before) {
+                        $heldCriterion = self::heldEntry($c, $heldCriteria);
+                        $out['criteria'][] = ['id' => $heldCriterion === null ? null : (int) $heldCriterion['id']] + $criterion;
                     }
                 }
-                if ($values === []) {
-                    throw new ValidationException('A criterion needs a value', ["$at.value" => 'Comma-separated values, e.g. "United States(US)" (`p202 rotator criteria-values`), or ALL for every visitor']);
-                }
-                // The redirects compare a country as "Name(CC)". A bare code —
-                // the form these docs once showed — never matches, so the
-                // rule would sit there matching nothing.
-                if ($type === 'country') {
-                    foreach ($values as $country) {
-                        if (preg_match('/^[A-Za-z]{2}$/D', $country) === 1) {
-                            throw new ValidationException('A country is written Name(CC)', ["$at.value" => '"' . $country . '" never matches: write it as the redirects compare it, e.g. "United States(US)" (`p202 rotator criteria-values --search ' . $country . '`)']);
-                        }
-                    }
-                }
-                // The redirects compare the visitor's device in lower case.
-                if ($type === 'device') {
-                    foreach ($values as $device) {
-                        if ($device !== 'ALL' && $device !== strtolower($device)) {
-                            throw new ValidationException('A device is written in lower case', ["$at.value" => '"' . $device . '" never matches: the redirects compare a device in lower case, e.g. "' . strtolower($device) . '" (desktop, mobile, tablet, bot)']);
-                        }
-                    }
-                }
-                $value = implode(',', $values);
-                // An IP criterion is a list of single addresses, stored in
-                // canonical form; one that is not an address (a typo, a
-                // range) would never match, so it is refused by name.
-                if ($type === 'ip') {
-                    $refused = IpCriterion::refusal($value);
-                    if ($refused !== null) {
-                        throw new ValidationException('An IP criterion lists single addresses', [
-                            "$at.value" => $refused,
-                        ]);
-                    }
-                    $value = IpCriterion::normalize($value)['value'];
-                }
-                $heldCriterion = self::heldEntry($c, $heldCriteria);
-                $out['criteria'][] = [
-                    'id' => $heldCriterion === null ? null : (int) $heldCriterion['id'],
-                    'type' => $type,
-                    'statement' => $statement,
-                    'value' => $value,
-                ];
             }
         }
         if (array_key_exists('redirects', $payload) && $payload['redirects'] !== null) {
             if (!is_array($payload['redirects']) || !array_is_list($payload['redirects'])) {
-                throw new ValidationException('redirects must be an array', ['redirects' => 'Expected an array of objects']);
-            }
-            $out['redirects'] = [];
-            foreach ($payload['redirects'] as $i => $r) {
-                $at = "redirects.$i";
-                if (!is_array($r)) {
-                    throw new ValidationException('Each redirect must be an object', [$at => 'Expected {"redirect_url"|"redirect_campaign"|"redirect_lp", "weight", "name"}']);
-                }
-                $heldEntry = self::heldEntry($r, $heldRedirects);
-                $monetizer = $r['auto_monetizer'] ?? null;
-                if ($monetizer !== null) {
-                    $destination = $this->destination($r, self::REDIRECT_KEYS, false, "$at.");
-                    if (array_filter($destination, static fn ($v): bool => $v !== null) !== []) {
-                        throw new ValidationException('A redirect is the auto-monetizer or a destination', [
-                            "$at.auto_monetizer" => 'This redirect is the auto-monetizer (set on Setup > Redirectors): '
-                                . 'send it without a destination to keep it, or without auto_monetizer to give it one',
-                        ]);
+                $refuse('redirects must be an array', ['redirects' => 'Expected an array of objects']);
+            } else {
+                $out['redirects'] = [];
+                foreach ($payload['redirects'] as $i => $r) {
+                    $at = "redirects.$i";
+                    if (!is_array($r)) {
+                        $refuse('Each redirect must be an object', [$at => 'Expected {"redirect_url"|"redirect_campaign"|"redirect_lp", "weight", "name"}']);
+                        continue;
                     }
-                    $destination['monetizer'] = (string) $monetizer;
-                } else {
-                    // A redirect sent back as GET showed it keeps what it
-                    // holds, a campaign deleted since included.
-                    $held = $heldEntry === null ? [] : [
-                        'url' => $heldEntry['redirect_url'] ?? null,
-                        'campaign' => $heldEntry['redirect_campaign'] ?? null,
-                        'lp' => $heldEntry['redirect_lp'] ?? null,
-                    ];
-                    $destination = $this->destination($r, self::REDIRECT_KEYS, true, "$at.", $held) + ['monetizer' => null];
+                    $before = count($errors);
+                    $heldEntry = self::heldEntry($r, $heldRedirects);
+                    $redirect = $this->redirect($r, $at, $heldEntry, $refuse);
+                    if ($redirect !== null && count($errors) === $before) {
+                        $out['redirects'][] = ['id' => $heldEntry === null ? null : (int) $heldEntry['id']] + $redirect;
+                    }
                 }
-                $weight = $r['weight'] ?? 100;
-                $heldWeight = $heldEntry['weight'] ?? null;
-                if ($heldWeight !== null && PayloadKeys::same($weight, $heldWeight)) {
-                    $weight = (string) $heldWeight;
-                } elseif ((!is_int($weight) && !is_string($weight)) || preg_match('/^(?:100|[1-9]?[0-9])$/D', (string)$weight) !== 1) {
-                    throw new ValidationException('Invalid weight', ["$at.weight" => 'A whole number from 0 to 100']);
-                }
-                $name = $r['name'] ?? '';
-                $heldName = $heldEntry['name'] ?? null;
-                if ($heldName !== null && PayloadKeys::same($name, $heldName)) {
-                    $name = (string) $heldName;
-                } elseif ((!is_string($name) && !is_int($name)) || mb_strlen((string)$name) > 255) {
-                    throw new ValidationException('Invalid redirect name', ["$at.name" => 'Text of at most 255 characters']);
-                }
-                $out['redirects'][] = ['id' => $heldEntry === null ? null : (int) $heldEntry['id']]
-                    + $destination + ['weight' => (string)$weight, 'name' => (string)$name];
             }
+        }
+        if ($errors !== []) {
+            if (count($messages) === 1) {
+                throw new ValidationException($messages[0], $errors);
+            }
+            PayloadKeys::refuse($errors);
         }
 
         return $out;
+    }
+
+    /**
+     * One criterion of a rule, its problems handed to $refuse field by field
+     * (null when its type or values cannot be read).
+     *
+     * @param array<string, mixed> $c
+     * @param callable(string, array<string, string>): void $refuse
+     * @return array{type: string, statement: string, value: string}|null
+     */
+    private static function criterion(array $c, string $at, callable $refuse): ?array
+    {
+        $type = $c['type'] ?? null;
+        $statement = $c['statement'] ?? 'is';
+        $value = $c['value'] ?? null;
+        $typed = is_string($type) && in_array($type, self::CRITERIA_TYPES, true);
+        if (!$typed) {
+            $refuse('Unknown criterion type', ["$at.type" => 'One of ' . implode(', ', self::CRITERIA_TYPES) . '; the redirects ignore any other, so the rule would never match']);
+        }
+        $stated = is_string($statement) && in_array($statement, ['is', 'is_not'], true);
+        if (!$stated) {
+            $refuse('Unknown criterion statement', ["$at.statement" => 'is or is_not']);
+        }
+        $values = [];
+        foreach ((is_string($value) || is_int($value)) ? explode(',', (string) $value) : [] as $part) {
+            $part = trim($part);
+            if ($part !== '') {
+                $values[] = $part === 'all' ? 'ALL' : $part;
+            }
+        }
+        if ($values === []) {
+            $refuse('A criterion needs a value', ["$at.value" => 'Comma-separated values, e.g. "United States(US)" (`p202 rotator criteria-values`), or ALL for every visitor']);
+            return null;
+        }
+        if (!$typed) {
+            return null;
+        }
+        // The redirects compare a country as "Name(CC)". A bare code — the
+        // form these docs once showed — never matches, so the rule would sit
+        // there matching nothing.
+        if ($type === 'country') {
+            foreach ($values as $country) {
+                if (preg_match('/^[A-Za-z]{2}$/D', $country) === 1) {
+                    $refuse('A country is written Name(CC)', ["$at.value" => '"' . $country . '" never matches: write it as the redirects compare it, e.g. "United States(US)" (`p202 rotator criteria-values --search ' . $country . '`)']);
+                    return null;
+                }
+            }
+        }
+        // The redirects compare the visitor's device in lower case.
+        if ($type === 'device') {
+            foreach ($values as $device) {
+                if ($device !== 'ALL' && $device !== strtolower($device)) {
+                    $refuse('A device is written in lower case', ["$at.value" => '"' . $device . '" never matches: the redirects compare a device in lower case, e.g. "' . strtolower($device) . '" (desktop, mobile, tablet, bot)']);
+                    return null;
+                }
+            }
+        }
+        $value = implode(',', $values);
+        // An IP criterion is a list of single addresses, stored in canonical
+        // form; one that is not an address (a typo, a range) would never
+        // match, so it is refused by name.
+        if ($type === 'ip') {
+            $refused = IpCriterion::refusal($value);
+            if ($refused !== null) {
+                $refuse('An IP criterion lists single addresses', ["$at.value" => $refused]);
+                return null;
+            }
+            $value = IpCriterion::normalize($value)['value'];
+        }
+
+        return $stated ? ['type' => $type, 'statement' => $statement, 'value' => $value] : null;
+    }
+
+    /**
+     * One redirect of a rule, its problems handed to $refuse field by field
+     * (null when its destination cannot be read). $heldEntry is the
+     * rule's own redirect it names by id, or null.
+     *
+     * @param array<string, mixed> $r
+     * @param array<string, mixed>|null $heldEntry
+     * @param callable(string, array<string, string>): void $refuse
+     * @return array{url: ?string, campaign: ?int, lp: ?int, monetizer: ?string, weight: string, name: string}|null
+     */
+    private function redirect(array $r, string $at, ?array $heldEntry, callable $refuse): ?array
+    {
+        $destination = null;
+        $monetizer = $r['auto_monetizer'] ?? null;
+        try {
+            if ($monetizer !== null) {
+                $parts = $this->destination($r, self::REDIRECT_KEYS, false, "$at.");
+                if (array_filter($parts, static fn ($v): bool => $v !== null) !== []) {
+                    $refuse('A redirect is the auto-monetizer or a destination', [
+                        "$at.auto_monetizer" => 'This redirect is the auto-monetizer (set on Setup > Redirectors): '
+                            . 'send it without a destination to keep it, or without auto_monetizer to give it one',
+                    ]);
+                } else {
+                    $destination = $parts + ['monetizer' => (string) $monetizer];
+                }
+            } else {
+                // A redirect sent back as GET showed it keeps what it holds, a
+                // campaign deleted since included.
+                $held = $heldEntry === null ? [] : [
+                    'url' => $heldEntry['redirect_url'] ?? null,
+                    'campaign' => $heldEntry['redirect_campaign'] ?? null,
+                    'lp' => $heldEntry['redirect_lp'] ?? null,
+                ];
+                $destination = $this->destination($r, self::REDIRECT_KEYS, true, "$at.", $held) + ['monetizer' => null];
+            }
+        } catch (ValidationException $e) {
+            $refuse($e->getMessage(), $e->getFieldErrors() === [] ? [$at => $e->getMessage()] : $e->getFieldErrors());
+        }
+        $weight = $r['weight'] ?? 100;
+        $heldWeight = $heldEntry['weight'] ?? null;
+        if ($heldWeight !== null && PayloadKeys::same($weight, $heldWeight)) {
+            $weight = (string) $heldWeight;
+        } elseif ((!is_int($weight) && !is_string($weight)) || preg_match('/^(?:100|[1-9]?[0-9])$/D', (string)$weight) !== 1) {
+            $refuse('Invalid weight', ["$at.weight" => 'A whole number from 0 to 100']);
+        }
+        $name = $r['name'] ?? '';
+        $heldName = $heldEntry['name'] ?? null;
+        if ($heldName !== null && PayloadKeys::same($name, $heldName)) {
+            $name = (string) $heldName;
+        } elseif ((!is_string($name) && !is_int($name)) || mb_strlen((string)$name) > 255) {
+            $refuse('Invalid redirect name', ["$at.name" => 'Text of at most 255 characters']);
+        }
+
+        return $destination === null ? null : $destination + ['weight' => (string) $weight, 'name' => (string) $name];
     }
 
     /** @param list<array{id: ?int, type: string, statement: string, value: string}> $criteria */
@@ -889,24 +951,19 @@ class RotatorsController
             ]];
         }
 
-        $plan = $this->transaction(function () use ($mayRemoveRules, $rotatorId, $sent): array {
+        return $this->transaction(function () use ($mayRemoveRules, $rotatorId, $sent): array {
             // Before the first plain read, so the set is planned from the
             // rules as the last writer left them.
             $this->lockRotator($rotatorId);
             $plan = $this->planRuleSet($rotatorId, $sent, $mayRemoveRules);
             $this->writeRuleSet($rotatorId, $plan);
-
-            return $plan;
-        });
-
-        // Committed: a failed read-back must not read as a failed write.
-        try {
+            // Read back under the lock: once it is let go, a writer waiting on
+            // it can write before this answers, and the answer would pair that
+            // writer's rules with this set's changes.
             $rules = $this->get($rotatorId)['data']['rules'];
-        } catch (\Throwable $e) {
-            throw new WriteCommittedException('rotator rule set', $e);
-        }
 
-        return ['data' => ['dry_run' => false, 'rotator_id' => $rotatorId, 'rules' => $rules, 'changes' => $plan['changes']]];
+            return ['data' => ['dry_run' => false, 'rotator_id' => $rotatorId, 'rules' => $rules, 'changes' => $plan['changes']]];
+        });
     }
 
     /**
@@ -1015,45 +1072,68 @@ class RotatorsController
                 $errors[$list] = 'At most ' . self::MAX_ENTRIES . ' entries';
             }
         }
-        PayloadKeys::refuse($errors);
 
-        $name = self::ruleOrRotatorName($rule, 'rule_name', true);
-        $splittest = ($rule['splittest'] ?? null) === null
-            ? (int) ($held['splittest'] ?? 0)
-            : self::flag($rule, 'splittest', 0);
+        // Every check runs, and every problem is refused together: two bad
+        // criteria in one rule are two field errors in one 422.
+        $name = '';
+        try {
+            $name = self::ruleOrRotatorName($rule, 'rule_name', true);
+        } catch (ValidationException $e) {
+            $errors += $e->getFieldErrors();
+        }
+        $splittest = null;
+        try {
+            $splittest = ($rule['splittest'] ?? null) === null
+                ? (int) ($held['splittest'] ?? 0)
+                : self::flag($rule, 'splittest', 0);
+        } catch (ValidationException $e) {
+            $errors += $e->getFieldErrors();
+        }
+        $status = null;
         if (($rule['status'] ?? null) !== null) {
-            $status = self::flag($rule, 'status', 1);
+            try {
+                $status = self::flag($rule, 'status', 1);
+            } catch (ValidationException $e) {
+                $errors += $e->getFieldErrors();
+            }
         } else {
             // A rule a pre-1.9 install stored with no status is not active
             // (the redirects try status 1): kept as it is.
             $status = $held === null ? 1 : ($held['status'] === null ? null : (int) $held['status']);
         }
-        $parts = $this->ruleParts($rule, $held);
-        $criteria = self::inStoredOrder($parts['criteria'] ?? []);
-        $redirects = self::inStoredOrder($parts['redirects'] ?? []);
-
-        if ($splittest === 0 && count($redirects) > 1) {
-            throw new ValidationException('A rule that is not a split test has one destination', [
-                'redirects' => 'splittest is 0, so the rule sends every visitor it matches to one destination: send one, '
-                    . 'or set splittest to 1 to split them by the destinations\' weights',
-            ]);
+        $parts = ['criteria' => null, 'redirects' => null];
+        try {
+            $parts = $this->ruleParts($rule, $held);
+        } catch (ValidationException $e) {
+            // A list's own shape is already refused above, in this method's words.
+            $errors += $e->getFieldErrors();
         }
-        if ($splittest === 1) {
-            $unweighted = [];
-            foreach ((array) $rule['redirects'] as $j => $entry) {
-                if (!is_array($entry) || ($entry['weight'] ?? null) === null) {
-                    $unweighted["redirects.$j.weight"] = 'A split test needs each destination\'s weight: a whole number '
-                        . 'from 0 to 100, its share of the visitors being its weight over the total';
+
+        $sent = $rule['redirects'] ?? null;
+        if ($splittest !== null && is_array($sent) && array_is_list($sent) && $sent !== []) {
+            if ($splittest === 0 && count($sent) > 1) {
+                $errors['redirects'] ??= 'splittest is 0, so the rule sends every visitor it matches to one destination: '
+                    . 'send one, or set splittest to 1 to split them by the destinations\' weights';
+            }
+            if ($splittest === 1) {
+                $zero = true;
+                foreach ($sent as $j => $entry) {
+                    $weight = is_array($entry) ? ($entry['weight'] ?? null) : null;
+                    if ($weight === null) {
+                        $errors["redirects.$j.weight"] ??= 'A split test needs each destination\'s weight: a whole number '
+                            . 'from 0 to 100, its share of the visitors being its weight over the total';
+                    }
+                    $zero = $zero && in_array($weight, [0, '0'], true);
+                }
+                if ($zero) {
+                    $errors['redirects'] ??= 'Every weight is 0, which sends every visitor to the first destination: give '
+                        . 'the destinations to split between a weight above 0';
                 }
             }
-            PayloadKeys::refuse($unweighted);
-            if (array_filter($redirects, static fn (array $r): bool => (int) $r['weight'] > 0) === []) {
-                throw new ValidationException('A split test needs a weight above 0', [
-                    'redirects' => 'Every weight is 0, which sends every visitor to the first destination: give the '
-                        . 'destinations to split between a weight above 0',
-                ]);
-            }
         }
+        PayloadKeys::refuse($errors);
+        $criteria = self::inStoredOrder($parts['criteria'] ?? []);
+        $redirects = self::inStoredOrder($parts['redirects'] ?? []);
 
         return [
             'id' => $held === null ? null : (int) $held['id'],
@@ -1373,7 +1453,7 @@ class RotatorsController
         $status = self::flag($payload, 'status', 1);
         $parts = $this->ruleParts($payload);
 
-        $this->transaction(function () use ($parts, $rotatorId, $ruleName, $splittest, $status): void {
+        return $this->transaction(function () use ($parts, $rotatorId, $ruleName, $splittest, $status): array {
             $this->lockRotator($rotatorId);
             // A rule added on its own is tried after the others.
             $stmt = $this->prepare('SELECT COALESCE(MAX(position), 0) + 1 AS next FROM 202_rotator_rules WHERE rotator_id = ?');
@@ -1390,14 +1470,10 @@ class RotatorsController
 
             $this->insertCriteria($rotatorId, $ruleId, $parts['criteria'] ?? []);
             $this->insertRedirects($ruleId, $parts['redirects'] ?? []);
-        });
 
-        // Committed: the rule and its redirects exist.
-        try {
+            // Read back under the lock, as setRules() does.
             return $this->get($rotatorId);
-        } catch (\Throwable $e) {
-            throw new WriteCommittedException('rotator rule', $e);
-        }
+        });
     }
 
     public function updateRule(int $rotatorId, int $ruleId, array $payload): array
@@ -1408,7 +1484,7 @@ class RotatorsController
             'a redirector rule'
         );
 
-        $this->transaction(function () use ($payload, $rotatorId, $ruleId): void {
+        return $this->transaction(function () use ($payload, $rotatorId, $ruleId): array {
             // The locks before the first read (CLAUDE.md #36), so the rule is
             // read as the last writer left it: a set that removed it while
             // this waited leaves nothing to update, and the call is a 404.
@@ -1492,14 +1568,10 @@ class RotatorsController
                 $deleteRedirects->close();
                 $this->insertRedirects($ruleId, $parts['redirects'] ?? []);
             }
-        });
 
-        // Committed: a failed read-back must not read as a failed update.
-        try {
+            // Read back under the locks, as setRules() does.
             return $this->get($rotatorId);
-        } catch (\Throwable $e) {
-            throw new WriteCommittedException('rotator rule', $e);
-        }
+        });
     }
 
     /**
