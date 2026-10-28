@@ -316,7 +316,25 @@ class ReportsController
         $row = $result->fetch_assoc();
         $stmt->close();
 
-        return ['data' => self::typedMetrics($row ?? [])];
+        return ['data' => self::typedMetrics($row ?? []) + ['currency' => $this->accountCurrency()]];
+    }
+
+    /**
+     * The currency the summary's money is in: the account's, as the report
+     * pages print it (USD when unset). A client adding one server's amounts
+     * to another's needs it (`p202 report summary --profiles` adds money
+     * only across profiles that state one currency), and a currency that
+     * could not be read is not USD, so a failed read throws.
+     */
+    private function accountCurrency(): string
+    {
+        $stmt = $this->prepare('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $this->userId);
+        $this->execute($stmt, 'Failed to read the account currency');
+        $row = $this->resultOf($stmt, 'Failed to read the account currency')->fetch_assoc();
+        $stmt->close();
+
+        return UsersController::normalizeCurrency($row['user_account_currency'] ?? null);
     }
 
     public function breakdown(array $params): array
