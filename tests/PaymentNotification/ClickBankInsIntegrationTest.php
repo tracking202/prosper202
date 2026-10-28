@@ -31,10 +31,13 @@ final class ClickBankInsIntegrationTest extends TestCase
     private const SECOND = 990502;
     private const SHARING = 990503;
     private const EUROS = 990504;
+    /** An account deleted in Account › Users, whose preferences row still holds its key. */
+    private const DELETED = 990506;
     private const CLICK = 99050101;
     private const SECOND_CLICK = 99050111;
     private const SHARING_CLICK = 99050121;
     private const EUROS_CLICK = 99050131;
+    private const DELETED_CLICK = 99050151;
 
     private const FIRST_KEY = 'FIRSTACCOUNT0001';
     private const SECOND_KEY = 'SECONDACCOUNT001';
@@ -56,7 +59,10 @@ final class ClickBankInsIntegrationTest extends TestCase
         }
         require_once __DIR__ . '/../../202-config/static-endpoint-helpers.php';
         self::cleanUp();
-        $currencies = [self::FIRST => 'USD', self::SECOND => 'USD', self::SHARING => 'USD', self::EUROS => 'EUR'];
+        $currencies = [
+            self::FIRST => 'USD', self::SECOND => 'USD', self::SHARING => 'USD', self::EUROS => 'EUR',
+            self::DELETED => 'USD',
+        ];
         foreach ($currencies as $user => $currency) {
             self::user($user);
             self::q("INSERT INTO 202_users_pref SET user_id = $user, user_account_currency = '$currency'");
@@ -66,6 +72,7 @@ final class ClickBankInsIntegrationTest extends TestCase
                 . ' aff_campaign_payout = 30, aff_campaign_time = 1, aff_campaign_foreign_payout = 30,'
                 . " payout_mode = 'accumulate'");
         }
+        self::q('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ' . self::DELETED);
     }
 
     public static function tearDownAfterClass(): void
@@ -88,11 +95,12 @@ final class ClickBankInsIntegrationTest extends TestCase
         self::key(self::SECOND, self::SECOND_KEY);
         self::key(self::SHARING, null);
         self::key(self::EUROS, self::EUROS_KEY);
+        self::key(self::DELETED, null);
         self::q('UPDATE 202_users_pref SET cb_verified = 0 WHERE user_id IN (' . self::users() . ')');
         $repo = new MysqlClickRepository(new Connection($db));
         $clicks = [
             self::CLICK => self::FIRST, self::SECOND_CLICK => self::SECOND, self::SHARING_CLICK => self::SHARING,
-            self::EUROS_CLICK => self::EUROS,
+            self::EUROS_CLICK => self::EUROS, self::DELETED_CLICK => self::DELETED,
         ];
         foreach ($clicks as $click => $user) {
             $repo->recordClick(new ClickRecord(
@@ -130,9 +138,10 @@ final class ClickBankInsIntegrationTest extends TestCase
         foreach ([...self::CLICK_TABLES, '202_conversion_logs'] as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
         }
-        self::q('DELETE FROM 202_aff_campaigns WHERE user_id IN (' . self::users() . ')');
-        self::q('DELETE FROM 202_users_pref WHERE user_id IN (' . self::users() . ')');
-        self::q('DELETE FROM 202_users WHERE user_id IN (' . self::users() . ')');
+        $users = self::users() . ', ' . self::DELETED;
+        self::q("DELETE FROM 202_aff_campaigns WHERE user_id IN ($users)");
+        self::q("DELETE FROM 202_users_pref WHERE user_id IN ($users)");
+        self::q("DELETE FROM 202_users WHERE user_id IN ($users)");
     }
 
     private static function key(int $user, ?string $key): void
@@ -337,6 +346,47 @@ final class ClickBankInsIntegrationTest extends TestCase
         // The other account's own key is not affected.
         $second = $this->post(['trackingCodes' => [(string) self::SECOND_CLICK]], self::SECOND_KEY);
         self::assertOutcome(OutcomeKind::RECORDED, 200, $second);
+    }
+
+    /**
+     * A deleted account owns no key: the live account that stores its key
+     * now is the only one the key names (a notification was refused as a key
+     * two accounts store, with nothing in the UI to clear the deleted
+     * account's copy), and a key only it stores decrypts nothing. An account
+     * switched off in Account › Users still owns its key.
+     */
+    public function testADeletedAccountsStoredKeyIsNoSecondAccount(): void
+    {
+        self::key(self::DELETED, self::FIRST_KEY);
+
+        $sale = $this->post([], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $sale);
+        self::assertSame(self::FIRST, $sale->accountId);
+        self::assertOutcome(OutcomeKind::TEST, 200, $this->post(['transactionType' => 'TEST'], self::FIRST_KEY));
+        self::assertSame('1', self::verifiedFlags()[self::FIRST]);
+        self::assertSame('0', (string) self::scalar(
+            'SELECT cb_verified FROM 202_users_pref WHERE user_id = ' . self::DELETED
+        ));
+
+        self::key(self::DELETED, 'DELETEDACCOUNT01');
+        $onlyDeleted = ['trackingCodes' => [(string) self::DELETED_CLICK], 'receipt' => 'DELETEDR1'];
+        self::assertOutcome(OutcomeKind::UNVERIFIED, 403, $this->post($onlyDeleted, 'DELETEDACCOUNT01'));
+        self::assertSame(
+            [[(string) self::CLICK, (string) self::FIRST]],
+            array_map(static fn (array $r): array => [$r['click_id'], $r['user_id']], self::conversions())
+        );
+
+        self::q('UPDATE 202_users SET user_active = 0 WHERE user_id = ' . self::SECOND);
+        try {
+            $off = $this->post(
+                ['trackingCodes' => [(string) self::SECOND_CLICK], 'receipt' => 'SECONDOFF'],
+                self::SECOND_KEY
+            );
+        } finally {
+            self::q('UPDATE 202_users SET user_active = 1 WHERE user_id = ' . self::SECOND);
+        }
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $off);
+        self::assertSame(self::SECOND, $off->accountId);
     }
 
     public function testAReplayIsADuplicateAndAnotherAmountUnderItsReceiptIsRefused(): void
