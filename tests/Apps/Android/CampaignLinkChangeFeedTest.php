@@ -59,7 +59,8 @@ final class CampaignLinkChangeFeedTest extends TestCase
     /** @return list<array<string, mixed>> the feed's campaign records for campaign 30, oldest first */
     private function feed(): array
     {
-        $changes = (new ServerStateStore($this->stateDir))->listChanges('campaigns', null, 1000, 3600);
+        // The install's own directory in P202_SERVER_STATE_DIR, as the API wrote it.
+        $changes = ServerStateStore::forInstall(self::$db)->listChanges('campaigns', null, 1000, 3600);
         $out = [];
         foreach ($changes['data'] as $item) {
             if (is_array($item) && (int) ($item['record']['aff_campaign_id'] ?? 0) === 30) {

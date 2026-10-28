@@ -499,8 +499,11 @@ final class BulkUpsertLockConflictIntegrationTest extends TestCase
 
     public function testAChangeRecordThatCannotBeWrittenLeavesTheRowStoredAndSaysSo(): void
     {
-        // A directory where the feed's lock file goes: the record cannot be written.
-        mkdir($this->stateDir . '/changes/aff-networks.json.lock', 0700, true);
+        // A directory where the feed's lock file goes, in the install's own
+        // directory in P202_SERVER_STATE_DIR: the record cannot be written.
+        $installDir = ServerStateStore::forInstall(self::db())->baseDir();
+        self::assertStringStartsWith($this->stateDir . '/install-', $installDir);
+        mkdir($installDir . '/changes/aff-networks.json.lock', 0700, true);
         $log = ini_set('error_log', '/dev/null');
         try {
             $result = $this->bulk(new AffNetworksController(self::db(), self::USER), [
@@ -672,7 +675,8 @@ final class BulkUpsertLockConflictIntegrationTest extends TestCase
      */
     private function changes(string $entity, string $idColumn): array
     {
-        $items = (new ServerStateStore($this->stateDir))->listChanges($entity, null, 5000, 60)['data'];
+        // The install's own directory in P202_SERVER_STATE_DIR, as the API wrote it.
+        $items = ServerStateStore::forInstall(self::$db)->listChanges($entity, null, 5000, 60)['data'];
 
         return array_map(
             static fn (array $item): array => [(string) $item['operation'], (int) $item['record'][$idColumn]],
