@@ -1,6 +1,36 @@
 parameters:
 	ignoreErrors:
 		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 2
+			path: '202-account/account.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: '202-account/api-integrations.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 4
+			path: '202-account/attribution.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 2
+			path: '202-account/user-management.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 2
+			path: '202-config/data/index.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: '202-config/functions-ui-overview.php'
+
+		-
 			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
 			identifier: prosper202.directStmtCall
 			count: 7
@@ -23,6 +53,11 @@ parameters:
 			identifier: prosper202.directStmtCall
 			count: 2
 			path: '202-config/migrations/run_ltv_migration.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: '202-cronjobs/dej.php'
 
 		-
 			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
@@ -41,3 +76,108 @@ parameters:
 			identifier: prosper202.directStmtCall
 			count: 1
 			path: api/v3/Controllers/CapabilitiesController.php
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 3
+			path: 'tracking202/ajax/click_history.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: 'tracking202/ajax/custom_variables.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 2
+			path: 'tracking202/ajax/dni_get_offers.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: 'tracking202/ajax/get_adv_landing_code.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 7
+			path: 'tracking202/ajax/ltv_companies.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 3
+			path: 'tracking202/ajax/ltv_customer.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: 'tracking202/ajax/ltv_merge_search.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 5
+			path: 'tracking202/ajax/ltv_products.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: 'tracking202/ajax/ltv_subscriptions.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: 'tracking202/ajax/sort_ltv.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 2
+			path: 'tracking202/analyze/MobileAppsReportController.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 7
+			path: 'tracking202/setup/MobileAppsController.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 5
+			path: 'tracking202/setup/aff_campaigns.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: 'tracking202/setup/aff_networks.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 2
+			path: 'tracking202/setup/landing_pages.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 2
+			path: 'tracking202/setup/ppc_accounts.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 2
+			path: 'tracking202/setup/rotator.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: 'tracking202/setup/templates/mobile_apps/_ios_values.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 2
+			path: 'tracking202/setup/text_ads.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 1
+			path: 'tracking202/static/p13n_event.php'
+
+		-
+			identifier: prosper202.numericCastOfRequestParam
+			count: 3
+			path: 'tracking202/update/upload.php'
