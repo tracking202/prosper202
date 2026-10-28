@@ -116,6 +116,6 @@ final class StrictIntegerBodyFieldsTest extends TestCase
         $dir = sys_get_temp_dir() . '/p202-int-body-' . bin2hex(random_bytes(6));
         $this->scratch[] = $dir;
 
-        return new SyncController($conn, 7, new ServerStateStore($dir, 'strict-int-body-test'));
+        return new SyncController($conn, 7, new ServerStateStore($dir));
     }
 }

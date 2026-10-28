@@ -61,7 +61,7 @@ if (is_string($request)) {
                 $error = 'Choose what the assistant may do.';
             } else {
                 $userId = (int) $_SESSION['user_own_id'];
-                $store = new ServerStateStore();
+                $store = ServerStateStore::forInstall($db);
                 $challenge = $request['code_challenge'];
                 $code = AiConnect::approve($store, $userId, $scope, $challenge, $request['client_name']);
                 $query = ['code' => $code] + $query;

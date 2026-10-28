@@ -476,6 +476,17 @@ record replayed here and its staged DELETE was listed to apply against this
 database. Data whose owner cannot be shown resolves to "not ours": leave it,
 and say how the owner carries it over.
 
+The name the store took instead had the same flaw one level down. A
+database's host and name name a slot, and a database dropped and installed
+again in it is another install in the same slot: the new install read the
+old one's directory as its own, every create sent under an Idempotency-Key
+the old install had answered was answered 201 with nothing created, and the
+old install's staged DELETE of campaign 1 deleted the new install's campaign
+1 (measured live). The install's id, minted with its schema (`InstallId`),
+names the directory now, and `StateStoresNameTheInstallTest` holds every
+store the served tree builds to `ServerStateStore::forInstall()`. Before
+keying state on where something lives, ask what can replace it there.
+
 ### 12. A guard is only as good as the layer that delivers the input
 The server rejected an explicitly empty API-key scope. It never fired, because
 the CLI dropped the field before building the request, so the server saw

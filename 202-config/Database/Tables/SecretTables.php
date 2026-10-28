@@ -16,6 +16,9 @@ use Prosper202\Database\Schema\TableRegistry;
  * It is minted by one idempotent function (InstallTokenKey::ensure()) from
  * both paths that create a 1.9.76 schema — the installer and the
  * 1.9.75 → 1.9.76 rung — because a fresh install never runs a rung.
+ * The install's id (Prosper202\Database\InstallId), which names the API
+ * state directory, is minted the same way, by the installer and by every
+ * rung that reconciles this table (the 1.9.78 → 1.9.79 rung among them).
  *
  * No user owns a row here, so the user-deletion purge never touches it.
  */

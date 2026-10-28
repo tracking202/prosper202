@@ -18,12 +18,14 @@ use Api\V3\Support\RequestFlag;
 class SyncController
 {
     private readonly SyncEngine $engine;
+    private readonly ServerStateStore $store;
 
-    public function __construct(\mysqli $db, private readonly int $userId, private readonly ServerStateStore $store = new ServerStateStore(), ?SyncEngine $engine = null)
+    public function __construct(\mysqli $db, private readonly int $userId, ?ServerStateStore $store = null, ?SyncEngine $engine = null)
     {
         if ($db->connect_errno !== 0) {
             throw new DatabaseException('Database connection unavailable for sync controller');
         }
+        $this->store = $store ?? ServerStateStore::forInstall($db);
         $this->engine = $engine ?? new SyncEngine($this->store);
     }
 

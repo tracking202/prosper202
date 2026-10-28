@@ -494,12 +494,23 @@ Empty response body.
 Idempotency records, staged changes, sync jobs and their audit, sync
 manifests, rate-limit buckets and metrics live in a directory on the server,
 not in the database: `P202_SERVER_STATE_DIR` when it is set, otherwise
-`p202-api-v3-state-<hash>` in the system temp directory, where the hash is of
-the database host and name, so two instances on one host keep their own. A
-process that runs without the configuration in scope uses
-`p202-api-v3-state-unscoped` and logs that it does; it used to use the
-pre-1.9.75 shared directory, which the next instance installed on the host
-then adopted as its own.
+`p202-api-v3-state-<database>-<install>` in the system temp directory, where
+`<database>` is a hash of the database host and name, so two instances on one
+host keep their own, and `<install>` a hash of the install's id, so a database
+installed again keeps none of its predecessor's. A process that runs without
+the configuration in scope uses `p202-api-v3-state-unscoped` and logs that it
+does; it used to use the pre-1.9.75 shared directory, which the next instance
+installed on the host then adopted as its own.
+
+**The install's id** is 32 random bytes the installer stores in
+`202_deployment_secrets` (`secret_name` `install_id`); the upgrade to 1.9.79
+gives an existing install one, and so does its first API request when the
+files are deployed before the upgrade runs. It is read from the database
+whenever the directory it names is the one used (not for
+`P202_SERVER_STATE_DIR`). When it cannot be read the API answers `500` (`503`
+while the upgrade is pending) and the log says why; it never falls back to a
+directory named by the database alone, which is the name a reinstalled
+database shared with the install before it.
 
 **The pre-1.9.75 shared directory (`p202-api-v3-state`, no hash) is never
 adopted.** An instance with no directory of its own used to rename it into
@@ -512,15 +523,31 @@ install's own staged changes and sync jobs (an upgrade from before 1.9.75),
 move it to that directory before the next request, or point
 `P202_SERVER_STATE_DIR` at it.
 
-**Reinstalling into a database of the same name on the same host keeps that
-directory**, and with it the previous install's state: a retried
-`Idempotency-Key` it recorded replays the old response, and its staged
-changes are listed to the new install's users. Before reinstalling that
-way, remove the directory (or point `P202_SERVER_STATE_DIR` somewhere new).
+**Reinstalling into a database of the same name on the same host starts
+with an empty directory.** Before 1.9.79 the directory was named by the
+database alone, so the new install took the old one's: a create sent under
+an `Idempotency-Key` the old install had answered was answered `201` with the
+old record and created nothing, and the old install's staged changes were
+listed to the new install's users and could be applied to its database. The
+earlier directory — the one named by the database alone
+(`p202-api-v3-state-<database>`, from before the upgrade to 1.9.79), or an
+earlier install's — is left where it is and never read; the server log names
+each once, when the install makes its own ("the API state directory … is
+not used: …"). If it holds this install's own
+staged changes or sync jobs from before the upgrade, copy what it holds into
+the directory the log names; otherwise remove it (`rm -r` it, as the server's
+user).
+
+**`P202_SERVER_STATE_DIR` is used as named, for whichever install is
+there.** When the database it served is replaced — reinstalled, or restored
+from a backup — empty it first: the previous database's idempotency records
+and staged changes are still in it. (On the Coolify stack that directory is
+the `api_state` volume.)
 
 **The temp-dir default is used only when the server's own user owns it
-alone.** Its name can be worked out from the database host and name, and the
-temp dir is anyone's, so another local user could make it first and put
+alone.** Before 1.9.79 its name could be worked out from the database host
+and name, and the temp dir is anyone's, so another local user could make it
+first and put
 records in it: a planted `Idempotency-Key` record replayed its response (and
 created nothing), and a planted staged change was listed to apply. The
 directory is now used only when it is a real directory (not a symbolic link)

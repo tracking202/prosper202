@@ -224,6 +224,6 @@ final class StrictBodyFlagsTest extends TestCase
         $dir = sys_get_temp_dir() . '/p202-flag-body-' . bin2hex(random_bytes(6));
         $this->scratch[] = $dir;
 
-        return new ServerStateStore($dir, 'strict-flag-body-test');
+        return new ServerStateStore($dir);
     }
 }

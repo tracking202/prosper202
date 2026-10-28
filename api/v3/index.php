@@ -220,7 +220,7 @@ try {
         // budget is refused before the work unless its code is a live one).
         // The budget check reads only the presented code; the body goes
         // whole to ConnectController::token, which refuses unknown keys.
-        $connectStore = new ServerStateStore();
+        $connectStore = ServerStateStore::forInstall($db);
         $presentedCode = is_array($payload) ? ($payload['code'] ?? null) : null;
         [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::tokenWithFailureBudget(
             $connectStore,
@@ -288,7 +288,7 @@ try {
     }
 
     // Lightweight fixed-window rate limits for high-impact operations.
-    $stateStore = new ServerStateStore();
+    $stateStore = ServerStateStore::forInstall($db);
     $bucketKey = 'user:' . $userId;
     $limit = null;
     $windowSeconds = 60;
