@@ -7,6 +7,7 @@ namespace Tests\PaymentNotification;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickRecord;
 use Prosper202\Click\MysqlClickRepository;
+use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\ClickBank\ClickBankAdapter;
 use Prosper202\PaymentNotification\InboundRequest;
@@ -413,14 +414,281 @@ final class ClickBankInsIntegrationTest extends TestCase
 
     public function testOtherTransactionTypesAreAcknowledgedAndLogged(): void
     {
-        $outcome = $this->post(['transactionType' => 'ABANDONED_ORDER'], self::FIRST_KEY);
+        $this->post([], self::FIRST_KEY);
+        foreach (['CANCEL-REBILL', 'UNCANCEL-REBILL', 'SUBSCRIPTION-CHG', 'ABANDONED_ORDER'] as $type) {
+            $outcome = $this->post(['transactionType' => $type], self::FIRST_KEY);
+            self::assertOutcome(OutcomeKind::IGNORED, 200, $outcome);
+            self::assertSame(self::FIRST, $outcome->accountId);
+            self::assertStringContainsString(
+                'ClickBank notification: ignored (200), ' . $type . ' (ignored), account ' . self::FIRST,
+                (string) file_get_contents($this->log)
+            );
+        }
+        self::assertSame(['37.62000'], array_column(self::conversions(), 'click_payout'));
+    }
 
-        self::assertOutcome(OutcomeKind::IGNORED, 200, $outcome);
-        self::assertSame(self::FIRST, $outcome->accountId);
+    public function testATestVersionOfAnotherTypeIsATest(): void
+    {
+        $outcome = $this->post(['transactionType' => 'TEST_SALE'], self::FIRST_KEY);
+
+        self::assertOutcome(OutcomeKind::TEST, 200, $outcome);
         self::assertSame([], self::conversions());
+        self::assertSame('1', self::verifiedFlags()[self::FIRST]);
+    }
+
+    public function testATypeClickBankDoesNotListIsRefusedByName(): void
+    {
+        $outcome = $this->post(['transactionType' => 'RFND-RB'], self::FIRST_KEY);
+
+        self::assertOutcome(OutcomeKind::MALFORMED, 400, $outcome);
+        self::assertSame('transactionType is "RFND-RB", which ClickBank\'s Instant Notification Service article does'
+            . ' not list; nothing was recorded.', $outcome->message);
+        self::assertSame([], self::conversions());
+    }
+
+    public function testARebillIsAnotherConversionUnderItsOwnReceipt(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $rebill = ['transactionType' => 'BILL', 'receipt' => 'CWOGBZLN-0001', 'totalAccountAmount' => '9.95'];
+
+        $outcome = $this->post($rebill, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $outcome);
+        self::assertSame('Recorded transaction CWOGBZLN-0001 on click ' . self::CLICK . ' at 9.95.', $outcome->message);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $this->post(
+            ['receipt' => 'CWOGBZLN-0002', 'totalAccountAmount' => 9.95] + $rebill,
+            self::FIRST_KEY
+        ));
+        self::assertSame(
+            [['CWOGBZLN', '37.62000'], ['CWOGBZLN-0001', '9.95000'], ['CWOGBZLN-0002', '9.95000']],
+            array_map(static fn (array $r): array => [$r['transaction_id'], $r['click_payout']], self::conversions())
+        );
+        self::assertSame(['clickbank'], array_values(array_unique(array_column(self::conversions(), 'source'))));
+        // The campaign adds conversions up: the click is worth the sale and both rebills.
+        self::assertSame('57.52000', self::clickPayout());
+
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($rebill, self::FIRST_KEY));
+        $changed = $this->post(['totalAccountAmount' => '19.95'] + $rebill, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $changed);
+        self::assertCount(3, self::conversions());
         self::assertStringContainsString(
-            'ClickBank notification: ignored (200), ABANDONED_ORDER (ignored), account ' . self::FIRST,
+            'ClickBank notification: recorded (200), BILL (rebill), click ' . self::CLICK
+            . ', transaction CWOGBZLN-0001, account ' . self::FIRST,
             (string) file_get_contents($this->log)
         );
+    }
+
+    public function testARefundReversesTheConversionItsReceiptNamesOnce(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $sale = self::conversions()[0];
+        $refund = ['transactionType' => 'RFND', 'totalAccountAmount' => '-37.62'];
+
+        $outcome = $this->post($refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);
+        self::assertSame('Reversed transaction CWOGBZLN on click ' . self::CLICK . ' by 37.62.', $outcome->message);
+        $rows = self::conversions();
+        self::assertCount(2, $rows);
+        self::assertSame(
+            ['CWOGBZLN', '-37.62000', 'clickbank', (string) self::FIRST],
+            [$rows[1]['transaction_id'], $rows[1]['click_payout'], $rows[1]['source'], $rows[1]['user_id']]
+        );
+        self::assertNotNull($rows[1]['reverses_conv_id']);
+        self::assertSame('0.00000', self::clickPayout());
+
+        // The same refund again, however its amount is spelled; a chargeback of the same amount is the same reversal.
+        foreach ([['-37.62'], ['37.62'], [-37.62]] as [$amount]) {
+            $again = $this->post(['totalAccountAmount' => $amount] + $refund, self::FIRST_KEY);
+            self::assertOutcome(OutcomeKind::DUPLICATE, 200, $again);
+        }
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post(
+            ['transactionType' => 'CGBK', 'totalAccountAmount' => '-37.62'],
+            self::FIRST_KEY
+        ));
+        $other = $this->post(['totalAccountAmount' => '-10.00'] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $other);
+        self::assertSame('Transaction CWOGBZLN on click ' . self::CLICK . ' is already reversed by 37.62; this RFND'
+            . ' states 10.00, and a sale is reversed once. Nothing was changed.', $other->message);
+        self::assertCount(2, self::conversions());
+        self::assertSame($sale['transaction_id'], self::conversions()[1]['transaction_id']);
+    }
+
+    public function testARefundIsDatedWhenClickBankSaysItHappened(): void
+    {
+        $clickTime = (int) self::scalar(
+            'SELECT click_time FROM 202_clicks WHERE click_id = ' . self::CLICK . ' LIMIT 1'
+        );
+        $this->post(['transactionTime' => self::stated($clickTime + 60)], self::FIRST_KEY);
+
+        $refund = $this->post([
+            'transactionType' => 'RFND', 'totalAccountAmount' => '-37.62',
+            'transactionTime' => self::stated($clickTime + 120),
+        ], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+        $times = self::requireScratch()->query('SELECT conv_time FROM 202_conversion_logs WHERE click_id = '
+            . self::CLICK . ' ORDER BY conv_id');
+        self::assertInstanceOf(\mysqli_result::class, $times);
+        self::assertSame(
+            [(string) ($clickTime + 60), (string) ($clickTime + 120)],
+            array_column($times->fetch_all(MYSQLI_ASSOC), 'conv_time')
+        );
+        $bad = $this->post(['transactionType' => 'CGBK', 'transactionTime' => '20261301T000000-0600'], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::MALFORMED, 400, $bad);
+    }
+
+    public function testAPartialRefundTakesBackWhatTheAccountLost(): void
+    {
+        $this->post([], self::FIRST_KEY);
+
+        $partial = $this->post(['transactionType' => 'RFND', 'totalAccountAmount' => '-10.00'], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $partial);
+        self::assertSame(['37.62000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
+        self::assertSame('27.62000', self::clickPayout());
+        // The rest, afterwards, is not reversed a second time; it says what is still credited.
+        $rest = $this->post(['transactionType' => 'RFND', 'totalAccountAmount' => '0'], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $rest);
+        self::assertStringContainsString('27.62 of its 37.62 is still credited', $rest->message);
+    }
+
+    public function testAChargebackAndAReturnedEcheckReverseTheWholeSaleWhenTheyStateNoAmount(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $this->post(['receipt' => 'SECONDSL', 'totalAccountAmount' => '20.00'], self::FIRST_KEY);
+
+        $chargeback = $this->post(['transactionType' => 'CGBK', 'totalAccountAmount' => '0.00'], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $chargeback);
+        self::assertSame(
+            'Reversed transaction CWOGBZLN on click ' . self::CLICK . ' by its full amount.',
+            $chargeback->message
+        );
+        $bounced = ClickBankAdapterTest::sale(
+            ['transactionType' => 'INSF', 'receipt' => 'SECONDSL', 'trackingCodes' => [(string) self::CLICK]]
+        );
+        unset($bounced['totalAccountAmount']);
+        $insf = $this->deliver(ClickBankAdapterTest::body($bounced, self::FIRST_KEY));
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $insf);
+        self::assertSame(
+            ['37.62000', '20.00000', '-37.62000', '-20.00000'],
+            array_column(self::conversions(), 'click_payout')
+        );
+        self::assertSame('0.00000', self::clickPayout());
+        self::assertStringContainsString(
+            'ClickBank notification: reversed (200), INSF (chargeback), click ' . self::CLICK
+            . ', transaction SECONDSL, account ' . self::FIRST,
+            (string) file_get_contents($this->log)
+        );
+    }
+
+    public function testARefundOfARebillTakesBackOnlyTheRebill(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $rebill = ['transactionType' => 'BILL', 'receipt' => 'CWOGBZLN-0001', 'totalAccountAmount' => '9.95'];
+        $this->post($rebill, self::FIRST_KEY);
+
+        $refund = $this->post(
+            ['transactionType' => 'RFND', 'receipt' => 'CWOGBZLN-0001', 'totalAccountAmount' => '-9.95'],
+            self::FIRST_KEY
+        );
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+        self::assertSame(['37.62000', '9.95000', '-9.95000'], array_column(self::conversions(), 'click_payout'));
+        self::assertSame('37.62000', self::clickPayout());
+    }
+
+    /** A sale a refund took back is not counted, so the SALE sent again is no duplicate. */
+    public function testASaleSentAgainAfterItsRefundIsRefusedNamingTheReversalToDelete(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $this->post(['transactionType' => 'RFND', 'totalAccountAmount' => '-37.62'], self::FIRST_KEY);
+        $reversal = (int) self::conversionIds()[1];
+
+        $again = $this->post(['attemptCount' => 2], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $again);
+        self::assertSame('Transaction CWOGBZLN on click ' . self::CLICK . ' is recorded and reversed by conversion '
+            . $reversal . '; this SALE states the sale again. Nothing was changed: if the refund was undone, delete'
+            . ' conversion ' . $reversal . ' to count the sale.', $again->message);
+
+        self::conversionRepository()->softDelete($reversal, self::FIRST);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post([], self::FIRST_KEY));
+    }
+
+    /**
+     * A reversal deleted (the refund undone): the same refund, however often
+     * ClickBank sends it again, changes nothing, and a later chargeback of
+     * the sale reverses it again. ClickBank's order is not its form fields,
+     * so the adapter says what one notification is: the order without the
+     * attempt count, which a retry raises.
+     */
+    public function testAReversalAfterTheOneOnFileWasDeletedReversesTheSaleAgain(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $refund = [
+            'transactionType' => 'RFND', 'totalAccountAmount' => '-37.62',
+            'transactionTime' => '2026-10-24T09:00:00-06:00',
+        ];
+        $this->post($refund, self::FIRST_KEY);
+        $deleted = (int) self::conversionIds()[1];
+        self::conversionRepository()->softDelete($deleted, self::FIRST);
+
+        $retry = $this->post(['attemptCount' => 2] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $retry);
+        self::assertSame('Transaction CWOGBZLN on click ' . self::CLICK . ' was reversed by conversion ' . $deleted
+            . ', since deleted; this RFND is that refund sent again, so nothing was changed.', $retry->message);
+
+        $chargeback = [
+            'transactionType' => 'CGBK', 'totalAccountAmount' => '-37.62',
+            'transactionTime' => '2026-11-02T09:00:00-06:00',
+        ];
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($chargeback, self::FIRST_KEY));
+        self::assertSame(
+            [['37.62000', '0'], ['-37.62000', '1'], ['-37.62000', '0']],
+            array_map(static fn (array $r): array => [$r['click_payout'], $r['deleted']], self::conversions())
+        );
+        $chargebackAgain = $this->post(['attemptCount' => 3] + $chargeback, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $chargebackAgain);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($refund, self::FIRST_KEY));
+        self::assertCount(3, self::conversions());
+    }
+
+    public function testAReversalOfNothingOnFileOrOfAnotherAccountsClickWritesNothing(): void
+    {
+        $missing = $this->post(['transactionType' => 'RFND', 'receipt' => 'NEVERSOLD'], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::NOTHING_TO_REVERSE, 404, $missing);
+        self::assertSame('There is no conversion with transaction id "NEVERSOLD" on click ' . self::CLICK
+            . ' to reverse. Nothing was changed.', $missing->message);
+
+        $this->post(['trackingCodes' => [(string) self::SECOND_CLICK], 'receipt' => 'SECONDR1'], self::SECOND_KEY);
+        $foreign = $this->post(
+            ['transactionType' => 'CGBK', 'receipt' => 'SECONDR1', 'trackingCodes' => [(string) self::SECOND_CLICK]],
+            self::FIRST_KEY
+        );
+        self::assertOutcome(OutcomeKind::UNKNOWN_CLICK, 404, $foreign);
+        self::assertSame(['37.62000'], array_column(self::conversions(), 'click_payout'));
+
+        $noClick = $this->post(['transactionType' => 'RFND', 'trackingCodes' => []], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::NO_CLICK, 200, $noClick);
+        self::assertCount(1, self::conversions());
+    }
+
+    private static function conversionRepository(): MysqlConversionRepository
+    {
+        return new MysqlConversionRepository(new Connection(self::requireScratch()));
+    }
+
+    /** @return list<string> */
+    private static function conversionIds(): array
+    {
+        $result = self::requireScratch()->query('SELECT conv_id FROM 202_conversion_logs WHERE click_id = '
+            . self::CLICK . ' ORDER BY conv_id');
+        self::assertInstanceOf(\mysqli_result::class, $result);
+
+        return array_column($result->fetch_all(MYSQLI_ASSOC), 'conv_id');
+    }
+
+    private static function clickPayout(): string
+    {
+        $result = self::requireScratch()->query('SELECT click_payout FROM 202_clicks WHERE click_id = ' . self::CLICK
+            . ' ORDER BY click_time DESC LIMIT 1');
+        self::assertInstanceOf(\mysqli_result::class, $result);
+
+        return (string) ($result->fetch_assoc()['click_payout'] ?? '');
     }
 }

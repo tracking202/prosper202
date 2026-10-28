@@ -340,16 +340,95 @@ final class ClickBankAdapterTest extends TestCase
         );
     }
 
-    public function testATestIsATestAndEveryOtherTypeIsAcknowledged(): void
+    /** Every transactionType the INS article lists, and what it asks of the ledger. */
+    public function testEveryTypeClickBankListsIsReadAndNoOther(): void
     {
-        $test = self::parsed(['transactionType' => 'TEST', 'receipt' => '********']);
-        self::assertSame([NotificationKind::TEST, 'TEST'], [$test->kind, $test->event]);
-
-        foreach (['ABANDONED_ORDER', 'CUSTOMER_EMAIL_UPDATE', 'SOMETHING-NEW', "WEIRD\u{00e9}"] as $type) {
-            $n = self::parsed(['transactionType' => $type]);
-            self::assertSame(NotificationKind::IGNORED, $n->kind, $type);
+        $types = [
+            'SALE' => NotificationKind::SALE, 'BILL' => NotificationKind::REBILL, 'RFND' => NotificationKind::REFUND,
+            'CGBK' => NotificationKind::CHARGEBACK, 'INSF' => NotificationKind::CHARGEBACK,
+            'CANCEL-REBILL' => NotificationKind::IGNORED, 'UNCANCEL-REBILL' => NotificationKind::IGNORED,
+            'SUBSCRIPTION-CHG' => NotificationKind::IGNORED, 'ABANDONED_ORDER' => NotificationKind::IGNORED,
+            'CUSTOMER_AUTH_FAILURE' => NotificationKind::IGNORED, 'CUSTOMER_EMAIL_UPDATE' => NotificationKind::IGNORED,
+            'CUSTOMER_UPDATE_CC_NOTIFICATION' => NotificationKind::IGNORED,
+            'PURCHASE_DETAILS_EMAIL_RESPONSE' => NotificationKind::IGNORED,
+            'TEST' => NotificationKind::TEST, 'TEST_SALE' => NotificationKind::TEST,
+            'TEST_BILL' => NotificationKind::TEST,
+            'TEST_RFND' => NotificationKind::TEST, 'CANCEL-TEST-REBILL' => NotificationKind::TEST,
+            'UNCANCEL-TEST-REBILL' => NotificationKind::TEST,
+        ];
+        foreach ($types as $type => $kind) {
+            $n = self::parsed(self::sale(['transactionType' => $type]));
+            self::assertSame([$kind, $type], [$n->kind, $n->event], $type);
         }
-        self::assertSame('WEIRD??', self::parsed(['transactionType' => "WEIRD\u{00e9}"])->event);
+        // A test or an acknowledged type needs nothing else from the order.
+        $test = self::parsed(['transactionType' => 'TEST', 'receipt' => '********']);
+        self::assertSame(NotificationKind::TEST, $test->kind);
+        self::assertSame(NotificationKind::IGNORED, self::parsed(['transactionType' => 'CANCEL-REBILL'])->kind);
+
+        foreach (['SOMETHING-NEW', 'sale', 'RFND ', 'SALE-RB', "WEIRD\u{00e9}"] as $type) {
+            self::assertSame(
+                'transactionType is "' . str_replace("\u{00e9}", '??', $type) . '", which ClickBank\'s Instant'
+                . ' Notification Service article does not list; nothing was recorded.',
+                self::refused(self::sale(['transactionType' => $type])),
+                $type
+            );
+        }
+    }
+
+    public function testARebillIsASaleUnderItsOwnReceipt(): void
+    {
+        $n = self::parsed(self::sale(
+            ['transactionType' => 'BILL', 'receipt' => 'CWOGBZLN-0001', 'totalAccountAmount' => '9.95']
+        ));
+        self::assertSame(
+            [NotificationKind::REBILL, 'CWOGBZLN-0001', null, '9.95', 'USD', 42],
+            [$n->kind, $n->transactionId, $n->originalTransactionId, $n->amount, $n->currency, $n->clickId]
+        );
+        self::assertStringEndsWith(
+            self::AMOUNT_RULE,
+            self::refused(self::sale(['transactionType' => 'BILL', 'totalAccountAmount' => '-9.95']))
+        );
+        $none = self::sale(['transactionType' => 'BILL']);
+        unset($none['totalAccountAmount']);
+        self::assertSame('The BILL carries no totalAccountAmount.', self::refused($none));
+        $noReceipt = self::sale(['transactionType' => 'BILL']);
+        unset($noReceipt['receipt']);
+        self::assertSame('The BILL carries no receipt.', self::refused($noReceipt));
+        self::assertNoClick(self::sale(['transactionType' => 'BILL', 'trackingCodes' => []]));
+    }
+
+    /** A refund, a chargeback and a returned eCheck take back what the account lost, the whole payment for none. */
+    public function testAReversalNamesTheReceiptItTakesBackAndHowMuch(): void
+    {
+        $kinds = [
+            'RFND' => NotificationKind::REFUND, 'CGBK' => NotificationKind::CHARGEBACK,
+            'INSF' => NotificationKind::CHARGEBACK,
+        ];
+        foreach ($kinds as $type => $kind) {
+            $amounts = [
+                '-37.62' => '37.62', '37.62' => '37.62', '-10' => '10', '0' => null, '0.00' => null, '-0.00' => null,
+            ];
+            foreach ($amounts as $sent => $read) {
+                $n = self::parsed(self::sale(['transactionType' => $type, 'totalAccountAmount' => (string) $sent]));
+                self::assertSame(
+                    [$kind, 'CWOGBZLN', 'CWOGBZLN', $read, 'USD', 42],
+                    [$n->kind, $n->transactionId, $n->originalTransactionId, $n->amount, $n->currency, $n->clickId],
+                    $type . ' ' . $sent
+                );
+            }
+            foreach ([[-37.62, '37.62'], [0.0, null], [-5, '5']] as [$sent, $read]) {
+                $n = self::parsed(self::sale(['transactionType' => $type, 'totalAccountAmount' => $sent]));
+                self::assertSame($read, $n->amount, $type . ' ' . $sent);
+            }
+            $none = self::sale(['transactionType' => $type]);
+            unset($none['totalAccountAmount']);
+            self::assertNull(self::parsed($none)->amount);
+            self::assertStringEndsWith(
+                'an amount is an exact decimal such as 47 or 47.00, at most 999999.99999.',
+                self::refused(self::sale(['transactionType' => $type, 'totalAccountAmount' => '--1']))
+            );
+            self::assertNoClick(self::sale(['transactionType' => $type, 'trackingCodes' => []]));
+        }
     }
 
     public function testABuyerNameInAnotherEncodingDoesNotMakeTheOrderUnreadable(): void
@@ -361,6 +440,36 @@ final class ClickBankAdapterTest extends TestCase
 
         self::assertNotNull($adapter->verify($request, [3 => [self::KEY_A]]));
         self::assertSame('CWOGBZLN', $adapter->parse($request)->transactionId);
+    }
+
+    /** One notification is its order without the attempt count, however it is encrypted. */
+    public function testANotificationSentAgainHasItsFingerprintAndAnotherDoesNot(): void
+    {
+        $print = static function (array $order): string {
+            $adapter = new ClickBankAdapter();
+            $request = self::request(self::body($order, self::KEY_A));
+            self::assertNotNull($adapter->verify($request, [3 => [self::KEY_A]]));
+
+            return $adapter->fingerprint($request);
+        };
+        $refund = self::sale(['transactionType' => 'RFND', 'totalAccountAmount' => '-37.62']);
+
+        $first = $print($refund);
+        self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $first);
+        self::assertSame($first, $print($refund), 'another IV');
+        self::assertSame($first, $print(['attemptCount' => 4] + $refund), 'a retry');
+        self::assertSame($first, $print(array_reverse($refund, true)), 'the keys in another order');
+        $customer = ['customer' => ['billing' => ['email' => 'buyer@example.com', 'fullName' => 'Test Guy']]];
+        self::assertSame($first, $print($customer + $refund), 'nested keys in another order');
+        foreach (
+            [['transactionType' => 'CGBK'], ['totalAccountAmount' => '-10.00'], ['transactionTime' => '2026-11-01'],
+            ['receipt' => 'OTHERRCP']] as $change
+        ) {
+            self::assertNotSame($first, $print($change + $refund), (string) json_encode($change));
+        }
+
+        $this->expectException(\LogicException::class);
+        (new ClickBankAdapter())->fingerprint(self::request(self::body($refund, self::KEY_A)));
     }
 
     /** The payment's own time dates the row; the values are `date -d … +%s`'s. */
