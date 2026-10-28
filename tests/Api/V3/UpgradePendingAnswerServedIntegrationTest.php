@@ -323,10 +323,19 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
         self::assertSame([500, $message], [$status, $answer['message'] ?? null]);
     }
 
-    public function testTheSameFailureWithTheSchemaCurrentClaimsNoCause(): void
+    /** @return iterable<string, array{string}> */
+    public static function schemasNoUpgradeMends(): iterable
+    {
+        require_once dirname(__DIR__, 3) . '/202-config/version.php';
+        yield 'current' => [PROSPER202_VERSION];
+        yield 'newer than the code (files rolled back), though smaller as text' => ['1.9.100'];
+    }
+
+    /** @dataProvider schemasNoUpgradeMends */
+    public function testTheSameFailureWithTheSchemaCurrentClaimsNoCause(string $version): void
     {
         self::requireScratch();
-        self::deployedOver(PROSPER202_VERSION);
+        self::deployedOver($version);
 
         [$status, $body] = self::get('/api/v3/ltv/breakdown?by=campaign');
         self::assertSame([500, 'Internal server error'], [$status, $body['message'] ?? null]);
