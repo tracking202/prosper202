@@ -103,9 +103,17 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 			WithHint("Send less: a tool's arguments are ids, filters and short values.")
 	}
 	if mcpHostedRun {
-		if _, over := api.JSONValuesOver(input, hostedArgumentValues); over {
-			return validationError("the arguments for %s hold more than %d JSON values, more than a hosted call takes", spec.Name, hostedArgumentValues).
-				WithHint("Send less: a tool's arguments are ids, filters and short values.")
+		bound := hostedArgumentValues
+		if len(spec.JSON) > 0 {
+			bound = hostedDocumentArgumentValues
+		}
+		if _, over := api.JSONValuesOver(input, bound); over {
+			refused := validationError("the arguments for %s hold more than %d JSON values, more than a hosted call takes", spec.Name, bound)
+			if len(spec.JSON) > 0 {
+				return refused.WithHint("Leave out what the call does not need (the read-only ids and the null parts a get answers); "+
+					"a larger one is sent with `p202 %s` from the user's computer.", strings.Join(spec.Command, " "))
+			}
+			return refused.WithHint("Send less: a tool's arguments are ids, filters and short values.")
 		}
 	}
 	argv, err := mcpToolArgv(rootCmd, spec, input)

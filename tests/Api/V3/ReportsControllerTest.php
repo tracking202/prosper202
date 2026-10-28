@@ -494,7 +494,7 @@ final class ReportsControllerTest extends TestCase
         $binds = [];
         $db = $this->bindRecordingDb([
             'FROM 202_rotators WHERE id = ?' => ['id' => 9, 'name' => 'Geo split'],
-            'FROM 202_rotator_rules WHERE rotator_id = ?' => [
+            'FROM 202_rotator_rules AS ru WHERE ru.rotator_id = ?' => [
                 ['id' => 4, 'rule_name' => 'US', 'status' => 1],
                 ['id' => 5, 'rule_name' => 'Mobile', 'status' => 0],
             ],
@@ -525,7 +525,7 @@ final class ReportsControllerTest extends TestCase
         self::assertSame(
             [4, 5, 2],
             array_column($data['rules'], 'rule_id'),
-            'every rule in id order, then one deleted since'
+            'every rule in the order the redirects try them, then one deleted since'
         );
         self::assertSame(['US', 'Mobile', null], array_column($data['rules'], 'rule_name'));
         self::assertSame([false, false, true], array_column($data['rules'], 'deleted'));

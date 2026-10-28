@@ -12,6 +12,7 @@ use Api\V3\Support\ReportFilter;
 use Api\V3\Support\ResponseSanitizer;
 use Api\V3\Support\StatementHelpers;
 use Prosper202\Report\LocalTime;
+use Prosper202\Rotator\RuleOrder;
 
 class ReportsController
 {
@@ -904,7 +905,8 @@ class ReportsController
         }
 
         $stmt = $this->prepare(
-            'SELECT id, rule_name, status FROM 202_rotator_rules WHERE rotator_id = ? ORDER BY id ASC'
+            'SELECT ru.id, ru.rule_name, ru.status FROM 202_rotator_rules AS ru WHERE ru.rotator_id = ? '
+                . RuleOrder::orderBy('ru')
         );
         $this->bind($stmt, 'i', $rotatorId);
         $this->execute($stmt, 'Rotator rules lookup failed');

@@ -20,7 +20,7 @@ import (
 
 // mcpWriteToolInput are the arguments a write tool needs before it sends its
 // write, beyond its ids.
-var mcpWriteToolInput = map[string]map[string]string{
+var mcpWriteToolInput = map[string]map[string]interface{}{
 	"campaign_create":         {"aff_campaign_name": "X", "aff_campaign_url": "https://example.com/o", "aff_campaign_payout": "1", "aff_network_id": "1"},
 	"campaign_update":         {"aff_campaign_name": "Y"},
 	"tracker_create_with_url": {"aff_campaign_id": "1", "ppc_account_id": "1"},
@@ -33,6 +33,13 @@ var mcpWriteToolInput = map[string]map[string]string{
 	"ppc_network_create":      {"ppc_network_name": "N"},
 	"ppc_account_create":      {"ppc_account_name": "A", "ppc_network_id": "1"},
 	"aff_network_create":      {"aff_network_name": "C"},
+	"rotator_create":          {"name": "R", "default_url": "https://example.com/d"},
+	"rotator_update":          {"name": "S"},
+	"rotator_set_rules": {"rules": []interface{}{map[string]interface{}{
+		"rule_name": "Mobile",
+		"criteria":  []interface{}{map[string]interface{}{"type": "device", "value": "mobile"}},
+		"redirects": []interface{}{map[string]interface{}{"redirect_url": "https://example.com/m"}},
+	}}},
 }
 
 // mcpHostedOptionalReads are reads a hosted tool makes when its key allows
@@ -99,7 +106,7 @@ func TestHostedMCPToolsStayInsideTheAIKeyAreas(t *testing.T) {
 			tmp := t.TempDir()
 			setTestHome(t, tmp)
 			writeTestConfig(t, tmp, srv.URL, "test-key-123456")
-			input := map[string]string{}
+			input := map[string]interface{}{}
 			for _, a := range s.Args {
 				input[a.Name] = "1"
 				if a.Pattern == mcpChangeID {

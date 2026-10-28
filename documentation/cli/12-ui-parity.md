@@ -34,7 +34,7 @@ record links only to the caller's own records
 | Campaigns | `/campaigns` (+ `attribution_model_id`, `app_registration_id`) | `p202 campaign …`, `campaign clone`, `campaign check-urls`, `campaign replace-url` | ✅ |
 | Landing Pages | `/landing-pages` | `p202 landing-page …` | ✅ |
 | Text Ads | `/text-ads` | `p202 text-ad …` | ✅ |
-| Redirector: redirectors, rules, criteria | `/rotators`, `/rotators/{id}/rules` | `p202 rotator …`, `rotator rule-create/update/delete`, `rotator criteria-values`, `rotator test`, `rotator trace` | ◐ criteria values that come from a hosted list for some types |
+| Redirector: redirectors, rules, criteria | `/rotators`, `/rotators/{id}/rules` (`PUT` saves the whole set, in order, as the page does) | `p202 rotator …`, `rotator set-rules`, `rotator rule-create/update/delete`, `rotator criteria-values`, `rotator test`, `rotator trace` | ◐ criteria values that come from a hosted list for some types; the auto-monetizer is set on the page only |
 | Mobile Apps (incl. goals, SKAN encodings, integrity) | `/apps/…`, `/goals/…` | `p202 app …`, `p202 goal …` | ✅ |
 | Get LP Code | `GET /landing-pages/{id}/code` (`?offers=campaign:12,rotator:3` for an advanced page) | `p202 landing-page code <id>` (`--offer`) | ✅ |
 | Get Links | `POST /trackers`, `GET /trackers/{id}/url` (`t202kw`, `c1`–`c4`, `utm_*`, the source's custom variables) | `p202 tracker create`, `tracker create-with-url`, `tracker get-url`, `tracker bulk-urls` | ✅ |
