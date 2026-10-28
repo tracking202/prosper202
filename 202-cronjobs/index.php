@@ -584,7 +584,10 @@ function RunSecondsCronjob()
                 new \Prosper202\Database\Connection($db),
                 20
             );
-            if ($attribution !== null && ($attribution->processed() > 0 || $attribution->backfill !== null)) {
+            $mergesNotRequeued = $attribution === null ? 0 : $attribution->mergesFailed + $attribution->mergesRetired;
+            $worthALine = $attribution !== null
+                && ($attribution->processed() > 0 || $attribution->backfill !== null || $mergesNotRequeued > 0);
+            if ($worthALine) {
                 echo 'Attribution: ' . htmlspecialchars($attribution->summary(), ENT_QUOTES) . '<br>';
             }
         } catch (\Throwable $e) {

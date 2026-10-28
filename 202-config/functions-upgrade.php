@@ -4589,6 +4589,8 @@ class UPGRADE
                 \Prosper202\Database\Tables\AppTables::appInstalls(),
                 // Mints the install's id there, which names the API state directory.
                 \Prosper202\Database\Tables\SecretTables::deploymentSecrets(),
+                // The attribution worker's queue of identity merges: the requeue_* columns and requeue_due.
+                \Prosper202\Database\Tables\IdentityTables::identityMerges(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             if ($step_ok) {

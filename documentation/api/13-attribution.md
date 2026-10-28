@@ -27,7 +27,7 @@ way around a read the role does not allow.
 | `GET` | `/attribution/reports/breakdown` | Attributed conversions, revenue, cost, ROI and assists by a click dimension |
 | `GET` | `/attribution/reports/journeys` | Journey length, time to convert, one-touch share by browser |
 | `GET` | `/attribution/conversions/{id}/journey` | One conversion's touches, the signals that linked them, every model's credit |
-| `GET` | `/attribution/queue` | The worker's backlog: waiting, failing (with the error), and why each row was queued |
+| `GET` | `/attribution/queue` | The worker's backlog: waiting, failing (with the error), and why each row was queued; identity merges awaiting their re-queue, failing (`merges_failing`) and retired (`merges_retired`), each listed in `merge_rows` with its `last_error` |
 | `GET` | `/attribution/exports` | Export jobs, newest first (`?status=`, `?limit=`) |
 | `GET` | `/attribution/exports/{id}` | One export job |
 | `POST` | `/attribution/exports` | Queue an export: a breakdown written to CSV, now or at `run_at`, optionally to a webhook (honors `Idempotency-Key`; supports `?staged=1`) |

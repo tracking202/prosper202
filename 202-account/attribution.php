@@ -354,6 +354,24 @@ try {
 	error_log('attribution page: ' . $e->getMessage());
 	$loadError = 'The attribution tables could not be read. Check that the upgrade finished, then reload.';
 }
+// The merges the worker could not re-queue: failing ones are tried again, retired ones are not.
+$mergeNote = null;
+if ($queue !== null && ((int) $queue['merges_failing'] > 0 || (int) $queue['merges_retired'] > 0)) {
+    $failingMerges = (int) $queue['merges_failing'];
+    $retiredMerges = (int) $queue['merges_retired'];
+    $mergeParts = [];
+    if ($failingMerges > 0) {
+        $mergeParts[] = $failingMerges
+            . ($failingMerges === 1 ? ' merge failed to credit its' : ' merges failed to credit their')
+            . ' conversions again; each is tried again, less often the longer it fails';
+    }
+    if ($retiredMerges > 0) {
+        $mergeParts[] = $retiredMerges
+            . ($retiredMerges === 1 ? ' merge cannot credit its' : ' merges cannot credit their')
+            . ' conversions again and ' . ($retiredMerges === 1 ? 'is' : 'are') . ' not tried again';
+    }
+    $mergeNote = implode('; ', $mergeParts) . ' (p202 attribution queue shows why).';
+}
 $activeModels = array_values(array_filter($models, static fn (array $m): bool => $m['status'] === 'active'));
 $defaultModel = null;
 foreach ($models as $m) {
@@ -590,6 +608,16 @@ $modelSettings = static function (array $m): string {
 		</div>
 	</div>
 <?php } ?>
+
+    <?php if ($mergeNote !== null) { ?>
+    <div class="p202-strip mb-3" id="attribution-merges">
+        <div class="p202-strip__row">
+            <span class="p202-pill p202-pill--bad">Failing</span>
+            <span class="p202-strip__label">Visitors merged into one person</span>
+            <span class="p202-strip__value"><?php echo $h($mergeNote); ?></span>
+        </div>
+    </div>
+    <?php } ?>
 
 <?php if ($view === 'report') { ?>
 	<?php
