@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Click;
 
+use Prosper202\Repository\LookupRepositoryFactory;
 use mysqli;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickBotDetector;
@@ -79,7 +80,7 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
     {
         $GLOBALS['memcacheWorking'] = true;
         $stale = ['browser' => 1, 'platform' => 2, 'device' => 3, 'type' => '1'];
-        $GLOBALS['memcache'] = self::cache([md5('user-agent-typed' . self::GOOGLEBOT . 'test') => $stale]);
+        $GLOBALS['memcache'] = self::cache([self::key(self::GOOGLEBOT) => $stale]);
 
         $info = \PLATFORMS::get_device_info(self::db(), new \DeviceDetect(), self::GOOGLEBOT);
 
@@ -88,7 +89,7 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
             $info['ua_device_family'] ?? null,
             'an entry cached before the family existed was served as is'
         );
-        $key = md5('user-agent-typed' . self::GOOGLEBOT . 'test');
+        $key = self::key(self::GOOGLEBOT);
         self::assertSame($info, $GLOBALS['cacheWrites'][$key] ?? null, 'the re-parsed entry replaces it');
     }
 
@@ -96,7 +97,7 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
     {
         $GLOBALS['memcacheWorking'] = true;
         $cached = ['browser' => 1, 'platform' => 2, 'device' => 3, 'type' => '1', 'ua_device_family' => 'Other', 'ua_only' => true];
-        $GLOBALS['memcache'] = self::cache([md5('user-agent-typed' . self::CHROME . 'test') => $cached]);
+        $GLOBALS['memcache'] = self::cache([self::key(self::CHROME) => $cached]);
 
         self::assertSame($cached, \PLATFORMS::get_device_info(self::db(), new \DeviceDetect(), self::CHROME));
         self::assertSame([], $GLOBALS['cacheWrites']);
@@ -119,7 +120,7 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
 
         self::assertNotSame($old, $info);
         self::assertSame(self::$devices->findOrCreateDevice('Desktop', DeviceType::Desktop), $info['device']);
-        self::assertSame($info, $GLOBALS['cacheWrites'][md5('user-agent-typed' . self::CHROME . 'test')] ?? null);
+        self::assertSame($info, $GLOBALS['cacheWrites'][self::key(self::CHROME)] ?? null);
     }
 
     private static function db(): mysqli
@@ -141,5 +142,11 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
                 return $this->entries[$key] ?? false;
             }
         };
+    }
+
+    /** The entry connect2.php keeps for an agent's parse. */
+    private static function key(string $agent): string
+    {
+        return md5('user-agent-typed' . $agent . LookupRepositoryFactory::cacheNamespace());
     }
 }

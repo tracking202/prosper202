@@ -276,7 +276,7 @@ module.exports = {
       name: "Settings: AutoCron after the page's own cron ping, said where the switch is",
       async run(ctx) {
         const { db, expect, state, withSession } = ctx;
-        const unneeded = /Your own cron job ran in the last five minutes/;
+        const unneeded = /A cron job ran on this install in the last five minutes, so AutoCron may not be needed/;
         const original = db.value('SELECT auto_cron FROM 202_users_pref WHERE user_id=' + state.owner);
         // Viewports where the page is longer than the screen, so landing on
         // #autocron scrolls past the top of the page (at 1280x1000 it does not).
@@ -331,6 +331,15 @@ module.exports = {
             await app.submit('#autocron button[type="submit"]');
             expect.match(await app.messages(), unneeded, at + 'a cron job that ran leaves AutoCron off, and says so');
             await inView('the refusal');
+
+            // Anyone can open the cron's address, so the record is no proof:
+            // the owner may say the run was not their cron job's.
+            const anyway = '#autocron_no_own_job_form button[type="submit"]';
+            expect.ok(await ui.visible(anyway), at + 'and offers to turn it on anyway');
+            await app.submit(anyway);
+            const answered = await app.messages();
+            expect.notMatch(answered, unneeded, at + "the owner's word is taken");
+            expect.ok(answered !== '', at + 'the switch says what the service answered', answered);
           });
         }
         db.write("UPDATE 202_users_pref SET auto_cron='" + original + "' WHERE user_id=" + state.owner);
@@ -374,6 +383,32 @@ module.exports = {
         await ui.ready();
         expect.notOk(await ui.visible('#p202-getting-started'), 'and it stays hidden');
         await ui.page.evaluate(() => { try { localStorage.removeItem('p202_getting_started_dismissed'); } catch (e) { /* ignore */ } });
+      },
+    },
+
+    {
+      name: 'AI connect: the approval page shows what the link says as the link\'s words, and vouches for none of it',
+      async run(ctx) {
+        const { app, ui, expect } = ctx;
+        const query = new URLSearchParams({
+          state: 'a'.repeat(43) + '.' + 'B'.repeat(43),
+          code_challenge: 'c'.repeat(43),
+          code_challenge_method: 'S256',
+          client_name: 'Claude',
+          client_domain: 'claude.ai',
+          redirect_host: 'claude.ai',
+          install: ctx.config.base + '/',
+          redirect_uri: 'https://mcp.tracking202.com/callback',
+        });
+        await app.goto('/202-account/connect-ai.php?' + query);
+        // What a person reads: rendered and visible, not the source.
+        const text = await ui.page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+        expect.ok(text.includes('calls itself \u201cClaude\u201d (claude.ai)'), 'the name and site are the link\'s');
+        expect.ok(text.includes("The app's name and site are what the link says; this page cannot check them."),
+          'and the page says it cannot check them');
+        expect.ok(text.includes('Whoever started the connection gets the access you choose'), 'and who gets the access');
+        expect.notOk(/verif/i.test(text), 'nothing on the page says verified');
+        expect.ok(await ui.page.isVisible('form[method="post"] button[type="submit"]'), 'the approval form is offered');
       },
     },
 

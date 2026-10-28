@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Click;
 
+use Prosper202\Repository\LookupRepositoryFactory;
 use mysqli;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickBotDetector;
@@ -154,7 +155,7 @@ final class DeviceInfoAddressVerdictTest extends TestCase
 
     private static function key(): string
     {
-        return md5('user-agent-typed' . self::CHROME . 'test');
+        return md5('user-agent-typed' . self::CHROME . LookupRepositoryFactory::cacheNamespace());
     }
 
     /** The Bot model is type 4 and the Desktop one type 1, as PLATFORMS stores them. */
