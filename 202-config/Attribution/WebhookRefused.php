@@ -10,6 +10,6 @@ namespace Prosper202\Attribution;
  * API returns it as the field error on `webhook_url`, and the dashboard
  * shows it under the field.
  */
-final class WebhookRefused extends \RuntimeException
+class WebhookRefused extends \RuntimeException
 {
 }

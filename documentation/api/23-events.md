@@ -190,7 +190,10 @@ same transaction as the conversion (`202_notification_pending`), and the
 worker — `202-cronjobs/app-installs.php`, and the web cron
 `202-cronjobs/index.php` every minute — sends it: a failure is retried with
 backoff (1 minute doubling, at most 6 hours) and marked `failed` after 8
-attempts, and never undoes the recorded conversion. A pixel whose code
+attempts, and never undoes the recorded conversion. A URL the sender refuses
+to call — an address that is not public, at the URL or at a redirect it
+answers with ([27-setup.md](27-setup.md#an-accounts-pixels--ppc-accountsidpixels)) —
+is `failed` at once, with the reason, and not tried again. A pixel whose code
 holds several space-separated URLs queues one row per URL, each retried on
 its own, so a URL that refuses is asked again without resending to one
 that accepted. The response reports `status: queued` with the number of

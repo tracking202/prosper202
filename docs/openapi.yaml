@@ -4970,8 +4970,10 @@ paths:
         The notification outbox for app installs, newest first: every
         server-to-server postback an install's goal outcome queued, with
         its kind and status — `pending` (waiting, or backing off after a
-        failed attempt), `sent`, `failed` (attempts ran out; `last_error`
-        says why), `cancelled` (replaced before it went out) or
+        failed attempt), `sent`, `failed` (attempts ran out, or the sender
+        refused the URL, or a redirect it answered with, as an address it
+        never calls: a refusal is final, sent no further, and `last_error`
+        says why in either case), `cancelled` (replaced before it went out) or
         `suppressed` (a correction or retraction for a pixel with no
         correction URL). `meta.summary` counts every status under the same
         filters except `status`. Web clicks' postbacks go through the same
@@ -9673,8 +9675,20 @@ paths:
         is the URL from the pixel's src, several separated by spaces; a
         Postback's must be http(s), the only URLs the postback sender calls.
         `correction_url` goes on a Postback pixel only, one URL per code URL in
-        the same order (the form's check). Unknown fields are refused. Takes
-        an `Idempotency-Key`; stageable with `?staged=1`.
+        the same order (the form's check). A Postback's URLs and its
+        correction URLs are refused, naming the field, where the sender
+        would refuse to call them and that shows without a DNS lookup: a
+        user name or password before the host, a private, loopback,
+        link-local (cloud metadata), carrier-grade NAT, multicast, reserved
+        or other non-public address (an IPv4 address inside IPv6 included,
+        and the other spellings of an address), or a local name
+        (`localhost`, a single label, `.local`, `.internal`). http:// and
+        any port are accepted; a `[[token]]` in the host is checked when it
+        is filled. `P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php` admits
+        the operator's own networks, never link-local or metadata addresses.
+        A URL the pixel already holds is not refused when sent back as it
+        is. Unknown fields are refused. Takes an `Idempotency-Key`;
+        stageable with `?staged=1`.
       operationId: createPpcAccountPixel
       requestBody:
         required: true
@@ -14555,6 +14569,12 @@ components:
         last_error:
           type: string
           nullable: true
+          description: >-
+            Why the last attempt did not land, naming hosts and never a path or
+            query: what the network answered (`http://pb.example answered 500`),
+            that it could not be reached, or why the sender refused it (`not
+            sent: 10.0.0.5, which is a private address. ...`, or `redirected
+            to ..., which was not followed: ...`)
         created_at:
           type: integer
         sent_at:

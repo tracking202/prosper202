@@ -550,8 +550,11 @@ p202 ppc-account pixel delete 4 9 --force
 `--type-id`: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server),
 5 Raw (markup as given), 6 Bot202 Facebook Pixel Assistant. For every type but
 Raw, `--code` is the pixel's URL (several separated by spaces); a Postback's
-must be http(s). `--correction-url` goes on a Postback only, one URL per code
-URL in the same order. A removed pixel goes with its correction URL.
+must be http(s), to a public address: one aimed at a private, loopback or
+metadata address or a local name, or with a user name or password, is refused
+on its field (`P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php` admits the
+operator's own network). `--correction-url` goes on a Postback only, one URL
+per code URL in the same order. A removed pixel goes with its correction URL.
 
 ### Tracker (`p202 tracker`)
 

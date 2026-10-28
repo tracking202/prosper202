@@ -137,13 +137,16 @@ final class OutboundUrlGuardTest extends TestCase
     }
 
     /**
-     * Two implementations pin an outbound webhook: this guard's curlOptions()
-     * (LTV webhooks) and Attribution\WebhookSender (MTA exports, checked by
-     * its own, stricter WebhookGuard). They arrived separately; until they are
-     * one, what keeps them from drifting is this: no third file pins curl
-     * itself, and each of the two names every option in the hardening set.
-     * Presence only -- this guard's values are asserted above, the sender's in
-     * tests/Attribution/WebhookSenderTest. The proxy pair is in the set
+     * Three implementations pin an outbound call to a URL someone else
+     * chose: this guard's curlOptions() (LTV webhooks),
+     * Attribution\WebhookSender (MTA exports, checked by its own, stricter
+     * WebhookGuard) and Notifications\PostbackSender (traffic-source
+     * postbacks, checked by WebhookGuard::checkPostback()). They arrived
+     * separately; until they are one, what keeps them from drifting is this:
+     * no other file pins curl itself, and each names every option in the
+     * hardening set. Presence only -- this guard's values are asserted above,
+     * the senders' in tests/Attribution/WebhookSenderTest and
+     * tests/Notifications/PostbackSenderTest. The proxy pair is in the set
      * because it was the drift: the sender had it and this guard did not, and
      * without it a proxy in the environment resolves the host and the pin is
      * ignored.
@@ -160,6 +163,7 @@ final class OutboundUrlGuardTest extends TestCase
         $sanctioned = [
             '202-config/Validation/OutboundUrlGuard.php',
             '202-config/Attribution/WebhookSender.php',
+            '202-config/Notifications/PostbackSender.php',
             '202-config/DataEngine/SelfCall.php',
         ];
         $files = \Tests\Support\SourceScan::phpFiles();
