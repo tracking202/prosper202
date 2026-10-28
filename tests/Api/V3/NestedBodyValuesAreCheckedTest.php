@@ -124,31 +124,15 @@ final class NestedBodyValuesAreCheckedTest extends TestCase
         ],
         'RotatorsController::ruleParts' => [
             'criteria' => [
-                'why' => 'A rule\'s entries are checked by refuseNestedKeys(), which predates PayloadKeys\' '
-                    . 'nested checks and also holds each entry\'s read-only keys to the rule\'s own values; both '
-                    . 'handlers that read a rule call it first.',
-                'contains' => [
-                    'RotatorsController::createRule' => 'self::refuseNestedKeys($payload, null);',
-                    'RotatorsController::updateRule' => 'self::refuseNestedKeys($payload, $rule);',
-                ],
+                'why' => 'A rule\'s entries are checked by nestedKeyErrors(), which predates PayloadKeys\' '
+                    . 'nested checks and also holds each entry\'s read-only keys to the rule\'s own values; '
+                    . 'ruleParts() is called only by planRule(), the one check of a rule every rule write makes '
+                    . '(RotatorRuleWritesAreCheckedTest), which reports these with the rule\'s other problems.',
+                'contains' => ['RotatorsController::planRule' => '$errors += self::nestedKeyErrors($rule, $held);'],
             ],
             'redirects' => [
-                'why' => 'As criteria: refuseNestedKeys() checks every redirect first.',
-                'contains' => [
-                    'RotatorsController::createRule' => 'self::refuseNestedKeys($payload, null);',
-                    'RotatorsController::updateRule' => 'self::refuseNestedKeys($payload, $rule);',
-                ],
-            ],
-        ],
-        'RotatorsController::updateRule' => [
-            'criteria' => [
-                'why' => 'refuseNestedKeys() has checked every criterion by the time the update tests the '
-                    . 'list\'s type.',
-                'contains' => ['RotatorsController::updateRule' => 'self::refuseNestedKeys($payload, $rule);'],
-            ],
-            'redirects' => [
-                'why' => 'As criteria.',
-                'contains' => ['RotatorsController::updateRule' => 'self::refuseNestedKeys($payload, $rule);'],
+                'why' => 'As criteria: nestedKeyErrors() checks every redirect.',
+                'contains' => ['RotatorsController::planRule' => '$errors += self::nestedKeyErrors($rule, $held);'],
             ],
         ],
         'IntegrityPolicy::judge' => [

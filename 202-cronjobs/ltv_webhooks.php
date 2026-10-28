@@ -1,128 +1,95 @@
-#!/usr/bin/env php
 <?php
 
 declare(strict_types=1);
 
 /**
- * LTV outbound webhook dispatcher. Run every 1-5 minutes.
+ * The LTV webhook dispatcher on its own (Prosper202\Ltv\WebhookDispatcher):
+ * sends the deliveries the /ltv API writes queue, and exits.
  *
- * Delivers pending rows from 202_ltv_webhook_deliveries (queued by the /ltv
- * API writes) to their endpoints. This cron is the ONLY place LTV webhook
- * HTTP happens — never inline in ingest or API handling.
+ * The minutely 202-cronjobs/index.php runs the same dispatch with a shorter
+ * budget, so an install whose crontab has only that one line (and every
+ * Docker and AutoCron install) sends its webhooks; this entry point is for
+ * deployments that schedule workers separately (docker-compose.coolify.yaml).
+ * Both take the dispatcher's MySQL named lock: a copy started while another
+ * runs exits at once and says so.
  *
- * Hardening:
- *  - SSRF guard re-checked at dispatch time (DNS may have changed since
- *    registration): https only, no private/loopback/reserved addresses,
- *    redirects are never followed.
- *  - Payloads signed with HMAC-SHA256 over the exact body, sent as
- *    X-P202-Signature: sha256=<hex>, so receivers can authenticate us.
- *  - Failures back off exponentially (2^attempts minutes). After
- *    MysqlWebhookRepository::MAX_ATTEMPTS the delivery is marked failed and
- *    the endpoint is marked dead — visible state, no silent infinite retry.
- *  - Response bodies stored truncated (1000 chars). No payload contents
- *    (potential PII) are ever written to logs — only ids and status codes.
+ * Each delivery is sent by WebhookDispatcher::post(), which hands it to
+ * Ltv\DeliverySender: the export webhooks' sender and guard
+ * (Attribution\WebhookSender, WebhookGuard::check()), re-checked at dispatch
+ * time (DNS may have changed since registration): https only, no private,
+ * loopback, link-local or metadata address in any spelling, pinned to the
+ * address checked, no proxy, redirects never followed.
+ *
+ * Options:
+ *   --budget=N    seconds to keep sending (default 50, 1-3600); a delivery
+ *                 begun before the end may take its timeout past it
+ *
+ * Exit codes: 0 when the run finished (including "another run holds the
+ * lock"), 1 on a bad option or a database failure. Over HTTP a failure also
+ * answers 500, because a URL fetcher never sees the exit status.
+ *
+ * Example crontab entry:
+ *   * * * * * /usr/bin/php /path/to/prosper202/202-cronjobs/ltv_webhooks.php >> /var/log/p202-webhooks.log 2>&1
  */
+
+use Prosper202\Database\Connection;
+use Prosper202\Ltv\WebhookDispatcher;
 
 error_reporting(E_ALL);
 
 require_once __DIR__ . '/../202-config/connect.php';
 
-use Prosper202\Database\Connection;
-use Prosper202\Ltv\MysqlWebhookRepository;
-use Prosper202\Validation\OutboundUrlGuard;
-
 set_time_limit(0);
 
-if (!isset($db) || !($db instanceof mysqli)) {
-    fwrite(STDERR, "ltv_webhooks: database connection unavailable\n");
-    exit(1);
-}
+$buffering = PHP_SAPI !== 'cli' && ob_start();
 
-$conn = new Connection($db);
-$repo = new MysqlWebhookRepository($conn);
-
-$batchSize = 100;
-$delivered = 0;
-$failed = 0;
-
-try {
-    foreach ($repo->duePending($batchSize) as $delivery) {
-        $deliveryId = (int) $delivery['delivery_id'];
-        $webhookId = (int) $delivery['webhook_id'];
-        $url = (string) $delivery['webhook_url'];
-        $body = (string) $delivery['payload'];
-
-        // Claim before POSTing: overlapping cron runs both read the same
-        // pending set, but only one worker wins this atomic UPDATE — the
-        // other skips, so endpoints never receive a delivery twice.
-        if (!$repo->claimDelivery($deliveryId, time())) {
-            continue;
-        }
-
-        if ((string) $delivery['webhook_status'] !== 'active') {
-            // Endpoint was disabled/died after this delivery was queued.
-            $repo->recordAttempt($deliveryId, $webhookId, false, null, 'endpoint not active');
-            $failed++;
-            continue;
-        }
-
-        try {
-            $validatedIps = MysqlWebhookRepository::assertUrlAllowed($url);
-        } catch (Throwable $guard) {
-            $repo->recordAttempt($deliveryId, $webhookId, false, null, 'blocked: ' . $guard->getMessage());
-            $failed++;
-            continue;
-        }
-
-        $signature = MysqlWebhookRepository::signature($body, (string) $delivery['webhook_secret']);
-
-        $ch = curl_init($url);
-        if ($ch === false) {
-            $repo->recordAttempt($deliveryId, $webhookId, false, null, 'curl init failed');
-            $failed++;
-            continue;
-        }
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $body,
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'X-P202-Signature: ' . $signature,
-                'X-P202-Event: ' . (string) $delivery['event_name'],
-                'X-P202-Delivery: ' . $deliveryId,
-                'User-Agent: Prosper202-LTV-Webhook/1.0',
-            ],
-            CURLOPT_RETURNTRANSFER => true,
-        ]);
-        // Pin to an address the guard just validated, no redirects, https only,
-        // TLS verified -- one shared option set so no dispatcher can drop one.
-        curl_setopt_array($ch, OutboundUrlGuard::curlOptions($url, $validatedIps));
-
-        $responseBody = curl_exec($ch);
-        $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        $success = $responseBody !== false && $statusCode >= 200 && $statusCode < 300;
-        $repo->recordAttempt(
-            $deliveryId,
-            $webhookId,
-            $success,
-            $statusCode > 0 ? $statusCode : null,
-            $responseBody !== false ? (string) $responseBody : ('curl: ' . $curlError)
-        );
-
-        if ($success) {
-            $delivered++;
+$fail = static function (string $message) use (&$buffering): never {
+    if (defined('STDERR')) {
+        fwrite(STDERR, 'ltv_webhooks: ' . $message . "\n");
+    } else {
+        error_log('ltv_webhooks: ' . $message);
+    }
+    if (PHP_SAPI !== 'cli') {
+        if (!headers_sent()) {
+            http_response_code(500);
         } else {
-            $failed++;
-            error_log("ltv_webhooks: delivery {$deliveryId} to webhook {$webhookId} failed (status {$statusCode})");
+            echo "ltv_webhooks: FAILED\n";
+        }
+        if ($buffering) {
+            ob_end_flush();
+            $buffering = false;
         }
     }
-} catch (Throwable $e) {
-    fwrite(STDERR, 'ltv_webhooks failed: ' . $e->getMessage() . "\n");
-    error_log('ltv_webhooks failed: ' . $e->getMessage());
     exit(1);
+};
+
+$budget = 50;
+$argv = PHP_SAPI === 'cli' ? array_values((array) ($_SERVER['argv'] ?? [])) : [];
+for ($i = 1; $i < count($argv); $i++) {
+    $arg = is_string($argv[$i]) ? $argv[$i] : '';
+    if (preg_match('/^--budget=(\d{1,4})$/D', $arg, $m) === 1 && (int) $m[1] >= 1 && (int) $m[1] <= 3600) {
+        $budget = (int) $m[1];
+        continue;
+    }
+    // A mistyped option must not run with defaults the operator did not ask for.
+    $fail('unrecognised argument "' . $arg . '"; this job takes --budget=N (1-3600)');
 }
 
-echo "ltv_webhooks: {$delivered} delivered, {$failed} failed/retrying\n";
+if (!isset($db) || !($db instanceof mysqli)) {
+    $fail('database connection unavailable');
+}
+
+try {
+    $report = WebhookDispatcher::runExclusive(new Connection($db), time() + $budget);
+} catch (Throwable $e) {
+    error_log('ltv_webhooks failed: ' . $e->getMessage());
+    $fail(get_class($e) . ': ' . $e->getMessage());
+}
+
+echo 'ltv_webhooks: ' . ($report === null
+    ? 'another run holds the lock; nothing done'
+    : WebhookDispatcher::summary($report)) . "\n";
+
+if ($buffering) {
+    ob_end_flush();
+}

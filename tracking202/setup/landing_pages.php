@@ -155,7 +155,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 											  `landing_page_time`='" . $mysql['landing_page_time'] . "' ";
 
 		if ($editing == true) {
-			$landing_page_sql  .= "WHERE `landing_page_id`='" . $mysql['landing_page_id'] . "'";
+			$landing_page_sql  .= "WHERE `landing_page_id`='" . $mysql['landing_page_id'] . "'"
+                . " AND `user_id`='" . $mysql['user_id'] . "'";
 		}
 		//die($landing_page_sql);
 		$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
@@ -202,7 +203,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 			$landing_page_sql = "	UPDATE       `202_landing_pages`
 								 	SET          	 `landing_page_id_public`='" . $mysql['landing_page_id_public'] . "'
-								 	WHERE        `landing_page_id`='" . $mysql['landing_page_id'] . "'";
+								 	WHERE        `landing_page_id`='" . $mysql['landing_page_id'] . "'"
+                . " AND `user_id`='" . $mysql['user_id'] . "'";
 			$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 		}
 

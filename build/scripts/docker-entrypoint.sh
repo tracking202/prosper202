@@ -3,8 +3,18 @@ set -e
 
 cd /var/www/html
 
-# Install composer dependencies if vendor directory is missing or empty
+# Install composer dependencies if vendor directory is missing or empty: the
+# base image with the checkout bind-mounted (the app image bakes vendor/ in).
+# Only from composer.lock, as the app image and the release zip install: with
+# no lock composer resolves whatever matches composer.json that day, and with
+# a lock that has drifted from composer.json install only warns and installs
+# the old set, so validate stops the container first (set -e).
 if [ ! -d "vendor" ] || [ ! -f "vendor/autoload.php" ]; then
+    if [ ! -f composer.lock ]; then
+        echo "composer.lock is missing from $(pwd); restore it (git checkout composer.lock) so the install is the locked set." >&2
+        exit 1
+    fi
+    composer validate --no-check-publish --no-check-all
     echo "Installing Composer dependencies..."
 
     if [ "$APP_ENV" = "development" ] || [ "$APP_ENV" = "dev" ]; then

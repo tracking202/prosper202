@@ -48,14 +48,14 @@ on first boot, so the setup wizard opens with the database step already done.
 
 | File | Purpose |
 |------|---------|
-| `../Dockerfile` (repo root) | The app image, `prosper202-web`, on `php:8.3.36-apache`: pinned to a patch release, since a host with the moving `php:8.3-apache` cached keeps building on the PHP it pulled first (Dependabot proposes each 8.3 patch; `.github/workflows/docker-image.yml` builds the image and refuses an unpinned base). This is the **only** Dockerfile the stacks build — the dev compose uses `build:` with context `.`, which resolves to the root `Dockerfile`, not anything under `build/`. Two stages: **`base`** installs `mysqli`, `pdo_mysql`, `opcache`, and the `memcached` extension (used by `202-config/connect.php`), pulls Composer via `COPY --from=composer:2`, and writes an Apache conf that enables `mod_rewrite`, **denies dotfiles** (`.env`, `.git`, …) so a bind-mounted checkout can't leak them, and maps `X-Forwarded-Proto: https` to `HTTPS=on` for TLS-terminating proxies. `base` does **not** `COPY` the application in — the dev stack builds `target: base` and bind-mounts the source, with the entrypoint installing dependencies at boot. The default final stage (**`app`**) additionally bakes the checkout and a `--no-dev` Composer install into the image for deployments with no bind mount (Coolify / production compose); `.dockerignore` keeps `.git`, `.env*`, and `202-config.php` out of it. |
+| `../Dockerfile` (repo root) | The app image, `prosper202-web`, on `php:8.3.36-apache`: pinned to a patch release, since a host with the moving `php:8.3-apache` cached keeps building on the PHP it pulled first (Dependabot proposes each 8.3 patch; `.github/workflows/docker-image.yml` builds the image, refuses an unpinned base, and checks the image holds no `tests/` and that its `vendor/` is exactly `composer.lock`'s runtime set). This is the **only** Dockerfile the stacks build — the dev compose uses `build:` with context `.`, which resolves to the root `Dockerfile`, not anything under `build/`. Two stages: **`base`** installs `mysqli`, `pdo_mysql`, `opcache`, and the `memcached` extension (used by `202-config/connect.php`), pulls Composer via `COPY --from=composer:2`, and writes an Apache conf that enables `mod_rewrite`, **denies dotfiles** (`.env`, `.git`, …) so a bind-mounted checkout can't leak them, and maps `X-Forwarded-Proto: https` to `HTTPS=on` for TLS-terminating proxies. `base` does **not** `COPY` the application in — the dev stack builds `target: base` and bind-mounts the source, with the entrypoint installing dependencies at boot. The default final stage (**`app`**) additionally bakes the checkout and a `--no-dev` Composer install into the image for deployments with no bind mount (Coolify / production compose). The install is the locked set, the one the release zip ships: `composer.json` and `composer.lock` are copied first (the vendor layer is cached on both), and `composer validate` stops the build when the lock has drifted from `composer.json`, where `composer install` would only warn and install the old set (run `composer update <package>` and commit the lock); `tests/Release/ImageInstallsTheLockedSetTest.php` holds that shape, and the workflow checks the built image's `vendor/` against the lock with `build/scripts/release-tree.php vendor`. `.dockerignore` keeps `.git`, `.env*`, `202-config.php`, `vendor/` (a builder's own, with the dev set) and the test suite (`tests/`, whose runner scripts act on a database with no sign-in) out of it; `tests/Release/TestScriptsAreNotServedTest.php` holds that, and holds every runnable script under `tests/` to refusing a web request first, for the dev stack's bind mount. |
 | `php/conf.d/error-reporting.ini` | Dev-only PHP overrides — `display_errors = On`, `error_reporting = E_ALL`, errors to stderr (`/proc/self/fd/2`) so they land in `docker compose logs`. The dev compose mounts this read-only into the container; **never ship it to production**, where errors should be logged, not displayed. |
 
 ### Scripts (`scripts/`)
 
 | File | Purpose |
 |------|---------|
-| `docker-entrypoint.sh` | Container entrypoint. (1) Runs `composer install` if `vendor/` is missing (dev vs. `--no-dev` keyed off `APP_ENV`). (2) Calls `write-config.php` to self-generate `202-config.php` from the env vars compose passes in. Then `exec`s Apache. `set -e` means a real config failure stops the container loudly instead of booting with broken DB settings. |
+| `docker-entrypoint.sh` | Container entrypoint. (1) Runs `composer install` if `vendor/` is missing (dev vs. `--no-dev` keyed off `APP_ENV`), from `composer.lock` only: a missing lock, or one `composer validate` finds has drifted from `composer.json`, stops the container instead of installing a set nothing tested. (2) Calls `write-config.php` to self-generate `202-config.php` from the env vars compose passes in. Then `exec`s Apache. `set -e` means a real config failure stops the container loudly instead of booting with broken DB settings. |
 | `write-config.php` | Renders `202-config.php` from `202-config-sample.php`, substituting the DB/memcached placeholders with environment values (`MYSQL_DATABASE`, `DB_HOST`, `MYSQL_ROOT_PASSWORD`, `MC_HOST`, …). No-op if `202-config.php` already exists, so it's safe on every boot. Uses single-pass `strtr` (a credential containing a placeholder token can't be double-substituted) and hands the credentials file to the web user at `0640`, failing loudly rather than relaxing permissions. Mirrors the rewrite logic in `202-config/setup-config.php` — keep the two in sync if the sample's placeholder tokens change. |
 | `package-release.sh` | Maintainer release builder. Produces `dist/prosper202-<version>.zip` bundling `vendor/` (`--no-dev`) and cross-built Go CLI binaries so end users need no Composer/Go toolchain. Version comes from `202-config/version.php` (single source of truth). See [`RELEASING.md`](../RELEASING.md) for the full process. |
 
@@ -66,6 +66,7 @@ on first boot, so the setup wizard opens with the database step already done.
 | `test-install-config.php` | Pre-baked `202-config.php` mounted into the **test-install** stack (`docker-compose.test-install.yml`). Points at the `db-test` service. Credentials (`root` / `root_password`) are throwaway container defaults reachable only inside the compose network — not secrets. Committed on purpose so the test stack is one command. |
 | `staging-config.php` | Same idea for the **staging** stack (`docker-compose.staging.yml`), pointing at the `db2` service. *Gitignored* — `cp build/staging-config.sample.php build/staging-config.php` before bringing the staging stack up. |
 | `staging-config.sample.php` | Committed template for the above; defaults already match the staging compose stack, so the copy works as-is. |
+| `coolify-service-template/` | Ready-to-submit kit for listing Prosper202 in Coolify's one-click service catalog: the image-based service template, logo SVG, and submission checklist (see its README). Derived from `../docker-compose.coolify.yaml` — keep the two in sync. |
 | `apache/my-tracking-proxy.conf` | Example **host-side** Apache reverse-proxy vhost (port 80/443 → the app container) so you can hit a real hostname like `my.tracking202.com` with TLS during local dev. Not part of any compose file; drop it into a host Apache and adjust the `ProxyPass` target port to whatever you bound the app to. |
 
 ---
@@ -177,6 +178,14 @@ services:
 
 Also `cp build/staging-config.sample.php build/staging-config.php` first (see the
 file table above).
+
+`P202_URL_MAP` lets a server-side sync between the two stacks (`p202 sync
+--from dev --to staging`, profiles `http://localhost:8000` and
+`http://localhost:8001`) reach `web` and `web2` inside the compose network.
+A sync calls only public addresses unless the install that runs it admits
+others, so add `define('P202_WEBHOOK_ALLOW_NETWORKS', '172.16.0.0/12');`
+(Docker's default address pool) to the `202-config.php` of the stack named
+by `--from`; that also lets it use plain `http://` there.
 </details>
 
 ---
@@ -202,7 +211,8 @@ it never lands in a commit.
 docker compose up
    └─ web service builds/uses prosper202-web image (root ./Dockerfile, via build: .)
         └─ ENTRYPOINT docker-entrypoint.sh
-             ├─ composer install   (if vendor/ missing; dev vs --no-dev by APP_ENV)
+             ├─ composer validate + install   (if vendor/ missing; from composer.lock;
+             │                                 dev vs --no-dev by APP_ENV)
              ├─ php write-config.php → writes 202-config.php from env  (skipped if it exists)
              └─ exec apache2-foreground
    └─ db service (mysql) waits healthy before web starts
@@ -212,4 +222,6 @@ docker compose up
 Knowing this chain is usually enough to debug a boot problem: a 500 on every page
 almost always means `write-config.php` couldn't write/own `202-config.php`, and a
 missing-dependency fatal means `composer install` didn't run (delete `vendor/` and
-restart, or run it by hand in the container).
+restart, or run it by hand in the container). A container that stops at boot with
+"The lock file is not up to date" has a `composer.json` changed without its lock:
+run `composer update <package>` and commit `composer.lock`.

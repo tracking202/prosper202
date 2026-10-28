@@ -60,6 +60,12 @@ contract vectors and the eval cases the bundled SDKs and CLI point at) ship.
   - all six Go binaries are present;
   - no file is group- or world-writable (suPHP hosts answer 500 for those).
 
+The container image installs the same locked set: the Dockerfile copies
+`composer.lock` with `composer.json` and runs `composer validate` before
+`composer install --no-dev`, and the Docker Image workflow runs verify's vendor
+check on its own (`release-tree.php vendor`) in the built image, against the
+checkout's lock.
+
 Adding a file at the repository root? Put it under `ship` if a server needs it
 at runtime, under `exclude` if only contributors do. Adding a Composer package?
 Run `composer require` (or `composer update <pkg>`) and commit `composer.lock`;

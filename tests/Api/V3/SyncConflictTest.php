@@ -7,6 +7,7 @@ namespace Tests\Api\V3;
 use Api\V3\Controllers\SyncController;
 use Api\V3\Exception\RemoteApiException;
 use Api\V3\Support\ServerStateStore;
+use Api\V3\Support\SyncProfileKeys;
 use Tests\Support\ScriptedRemoteApiClient;
 use Tests\Support\ScriptedTargetSyncEngine;
 use Tests\TestCase;
@@ -31,6 +32,12 @@ final class SyncConflictTest extends TestCase
         . '"details":{"expected_version":"read","current_version":"now"}}';
 
     private string $tmpDir;
+
+    /** The key a job's profile keys are sealed with, in place of the database's. */
+    private static function syncKeys(): SyncProfileKeys
+    {
+        return SyncProfileKeys::withKey(str_repeat('k', 32));
+    }
 
     protected function setUp(): void
     {
@@ -81,7 +88,9 @@ final class SyncConflictTest extends TestCase
         ];
         $engine->target = new ScriptedRemoteApiClient(['PUT campaigns/20' => [$status, $body]]);
 
-        return [new SyncController($this->createMysqliMock(), 42, $store, $engine), $store, $engine->target];
+        $controller = new SyncController($this->createMysqliMock(), 42, $store, $engine, self::syncKeys());
+
+        return [$controller, $store, $engine->target];
     }
 
     /** @return array<string, mixed> the job as GET /sync/jobs/{id} answers it */
@@ -133,7 +142,11 @@ final class SyncConflictTest extends TestCase
 
         self::assertSame('failed', $job['status']);
         self::assertNull($job['next_run_at'], 'not queued to run again');
-        self::assertSame('campaigns[A] update: 409 from PUT campaigns/20: Version mismatch', $job['error']);
+        self::assertSame(
+            'campaigns[A] update: 409 from PUT campaigns/20: Version mismatch.'
+            . ' The target confirmed no write before it stopped.',
+            $job['error']
+        );
         self::assertSame('20', $job['conflict']['target_id']);
         self::assertFalse($job['conflict']['written']);
         $puts = array_values(array_filter($target->requests, static fn (array $r): bool => $r[0] === 'PUT'));
@@ -151,7 +164,11 @@ final class SyncConflictTest extends TestCase
 
         self::assertSame('queued', $job['status'], 'a 5xx is worth another attempt');
         self::assertNotNull($job['next_run_at']);
-        self::assertSame('campaigns[A] update: 503 from PUT campaigns/20: Service unavailable', $job['error']);
+        self::assertSame(
+            'campaigns[A] update: 503 from PUT campaigns/20: Service unavailable.'
+            . ' The target confirmed no write before it stopped.',
+            $job['error']
+        );
         self::assertNull($job['conflict']);
     }
 

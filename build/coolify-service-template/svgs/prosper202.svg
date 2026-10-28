@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Prosper202">
+  <!-- Placeholder mark derived from the Prosper202 wordmark colors
+       (202-img/prosper202.png): dark "Prosper", blue "202", green accent.
+       Swap for official vector brand art before submitting if available. -->
+  <rect x="4" y="4" width="120" height="120" rx="24" fill="#2b6cb8"/>
+  <rect x="4" y="98" width="120" height="26" rx="13" fill="#4ca42c" opacity="0.95"/>
+  <text x="64" y="76" text-anchor="middle"
+        font-family="Arial, Helvetica, sans-serif" font-size="46"
+        font-weight="bold" fill="#ffffff">202</text>
+  <text x="64" y="116" text-anchor="middle"
+        font-family="Arial, Helvetica, sans-serif" font-size="13"
+        font-weight="bold" fill="#ffffff" letter-spacing="1">PROSPER</text>
+</svg>

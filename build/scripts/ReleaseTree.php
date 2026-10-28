@@ -288,21 +288,32 @@ final class ReleaseTree
         return true;
     }
 
+    /** @return list<string> problems */
+    private static function verifyVendor(string $stage): array
+    {
+        if (!is_file("{$stage}/composer.lock")) {
+            return ['composer.lock is missing from the release tree'];
+        }
+
+        return self::vendorMatchesLock($stage, "{$stage}/composer.lock");
+    }
+
     /**
-     * vendor/ must be exactly the locked runtime set: nothing missing, and no
-     * dev package (a web-reachable PHPUnit is a known remote-code-execution
-     * vector on shared hosts).
+     * $root/vendor must be exactly $lockFile's runtime set: nothing missing,
+     * and no dev package (a web-reachable PHPUnit is a known
+     * remote-code-execution vector on shared hosts). The release zip's tree
+     * and the container image's docroot are both held to it.
      *
      * @return list<string> problems
      */
-    private static function verifyVendor(string $stage): array
+    public static function vendorMatchesLock(string $root, string $lockFile): array
     {
-        if (!is_file("{$stage}/vendor/autoload.php")) {
+        if (!is_file("{$root}/vendor/autoload.php")) {
             return ['vendor/autoload.php is missing'];
         }
-        $lockJson = @file_get_contents("{$stage}/composer.lock");
+        $lockJson = @file_get_contents($lockFile);
         if ($lockJson === false) {
-            return ['composer.lock is missing from the release tree'];
+            return ["{$lockFile} cannot be read"];
         }
         try {
             $lock = json_decode($lockJson, true, 512, JSON_THROW_ON_ERROR);
@@ -312,7 +323,7 @@ final class ReleaseTree
         if (!is_array($lock) || !isset($lock['packages']) || !is_array($lock['packages'])) {
             return ["composer.lock has no 'packages' list"];
         }
-        $installedFile = "{$stage}/vendor/composer/installed.php";
+        $installedFile = "{$root}/vendor/composer/installed.php";
         if (!is_file($installedFile)) {
             return ['vendor/composer/installed.php is missing'];
         }
@@ -353,7 +364,7 @@ final class ReleaseTree
                 $problems[] = "locked runtime package {$name} {$version} is not installed in vendor/";
             } elseif ($present[$name] !== $version) {
                 $problems[] = "vendor/ has {$name} {$present[$name]} but composer.lock pins {$version}";
-            } elseif ($onDisk[$name] && !is_dir("{$stage}/vendor/{$name}")) {
+            } elseif ($onDisk[$name] && !is_dir("{$root}/vendor/{$name}")) {
                 $problems[] = "vendor/{$name} is missing although installed.php lists it";
             }
         }
@@ -943,6 +954,15 @@ final class ReleaseTree
                 }
                 return 0;
             }
+            if ($command === 'vendor') {
+                $root = rtrim($argv[2] ?? '', '/');
+                $lockFile = $argv[3] ?? '';
+                if ($root === '' || !is_dir($root) || $lockFile === '') {
+                    fwrite(STDERR, "usage: release-tree.php vendor <app directory> <lock file>\n");
+                    return 2;
+                }
+                return self::report($command, self::vendorMatchesLock($root, $lockFile));
+            }
 
             $tree = self::load($repoRoot . '/build/release-manifest.php');
 
@@ -977,7 +997,11 @@ final class ReleaseTree
                     $problems = $tree->verify($stage, $tracked);
                     break;
                 default:
-                    fwrite(STDERR, "usage: release-tree.php check-manifest | prune <stage> | verify <stage>\n");
+                    fwrite(
+                        STDERR,
+                        "usage: release-tree.php check-manifest | prune <stage> | verify <stage>"
+                        . " | vendor <app directory> <lock file>\n"
+                    );
                     return 2;
             }
         } catch (\Throwable $e) {
@@ -985,6 +1009,12 @@ final class ReleaseTree
             return 1;
         }
 
+        return self::report($command, $problems);
+    }
+
+    /** @param list<string> $problems */
+    private static function report(string $command, array $problems): int
+    {
         if ($problems !== []) {
             fwrite(STDERR, "release-tree {$command}: " . count($problems) . " problem(s)\n");
             foreach ($problems as $problem) {

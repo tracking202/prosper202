@@ -50,6 +50,13 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	}
 
 	foreach ($_POST['data'] as $rule) {
+        // A rule with no criterion matches every visitor, so a rule needs
+        // one, as the API asks (RotatorsController::planRule()); and one
+        // destination at least. The editor posts neither list empty.
+        $listed = static fn ($list): bool => is_array($list) && $list !== [];
+        if (!is_array($rule) || !$listed($rule['criteria'] ?? null) || !$listed($rule['redirects'] ?? null)) {
+            die("ERROR");
+        }
 		$rule_empty = count($rule) != count(array_filter($rule));
 		if ($rule_empty) {
 			die("ERROR");
@@ -131,7 +138,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					$refuse();
 				}
 			}
-			if (($criteria['type'] ?? '') === 'ip' && ($reason = \Prosper202\Rotator\IpCriterion::refusal((string) ($criteria['value'] ?? ''))) !== null) {
+			if (($reason = \Prosper202\Rotator\Criterion::refusal((string) ($criteria['type'] ?? ''), (string) ($criteria['value'] ?? ''))) !== null) {
 				$refuse($reason);
 			}
 		}
@@ -299,7 +306,8 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 			break;		
 	}
 
-	$sql = "UPDATE 202_rotators SET ".$default_sql." WHERE id='".$rotator_id."'";
+	$sql = "UPDATE 202_rotators SET ".$default_sql." WHERE id='".$rotator_id."'"
+        . " AND user_id='" . $mysql['user_id'] . "'";
     if (!$db->query($sql)) {
         record_mysql_error($sql);
     }
@@ -308,10 +316,13 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
     $criteria_id = [];
     $criteria_added = [];
     $rules_added = [];
+    // The rules are tried in the order the page lists them (RuleOrder).
+    $position = 0;
 
     foreach ($_POST['data'] as $rule) {
         $redirects_ids = [];
         $redirect_changed = false;
+        $position++;
 
         $rule_name = $db->real_escape_string($rule['rule_name']);
         if ($rule['status'] == 'active') {$status = 1;} else {$status = 0;}
@@ -420,7 +431,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					break;	
 			}*/
 
-            $rule_sql = "UPDATE 202_rotator_rules SET rotator_id='".$rotator_id."', rule_name='".$rule_name."', splittest='".$splittest."', status='".$status."' WHERE id='".(int)$rule['rule_id']."'";
+            $rule_sql = "UPDATE 202_rotator_rules SET rotator_id='".$rotator_id."', rule_name='".$rule_name."', splittest='".$splittest."', status='".$status."', position='" . $position . "' WHERE id='".(int)$rule['rule_id']."'";
             if (!$db->query($rule_sql)) {
                 record_mysql_error($rule_sql);
             }
@@ -500,7 +511,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
                 }
             }
         } else {
-            $rule_sql = "INSERT INTO 202_rotator_rules SET rotator_id='".$rotator_id."', rule_name='".$rule_name."', splittest='".$splittest."', status='".$status."'";
+            $rule_sql = "INSERT INTO 202_rotator_rules SET rotator_id='".$rotator_id."', rule_name='".$rule_name."', splittest='".$splittest."', status='".$status."', position='" . $position . "'";
             if (!$db->query($rule_sql)) {
                 record_mysql_error($rule_sql);
             }
@@ -556,7 +567,10 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
         foreach ($rule['criteria'] as $criteria) {
             $type = $db->real_escape_string($criteria['type']);
             $statement = $db->real_escape_string($criteria['statement']);
-            $value = $db->real_escape_string($criteria['type'] === 'ip' ? \Prosper202\Rotator\IpCriterion::normalize((string) $criteria['value'])['value'] : $criteria['value']);
+            // Stored as the API stores it, every visitor as ALL (Criterion).
+            $value = $db->real_escape_string(
+                \Prosper202\Rotator\Criterion::stored((string) $criteria['type'], (string) $criteria['value'])
+            );
 
             if ($criteria['criteria_id'] != 'none') {
                 $criteria_sql = "UPDATE 202_rotator_rules_criteria SET rotator_id='".$rotator_id."', rule_id='".$rule_id."', type='".$type."', statement='".$statement."', value='".$value."' WHERE id='".(int)$criteria['criteria_id']."'";

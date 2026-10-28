@@ -66,6 +66,8 @@ var searchTasks = []searchTask{
 	{Run: "p202 text-ad list", Pages: []string{"Setup › Text Ads"}},
 	{Run: "p202 rotator list", Pages: []string{"Setup › Redirector"},
 		Phrases: []string{"rotators", "split test offers", "redirect rules"}},
+	{Run: "p202 rotator set-rules",
+		Phrases: []string{"redirector rules", "rotator rules", "rule order", "reorder rules", "weighted split", "split traffic by weight"}},
 	{Run: "p202 app list", Pages: []string{"Setup › Mobile Apps"},
 		Phrases: []string{"registered apps"}},
 	{Run: "p202 landing-page code", Pages: []string{"Setup › Get LP Code"},
@@ -76,6 +78,13 @@ var searchTasks = []searchTask{
 		Phrases: []string{"postback url", "s2s postback", "server to server postback"}},
 	{Run: "p202 conversion pixel",
 		Phrases: []string{"conversion pixel", "thank you page pixel", "tracking pixel"}},
+	{Run: "p202 conversion match-methods",
+		Phrases: []string{"how conversions were matched", "conversions matched by ip", "guessed conversions",
+			"cookie conversions", "conversions without a subid"}},
+	{Run: "p202 conversion offline-export --format google", Pages: []string{"Setup › Offline Conversions"},
+		Phrases: []string{"offline conversions csv", "google ads offline conversions",
+			"upload conversions to google ads", "gclid upload", "microsoft ads offline conversions", "msclkid upload",
+			"bing offline conversions", "scheduled conversion upload"}},
 
 	// Overview
 	{Run: "p202 report breakdown --breakdown campaign", Pages: []string{"Overview › Campaign Overview"},
@@ -108,6 +117,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"c1 c2 c3 c4", "custom variable breakdown"}},
 	{Run: "p202 ltv summary", Pages: []string{"Analyze › Customer LTV"},
 		Phrases: []string{"customer lifetime value"}},
+	{Run: "p202 ltv webhooks revive",
+		Phrases: []string{"revive webhook", "reactivate webhook", "webhook stopped sending", "resend missed webhook deliveries"}},
 	{Run: "p202 app report", Pages: []string{"Analyze › Mobile Apps"},
 		Phrases: []string{"app installs report", "skadnetwork postbacks"}},
 
@@ -122,11 +133,15 @@ var searchTasks = []searchTask{
 
 	// Account menu
 	{Run: "p202 user prefs update", Pages: []string{"Personal Settings"},
-		Phrases: []string{"my preferences", "report defaults", "privacy setting"}},
+		Phrases: []string{"my preferences", "report defaults", "privacy setting", "same ip fallback"}},
+	{Run: "p202 config set-url",
+		Phrases: []string{"instance url", "install address", "server address", "connect the cli to an install"}},
 	{Run: "p202 system info", Pages: []string{"Settings"},
-		Phrases: []string{"install settings", "versions", "database size"}},
+		Phrases: []string{"install settings", "versions", "database size", "geoip database age", "geolite build date"}},
 	{Run: "p202 system integrations", Pages: []string{"3rd Party API Integrations"},
 		Phrases: []string{"clickbank url", "jvzoo url", "instant notification url"}},
+	// The CLI's own setting: the docs call it the install's base URL.
+	{Run: "p202 config set-url", Phrases: []string{"base url", "instance url"}},
 	{Run: "p202 user list", Pages: []string{"User Management"},
 		Phrases: []string{"team members"}},
 	{Run: "p202 attribution breakdown", Pages: []string{"Attribution"},
@@ -135,6 +150,10 @@ var searchTasks = []searchTask{
 		Phrases: []string{"sign-in attempts", "login history", "failed logins"}},
 	{Run: "p202 system retention delete-before --dry-run",
 		Phrases: []string{"delete old clicks", "delete click data before a date", "purge old click data", "preview a click deletion"}},
+	{Run: "p202 system traffic-source-owners show",
+		Phrases: []string{"missing traffic source", "traffic source taken by another user", "traffic source in the wrong account", "move a traffic source back"}},
+	{Run: "p202 system traffic-source-owners split",
+		Phrases: []string{"traffic source shared by two users", "give each user their own traffic source", "split a shared traffic source"}},
 
 	// Pages and tasks with no command.
 	{Pages: []string{"Home"},
@@ -149,6 +168,9 @@ var searchTasks = []searchTask{
 	{Pages: []string{"VIP Perks Profile"}, Instead: "it is your profile on Tracking202's hosted service", Hint: "Open the page in the web UI."},
 	{Pages: []string{"Help"}, Instead: "it links the documentation and support",
 		Hint: "`p202 --help`, `p202 <command> --help` and `p202 commands` describe the CLI."},
+	{Phrases: []string{"refresh the geoip database", "maxmind license key"},
+		Instead: "the GeoIP refresh is set up and run in the web UI, under Account › Settings › GeoIP database",
+		Hint:    "`p202 system info` shows the database's build date and age (geoip_database) and how its last refresh ended (geoip_refresh)."},
 	{Phrases: []string{"upgrade", "1-click upgrade", "upgrade prosper202", "install upgrade"},
 		Instead: "upgrades run from the web UI's upgrade page",
 		Hint:    "`p202 system info` says which version is installed and whether an upgrade is needed."},

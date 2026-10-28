@@ -101,11 +101,17 @@ func systemMalformed(what string, err error) error {
 
 var systemInfoCmd = &cobra.Command{
 	Use:   "info",
-	Short: "What Account › Settings shows: versions, PHP limits, memcache, clicks recorded, database size, cron, DataEngine",
+	Short: "What Account › Settings shows: versions, PHP limits, memcache, clicks recorded, database size, cron, DataEngine, GeoIP database",
 	Long: "The Prosper202 code and database versions (database_upgrade_needed when they differ), PHP\n" +
 		"and MySQL versions, memcache, the PHP limits uploads and long reports run under, clicks\n" +
 		"recorded to date, database size, when the cron job last ran, and the DataEngine's progress.\n" +
 		"Whether a newer release exists is not reported: the UI asks a remote service for that.\n\n" +
+		"geoip_database is the GeoLite2 City file every location lookup reads, from its own metadata:\n" +
+		"state (current, stale past stale_after_days, missing, unreadable), built_at and built_on, and\n" +
+		"age_days; reason says why when it is not current. geoip_refresh is its weekly refresh with the\n" +
+		"install's MaxMind account: whether the account ID and licence key are stored (never their\n" +
+		"values), how the last run ended (last_outcome, last_error) and when the next is due. The\n" +
+		"refresh is set up and run under Account › Settings › GeoIP database.\n\n" +
 		systemSettingsNeeds + ", and system:read.",
 	Example: "  p202 system info\n  p202 system info --json",
 	Args:    cobra.NoArgs,

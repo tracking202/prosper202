@@ -153,6 +153,13 @@ class CapabilitiesController
                     // /system/isp-lookup (+ PUT), /system/integrations.
                     // Not stageable.
                     'administration' => true,
+                    // GET /system/traffic-source-owners, and POST
+                    // /system/traffic-source-owners/repair and /split: the
+                    // traffic sources Setup's rename moved out of their
+                    // accounts' user before 1.9.79, and the repair and split
+                    // an operator runs. Admin with access_to_settings. Not
+                    // stageable.
+                    'traffic_source_owners' => true,
                     // App measurement. `app_platforms` is what the registry
                     // (/apps) accepts a registration for. `app_postbacks` is
                     // one entry per platform-signed postback protocol the
@@ -212,13 +219,17 @@ class CapabilitiesController
                     // /clicks/{id}/conversions explains a click's value row
                     // by row, and GET /conversions filters by click, source
                     // and goal and returns every row's provenance. `sources`
-                    // is what the source filter accepts; `not_counted` the
-                    // reasons a row can be left out of its click's value.
+                    // is what the source filter accepts; `match_methods` what
+                    // the match_method filter does, the ways a click is found
+                    // (GET /conversions/match-methods counts them by campaign);
+                    // `not_counted` the reasons a row can be left out of its
+                    // click's value.
                     // The dimensions GET /reports/breakdown takes as
                     // `breakdown`, read from ReportsController itself.
                     'report_breakdowns' => ReportsController::breakdownDimensions(),
                     'conversion_ledger' => [
                         'sources' => array_map(static fn (\Prosper202\Conversion\Ledger\ConversionSource $s): string => $s->value, \Prosper202\Conversion\Ledger\ConversionSource::cases()),
+                        'match_methods' => \Prosper202\Conversion\Ledger\MatchMethod::values(),
                         'not_counted' => array_map(static fn (\Prosper202\Conversion\Ledger\NotCountedReason $r): string => $r->value, \Prosper202\Conversion\Ledger\NotCountedReason::cases()),
                         'click_breakdown' => true,
                     ],

@@ -134,6 +134,18 @@ tried again. Whoever reads the result reads the status, not the prose: an
 endpoint another process calls answers its failure in the status
 (`DataEngineHourAnswersItsFailureTest`).
 
+A verdict is a status line too. The Claude Code Review workflow's schema
+offered FINDINGS or CLEAN, and three reviews in a row (the re-click work, its
+restore into 1.9.79 and the ledger lock) answered CLEAN, 0 findings, while
+their own reports said they had not finished: two ended with their agents
+still running in the background, which a headless run does not wait for, and
+one could not read a diff too long for one `gh pr diff` answer. Both review
+workflows' schemas now carry `complete`, and an unfinished run answers NOT
+FINISHED and fails its check; the agents run in the foreground, and the
+diff is a file the job writes with git, since GitHub's diff endpoint refuses
+a PR of more than 300 files (1.9.78's release PR had 481). A result type with
+no way to say "this did not run" will say something else.
+
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.
 
@@ -207,6 +219,18 @@ the body under that name after the base class validated it, so the name
 cannot say whether a value was read — a hand-read body field is still the
 author's to read with `QueryInt` (`StrictIntegerBodyFieldsTest` holds the
 ones that exist).
+
+The pages cast the same way, and an id is where it bites: LTV Settings'
+Delete read `webhook_id` with `(int)`, so `12abc` deleted webhook 12, one of
+the account's own and not the one named. The rule now reads the request
+superglobals everywhere; an id a page posts is read with
+`Prosper202\Http\PostedId::read()` and anything else refused in the page's
+words. The 22 pages that still cast (48 sites) are listed by count in
+`phpstan-baseline.neon`, and the counts only shrink: Customer LTV's other
+pages left it next, where Companies' merge had read `12abc` as company 12,
+and read through `ltv_helpers.php`'s `p202_ltv_posted_*()`. A cast of a value
+copied out of `$_POST` first is not seen, nor `(string)` of one, which reads
+a list (`name[]=`) as "Array".
 
 The same drop lived one level down. With every top-level key refused, the
 objects and lists inside a body were still read by hand, for the keys the
@@ -335,6 +359,15 @@ algorithm moves. A scan cannot tell those two apart, so the test lists each
 writer as one or the other and holds them to opposite answers. When a
 predicate decides what a write means, ask whether every write of the column
 means it.
+
+A row's change stamp is the same sweep over its writers. Every write of a
+customer's company set `updated_at` but the LTV maintenance job's link, so a
+customer it attached answered the time of its last save on `GET
+/ltv/customers/{id}`, with nothing wrong in any one file.
+`CustomerWritesStampUpdatedAtTest` holds every write of `202_customers` to
+setting it; the other tables that keep `updated_at` are not held, and some
+of their writers do not (a model's default cleared, an app's icon stored).
+Writing a stamped row means writing its stamp.
 
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
@@ -512,6 +545,23 @@ record replayed here and its staged DELETE was listed to apply against this
 database. Data whose owner cannot be shown resolves to "not ours": leave it,
 and say how the owner carries it over.
 
+The name the store took instead had the same flaw one level down. A
+database's host and name name a slot, and a database dropped and installed
+again in it is another install in the same slot: the new install read the
+old one's directory as its own, every create sent under an Idempotency-Key
+the old install had answered was answered 201 with nothing created, and the
+old install's staged DELETE of campaign 1 deleted the new install's campaign
+1 (measured live). The install's id, minted with its schema (`InstallId`),
+names the directory now, and `StateStoresNameTheInstallTest` holds every
+store the served tree builds to `ServerStateStore::forInstall()`. Before
+keying state on where something lives, ask what can replace it there. The
+fix named the default directory and left `P202_SERVER_STATE_DIR` used as
+named — the directory the Coolify stack sets, on the deployments that
+reinstall most — so the bug stayed there; each install has a directory of
+its own inside it now, and the same test holds the store to never writing
+the operator's directory bare. A fix to a default reaches every setting that
+replaces it, or it is #5 again.
+
 ### 12. A guard is only as good as the layer that delivers the input
 The server rejected an explicitly empty API-key scope. It never fired, because
 the CLI dropped the field before building the request, so the server saw
@@ -656,6 +706,19 @@ handed back to the requester takes the host the requester used
 on takes the stored domain or the server's own name
 (`p202TrackingBaseUrl()`). `RequestHostSourceTest` lists every
 `getTrackingDomain()` caller with why its URL goes back to the requester.
+
+The scheme is part of the same address, and Get Links chose it alone: every
+direct and redirector link was `'http://' . getTrackingDomain() . …`, so an
+install served over HTTPS handed Safari and the ad platforms a plain-http hop
+while `p202 tracker get-url` gave the same tracker an https:// link, and the
+Postback and API integrations pages took the scheme from the request alone,
+never from a domain saved as `https://…`. A link the operator pastes is built
+on `p202TrackingBaseForResponse()`, the API's rule (`TrackingBaseLookup`): the
+scheme the domain is saved with, else the request's. `HandBuiltLinkSchemeTest`
+refuses a URL built on a hard-coded `http://` and lists every scheme chosen by
+hand (a ternary between http and https, or one as a default); it cannot see a
+scheme assembled from parts or set by an `if`. When two surfaces hand out one
+URL, they call one builder, and a test compares their answers to one request.
 
 A path in a directory anyone can write is a claim of the same kind: the
 name says whose it is, and anyone could have made it. The API state store's
@@ -1261,6 +1324,16 @@ UPDATE` of its own columns), and the test is a row another writer has
 touched. `ClickRowsWrittenOnlyByTheWriterTest` holds a click's rows to one
 writer, `MysqlClickRepository`.
 
+A second writer owes what the first one does after its write, not only the
+columns. Every API change of a subscription's status queued
+`subscription.changed`; the hourly sweep wrote `past_due` and `canceled`
+with no event, so a subscriber never heard that a subscription lapsed. The
+sweep queues it now, in its own transaction, and only for a change that took
+effect in the last 7 days: an announcement made late about the past is
+bounded by when the thing happened, or an upgrade's backlog becomes 30,000
+events ahead of every live one. `SubscriptionWritesAreAnnouncedTest` lists
+every statement that writes `202_subscriptions` with who announces it.
+
 A "none" that is also a lookup key finds every row that has none. A direct
 link's click without cloaking is stored with public id 0, and off.php looked
 the visitor's last click up by its public id: `click_id_public = '0'` matched
@@ -1413,6 +1486,40 @@ redirector) comes back 0 where the joined row is another account's, the
 "none" a tracker naming nothing always gave, so every consumer already reads
 it. The read is where the account is decided: a writer handed an id another
 account's read produced cannot tell it apart from its own.
+
+The write that names its row by id is the same claim, made by the request.
+Setup › Traffic Sources renamed a source with `UPDATE 202_ppc_networks SET
+user_id = <session>, … WHERE ppc_network_id = <posted id>`: no check at all,
+and the SET moved the source into the renamer's account (measured live: a
+Campaign manager of another account took user 1's source, and user 1's API
+answered 404 for it). Its siblings checked ownership in one statement and
+wrote by id alone in the next, right only while both name the same id on
+every path. `AccountScopedWriteTest` holds every UPDATE and DELETE in the
+served pages and endpoints to `user_id = <the account>` in its own WHERE,
+or, for a table owned through its parent, to a listed check that runs first.
+It reads SQL only: a write a page makes through a class it calls is the
+class's to tie, and a user id is trusted by its name.
+
+Closing the write leaves what already went through it. The sources the
+rename took stay in the taker's account, and the sign they leave, a traffic
+source account whose user is not its source's, is also what the API wrote
+before 1.9.77 for an account put on a source an admin set up for a user. A
+sign with two origins is a report, not a repair: `TrafficSourceOwners` lists
+each source with what tells the origins apart (whether its own user has
+accounts on it, which was saved first) and moves one only on an admin's
+say-so, never in the upgrade. When a fix closes a hole, ask what the hole left
+behind, and what else leaves the same rows.
+
+And run each repair to its fixed point. The move changes one id's owner, so
+a source both users' accounts named was listed again wherever it went, and
+the Settings notice that reports it never went away (measured live): a row
+shared by two owners has no owner a move can give it. The split gives each
+other owner a copy, and `TrafficSourceSplitIntegrationTest` holds both marks
+no move clears (`owner_has_accounts`, `several_users`) to a report that no
+longer lists the source after the split. A copy is a new id with readers of its own: the report rows are
+re-derived (#31), and what the old id's dependants recorded (a click's custom
+variable values name the source's variables) stays with the old id, which is
+said where the split is offered.
 
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 17305ee made the API answer money as numbers rather than mysqli's decimal
@@ -1745,6 +1852,21 @@ partition; and a join to `202_clicks_rotator` held its gap on a click with no
 route row, so every new redirector click's route waited for the conversion's
 commit. Measure a locking read on the path it runs on, joins included.
 
+Lock order is the other half, and a statement that only reads can hold one:
+under REPEATABLE READ an `INSERT … SELECT` share-locks the rows it reads, in
+its join order. The traffic source repair locked the source and then the
+accounts naming it; a click's rollup share-locks the click's account and then
+that account's source, and the two deadlocked on the first try (measured;
+`TrafficSourceOwnersIntegrationTest` holds it). Before adding a lock, list the
+statements that lock the same tables, rollups and other `INSERT … SELECT`
+copies included, and take the rows in their order or lock fewer of them. A
+re-check under the lock covers the window after the plan, not the one before
+it: the repair compared its rows with the plan it had made a moment earlier
+in the same request, while the operator had been shown a report read minutes
+before (and the CLI's `--all` sent `{"all": true}`, which moved whatever the
+server's own reading named). A confirmation carries what was shown, and the
+server compares with that (`owner_user_id`, `repair_to_user_id`).
+
 What the refusal does not see: a statement run on the raw handle
 (`writeConnection()`), which Connection never classifies; a read
 `isPlainRead()` does not recognise from its text (it knows `SELECT` and
@@ -1764,6 +1886,31 @@ first, and a transaction that asks for a second click after reading is
 refused with a `LogicException`, never served stale. Before relying on "the
 reads after the lock see what it holds", find the transaction's first read,
 not the lock.
+
+### 37. A row a batch skips is the first row of the next batch
+The company-linking sweep took 2,000 of an account's customers with a
+company string and no company, in no order, and skipped those whose string
+`canonicalName()` reduces to nothing (a tab, a no-break space). A skip wrote
+nothing, so the next run's select answered the same 2,000 first, and an
+account with more than 2,000 of them never had another customer linked —
+each run a success that linked 0. The skip was right; what it left was the
+select's answer for next time. Every row a batch takes has to leave the
+batch's selection — written to what the select excludes (here `''`, a
+"none" every reader of the column already had, #25), or walked past by a
+cursor on the key the select orders by — and a row the batch cannot act on
+for a reason it does not know is an error, not a skip (an entity id of 0
+was skipped the same way and would have been taken again forever, #11). Ask
+of every `continue` in a loop over a `LIMIT`ed read: does the next run's
+read take this row again, and what waits behind it?
+
+A cursor is a claim about an index, and the server may not share it.
+`WHERE user_id = ? AND company_id IS NULL AND customer_id > ? ORDER BY
+customer_id` has `(user_id, company_id)` to serve it, primary key implied;
+MariaDB 10.11 chose `merged_into` instead — `merged_into_customer_id IS
+NULL` is true of nearly every customer of every account, and that index
+also yields id order — and read 102,000 rows to return 2,000 (measured).
+The select names its index. Read the plan a cursor gets (`ANALYZE`, not
+`EXPLAIN`) on a table holding other accounts' rows before calling it cheap.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 

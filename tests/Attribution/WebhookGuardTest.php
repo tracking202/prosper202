@@ -235,6 +235,148 @@ final class WebhookGuardTest extends TestCase
         self::assertSame('10.0.0.1', $guard->check('https://10.0.0.1/')->pinned());
     }
 
+    /**
+     * A host's answer in each spelling of a private, loopback, link-local or
+     * metadata address (J0F7): the address, why it is refused with no
+     * allowlist, and whether an allowlist admitting every network
+     * (0.0.0.0/0, ::/0) still refuses it, which it must for every link-local
+     * and metadata address however it is carried. Shared with the postback
+     * and LTV webhook tests, each of which resolves a name to it.
+     *
+     * @return iterable<string, array{0: string, 1: string, 2: bool}>
+     */
+    public static function nonPublicAnswers(): iterable
+    {
+        $carried = '(carried inside an IPv6 address)';
+        $metadataLinkLocal = 'link-local address, where cloud metadata services answer';
+        $linkLocal = 'carries 169.254.169.254, a link-local address';
+        $azure = 'carries 168.63.129.16, a cloud metadata endpoint';
+        // Each of these was approved by the LTV webhooks' old guard.
+        yield 'Azure WireServer' => ['168.63.129.16', 'cloud metadata endpoint', true];
+        yield 'mapped metadata' => ['::ffff:169.254.169.254', $metadataLinkLocal . ' ' . $carried, true];
+        yield 'mapped loopback' => ['::ffff:127.0.0.1', 'loopback address ' . $carried, false];
+        yield 'mapped metadata, hex' => ['::ffff:a9fe:a9fe', 'link-local', true];
+        yield 'NAT64 metadata, hex' => ['64:ff9b::a9fe:a9fe', $metadataLinkLocal . ' ' . $carried, true];
+
+        yield 'mapped loopback, hex' => ['::ffff:7f00:1', 'loopback address ' . $carried, false];
+        yield 'mapped loopback, long' => ['0:0:0:0:0:ffff:7f00:0001', 'loopback address ' . $carried, false];
+        yield 'mapped private 10/8' => ['::ffff:10.0.0.1', 'private address ' . $carried, false];
+        yield 'mapped private 172.16/12' => ['::ffff:172.16.0.1', 'private address ' . $carried, false];
+        yield 'mapped private 192.168/16' => ['::ffff:192.168.1.1', 'private address ' . $carried, false];
+        yield 'mapped CGNAT' => ['::ffff:100.64.0.1', 'carrier-grade NAT', false];
+        yield 'mapped this network' => ['::ffff:0.0.0.0', 'this network', true];
+        yield 'mapped Azure' => ['::ffff:168.63.129.16', 'cloud metadata endpoint ' . $carried, true];
+        yield 'mapped Alibaba metadata' => ['::ffff:100.100.100.200', 'cloud metadata endpoint ' . $carried, true];
+
+        yield 'translated metadata' => ['::ffff:0:a9fe:a9fe', $linkLocal, true];
+        yield 'translated loopback' => ['::ffff:0:127.0.0.1', 'not a global unicast', false];
+        yield 'translated private' => ['::ffff:0:10.0.0.1', 'not a global unicast', false];
+
+        yield 'compatible metadata' => ['::169.254.169.254', $linkLocal, true];
+        yield 'compatible metadata, hex' => ['::a9fe:a9fe', $linkLocal, true];
+        yield 'compatible Azure' => ['::168.63.129.16', $azure, true];
+        yield 'compatible loopback' => ['::127.0.0.1', 'not a global unicast', false];
+        yield 'compatible private' => ['::10.0.0.1', 'not a global unicast', false];
+        yield 'compatible private 192.168' => ['::192.168.0.1', 'not a global unicast', false];
+
+        yield 'NAT64 loopback' => ['64:ff9b::127.0.0.1', 'loopback address ' . $carried, false];
+        yield 'NAT64 loopback, hex' => ['64:ff9b::7f00:1', 'loopback address ' . $carried, false];
+        yield 'NAT64 private' => ['64:ff9b::10.0.0.1', 'private address ' . $carried, false];
+        yield 'NAT64 private 192.168' => ['64:ff9b::192.168.1.1', 'private address ' . $carried, false];
+        yield 'NAT64 metadata' => ['64:ff9b::169.254.169.254', 'link-local', true];
+        yield 'NAT64 Azure' => ['64:ff9b::168.63.129.16', 'cloud metadata endpoint ' . $carried, true];
+        yield 'NAT64 Alibaba metadata' => ['64:ff9b::100.100.100.200', 'cloud metadata endpoint ' . $carried, true];
+
+        yield 'local NAT64 /96 metadata' => ['64:ff9b:1::a9fe:a9fe', $linkLocal, true];
+        yield 'local NAT64 /64 metadata' => ['64:ff9b:1:0:a9:fea9:fe00:0', $linkLocal, true];
+        yield 'local NAT64 /56 metadata' => ['64:ff9b:1:a9:fe:a9fe::', $linkLocal, true];
+        yield 'local NAT64 /48 metadata' => ['64:ff9b:1:a9fe:a9:fe00::', $linkLocal, true];
+        yield 'local NAT64 Azure' => ['64:ff9b:1::a83f:8110', $azure, true];
+        yield 'local NAT64 loopback' => ['64:ff9b:1::7f00:1', 'local-use NAT64', false];
+        yield 'local NAT64 private' => ['64:ff9b:1::a00:1', 'local-use NAT64', false];
+
+        yield '6to4 metadata' => ['2002:a9fe:a9fe::1', $linkLocal, true];
+        yield '6to4 Azure' => ['2002:a83f:8110::1', $azure, true];
+        yield '6to4 loopback' => ['2002:7f00:1::1', '6to4', false];
+        yield '6to4 private' => ['2002:a00:1::1', '6to4', false];
+        yield '6to4 private 192.168' => ['2002:c0a8:101::1', '6to4', false];
+
+        yield 'Teredo server metadata' => ['2001:0:a9fe:a9fe::1', $linkLocal, true];
+        yield 'Teredo client metadata' => ['2001:0:4136:e378:8000:63bf:5601:5601', $linkLocal, true];
+        yield 'Teredo client loopback' => ['2001:0:4136:e378:8000:63bf:80ff:fffe', 'Teredo', false];
+        yield 'Teredo client private' => ['2001:0:4136:e378:8000:63bf:f5ff:fffe', 'Teredo', false];
+        yield 'Teredo server private' => ['2001:0:a00:1::1', 'Teredo', false];
+
+        yield 'IPv6 loopback' => ['::1', 'loopback', false];
+        yield 'IPv6 link-local' => ['fe80::a9fe:a9fe', 'link-local', true];
+        yield 'AWS IPv6 metadata' => ['fd00:ec2::254', 'metadata', true];
+        yield 'IPv6 unique-local' => ['fd12:3456::1', 'unique-local', false];
+    }
+
+    /** @dataProvider nonPublicAnswers */
+    public function testEverySpellingAHostCanResolveToIsRefused(string $address, string $why): void
+    {
+        $guard = self::guard(['hooks.example.com' => [$address], 'mixed.example.com' => ['93.184.216.34', $address]]);
+        $canonical = (string) inet_ntop((string) inet_pton($address));
+        foreach (['https://hooks.example.com/p202', 'https://mixed.example.com/p202'] as $url) {
+            $message = self::refused($guard, $url);
+            self::assertStringContainsString('resolves to ' . $canonical . ', ', $message, $url);
+            self::assertStringContainsString($why, $message, $url);
+        }
+        $literal = str_contains($address, ':') ? '[' . $address . ']' : $address;
+        self::assertStringContainsString($why, self::refused($guard, 'https://' . $literal . '/p202'), 'the literal');
+        $saved = (string) $guard->webhookRefusal('https://' . $literal . '/p202');
+        self::assertStringContainsString($why, $saved, 'saved as a literal');
+    }
+
+    /**
+     * An operator's allowlist widens what it names and nothing else: no
+     * entry, not even every network there is, admits a link-local or
+     * metadata address, carried in IPv6 in any of the ways IPv6 carries
+     * IPv4. What the same allowlist does admit shows that this, and no
+     * other check, is what refuses them.
+     *
+     * @dataProvider nonPublicAnswers
+     */
+    public function testNoAllowlistAdmitsAMetadataAddressHoweverItIsCarried(
+        string $address,
+        string $why,
+        bool $never
+    ): void {
+        $guard = self::guard(['hooks.example.com' => [$address]], '0.0.0.0/0, ::/0');
+        if ($never) {
+            self::assertStringContainsString($why, self::refused($guard, 'https://hooks.example.com/'));
+        } else {
+            $canonical = (string) inet_ntop((string) inet_pton($address));
+            self::assertSame([$canonical], $guard->check('https://hooks.example.com/')->addresses);
+        }
+    }
+
+    public function testASaveOfAWebhookIsTheCheckWithoutTheLookup(): void
+    {
+        $guard = new WebhookGuard(static function (string $host): array {
+            throw new \LogicException('webhookRefusal() asked the resolver for ' . $host);
+        }, '');
+        self::assertNull($guard->webhookRefusal('https://hooks.example.com/p202'));
+        self::assertNull($guard->webhookRefusal('https://8.8.8.8:9443/p202'));
+        foreach ([...self::refusedLiterals(), ...self::malformed()] as [$url, $why]) {
+            self::assertStringContainsString($why, (string) $guard->webhookRefusal($url), $url);
+        }
+        foreach (self::spellings() as [$url]) {
+            self::assertNotNull($guard->webhookRefusal($url), $url);
+        }
+        self::assertNull($guard->webhookRefusal('https://hooks.example.com:8443/p202', [443, 8443]));
+        self::assertNull($guard->webhookRefusal('https://hooks.example.com/p202', [443, 8443]), 'no port is 443');
+        foreach (['https://hooks.example.com:9443/p202', 'https://[::ffff:8.8.8.8]:80/'] as $url) {
+            $why = (string) $guard->webhookRefusal($url, [443, 8443]);
+            self::assertStringContainsString('only sent to port 443 or 8443', $why, $url);
+        }
+        $allowed = new WebhookGuard(null, '10.20.0.0/16');
+        self::assertNull($allowed->webhookRefusal('https://10.20.0.5/p202'), 'the allowlist is honoured at saving');
+        $why = (string) $allowed->webhookRefusal('https://[::ffff:169.254.169.254]/');
+        self::assertStringContainsString('link-local', $why);
+    }
+
     /** @return iterable<string, array{0: string}> */
     public static function badAllowlists(): iterable
     {

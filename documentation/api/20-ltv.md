@@ -107,6 +107,32 @@ one). A value off a list, or a `limit` that is not a whole number in range
 (`abc`, `1000`), is a `422` naming the parameter and its range — never one
 row, never the first 500 read as all of them.
 
+**Numbers.** Every `/ltv` read answers money, averages and rates as a JSON
+number and a count or a unix time as an integer: a customer's
+`total_revenue`, `refunded_amount` and `mrr`; in the detail each
+subscription's `amount` and `mrr`, each revenue event's `amount`, and each
+line item's `quantity` (a measure, so `1.5` as well as `2`), `unit_price`
+(`null` when the line was sent without one) and `amount`; in the engagement
+each campaign's `conversions` and each event's `event_value` (a number, or
+`null`); a subscription's `amount`, `mrr` and `customer_ltv` in
+`GET /ltv/subscriptions`; every amount and rate of `GET /ltv/breakdown`, with
+`total_orders` (or, by product, `orders`) an integer and a product's `units`
+a number; a product's `price` (`null` when it has none); a company's
+`total_revenue` and `mrr`, with `order_count` and `last_activity_time`
+integers; and the ABM views' money and `avg_time_on_page`,
+`avg_scroll_depth` and `avg_video_pct`. Until 1.9.79 each of these answered
+MySQL's decimal text (`"54.12500"`, a quantity of `"1.500"`, conversions of
+`"1"`, an order count of `"4"`, a company's last activity of
+`"1793183200"`), while the summary, the cohorts, MRR and the projection
+answered numbers. A reference, an alias, a transaction id, a sku, a product key, a name
+or a postal code stays a string, digits or not. A customer's
+`custom_fields` is an object keyed by field, `{}` when it holds no value (it
+was `[]`, a list). `docs/openapi.yaml` gives each field's type, one schema
+per read (`LtvSummary`, `LtvCustomer`, `LtvCustomerDetail`,
+`LtvSubscription`, `LtvAcquisitionBreakdownRow`, `LtvProductBreakdownRow`,
+`LtvProduct`, `LtvCompanyRollup`, `LtvAbmAccount`, `LtvAbmContact` and the
+rest).
+
 ```bash
 p202 ltv summary --period last30
 p202 ltv customers --search acme --segment repeat --sort total_revenue
@@ -207,6 +233,51 @@ p202 ltv subscription event sub_123 --type renewal --transaction-id ch_889
 p202 ltv subscription event sub_123 --type cancel
 ```
 
+### When a subscription stops renewing
+
+A subscription no renewal reaches lapses on its own: once its
+`current_period_end` and `grace_days` (3 by default) are over it is
+`past_due`, and 30 days after that `canceled`. A renewal before then makes it
+`active` again. The cron job's hourly run (`202-cronjobs/index.php`, which
+every default install schedules) makes the change, so a status is at most an
+hour late, and the customer's cached `mrr` and `active_subscription_count`
+change with it. A `trialing` or `paused` subscription is left as it is.
+
+- `GET /ltv/mrr` counts only `active` subscriptions, so a lapsed one leaves
+  MRR at `past_due`. Monthly churn is the subscriptions canceled in the last
+  90 days over those active plus those canceled: a lapsed subscription's
+  `canceled_at` is the time the rule canceled it (period end + grace + 30
+  days), not the time the cron got to it.
+- Before 1.9.79 no default install ran this, so a subscription that stopped
+  renewing stayed `active` and counted in MRR. The first runs after the
+  upgrade move them, oldest first, in batches of 500 for up to 20 seconds an
+  hour (30,000 took 3 seconds on a test install, so only a very large
+  backlog takes more than one run). One that lapsed long ago goes straight to `canceled`, dated when it
+  would have been canceled, so it counts in churn only if that falls in the
+  last 90 days.
+- Each change queues a `subscription.changed` webhook event, as the API's
+  change of that status does: `past_due` with `action` `upsert` (the API
+  reaches `past_due` only through `POST /ltv/subscriptions`), `canceled` with
+  `action` `cancel` (the cancel event). It is queued in the same transaction
+  as the change, and only for a change that took effect in the last 7 days,
+  the time the sender keeps an unsent delivery: the first run after the
+  upgrade announces the last week's lapses, not every subscription that
+  lapsed since it was recorded (on a test install with 30,000 lapsed over
+  two years, 561 events, where announcing all would have queued 30,000 for
+  each webhook, hours of sending ahead of every live event). The run's line
+  says how many it did not announce.
+- The customer rollups (`order_count`, `total_revenue`, `refunded_amount`,
+  `mrr`, `active_subscription_count`) are also recomputed from the ledger
+  once a day, for the customers active in the last 48 hours, in case a write
+  left one out of step; the same daily run rebuilds the next-offer
+  transitions, attaches customers to companies by their company name and
+  removes expired personalization tokens.
+- `202-cronjobs/ltv_maintenance.php` runs all of it at once: `--full`
+  recomputes every customer's rollups, `--budget=N` sets how many seconds it
+  keeps going (300 by default), `--batch-size=N` how many rows a statement
+  takes (500). It and the cron take one database lock, so they never run at
+  once; a copy started while the other runs says so and exits.
+
 ## Customers
 
 | Method | Path | |
@@ -250,6 +321,13 @@ p202 ltv customer alias add 42 --type merchant_id --value M-77
 | `POST` | `/ltv/companies` | `name` (required, unique), `domain` (customers with that email domain join automatically); a duplicate is a `409` |
 | `PATCH` | `/ltv/companies/{id}`, `POST /ltv/companies/{id}/merge`, `DELETE /ltv/companies/{id}` | Rename or change the domain; merge `source_company_id` in; delete one with no customers (one with customers is merged instead) |
 
+A customer whose `company` was stored before that company existed is attached
+to it by the LTV maintenance job (`202-cronjobs/ltv_maintenance.php`), which
+creates the company if it has to. A `company` of nothing but spaces (tabs,
+no-break or ideographic spaces) names no company: the job stores it as `""`,
+as clearing it would, and the customer's email domain does not attach it.
+Either is a change to the customer, and its `updated_at` is when the job made it.
+
 ```bash
 p202 ltv product upsert --sku PRO-1 --name "Pro plan" --price 49
 p202 ltv fields create --key plan --type select --option free --option pro
@@ -259,13 +337,34 @@ p202 ltv company create --name Acme --domain acme.com
 
 ## Webhooks
 
-`POST /ltv/webhooks` registers an https endpoint (`url`; not a private,
-loopback or metadata address) for signed events. The response holds the
-webhook's `secret` once; it is never shown again. Each delivery is `POST
-{event, occurred_at, data}` with `X-P202-Signature: sha256=<HMAC-SHA256 of
-the body with the secret>` (and `X-P202-Event`, `X-P202-Delivery`),
-retried with backoff and failed after 6 attempts, which marks the webhook
-dead.
+`POST /ltv/webhooks` registers an https endpoint (`url`, on port 443 or
+8443) for signed events. The response holds the webhook's `secret` once; it
+is never shown again. Each delivery is `POST {event, occurred_at, data}`
+with `X-P202-Signature: sha256=<HMAC-SHA256 of the body with the secret>`
+(and `X-P202-Event`, `X-P202-Delivery`), retried with backoff and failed
+after 6 attempts, which marks the webhook dead until it is revived
+([A dead webhook](#a-dead-webhook)).
+
+The URL is held to the export webhooks' rules
+([13-attribution.md](13-attribution.md#exports)): spelled plainly (no user
+name, fragment or backslash), and never a private, loopback, link-local
+(where cloud metadata answers) or other non-public address, in any
+spelling. An IPv4 address carried in IPv6 (`::ffff:169.254.169.254`,
+`64:ff9b::a9fe:a9fe`) is judged as that address, and the metadata endpoints
+(`168.63.129.16` among them) are refused by name. Saving refuses what shows
+without a lookup (a `422` on `url`); each delivery is checked again when it
+is sent, every address the host resolves to with it, and goes only to the
+address that passed, with no proxy and no redirects; a refused one is
+logged `blocked: …` and nothing is sent. A receiver on the operator's own
+network is admitted by `P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php`, the
+export webhooks' setting; link-local and metadata addresses never are.
+
+`subscription.changed` carries `{subscription_id, customer_id, action}`:
+`upsert`, `renewal`, `cancel` or `refund` for a write through the API, and
+`upsert` (to `past_due`) or `cancel` when the hourly sweep moves a
+subscription that stopped renewing (see [When a subscription stops
+renewing](#when-a-subscription-stops-renewing)). Read the subscription for
+its status.
 
 `events` is a list of the events this install sends — `customer.updated`,
 `revenue.recorded`, `subscription.changed`, `conversion.recorded`,
@@ -279,11 +378,86 @@ subscribed the hook to every event).
 `GET /ltv/webhooks/{id}/deliveries` is the delivery log, newest first:
 `limit` 1–100 (default 25), `status` `pending`, `delivered` or `failed`,
 each with its attempts, next retry, last HTTP status and the last response
-or error. An unknown webhook is a `404`, never an empty log.
+or error (`curl: …` when the request failed, `blocked: …` when the address
+was refused at sending, `expired: …` and `held: …` below). An unknown
+webhook is a `404`, never an empty log.
+
+### How deliveries are sent
+
+A write only queues its event; the cron job sends it. The minutely
+`202-cronjobs/index.php` — the one job the installer's cron line,
+`install.sh`, both Docker cron services and AutoCron run — sends what is
+due after its other work, oldest first, for up to 15 seconds a run (one
+request begun before the end may take its 15-second timeout past it).
+Nothing else needs scheduling. `202-cronjobs/ltv_webhooks.php` is the same
+run on its own (`--budget=N` seconds, 50 by default), for a deployment that
+runs workers separately (`docker-compose.coolify.yaml`'s worker service
+does); the two take one database lock, and each delivery is claimed before
+it is sent, so a delivery is never sent by two runs.
+
+- A failure is retried 2, 4, 8, 16 and 32 minutes after each attempt; the
+  6th failed attempt fails the delivery and marks the webhook dead. Every
+  attempt is in the log.
+- A receiver that takes 2 seconds or more to fail is tried once a run; the
+  webhook's other deliveries wait, untried, for the next run, so a receiver
+  that times out does not hold up every other webhook on the install.
+- A delivery still unsent 7 days after it was queued is not sent: it is
+  `failed` with 0 attempts and `expired: still unsent 7 days after it was
+  queued, so it was not sent` as its last response. Before 1.9.79 no
+  default install ran the sender, so every delivery stayed queued: after the
+  upgrade a webhook is sent the events of the last 7 days that were waiting,
+  oldest first, and the older ones expire unsent.
+- A delivery is sent at least once: one whose outcome could not be recorded
+  (the database went away mid-run) is sent again 5 minutes later.
+  `X-P202-Delivery` is the same each time; de-duplicate by it.
+
+### A dead webhook
+
+The 6th failed attempt of one delivery, about an hour of retries, marks its
+webhook `dead`. Nothing is sent to a dead webhook. Its events are still
+queued and then held: each is `failed` with the attempts it had and `held:
+its webhook is dead, so it was not sent; …` as its last response, never
+tried.
+
+`PUT /ltv/webhooks/{id}` with `{"status": "active"}` revives it (LTV
+Settings has a Revive button on a dead webhook's row; `p202 ltv webhooks
+revive <id>`; `bin/p202 ltv:webhook:revive <id>`):
+
+- It keeps its id, URL and secret, so a receiver checks the signature as
+  before, and the Landing Page Optimizer's pairing webhook goes on with no
+  pairing again.
+- By default every delivery of it that was not delivered and was queued in
+  the last 7 days is sent: the one that failed 6 times and the ones held
+  while it was dead are sent again, and the ones still pending (queued
+  since the last cron run, or waiting out a retry's backoff when it died)
+  are sent too. They go oldest first on the next cron run, each with its
+  own `X-P202-Delivery`, so a receiver that took one without answering 2xx
+  sees the same delivery again; a pending one that was waiting out a
+  backoff keeps its time, at most 32 minutes. The attempts of the pending
+  ones start again from 0, so the next failure does not mark it dead at
+  once. A delivered one is never sent again, and older ones stay `failed`,
+  the 7 days of [How deliveries are sent](#how-deliveries-are-sent).
+- `"requeue": false` revives it for new events only: the deliveries still
+  pending are held too, `failed` with the attempts they had and `held: its
+  webhook was revived for new events only, …` as their last response, and
+  only events queued after the revival are sent.
+- A revival waits for a cron run that is sending (up to 20 seconds), so it
+  never changes a delivery a run is in the middle of; one that has not
+  ended by then is a `409`, and nothing changed.
+- The answer is the webhook (never its secret) with `revived`, `requeued`
+  (how many are sent again), `attempts_reset` and `held` (how many pending
+  ones `"requeue": false` set aside). An active webhook is left as it is
+  (`revived: false`). Any other `status` is a `422`: the server alone marks
+  a webhook dead, and `DELETE` removes one.
+
+Fix the receiver before reviving: a webhook whose next delivery fails 6
+times dies again.
 
 ```bash
 p202 ltv webhooks create --url https://hooks.example.com/p202 --events revenue.recorded,subscription.changed
 p202 ltv webhooks deliveries 3 --status failed
+p202 ltv webhooks revive 3
+p202 ltv webhooks revive 3 --requeue=false
 p202 ltv webhooks delete 3 --dry-run
 ```
 
@@ -302,6 +476,7 @@ own settings, a JSON object stored as sent (a list is a `422`).
 | `422` `started_at`: "a unix time in seconds" | A date where a time is read | Send unix seconds |
 | `422` `period`, `sort`, `limit`, `cf.<key>` | A read parameter off its list or range | Use a listed value |
 | `422` `events.0` on a webhook | An event this install never sends | One of the five names, or `*` |
+| `422` `status` on `PUT /ltv/webhooks/{id}` | Anything but `"active"` | Send `{"status": "active"}` to revive it; `DELETE` removes one |
 | `422` `is_required` | A flag that is not one | `true` or `false` |
 | `422` `staged` | An LTV write sent with `?staged=1` | Send it without |
 | `422` `amount`: "Must not be negative for purchase" | A negative `purchase` or `one_time` | Send it as `refund`/`chargeback` (positive amount) or `adjustment` |
@@ -311,4 +486,4 @@ own settings, a JSON object stored as sent (a list is a `422`).
 | `422` `idempotency_key` | A reserved prefix (`void:`, `sub:`, …) | Your own id for the event |
 | `422` `idempotency_key` (or `transaction_id` on a subscription event): "Already used for … with a different amount" | The key recorded a different request; the message lists what differs. Nothing was written | A retry sends exactly the first request; a different event gets its own key |
 | `404` | A customer, subscription, product, field, webhook or company of another account, or none | List them first (`p202 ltv customers`, `subscriptions`, `products`, …) |
-| `409` | A product an order line item names; a company name or domain in use; a company with customers attached (it was a `422`); a merge another request changed first | Leave the product; merge the companies, or pick another name; retry the merge |
+| `409` | A product an order line item names; a company name or domain in use; a company with customers attached (it was a `422`); a merge another request changed first; a revival while a cron run was still sending webhook deliveries | Leave the product; merge the companies, or pick another name; retry the merge or the revival |

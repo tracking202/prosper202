@@ -250,3 +250,31 @@ func mcpResultText(res *mcp.CallToolResult) string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+// `p202 mcp` hands the assistant the call's error envelope: the install's
+// remedy in the message, and the CLI's next step in the hint.
+func TestAnMCPToolErrorCarriesTheScopeRemedy(t *testing.T) {
+	scopeRefusingInstall(t, plainKeyRefusal)
+	session := connectMCPServer(t, "mcp")
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "ppc_network_update", Arguments: map[string]any{"id": "1", "ppc_network_name": "Main"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Error struct {
+			Category string `json:"category"`
+			Message  string `json:"message"`
+			Hint     string `json:"hint"`
+			ExitCode int    `json:"exit_code"`
+		} `json:"error"`
+	}
+	if !res.IsError || json.Unmarshal([]byte(mcpResultText(res)), &envelope) != nil {
+		t.Fatalf("the refused call answered %v %q", res.IsError, mcpResultText(res))
+	}
+	e := envelope.Error
+	if e.Category != "auth" || e.ExitCode != ExitAuth ||
+		!strings.Contains(e.Message, "make a key whose scope includes 'ppc-networks:write'") ||
+		!strings.Contains(e.Hint, "--scope campaigns:read,ppc-networks:write") {
+		t.Fatalf("envelope %+v", e)
+	}
+}

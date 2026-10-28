@@ -20,7 +20,13 @@ namespace Api\V3\Exception;
 final class SyncRecordException extends \RuntimeException
 {
     /**
+     * $written is what the target had confirmed writing when the run
+     * stopped, by entity (created, updated, pruned), and the message says
+     * it, none included; what became of the write it stopped at is the
+     * cause's to say (an answer, or none).
+     *
      * @param array<string, mixed>|null $conflict the conflict record, when the cause is one
+     * @param array<string, array<string, int>> $written
      */
     public function __construct(
         public readonly string $entity,
@@ -28,8 +34,28 @@ final class SyncRecordException extends \RuntimeException
         public readonly string $operation,
         string $what,
         public readonly ?array $conflict,
-        \Throwable $previous
+        \Throwable $previous,
+        public readonly array $written = [],
     ) {
-        parent::__construct(sprintf('%s[%s] %s: %s', $entity, $key, $operation, $what), 0, $previous);
+        $sentence = rtrim(sprintf('%s[%s] %s: %s', $entity, $key, $operation, $what), '. ');
+        parent::__construct($sentence . '.' . self::writtenSentence($written), 0, $previous);
+    }
+
+    /** @param array<string, array<string, int>> $written */
+    private static function writtenSentence(array $written): string
+    {
+        if ($written === []) {
+            return ' The target confirmed no write before it stopped.';
+        }
+        $parts = [];
+        foreach ($written as $entity => $counts) {
+            $done = [];
+            foreach ($counts as $what => $count) {
+                $done[] = $count . ' ' . $what;
+            }
+            $parts[] = $entity . ' ' . implode(', ', $done);
+        }
+
+        return ' Writes the target confirmed before it stopped: ' . implode('; ', $parts) . '.';
     }
 }

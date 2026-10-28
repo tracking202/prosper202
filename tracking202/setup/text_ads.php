@@ -140,7 +140,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 													  `user_id`='".$mysql['user_id']."',
 													  `text_ad_time`='".$mysql['text_ad_time']."'";
 													  
-		if ($editing == true) { $text_ad_sql  .= "WHERE `text_ad_id`='".$mysql['text_ad_id']."'"; } 
+		if ($editing == true) { $text_ad_sql  .= "WHERE `text_ad_id`='".$mysql['text_ad_id']."'"
+            . " AND `user_id`='" . $mysql['user_id'] . "'"; }
 		$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
 		$add_success = true;
 

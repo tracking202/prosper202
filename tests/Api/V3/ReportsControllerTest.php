@@ -334,11 +334,67 @@ final class ReportsControllerTest extends TestCase
         $prepared = [];
         $binds = [];
         $db = $this->bindRecordingDb([], $prepared, $binds);
-        (new ReportsController($db, 1))->breakdown(['sort_dir' => 'asc', 'limit' => '', 'offset' => '']);
-        self::assertSame([1, 50, 0], end($binds)['values'], 'the user, then limit 50 and offset 0');
+        $result = (new ReportsController($db, 1))->breakdown(['sort_dir' => 'asc', 'limit' => '', 'offset' => '']);
+        self::assertSame([1, 51, 0], end($binds)['values'], 'the user, then limit 50 (one more read) and offset 0');
+        self::assertSame([50, 0], [$result['limit'], $result['offset']]);
         self::assertStringContainsString('ORDER BY total_clicks ASC,', (string) end($prepared));
-        (new ReportsController($db, 1))->breakdown(['limit' => '500', 'offset' => '1000']);
-        self::assertSame([1, 500, 1000], end($binds)['values']);
+        $result = (new ReportsController($db, 1))->breakdown(['limit' => '500', 'offset' => '1000']);
+        self::assertSame([1, 501, 1000], end($binds)['values']);
+        self::assertSame([500, 1000], [$result['limit'], $result['offset']]);
+    }
+
+    // ─── breakdown truncation ───────────────────────────────────────
+
+    /**
+     * A page said nothing about the rows after it, so a reader that summed
+     * the default 50 rows read them as the account's. One row past the
+     * page is read and dropped: it is what `truncated` says.
+     */
+    public function testBreakdownFlagsTruncationWhenRowsRemainPastThePage(): void
+    {
+        $result = (new ReportsController($this->pagingDb($this->nameRows(51)), 1))->breakdown([]);
+
+        self::assertCount(50, $result['data']);
+        self::assertTrue($result['truncated']);
+        self::assertSame(50, $result['limit']);
+        self::assertSame(0, $result['offset']);
+        self::assertSame('n0049', $result['data'][49]['name'], 'the extra row is read, never served');
+        self::assertSame(
+            ['data', 'breakdown', 'available_breakdowns', 'truncated', 'limit', 'offset'],
+            array_keys($result)
+        );
+    }
+
+    public function testBreakdownAtExactlyTheLimitIsNotTruncated(): void
+    {
+        foreach ([[50, []], [7, ['limit' => '7']], [500, ['limit' => '500']]] as [$count, $params]) {
+            $result = (new ReportsController($this->pagingDb($this->nameRows($count)), 1))->breakdown($params);
+
+            self::assertCount($count, $result['data'], json_encode($params));
+            self::assertFalse($result['truncated'], json_encode($params));
+            self::assertSame($count, $result['limit']);
+        }
+    }
+
+    public function testBreakdownPagesSayWhetherRowsRemainAfterThem(): void
+    {
+        $db = $this->pagingDb($this->nameRows(120));
+        $pages = [
+            ['0', 50, true, 'n0000'],
+            ['50', 50, true, 'n0050'],
+            ['100', 20, false, 'n0100'],
+            ['70', 50, false, 'n0070'],
+            ['120', 0, false, null],
+            ['5000', 0, false, null],
+        ];
+        foreach ($pages as [$offset, $rows, $truncated, $first]) {
+            $result = (new ReportsController($db, 1))->breakdown(['offset' => $offset]);
+
+            self::assertCount($rows, $result['data'], "offset $offset");
+            self::assertSame($truncated, $result['truncated'], "offset $offset");
+            self::assertSame((int) $offset, $result['offset']);
+            self::assertSame($first, $result['data'][0]['name'] ?? null, "offset $offset");
+        }
     }
 
     // ─── the dimensions the Analyze pages had ───────────────────────
@@ -494,7 +550,7 @@ final class ReportsControllerTest extends TestCase
         $binds = [];
         $db = $this->bindRecordingDb([
             'FROM 202_rotators WHERE id = ?' => ['id' => 9, 'name' => 'Geo split'],
-            'FROM 202_rotator_rules WHERE rotator_id = ?' => [
+            'FROM 202_rotator_rules AS ru WHERE ru.rotator_id = ?' => [
                 ['id' => 4, 'rule_name' => 'US', 'status' => 1],
                 ['id' => 5, 'rule_name' => 'Mobile', 'status' => 0],
             ],
@@ -525,7 +581,7 @@ final class ReportsControllerTest extends TestCase
         self::assertSame(
             [4, 5, 2],
             array_column($data['rules'], 'rule_id'),
-            'every rule in id order, then one deleted since'
+            'every rule in the order the redirects try them, then one deleted since'
         );
         self::assertSame(['US', 'Mobile', null], array_column($data['rules'], 'rule_name'));
         self::assertSame([false, false, true], array_column($data['rules'], 'deleted'));
@@ -716,6 +772,54 @@ final class ReportsControllerTest extends TestCase
         self::assertCount(1, $matches, "expected one statement containing '$needle'");
 
         return $matches[0];
+    }
+
+    /**
+     * A mysqli mock that, like the server, answers a statement ending in
+     * `LIMIT ? OFFSET ?` with the rows its last two binds select.
+     *
+     * @param list<array<string, mixed>> $rows
+     */
+    private function pagingDb(array $rows): \mysqli
+    {
+        /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
+        $db = $this->getMockBuilder(\mysqli::class)->disableOriginalConstructor()->getMock();
+        $db->method('prepare')->willReturnCallback(function (string $sql) use ($rows): \mysqli_stmt {
+            self::assertMatchesRegularExpression('/LIMIT \? OFFSET \?$/', $sql);
+            $bound = [];
+            /** @var \mysqli_stmt&\PHPUnit\Framework\MockObject\MockObject $stmt */
+            $stmt = $this->getMockBuilder(\mysqli_stmt::class)->disableOriginalConstructor()->getMock();
+            $record = function (string $types, mixed ...$values) use (&$bound): bool {
+                $bound = $values;
+
+                return true;
+            };
+            $stmt->method('bind_param')->willReturnCallback($record);
+            $stmt->method('execute')->willReturn(true);
+            $stmt->method('close')->willReturn(true);
+            $stmt->method('get_result')->willReturnCallback(function () use (&$bound, $rows, $sql): \mysqli_result {
+                [$limit, $offset] = array_slice($bound, -2);
+
+                return $this->buildResultMock($sql, ['SELECT' => array_slice($rows, $offset, $limit)]);
+            });
+
+            return $stmt;
+        });
+
+        return $db;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function nameRows(int $count): array
+    {
+        $rows = [];
+        for ($i = 0; $i < $count; $i++) {
+            $rows[] = ['id' => $i + 1, 'name' => sprintf('n%04d', $i), 'total_clicks' => $count - $i];
+        }
+
+        return $rows;
     }
 
     /**

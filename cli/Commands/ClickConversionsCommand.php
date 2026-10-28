@@ -71,6 +71,7 @@ class ClickConversionsCommand extends BaseCommand
                 'amount' => $r['amount'] ?? '',
                 'counts' => $counts,
                 'source' => $r['source'] ?? '',
+                'matched_by' => $r['match_method'] ?? '',
                 'linked_to' => is_array($r['linked_to'] ?? null) ? (string) ($r['linked_to']['label'] ?? '') : '',
                 'transaction_id' => $r['transaction_id'] ?? '',
                 'event_name' => $r['event_name'] ?? '',

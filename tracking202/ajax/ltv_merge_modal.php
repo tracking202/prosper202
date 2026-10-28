@@ -119,9 +119,12 @@ function ltvMergeSearch() {
             var results = (data && data.results) || [];
             ltvMergeRenderResults(results, results.length ? null : 'No matching ' + ltvMergeCfg.noun + 's.');
         })
-        .fail(function() {
+        .fail(function(xhr) {
             if (seq !== ltvMergeState.seq) { return; }
-            ltvMergeRenderResults([], 'Search failed — try again.');
+            // A refused search (422) says what to pick.
+            var answer = xhr && xhr.responseJSON;
+            var refused = answer && typeof answer.error === 'string' ? answer.error : '';
+            ltvMergeRenderResults([], refused || 'Search failed — try again.');
         });
 }
 

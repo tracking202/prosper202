@@ -141,7 +141,9 @@ final class SystemControllerBehaviorTest extends TestCase
         putenv('P202_ALERT_QUEUE_LAG_SECONDS=1');
 
         try {
-            $store = new ServerStateStore($stateDir);
+            // The install's id names its directory in the state dir.
+            $db = $this->createMysqliMock(['202_deployment_secrets' => ['secret_value' => str_repeat('1', 64)]]);
+            $store = ServerStateStore::forInstall($db);
             $store->incrementMetric('jobs_failed', 2);
             $span = $store->startSpan('sync.execute', ['entity' => 'campaigns']);
             $store->endSpan($span, 'ok', ['done' => true]);
@@ -156,7 +158,6 @@ final class SystemControllerBehaviorTest extends TestCase
             $job['next_run_at'] = time() - 10;
             $store->saveJob($job);
 
-            $db = $this->createMysqliMock();
             $controller = new SystemController($db);
             $result = $controller->metrics();
 

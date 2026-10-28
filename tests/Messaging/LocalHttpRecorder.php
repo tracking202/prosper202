@@ -10,6 +10,11 @@ namespace Tests\Messaging;
  * pass for a path ending in /chat/pass, {"ok":true} for anything else. It
  * stands in for the portal, and for a proxy (a proxied request arrives with
  * an absolute target, http://host:port/path).
+ *
+ * Between hold() and release() a request is recorded and then not answered,
+ * for eight seconds at most: under MessagingClient's ten-second timeout, so
+ * a held request is answered, never retried. It serves four at a time, so a
+ * held request does not keep the next one from being recorded.
  */
 final class LocalHttpRecorder
 {
@@ -43,6 +48,11 @@ final class LocalHttpRecorder
                 'body' => (string) file_get_contents('php://input'),
             ]);
             file_put_contents(__DIR__ . '/requests.log', $entry . "\n", FILE_APPEND | LOCK_EX);
+            $answerBy = microtime(true) + 8;
+            while (is_file(__DIR__ . '/hold') && microtime(true) < $answerBy) {
+                usleep(20000);
+                clearstatcache();
+            }
             header('Content-Type: application/json');
             if (str_ends_with((string) parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/chat/pass')) {
                 echo json_encode(['ok' => true, 'pass' => '%PASS%', 'expires_at_s' => time() + 86400, 'chat_url' => 'https://chat.example.test']);
@@ -64,7 +74,9 @@ final class LocalHttpRecorder
         $process = proc_open(
             [PHP_BINARY, '-S', '127.0.0.1:' . $recorder->port, $router],
             [0 => ['pipe', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
-            $pipes
+            $pipes,
+            null,
+            ['PHP_CLI_SERVER_WORKERS' => '4'] + getenv()
         );
         if (!is_resource($process)) {
             throw new \RuntimeException('php -S did not start');
@@ -99,6 +111,20 @@ final class LocalHttpRecorder
         }
 
         return $requests;
+    }
+
+    public function hold(): void
+    {
+        if (!touch($this->dir . '/hold')) {
+            throw new \RuntimeException('could not hold the recorder\'s answers');
+        }
+    }
+
+    public function release(): void
+    {
+        if (is_file($this->dir . '/hold') && !unlink($this->dir . '/hold')) {
+            throw new \RuntimeException('could not release the recorder\'s answers');
+        }
     }
 
     public function stop(): void

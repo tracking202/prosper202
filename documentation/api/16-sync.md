@@ -95,6 +95,45 @@ curl -X POST https://your-domain.com/api/v3/sync/jobs \
 `collision_mode` (`warn` or `manual`) is read by `POST /sync/plan` only; a
 job body carrying it is a `422`, as is any key the table does not list.
 
+### What a profile `url` may name
+
+This server calls both profiles' URLs with their API keys and reads what
+they answer, so it calls only what the export webhooks and postbacks may
+call (the same guard, `WebhookGuard`):
+
+- `https://host[:port][/path]`: a directory (`https://example.com/tracker`)
+  and any port are fine; a query, a fragment, a user name or password, and
+  a host spelled other than as a name, a dotted IPv4 address or a bracketed
+  IPv6 address are refused.
+- Public addresses only. A private, loopback, carrier-grade NAT or other
+  non-public address, a single-label or `.local`/`.internal` name, and
+  `localhost` are refused. Two installs on one machine or one private
+  network sync once the operator of the install that runs the sync admits
+  the other's address in its `202-config.php`:
+  `define('P202_WEBHOOK_ALLOW_NETWORKS', '127.0.0.1/32');` (comma- or
+  space-separated networks; the same setting the export webhooks and
+  postbacks obey). Write such an install by its address
+  (`http://127.0.0.1:8001`), not `localhost`.
+- `http://` only to an address that setting names: the key crosses the
+  operator's own network in plain text, never the internet.
+- Link-local addresses (169.254.0.0/16, fe80::/10) and the cloud metadata
+  endpoints are never called, whatever the setting says.
+- Redirects are not followed: the key is sent only to the URL named. A
+  remote that answers with one fails the sync, naming where it pointed.
+
+`POST /sync/jobs`, `/sync/re-sync` and `/sync/plan` refuse what they can
+tell without a DNS lookup with a `422` on `source.url` or `target.url`
+(the field error says why, and names the setting when it would admit the
+address). Every request a sync makes is checked again when it is sent: the
+name is resolved, every address checked, and the connection pinned to the
+address checked, with no proxy. A job whose URL is refused then fails at
+once (`error_code: sync_url_refused`) and is not retried.
+
+On a Docker stack, `P202_URL_MAP` (`localhost:8000=web:80,…`) sends a URL
+to a service name; that name's one label is the operator's and is accepted,
+and its address is held to the rules above, so the Docker network
+(`172.16.0.0/12` by default) goes in `P202_WEBHOOK_ALLOW_NETWORKS`.
+
 `source` and `target` (or their other names `from` and `to`; send one name
 for each side) are objects of `url`, `api_key` and `name`, each a string: any
 other key is a `422` naming it (`source.nmae`), as it is on `POST /sync/plan`
@@ -138,6 +177,48 @@ when anything else was synced). Without it the run stops at the first one:
 the job's `error` names the record, and an outage (a `5xx`, a network
 failure) is retried up to `max_attempts` with backoff, while a conflict
 fails the job at once, with the record in the job's `conflict`.
+
+### Caps, and a sync that stops
+
+What a remote can make this server read is bounded. A sync reads at most
+8 MiB (8,388,608 bytes) of one answer, 200 pages of 500 records (100,000)
+of one list, and takes at most 900 seconds in all, both remotes and every
+request together (one request at most 60). A remote that answers more, or
+more slowly, fails the sync with the cap and the remote's origin named; it
+never reads as a shorter list, which a prune would act on. Neither does an
+answer that is not a page of records (no `data` list, a record that is not
+an object, more records than asked for, a `total` that is not a number).
+
+A URL refused, a cap reached, or a host that does not resolve stops the
+whole sync, with `skip_errors` too: the next record would meet it again.
+The job then says why in `error` and which kind in `error_code`:
+
+| `error_code` | Meaning | Retried by the job |
+| ------------ | ------- | ------------------ |
+| `sync_url_refused` | A profile URL this server does not call, a redirect, or a connection that did not stay on the checked address | No |
+| `sync_url_unresolved` | A profile's host did not resolve from this server | Yes |
+| `sync_limit` | A cap above was reached | No |
+| `sync_key_unreadable` | The job's stored key could not be opened; queue the sync again | No |
+| `sync_remote_failed` | A remote did not answer, or answered something no Prosper202 API does | Yes |
+
+`error_code` is `null` for any other failure. When a sync stops after it
+began writing, `written` lists what the target had confirmed by then, by
+entity (`{"campaigns": {"created": 3, "updated": 1}}`), and `error` ends
+with the same in words ("Writes the target confirmed before it stopped:
+…"); a stop while still reading ends "Nothing was written." Records synced
+are found by their natural key the next time, so running the same sync
+again finishes it.
+
+### The profiles' API keys
+
+A queued job keeps both profiles' API keys encrypted (AES-256-GCM, under a
+key this install keeps in its database, bound to the profile's side and
+URL), and a job that has ended keeps none. Jobs are files in the API's
+state directory; a job queued by a version before 1.9.79 held its keys as
+sent: it still runs, its keys are encrypted when it does, and the next
+worker run removes the keys of every job that has ended. A job's stored
+key that does not open (its database key is gone, or the file was altered)
+fails it with `sync_key_unreadable`: queue the sync again.
 
 ## Example: Sync Campaigns Between Instances
 

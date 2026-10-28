@@ -21,6 +21,12 @@ declare(strict_types=1);
  * printed before it died.
  */
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 [, $reader, $lock] = $argv + [null, '', 'none'];
 
 $root = dirname(__DIR__, 3);

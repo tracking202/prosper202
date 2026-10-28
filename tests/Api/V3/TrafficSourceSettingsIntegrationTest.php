@@ -253,6 +253,83 @@ final class TrafficSourceSettingsIntegrationTest extends TestCase
         self::assertArrayHasKey('correction_url', $this->refusal(fn () => $this->pixels()->update($account, $postback['pixel_id'], ['pixel_code' => 'https://a.example/1'])), 'a code that loses a URL is checked against the correction URLs it keeps');
     }
 
+    /**
+     * The postback sender refuses to call an address that is not public;
+     * what of that shows without a lookup is refused when the pixel is
+     * saved, naming the field, and nothing is written.
+     */
+    public function testAPostbackTheSenderWouldNeverCallIsRefusedWhenSaved(): void
+    {
+        $account = $this->ids['account_mine'];
+        $create = fn (array $payload): array => $this->refusal(fn () => $this->pixels()->create($account, $payload));
+        $refused = [
+            'http://127.0.0.1:8080/pb?s=[[subid]]' => '127.0.0.1, which is a loopback address. Postbacks are only sent',
+            'http://169.254.169.254/latest/meta-data/' => 'link-local',
+            'http://10.0.0.5/pb' => 'private',
+            'https://[::ffff:127.0.0.1]/pb' => 'loopback address (carried inside an IPv6 address)',
+            'http://2130706433/pb' => 'dotted form',
+            'http://user:pass@net.example/pb' => 'user name or password',
+            'http://localhost/pb' => 'single-label',
+            'http://metadata.google.internal/computeMetadata/v1/' => 'local name',
+            'https://net.example/ok http://192.168.1.1/pb' => 'URL 2: 192.168.1.1, which is a private address',
+        ];
+        foreach ($refused as $code => $why) {
+            $errors = $create(['pixel_type_id' => 4, 'pixel_code' => $code]);
+            self::assertSame(['pixel_code'], array_keys($errors), $code);
+            self::assertStringContainsString($why, $errors['pixel_code'], $code);
+        }
+        $errors = $create([
+            'pixel_type_id' => 4,
+            'pixel_code' => 'https://net.example/pb',
+            'correction_url' => 'http://169.254.169.254/fix?v=[[p202_goal_value]]',
+        ]);
+        self::assertSame(['correction_url'], array_keys($errors));
+        self::assertStringContainsString('link-local', $errors['correction_url']);
+        self::assertSame(['data' => []], $this->pixels()->list($account), 'nothing refused was written');
+
+        // An image pixel is loaded by a browser, not by this server; made a
+        // postback, its code is checked.
+        $image = $this->pixels()->create($account, ['pixel_type_id' => 1, 'pixel_code' => 'http://10.0.0.5/px.gif']);
+        $becomes = fn () => $this->pixels()->update($account, $image['data']['pixel_id'], ['pixel_type_id' => 4]);
+        self::assertStringContainsString('private', $this->refusal($becomes)['pixel_code']);
+
+        // What networks send: http, a port, a query, and a host the tokens fill.
+        $code = 'http://net.example:8080/pb?s=[[subid]] https://[[c1]].net.example?s=[[subid]]';
+        $postback = $this->pixels()->create($account, ['pixel_type_id' => 4, 'pixel_code' => $code])['data'];
+        self::assertSame($code, $postback['pixel_code']);
+    }
+
+    /**
+     * A pixel saved before the check, by an older version or straight into
+     * the table, is not refused for being sent back as it is (the GET body
+     * PUT back, or another field changed); a URL it does not hold is
+     * checked. The sender refuses the held one when it fires.
+     */
+    public function testAPostbackStoredBeforeTheCheckIsTakenAsItIs(): void
+    {
+        $account = $this->ids['account_mine'];
+        $held = 'http://127.0.0.1:9/pb?s=[[subid]]';
+        $id = self::exec("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 4,
+            pixel_code = '$held'");
+        self::exec('INSERT INTO 202_notification_correction_urls SET pixel_id = ' . $id . ', user_id = ' . self::USER
+            . ", correction_url = 'http://127.0.0.1:9/fix', created_at = 0, updated_at = 0");
+        $stored = $this->pixels()->list($account)['data'][0];
+        self::assertSame('http://127.0.0.1:9/fix', $stored['correction_url']);
+
+        $body = array_intersect_key($stored, array_flip(['pixel_type_id', 'pixel_code', 'correction_url']));
+        $back = $this->pixels()->update($account, $id, $body)['data'];
+        self::assertSame($stored, $back, 'the GET body goes back whole');
+        $this->pixels()->update($account, $id, ['pixel_code' => $held . ' https://net.example/two']);
+
+        $update = fn (array $payload) => fn () => $this->pixels()->update($account, $id, $payload);
+        $errors = $this->refusal($update(['pixel_code' => $held . ' http://127.0.0.1:10/pb']));
+        self::assertStringContainsString('URL 2: 127.0.0.1, which is a loopback address', $errors['pixel_code']);
+        $errors = $this->refusal($update(['correction_url' => 'http://10.1.1.1/fix']));
+        self::assertStringContainsString('private', $errors['correction_url']);
+        $kept = $this->pixels()->list($account)['data'][0]['pixel_code'];
+        self::assertSame($held . ' https://net.example/two', $kept);
+    }
+
     public function testOnlyTheCallersLiveAccountAndItsOwnPixelsAreReached(): void
     {
         $mine = $this->ids['account_mine'];

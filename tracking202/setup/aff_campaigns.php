@@ -221,7 +221,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 													  `aff_campaign_time`='" . $mysql['aff_campaign_time'] . "'";
 
 		if ($editing == true) {
-			$aff_campaign_sql .= "WHERE `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "'";
+			$aff_campaign_sql .= "WHERE `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "'"
+                . " AND `user_id`='" . $mysql['user_id'] . "'";
 		}
 		$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
 		$add_success = true;
@@ -292,7 +293,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 
 			$aff_campaign_sql = "	UPDATE       `202_aff_campaigns`
 								 	SET          	 `aff_campaign_id_public`='" . $mysql['aff_campaign_id_public'] . "'
-								 	WHERE        `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "'";
+								 	WHERE        `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "'"
+                . " AND `user_id`='" . $mysql['user_id'] . "'";
 			$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
 
 			if (isset($_POST['dni_id']) && isset($_POST['dni_offer_id'])) {

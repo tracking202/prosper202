@@ -85,6 +85,46 @@ final readonly class Auth
     }
 
     /**
+     * The user a page's session signed in (AUTH::require_user() checked it),
+     * with the roles an API key of theirs would carry and no scope, so a page
+     * asks a route's own checks rather than a copy of them: Account ›
+     * Settings runs TrafficSourceOwnersController behind requireAdmin() and
+     * access_to_settings, as the routes do. Refused as fromRequest() refuses
+     * a key, when the user is deleted or switched off: a session outlives
+     * both. $userId is the session's, never a request value.
+     */
+    public static function forSignedInUser(int $userId, \mysqli $db): self
+    {
+        $stmt = $db->prepare('SELECT user_active FROM 202_users WHERE user_id = ? AND user_deleted = 0 LIMIT 1');
+        if (!$stmt) {
+            throw new AuthException('Authentication unavailable', 500);
+        }
+        self::bind($stmt, 'i', $userId);
+        if (!self::execute($stmt)) {
+            $stmt->close();
+            throw new AuthException('Authentication unavailable', 500);
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new AuthException('Authentication unavailable', 500);
+        }
+        $row = $result->fetch_assoc();
+        $stmt->close();
+        if (!is_array($row)) {
+            throw new AuthException('The signed-in account no longer exists.', 401);
+        }
+        if ((string) ($row['user_active'] ?? '') !== '1') {
+            throw new AuthException(
+                'The signed-in account is switched off; an Admin can turn it back on in My Account › User Management.',
+                401
+            );
+        }
+
+        return self::loadRoles($userId, $db);
+    }
+
+    /**
      * The API key a request bears in `Authorization: Bearer <key>`, or ''.
      * fromRequest() authenticates this value, and POST /connect/revoke
      * removes exactly the key that was authenticated, so both read it here.
@@ -248,11 +288,23 @@ final readonly class Auth
      */
     public function hasScope(string $scope): bool
     {
+        return self::scopesSatisfy($this->scopes, $scope);
+    }
+
+    /**
+     * Whether a key holding $scopes passes a check for $scope: hasScope()'s
+     * rule, for a scope list that is not a key's (what an AI connection's
+     * access would mint, AiConnect::accessCovering()).
+     *
+     * @param string[] $scopes lower-cased tokens, as parseScopes() gives them
+     */
+    public static function scopesSatisfy(array $scopes, string $scope): bool
+    {
         $scope = strtolower(trim($scope));
         if ($scope === '') {
             return true;
         }
-        if (in_array('*', $this->scopes, true) || in_array($scope, $this->scopes, true)) {
+        if (in_array('*', $scopes, true) || in_array($scope, $scopes, true)) {
             return true;
         }
 
@@ -262,17 +314,17 @@ final readonly class Auth
         }
         [$area, $action] = $parts;
         if ($action === 'read') {
-            return in_array('read', $this->scopes, true)
-                || in_array('write', $this->scopes, true)
-                || in_array($area . ':write', $this->scopes, true);
+            return in_array('read', $scopes, true)
+                || in_array('write', $scopes, true)
+                || in_array($area . ':write', $scopes, true);
         }
         if ($action === 'write') {
-            return in_array('write', $this->scopes, true);
+            return in_array('write', $scopes, true);
         }
         if ($action === 'stage') {
-            return in_array('stage', $this->scopes, true)
-                || in_array('write', $this->scopes, true)
-                || in_array($area . ':write', $this->scopes, true);
+            return in_array('stage', $scopes, true)
+                || in_array('write', $scopes, true)
+                || in_array($area . ':write', $scopes, true);
         }
         return false;
     }
@@ -280,13 +332,15 @@ final readonly class Auth
     public function requireScope(string $scope): void
     {
         if (!$this->hasScope($scope)) {
-            throw new AuthException(
+            $scope = strtolower(trim($scope));
+            throw new InsufficientScopeException(
+                $scope,
+                $this->scopes,
                 sprintf(
                     "Insufficient API key scope for this operation: requires '%s' (key has: %s).",
-                    strtolower(trim($scope)),
+                    $scope,
                     implode(',', $this->scopes)
-                ),
-                403
+                )
             );
         }
     }

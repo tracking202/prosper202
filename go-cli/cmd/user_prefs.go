@@ -45,6 +45,7 @@ var prefFlags = []prefFlag{
 	{name: "user_pref_referer_data", desc: "Referer to record: the browser's, or the t202ref link parameter", values: []string{"browser", "t202ref"}},
 	{name: "user_pref_dynamic_bid", desc: "Click cost: 0 from the tracker's setup, 1 from the t202b link parameter (0 to 99.99; any other bid costs the tracker's)", values: binaryValues},
 	{name: "user_pref_privacy", desc: "Privacy mode: disabled, eu (European traffic only) or all traffic", values: []string{"disabled", "eu", "all"}},
+	{name: "user_pref_same_ip_fallback", desc: "When a pixel names no click: 1 credits your latest click from the visitor's IP address in the last 30 days (a guess, matched by same_ip), 0 credits none", values: binaryValues},
 	{name: "user_pref_cloak_referer", desc: "What a cloaked link shows as referer: origin (this domain) or never (blank)", values: []string{"origin", "never"}},
 	{name: "user_pref_ad_settings", desc: "Where Prosper202 shows its ads", values: []string{"show_all", "hide_login", "hide_all"}},
 	{name: "user_account_currency", desc: "Account currency; re-prices every campaign's payout into it", values: accountCurrencies},
@@ -58,7 +59,8 @@ var prefFlags = []prefFlag{
 	{name: "ipqs_api_key", desc: "IPQualityScore API key (\"\" removes it)", clear: true},
 	{name: "cb_key", desc: "ClickBank secret key; changing it resets its verification (\"\" removes it)", clear: true},
 	{name: "zaxaa_api_signature", desc: "Zaxaa API signature (\"\" removes it)", clear: true},
-	{name: "jvzoo_ipn_secret_key", desc: "JVZoo IPN secret key (\"\" removes it)", clear: true},
+	{name: "jvzoo_ipn_secret_key", desc: "JVZoo JVZIPN secret key, as JVZoo shows it under Seller Settings; it verifies both JVZoo URLs (\"\" removes it)", clear: true},
+	{name: "paykickstart_ipn_secret_keys", desc: "PayKickstart IPN secret keys, one for each PayKickstart campaign, separated by commas; replaces every stored key (\"\" removes them all)", clear: true},
 	// LTV › Settings
 	{name: "user_ltv_customer_cparam", desc: "Tracking variable that carries a customer id: 0 off, 1-4 for c1-c4", values: []string{"0", "1", "2", "3", "4"}},
 	{name: "user_ltv_personalization_fields", desc: "Fields a landing page may personalize with: comma list of first_name, last_name, company, city, country, cf:<field_key>, rec:next_offer (\"\" none)", clear: true},

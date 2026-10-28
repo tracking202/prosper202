@@ -487,6 +487,18 @@ stats are not narrowed by `--aff-network-id`: a campaign's clicks count wherever
 The window flags are refused without `--with-stats`. There is no last-click date: no API endpoint
 returns one per campaign without a request per campaign.
 
+`p202 campaign optimize <id>` prints a diagnosis on stderr: clicks, conversions, the reports' `conv_rate`
+(conversions ÷ click-throughs) beside the conversions per click, EPC, and the break-even CPC (the campaign's
+payout × conversions per click, since a click is what the traffic costs). On landing-page traffic the two rates
+differ, and `conv_rate` is the one every report shows. Stdout lists the other campaigns ranked by EPC, each
+row with its `aff_campaign_id`, the id `rotator create --default-campaign` takes. When the campaign loses money
+and the top row earns more per click, the Next step names that id (`p202 rotator create --name "Salvage"
+--default-campaign 11`); when none earns more, it says there is no salvage offer and gives `p202 report losers`
+with the same window and filters. A ranking or summary that cannot be read (a 5xx, a key whose scope refuses
+it, an unreachable server, an answer that is not one) fails the command with that error's category, exit code
+and hint, and prints nothing else; it is never shown as an empty ranking. The campaign is the argument:
+`--aff-campaign-id` is refused, and a configured `report.aff_campaign_id` default does not narrow the ranking.
+
 ### Affiliate network (`p202 aff-network`)
 
 | Flag | Required | Description |
@@ -550,8 +562,11 @@ p202 ppc-account pixel delete 4 9 --force
 `--type-id`: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server),
 5 Raw (markup as given), 6 Bot202 Facebook Pixel Assistant. For every type but
 Raw, `--code` is the pixel's URL (several separated by spaces); a Postback's
-must be http(s). `--correction-url` goes on a Postback only, one URL per code
-URL in the same order. A removed pixel goes with its correction URL.
+must be http(s), to a public address: one aimed at a private, loopback or
+metadata address or a local name, or with a user name or password, is refused
+on its field (`P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php` admits the
+operator's own network). `--correction-url` goes on a Postback only, one URL
+per code URL in the same order. A removed pixel goes with its correction URL.
 
 ### Tracker (`p202 tracker`)
 
@@ -599,10 +614,10 @@ not combinable with `--page`/`--limit`/`--offset`).
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--landing-page-url` | Yes | Landing page URL |
-| `--aff-campaign-id` | Yes | Campaign ID |
+| `--aff-campaign-id` | Yes | Campaign ID; `0` for an advanced landing page |
 | `--landing-page-nickname` | Yes | Landing page nickname |
 | `--leave-behind-page-url` | No | Leave-behind page URL (on update, `""` clears it) |
-| `--landing-page-type` | No | Landing page type: 0 simple (one campaign), 1 advanced (several offers) |
+| `--landing-page-type` | No | `0` simple (one campaign, the default) or `1` advanced (several offers, `--aff-campaign-id 0`) |
 
 The page's tracking code, as Setup › Get LP Code hands it out:
 
@@ -624,13 +639,27 @@ carries (`lpip=`) is accepted too.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--text-ad-name` | Yes | Text ad name |
-| `--text-ad-headline` | Yes | Headline |
-| `--text-ad-description` | Yes | Description text |
-| `--text-ad-display-url` | Yes | Display URL |
-| `--aff-campaign-id` | No | Campaign ID |
-| `--landing-page-id` | No | Landing page ID |
-| `--text-ad-type` | No | Text ad type |
+| `--text-ad-name` | Yes | Text ad name, up to 100 characters |
+| `--text-ad-headline` | Yes | Headline, up to 100 characters |
+| `--text-ad-description` | Yes | Description text, up to 100 characters |
+| `--text-ad-display-url` | Yes | Display URL, up to 100 characters |
+| `--aff-campaign-id` | For type 0 | The campaign the ad is for |
+| `--landing-page-id` | For type 1 | The advanced landing page the ad is for |
+| `--text-ad-type` | No | `0` a campaign's ad (the default) or `1` an advanced landing page's |
+
+As Setup › Text Ads does, `create` refuses a campaign's ad without
+`--aff-campaign-id` and an advanced landing page's ad without
+`--landing-page-id`, before any request: Get Links offers an ad only on the
+links of its campaign or advanced landing page. `update` holds the ad as it
+will be (the flags given over the stored ad, read when a flag sets the type or
+a link) to the same rule, so `--text-ad-type 1` needs the ad to have, or be
+given, its landing page. A tracker carries the ad its links show:
+
+```bash
+p202 text-ad create --text-ad-name "Spring" --text-ad-headline "Spring sale" \
+  --text-ad-description "Up to 40% off." --text-ad-display-url example.com/spring --aff-campaign-id 3
+p202 tracker update 12 --text-ad-id <text_ad_id from the create>
+```
 
 ## Clicks
 
@@ -709,7 +738,8 @@ and reversals alike — with its amount, whether it counts toward the click's
 value (and the reason when it does not: `deleted`, `unpaid`, `superseded
 (replace|batch|pre_ledger|replay|reevaluation)`, `not_netted`), its source,
 what that is (a goal and version, an upload, the sale a reversal nets, the API
-key that wrote it), its transaction id and event. The table ends with the
+key that wrote it), how its click was found (`matched_by`: `click_id`,
+`cookie`, `visitor_id`, `same_ip`, `unknown`), its transaction id and event. The table ends with the
 click's value and says so if the counted rows do not add up to it. `--json`
 prints the API's answer unchanged (`GET /clicks/{id}/conversions`). The PHP
 CLI's `click:conversions <id>` prints the same.
@@ -743,6 +773,7 @@ p202 conversion list
 p202 conversion list --campaign-id 3 --time-from 1700000000
 p202 conversion list --click-id 12345
 p202 conversion list --source goal --goal 7
+p202 conversion list --match-method same_ip --campaign-id 3
 p202 conversion list --all
 ```
 
@@ -754,14 +785,75 @@ p202 conversion list --all
 | `--time-from`   |         | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset |
 | `--time-to`     |         | End, inclusive: the same forms |
 | `--click-id`    |         | Only this click's conversions |
-| `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` |
+| `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `app_install`, `goal`, `legacy_baseline` |
+| `--match-method` |        | Only conversions whose click was found this way: `click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown` |
 | `--goal`        |         | Only this goal's outcomes (every version) |
 | `--all`         | false   | Fetch all rows across pages |
 
-Each row carries its provenance: `source`, `source_ref`, `event_name`,
+Each row carries its provenance: `source`, `source_ref`, `match_method`, `event_name`,
 `payable`, `reverses_conv_id`, `superseded_by`, `superseded_reason`, and a
 goal row's `goal_id` and `goal_version`. A filter value that is not one of
 these is refused before any request, with the command that finds a right one.
+
+### Conversions by how their click was found
+
+```bash
+p202 conversion match-methods --period last30
+p202 conversion match-methods --aff-campaign-id 3 --time-from 2026-10-01
+```
+
+Each campaign's conversions by `match_method`, how the click they credit was
+found: `click_id` (the postback, pixel, API call, upload or app install named
+it), `cookie` (a tracking cookie did), `visitor_id` (a landing page's
+`p202.track()` visitor id), `same_ip` (nothing named a click, so the latest
+click from the visitor's address: a guess) or `unknown` (recorded before
+1.9.79). `conversions` leaves out reversals, `counted` is how many count
+toward their click's value and `income` what those add up to. The window is
+the conversions' time (`--period`, `--time-from`, `--time-to`). The table ends
+with every method's totals over the campaigns it lists; `--json` is
+`GET /conversions/match-methods`. The PHP CLI's `conversion:match-methods`
+prints the same.
+
+### Offline conversion files for Google Ads and Microsoft Advertising
+
+```bash
+p202 conversion offline-export --format google --output google-ads.csv
+p202 conversion offline-export --format google_uploads --days 30 --ad-user-data granted --ad-personalization granted
+p202 conversion offline-export --format microsoft --days 7 --summary
+```
+
+The account's conversions as an ad platform's offline conversion import
+file, to upload so its bidding learns which clicks converted: `google` is
+Google Ads Data Manager's (gclid, gbraid and wbraid, each in its column),
+`google_uploads` Google's classic Conversions › Uploads template (a
+`Parameters:TimeZone` line, gclid only) and `microsoft` Microsoft
+Advertising's (msclkid, times in UTC). A conversion is a line when it counts
+now, at the value it counts for net of partial refunds, in the account's
+currency, and only when it named its click (`match_method` `click_id` or
+`cookie`); a click found by a visitor id or guessed from an IP address is
+left out, as is a click with no id from the platform, one more than 90 days
+old or less than 6 hours old. Each line is sent under its campaign's
+conversion name, set on Setup › Offline Conversions (`--conversion-name`
+names every line instead). `--summary` prints how many conversions the file
+holds and why each other one is left out (`GET
+/conversions/offline-export/summary`); without it the file goes to
+`--output`, or to stdout.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format` | required | `google`, `google_uploads` or `microsoft` |
+| `--days` | 90 | Conversions from the last this many days, 1 to 90 |
+| `--aff-campaign-id` | | Only this campaign's conversions |
+| `--conversion-name` | | Send every conversion under this conversion action (Google) or goal (Microsoft) |
+| `--ad-user-data`, `--ad-personalization` | empty | Google's consent columns on every line: `granted` or `denied`, as your consent banner collected it |
+| `--output` | stdout | Write the file here |
+| `--summary` | false | Print the counts and the reasons instead of the file |
+
+A file the platform fetches by itself on a schedule is a fetch URL made on
+Setup › Offline Conversions; the CLI does not make one, because its key is
+shown once, on that page. The CLI downloads at most 64 MB: a larger file is
+refused whole, nothing written, and the hint names `--days` and
+`--aff-campaign-id` for a smaller one (a fetch URL has no such limit).
 
 ### Get a conversion
 
@@ -1094,6 +1186,20 @@ A row is one stored value; clicks with no value for the dimension (no referer, n
 
 Rows tied on the sort column come back in id order, so paging with `--offset` neither skips nor repeats a row.
 
+A page with rows after it says so: `--json` carries the server's `"truncated": true` with the page's `limit` and `offset`, each `--ndjson` line carries `"truncated": true`, and a table (or `--csv`, `--quiet`) gets one line on stderr naming the next page, e.g. `Note: more rows remain after rows 1-50; --offset 50 reads the next page (--limit takes up to 500).` Don't total the rows of a truncated page as the dimension's figures: read on with `--offset` until `truncated` is false, or use `report summary` for the totals. `--min-clicks`, `--min-cost`, `--zero-leads` and `--having` filter only the page read, and the note says so. A server from before the flag says nothing; a page it filled to `--limit` gets the note as "does not say whether rows remain".
+
+The commands built on a breakdown say the same:
+
+- `report breakeven` reads one page as `report breakdown` does (`-l, --limit`, default 50, at most 500; `-o, --offset`), most clicks first, and ranks that page by margin; `--json` carries `truncated`, `limit` and `offset`, and a table's note names the next `--offset`.
+- `report losers`, `report winners` and `campaign optimize` classify or rank every row: they read page after page, 500 rows a request, up to the 5000 with the most clicks (`campaign optimize`: the most revenue). Their `--json` always has `truncated`; `true` means the answer covers only those 5000, and a table's note says so.
+- `report crosstab` asks the server for the `--limit-rows` (default 20; `0` for up to 5000) row values with the highest `--metric`, ranked over every row, and reads every column value of each, up to 5000. `"truncated": true` means rows remain past `--limit-rows` or a row's columns past 5000; the note says which.
+
+`report losers`, `report winners`, `report crosstab` and `campaign optimize` (its offers' `epc`) read these rows, and
+a figure they list under a breakdown column's name (`total_cost`, `avg_cpc`, `total_net`, `epc`, …) is the breakdown's
+as the server sent it: a $0.00125 CPC is 0.00125 in `--json` and `--csv`, and only the table rounds it, as it does for
+every report. A figure a command computes has a name of its own: with `--payout`, losers and winners add `payout_net`
+(sales × payout − `total_cost`, what the rows are classified and sorted on) beside the breakdown's `total_net`.
+
 ### Analytics shorthand
 
 ```bash
@@ -1105,6 +1211,7 @@ p202 analytics --group-by campaign --days 14 --sort roi --limit 10
 - `--group-by` takes the breakdown dimensions above; `lp`, `source`, `network`, `offer` and `geo` map to `landing_page`, `ppc_account`, `aff_network`, `campaign` and `country`
 - `--sort conversions` maps to `total_leads`
 - `--period` takes precedence over `--days`
+- a page with rows after it carries `truncated` and gets the same note as `report breakdown`
 
 #### Before/after a date (`--split-at`)
 
@@ -1258,6 +1365,37 @@ page counted by the chosen redirect's id, so its per-rule rows can differ.
 Needs read scope on rotators and reports. `--breakdown rotator_rule` gives
 every rule of every rotator in one breakdown, without the defaults.
 
+### Set the whole rule set
+
+```bash
+p202 rotator get 5 --json | jq '.data.rules' > rules.json   # edit rules.json
+p202 rotator set-rules 5 --file rules.json --dry-run          # what would change; writes nothing
+p202 rotator set-rules 5 --file rules.json
+p202 rotator set-rules 5 --rules '[{"rule_name":"Mobile","criteria":[{"type":"device","value":"mobile"}],"redirects":[{"redirect_campaign":12}]}]'
+```
+
+`set-rules` is Setup › Redirector's save as one command (`PUT
+/rotators/{id}/rules`): the set is every rule the redirector is to have, in the
+order the redirects try them (the first active rule whose criteria all match
+sends the visitor), and it is written in one transaction or not at all. A rule
+sent with its `id` keeps it (its clicks stay its own), and so do criteria and
+destinations sent with theirs; a rule without an `id` is added; a rule left out
+is removed (the role needs `remove_rotator_rule`). A rule needs a `rule_name`,
+at least one criterion (`ALL` matches everyone) and at least one destination; a
+split test (`splittest` 1) needs a `weight` on each destination, and a rule
+that is not one has one destination. A kept rule sent without `splittest` or
+`status` keeps its own.
+
+| Flag        | Description |
+|-------------|-------------|
+| `--rules`   | The set as JSON: an array of rules (as `rotator get --json` shows them under `data.rules`), or `{"rules": [...]}` |
+| `--file`, `-F` | Read the set from a file (`-` for stdin) |
+| `--dry-run` | Answer the set as it would be stored and each rule's change (`add`, `update` with what changed, `keep`, `remove`), writing nothing |
+
+Everything is checked before anything is written, and every problem is named
+by its place (`rules.1.redirects.0.redirect_campaign`). Under `--staged` the
+set becomes a proposal; `--dry-run` is a read and is never staged.
+
 ### Create a rule
 
 ```bash
@@ -1272,13 +1410,27 @@ p202 rotator rule-create 5 \
 | `--rule-name`      | Yes      | Rule name                  |
 | `--splittest`      | No       | Enable split test (0 or 1) |
 | `--status`         | No       | 1 active (default), 0 created paused |
-| `--criteria-json`  | No       | Criteria as JSON array: `type` country, region, city, isp, ip, platform, device or browser; `statement` is or is_not; `value` comma-separated, countries as `United States(US)`, `ip` as single IPv4/IPv6 addresses (no ranges) |
-| `--redirects-json` | No       | Redirects as JSON array: each with exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`, plus `weight` (0-100) and `name` |
+| `--criteria-json`  | Yes, or `--country` | Criteria as JSON array: `type` country, region, city, isp, ip, platform, device or browser; `statement` is or is_not; `value` comma-separated, countries as `United States(US)`, `ip` as single IPv4/IPv6 addresses (no ranges), `ALL` for every visitor |
+| `--country`        | Yes, or `--criteria-json` | An ISO country code (`US`): a country `is` criterion |
+| `--redirects-json` | Yes, or `--redirect-campaign` | Redirects as JSON array: each with exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`, plus `weight` (0-100) and `name` |
+| `--redirect-campaign` | Yes, or `--redirects-json` | A campaign id: one redirect to it at full weight |
 
 Both JSON fields are checked for syntax before sending, and the server checks
 the rest before writing anything: an unknown criterion type, a country written
-as a bare code (`US` never matches), a redirect with no destination or two, or
-a campaign or landing page that is not yours is refused naming the entry.
+as a bare code (`US` never matches), a device in capitals (the redirects compare
+it in lower case), a redirect with no destination or two, or a campaign or
+landing page that is not yours is refused naming the entry. A value list is
+stored as the Redirector page stores it: each value trimmed, the empty ones
+dropped. A rule created here is tried after the redirector's others; to put it
+anywhere else, use `set-rules`.
+
+A rule needs a criterion and a destination, as on the Redirectors page and in
+`set-rules`, and the server refuses it in the same words. The redirects read a
+rule with no criterion as every visitor, so a rule created without
+`--criteria-json` took all of the redirector's traffic before 1.9.79; the
+command now refuses one, and an empty list, before any request. To send every
+visitor to the rule, say so: `--criteria-json
+'[{"type":"country","statement":"is","value":"ALL"}]'`.
 
 ### Delete a rule
 
@@ -1305,6 +1457,20 @@ p202 rotator rule-update 5 12 \
 | `--status`         | Rule status (0 or 1)       |
 | `--criteria-json`  | Criteria as JSON array     |
 | `--redirects-json` | Redirects as JSON array    |
+
+What the command does not send, the rule keeps. The rule it would leave is
+checked as `set-rules` checks one: `--splittest 0` on a rule with two redirects
+is refused, and an empty `--criteria-json` or `--redirects-json` list is
+refused before any request. A rule stored with no criterion by an older
+`rule-create` matches every visitor; any update that would leave it with none,
+a rename included, is refused until it has one (the value `ALL` keeps it on
+every visitor), or it is deleted.
+
+`--redirects-json` (and `--criteria-json`) is the rule's whole list, written as
+`set-rules` writes a rule it keeps: an entry sent with its `id`, as
+`p202 rotator get <rotator_id> --json` shows it, keeps the id its clicks and
+reports name; one left out is removed; one without an `id` is added. To change
+one redirect's URL, send every redirect with its id and the new URL on that one.
 
 ## Attribution
 
@@ -1558,8 +1724,10 @@ request. A free-text flag given `""` clears it.
 | `--user-daily-email` | `never`, `00`-`23` (hour, your time zone) |
 | `--user-account-currency` | 3-letter code; re-prices every campaign's payout into it |
 | `--user-keyword-searched-or-bidded`, `--user-pref-referer-data`, `--user-pref-dynamic-bid`, `--user-pref-privacy`, `--user-pref-cloak-referer`, `--user-pref-ad-settings` | Personal settings' choices |
+| `--user-pref-same-ip-fallback` | `1`: a pixel that names no click credits your latest click from the visitor's IP address (a guess, `same_ip`); `0`: none. New accounts start at `0` |
 | `--user-pref-time-predefined`, `--user-pref-limit`, `--user-cpc-or-cpv`, `--chart-time-range` | report and chart defaults |
 | `--user-slack-incoming-webhook`, `--ipqs-api-key`, `--cb-key`, `--zaxaa-api-signature`, `--jvzoo-ipn-secret-key` | Integrations (a value here stays in shell history) |
+| `--paykickstart-ipn-secret-keys` | PayKickstart's IPN secret keys, one for each PayKickstart campaign, separated by commas. The list replaces every stored key, so send them all; `""` removes them. `user prefs get` shows only whether any is stored (`{"stored": true}`) and `system integrations` how many, never the keys |
 | `--user-ltv-customer-cparam`, `--user-ltv-personalization-fields`, `--user-ltv-score-weights`, `--user-ltv-rec-fatigue` | LTV › Settings |
 
 An integration secret is never read back: `prefs get` (and the answer `prefs update`
@@ -1600,6 +1768,7 @@ p202 diff all --from prod --to staging --json
 
 `diff` reports per-entity `only_in_source`, `only_in_target`, `changed`, and `identical_count`.
 When server capabilities expose `sync_plan`, the CLI uses `POST /api/v3/sync/plan` automatically and falls back to client-side diff when unavailable.
+The plan is computed by the `--from` profile's install, which calls both profiles' URLs. A profile URL it refuses on its field (`source.url` or `target.url`) is the same validation error (exit 1, same hint) as for `p202 sync` below, and the CLI does not then diff from this machine; any other failure of the plan request (a server without the route, an entity it does not know) still falls back to the client-side diff.
 
 ### Sync and re-sync
 
@@ -1623,6 +1792,7 @@ p202 re-sync --from prod --to staging --force-update --json
 Sync state is stored in `~/.p202/sync/<source>-<target>.json`.
 When server capabilities expose `async_jobs`, the CLI routes sync execution through server endpoints (`/sync/jobs`, `/sync/re-sync`, `/sync/status`, `/sync/history`) and falls back to local client-side sync when unavailable.
 Server-side jobs are queue-driven; run the worker endpoint or cron worker (`202-cronjobs/sync-worker.php`) in environments where asynchronous processing is enabled.
+A server-side sync is run by the `--from` profile's install, which calls both profiles' URLs: only public `https://` addresses, with no redirect followed. A profile URL it refuses (`localhost`, a private or loopback address, plain `http://` to the internet, a link-local or metadata address) is a validation error (exit 1) whose hint names the profile to repoint with `p202 --profile <name> config set-url https://…`; the CLI does not then run the sync itself. Two installs on one machine or one private network sync once that install's `202-config.php` admits the other's address with `P202_WEBHOOK_ALLOW_NETWORKS` (write it as `http://127.0.0.1:8001`, not `localhost`), which also allows `http://` there. A job stopped by a refusal, a host that does not resolve, or one of the sync's caps (8 MiB of one answer, 200 pages of 500 records of one list, 900 seconds in all) carries `error_code` (see [the Sync API](../documentation/api/16-sync.md)) and exits 5 with that reason's next step.
 Server-side rotator rule re-sync after updates can be controlled with the server environment variable `SYNC_ROTATOR_RULE_RESYNC_ENABLED=0|1` (enabled by default).
 
 ### Server-side sync capabilities not yet exposed in CLI
@@ -1670,7 +1840,7 @@ p202 system metrics      # Sync counters, job queue and active alerts
 | Command              | Auth required |
 |----------------------|---------------|
 | `p202 system health` | No            |
-| `p202 system info`, `login-log`, `retention …`, `isp-lookup …` | Admin, and a role with `access_to_settings` |
+| `p202 system info`, `login-log`, `retention …`, `isp-lookup …`, `traffic-source-owners …` | Admin, and a role with `access_to_settings` |
 | `p202 system integrations` | Admin, and a role with `access_to_api_integrations` |
 | All others           | Admin         |
 
@@ -1683,7 +1853,9 @@ role lacks the page's permission is refused naming it.
 
 ```bash
 p202 system info                    # versions (and database_upgrade_needed), PHP limits, memcache,
-                                    # clicks recorded, database size, cron last ran, DataEngine
+                                    # clicks recorded, database size, cron last ran, DataEngine,
+                                    # geoip_database (state, built_on, age_days) and geoip_refresh
+                                    # (credentials stored or not, last_outcome, last_error)
 p202 system login-log --limit 100   # sign-in attempts: user name, time, IP, status (default 50)
 p202 system login-log --status not_completed  # right password, but a database failure stopped the
                                     # sign-in (the throttle counts failed attempts alone)
@@ -1716,6 +1888,60 @@ remote Prosper202 service for both.
 `retention set --days N` makes the cron job delete every click recorded
 before midnight that began the day N days ago (server time), from every
 click table, in batches over its next runs; N whole days and today are kept.
+
+### Traffic sources taken before 1.9.79
+
+Before 1.9.79, renaming a traffic source on Setup › Traffic Sources also moved
+it into the account of the user who saved the rename, and nothing checked whose
+source it was: a user who could open Setup could take another user's source.
+Its traffic source accounts stayed with their user, whose reports then lost the
+source. 1.9.79 stops new takeovers; these find and move back the old ones.
+
+```bash
+p202 system traffic-source-owners show                  # each source other users' accounts name: who has it,
+                                                        # whose accounts name it (accounts, clicks, conversions),
+                                                        # repair_to, and why it is ambiguous
+p202 system traffic-source-owners repair 12             # says what moves where, then asks; --force skips
+p202 system traffic-source-owners repair 12 --to-user-id 3   # an ambiguous source, to a user you name
+p202 system traffic-source-owners repair --all          # every source the report names a user for, one by one
+p202 system traffic-source-owners split 9               # a copy of its own for each user whose accounts name it
+```
+
+Nothing is moved by itself, the upgrade included, because the same rows have
+other origins: before 1.9.77 the API put a traffic source account under
+whatever source it was sent, and an admin may have moved a source on purpose.
+`show` marks a source `ambiguous` when its own user has accounts on it too
+(`owner_has_accounts`), accounts of several users name it (`several_users`),
+an account was saved after the source was, or in its second
+(`saved_after_rename`, the shape the API made), a user has no record
+(`no_such_user`), or a user is deleted (`deleted_user`); such a source moves
+only with `--to-user-id`, naming one of the users whose accounts name it, and
+`--all` leaves it. No source moves into a deleted user's account; a
+switched-off user's is shown as such and still repaired. A repair changes only the source's user: the name stays as
+the rename left it and a removed source stays removed. Its accounts' clicks are
+queued for the cron job's report rollup, and the move is logged on the server.
+Each request sends back the user the source was in and the user it was going
+to as the report showed them, so a source that has changed since (another
+admin's repair, an account added or moved) is refused and left as it is;
+under `--all` it is listed as skipped with the reason `changed`, and a failure
+of any other kind stops the run and names the sources already moved.
+It needs a key whose user may act on both users, as Account › Users allows
+(only user 1 moves a source into or out of user 1's account). A source taken
+with no traffic source account under it leaves no sign and is not listed.
+No move clears a source accounts of more than one user name
+(`owner_has_accounts`, `several_users`): wherever it is, another user's accounts
+still name it. `split` leaves it where it is and gives each user `show` lists
+under `named_by` a copy of their own, with its name, its custom variables and
+its removed mark; their accounts move onto the copy, a report filter of theirs
+set to the source follows, and the accounts' clicks are queued for the report
+rollup. It says what it copies and asks (`--force` skips), sends back the owner
+and the users it showed (a source that changed since is refused), refuses a
+source a deleted user's accounts name, and needs a key whose user may act on
+the user the source is in and on each who gets a copy. To have the source end
+up with another user, `repair --to-user-id` it there first, then split it.
+Account › Settings shows the same list to the same admins, as a notice whose
+Review link opens a panel that moves or splits each source through the same
+code and the same checks.
 
 For an https base URL, `system health` checks the host's TLS certificate before it calls the API:
 a verified handshake on its own connection, with no HTTP request. It adds `tls_status`,
@@ -1821,7 +2047,7 @@ Errors go to stderr; stdout stays empty on failure. In human mode:
 
 ```
 Error [auth]: fetching historical data: API error (401): invalid api key
-Hint: Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.
+Hint: Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong.
 ```
 
 With `--json` or `--ndjson` the same failure is one JSON envelope:
@@ -1831,6 +2057,15 @@ With `--json` or `--ndjson` the same failure is one JSON envelope:
 ```
 
 `field_errors` is added for 422 responses. Exit codes hold through error wrapping, and nearly every error carries a `hint` naming the next step (the command that yields the right value, the flag to change, or the order to follow); validation errors without a specific hint point at `<command> --help`. See the agent guide's [Error handling](cli-agent.md#error-handling) for the decision procedure.
+
+A key refused for a scope it lacks exits 2, and the hint names the scope and what grants it. A key's scope cannot be changed, so for a REST API key the hint is a new key with this key's scope plus the missing one, made with a key that may (a full-access key from My Account › Personal Settings › API keys):
+
+```
+Error [auth]: API error (403): Insufficient API key scope for this operation: requires 'ppc-networks:write' (key has: campaigns:read). A key's scope cannot be changed: …
+Hint: A key's scope cannot be changed. Make one whose scope includes 'ppc-networks:write' with a key that may (a full-access key from My Account › Personal Settings › API keys): `p202 user apikey create <user_id> --scope campaigns:read,ppc-networks:write` (`p202 whoami` shows the user id), then use it: `p202 config set-key <new key>`.
+```
+
+For a key an AI app's connection made (the install says so from 1.9.79 on, and on Tracking202's hosted MCP server every key is one), the hint is to connect the AI app again and choose the access the install names on its approval page ("Read and change", or "Read, and propose changes"): a connection keeps the access it was approved with, so one approved before a release added to what connections may do is refused there until it is approved again. When no connection's key can hold the scope (users, system, sync), the hint says so instead. An install older than 1.9.79 names the scope only in its message; the hint reads it from there.
 
 ## Telemetry
 

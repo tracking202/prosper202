@@ -133,7 +133,7 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
     {
         $this->insertClick(1000);
 
-        $result = p202RecordConversion(self::$db, $this->log(1000), '', true, '10.0', 'ORD-1');
+        $result = p202RecordConversion(self::$db, $this->log(1000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'ORD-1');
 
         self::assertFalse($result['duplicate']);
         self::assertGreaterThan(0, $result['conv_id'], 'A real conv_id must be returned from insert_id');
@@ -147,8 +147,8 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
     {
         $this->insertClick(1000);
 
-        $first = p202RecordConversion(self::$db, $this->log(1000), '', true, '10.0', 'ORD-DUP');
-        $second = p202RecordConversion(self::$db, $this->log(1000), '', true, '10.0', 'ORD-DUP');
+        $first = p202RecordConversion(self::$db, $this->log(1000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'ORD-DUP');
+        $second = p202RecordConversion(self::$db, $this->log(1000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'ORD-DUP');
 
         self::assertFalse($first['duplicate']);
         self::assertTrue($second['duplicate'], 'A retried postback with the same order id is a duplicate');
@@ -160,8 +160,8 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
     {
         $this->insertClick(1001);
 
-        $first = p202RecordConversion(self::$db, $this->log(1001), '', true, '10.0', '');
-        $second = p202RecordConversion(self::$db, $this->log(1001), '', true, '10.0', '');
+        $first = p202RecordConversion(self::$db, $this->log(1001), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', '');
+        $second = p202RecordConversion(self::$db, $this->log(1001), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', '');
 
         self::assertFalse($first['duplicate']);
         self::assertFalse($second['duplicate']);
@@ -185,8 +185,8 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         $log = $this->log(1005);
         $log['once_per_click'] = true;
 
-        $first = p202RecordConversion(self::$db, $log, '', true, '10.0', '');
-        $retry = p202RecordConversion(self::$db, $log, '', true, '10.0', '');
+        $first = p202RecordConversion(self::$db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', '');
+        $retry = p202RecordConversion(self::$db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', '');
 
         self::assertFalse($first['duplicate']);
         self::assertGreaterThan(0, $first['conv_id']);
@@ -228,7 +228,7 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
     public function testMissingSourceClickWritesNoOrphanConversion(): void
     {
         // No click inserted for 999999.
-        $result = p202RecordConversion(self::$db, $this->log(999999), '', true, '10.0', 'ORD-X');
+        $result = p202RecordConversion(self::$db, $this->log(999999), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'ORD-X');
 
         self::assertSame(0, $result['conv_id']);
         self::assertFalse($result['duplicate']);

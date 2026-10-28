@@ -84,6 +84,11 @@ use Prosper202\Database\Schema\TableRegistry;
  * so a token already owned by a verified install is refused as a replay
  * without spending quota.
  *
+ * `settle_failures` and `settle_next_at` are the pending-click settler's
+ * queue (PendingClickSettler): while an install is `pending_click`, the
+ * settles in a row that failed and when it is next taken (0 until it has
+ * been tried); left as they were once it settles.
+ *
  * `ctit_seconds` is the install's click-to-install time: Google's server
  * install-begin time (the receipt time when Play gave none) minus its
  * click's `click_time`, recorded whenever the install's token names a click
@@ -297,6 +302,8 @@ final class AppTables
                 `ctit_flag` varchar(8) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
                 `received_at` int(10) unsigned NOT NULL,
                 `settled_at` int(10) unsigned DEFAULT NULL,
+                `settle_failures` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `settle_next_at` int(10) unsigned NOT NULL DEFAULT '0',
                 `raw_payload` text NOT NULL,
                 `remote_ip` varchar(45) NOT NULL DEFAULT '',
                 PRIMARY KEY (`install_row_id`),
@@ -307,6 +314,7 @@ final class AppTables
                 KEY `state_received` (`match_state`,`received_at`),
                 KEY `trusted_received` (`trusted`,`received_at`),
                 KEY `integrity_due` (`integrity_state`,`integrity_next_at`),
+                KEY `settle_due` (`match_state`,`settle_next_at`),
                 KEY `registration_integrity_token` (`registration_id`,`integrity_token_hash`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Android installs reported by the SDK: the Play referrer, its MatchState and trust'"
         );

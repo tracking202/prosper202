@@ -20,7 +20,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - **Landing Page Personalization** — Dynamically display ISP, device, postal code, geo location, keyword, UTM variables, browser, OS, and more on your landing pages.
 - **Device Detection** — Automatically detect device types and models for full insights into mobile-targeted campaigns.
 - **Multi-Currency & Timezone** — Automatically convert payouts into your local currency and display reports in your local timezone.
-- **Google Ads Integration** — Offline conversion tracking with one-click CSV export. UTM parameters and GCLID values are automatically captured.
+- **Offline Conversions for Google Ads and Microsoft Advertising** — Clicks keep their GCLID, GBRAID, WBRAID and MSCLKID, and UTM values. Setup › Offline Conversions writes your conversions as Google Ads' offline conversion import file (Data Manager, or the classic Uploads template) or Microsoft Advertising's, with a conversion name per campaign, each conversion's time, value, currency and order id, and Google's consent columns. Only conversions whose click was named, not guessed from an IP address, are sent. Download a file, or give the platform a private URL it fetches on a schedule; the API (`GET /conversions/offline-export`) and `p202 conversion offline-export` write the same file ([guide](documentation/features/offline-conversions.md)).
 - **WordPress Integration** — Two-way communication between WordPress and Prosper202, instantly setting up posts and pages as landing pages.
 - **Deep Linking** — Boost conversion rates by deep linking directly into apps, reducing friction for users.
 - **Team Access** — Full role-based authentication with no limit on users and no per-seat costs.
@@ -186,6 +186,12 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
        location ^~ /202-config/temp/ {
            deny all;
        }
+
+       # GeoIP databases: read by the install, never served (a refreshed
+       # GeoLite2 file is licensed for this install's use only)
+       location ^~ /202-config/geo/ {
+           deny all;
+       }
    }
    ```
 
@@ -200,7 +206,7 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
 
 #### Apache Alternative
 
-If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled so the `.htaccess` files shipped in `api/v3/` and `tracking202/update/reports/` can handle routing. Those files only need `AllowOverride FileInfo Options=FollowSymLinks` (`FileInfo` for the rewrite rules, `Options=FollowSymLinks` for the `Options +FollowSymLinks` line in the reports rules) — avoid `AllowOverride All`, which is broader than required. Example virtual host:
+If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled so the `.htaccess` files shipped in `api/v3/`, `tracking202/update/reports/` and `202-config/geo/` can handle routing (the last refuses every request, so the GeoIP databases are never served). Those files only need `AllowOverride FileInfo Options=FollowSymLinks` (`FileInfo` for the rewrite rules, `Options=FollowSymLinks` for the `Options +FollowSymLinks` line in the reports rules) — avoid `AllowOverride All`, which is broader than required. Example virtual host:
 
 ```apache
 <VirtualHost *:80>
@@ -217,6 +223,12 @@ If you prefer Apache over Nginx, point your document root at the project directo
     # authenticated download endpoints. The directory's own .htaccess needs
     # AllowOverride AuthConfig, so the deny lives here instead.
     <Directory /path/to/prosper202/202-config/temp>
+        AllowOverride None
+        Require all denied
+    </Directory>
+
+    # GeoIP databases: read by the install, never served
+    <Directory /path/to/prosper202/202-config/geo>
         AllowOverride None
         Require all denied
     </Directory>
@@ -278,6 +290,11 @@ This variant sets `AllowOverride None` and inlines the shipped `.htaccess` rules
     # Attribution export CSVs and upgrade zips: with AllowOverride None the
     # directory's .htaccess is never read, so this is the only deny
     <Directory /path/to/prosper202/202-config/temp>
+        Require all denied
+    </Directory>
+
+    # GeoIP databases: read by the install, never served
+    <Directory /path/to/prosper202/202-config/geo>
         Require all denied
     </Directory>
 

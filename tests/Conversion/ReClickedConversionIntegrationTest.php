@@ -256,7 +256,7 @@ final class ReClickedConversionIntegrationTest extends TestCase
             'user_agent' => '',
             'click_payout' => '',
             'once_per_click' => false,
-        ], '', false, '', 'TX-AFTER-RECLICK');
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', false, '', 'TX-AFTER-RECLICK');
 
         self::assertGreaterThan(0, $result['conv_id']);
         self::assertSame([self::credited() + ['source' => 'postback']], self::conversions());
@@ -280,7 +280,7 @@ final class ReClickedConversionIntegrationTest extends TestCase
             'click_payout' => '',
             'once_per_click' => true,
             'notify_traffic_source' => true,
-        ], '', false, '');
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', false, '');
 
         self::assertGreaterThan(0, $result['conv_id']);
         self::assertSame([self::credited() + ['source' => 'postback']], self::conversions());
@@ -298,9 +298,9 @@ final class ReClickedConversionIntegrationTest extends TestCase
         self::reClicked();
         self::campaign(13, '5.00');
 
-        $refused = p202RecordLegacyConversion(self::$db, self::CLICK, 1, ['campaign_id' => 13]);
+        $refused = p202RecordLegacyConversion(self::$db, self::CLICK, 1, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['campaign_id' => 13]);
         self::assertSame('campaign_mismatch', $refused['reason'], 'pb.php naming a campaign no visit was on');
-        $recorded = p202RecordLegacyConversion(self::$db, self::CLICK, 1, ['campaign_id' => 11, 'user_id' => 1]);
+        $recorded = p202RecordLegacyConversion(self::$db, self::CLICK, 1, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['campaign_id' => 11, 'user_id' => 1]);
         self::assertTrue($recorded['recorded'], 'pb.php naming the first visit\'s campaign: ' . json_encode($recorded));
         self::assertSame([self::credited() + ['source' => 'legacy_pixel']], self::conversions(), 'credited to the latest visit');
     }
@@ -360,7 +360,7 @@ final class ReClickedConversionIntegrationTest extends TestCase
 
         $preview = (new SubidBatch(new Connection(self::$db), $repo))->markPreview(1, [(string) self::CLICK]);
         self::assertSame(0, $preview['would_mark'], (string) json_encode($preview));
-        $legacy = p202RecordLegacyConversion(self::$db, self::CLICK, 1, ['user_id' => 1]);
+        $legacy = p202RecordLegacyConversion(self::$db, self::CLICK, 1, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['user_id' => 1]);
         self::assertSame('already_lead', $legacy['reason'] ?? null, (string) json_encode($legacy));
         self::assertSame('1', (string) self::one(p202PixelClickSql(self::CLICK))['click_lead'], 'gpx.php');
         self::assertSame('1', (string) self::one(p202PostbackClickSql(self::CLICK))['click_lead'], 'gpb.php, upx.php');
@@ -369,7 +369,7 @@ final class ReClickedConversionIntegrationTest extends TestCase
             'click_id' => self::CLICK, 'campaign_id' => '12', 'user_id' => '1', 'click_time' => self::LATEST_TIME,
             'conv_time' => self::LATEST_TIME + 60, 'time_difference' => '', 'ip' => '', 'pixel_type' => 2,
             'user_agent' => '', 'click_payout' => '', 'once_per_click' => true,
-        ], '', false, '');
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', false, '');
         self::assertSame(0, $locked['conv_id'], 'the check under the lock: ' . json_encode($locked));
         self::assertSame($before, self::conversions(), 'no conversion was recorded or replaced');
     }
@@ -392,7 +392,7 @@ final class ReClickedConversionIntegrationTest extends TestCase
         $before = $rows();
 
         $result = (new MysqlConversionRepository(new Connection(self::$db)))
-            ->record(1, ['click_id' => self::CLICK, 'transaction_id' => 'M-1', 'source' => 'api']);
+            ->record(1, ['click_id' => self::CLICK, 'transaction_id' => 'M-1', 'source' => 'api'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertSame([0, false], [$result['convId'], $result['clickFound']]);
         self::assertSame([], self::conversions());
@@ -411,7 +411,7 @@ final class ReClickedConversionIntegrationTest extends TestCase
         self::visit(true);
         $repo = new MysqlConversionRepository(new Connection(self::$db));
 
-        $repo->record(1, ['click_id' => self::CLICK, 'transaction_id' => 'NEW-1', 'source' => 'api']);
+        $repo->record(1, ['click_id' => self::CLICK, 'transaction_id' => 'NEW-1', 'source' => 'api'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         $rows = self::conversions();
         self::assertSame(

@@ -23,8 +23,9 @@ use Prosper202\Database\Tables\UserTables;
  * delivers what is pending, holds back within MESSAGING_SYNC_THROTTLE and says
  * for how long, and reports a portal it cannot reach as failed, with the
  * event kept for the next try. A backlog goes out in batches, and "more" says
- * rows are still pending. deliverPending(), the hourly cron's run, visits
- * only active users with something pending and stops after failures in a row.
+ * rows are still pending. deliverPendingExclusive(), the hourly cron's run,
+ * visits only active users with something pending and stops after failures in
+ * a row (OneAnalyticsDeliveryAtATimeIntegrationTest holds its lock).
  *
  * Each test runs in its own process: MESSAGING_API_URL is a constant.
  *
@@ -275,7 +276,7 @@ final class MessagingServiceIntegrationTest extends TestCase
             $this->assertSame([1, 6], \MessagingService::usersWithPendingDelivery($db));
             $this->assertSame(
                 ['sent' => 2, 'more' => 0, 'idle' => 0, 'failed' => 0, 'stopped' => 0],
-                \MessagingService::deliverPending($db)
+                \MessagingService::deliverPendingExclusive($db, $this->lockPath())
             );
             $who = array_map(static fn (array $r): int => (int) (json_decode($r['body'], true)['identity']['user_id'] ?? 0), $portal->requests());
             $this->assertSame([1, 6], $who);
@@ -312,7 +313,7 @@ final class MessagingServiceIntegrationTest extends TestCase
 
         $this->assertSame(
             ['sent' => 0, 'more' => 0, 'idle' => 0, 'failed' => 3, 'stopped' => 2],
-            \MessagingService::deliverPending($db, 10, 3)
+            \MessagingService::deliverPendingExclusive($db, $this->lockPath(), 10, 3)
         );
         $this->assertSame(
             [['1', '1'], ['2', '1'], ['5', '1'], ['6', '0'], ['8', '0']],
@@ -321,6 +322,19 @@ final class MessagingServiceIntegrationTest extends TestCase
         );
         $this->assertStringContainsString('3 deliveries failed in a row; 2 user(s) wait for the next run', (string) file_get_contents($log));
         unlink($log);
+    }
+
+    /** The delivery's lock, in this test's own place: each test runs in a process of its own. */
+    private function lockPath(): string
+    {
+        return sys_get_temp_dir() . '/p202-analytics-delivery-' . getmypid() . '.lock';
+    }
+
+    protected function tearDown(): void
+    {
+        if (is_file($this->lockPath())) {
+            unlink($this->lockPath());
+        }
     }
 
     private function connect(): \mysqli

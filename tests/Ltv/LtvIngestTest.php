@@ -74,7 +74,7 @@ final class LtvIngestTest extends TestCase
             'transaction_id' => 'order-1',
             'customer_ref' => 'cust-abc',
             'customer_ref_type' => 'merchant_id',
-        ]);
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertFalse($result['duplicate']);
         self::assertSame(501, $result['customerId']);
@@ -117,7 +117,7 @@ final class LtvIngestTest extends TestCase
         $conn = new Connection($write, new FakeMysqliConnection());
         $repo = new MysqlConversionRepository($conn);
 
-        $result = $repo->record(7, ['click_id' => 10, 'transaction_id' => 'order-2']);
+        $result = $repo->record(7, ['click_id' => 10, 'transaction_id' => 'order-2'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertSame(501, $result['customerId'], 'subid fast-path must resolve the cached customer');
         self::assertCount(1, $write->statementsContaining('INSERT INTO 202_revenue_events'));
@@ -161,7 +161,7 @@ final class LtvIngestTest extends TestCase
             'click_id' => 10,
             'transaction_id' => 'order-1',
             'customer_ref' => 'cust-abc',
-        ]);
+        ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertTrue($result['duplicate']);
         self::assertSame(9001, $result['convId']);
@@ -177,7 +177,7 @@ final class LtvIngestTest extends TestCase
         $conn = new Connection($write, new FakeMysqliConnection());
         $repo = new MysqlConversionRepository($conn);
 
-        $result = $repo->record(7, ['click_id' => 10, 'transaction_id' => 'order-2']);
+        $result = $repo->record(7, ['click_id' => 10, 'transaction_id' => 'order-2'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertNull($result['customerId']);
         self::assertCount(0, $write->statementsContaining('INSERT INTO 202_revenue_events'));
@@ -202,7 +202,7 @@ final class LtvIngestTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('not found for this account');
-        $repo->record(7, ['click_id' => 10, 'customer_id' => 999]);
+        $repo->record(7, ['click_id' => 10, 'customer_id' => 999], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
     }
 
     public function testAddAliasReportsExistingOwnerInsteadOfRepointing(): void

@@ -400,8 +400,10 @@ final readonly class ClickPathReads
     }
 
     /**
-     * A campaign by its public id (off.php reached with no click), any
-     * account's: the account is the campaign's own.
+     * A campaign by its public id (off.php reached with no click, px.php's
+     * acip), any account's: the account is the campaign's own. Its
+     * identity_signals decides whether px.php may guess the click by address
+     * (SameIpFallback::ofCampaign()).
      *
      * @return Row|null
      */
@@ -421,7 +423,8 @@ final readonly class ClickPathReads
                     ac.aff_campaign_url_3,
                     ac.aff_campaign_url_4,
                     ac.aff_campaign_url_5,
-                    ac.aff_campaign_cloaking
+                    ac.aff_campaign_cloaking,
+                    ac.identity_signals
                FROM 202_aff_campaigns AS ac
               WHERE ac.aff_campaign_id_public = ?
               ORDER BY ac.aff_campaign_id
