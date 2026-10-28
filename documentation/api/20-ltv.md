@@ -265,7 +265,7 @@ webhook's `secret` once; it is never shown again. Each delivery is `POST
 {event, occurred_at, data}` with `X-P202-Signature: sha256=<HMAC-SHA256 of
 the body with the secret>` (and `X-P202-Event`, `X-P202-Delivery`),
 retried with backoff and failed after 6 attempts, which marks the webhook
-dead.
+dead until it is revived ([A dead webhook](#a-dead-webhook)).
 
 `events` is a list of the events this install sends — `customer.updated`,
 `revenue.recorded`, `subscription.changed`, `conversion.recorded`,
@@ -279,11 +279,77 @@ subscribed the hook to every event).
 `GET /ltv/webhooks/{id}/deliveries` is the delivery log, newest first:
 `limit` 1–100 (default 25), `status` `pending`, `delivered` or `failed`,
 each with its attempts, next retry, last HTTP status and the last response
-or error. An unknown webhook is a `404`, never an empty log.
+or error (`curl: …` when the request failed, `blocked: …` when the address
+was refused at sending, `expired: …` and `held: …` below). An unknown
+webhook is a `404`, never an empty log.
+
+### How deliveries are sent
+
+A write only queues its event; the cron job sends it. The minutely
+`202-cronjobs/index.php` — the one job the installer's cron line,
+`install.sh`, both Docker cron services and AutoCron run — sends what is
+due after its other work, oldest first, for up to 15 seconds a run (one
+request begun before the end may take its 15-second timeout past it).
+Nothing else needs scheduling. `202-cronjobs/ltv_webhooks.php` is the same
+run on its own (`--budget=N` seconds, 50 by default), for a deployment that
+runs workers separately (`docker-compose.coolify.yaml`'s worker service
+does); the two take one database lock, and each delivery is claimed before
+it is sent, so a delivery is never sent by two runs.
+
+- A failure is retried 2, 4, 8, 16 and 32 minutes after each attempt; the
+  6th failed attempt fails the delivery and marks the webhook dead. Every
+  attempt is in the log.
+- A receiver that takes 2 seconds or more to fail is tried once a run; the
+  webhook's other deliveries wait, untried, for the next run, so a receiver
+  that times out does not hold up every other webhook on the install.
+- A delivery still unsent 7 days after it was queued is not sent: it is
+  `failed` with 0 attempts and `expired: still unsent 7 days after it was
+  queued, so it was not sent` as its last response. Before 1.9.79 no
+  default install ran the sender, so every delivery stayed queued: after the
+  upgrade a webhook is sent the events of the last 7 days that were waiting,
+  oldest first, and the older ones expire unsent.
+- A delivery is sent at least once: one whose outcome could not be recorded
+  (the database went away mid-run) is sent again 5 minutes later.
+  `X-P202-Delivery` is the same each time; de-duplicate by it.
+
+### A dead webhook
+
+The 6th failed attempt of one delivery, about an hour of retries, marks its
+webhook `dead`. Nothing is sent to a dead webhook. Its events are still
+queued and then held: each is `failed` with the attempts it had and `held:
+its webhook is dead, so it was not sent; …` as its last response, never
+tried.
+
+`PUT /ltv/webhooks/{id}` with `{"status": "active"}` revives it (LTV
+Settings has a Revive button on a dead webhook's row; `p202 ltv webhooks
+revive <id>`; `bin/p202 ltv:webhook:revive <id>`):
+
+- It keeps its id, URL and secret, so a receiver checks the signature as
+  before, and the Landing Page Optimizer's pairing webhook goes on with no
+  pairing again.
+- The attempts of its pending deliveries start again from 0, so the next
+  failure does not mark it dead at once.
+- By default every delivery of it that was not delivered and was queued in
+  the last 7 days is sent again: the one that failed 6 times, and the ones
+  held while it was dead. They go oldest first on the next cron run, each
+  with its own `X-P202-Delivery`, so a receiver that took one without
+  answering 2xx sees the same delivery again. A delivered one is never sent
+  again, and older ones stay `failed`, the 7 days of
+  [How deliveries are sent](#how-deliveries-are-sent).
+- `"requeue": false` revives it for new events only.
+- The answer is the webhook (never its secret) with `revived`, `requeued`
+  (how many are sent again) and `attempts_reset`. An active webhook is left
+  as it is (`revived: false`). Any other `status` is a `422`: the server
+  alone marks a webhook dead, and `DELETE` removes one.
+
+Fix the receiver before reviving: a webhook whose next delivery fails 6
+times dies again.
 
 ```bash
 p202 ltv webhooks create --url https://hooks.example.com/p202 --events revenue.recorded,subscription.changed
 p202 ltv webhooks deliveries 3 --status failed
+p202 ltv webhooks revive 3
+p202 ltv webhooks revive 3 --requeue=false
 p202 ltv webhooks delete 3 --dry-run
 ```
 
@@ -302,6 +368,7 @@ own settings, a JSON object stored as sent (a list is a `422`).
 | `422` `started_at`: "a unix time in seconds" | A date where a time is read | Send unix seconds |
 | `422` `period`, `sort`, `limit`, `cf.<key>` | A read parameter off its list or range | Use a listed value |
 | `422` `events.0` on a webhook | An event this install never sends | One of the five names, or `*` |
+| `422` `status` on `PUT /ltv/webhooks/{id}` | Anything but `"active"` | Send `{"status": "active"}` to revive it; `DELETE` removes one |
 | `422` `is_required` | A flag that is not one | `true` or `false` |
 | `422` `staged` | An LTV write sent with `?staged=1` | Send it without |
 | `422` `amount`: "Must not be negative for purchase" | A negative `purchase` or `one_time` | Send it as `refund`/`chargeback` (positive amount) or `adjustment` |
