@@ -38,7 +38,7 @@ final class DeliverySender
         try {
             $this->sender ??= new WebhookSender();
             $sent = $this->sender->post(
-                (string) $delivery['webhook_url'],
+                MysqlWebhookRepository::sendableUrl((string) $delivery['webhook_url']),
                 (string) $delivery['payload'],
                 self::headers($delivery),
                 MysqlWebhookRepository::PORTS
