@@ -371,6 +371,8 @@ function p202SendBeacon() {
         "gbraid=" + t202Enc(t202GetVar('gbraid')),
         "wbraid=" + t202Enc(t202GetVar('wbraid')),
         "ttclid=" + t202Enc(t202GetVar('ttclid')),
+        "msclkid=" + t202Enc(t202GetVar('msclkid')),
+        "fbclid=" + t202Enc(t202GetVar('fbclid')),
 		"target_passthrough=" + t202Enc(t202GetVar('target_passthrough')),
 		"keyword=" + t202Enc(t202GetVar('keyword')),
 		"utm_source=" + t202Enc(utm_source),

@@ -39,6 +39,19 @@ final readonly class ClickRecord
     public const TTCLID_CHARS = 1000;
 
     /**
+     * Microsoft Advertising's click id, 202_google.msclkid: a 32-character
+     * GUID as Microsoft documents it, in a VARCHAR(150) as the gclid.
+     */
+    public const MSCLKID_CHARS = 150;
+
+    /**
+     * Meta's click id, 202_google.fbclid, a VARCHAR(1000): measured at 61
+     * characters in its old form and 200 in the form with an `_aem_`
+     * payload, past the 150 that 202_facebook's column holds.
+     */
+    public const FBCLID_CHARS = 1000;
+
+    /**
      * The ad platforms' click ids a click keeps, each by the request
      * parameter it arrives in, with its column's width in characters.
      */
@@ -47,6 +60,8 @@ final readonly class ClickRecord
         'gbraid' => self::GBRAID_CHARS,
         'wbraid' => self::WBRAID_CHARS,
         'ttclid' => self::TTCLID_CHARS,
+        'msclkid' => self::MSCLKID_CHARS,
+        'fbclid' => self::FBCLID_CHARS,
     ];
 
     private const DECIMAL = '/\A-?\d+(?:\.\d+)?\z/';
@@ -72,6 +87,16 @@ final readonly class ClickRecord
         return StoredText::chars($ttclid, self::TTCLID_CHARS);
     }
 
+    public static function storedMsclkid(string $msclkid): string
+    {
+        return StoredText::chars($msclkid, self::MSCLKID_CHARS);
+    }
+
+    public static function storedFbclid(string $fbclid): string
+    {
+        return StoredText::chars($fbclid, self::FBCLID_CHARS);
+    }
+
     /**
      * An ad click id (AD_CLICK_IDS, by name) as its column keeps it: cut to
      * the column's width in characters, as the gclid always was.
@@ -85,6 +110,8 @@ final readonly class ClickRecord
             'gbraid' => self::storedGbraid($value),
             'wbraid' => self::storedWbraid($value),
             'ttclid' => self::storedTtclid($value),
+            'msclkid' => self::storedMsclkid($value),
+            'fbclid' => self::storedFbclid($value),
             default => throw new InvalidArgumentException("$name is not an ad click id a click keeps"),
         };
     }
@@ -144,6 +171,8 @@ final readonly class ClickRecord
         public string $gbraid = '',
         public string $wbraid = '',
         public string $ttclid = '',
+        public string $msclkid = '',
+        public string $fbclid = '',
         public int $utmSourceId = 0,
         public int $utmMediumId = 0,
         public int $utmCampaignId = 0,
@@ -210,7 +239,10 @@ final readonly class ClickRecord
         if (preg_match('/\A\d+\z/', $clickIdPublic) !== 1) {
             throw new InvalidArgumentException("A click's clickIdPublic is digits, not '$clickIdPublic'");
         }
-        $adClickIds = ['gclid' => $gclid, 'gbraid' => $gbraid, 'wbraid' => $wbraid, 'ttclid' => $ttclid];
+        $adClickIds = [
+            'gclid' => $gclid, 'gbraid' => $gbraid, 'wbraid' => $wbraid, 'ttclid' => $ttclid,
+            'msclkid' => $msclkid, 'fbclid' => $fbclid,
+        ];
         foreach ($adClickIds as $name => $value) {
             if (self::storedAdClickId($name, $value) !== $value) {
                 throw new InvalidArgumentException(
@@ -221,8 +253,8 @@ final readonly class ClickRecord
         $campaignValues = [$variableSetId, $utmSourceId, $utmMediumId, $utmCampaignId, $utmTermId, $utmContentId];
         if (!$recordsCampaignRows && (implode('', $adClickIds) !== '' || array_filter($campaignValues) !== [])) {
             throw new InvalidArgumentException(
-                'A click that records no gclid, gbraid, wbraid, ttclid, UTM values or tracking variables'
-                    . ' was given one'
+                'A click that records no gclid, gbraid, wbraid, ttclid, msclkid, fbclid, UTM values or'
+                    . ' tracking variables was given one'
             );
         }
     }

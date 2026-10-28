@@ -125,7 +125,7 @@ if ($usedCachedRedirect == true) {
 
 			// c1-c4, the ad click ids and the UTM values as sent, or p202<name> for one not sent
 			$cachedTokens = [
-                'c1', 'c2', 'c3', 'c4', 'gclid', 'gbraid', 'wbraid', 'ttclid',
+                'c1', 'c2', 'c3', 'c4', 'gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid',
                 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
 			];
 			foreach ($cachedTokens as $token) {
@@ -241,7 +241,7 @@ for ($i = 1; $i <= 4; $i++) {
 	$mysql[$custom . '_id'] = $db->real_escape_string((string)$custom_id); //save it
 }
 
-// The ad platforms' click ids (gclid, gbraid, wbraid, ttclid). Raw: the
+// The ad platforms' click ids (ClickRecord::AD_CLICK_IDS). Raw: the
 // writer binds them, so an escaped value was stored with its backslashes.
 $adClickIds = ClickRequest::adClickIds($_GET);
 foreach ($adClickIds as $adClickIdName => $adClickId) {
