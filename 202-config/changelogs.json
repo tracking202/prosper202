@@ -47,7 +47,8 @@
       "Fixed: A redirector rule saved as \"all\" sends every visitor to the rule from a landing page's offer link too, as it did from the redirector link; it sent them to the default. ALL is read the same way in any case and beside other values, by both links, the Redirector page and the Rotator Breakdown, and is accepted on an IP rule, which was refused as not an IP address",
       "Fixed: p202 report losers, winners and crosstab, and the offers p202 campaign optimize ranks, show the cost, CPC, profit and EPC p202 report breakdown shows for the same rows; they rounded them, so a cost or CPC below a cent read 0. With --payout, the profit at your payout is its own column, payout_net, beside the recorded total_net",
       "Fixed: LTV Settings deletes only the webhook, field or integration a row names: an id sent as 12abc deleted number 12, and is refused now",
-      "Fixed: p202 campaign optimize shows the conversion rate the reports show (conversions per click-through) and calls its own rate, which its break-even CPC uses, conversions per click; it called that one CVR, so on landing-page traffic it read lower than every report"
+      "Fixed: p202 campaign optimize shows the conversion rate the reports show (conversions per click-through) and calls its own rate, which its break-even CPC uses, conversions per click; it called that one CVR, so on landing-page traffic it read lower than every report",
+      "Fixed: API Integrations says when the Landing Page Optimizer is not receiving events because its webhook is dead or gone, where it said Connected"
     ]
   },
   "1.9.78": {
