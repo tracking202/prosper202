@@ -1683,6 +1683,7 @@ Sync state is stored in `~/.p202/sync/<source>-<target>.json`.
 When server capabilities expose `async_jobs`, the CLI routes sync execution through server endpoints (`/sync/jobs`, `/sync/re-sync`, `/sync/status`, `/sync/history`) and falls back to local client-side sync when unavailable.
 Server-side jobs are queue-driven; run the worker endpoint or cron worker (`202-cronjobs/sync-worker.php`) in environments where asynchronous processing is enabled.
 Server-side rotator rule re-sync after updates can be controlled with the server environment variable `SYNC_ROTATOR_RULE_RESYNC_ENABLED=0|1` (enabled by default).
+A server-side sync writes a redirector's rules on the target as one set (`PUT /rotators/{id}/rules`), which the target takes whole or refuses with nothing written; the refusal names the source rule. A target from before 1.9.79, which has no such route, has its rules replaced one at a time.
 
 ### Server-side sync capabilities not yet exposed in CLI
 
