@@ -135,6 +135,12 @@ function apiint_cb_pill(bool $verified): string
 		: '<span class="p202-pill p202-pill--warn">Unverified</span>';
 }
 
+/** A DNI network's id as the page writes it, or null: `12abc` named network 12. */
+function apiint_dni_id(mixed $value): ?int
+{
+	return is_string($value) && preg_match('/^[1-9][0-9]{0,9}$/D', $value) === 1 && (int)$value <= 4294967295 ? (int)$value : null;
+}
+
 $strProtocol = getSecureStatus() ? 'https://' : 'http://'; // SERVER_PROTOCOL is "HTTP/1.1" even over TLS (review finding)
 
 /**
@@ -174,7 +180,6 @@ $dniNetworksAvailable = is_array($dniNetworks);
 if (!$dniNetworksAvailable) {
 	$dniNetworks = [];
 }
-$dniProcesing = ['host' => getDNIHost(), 'install_hash' => $user_row['install_hash'], 'networks' => []];
 
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
@@ -464,23 +469,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	if (isset($_POST['dni_network'])) {
-		$dniRequired = ['dni_network', 'dni_network_type', 'dni_network_name', 'dni_network_api_key', 'dni_network_affiliate_id'];
+		// An edit may leave the key empty to keep the saved one, which the page never shows.
+		$dniEditing = isset($_POST['editing_dni_network']);
+		$dniEditId = apiint_dni_id($_POST['editing_dni_network_id'] ?? null);
+		$dniApiKey = (string)($_POST['dni_network_api_key'] ?? '');
+		$dniRequired = array_merge(['dni_network', 'dni_network_type', 'dni_network_name', 'dni_network_affiliate_id'], $dniEditing ? [] : ['dni_network_api_key']);
 		$dniMissing = array_filter($dniRequired, static fn (string $field): bool => trim((string)($_POST[$field] ?? '')) === '');
 		if ($dniMissing) {
 			$error['dni_network'] = 'Make sure all fields are selected and filled out!';
-		} else {
+		} elseif ($dniEditing && $dniEditId === null) {
+			$error['dni_network'] = 'That network was not found; nothing was changed.';
+		} elseif ($dniEditId !== null && $dniEditing && trim($dniApiKey) === '') {
+			[$dniApiKey, $dniRefused] = \Prosper202\Setup\DniNetworks::keptKey($db, (int)$_SESSION['user_id'], $dniEditId, (string)$_POST['dni_network']);
+			if ($dniRefused !== null) {
+				$error['dni_network'] = $dniRefused;
+			}
+		}
+		if (!isset($error['dni_network'])) {
 			$mysql['dniNetworkId'] = $db->real_escape_string((string)$_POST['dni_network']);
 			$mysql['dniNetworkType'] = $db->real_escape_string((string)$_POST['dni_network_type']);
 			$dniNetworkName = explode(" (", (string) $_POST['dni_network_name'], 2);
 			$mysql['dniNetworkName'] = $db->real_escape_string($dniNetworkName[0]);
 			$mysql['dniAffiliateId'] = $db->real_escape_string((string)$_POST['dni_network_affiliate_id']);
-			$mysql['dniApikey'] = $db->real_escape_string((string)$_POST['dni_network_api_key']);
-			$dniAuth = authDniNetworks($user_row['install_hash'], $_POST['dni_network'], $_POST['dni_network_api_key'], $_POST['dni_network_affiliate_id']);
+			$mysql['dniApikey'] = $db->real_escape_string($dniApiKey);
+			$dniAuth = authDniNetworks($user_row['install_hash'], $_POST['dni_network'], $dniApiKey, $_POST['dni_network_affiliate_id']);
 
 			if (empty($dniAuth['auth'])) {
 				$error['dni_network_auth'] = 'Can\'t authenticate with provided credentials. Try again!';
 			} else {
-				if (!isset($_POST['editing_dni_network'])) {
+				if (!$dniEditing) {
 					$dniShortDescription = '';
 					$dniFavIcon = '';
 					foreach ($dniNetworks as $dniNetwork) {
@@ -526,15 +543,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						p202_account_redirect('202-account/api-integrations.php#dni');
 					}
 					$error['dni_network'] = 'The network could not be saved, and nothing was added; try again.';
-				} else if (isset($_POST['editing_dni_network_id']) && !empty($_POST['editing_dni_network_id'])) {
-					$mysql['editing_dni_network_id'] = $db->real_escape_string((string)$_POST['editing_dni_network_id']);
-					$sql = "UPDATE 202_dni_networks SET networkId = '" . $mysql['dniNetworkId'] . "', name = '" . $mysql['dniNetworkName'] . "', type = '" . $mysql['dniNetworkType'] . "', apiKey = '" . $mysql['dniApikey'] . "', time = '" . time() . "'";
-
-					if ($_POST['dni_network_type'] == 'Cake') {
-						$sql .= ", affiliateId = '" . $mysql['dniAffiliateId'] . "'";
-					}
-
-					$sql .= " WHERE id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
+				} elseif ($dniEditId !== null) {
+					$mysql['editing_dni_network_id'] = (string)$dniEditId;
+					$dniAffiliateSet = $_POST['dni_network_type'] == 'Cake' ? ", affiliateId = '" . $mysql['dniAffiliateId'] . "'" : '';
+					// One statement, so its WHERE is read with the rest of it.
+					$sql = "UPDATE 202_dni_networks SET networkId = '" . $mysql['dniNetworkId'] . "', name = '" . $mysql['dniNetworkName'] . "', type = '" . $mysql['dniNetworkType'] . "', apiKey = '" . $mysql['dniApikey'] . "', time = '" . time() . "'" . $dniAffiliateSet
+						. " WHERE id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
 
 					// The edit names a network of this account's or changes
 					// nothing: it flashed "updated" on a no-op for an id that is
@@ -573,42 +587,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 }
 
-if (isset($_GET['edit_dni_network']) && !empty($_GET['edit_dni_network'])) {
-	$mysql['editDniNetworkId'] = $db->real_escape_string((string)$_GET['edit_dni_network']);
-	$sql_edit_dni = "SELECT * FROM 202_dni_networks WHERE id = '" . $mysql['editDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'";
-	$edit_dni_result = _mysqli_query($db, $sql_edit_dni);
-	if ($edit_dni_result === false) {
-		record_mysql_error($db, $sql_edit_dni);
+// The signed-in account's networks, and the one being edited, without their
+// keys: the list read user 1's, and put every key into the page.
+$edit_dni_row = null;
+$dniEditMissing = false;
+try {
+	if (isset($_GET['edit_dni_network']) && (string)$_GET['edit_dni_network'] !== '') {
+		$dniEditGetId = apiint_dni_id($_GET['edit_dni_network']);
+		$edit_dni_row = $dniEditGetId === null ? null : \Prosper202\Setup\DniNetworks::oneFor($db, (int)$_SESSION['user_id'], $dniEditGetId);
+		$editing_dni_network = $edit_dni_row !== null;
+		$dniEditMissing = $edit_dni_row === null;
 	}
-	if ($edit_dni_result->num_rows > 0) {
-		$edit_dni_row = $edit_dni_result->fetch_assoc();
-		$editing_dni_network = true;
-	}
-}
-
-$dni_sql = "SELECT * FROM 202_dni_networks WHERE user_id = '1'";
-$dni_result = _mysqli_query($db, $dni_sql);
-if ($dni_result === false) {
+	$dniRows = \Prosper202\Setup\DniNetworks::listFor($db, (int)$_SESSION['user_id']);
+} catch (\Prosper202\Database\Exceptions\QueryException $failed) {
 	// Not "no networks": the page would offer to add ones that exist.
-	record_mysql_error($db, $dni_sql);
-}
-$dniRows = [];
-while ($dni_row = $dni_result->fetch_assoc()) {
-	$dniRows[] = $dni_row;
-	if ($dni_row['processed'] == false) {
-		$dniProcesing['networks'][] = ['id' => $dni_row['id'], 'networkId' => $dni_row['networkId'], 'api_key' => $dni_row['apiKey'], 'type' => $dni_row['type']];
-	}
-}
-
-// The networks still importing, for the progress poller's inline script.
-// Network-supplied strings can be invalid UTF-8, which made json_encode()
-// return false and the script read `var processing = ;` (#165, #1): they are
-// substituted, and an encoding that still fails is said on the page.
-$dniProcessingJson = json_encode($dniProcesing, JSON_NUMERIC_CHECK | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE);
-if ($dniProcessingJson === false) {
-	error_log('api-integrations.php: the DNI progress data could not be encoded: ' . json_last_error_msg());
-	$dniProcessingJson = '{"networks":[]}';
-	$dniProgressUnavailable = true;
+	record_mysql_error($db, 'api-integrations.php: the DNI networks', $failed->getMessage());
 }
 
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
@@ -635,17 +628,14 @@ $endpoint = static function (string $label, string $url) use ($e): string {
 $trackingBase = $strProtocol . getTrackingDomain() . get_absolute_url();
 
 $flashExtra = [];
-if (!empty($dniProgressUnavailable)) {
-	$flashExtra[] = ['kind' => 'warn', 'text' => 'The import progress of your DNI networks cannot be shown just now; reload the page to see it.'];
+if ($dniEditMissing) {
+	$flashExtra[] = ['kind' => 'warn', 'text' => 'That DNI network is not one of yours, or it was removed.'];
 }
 if (isset($_GET['lpo']) && $_GET['lpo'] === 'connected') {
 	$flashExtra[] = ['kind' => 'ok', 'text' => 'Landing Page Optimizer connected.'];
 }
 if (isset($_GET['lpo']) && $_GET['lpo'] === 'disconnected') {
 	$flashExtra[] = ['kind' => 'ok', 'text' => 'Landing Page Optimizer disconnected.'];
-}
-if (!$dni_result) {
-	$flashExtra[] = ['kind' => 'bad', 'text' => 'Your DNI networks could not be read just now. Reload the page to see them.'];
 }
 
 /** The key-based integrations, which all work the same way: one secret, one Save. */
@@ -727,15 +717,12 @@ template_top('API Integrations');
 						<table class="table p202-table">
 							<thead><tr><th>Network</th><th>API key</th><th>Affiliate ID</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 							<tbody>
-								<?php foreach ($dniRows as $dni_row) {
-									$dniKey = (string)$dni_row['apiKey'];
-									$dniKeyId = 'dni-key-' . (int)$dni_row['id'];
-									?>
+								<?php foreach ($dniRows as $dni_row) { ?>
 									<tr>
 										<td>
 											<?php if ((string)$dni_row['favIcon'] !== '') { ?><img src="<?php echo $e($dni_row['favIcon']); ?>" width="16" height="16" alt="" class="me-1"><?php } ?>
 											<span title="<?php echo $e($dni_row['shortDescription']); ?>"><?php echo $e($dni_row['name'] . ' (' . $dni_row['type'] . ')'); ?></span>
-											<?php if ($dni_row['processed'] == false) { ?>
+											<?php if (!$dni_row['processed']) { ?>
 												<div class="mt-1" id="network-<?php echo (int)$dni_row['id']; ?>">
 													<div class="form-text mt-0">Processing offers…</div>
 													<div class="progress" role="progressbar" aria-label="Processing <?php echo $e($dni_row['name']); ?>" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
@@ -744,13 +731,8 @@ template_top('API Integrations');
 												</div>
 											<?php } ?>
 										</td>
-										<td>
-											<div class="p202-code">
-												<pre class="p202-code__value p202-code__value--masked" id="<?php echo $dniKeyId; ?>" data-p202-value="<?php echo $e($dniKey); ?>"><?php echo $e(substr($dniKey, 0, 12) . str_repeat("\u{2022}", 8)); ?></pre>
-												<button type="button" class="btn btn-secondary btn-sm" data-p202-reveal="#<?php echo $dniKeyId; ?>">Reveal</button>
-											</div>
-										</td>
-										<td><?php echo $e($dni_row['affiliateId'] ?? ''); ?></td>
+										<td class="text-nowrap"><?php echo $e($dni_row['keyHint']); ?></td>
+										<td><?php echo $e($dni_row['affiliateId']); ?></td>
 										<td class="text-end text-nowrap">
 											<a class="btn btn-secondary btn-sm" href="<?php echo $e($self . '?edit_dni_network=' . (int)$dni_row['id'] . '#dni'); ?>">Edit</a>
 											<form method="post" action="<?php echo $e($self . '#dni'); ?>" class="d-inline" data-p202-confirm="<?php echo $e('Remove ' . $dni_row['name'] . '? Its offers stay in your campaigns but stop updating, and its DNI affiliate network is retired.'); ?>">
@@ -771,8 +753,10 @@ template_top('API Integrations');
 				<?php } else {
 					$dniType = (string)($_POST['dni_network_type'] ?? ($edit_dni_row['type'] ?? ''));
 					$dniSelected = (string)($_POST['dni_network'] ?? ($edit_dni_row['networkId'] ?? $mysql['add_dni']));
+					// A refused edit comes back to the edit, not to an empty add.
+					$dniFormAction = $editing_dni_network ? $self . '?edit_dni_network=' . (int)$edit_dni_row['id'] . '#dni' : $self . '#dni';
 					?>
-					<form method="post" action="<?php echo $e($self . '#dni'); ?>" data-dni-form>
+					<form method="post" action="<?php echo $e($dniFormAction); ?>" data-dni-form>
 						<?php echo p202_account_token_field(); ?>
 						<input type="hidden" name="dni_network_type" id="dni_network_type" value="<?php echo $e($dniType); ?>">
 						<input type="hidden" name="dni_network_name" id="dni_network_name" value="<?php echo $e($_POST['dni_network_name'] ?? ($edit_dni_row['name'] ?? '')); ?>">
@@ -791,8 +775,9 @@ template_top('API Integrations');
 								</select>
 							</div>
 							<div class="col-md" id="dni_api_key_input_group">
-								<label class="form-label" for="dni_network_api_key">API key</label>
-								<input type="text" name="dni_network_api_key" id="dni_network_api_key" class="form-control" required autocomplete="off" spellcheck="false" value="<?php echo $e($_POST['dni_network_api_key'] ?? ($edit_dni_row['apiKey'] ?? '')); ?>">
+								<label class="form-label" for="dni_network_api_key"><?php echo $editing_dni_network ? 'New API key' : 'API key'; ?></label>
+								<?php // Never filled in: a saved key, or one typed into a refused submit, stays off the page. ?>
+								<input type="text" name="dni_network_api_key" id="dni_network_api_key" class="form-control"<?php echo $editing_dni_network ? '' : ' required'; ?> autocomplete="off" spellcheck="false" value=""<?php echo $editing_dni_network ? ' placeholder="' . $e('Key ' . lcfirst($edit_dni_row['keyHint']) . '; leave empty to keep it') . '"' : ''; ?>>
 							</div>
 							<div class="col-md-2" id="dni_affiliate_id_input_group"<?php echo $dniType === 'Cake' ? '' : ' hidden'; ?>>
 								<label class="form-label" for="dni_network_affiliate_id">Affiliate ID</label>
@@ -807,7 +792,7 @@ template_top('API Integrations');
 								</div>
 							</div>
 						</div>
-						<div class="form-text">HasOffers networks need only the API key; Cake networks also ask for your affiliate ID.</div>
+						<div class="form-text">HasOffers networks need only the API key; Cake networks also ask for your affiliate ID.<?php echo $editing_dni_network ? ' The saved key is never shown: leave New API key empty to keep it, or paste a new one to replace it.' : ''; ?></div>
 					</form>
 				<?php } ?>
 			</div>
@@ -1054,12 +1039,13 @@ template_top('API Integrations');
 				.then(function () { button.disabled = false; });
 		});
 
-		/* Networks still importing their offers: poll their progress. */
-		var processing = <?php echo $dniProcessingJson; ?>;
-		if (!processing.networks || processing.networks.length === 0) { return; }
+		/* Networks still importing their offers: poll their progress. The
+		   server asks the service about this account's own networks; their
+		   keys never reach the page. */
+		if (!document.querySelector('[data-dni-progress]')) { return; }
 		var base = <?php echo json_encode($base . '202-account/ajax/dni.php'); ?>;
 		var poll = function () {
-			fetch(base + '?getProgress=true', { method: 'POST', credentials: 'same-origin', body: JSON.stringify(processing) })
+			fetch(base + '?getProgress=true', { method: 'POST', credentials: 'same-origin' })
 				.then(function (response) { return response.json(); })
 				.then(function (json) {
 					(json && json.data ? json.data : []).forEach(function (item) {

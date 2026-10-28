@@ -83,6 +83,10 @@ OPERA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
 
 TAG="or-pass $(date +%s)"
 U="https://example.com/or-$(date +%s)"
+# The routing is read off clicks recorded from this machine.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" || exit 2
 
 say "setup: a campaign, three landing pages, a rotator with four rules ($TAG)"
 must "$(api POST /aff-networks "{\"aff_network_name\":\"$TAG\"}")" "category"
