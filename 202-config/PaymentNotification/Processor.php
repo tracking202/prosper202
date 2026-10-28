@@ -288,7 +288,8 @@ final class Processor
     ): array {
         require_once dirname(__DIR__) . '/static-endpoint-helpers.php';
 
-        return p202RecordLegacyConversion($this->db, $clickId, 2, [
+        // The notification's tracking code named the click.
+        return p202RecordLegacyConversion($this->db, $clickId, 2, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, [
             'user_id' => $owner,
             'ip' => $request->senderAddress,
             'user_agent' => $request->userAgent,
