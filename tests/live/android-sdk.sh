@@ -114,6 +114,10 @@ SQL
 }
 cleanup
 trap cleanup EXIT
+# Installs are matched to clicks this pass records from this machine.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" "$OWNER" || exit 2
 
 # A previous pass may have spent this peer's intake bucket: wait it out.
 for _ in 1 2 3; do
