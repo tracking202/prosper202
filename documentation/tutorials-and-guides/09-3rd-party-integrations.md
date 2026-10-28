@@ -49,7 +49,8 @@ is answered with a 2xx):
 | the same `SALE` again | nothing; a retry stating another amount is refused | `200 duplicate` / `409` |
 | `BILL` (a subscription's rebill) | another conversion on the click, under its own `receipt` (the first payment's with `-0001`, `-0002` after it), worth its `totalAccountAmount` | `200 recorded` |
 | `RFND`, `CGBK`, `INSF` (a refund, a chargeback, an eCheck the buyer's bank returned) | a reversal of the conversion under its `receipt`, by what its `totalAccountAmount` says the account lost (the whole of it when it states none or 0); a payment is reversed once | `200 reversed`, `404` when no such conversion is on the click |
-| the same reversal again (a refund sent again, or a chargeback of a refunded payment for the same amount) | nothing; one that takes back another amount is refused, saying how much is still credited | `200 duplicate` / `409` |
+| the same reversal again (ClickBank's retry of it) | nothing | `200 duplicate` |
+| another reversal of a payment already reversed (a second refund, or a chargeback of a refunded payment), whatever amount it states | nothing: a payment is reversed once; the answer names the reversal on file and how much of the payment is still credited | `409` |
 | `TEST`, and `TEST_SALE`, `TEST_BILL`, `TEST_RFND`, `CANCEL-TEST-REBILL`, `UNCANCEL-TEST-REBILL` | the key is marked Verified; nothing is recorded | `200 test` |
 | `CANCEL-REBILL` and `UNCANCEL-REBILL` (a subscription cancelled, a cancellation undone), `SUBSCRIPTION-CHG`, `ABANDONED_ORDER`, `CUSTOMER_AUTH_FAILURE`, `CUSTOMER_EMAIL_UPDATE`, `CUSTOMER_UPDATE_CC_NOTIFICATION`, `PURCHASE_DETAILS_EMAIL_RESPONSE` | nothing: no money moves | `200 ignored` |
 | a type ClickBank's INS article does not list | nothing | `400`, naming it |
