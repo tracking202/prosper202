@@ -523,14 +523,22 @@ if (!function_exists('_upgrade_measurement_tables')) {
      * statement) fails the step like a failed CREATE: the version stays,
      * and the next run drops what is left.
      *
+     * $defaults are the columns whose DEFAULT the step changes, by table:
+     * the reconciler leaves a column that is there with the default it was
+     * added with, so each named one is set to the DEFAULT its definition
+     * declares (SchemaReconciler::defaultStatement()), which rewrites no row.
+     * The table must be one of $definitions; anything that cannot be set
+     * fails the step.
+     *
      * @param  array<int, \Prosper202\Database\Schema\SchemaDefinition> $definitions
      * @param  list<string> $retirements
+     * @param  array<string, list<string>> $defaults table => its columns
      * @return bool True when every table exists and matches its definition,
-     *         every marker is written and every retired table is gone.
-     *         False leaves the version where it is, so the next run retries
-     *         the whole step.
+     *         every named default is set, every marker is written and every
+     *         retired table is gone. False leaves the version where it is,
+     *         so the next run retries the whole step.
      */
-    function _upgrade_measurement_tables(array $definitions, array $retirements = []): bool
+    function _upgrade_measurement_tables(array $definitions, array $retirements = [], array $defaults = []): bool
     {
         $reconciler = new \Prosper202\Database\SchemaReconciler(
             static function (string $sql) {
@@ -560,6 +568,33 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
             if (!$reconciler->reconcile($definition)) {
                 $ok = false;
+            }
+        }
+
+        if ($ok) {
+            foreach ($defaults as $table => $columns) {
+                $owner = null;
+                foreach ($definitions as $definition) {
+                    if ($definition->tableName === $table) {
+                        $owner = $definition;
+                        break;
+                    }
+                }
+                foreach ($columns as $column) {
+                    $statement = null;
+                    $why = $owner === null ? ' (the step converges no such table)' : '';
+                    if ($owner !== null) {
+                        try {
+                            $statement = \Prosper202\Database\SchemaReconciler::defaultStatement($owner, $column);
+                        } catch (\RuntimeException $e) {
+                            $why = ' (' . $e->getMessage() . ')';
+                        }
+                    }
+                    if ($statement === null || _upgrade_query($statement) === false) {
+                        $ok = false;
+                        error_log('Prosper202 upgrade: failed to set the default of ' . $table . '.' . $column . $why);
+                    }
+                }
             }
         }
 
@@ -4425,15 +4460,24 @@ class UPGRADE
             // The clicks re-clicked before 1.9.79 have no record, and rows
             // written by an older rule: the step marks the newest click, and
             // the cron walks the clicks up to it (Prosper202\Click\ReClickBackfill).
+            //
+            // An account created from 1.9.79 on starts with privacy 'eu'
+            // (Enabled for European Traffic): 202_users_pref's privacy column
+            // takes the installer's DEFAULT, and every account already there
+            // keeps its own value.
+            //
             // A schema change for 1.9.79 belongs in this block, reconciled
             // before the version is written.
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // 202_google gains gbraid, wbraid, ttclid, msclkid and fbclid
+                // (Prosper202\Click\ClickRecord).
+                \Prosper202\Database\Tables\TrackingTables::google(),
                 // 202_users_pref gains paykickstart_ipn_secret_keys, the keys
                 // PayKickstart's product IPN is verified with (PayKickstartKeys).
                 \Prosper202\Database\Tables\UserTables::usersPref(),
-            ]);
+            ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.79'") !== false) {
@@ -4443,8 +4487,9 @@ class UPGRADE
                         . 'leaving version at 1.9.78 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: the re-click tables could not be reconciled, or the re-click'
-                    . ' backfill marked; leaving version at 1.9.78 so the next run retries.');
+                error_log('Prosper202 upgrade: the re-click tables, 202_google or 202_users_pref could not be reconciled,'
+                    . ' the new accounts\' privacy default set or the re-click backfill marked; leaving version'
+                    . ' at 1.9.78 so the next run retries.');
             }
         }
 

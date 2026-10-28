@@ -77,7 +77,9 @@ is a journey of one.
 
 The privacy setting ([`user_pref_privacy`](../api/14-users.md#privacy-user_pref_privacy))
 withholds the `p202vid` cookie too: a visitor it holds back is neither given
-one nor read for one, as they are given no click cookie. The landing-page id
+one nor read for one, as they are given no click cookie. A new account starts
+at `eu` (since 1.9.79), so while it is there its visitors from Europe, and
+every visitor GeoIP cannot place, get none. The landing-page id
 and a signed customer id still link that visitor's clicks. `p202.track()` ([web events](../api/23-events.md)) finds
 the visitor's click by the landing-page id alone, so it sends nothing either.
 

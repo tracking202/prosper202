@@ -6,6 +6,8 @@ Currently inside your Prosper202 Install, we support a number of 3rd party integ
 
 Direct Network Integration allows you to quickly find and setup offers directly inside of Prosper202 without any manual work. You can review the section on Direct Network Integrations for more details about this. [Click here to go there now](10-direct-network-integrations-dni.md).
 
+Each user's networks are their own: My Account › 3rd Party API Integrations lists the networks the signed-in user added, and no one else's. A network's API key is never shown once it is saved; the list says that a key is saved and, for a key of 12 characters or more, its last four characters. To change a network, choose Edit: leave New API key empty to keep the saved key, or paste a new one to replace it. Moving the integration to a different network needs that network's key.
+
 ## Clickbank Sales Notification
 
 Clickbank doesn't support Postback or custom conversion pixels, so to get real-time reporting of sales you can setup our Clickbank Sales Notification integration.
