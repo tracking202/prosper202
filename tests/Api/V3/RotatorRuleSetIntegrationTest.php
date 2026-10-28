@@ -1140,14 +1140,73 @@ final class RotatorRuleSetIntegrationTest extends TestCase
             'criteria' => [
                 ['type' => 'country', 'value' => ' United States(US), Canada(CA),, '],
                 ['type' => 'city', 'statement' => 'is_not', 'value' => 'all'],
+                ['type' => 'region', 'value' => ' All '],
+                ['type' => 'browser', 'value' => 'Chrome, aLL'],
             ],
             'redirects' => [['redirect_url' => 'https://v.example/']],
         ]]);
         self::assertSame(
-            ['United States(US),Canada(CA)', 'ALL'],
+            ['United States(US),Canada(CA)', 'ALL', 'ALL', 'Chrome,ALL'],
             array_column($this->rotators()->listRules($id)['data'][0]['criteria'], 'value'),
-            'split on commas and trimmed, as the page\'s editor sends them, and ALL as both redirects read it'
+            'split on commas and trimmed, as the page\'s editor sends them, and ALL in any case as ALL (Criterion)'
         );
+    }
+
+    /**
+     * ALL matches every visitor whatever the criterion's type, so a value
+     * holding it is not held to the type's own form first: an IP criterion
+     * of ALL, which the redirects read as every visitor, was refused as "not
+     * an IP address", and a rule stored that way could not be sent back as
+     * GET answered it. The same goes for a country or device list beside ALL.
+     */
+    public function testAValueHoldingAllIsTakenWhateverTheType(): void
+    {
+        $id = $this->rotator();
+        $this->set($id, [['rule_name' => 'stored', 'criteria' => [['type' => 'country', 'value' => 'ALL']],
+            'redirects' => [['redirect_url' => 'https://s.example/']]]]);
+        $retype = "UPDATE 202_rotator_rules_criteria SET type = 'ip' WHERE rotator_id = $id";
+        self::assertTrue(self::$db->query($retype), (string) self::$db->error);
+        $read = $this->rotators()->listRules($id)['data'];
+        $criteria = array_map(static fn (array $c): array => [$c['type'], $c['value']], $read[0]['criteria']);
+        self::assertSame([['ip', 'ALL']], $criteria);
+        $before = self::stored($id);
+
+        $answer = $this->set($id, $read);
+        self::assertSame(
+            ['added' => 0, 'updated' => 0, 'unchanged' => 1, 'removed' => 0],
+            array_slice($answer['changes'], 0, 4)
+        );
+        self::assertSame($before, self::stored($id), 'a GET body sent back writes the rule as it was');
+        // A PUT of one rule writes its entries afresh, with new ids.
+        $after = $this->rotators()->updateRule($id, (int) $read[0]['id'], $read[0])['data']['rules'][0];
+        self::assertSame(
+            [['ip', 'is', 'ALL']],
+            array_map(static fn (array $c): array => [$c['type'], $c['statement'], $c['value']], $after['criteria']),
+            'and so does a PUT of the one rule'
+        );
+
+        $this->set($id, [[
+            'rule_name' => 'spellings',
+            'criteria' => [
+                ['type' => 'ip', 'value' => ' all '],
+                ['type' => 'ip', 'statement' => 'is_not', 'value' => 'All'],
+                ['type' => 'ip', 'value' => '203.0.113.7, ALL'],
+                ['type' => 'country', 'value' => 'US, ALL'],
+                ['type' => 'device', 'value' => 'Mobile, all'],
+            ],
+            'redirects' => [['redirect_url' => 'https://s.example/']],
+        ]]);
+        self::assertSame(
+            ['ALL', 'ALL', '203.0.113.7,ALL', 'US,ALL', 'Mobile,ALL'],
+            array_column($this->rotators()->listRules($id)['data'][0]['criteria'], 'value')
+        );
+        try {
+            $this->set($id, [['rule_name' => 'no all', 'criteria' => [['type' => 'ip', 'value' => '203.0.113.500']],
+                'redirects' => [['redirect_url' => 'https://s.example/']]]]);
+            self::fail('an IP criterion that is not an address was taken');
+        } catch (ValidationException $e) {
+            self::assertSame(['rules.0.criteria.0.value'], array_keys($e->getFieldErrors()));
+        }
     }
 
     public function testAnEmptySetIsRefused(): void

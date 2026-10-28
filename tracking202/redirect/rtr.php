@@ -148,9 +148,9 @@ foreach ($rule_row as $rule) {
 			break;
 		}
 
-		$values = explode(',', (string) $criteria['value']);
+		$values = \Prosper202\Rotator\Criterion::values($criteria['value']);
 
-		if (in_array('ALL', $values) || in_array('all', $values)) {
+		if (\Prosper202\Rotator\Criterion::matchesEveryone($values)) {
 			
 			$rotate[] = true;
 

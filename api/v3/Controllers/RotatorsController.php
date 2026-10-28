@@ -11,6 +11,7 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\QueryInt;
+use Prosper202\Rotator\Criterion;
 use Prosper202\Rotator\IpCriterion;
 use Prosper202\Rotator\RuleOrder;
 
@@ -553,12 +554,11 @@ class RotatorsController
      * written. Each entry must be an object: an update that skipped a
      * malformed entry wrote the rest and said nothing (CLAUDE.md #4).
      *
-     * A criterion's values are stored as Setup › Redirectors stores them:
-     * split on commas, each trimmed, the empty ones dropped. The redirects
-     * compare each value whole, so `United States(US), Canada(CA)` stored as
-     * sent never matched Canada: the space stayed on its value. `all` is
-     * stored `ALL`, the one spelling both redirects read as every visitor
-     * (offrtr.php reads no other).
+     * A criterion's values are stored as Criterion::normalize() writes
+     * them, as Setup › Redirectors stores them: split on commas, each
+     * trimmed, the empty ones dropped, and every visitor as `ALL` in
+     * whatever case it was sent. The redirects compared each value whole, so
+     * `United States(US), Canada(CA)` stored as sent never matched Canada.
      *
      * A redirect read with GET from one the Setup page made the
      * auto-monetizer carries `auto_monetizer` (nestedKeyErrors() holds it
@@ -668,19 +668,19 @@ class RotatorsController
         if (!$stated) {
             $refuse('Unknown criterion statement', ["$at.statement" => 'is or is_not']);
         }
-        $values = [];
-        foreach ((is_string($value) || is_int($value)) ? explode(',', (string) $value) : [] as $part) {
-            $part = trim($part);
-            if ($part !== '') {
-                $values[] = $part === 'all' ? 'ALL' : $part;
-            }
-        }
+        $values = (is_string($value) || is_int($value)) ? Criterion::values(Criterion::normalize((string) $value)) : [];
         if ($values === []) {
             $refuse('A criterion needs a value', ["$at.value" => 'Comma-separated values, e.g. "United States(US)" (`p202 rotator criteria-values`), or ALL for every visitor']);
             return null;
         }
         if (!$typed) {
             return null;
+        }
+        // ALL matches every visitor whatever the type, so the type's own form
+        // is not asked of a value holding it: an IP criterion of ALL, which
+        // the redirects read as every visitor, was refused as no address.
+        if (Criterion::matchesEveryone($values)) {
+            return $stated ? ['type' => $type, 'statement' => $statement, 'value' => implode(',', $values)] : null;
         }
         // The redirects compare a country as "Name(CC)". A bare code — the
         // form these docs once showed — never matches, so the rule would sit
@@ -696,7 +696,7 @@ class RotatorsController
         // The redirects compare the visitor's device in lower case.
         if ($type === 'device') {
             foreach ($values as $device) {
-                if ($device !== 'ALL' && $device !== strtolower($device)) {
+                if ($device !== strtolower($device)) {
                     $refuse('A device is written in lower case', ["$at.value" => '"' . $device . '" never matches: the redirects compare a device in lower case, e.g. "' . strtolower($device) . '" (desktop, mobile, tablet, bot)']);
                     return null;
                 }

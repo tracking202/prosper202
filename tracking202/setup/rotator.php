@@ -408,7 +408,7 @@ if ($error) {
 										<?php foreach ($rules as $rule) {
 											$ruleId = (int) $rule['id'];
 											$conditions = array_map(
-												static fn (array $c): string => ($criterionTypes[$c['type']] ?? $c['type']) . ' ' . ($c['statement'] === 'is_not' ? 'is not' : 'is') . ' ' . $c['value'],
+												static fn (array $c): string => \Prosper202\Rotator\Criterion::describe((string) $c['type'], (string) $c['statement'], $c['value'], $criterionTypes),
 												$criteriaByRule[$ruleId] ?? []
 											);
 											$targets = array_map(
