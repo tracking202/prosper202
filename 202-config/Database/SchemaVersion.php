@@ -65,10 +65,14 @@ final class SchemaVersion
             . '. Open 202-config/upgrade.php on the site (signed in) to upgrade it.';
     }
 
-    /** Dotted numbers, as 202_version holds them: version_compare() orders anything else by its own rules. */
+    /**
+     * Dotted numbers, as 202_version holds them, with the one letter the
+     * ladder has written (1.9.30a, 1.9.30b, which version_compare() orders
+     * before 1.9.30): it orders anything else by its own rules.
+     */
     private static function isVersion(string $version): bool
     {
-        return preg_match('/\A\d+(\.\d+)*\z/', $version) === 1;
+        return preg_match('/\A\d+(\.\d+)*[a-z]?\z/', $version) === 1;
     }
 
     /** @return array{version: string}|array{error: string} */

@@ -89,6 +89,8 @@ final class SchemaVersionIntegrationTest extends TestCase
     {
         yield 'the version before' => ['1.9.78', true, 'the database needs an upgrade'];
         yield 'older, though greater as text' => ['1.9.8', true, 'the database needs an upgrade'];
+        yield 'a rung the ladder wrote with a letter' => ['1.9.30b', true, 'the database needs an upgrade'];
+        yield 'the other lettered rung' => ['1.9.30a', true, 'the database needs an upgrade'];
         yield 'the code\'s own' => [self::CODE, false, null];
         yield 'newer' => ['1.9.80', false, 'the database\'s schema is version 1.9.80, newer than this code'];
         yield 'newer, though smaller as text' => ['1.9.100', false, 'the database\'s schema is version 1.9.100, newer'];
