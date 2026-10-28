@@ -6,11 +6,15 @@ on:
       - '**.php'
       - 'tests/run-integration-suites.sh'
       - '.github/workflows/php-integration.yml'
+      # SummaryTotalVectorsIntegrationTest holds these answers to the server.
+      - 'tests/fixtures/summary-totals/**'
   pull_request:
     paths:
       - '**.php'
       - 'tests/run-integration-suites.sh'
       - '.github/workflows/php-integration.yml'
+      # SummaryTotalVectorsIntegrationTest holds these answers to the server.
+      - 'tests/fixtures/summary-totals/**'
 
 jobs:
   integration:
