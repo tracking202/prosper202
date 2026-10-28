@@ -19,6 +19,8 @@ System health checks, diagnostics, and administration.
 | `POST` | `/system/retention/delete-before` | Admin + `access_to_settings` | Schedule the deletion of click data from before a day (`?dry_run=1` previews) |
 | `GET` `PUT` | `/system/isp-lookup` | Admin + `access_to_settings` | MaxMind ISP and carrier lookup |
 | `GET` | `/system/integrations` | Admin + `access_to_api_integrations` | The notification URLs to paste into ClickBank, JVZoo, Zaxaa, Slack, PayKickstart |
+| `GET` | `/system/traffic-source-owners` | Admin + `access_to_settings` | Traffic sources another user's traffic source accounts name (taken by Setup's rename before 1.9.79) |
+| `POST` | `/system/traffic-source-owners/repair` | Admin + `access_to_settings`, and a user who may act on both users | Move one back, or every one the report names a user for |
 
 ## Health Check
 
@@ -376,3 +378,132 @@ IPN**, where the click is the `tid=[[subid]]` on the affiliate link, and
 click is the `subid=[[subid]]` on the buy link. A sale or rebill is recorded,
 a refund or chargeback reverses it (see
 [3rd party integrations](../tutorials-and-guides/09-3rd-party-integrations.md#jvzoo)).
+
+## Traffic sources taken before 1.9.79
+
+Before 1.9.79, renaming a traffic source on Setup › Traffic Sources wrote
+`UPDATE 202_ppc_networks SET user_id = <the renamer>, … WHERE ppc_network_id =
+<the posted id>` and checked nothing: a user who could open Setup could rename
+another user's source and take it into their own account. Its traffic source
+accounts stayed with their user, whose `GET /ppc-networks/{id}` then answered
+`404`, and whose reports put each click those accounts recorded from then on
+under no traffic source: a report row takes the source only from the click's
+own account. 1.9.79 refuses the
+rename of another user's source; these two routes find the sources taken
+before, and move one back on an operator's say-so. Nothing is moved by
+itself, and the upgrade neither looks nor moves.
+
+`GET /system/traffic-source-owners`
+
+```json
+{
+  "data": {
+    "sources": [
+      {
+        "ppc_network_id": 7, "ppc_network_name": "Google Ads", "removed": false, "ppc_network_time": 1100000000,
+        "owner": { "user_id": 3, "user_name": "taker", "user_deleted": false, "user_active": true, "ppc_accounts": 0, "removed_ppc_accounts": 0,
+                   "ppc_account_ids": [], "last_ppc_account_time": null, "clicks": 0, "conversions": 0 },
+        "named_by": [
+          { "user_id": 2, "user_name": "owner", "user_deleted": false, "user_active": true, "ppc_accounts": 2, "removed_ppc_accounts": 1,
+            "ppc_account_ids": [4, 5, 6], "last_ppc_account_time": 1000000000, "clicks": 1200, "conversions": 14 }
+        ],
+        "repair_to_user_id": 2,
+        "ambiguous": []
+      }
+    ],
+    "repairable": 1,
+    "ambiguous": 0
+  }
+}
+```
+
+A source is listed when traffic source accounts (live or removed) of a user
+other than its own name it: `owner` is the user it is in now, `named_by` each
+user whose accounts name it. For each, the accounts, the clicks recorded on
+them (each click once, whatever its visits) and the conversions that count on
+those clicks (a reversal is not counted again). The takeover changed nothing
+else, so a source taken with no account under it leaves no sign and is not
+listed.
+
+The same rows have other origins: before 1.9.77 the API put a traffic source
+account under whatever source it was sent (an account a user made on a source
+an admin set up for them), and an admin may have moved a source on purpose.
+`repair_to_user_id` is the one user a repair takes the source to without being
+told; it is null, and `ambiguous` lists why, when:
+
+- `owner_has_accounts`: the user it is in has accounts on it too;
+- `several_users`: accounts of more than one other user name it;
+- `saved_after_rename`: an account of another user was saved after the source
+  was last saved, or in the same second (the times are whole seconds). The
+  rename stamped `ppc_network_time`, so the accounts of the user a source was
+  taken from were all saved before it, while an account the API put on another
+  user's source was saved after that source. (A source renamed by its own user
+  after that reads as taken.)
+- `no_such_user`: a user it names has no user record;
+- `deleted_user`: a user it names is deleted. Nobody signs in as a deleted
+  user, and a source moved into that account would leave the report for good,
+  so no repair moves a source there, named or not (`to_user_id` naming one is
+  a `422`).
+
+A switched-off user (`user_active: false`, Account › Users' Active switch) can
+be switched on again, and the source is still theirs, so it is shown and does
+not stop a repair.
+
+`POST /system/traffic-source-owners/repair`
+
+- `{"ppc_network_id": 7}` moves the source to its `repair_to_user_id`.
+- `{"ppc_network_id": 9, "to_user_id": 4}` moves it to a user you name, who
+  must be one of its `named_by` users; the only way to move an ambiguous one.
+- `"owner_user_id"` and `"repair_to_user_id"` send back the report's
+  `owner.user_id` and `repair_to_user_id` as you read them (send
+  `repair_to_user_id` only without `to_user_id`). The report can change
+  between your read and the request: another admin's repair, an
+  account added or moved. With them, a source that is in another account by
+  now, or would go to another user, is a `422` naming the field rather than a
+  move from or to a user you were never shown:
+  `{"ppc_network_id": 7, "owner_user_id": 3, "repair_to_user_id": 2}`. The
+  CLI always sends them.
+- `{"all": true}` moves every source the report names a `repair_to_user_id`
+  for as the server reads it then, and answers the others under `skipped`
+  with a `reason`: `ambiguous`, `not_permitted` (the caller may not act on one
+  of the users) or `changed`. It takes neither field above, so it can move a
+  source that came into the report after you read it; the CLI's `--all` sends
+  one request per source it showed you instead.
+
+```json
+{ "data": { "repaired": [ { "ppc_network_id": 7, "ppc_network_name": "Google Ads", "removed": false, "from_user_id": 3, "to_user_id": 2, "ppc_accounts": 3, "queued_ppc_accounts": 3 } ], "skipped": [] } }
+```
+
+Each source moves in a transaction of its own: the two users, then the source,
+are locked, everything is read again, and nothing is written unless it still
+leads to the same two users. The users are locked first, as a user's deletion
+locks the user first, so a repair waits for a user being deleted and then
+reads them as deleted. The accounts naming the source are read, not locked: a
+click's report rollup share-locks the click's account and then its source, so
+a repair holding the source and waiting for an account deadlocked with it.
+Only the source's own user can add an account to it, and one added meanwhile
+leaves the source in the report. Only the source's `user_id` changes: its name stays
+as the rename left it, its custom variables go with it, and a removed source
+stays removed. Every account naming it is queued for the cron job's report
+rollup, so the report rows take the source from it again on the cron job's
+next run. Each move is written to the PHP error log: `Prosper202 traffic
+source repair: traffic source 7 ("Google Ads") moved from user 3 to user 2,
+whose 3 traffic source account(s) name it, at user 1's request`.
+
+A source the report does not list, an ambiguous one without `to_user_id`, a
+`to_user_id` that is not one of its `named_by` users, an `owner_user_id` or
+`repair_to_user_id` the report no longer gives, and a source that changed
+after it was read are each a `422` naming the field; nothing is moved.
+With `all`, a failure after some sources moved is a `500` naming them; sending
+the request again moves only what the report still names a user for.
+
+Both routes need an Admin or Super user key whose role has
+`access_to_settings`, like the rest of Account › Settings: the report names
+every user's sources. A repair moves a source out of one user's account into
+another's, so the key's user must also be one that may act on both, as
+Account › Users allows: only user 1 moves a source into or out of user 1's
+account, and an Admin's or the Super user's account needs
+`add_edit_delete_admin` (a `403` otherwise). Reads need `system:read`, the
+repair `system:write`. Neither can be staged, and the repair has no preview
+(`?dry_run=1` is a `422`): the report is what it would do. The CLI is
+`p202 system traffic-source-owners show` and `repair`.

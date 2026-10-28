@@ -1240,6 +1240,9 @@ p202 system retention show [--json]               # auto_delete_days, scheduled_
 p202 system retention set --days 0-36500 [--force]                 # asks when it keeps less than now
 p202 system retention delete-before --date YYYY-MM-DD [--dry-run] [--force]   # irreversible; always previews
 p202 system isp-lookup show | enable | disable [--json]
+p202 system traffic-source-owners show [--json]   # sources another user's traffic source accounts name (taken by Setup's rename before 1.9.79)
+p202 system traffic-source-owners repair <ppc_network_id> [--to-user-id N] [--force]   # reads the report, says what moves, asks
+p202 system traffic-source-owners repair --all [--force]                             # every source the report names a user for
 # Admin and a role with access_to_api_integrations:
 p202 system integrations [--json]   # notification URLs per integration; secret_stored, never the secret
 ```
@@ -1262,6 +1265,22 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
   cron job deletes every click recorded before midnight that began the day N
   days ago (server time), in batches over its next runs; the command itself
   deletes nothing, so say the deletion is set, not done.
+- `system traffic-source-owners` never moves a source by itself. `show` names,
+  per source, the user it is in, each user whose traffic source accounts name
+  it (with their accounts, clicks and conversions), `repair_to_user_id` and
+  `ambiguous` (`owner_has_accounts`, `several_users`, `saved_after_rename`,
+  `no_such_user`, `deleted_user`). `repair <id>` moves a source to its
+  `repair_to_user_id`; an ambiguous one is refused (exit 1, nothing sent)
+  unless `--to-user-id` names one of its `named_by` users, and never a deleted
+  one. Ask the user which before passing it: the same
+  rows come from accounts the API put on another user's source before 1.9.77.
+  `--all` leaves the ambiguous ones and repairs the rest one request at a
+  time. Each request sends back the owner and `repair_to_user_id` the report
+  showed: a source that changed since is refused (exit 1; under `--all`,
+  `skipped` with `reason: changed`), so read the report again before retrying.
+  `--all` stops at any other failure, names the sources already moved, and
+  prints nothing to stdout. Only the source's user changes. A move out of or
+  into user 1's, or an Admin's, account is a 403 unless the key is user 1's.
 - None of the `system` writes can be staged; `--staged` is refused before any
   request. AutoCron and "update available" are not exposed (they call a remote
   Prosper202 service).

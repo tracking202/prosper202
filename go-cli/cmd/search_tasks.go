@@ -144,6 +144,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"sign-in attempts", "login history", "failed logins"}},
 	{Run: "p202 system retention delete-before --dry-run",
 		Phrases: []string{"delete old clicks", "delete click data before a date", "purge old click data", "preview a click deletion"}},
+	{Run: "p202 system traffic-source-owners show",
+		Phrases: []string{"missing traffic source", "traffic source taken by another user", "traffic source in the wrong account", "move a traffic source back"}},
 
 	// Pages and tasks with no command.
 	{Pages: []string{"Home"},

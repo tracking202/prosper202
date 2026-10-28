@@ -1416,6 +1416,16 @@ or, for a table owned through its parent, to a listed check that runs first.
 It reads SQL only: a write a page makes through a class it calls is the
 class's to tie, and a user id is trusted by its name.
 
+Closing the write leaves what already went through it. The sources the
+rename took stay in the taker's account, and the sign they leave, a traffic
+source account whose user is not its source's, is also what the API wrote
+before 1.9.77 for an account put on a source an admin set up for a user. A
+sign with two origins is a report, not a repair: `TrafficSourceOwners` lists
+each source with what tells the origins apart (whether its own user has
+accounts on it, which was saved first) and moves one only on an admin's
+say-so, never in the upgrade. When a fix closes a hole, ask what the hole left
+behind, and what else leaves the same rows.
+
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 17305ee made the API answer money as numbers rather than mysqli's decimal
 strings — right at the edge, and every PHP suite stayed green. It broke four
@@ -1746,6 +1756,21 @@ through the `click_lead` index, whose lock covered every lead in the
 partition; and a join to `202_clicks_rotator` held its gap on a click with no
 route row, so every new redirector click's route waited for the conversion's
 commit. Measure a locking read on the path it runs on, joins included.
+
+Lock order is the other half, and a statement that only reads can hold one:
+under REPEATABLE READ an `INSERT … SELECT` share-locks the rows it reads, in
+its join order. The traffic source repair locked the source and then the
+accounts naming it; a click's rollup share-locks the click's account and then
+that account's source, and the two deadlocked on the first try (measured;
+`TrafficSourceOwnersIntegrationTest` holds it). Before adding a lock, list the
+statements that lock the same tables, rollups and other `INSERT … SELECT`
+copies included, and take the rows in their order or lock fewer of them. A
+re-check under the lock covers the window after the plan, not the one before
+it: the repair compared its rows with the plan it had made a moment earlier
+in the same request, while the operator had been shown a report read minutes
+before (and the CLI's `--all` sent `{"all": true}`, which moved whatever the
+server's own reading named). A confirmation carries what was shown, and the
+server compares with that (`owner_user_id`, `repair_to_user_id`).
 
 What the refusal does not see: a statement run on the raw handle
 (`writeConnection()`), which Connection never classifies; a read

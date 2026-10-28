@@ -1774,7 +1774,7 @@ p202 system metrics      # Sync counters, job queue and active alerts
 | Command              | Auth required |
 |----------------------|---------------|
 | `p202 system health` | No            |
-| `p202 system info`, `login-log`, `retention …`, `isp-lookup …` | Admin, and a role with `access_to_settings` |
+| `p202 system info`, `login-log`, `retention …`, `isp-lookup …`, `traffic-source-owners …` | Admin, and a role with `access_to_settings` |
 | `p202 system integrations` | Admin, and a role with `access_to_api_integrations` |
 | All others           | Admin         |
 
@@ -1822,6 +1822,45 @@ remote Prosper202 service for both.
 `retention set --days N` makes the cron job delete every click recorded
 before midnight that began the day N days ago (server time), from every
 click table, in batches over its next runs; N whole days and today are kept.
+
+### Traffic sources taken before 1.9.79
+
+Before 1.9.79, renaming a traffic source on Setup › Traffic Sources also moved
+it into the account of the user who saved the rename, and nothing checked whose
+source it was: a user who could open Setup could take another user's source.
+Its traffic source accounts stayed with their user, whose reports then lost the
+source. 1.9.79 stops new takeovers; these find and move back the old ones.
+
+```bash
+p202 system traffic-source-owners show                  # each source other users' accounts name: who has it,
+                                                        # whose accounts name it (accounts, clicks, conversions),
+                                                        # repair_to, and why it is ambiguous
+p202 system traffic-source-owners repair 12             # says what moves where, then asks; --force skips
+p202 system traffic-source-owners repair 12 --to-user-id 3   # an ambiguous source, to a user you name
+p202 system traffic-source-owners repair --all          # every source the report names a user for, one by one
+```
+
+Nothing is moved by itself, the upgrade included, because the same rows have
+other origins: before 1.9.77 the API put a traffic source account under
+whatever source it was sent, and an admin may have moved a source on purpose.
+`show` marks a source `ambiguous` when its own user has accounts on it too
+(`owner_has_accounts`), accounts of several users name it (`several_users`),
+an account was saved after the source was, or in its second
+(`saved_after_rename`, the shape the API made), a user has no record
+(`no_such_user`), or a user is deleted (`deleted_user`); such a source moves
+only with `--to-user-id`, naming one of the users whose accounts name it, and
+`--all` leaves it. No source moves into a deleted user's account; a
+switched-off user's is shown as such and still repaired. A repair changes only the source's user: the name stays as
+the rename left it and a removed source stays removed. Its accounts' clicks are
+queued for the cron job's report rollup, and the move is logged on the server.
+Each request sends back the user the source was in and the user it was going
+to as the report showed them, so a source that has changed since (another
+admin's repair, an account added or moved) is refused and left as it is;
+under `--all` it is listed as skipped with the reason `changed`, and a failure
+of any other kind stops the run and names the sources already moved.
+It needs a key whose user may act on both users, as Account › Users allows
+(only user 1 moves a source into or out of user 1's account). A source taken
+with no traffic source account under it leaves no sign and is not listed.
 
 For an https base URL, `system health` checks the host's TLS certificate before it calls the API:
 a verified handshake on its own connection, with no HTTP request. It adds `tls_status`,
