@@ -174,4 +174,43 @@ final class PreferencesWriteIntegrationTest extends TestCase
         self::assertSame('1', (string) self::$db->query('SELECT COUNT(*) FROM 202_charts WHERE user_id = ' . self::USER)->fetch_row()[0], 'updated, not duplicated');
         self::assertSame('days', $this->prefs()['chart_time_range']);
     }
+
+    /**
+     * GET /users/{id}/preferences answers with the account's row, and the
+     * PayKickstart IPN keys are never in it: whether any is stored, as every
+     * secret (ServedPreferences), on the GET and on the PUT's answer.
+     */
+    public function testPayKickstartKeysAreWrittenAndNeverServed(): void
+    {
+        $users = new UsersController(self::$db);
+        $column = 'paykickstart_ipn_secret_keys';
+        $answer = $users->updatePreferences(self::USER, [$column => 'pk-key-one-0001, pk-key-two-0002']);
+
+        foreach ([$answer['data'], $this->prefs()] as $served) {
+            self::assertSame(['stored' => true], $served[$column]);
+            self::assertStringNotContainsString('pk-key-', (string) json_encode($served));
+        }
+        $stored = self::$db->query("SELECT $column FROM 202_users_pref WHERE user_id = " . self::USER)->fetch_row()[0];
+        self::assertSame("pk-key-one-0001\npk-key-two-0002", $stored);
+
+        try {
+            $users->updatePreferences(self::USER, [$column => 'pk-key-one-0001,short']);
+            self::fail('a key that is not one was written');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                [$column => 'Key 2 is 5 characters long; a PayKickstart IPN secret key is 8 to 128.'],
+                $e->getFieldErrors()
+            );
+        }
+        $stored = self::$db->query("SELECT $column FROM 202_users_pref WHERE user_id = " . self::USER)->fetch_row()[0];
+        self::assertSame("pk-key-one-0001\npk-key-two-0002", $stored, 'nothing written');
+
+        // Its stored state sent back keeps the keys, as GET's body does.
+        $users->updatePreferences(self::USER, [$column => ['stored' => true], 'user_pref_limit' => '25']);
+        $stored = self::$db->query("SELECT $column FROM 202_users_pref WHERE user_id = " . self::USER)->fetch_row()[0];
+        self::assertSame("pk-key-one-0001\npk-key-two-0002", $stored, 'kept');
+
+        $users->updatePreferences(self::USER, [$column => '']);
+        self::assertSame(['stored' => false], $this->prefs()[$column]);
+    }
 }

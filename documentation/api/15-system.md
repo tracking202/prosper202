@@ -293,7 +293,7 @@ minutes.
       { "integration": "jvzoo", "name": "JVZoo", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php", "secret_stored": false },
       { "integration": "zaxaa", "name": "Zaxaa", "label": "ZPN URL", "url": "https://track.example.com/tracking202/static/zpn.php", "secret_stored": false },
       { "integration": "slack", "name": "Slack", "label": "Prosper202 webhook", "url": "https://track.example.com/tracking202/static/slack.php", "secret_stored": false },
-      { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": null }
+      { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": true, "keys_stored": 2 }
     ]
   }
 }
@@ -302,5 +302,14 @@ minutes.
 The base is the one tracker links use: user 1's tracking domain (or this
 server's name) and the install's path. `secret_stored` says whether the
 caller has stored the key each notification is checked with (null: it needs
-none); the secrets are never served — `PUT /users/{id}/preferences` sets them,
-and its `GET` answers each only as `{"stored": true}` or `{"stored": false}`.
+none); PayKickstart's `keys_stored` counts its IPN secret keys, one for each
+PayKickstart campaign. The secrets are never served — `PUT
+/users/{id}/preferences` sets them, and its `GET` answers each only as
+`{"stored": true}` or `{"stored": false}`.
+
+PayKickstart's URL takes its **product (vendor) IPN**, which a vendor sets
+under each product's IPN Integration tab: a sale is recorded on the click the
+checkout link's `subid=[[subid]]` names, and a refund reverses it (see
+[3rd party integrations](../tutorials-and-guides/09-3rd-party-integrations.md#paykickstart)).
+PayKickstart's Affiliate IPN carries no click and no signature, so it cannot
+update conversions; this URL answers it `415`, saying so.

@@ -174,7 +174,7 @@ Each row (`data[]`) carries:
 | `not_counted_reason` | when it is not: `deleted`, `unpaid` (a tracked outcome), `superseded` (see `superseded_reason`: `replace` — the campaign pays the latest conversion; `batch` — a newer revenue upload; `pre_ledger` — recorded before the ledger, its value carried in as a `legacy_baseline` row; `replay` or `reevaluation` — the goals engine re-decided the outcome), or `not_netted` (a reversal of a sale that does not count) |
 | `superseded_by` | the row that replaced it, when there is one |
 | `explanation` | the reason as a sentence |
-| `source`, `source_label` | what produced the row: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` |
+| `source`, `source_label` | what produced the row: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `app_install`, `goal`, `legacy_baseline` |
 | `source_ref`, `linked_to` | what that is, resolved: a goal and its version (`Goal "Level 3" v2`), a revenue upload and its file, the conversion a reversal nets, or the API key that wrote the row (named by when it was created — the reference is a digest, never the key) |
 | `event_name`, `transaction_id`, `reverses_conv_id` | the event that reached a goal, the network's id, and the sale a reversal reverses |
 

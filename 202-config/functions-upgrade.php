@@ -4478,6 +4478,8 @@ class UPGRADE
                 // 202_google gains gbraid, wbraid, ttclid, msclkid and fbclid
                 // (Prosper202\Click\ClickRecord).
                 \Prosper202\Database\Tables\TrackingTables::google(),
+                // 202_users_pref gains paykickstart_ipn_secret_keys, the keys
+                // PayKickstart's product IPN is verified with (PayKickstartKeys).
                 \Prosper202\Database\Tables\UserTables::usersPref(),
                 \Prosper202\Database\Tables\RotatorTables::rotatorRules(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);

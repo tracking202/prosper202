@@ -88,7 +88,8 @@ free-text value given as `""` clears it. `GET` returns the whole preferences
 row, and never an integration secret: each one is answered as whether one is
 stored, `"cb_key": {"stored": true}` (or `false`). Those are the ClickBank,
 JVZoo, Zaxaa and IPQS keys, the Slack webhook, the RevContent id and secret,
-and the Landing Page Optimizer's `lpo_site_key` and `lpo_bridge_config`. A
+the Landing Page Optimizer's `lpo_site_key` and `lpo_bridge_config`, and the
+PayKickstart IPN secret keys (`GET /system/integrations` says how many). A
 column is served as stored only once it is on the list of columns that hold
 no credential (`Prosper202\User\ServedPreferences`), so a new one is a secret
 until someone decides otherwise.
@@ -118,6 +119,7 @@ but unchanged keys is `422` (`No valid fields to update`).
 | `chart_time_range` | `hours`, `days` | Overview chart (kept in `202_charts`, where the chart reads it) |
 | `user_slack_incoming_webhook` | an `https://` URL, or `""` | Integrations |
 | `ipqs_api_key`, `cb_key`, `zaxaa_api_signature`, `jvzoo_ipn_secret_key` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
+| `paykickstart_ipn_secret_keys` | the keys PayKickstart's product IPN is verified with, one for each PayKickstart campaign, separated by commas, spaces or new lines: at most 20, each 8 to 128 letters, digits and punctuation other than the comma. The list **replaces** every stored key (none can be read back), so send them all; `""` removes them. A key that is not one is refused by its place in the list (`Key 2 is 5 characters long; …`), never by its text | Integrations |
 | `user_ltv_customer_cparam` | `0` (off), `1`-`4` (c1-c4) | LTV › Settings |
 | `user_ltv_personalization_fields` | comma list of `first_name`, `last_name`, `company`, `city`, `country`, `cf:<field_key>`, `rec:next_offer` | LTV › Settings |
 | `user_ltv_score_weights` | `volume:N,time:N,scroll:N,video:N,recency:N` summing to 100, or `""` for the defaults | LTV › Settings |

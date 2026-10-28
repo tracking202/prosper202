@@ -1,6 +1,6 @@
 # 3rd Party Integrations
 
-Currently inside your Prosper202 Install, we support a number of 3rd party integrations available to you. Below are the three integrations you will find:
+Currently inside your Prosper202 Install, we support a number of 3rd party integrations available to you. Below are some of the integrations you will find:
 
 ## Direct Network Integration
 
@@ -13,6 +13,69 @@ Each user's networks are their own: My Account › 3rd Party API Integrations li
 Clickbank doesn't support Postback or custom conversion pixels, so to get real-time reporting of sales you can setup our Clickbank Sales Notification integration.
 
 **Video:** [Setting Up Prosper202 and Clickbank Instant Notification](https://www.youtube.com/watch?v=M6zo3XuExL0&feature=youtu.be)
+
+## PayKickstart
+
+For a **vendor** selling through PayKickstart: Prosper202 records each sale and
+rebill of your product on the click that sent the buyer, and a refund reverses
+the sale, from PayKickstart's product IPN. Under **Account › API integrations ›
+PayKickstart**:
+
+1. Make each campaign's offer URL its PayKickstart checkout link with
+   `subid=[[subid]]` added, such as
+   `https://app.paykickstart.com/checkout/123?subid=[[subid]]`. A tracker fills
+   `[[subid]]` with the click id, and PayKickstart sends it back in the IPN as
+   `custom_subid`. For a subscription, set the campaign's **When a click
+   converts more than once** (under Advanced) to **Add them up**: with **Keep
+   the latest**, each rebill replaces the click's value rather than adding to
+   it.
+2. In PayKickstart, paste the page's IPN URL
+   (`https://<your tracking domain>/tracking202/static/paykickstart.php`) into
+   the **IPN Integration** tab of each product.
+3. Store the **IPN secret key** of each PayKickstart campaign on the page (every
+   campaign has its own, in its settings). Prosper202 verifies each IPN's
+   `hash` with the stored keys, and the account whose key verifies it is the
+   one it records for; an IPN no stored key verifies is refused. The keys are
+   never shown back: the page lists their last four characters, and the API
+   (`PUT /users/{id}/preferences`, `p202 user prefs update
+   --paykickstart-ipn-secret-keys`) how many are stored.
+
+What each IPN does, and what PayKickstart's IPN log shows for it:
+
+| IPN | Prosper202 | Status |
+| --- | ---------- | ------ |
+| `sales` (a first payment or a rebill) | a conversion on the click, source `paykickstart`, under its `transaction_id`, worth its `amount` | `200 recorded` |
+| the same `sales` again | nothing; a retry stating another amount is refused, and so is a sale whose refund is on file, naming the reversal to delete if the refund was undone | `200 duplicate` / `409` |
+| `refund` | a reversal of the sale its `transaction_id` names, by its `amount` (the whole sale when it carries none or 0); a sale is reversed once | `200 reversed`, `404` when no such sale is on the click |
+| a `refund` of a sale already reversed | nothing; a refund that takes back another amount than the one on file is refused, naming both: a full refund after a partial one says how much is still credited. Once that reversal is deleted, a later refund reverses the sale again; the deleted one's own refund, sent again unchanged, changes nothing | `200 duplicate` / `409` |
+| test mode (`mode=test`) | nothing | `200 test` |
+| `subscription-payment` and every other event | nothing (`sales` already counts every payment) | `200 ignored` |
+| a sale whose checkout carried no subid | nothing: no click to credit | `200 no_click` |
+| a `custom_subid` that is not a click of the account | nothing | `404` |
+| a hash no stored key verifies | nothing | `403` |
+| a malformed field (an amount such as `1,000`, `custom_subid=[[subid]]`, a `transaction_time` that is not a Unix time) | nothing | `400`, naming the field |
+| an IPN that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
+| an IPN that could not be recorded just now | nothing that a retry would double: a transaction id is recorded once | `500` |
+
+A sale or refund is dated by its `transaction_time`, so one PayKickstart sends
+again days later still falls on the day it happened; without one, it is
+dated when it arrives. A time before the click (for a refund, before its
+sale) is dated at the click (the sale), and one ahead of this server's
+clock at its arrival; the answer says so. Reports by click day (`p202
+report`) are unchanged by this: they count a conversion on its click's day.
+
+Each IPN is logged in the server's error log in one line: the outcome, the
+event, the click, the transaction and the account, never a key or the
+buyer's details. Use an `https://` IPN URL: PayKickstart's signature covers the
+values of an IPN but not which field each one is in, so whoever holds a signed
+IPN can move its values between fields.
+
+For an **affiliate** promoting PayKickstart products: PayKickstart's Affiliate
+IPN cannot update conversions. It carries no click (PayKickstart allows no
+custom variables in it, and the `tid` on your affiliate link shows only in
+your PayKickstart account) and it is not signed. Leave the IPN URL out of the
+Affiliate IPN setting; if you have it there, Prosper202 answers it `415`,
+saying so.
 
 ## Slack Integration
 

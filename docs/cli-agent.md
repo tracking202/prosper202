@@ -844,7 +844,7 @@ p202 click update-cpc --from YYYY-MM-DD --to YYYY-MM-DD --cpc D
 ```
 p202 conversion list   [--limit 50] [--offset 0] [--campaign-id N] [--all]
                        [--time-from T] [--time-to T] [--click-id N]
-                       [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|app_install|goal|legacy_baseline]
+                       [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|paykickstart|app_install|goal|legacy_baseline]
                        [--goal N] [--json]
 p202 conversion get    <id> [--json]
 p202 conversion create --click-id N [--payout F] [--transaction-id S] [--conv-time T] [--idempotency-key S]

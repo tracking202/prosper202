@@ -784,11 +784,13 @@ paths:
       summary: The notification URLs Account › API integrations hands out
       description: |
         The URL to paste into ClickBank (INS), JVZoo (IPN), Zaxaa (ZPN),
-        Slack and PayKickstart (IPN), on this install's tracking base (user
-        1's tracking domain or this server's name, and the install's path —
-        the base tracker links use), and whether the caller has stored the
-        secret each is checked with (`secret_stored`; null when it needs
-        none). The secrets are never served.
+        Slack and PayKickstart (the product IPN, set under each product's IPN
+        Integration tab), on this install's tracking base (user 1's tracking
+        domain or this server's name, and the install's path — the base
+        tracker links use), and whether the caller has stored the secret
+        each is checked with (`secret_stored`; for PayKickstart,
+        `keys_stored` counts its keys, one for each PayKickstart campaign).
+        The secrets are never served.
 
         Admin (or Super user) with the role permission
         `access_to_api_integrations`, as the page asks, and `system:read`.
@@ -827,6 +829,9 @@ paths:
                             verified:
                               type: boolean
                               description: ClickBank only
+                            keys_stored:
+                              type: integer
+                              description: PayKickstart only, how many IPN secret keys are stored
         "403":
           $ref: "#/components/responses/Forbidden"
 
@@ -11672,7 +11677,7 @@ components:
     ConversionSource:
       type: string
       description: What produced a ledger row.
-      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, app_install, goal, legacy_baseline]
+      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, paykickstart, app_install, goal, legacy_baseline]
 
     ClickConversion:
       type: object
@@ -13134,6 +13139,7 @@ components:
         revcontent_user_secret: {$ref: "#/components/schemas/StoredSecret"}
         lpo_site_key: {$ref: "#/components/schemas/StoredSecret"}
         lpo_bridge_config: {$ref: "#/components/schemas/StoredSecret"}
+        paykickstart_ipn_secret_keys: {$ref: "#/components/schemas/StoredSecret"}
 
     UserPreferencesUpdate:
       type: object
@@ -13200,6 +13206,18 @@ components:
         jvzoo_ipn_secret_key:
           oneOf:
             - {type: string, maxLength: 250}
+            - $ref: "#/components/schemas/StoredSecret"
+        paykickstart_ipn_secret_keys:
+          oneOf:
+            - type: string
+              description: >-
+                The PayKickstart IPN secret keys the product IPN
+                (tracking202/static/paykickstart.php) is verified with, one for
+                each PayKickstart campaign, separated by commas, spaces or new
+                lines: at most 20, each 8 to 128 letters, digits and punctuation
+                other than the comma. The list replaces every stored key, since
+                none can be read back; "" removes them all. A key that is not one
+                is a 422 naming it by its place in the list.
             - $ref: "#/components/schemas/StoredSecret"
         user_ltv_customer_cparam: {type: integer, enum: [0, 1, 2, 3, 4], description: "c1-c4 carries a customer id; 0 off."}
         user_ltv_personalization_fields: {type: string, maxLength: 500, description: "Comma list of first_name, last_name, company, city, country, cf:<field_key>, rec:next_offer."}

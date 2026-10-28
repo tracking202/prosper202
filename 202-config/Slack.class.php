@@ -134,6 +134,7 @@ class Slack {
       'zaxaa_api_signature_updated' => '#[user] entered a new Zaxaa API Signature',
 	  'jvzoo_secret_key_updated' => '#[user] entered a new JVZoo Secret Key',
 	  'ipqs_api_key_updated' => '#[user] entered a new IPQualityScore API Key',
+	  'paykickstart_ipn_keys_updated' => '#[user] changed the PayKickstart IPN secret keys',
 
       //User Management
       'user_management_user' => '#[user] [type] a Prosper202 ClickServer User: #[username] ([role])',
