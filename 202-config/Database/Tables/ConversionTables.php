@@ -55,6 +55,8 @@ final class ConversionTables
             self::notificationCorrectionUrls(),
             self::attributionRollupDirty(),
             self::attributionRollupDirtyClicks(),
+            self::offlineConversionFeeds(),
+            self::offlineConversionNames(),
         ];
     }
 
@@ -317,6 +319,58 @@ final class ConversionTables
                 `click_id` bigint(20) unsigned NOT NULL,
                 PRIMARY KEY (`dirty_id`),
                 KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The scheduled fetch URLs of offline conversion files
+     * (Prosper202\OfflineConversion\FeedStore): one row per URL an ad
+     * platform fetches. The URL carries a key of which only the SHA-256 is
+     * kept, so a read of the table hands out no URL; replacing the key
+     * rewrites key_hash, and deleting the row ends the URL.
+     */
+    public static function offlineConversionFeeds(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::OFFLINE_CONVERSION_FEEDS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::OFFLINE_CONVERSION_FEEDS . "` (
+                `feed_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `format` varchar(16) NOT NULL,
+                `key_hash` binary(32) NOT NULL,
+                `days` tinyint(3) unsigned NOT NULL DEFAULT '7',
+                `conversion_name` varchar(100) DEFAULT NULL,
+                `ad_user_data` varchar(8) NOT NULL DEFAULT '',
+                `ad_personalization` varchar(8) NOT NULL DEFAULT '',
+                `created_at` int(10) unsigned NOT NULL,
+                `key_created_at` int(10) unsigned NOT NULL,
+                `last_fetched_at` int(10) unsigned DEFAULT NULL,
+                `last_fetch_rows` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`feed_id`),
+                UNIQUE KEY `key_hash` (`key_hash`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The conversion action (Google Ads) or goal (Microsoft Advertising) a
+     * campaign's conversions are uploaded as (Prosper202\OfflineConversion\
+     * ConversionNames). aff_campaign_id 0 is the account's name for every
+     * campaign without one of its own. platform is one of two fixed words.
+     */
+    public static function offlineConversionNames(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::OFFLINE_CONVERSION_NAMES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::OFFLINE_CONVERSION_NAMES . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `platform` varchar(16) COLLATE utf8mb4_bin NOT NULL,
+                `aff_campaign_id` mediumint(8) unsigned NOT NULL,
+                `conversion_name` varchar(100) NOT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`,`platform`,`aff_campaign_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

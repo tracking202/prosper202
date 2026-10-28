@@ -122,6 +122,19 @@ if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D
     exit;
 }
 
+// ─── An offline conversion file's fetch URL (pre-auth) ───────────────
+// GET /offline-conversions/{key}, which Google Ads or Microsoft
+// Advertising fetch on a schedule: the key in the path is the credential
+// (Prosper202\OfflineConversion\FeedStore). Every refusal is the same 404
+// (OfflineConversionsController::serveFeed()), and the soft rate limit keys
+// on the TCP peer, never on a header the sender chooses (CLAUDE.md #16).
+if ($path === '/offline-conversions' || str_starts_with($path, '/offline-conversions/')) {
+    $feedMethod = \Api\V3\Apps\PublicIntake::preflight(0, ['GET']);
+    \Api\V3\Apps\PublicIntake::rateLimit('offline-conversions', 60, 60);
+    \Api\V3\Controllers\OfflineConversionsController::serveFeed($db, substr($path, strlen('/offline-conversions/')), $queryParams, $feedMethod);
+    exit;
+}
+
 $payload = [];
 if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
     // 1 MB, except for a revenue report upload, whose body carries the
@@ -513,6 +526,16 @@ try {
         $updateSection = static function () use ($auth, $db): void {
             $auth->requirePermission($db, 'access_to_update_section');
         };
+        // The offline conversion import files (Setup › Offline Conversions):
+        // every conversion's value, which a role without campaign data is
+        // not shown, and a CSV that cannot be masked as the JSON reads are,
+        // so the role is refused. Before /{id}, which would read the segment
+        // as an id.
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\OfflineConversionsController::class;
+            $r->get('/offline-export', fn() => $crud($cls)->export($queryParams));
+            $r->get('/offline-export/summary', fn() => $crud($cls)->summary($queryParams));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_campaign_data'); }]);
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
@@ -1618,6 +1641,11 @@ try {
         header('Content-Length: ' . strlen((string) $file['body']));
         header('Cache-Control: no-store');
         echo (string) $file['body'];
+    } elseif (isset($response['_stream']) && is_array($response['_stream'])) {
+        // A file written to a temporary stream (an offline conversion file),
+        // sent without reading it into memory.
+        $stream = $response['_stream'];
+        \Prosper202\OfflineConversion\OfflineFile::send($stream['handle'], (string) $stream['filename'], $stream['summary'] ?? null);
     } else {
         $status = $response['_status'] ?? 200;
         unset($response['_status']);

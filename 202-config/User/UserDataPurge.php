@@ -139,10 +139,12 @@ final class UserDataPurge
 
     /**
      * The user's revenue-upload batches: the file names they uploaded. The
-     * conversion rows the batches wrote stay, with the clicks.
+     * conversion rows the batches wrote stay, with the clicks. And the
+     * conversion names their offline conversion files were sent under.
      */
     public const CONVERSION_STATEMENTS = [
         'DELETE FROM 202_conversion_uploads WHERE user_id = ?',
+        'DELETE FROM 202_offline_conversion_names WHERE user_id = ?',
     ];
 
     /** Queued traffic-source postbacks, and where corrections to them would go: a deleted account's never go out. */
@@ -154,11 +156,16 @@ final class UserDataPurge
     /** Taken first in the delete's transaction: see deleteUser(). */
     public const LOCK_USER = 'SELECT user_id FROM 202_users WHERE user_id = ? FOR UPDATE';
 
-    /** What lets the user act at all through the API; revoked with the rest. */
+    /**
+     * What lets the user act at all through the API, and the offline
+     * conversion files' fetch URLs, which hand out the user's conversions
+     * to whoever holds one; revoked with the rest.
+     */
     private const ACCESS_STATEMENTS = [
         'DELETE FROM 202_api_keys WHERE user_id = ?',
         'DELETE FROM 202_auth_keys WHERE user_id = ?',
         'DELETE FROM 202_last_ips WHERE user_id = ?',
+        'DELETE FROM 202_offline_conversion_feeds WHERE user_id = ?',
     ];
 
     /**

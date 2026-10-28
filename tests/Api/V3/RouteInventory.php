@@ -41,6 +41,7 @@ final class RouteInventory
         "\$path === '/connect' && \$method === 'GET'" => ['GET /connect'],
         "\$path === '/connect/token' && \$method === 'POST'" => ['POST /connect/token'],
         "\$path === '/connect/revoke' && \$method === 'POST'" => ['POST /connect/revoke'],
+        "str_starts_with(\$path, '/offline-conversions/')" => ['GET /offline-conversions/{}'],
     ];
 
     private const ROUTE_METHODS = ['get' => 'GET', 'post' => 'POST', 'put' => 'PUT', 'patch' => 'PATCH', 'delete' => 'DELETE'];

@@ -2041,6 +2041,111 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /conversions/offline-export:
+    get:
+      tags: [Conversions]
+      summary: The account's conversions as Google Ads' or Microsoft Advertising's offline conversion import file
+      description: |
+        A CSV to upload to Google Ads or Microsoft Advertising, so their
+        bidding learns which clicks converted (Setup › Offline Conversions
+        downloads the same file, and its fetch URLs serve it on a schedule).
+        `format` chooses the layout:
+
+        - `google`: Google Ads Data Manager's offline conversion import.
+          Headers on the first line; `Google Click ID`, `GBRAID` and `WBRAID`
+          each in a column, every id the click came with written; then
+          `Conversion Name`, `Conversion Time` (the account's zone, the offset
+          in force at that instant, `2026-10-27T02:22:48-04:00`), `Conversion
+          Value`, `Conversion Currency`, `Order ID` (`P202-` and the
+          conversion's id, the same on every fetch), `Ad User Data` and `Ad
+          Personalization`.
+        - `google_uploads`: Google's classic template for Goals › Conversions
+          › Uploads: a `Parameters:TimeZone=` line naming the account's zone,
+          then the same columns without GBRAID and WBRAID, which that template
+          has no column for (a click with only those is left out).
+        - `microsoft`: Microsoft Advertising's template: `Parameters:TimeZone=+0000`,
+          then `Conversion Name`, `Conversion Time` (UTC), `Conversion Value`
+          (three decimals), `Conversion Currency`, `Microsoft Click ID` and the
+          two hashed contact columns, empty.
+
+        A conversion is a line when it counts now (net of partial refunds; one
+        refunded in full, deleted, replaced on its click or not payable is
+        not), its click was named (`match_method` `click_id` or `cookie`; a
+        click found by a visitor id or guessed from an IP address is left
+        out), its click is this account's, came with an id the platform
+        issues, and is 6 hours to 90 days old, its value is not negative, and
+        it has a conversion name (its campaign's, or the account's default,
+        set on the Setup page; `conversion_name` names every line instead).
+        The value is the conversion's amount in the account's currency, which
+        is what the ledger records. Lines are newest first; a Microsoft file
+        stops at Microsoft's 100,000 rows. `X-P202-Rows` and `X-P202-Left-Out`
+        say how many conversions are in the file and how many were left out;
+        `GET /conversions/offline-export/summary` says why. A role without
+        access to campaign data is refused: the file carries every value.
+      operationId: getConversionOfflineExport
+      parameters:
+        - $ref: "#/components/parameters/offlineExportFormat"
+        - $ref: "#/components/parameters/offlineExportDays"
+        - $ref: "#/components/parameters/offlineExportCampaign"
+        - $ref: "#/components/parameters/offlineExportConversionName"
+        - $ref: "#/components/parameters/offlineExportAdUserData"
+        - $ref: "#/components/parameters/offlineExportAdPersonalization"
+      responses:
+        "200":
+          description: The file
+          headers:
+            X-P202-Rows:
+              description: Conversions in the file
+              schema:
+                type: integer
+            X-P202-Left-Out:
+              description: Conversions in the window left out of it
+              schema:
+                type: integer
+          content:
+            text/csv:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/offline-export/summary:
+    get:
+      tags: [Conversions]
+      summary: What an offline conversion file would hold, and every conversion it would leave out, by reason
+      description: |
+        The same parameters and the same rule as `GET
+        /conversions/offline-export`, answered as counts: `conversions` in the
+        window (reversals are not conversions), `rows` the file would hold, and
+        `left_out`, every reason with its count (each conversion counted once,
+        under the first reason that applies, in the order listed), so `rows`
+        and the counts add up to `conversions`. `reasons` gives each reason's
+        sentence.
+      operationId: getConversionOfflineExportSummary
+      parameters:
+        - $ref: "#/components/parameters/offlineExportFormat"
+        - $ref: "#/components/parameters/offlineExportDays"
+        - $ref: "#/components/parameters/offlineExportCampaign"
+        - $ref: "#/components/parameters/offlineExportConversionName"
+        - $ref: "#/components/parameters/offlineExportAdUserData"
+        - $ref: "#/components/parameters/offlineExportAdPersonalization"
+      responses:
+        "200":
+          description: The counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/OfflineConversionSummary"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /conversions/{id}:
     parameters:
       - $ref: "#/components/parameters/resourceId"
@@ -5450,6 +5555,55 @@ paths:
           $ref: "#/components/responses/AppRateLimited"
         "405":
           description: Only GET is served
+
+  /offline-conversions/{key}:
+    get:
+      tags: [Conversions]
+      summary: An offline conversion file's scheduled fetch URL (no API key)
+      description: |
+        The URL Google Ads or Microsoft Advertising fetches an account's
+        offline conversion file from on a schedule, made on Setup › Offline
+        Conversions, which shows it once. The key in the path is the
+        credential: 43 characters, of which only a hash is stored. The URL
+        handed out ends `?file=conversions.csv`, since Google asks for a URL
+        ending in the file's extension; `file` is the only parameter, and
+        `{key}.csv` answers too. The file is `GET
+        /conversions/offline-export`'s, with the URL's own settings (its
+        format, window, conversion name and consent columns). A key of the
+        wrong shape, one that opens nothing, one replaced or deleted, and one
+        whose account is deactivated or whose role does not read campaign
+        data all answer the same `404`. Rate-limited per peer address.
+      operationId: getOfflineConversionFeed
+      security: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9_-]{43}(\\.csv)?$"
+        - name: file
+          in: query
+          description: Any name; it is there for the URL to end in .csv.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The file
+          content:
+            text/csv:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          description: Only GET is served
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/AppRateLimited"
+        "503":
+          description: The database needs an upgrade (the message says so); the platform fetches again on its schedule
 
   /apps/installs:
     get:
@@ -10200,6 +10354,59 @@ components:
       schema:
         type: string
         enum: [download, redownload, re-engagement]
+    offlineExportFormat:
+      name: format
+      in: query
+      required: true
+      description: The layout. Anything else is a 422 naming format.
+      schema:
+        type: string
+        enum: [google, google_uploads, microsoft]
+    offlineExportDays:
+      name: days
+      in: query
+      description: >-
+        Conversions from the last this many days, by conversion time (1 to 90;
+        90, everything the platforms still import, when absent).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 90
+        default: 90
+    offlineExportCampaign:
+      name: campaign_id
+      in: query
+      description: Only this campaign's conversions.
+      schema:
+        type: integer
+        minimum: 1
+    offlineExportConversionName:
+      name: conversion_name
+      in: query
+      description: >-
+        Every line under this conversion name, whatever its campaign's. At most
+        100 characters, no tab or line break, and not starting with =, +, - or @.
+      schema:
+        type: string
+        maxLength: 100
+    offlineExportAdUserData:
+      name: ad_user_data
+      in: query
+      description: >-
+        Google's Ad User Data column, the same on every line (Prosper202 records
+        no visitor's consent). Absent leaves the column empty; refused for microsoft.
+      schema:
+        type: string
+        enum: [granted, denied]
+    offlineExportAdPersonalization:
+      name: ad_personalization
+      in: query
+      description: >-
+        Google's Ad Personalization column, the same on every line. Absent leaves
+        the column empty; refused for microsoft.
+      schema:
+        type: string
+        enum: [granted, denied]
     postbackAdInteractionType:
       name: ad_interaction_type
       in: query
@@ -11627,6 +11834,57 @@ components:
           type: number
           nullable: true
           description: What the rows that count add up to, reversals netted.
+
+    OfflineConversionSummary:
+      type: object
+      properties:
+        format:
+          type: string
+          enum: [google, google_uploads, microsoft]
+        days:
+          type: integer
+        time_from:
+          type: integer
+          description: The window's first conversion time (Unix seconds).
+        time_to:
+          type: integer
+          description: When the file was written (Unix seconds).
+        timezone:
+          type: string
+          description: The zone the file's times are written in (UTC for microsoft).
+        currency:
+          type: string
+          description: The account's currency, every value's.
+        conversions:
+          type: integer
+          description: Conversions in the window, reversals not counted.
+        rows:
+          type: integer
+        left_out:
+          type: object
+          description: Every reason, with how many conversions it left out.
+          properties:
+            not_counted: {type: integer}
+            visitor_id: {type: integer}
+            same_ip: {type: integer}
+            match_unknown: {type: integer}
+            no_click_id: {type: integer}
+            gbraid_wbraid_only: {type: integer}
+            malformed_click_id: {type: integer}
+            not_accounts_click: {type: integer}
+            click_too_old: {type: integer}
+            before_click: {type: integer}
+            click_too_recent: {type: integer}
+            negative_value: {type: integer}
+            no_conversion_name: {type: integer}
+            over_row_limit: {type: integer}
+        left_out_total:
+          type: integer
+        reasons:
+          type: object
+          description: Each reason's sentence.
+          additionalProperties:
+            type: string
 
     ClickConversion:
       type: object

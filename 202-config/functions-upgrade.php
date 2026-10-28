@@ -4450,6 +4450,10 @@ class UPGRADE
                 \Prosper202\Database\Tables\TrackingTables::google(),
                 \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
                 \Prosper202\Database\Tables\GoalTables::goalEvents(),
+                // The offline conversion files' fetch URLs and conversion
+                // names (Prosper202\OfflineConversion).
+                \Prosper202\Database\Tables\ConversionTables::offlineConversionFeeds(),
+                \Prosper202\Database\Tables\ConversionTables::offlineConversionNames(),
             ]);
 
             if ($step_ok) {
@@ -4460,9 +4464,9 @@ class UPGRADE
                         . 'leaving version at 1.9.78 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: the re-click tables, 202_google, 202_conversion_logs or'
-                    . ' 202_goal_events could not be reconciled, or the re-click backfill marked; leaving version'
-                    . ' at 1.9.78 so the next run retries.');
+                error_log('Prosper202 upgrade: the re-click tables, 202_google, 202_conversion_logs,'
+                    . ' 202_goal_events or the offline conversion tables could not be reconciled, or the re-click'
+                    . ' backfill marked; leaving version at 1.9.78 so the next run retries.');
             }
         }
 
