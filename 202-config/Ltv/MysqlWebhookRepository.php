@@ -76,7 +76,19 @@ final class MysqlWebhookRepository
             $guard = new WebhookGuard(null, '');
         }
 
-        return $guard->webhookRefusal($url, self::PORTS);
+        return $guard->webhookRefusal(self::sendableUrl($url), self::PORTS);
+    }
+
+    /**
+     * The URL a webhook is checked and sent as. A query straight after the
+     * host (https://host?token=x) gets the root path it means: the guard's
+     * form wants a path before any "?", since a parser that does not end the
+     * host there reads https://host?@other/ as other. The stored URL is kept
+     * as it was saved; a webhook saved that way before 1.9.79 still sends.
+     */
+    public static function sendableUrl(string $url): string
+    {
+        return preg_replace('~^(https://[^/?#]*)\?~i', '$1/?', $url, 1) ?? $url;
     }
 
     /**

@@ -129,6 +129,24 @@ final class DeliverySenderTest extends TestCase
         ), $o, 'every option is the export webhooks\' set');
     }
 
+    public function testAQueryStraightAfterTheHostIsSentToTheRootPath(): void
+    {
+        // Saved before 1.9.79, when the LTV check did not ask for a path.
+        $answer = $this->sender(['hooks.example.com' => [self::PUBLIC]], ['primary_ip' => self::PUBLIC])
+            ->post(self::delivery('https://hooks.example.com?token=x'));
+        self::assertSame([true, 200, 'ok'], $answer);
+        self::assertSame('https://hooks.example.com/?token=x', $this->sent[0][CURLOPT_URL]);
+        self::assertSame(['hooks.example.com:443:' . self::PUBLIC], $this->sent[0][CURLOPT_RESOLVE]);
+
+        // The host is the one before the "?", whatever the query holds.
+        $this->sent = [];
+        $answer = $this->sender(['hooks.example.com' => [self::PUBLIC]], ['primary_ip' => self::PUBLIC])
+            ->post(self::delivery('https://hooks.example.com?@10.0.0.1/'));
+        self::assertTrue($answer[0]);
+        self::assertSame('https://hooks.example.com/?@10.0.0.1/', $this->sent[0][CURLOPT_URL]);
+        self::assertSame(['hooks.example.com:443:' . self::PUBLIC], $this->sent[0][CURLOPT_RESOLVE]);
+    }
+
     public function testTheHeadersSignTheExactBody(): void
     {
         $delivery = self::delivery('https://hooks.example.com/p202');

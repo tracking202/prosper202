@@ -242,6 +242,13 @@ final class LtvGuardsTest extends TestCase
         // is sent (DeliverySenderTest).
         self::assertNull(MysqlWebhookRepository::urlRefusal('https://this-host-must-not-be-looked-up.invalid/hook'));
         self::assertNull(MysqlWebhookRepository::urlRefusal('https://hooks.example.com:8443/hook'));
+        // A query straight after the host is checked as the root path it means.
+        self::assertNull(MysqlWebhookRepository::urlRefusal('https://hooks.example.com?token=x'));
+        self::assertSame('https://hooks.example.com/?token=x', MysqlWebhookRepository::sendableUrl('https://hooks.example.com?token=x'));
+        self::assertSame('https://hooks.example.com:8443/?a=b', MysqlWebhookRepository::sendableUrl('https://hooks.example.com:8443?a=b'));
+        self::assertSame('https://hooks.example.com/p?a=b', MysqlWebhookRepository::sendableUrl('https://hooks.example.com/p?a=b'));
+        self::assertSame('https://hooks.example.com/?@10.0.0.1/', MysqlWebhookRepository::sendableUrl('https://hooks.example.com?@10.0.0.1/'));
+        self::assertStringContainsString('not in the form', (string) MysqlWebhookRepository::urlRefusal('https://hooks.example.com@10.0.0.1?x'));
     }
 
     public function testTheOperatorsAllowlistIsHonouredAtSavingAndOneThatDoesNotParseAdmitsNothing(): void
