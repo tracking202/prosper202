@@ -301,15 +301,25 @@ final class RotatorDestinationsIntegrationTest extends TestCase
             ))), $rule['redirects']),
         ];
         self::assertSame($content($read), $content($after), 'the rule is as it was');
+        $ids = static fn (array $rule): array => [
+            array_column($rule['criteria'], 'id'), array_column($rule['redirects'], 'id'),
+        ];
+        self::assertSame($ids($read), $ids($after), 'and its criteria and redirects keep their ids');
 
         // Another value of a read-only key is refused, not ignored; so is a
-        // GET body read before the entries were rewritten (their ids moved).
-        foreach (['top-level id' => ['id' => $ruleId + 1] + $after, 'stale entry ids' => $read] as $case => $body) {
+        // GET body naming a redirect a later write removed.
+        $this->rotators()->updateRule($id, $ruleId, ['redirects' => [$after['redirects'][0]]]);
+        $current = $this->rotators()->listRules($id)['data'][0];
+        $cases = [
+            'top-level id' => [['id' => $ruleId + 1] + $current, ['id']],
+            'stale entry ids' => [$read, ['redirects.1.id']],
+        ];
+        foreach ($cases as $case => [$body, $refused]) {
             try {
                 $this->rotators()->updateRule($id, $ruleId, $body);
                 self::fail("$case was accepted");
             } catch (ValidationException $e) {
-                self::assertNotSame([], $e->getFieldErrors(), $case);
+                self::assertSame($refused, array_keys($e->getFieldErrors()), $case);
             }
         }
 

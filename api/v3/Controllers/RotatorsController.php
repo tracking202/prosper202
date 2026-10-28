@@ -154,7 +154,7 @@ class RotatorsController
      * GET can be sent back whole: on an update each is accepted only with
      * the value the rule holds, and refused with any other; on a create,
      * each is refused. A criterion's or redirect's `id` must be one of this
-     * rule's own (the entries are written afresh, so it names nothing else).
+     * rule's own: an entry sent with one is that entry, updated in place.
      */
     private const RULE_READ_ONLY = ['id', 'rotator_id'];
     private const CRITERION_FIELDS = ['type', 'statement', 'value'];
@@ -1422,12 +1422,23 @@ class RotatorsController
             $this->bind($stmt, 'siiiii', $rule['rule_name'], $rule['splittest'], $rule['status'], $rule['position'], $rule['id'], $rotatorId);
             $this->execute($stmt, 'Failed to update rule');
             $stmt->close();
-            if (self::criteriaChanged($rule['criteria'], $rule['held']['criteria'])) {
-                $this->writeCriteria($rotatorId, $rule['id'], $rule['criteria']);
-            }
-            if (self::redirectsChanged($rule['redirects'], $rule['held']['redirects'])) {
-                $this->writeRedirects($rule['id'], $rule['redirects']);
-            }
+            $this->writeKeptEntries($rotatorId, $rule);
+        }
+    }
+
+    /**
+     * A kept rule's criteria and destinations, where they changed from what
+     * it holds, as a set and a PUT of one rule both write them.
+     *
+     * @param array<string, mixed> $rule a rule planRule() planned with the rule it keeps
+     */
+    private function writeKeptEntries(int $rotatorId, array $rule): void
+    {
+        if (self::criteriaChanged($rule['criteria'], $rule['held']['criteria'])) {
+            $this->writeCriteria($rotatorId, $rule['id'], $rule['criteria']);
+        }
+        if (self::redirectsChanged($rule['redirects'], $rule['held']['redirects'])) {
+            $this->writeRedirects($rule['id'], $rule['redirects']);
         }
     }
 
@@ -1593,21 +1604,9 @@ class RotatorsController
                 }
             }
 
-            if (array_key_exists('criteria', $payload)) {
-                $deleteCriteria = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?');
-                $this->bind($deleteCriteria, 'i', $ruleId);
-                $this->execute($deleteCriteria, 'Failed to clear criteria');
-                $deleteCriteria->close();
-                $this->insertCriteria($rotatorId, $ruleId, $planned['criteria']);
-            }
-
-            if (array_key_exists('redirects', $payload)) {
-                $deleteRedirects = $this->prepare('DELETE FROM 202_rotator_rules_redirects WHERE rule_id = ?');
-                $this->bind($deleteRedirects, 'i', $ruleId);
-                $this->execute($deleteRedirects, 'Failed to clear redirects');
-                $deleteRedirects->close();
-                $this->insertRedirects($ruleId, $planned['redirects']);
-            }
+            // As a set writes a rule it keeps: an entry sent with its id keeps
+            // the id, which its clicks and their report rows name.
+            $this->writeKeptEntries($rotatorId, $planned);
 
             // Read back under the locks, as setRules() does.
             return $this->get($rotatorId);

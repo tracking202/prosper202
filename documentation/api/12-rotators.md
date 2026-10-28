@@ -153,9 +153,8 @@ and the redirect stored at the default weight of 100.
 rule's `id` and `rotator_id`, and each criterion's `id`, `rotator_id` and
 `rule_id` and each redirect's `id`, `rule_id` and `auto_monetizer`, are
 accepted with the rule's own values and refused with any other. An entry's
-`id` must be one of this rule's: an update writes the criteria and redirects
-afresh, so they get new ids, and a body read before an earlier update names
-ids that are gone (re-read the rule). A create refuses all of them. A
+`id` must be one of this rule's (another rule's, or one a later write
+removed, is a `422`; re-read the rule). A create refuses all of them. A
 redirect that Setup → Redirectors made the auto-monetizer (no destination,
 `auto_monetizer` set) stays the auto-monetizer when it is sent back that way;
 sending a destination beside it is a `422`.
@@ -168,6 +167,14 @@ does and refuse it in the same words: a `rule_name`, at least one criterion
 and at least one redirect, one redirect unless it is a split test, and a
 `weight` on each redirect of a split test with at least one above 0.
 
+- **A `PUT` writes the criteria and redirects it sends as the set does.** One
+  sent with its `id` is that entry, changed to what is sent: it keeps the id,
+  which its clicks and their report rows name (Group Overview's Redirect
+  level). One the list leaves out is removed, and one sent without an `id` is
+  added. Send the redirects `GET` answers, edited, to keep them: before
+  1.9.79 a `PUT` with `redirects` deleted the rule's redirects and inserted
+  them again, each with a new id, and the clicks on them were listed under no
+  redirect.
 - **A `PUT` keeps what it leaves out**, as stored and unchecked: a rule
   renamed keeps its criteria and redirects. The checks of the rule as a whole
   are made of the rule the write would leave, kept parts included, so

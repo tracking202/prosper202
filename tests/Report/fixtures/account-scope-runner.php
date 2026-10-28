@@ -11,7 +11,8 @@ declare(strict_types=1);
  * argv: <reader>
  *   engine:<type>   DataEngine::getReportData(<type>) over the window
  *   group:<level>   Group Overview's query (ReportSummaryForm) at one level,
- *                   a ReportBasicForm::DETAIL_LEVEL_* constant's name
+ *                   a ReportBasicForm::DETAIL_LEVEL_* constant's name: each
+ *                   row's id, title and clicks
  *   visitors        the Visitors list's query(): its count, and the click
  *                   ids its statement lists
  *   lists           the filter menus: ReportPrefsStore::lists() and
@@ -170,7 +171,11 @@ try {
         }
         $result = [];
         foreach ($form->getReportData()->getChildArrayBySort() as $child) {
-            $result[] = ['title' => (string) $child->getTitle(), 'clicks' => (int) $child->getClicks()];
+            $result[] = [
+                'id' => (string) $child->getId(),
+                'title' => (string) $child->getTitle(),
+                'clicks' => (int) $child->getClicks(),
+            ];
         }
     } elseif ($reader === 'visitors') {
         $query = query('SELECT 2c.click_id FROM 202_dataengine 2c ', '2c');

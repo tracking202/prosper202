@@ -567,7 +567,7 @@ func init() {
 	rotatorRuleUpdateCmd.Flags().String("status", "", "Rule status (1 = active)")
 	enumFlag(rotatorRuleUpdateCmd, "status", newEnum(binaryValues))
 	rotatorRuleUpdateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"United States(US)"}]`)
-	rotatorRuleUpdateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_url":"...","weight":"50","name":"A"}]`)
+	rotatorRuleUpdateCmd.Flags().String("redirects_json", "", `The rule's whole redirects JSON array: one sent with its id (`+"`p202 rotator get`"+`) keeps it, one left out is removed, e.g. [{"id":"12","redirect_url":"...","weight":"50","name":"A"}]`)
 
 	addReportFilters(rotatorStatsCmd)
 

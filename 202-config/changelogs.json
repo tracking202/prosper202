@@ -54,7 +54,8 @@
       "Fixed: When an API key, or an AI app connected before an update let it do more, is refused for a scope it lacks, the refusal names the scope and what grants it: connecting the AI app again with the access it names, or a new key with that scope. The p202 CLI and the MCP tools pass it on",
       "Fixed: Customers whose company was stored before that company existed are attached by the LTV maintenance job even when an account has more than 2,000 whose company is nothing but spaces; those are stored as having no company, where they held the job back on every run",
       "Changed: The API answers a customer's revenue, refunds and MRR (and its subscriptions', revenue events' and line items' amounts, and its engagement) as numbers, as the LTV summary does, rather than as text such as \"54.12500\", and its custom_fields as an object even when it holds none",
-      "Fixed: Security. The container image no longer ships the test suite, whose helper scripts could act on a database with no sign-in; in a checkout served as the web root they now answer 404"
+      "Fixed: Security. The container image no longer ships the test suite, whose helper scripts could act on a database with no sign-in; in a checkout served as the web root they now answer 404",
+      "Fixed: Changing one redirector rule's destinations through the API or the CLI (PUT /rotators/{id}/rules/{ruleId}, p202 rotator rule-update) keeps each destination sent with its id, as saving the whole rule set does; every destination took a new id, so the clicks it had sent were listed under no redirect in Group Overview"
     ]
   },
   "1.9.78": {
