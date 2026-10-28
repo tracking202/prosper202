@@ -7,6 +7,7 @@ namespace Prosper202\PaymentNotification\PayKickstart;
 use Prosper202\Click\ClickId;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\AccountSecrets;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
@@ -57,23 +58,19 @@ final class PayKickstartAdapter implements ProviderAdapter
 
     public function storedSecrets(Connection $conn): array
     {
-        $stmt = $conn->prepareRead(
-            'SELECT user_id, ' . PayKickstartKeys::COLUMN . ' AS secret_keys FROM 202_users_pref'
-            . ' WHERE ' . PayKickstartKeys::COLUMN . " <> '' ORDER BY user_id"
-        );
         $secrets = [];
-        foreach ($conn->fetchAll($stmt) as $row) {
-            $stored = PayKickstartKeys::stored(is_string($row['secret_keys']) ? $row['secret_keys'] : null);
+        foreach (AccountSecrets::stored($conn, PayKickstartKeys::COLUMN) as $accountId => $column) {
+            $stored = PayKickstartKeys::stored($column);
             if ($stored['unreadable'] > 0) {
                 error_log(sprintf(
                     'PayKickstart notification: account %d has %d stored IPN secret key(s) that are not keys;'
                     . ' they verify nothing',
-                    (int) $row['user_id'],
+                    $accountId,
                     $stored['unreadable']
                 ));
             }
             if ($stored['keys'] !== []) {
-                $secrets[(int) $row['user_id']] = $stored['keys'];
+                $secrets[$accountId] = $stored['keys'];
             }
         }
 
