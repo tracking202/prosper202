@@ -24,8 +24,11 @@ use Prosper202\Database\Connection;
  * (CLAUDE.md #11: a security value that cannot be parsed never resolves to
  * the most permissive reading): a failed query, or a stored value that is
  * not disabled, eu or all, logged by user id so the row can be found. An
- * account with no preferences row has set nothing: the column's default,
- * 'disabled'.
+ * account with no preferences row has set nothing, and counts as
+ * 'disabled', as before 1.9.79. That is no longer the column's default
+ * ('eu' since then, for a new account's row); every path that makes an
+ * account makes the row in the same transaction, so one is missing only
+ * where it was lost.
  */
 final class PrivacySetting
 {

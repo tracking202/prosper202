@@ -7,7 +7,8 @@
 # through the shared writer, with the gate, the scoping and the de-duplication
 # that come with it.
 #
-# The endpoints are public, so no login is needed. Clicks and a campaign are
+# The endpoints are public, so no login is needed; P202_API_KEY sets the
+# account's privacy for the run (privacy.sh). Clicks and a campaign are
 # seeded straight into the scratch database, because a redirect through
 # dl.php would need a tracker and a network as well and the click row is all
 # these endpoints read.
@@ -40,6 +41,10 @@ eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; f
 # they cannot collide with anything the instance created itself.
 USER_ID=$(Q "SELECT user_id FROM 202_users ORDER BY user_id LIMIT 1")
 [ -n "$USER_ID" ] || { echo "no user in $DB" >&2; exit 2; }
+# The pixels read the click cookie and store the visitor's address.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "${P202_API_KEY:-}" "$USER_ID" || exit 2
 NOW=$(date +%s)
 CLICK_A=910000001; CLICK_B=910000002; CLICK_C=910000003; CLICK_D=910000004; CLICK_E=910000005; CLICK_F=910000006; CLICK_G=910000007
 ACIP=987654321
