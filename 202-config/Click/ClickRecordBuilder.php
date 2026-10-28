@@ -93,6 +93,8 @@ final class ClickRecordBuilder
             gbraid: $campaignRows ? ClickRecord::storedGbraid(self::text($mysql, 'gbraid')) : '',
             wbraid: $campaignRows ? ClickRecord::storedWbraid(self::text($mysql, 'wbraid')) : '',
             ttclid: $campaignRows ? ClickRecord::storedTtclid(self::text($mysql, 'ttclid')) : '',
+            msclkid: $campaignRows ? ClickRecord::storedMsclkid(self::text($mysql, 'msclkid')) : '',
+            fbclid: $campaignRows ? ClickRecord::storedFbclid(self::text($mysql, 'fbclid')) : '',
             utmSourceId: $campaignRows ? self::int($mysql, 'utm_source_id') : 0,
             utmMediumId: $campaignRows ? self::int($mysql, 'utm_medium_id') : 0,
             utmCampaignId: $campaignRows ? self::int($mysql, 'utm_campaign_id') : 0,

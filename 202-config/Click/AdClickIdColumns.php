@@ -7,19 +7,19 @@ namespace Prosper202\Click;
 use Prosper202\Database\Connection;
 
 /**
- * The click ids the 1.9.79 upgrade adds to 202_google: gbraid, wbraid and
- * ttclid (ClickRecord). An install's files are replaced first and the
- * upgrade run after, and in between a statement that names one is the
- * server's 1054. The click path and the postbacks have nobody to answer, so
- * there a click is recorded without its ids, and the tokens they fill read
- * none, rather than the click or the conversion being lost. The reads that
- * predate them read them here, apart, so a failure cannot take the rest of
- * a click's values with it.
+ * The click ids the 1.9.79 upgrade adds to 202_google: gbraid, wbraid,
+ * ttclid, msclkid and fbclid (ClickRecord). An install's files are replaced
+ * first and the upgrade run after, and in between a statement that names
+ * one is the server's 1054. The click path and the postbacks have nobody to
+ * answer, so there a click is recorded without its ids, and the tokens they
+ * fill read none, rather than the click or the conversion being lost. The
+ * reads that predate them read them here, apart, so a failure cannot take
+ * the rest of a click's values with it.
  */
 final class AdClickIdColumns
 {
     /** In the order the table has them. */
-    public const ADDED = ['gbraid', 'wbraid', 'ttclid'];
+    public const ADDED = ['gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'];
 
     private function __construct()
     {
@@ -30,14 +30,14 @@ final class AdClickIdColumns
      * for a click its caller has already read as the account's. On the write
      * handle, which sees a click its caller's transaction has just written.
      *
-     * @return array{gbraid: string, wbraid: string, ttclid: string}
+     * @return array{gbraid: string, wbraid: string, ttclid: string, msclkid: string, fbclid: string}
      */
     public static function of(Connection $conn, int $clickId): array
     {
         try {
             $stmt = $conn->prepareWrite(
-                'SELECT MAX(gbraid) AS gbraid, MAX(wbraid) AS wbraid, MAX(ttclid) AS ttclid'
-                    . ' FROM 202_google WHERE click_id = ?'
+                'SELECT MAX(gbraid) AS gbraid, MAX(wbraid) AS wbraid, MAX(ttclid) AS ttclid,'
+                    . ' MAX(msclkid) AS msclkid, MAX(fbclid) AS fbclid FROM 202_google WHERE click_id = ?'
             );
             $conn->bind($stmt, 'i', [$clickId]);
             $row = $conn->fetchOne($stmt) ?? [];
@@ -52,6 +52,8 @@ final class AdClickIdColumns
             'gbraid' => (string) ($row['gbraid'] ?? ''),
             'wbraid' => (string) ($row['wbraid'] ?? ''),
             'ttclid' => (string) ($row['ttclid'] ?? ''),
+            'msclkid' => (string) ($row['msclkid'] ?? ''),
+            'fbclid' => (string) ($row['fbclid'] ?? ''),
         ];
     }
 

@@ -145,11 +145,13 @@ final class TrackingTables
 
     /**
      * A click's ad platform click ids and UTM values, for every path but the
-     * redirector (ClickRecord). gbraid, wbraid and ttclid came in 1.9.79: at
-     * the end, where an upgrade adds a column to a table this size without
-     * copying it (ALGORITHM=INSTANT on MariaDB 10.11, measured; MySQL 8 says
-     * the same of the last position), and compared byte for byte, since an
-     * id's case is part of it. '' is none.
+     * redirector (ClickRecord). gbraid, wbraid, ttclid, msclkid and fbclid
+     * came in 1.9.79: at the end, where an upgrade adds a column to a table
+     * this size without copying it (ALGORITHM=INSTANT on MariaDB 10.11,
+     * measured; MySQL 8 says the same of the last position), and compared
+     * byte for byte, since an id's case is part of it. '' is none. The
+     * msclkid and fbclid are kept here, not in 202_bing and 202_facebook,
+     * which no version in this repository's history wrote.
      */
     public static function google(): SchemaDefinition
     {
@@ -166,11 +168,18 @@ final class TrackingTables
                 `gbraid` varchar(150) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
                 `wbraid` varchar(150) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
                 `ttclid` varchar(1000) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+                `msclkid` varchar(150) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+                `fbclid` varchar(1000) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
                 PRIMARY KEY (`click_id`,`gclid`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
 
+    /**
+     * Written by no version in this repository's history: a click's msclkid is
+     * 202_google's since 1.9.79. Kept for any rows an earlier version left,
+     * which click retention deletes with their clicks.
+     */
     public static function bing(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -188,6 +197,11 @@ final class TrackingTables
         );
     }
 
+    /**
+     * Written by no version in this repository's history: a click's fbclid is
+     * 202_google's since 1.9.79. Kept for any rows an earlier version left,
+     * which click retention deletes with their clicks.
+     */
     public static function facebook(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(

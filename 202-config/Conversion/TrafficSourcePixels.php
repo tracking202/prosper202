@@ -250,6 +250,8 @@ final class TrafficSourcePixels
                 'gbraid' => $adClickIds['gbraid'],
                 'wbraid' => $adClickIds['wbraid'],
                 'ttclid' => $adClickIds['ttclid'],
+                'msclkid' => $adClickIds['msclkid'],
+                'fbclid' => $adClickIds['fbclid'],
                 'utm_source' => (string) ($row['utm_source'] ?? ''),
                 'utm_medium' => (string) ($row['utm_medium'] ?? ''),
                 'utm_campaign' => (string) ($row['utm_campaign'] ?? ''),

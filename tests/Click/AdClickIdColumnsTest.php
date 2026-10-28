@@ -10,9 +10,9 @@ use Prosper202\Database\Exceptions\QueryException;
 
 /**
  * What reads as the window before the 1.9.79 upgrade: the server's 1054
- * naming gbraid, wbraid or ttclid, however the statement named it and in
- * whatever language the server answers. Anything else is a failure, which
- * the click path does not swallow.
+ * naming gbraid, wbraid, ttclid, msclkid or fbclid, however the statement
+ * named it and in whatever language the server answers. Anything else is a
+ * failure, which the click path does not swallow.
  */
 final class AdClickIdColumnsTest extends TestCase
 {
@@ -30,6 +30,12 @@ final class AdClickIdColumnsTest extends TestCase
         yield 'an INSERT naming it' => [$prepare("Unknown column 'gbraid' in 'field list' [errno 1054]"), true];
         yield 'named by alias' => [$prepare("Unknown column '2g.ttclid' in 'field list' [errno 1054]"), true];
         yield 'strict reporting' => [$strict('wbraid'), true];
+        yield 'the msclkid' => [$prepare("Unknown column 'msclkid' in 'field list' [errno 1054]"), true];
+        yield 'the fbclid, by alias' => [$prepare("Unknown column 'g.fbclid' in 'field list' [errno 1054]"), true];
+        yield 'a column that starts with one' => [
+            $prepare("Unknown column 'msclkid_x' in 'field list' [errno 1054]"),
+            false,
+        ];
         yield 'another language' => [$prepare("Unbekanntes Tabellenfeld 'ttclid' in field list [errno 1054]"), true];
         yield 'wrapped' => [new \RuntimeException('recording click 1 failed', 0, $strict('gbraid')), true];
         yield 'another column' => [$prepare("Unknown column 'gclidx' in 'field list' [errno 1054]"), false];
@@ -52,6 +58,8 @@ final class AdClickIdColumnsTest extends TestCase
     {
         self::assertTrue(AdClickIdColumns::namedIn('https://o.example/?t=[[TTCLID]]'));
         self::assertTrue(AdClickIdColumns::namedIn('https://o.example/?g=[[gbraid]]&w=[[wbraid]]'));
+        self::assertTrue(AdClickIdColumns::namedIn('https://o.example/?m=[[msclkid]]'));
+        self::assertTrue(AdClickIdColumns::namedIn('https://o.example/?f=[[FBCLID]]'));
         self::assertFalse(AdClickIdColumns::namedIn('https://o.example/?g=[[gclid]]&s=[[subid]]'));
         self::assertFalse(AdClickIdColumns::namedIn('https://o.example/?ttclid=x'));
     }
