@@ -28,8 +28,9 @@ interface ProviderAdapter
     public function signatureField(): string;
 
     /**
-     * Every account's stored secrets for this provider. An entry that cannot
-     * be read is left out, so it verifies nothing.
+     * Every account's stored secrets for this provider, read through
+     * AccountSecrets::stored(), which leaves out a deleted account's. An entry
+     * that cannot be read is left out, so it verifies nothing.
      *
      * @return array<int, list<string>> account id => its secrets
      */

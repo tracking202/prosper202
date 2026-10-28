@@ -94,7 +94,8 @@ PayKickstart**:
 3. Store the **IPN secret key** of each PayKickstart campaign on the page (every
    campaign has its own, in its settings). Prosper202 verifies each IPN's
    `hash` with the stored keys, and the account whose key verifies it is the
-   one it records for; an IPN no stored key verifies is refused. The keys are
+   one it records for (a deleted account's keys verify nothing); an IPN no
+   stored key verifies is refused. The keys are
    never shown back: the page lists their last four characters, and the API
    (`PUT /users/{id}/preferences`, `p202 user prefs update
    --paykickstart-ipn-secret-keys`) how many are stored.
