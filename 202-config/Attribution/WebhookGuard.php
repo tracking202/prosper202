@@ -38,10 +38,16 @@ namespace Prosper202\Attribution;
  *   rebinding) changes nothing. The check at save time exists so the person
  *   saving the export is told.
  *
+ * Traffic-source postbacks are held to the same rules (checkPostback()),
+ * with http:// and any port allowed, since that is what networks' postback
+ * URLs are: one set of ranges, one resolver, one allowlist for every URL
+ * this server calls on a stranger's word.
+ *
  * The one relaxation is the operator's, never a request's: a constant
  * `P202_WEBHOOK_ALLOW_NETWORKS` in 202-config.php (comma- or
  * space-separated CIDRs) admits addresses in those networks, for an
- * operator whose receiver lives on their own network. It cannot admit the
+ * operator whose receiver lives on their own network — export webhooks and
+ * postbacks alike. It cannot admit the
  * addresses no receiver lives at — link-local and the named metadata
  * endpoints, this-network, multicast and reserved — and an entry that does
  * not parse refuses every URL rather than being skipped (CLAUDE.md error
@@ -153,10 +159,112 @@ final class WebhookGuard
             );
         }
 
-        $port = 443;
+        $target = $this->target($url, $m, 443, 'webhook', true);
+        assert($target !== null);
+
+        return $target;
+    }
+
+    /**
+     * The same check for a traffic source's server-to-server postback
+     * (Notifications\PostbackSender), at send time and at every redirect:
+     * http:// as well as https://, since many networks' postback URLs are
+     * plain http, on any port, with a query (or a fragment) straight after
+     * the host. The host and every address it resolves to are held to the
+     * rules above, the allowlist included.
+     *
+     * @throws WebhookUnresolved when the host resolves to nothing, which a later try may change
+     * @throws WebhookRefused with the reason, which names the host and never the path or query
+     */
+    public function checkPostback(string $url): WebhookTarget
+    {
+        $m = self::postbackParts($url, false);
+        assert($m !== null);
+        $target = $this->target($url, $m, self::defaultPort($m['scheme']), 'postback', true);
+        assert($target !== null);
+
+        return $target;
+    }
+
+    /**
+     * What checkPostback() refuses without asking a resolver, for the
+     * places a postback URL is saved: null when nothing is, else why. With
+     * $template, the URL is a pixel's code before its [[tokens]] are filled,
+     * and a host made of tokens is left to the check at send time.
+     */
+    public function postbackRefusal(string $url, bool $template = false): ?string
+    {
+        try {
+            $m = self::postbackParts($url, $template);
+            if ($m !== null) {
+                $this->target($url, $m, self::defaultPort($m['scheme']), 'postback', false);
+            }
+        } catch (WebhookRefused $e) {
+            return $e->getMessage();
+        }
+
+        return null;
+    }
+
+    /**
+     * A postback URL's parts, or null for a template whose host is tokens.
+     * The host ends at the first /, ? or #, as curl reads it, and a user
+     * name or password before it is refused by name.
+     *
+     * @return array<string, string>|null
+     * @throws WebhookRefused
+     */
+    private static function postbackParts(string $url, bool $template): ?array
+    {
+        if (preg_match('~^https?://~i', $url, $scheme) !== 1) {
+            throw new WebhookRefused(
+                'The postback URL must start with http:// or https://; the postback sender calls nothing else.'
+            );
+        }
+        $rest = substr($url, strlen($scheme[0]));
+        $authority = substr($rest, 0, strcspn($rest, '/?#'));
+        if (str_contains($authority, '@')) {
+            throw new WebhookRefused(
+                'The postback URL has a user name or password before its host ("…@"), which is not accepted: '
+                . 'put a network\'s key in the path or the query.'
+            );
+        }
+        if ($template && str_contains($authority, '[[')) {
+            return null;
+        }
+        $pattern = '~^(?<scheme>https?)://(?:\[(?<v6>[0-9A-Fa-f:.]+)\]|(?<host>[A-Za-z0-9.-]+))'
+            . '(?::(?<port>[0-9]{1,5}))?(?<rest>[/?#][^\x00-\x20\x7F]*)?$~iD';
+        if (preg_match($pattern, $url, $m) !== 1) {
+            throw new WebhookRefused(
+                'The postback URL is not in the form http(s)://host[:port]/path?query: spaces and control characters '
+                . 'are not accepted, and the host is a name of letters, digits, dots and hyphens, an IPv4 address, '
+                . 'or an IPv6 address in brackets.'
+            );
+        }
+
+        return $m;
+    }
+
+    private static function defaultPort(string $scheme): int
+    {
+        return strtolower($scheme) === 'http' ? 80 : 443;
+    }
+
+    /**
+     * The checks every kind of URL shares, from its parsed parts: the port,
+     * the host's spelling, and every address the host is or resolves to.
+     * Without $resolve a host name passes once its spelling does (null).
+     *
+     * @param array<string, string> $m
+     * @throws WebhookRefused
+     */
+    private function target(string $url, array $m, int $port, string $kind, bool $resolve): ?WebhookTarget
+    {
         if (($m['port'] ?? '') !== '') {
             if ($m['port'][0] === '0' || (int) $m['port'] < 1 || (int) $m['port'] > 65535) {
-                throw new WebhookRefused('The webhook URL has port ' . $m['port'] . ', which is not a port from 1 to 65535.');
+                throw new WebhookRefused(
+                    'The ' . $kind . ' URL has port ' . $m['port'] . ', which is not a port from 1 to 65535.'
+                );
             }
             $port = (int) $m['port'];
         }
@@ -167,7 +275,7 @@ final class WebhookGuard
                 throw new WebhookRefused('[' . $m['v6'] . '] is not an IPv6 address.');
             }
             $address = (string) inet_ntop($binary);
-            $this->assertAllowed($address, $address);
+            $this->assertAllowed($address, $address, $kind);
 
             return new WebhookTarget($url, '[' . $address . ']', $port, true, [$address]);
         }
@@ -181,12 +289,15 @@ final class WebhookGuard
                     . 'Other spellings of an address are refused because resolvers read them differently.'
                 );
             }
-            $this->assertAllowed($address, $host);
+            $this->assertAllowed($address, $host, $kind);
 
             return new WebhookTarget($url, $host, $port, true, [$address]);
         }
 
-        self::assertHostname($host);
+        self::assertHostname($host, $kind);
+        if (!$resolve) {
+            return null;
+        }
 
         $resolved = [];
         foreach (($this->resolver)($host) as $answer) {
@@ -198,10 +309,10 @@ final class WebhookGuard
         }
         $resolved = array_values(array_unique($resolved));
         if ($resolved === []) {
-            throw new WebhookRefused($host . ' does not resolve to an address from this server.');
+            throw new WebhookUnresolved($host . ' does not resolve to an address from this server.');
         }
         foreach ($resolved as $address) {
-            $this->assertAllowed($address, $host);
+            $this->assertAllowed($address, $host, $kind);
         }
 
         return new WebhookTarget($url, $host, $port, false, $resolved);
@@ -230,13 +341,13 @@ final class WebhookGuard
         return $this->v4Refusal($binary);
     }
 
-    private function assertAllowed(string $address, string $named): void
+    private function assertAllowed(string $address, string $named, string $kind): void
     {
         $why = $this->refusal($address);
         if ($why !== null) {
             throw new WebhookRefused(
                 ($named === $address ? $address : $named . ' resolves to ' . $address) . ', ' . $why
-                . '. Webhooks are only sent to public addresses.'
+                . '. ' . ucfirst($kind) . 's are only sent to public addresses.'
             );
         }
     }
@@ -347,10 +458,10 @@ final class WebhookGuard
         return $host;
     }
 
-    private static function assertHostname(string $host): void
+    private static function assertHostname(string $host, string $kind): void
     {
         if (strlen($host) > 253) {
-            throw new WebhookRefused('The webhook host name is longer than 253 characters.');
+            throw new WebhookRefused('The ' . $kind . ' host name is longer than 253 characters.');
         }
         $labels = explode('.', $host);
         foreach ($labels as $label) {
@@ -369,7 +480,9 @@ final class WebhookGuard
             );
         }
         if ($last === 'localhost' || $last === 'local' || $last === 'internal') {
-            throw new WebhookRefused($host . ' is a local name (.' . $last . '). Webhooks are only sent to public host names.');
+            throw new WebhookRefused(
+                $host . ' is a local name (.' . $last . '). ' . ucfirst($kind) . 's are only sent to public host names.'
+            );
         }
     }
 

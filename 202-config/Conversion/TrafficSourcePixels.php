@@ -7,6 +7,8 @@ namespace Prosper202\Conversion;
 use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Click\FirstVisit;
 use Prosper202\Database\Connection;
+use Prosper202\Notifications\PostbackResult;
+use Prosper202\Notifications\PostbackSender;
 
 /**
  * Telling a click's traffic source about a conversion: the one sender for
@@ -28,7 +30,7 @@ use Prosper202\Database\Connection;
  */
 final class TrafficSourcePixels
 {
-    public const POSTBACK_USER_AGENT = \Prosper202\Notifications\PostbackSender::USER_AGENT;
+    public const POSTBACK_USER_AGENT = PostbackSender::USER_AGENT;
 
     /**
      * Every token replaceTokens() fills, in the order it fills them, as
@@ -111,9 +113,10 @@ final class TrafficSourcePixels
      * outbox, which the worker sends with retries.
      *
      * @param array<string, scalar|null> $tokens
-     * @param (callable(string): bool)|null $fetch Performs a type-4 GET and
-     *        says whether it succeeded (a 2xx or 3xx status); defaults to
-     *        curl with the postback user agent. Injected by tests.
+     * @param (callable(string): (bool|PostbackResult))|null $fetch Performs a
+     *        type-4 GET and says whether it succeeded (a 2xx or 3xx status);
+     *        defaults to PostbackSender, which refuses an address it does not
+     *        call. Injected by tests.
      * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
     public static function fire(Connection $conn, int $ppcAccountId, array $tokens, ?callable $fetch = null, bool $browser = true, bool $server = true): array
@@ -124,7 +127,8 @@ final class TrafficSourcePixels
         }
 
         $stmt = $conn->prepareRead(
-            'SELECT pixel_code, pixel_type_id FROM 202_ppc_account_pixels WHERE ppc_account_id = ? ORDER BY pixel_id'
+            'SELECT pixel_id, pixel_code, pixel_type_id
+             FROM 202_ppc_account_pixels WHERE ppc_account_id = ? ORDER BY pixel_id'
         );
         $conn->bind($stmt, 'i', [$ppcAccountId]);
         $pixels = $conn->fetchAll($stmt);
@@ -132,8 +136,9 @@ final class TrafficSourcePixels
         // The one server-to-server sender, shared with the notification
         // outbox's worker (PR 5): it answers whether the network heard us
         // (a status, not a body — an empty 200 and a failure both read as
-        // ''), and refuses anything but http(s), redirects included.
-        $fetch ??= \Prosper202\Notifications\PostbackSender::fetch(...);
+        // ''), and refuses anything but http(s) to a public address,
+        // redirects included.
+        $fetch ??= (new PostbackSender())->send(...);
 
         foreach ($pixels as $pixel) {
             $type = (int) $pixel['pixel_type_id'];
@@ -177,9 +182,13 @@ final class TrafficSourcePixels
                             break;
                         }
                         $out['server_calls']++;
-                        if (!$fetch($url)) {
+                        $result = PostbackResult::of($fetch($url));
+                        if (!$result->isDelivered()) {
                             $out['server_failures']++;
-                            error_log('traffic source postback failed for ppc account ' . $ppcAccountId . ': ' . $url);
+                            // The host only: a postback's path and query can carry the network's key.
+                            error_log('traffic source postback ' . ($result->isRefused() ? 'refused' : 'failed')
+                                . ' for pixel ' . (int) ($pixel['pixel_id'] ?? 0) . ' of ppc account ' . $ppcAccountId
+                                . ' (' . PostbackSender::origin($url) . '): ' . $result->reason);
                         }
                         break;
                 }

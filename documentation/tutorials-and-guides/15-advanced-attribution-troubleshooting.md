@@ -12,7 +12,7 @@
 | An export stays `pending` | `p202 attribution export get <id>` — is `run_at` in the future? | The minutely cron runs due exports; run `php 202-cronjobs/attribution-exports.php` by hand to see its output |
 | An export `failed` | `last_error` names the reason (a model switched off, a refused or redirecting webhook, a receiver answering 4xx) | Fix it, then `p202 attribution export retry <id>`; the file is downloadable whatever the webhook did |
 | A webhook URL is refused | The error names the address the host resolved to and why | Use the receiver's public https address. A receiver on your own network needs `P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php`; metadata and link-local addresses are never allowed |
-| Every webhook fails with "P202_WEBHOOK_ALLOW_NETWORKS entry … is not a network" | `202-config.php` | Write each entry in CIDR form (`10.20.0.0/16`); until then no webhook is sent, on purpose |
+| Every webhook fails with "P202_WEBHOOK_ALLOW_NETWORKS entry … is not a network" | `202-config.php` | Write each entry in CIDR form (`10.20.0.0/16`); until then no webhook, and no traffic-source postback, is sent, on purpose (postbacks wait and are retried) |
 
 The worker's output line (cron log) reads, for example:
 

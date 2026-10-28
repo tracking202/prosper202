@@ -74,13 +74,26 @@ func setupRequestError(c *api.Client, err error, page string) error {
 		}
 	}
 	if apiErr.Status == 422 {
-		for field := range apiErr.FieldErrors {
+		for field, message := range apiErr.FieldErrors {
 			if field == "offers" || strings.HasPrefix(field, "offers[") {
 				return withHint(err, "%s", setupOfferHint)
+			}
+			if (field == "pixel_code" || field == "correction_url") && postbackAddressRefused(message) {
+				flag := "--code"
+				if field == "correction_url" {
+					flag = "--correction-url"
+				}
+				return withHint(err, "Point %s at the network's public postback URL: this server sends postbacks only to public addresses, never to a private, loopback, link-local or metadata one, or to a local name. An operator whose receiver is on their own network can allow that network with P202_WEBHOOK_ALLOW_NETWORKS in 202-config.php.", flag)
 			}
 		}
 	}
 	return err
+}
+
+// postbackAddressRefused is whether a pixel field error is the postback
+// sender's address rule (WebhookGuard::postbackRefusal()'s sentences).
+func postbackAddressRefused(message string) bool {
+	return strings.Contains(message, "Postbacks are only sent to public") || strings.Contains(message, "single-label name")
 }
 
 // setupNotFound reads which record a Setup 404 names (the controllers' own

@@ -200,7 +200,9 @@ TLS verified against the host name, no proxy and no redirects. An operator
 whose receiver is on their own network can allow that network with
 `define('P202_WEBHOOK_ALLOW_NETWORKS', '10.20.0.0/16');` in `202-config.php`;
 link-local and the metadata endpoints can never be allowed, and an entry that
-does not parse stops every webhook until it is fixed.
+does not parse stops every webhook until it is fixed. The same setting, and
+the same address rules (with http:// allowed), govern the traffic sources'
+server-to-server postbacks ([27-setup.md](27-setup.md#an-accounts-pixels--ppc-accountsidpixels)).
 
 Each delivery carries `X-P202-Export-Id`, `X-P202-Delivery-Attempt`,
 `X-P202-Timestamp` and `X-P202-Signature: sha256=<hex>`, the HMAC-SHA256 of

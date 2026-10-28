@@ -105,8 +105,8 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
      * @param array<string, scalar> $tokens replaceTokens() tokens; the caller
      *        fills `transactionid` with the conversion's transaction id, or
      *        its dedupe key when the network sent none
-     * @param (callable(string): bool)|null $fetch Performs a type-4 GET and
-     *        says whether it succeeded; injected by tests.
+     * @param (callable(string): (bool|\Prosper202\Notifications\PostbackResult))|null $fetch
+     *        Performs a type-4 GET and says whether it succeeded; injected by tests.
      * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
     function p202FireTrafficSourcePixels(
