@@ -4430,6 +4430,8 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // The pending-click settler's queue: settle_failures, settle_next_at and settle_due.
+                \Prosper202\Database\Tables\AppTables::appInstalls(),
             ]);
 
             if ($step_ok) {

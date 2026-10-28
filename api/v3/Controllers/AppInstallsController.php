@@ -43,7 +43,7 @@ final class AppInstallsController
         . 'utm_content, gclid, referrer_click_at, install_begin_at, referrer_click_server_at, install_begin_server_at, '
         . 'install_version, google_play_instant, app_version, sdk_version, os_version, integrity_mode, integrity_state, integrity_reason, '
         . 'integrity_attempts, integrity_next_at, integrity_checked_at, integrity_verdict, first_open_at, '
-        . 'ctit_seconds, ctit_flag, received_at, settled_at, remote_ip';
+        . 'ctit_seconds, ctit_flag, received_at, settled_at, settle_failures, settle_next_at, remote_ip';
 
     private const UNTRUSTED_FIELDS = [
         'referrer_raw', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid',
@@ -56,6 +56,7 @@ final class AppInstallsController
         'install_row_id', 'registration_id', 'click_id', 'conversion_id', 'trusted', 'referrer_click_at', 'install_begin_at',
         'referrer_click_server_at', 'install_begin_server_at', 'first_open_at', 'received_at', 'settled_at',
         'integrity_attempts', 'integrity_next_at', 'integrity_checked_at', 'ctit_seconds',
+        'settle_failures', 'settle_next_at',
     ];
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
