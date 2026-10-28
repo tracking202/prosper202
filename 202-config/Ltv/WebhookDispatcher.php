@@ -39,6 +39,8 @@ use Prosper202\Validation\OutboundUrlGuard;
  * about an hour, far inside the limit. A dead webhook's deliveries are held,
  * not tried (MysqlWebhookRepository::holdDelivery()); reviving it within
  * MAX_AGE_SECONDS of a delivery's queueing sends that delivery (revive()).
+ * A revival changes deliveries only between runs, under the same lock
+ * (betweenRuns()).
  */
 final class WebhookDispatcher
 {
@@ -103,9 +105,53 @@ final class WebhookDispatcher
         if ((int) $got['got'] !== 1) {
             return null;
         }
+        return self::holding($conn, $name, static fn (): array => (new self($conn, $send, $clock))->run($deadline));
+    }
+
+    /**
+     * $work between runs: under the dispatcher's lock, so no run is between
+     * a delivery's claim and its record while $work changes deliveries
+     * (MysqlWebhookRepository::revive()). A run's claim cannot be told from
+     * a retry's backoff on the row, so the lock is what says none is in
+     * flight. Waits up to $waitSeconds for a run to end; one that does not is
+     * an LtvConflictException, and $work never runs.
+     *
+     * @template T
+     * @param callable(): T $work
+     * @return T
+     */
+    public static function betweenRuns(Connection $conn, int $waitSeconds, callable $work): mixed
+    {
+        $name = self::lockName($conn);
+        $stmt = $conn->prepareWrite('SELECT GET_LOCK(?, ?) AS got');
+        $conn->bind($stmt, 'si', [$name, max(0, $waitSeconds)]);
+        $got = $conn->fetchOne($stmt);
+        if ($got === null || $got['got'] === null) {
+            throw new \RuntimeException('GET_LOCK failed for ' . $name);
+        }
+        if ((int) $got['got'] !== 1) {
+            throw new LtvConflictException('LTV webhook deliveries are being sent right now, and the run did not end'
+                . ' within ' . $waitSeconds . ' seconds; nothing was changed. Try again in a minute.');
+        }
+
+        return self::holding($conn, $name, $work);
+    }
+
+    /**
+     * $work, then the lock $name released. When $work throws, that
+     * exception is what the caller sees: a RELEASE_LOCK that fails too (the
+     * connection died under it) is dropped, since the lock goes with the
+     * session.
+     *
+     * @template T
+     * @param callable(): T $work
+     * @return T
+     */
+    private static function holding(Connection $conn, string $name, callable $work): mixed
+    {
         $failure = null;
         try {
-            return (new self($conn, $send, $clock))->run($deadline);
+            return $work();
         } catch (\Throwable $e) {
             $failure = $e;
             throw $e;

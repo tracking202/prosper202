@@ -44,6 +44,12 @@ final class MysqlWebhookRepository
     public const HELD_REASON = 'held: its webhook is dead, so it was not sent; reviving the webhook within 7 days'
         . ' of when this was queued sends it';
 
+    /** The last response of a delivery a revival without requeue set aside (revive()). */
+    public const REVIVED_HELD_REASON = 'held: its webhook was revived for new events only, so it was not sent';
+
+    /** How long revive() waits for a dispatcher run in flight to end. */
+    public const REVIVE_LOCK_WAIT_SECONDS = 20;
+
     public function __construct(private Connection $conn)
     {
     }
@@ -494,70 +500,104 @@ final class MysqlWebhookRepository
      * and secret, so whatever was set up with them (the Landing Page
      * Optimizer's pairing) goes on as it was.
      *
-     * Its pending deliveries' attempts start again from 0, so the next
-     * failure does not mark it dead again at once. With $requeue, every
-     * delivery of it that was not delivered and was queued within
-     * WebhookDispatcher::MAX_AGE_SECONDS (the one that exhausted its
-     * attempts, and the ones held while it was dead) is pending again, due
-     * now, attempts 0: the dispatcher sends them oldest first, each under
-     * its own delivery id (X-P202-Delivery). A delivered one is never sent
-     * again; older ones stay failed, as the dispatcher's expiry leaves them.
+     * With $requeue, every delivery of it that was not delivered and was
+     * queued within WebhookDispatcher::MAX_AGE_SECONDS is sent: the failed
+     * ones (the one that exhausted its attempts, the ones held while it was
+     * dead) are pending again, attempts 0, due at their queueing, so the
+     * dispatcher sends them oldest first with the pending ones no run held
+     * yet, each under its own delivery id (X-P202-Delivery). The pending
+     * ones' attempts start again from 0, so the next failure does not mark
+     * it dead again at once, and each keeps its due time: a retry's backoff
+     * (at most 32 minutes) reads the same as a claim, and a claim is not
+     * shortened. A delivered one is never sent again; older ones stay
+     * failed, as the dispatcher's expiry leaves them.
      *
-     * The webhook's row is locked first: two revivals do not both count one
-     * delivery, and a hold (holdDelivery()) waits for the revival and then
-     * finds the webhook active. An active webhook is left as it is
-     * (revived false). Another account's webhook, or none, is a
-     * RecordNotFoundException.
+     * Without $requeue it is sent new events only: every delivery of it
+     * still pending, queued before the revival, is set aside as a dead
+     * webhook's are (holdDelivery()): failed, its attempts as they were,
+     * REVIVED_HELD_REASON as its last response, never sent.
      *
-     * @return array{revived: bool, requeued: int, attempts_reset: int}
+     * Deliveries are changed only between dispatcher runs: the revival takes
+     * the dispatcher's lock (WebhookDispatcher::betweenRuns()), waiting up to
+     * $lockWaitSeconds for a run in flight, so no delivery a run has claimed
+     * and not yet recorded is held, reset or made due under it. A run that
+     * does not end in time is an LtvConflictException, and nothing changed.
+     * The webhook's row is locked too: two revivals do not both count one
+     * delivery. An active webhook is left as it is (revived false). Another
+     * account's webhook, or none, is a RecordNotFoundException.
+     *
+     * @return array{revived: bool, requeued: int, attempts_reset: int, held: int}
      */
-    public function revive(int $userId, int $webhookId, bool $requeue, int $now): array
+    public function revive(
+        int $userId,
+        int $webhookId,
+        bool $requeue,
+        int $now,
+        int $lockWaitSeconds = self::REVIVE_LOCK_WAIT_SECONDS
+    ): array {
+        return WebhookDispatcher::betweenRuns(
+            $this->conn,
+            $lockWaitSeconds,
+            fn (): array => $this->conn->transaction(
+                fn (): array => $this->reviveLocked($userId, $webhookId, $requeue, $now)
+            )
+        );
+    }
+
+    /** @return array{revived: bool, requeued: int, attempts_reset: int, held: int} */
+    private function reviveLocked(int $userId, int $webhookId, bool $requeue, int $now): array
     {
-        return $this->conn->transaction(function () use ($userId, $webhookId, $requeue, $now): array {
-            $lock = $this->conn->prepareWrite(
-                'SELECT status FROM 202_ltv_webhooks WHERE webhook_id = ? AND user_id = ? FOR UPDATE'
-            );
-            $this->conn->bind($lock, 'ii', [$webhookId, $userId]);
-            $row = $this->conn->fetchOne($lock);
-            if ($row === null) {
-                throw new RecordNotFoundException('Webhook not found');
-            }
-            if ((string) $row['status'] === 'active') {
-                return ['revived' => false, 'requeued' => 0, 'attempts_reset' => 0];
-            }
+        $lock = $this->conn->prepareWrite(
+            'SELECT status FROM 202_ltv_webhooks WHERE webhook_id = ? AND user_id = ? FOR UPDATE'
+        );
+        $this->conn->bind($lock, 'ii', [$webhookId, $userId]);
+        $row = $this->conn->fetchOne($lock);
+        if ($row === null) {
+            throw new RecordNotFoundException('Webhook not found');
+        }
+        if ((string) $row['status'] === 'active') {
+            return ['revived' => false, 'requeued' => 0, 'attempts_reset' => 0, 'held' => 0];
+        }
 
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_ltv_webhooks SET status = 'active', updated_at = ? WHERE webhook_id = ? AND user_id = ?"
+        );
+        $this->conn->bind($stmt, 'iii', [$now, $webhookId, $userId]);
+        $this->conn->executeUpdate($stmt);
+
+        if (!$requeue) {
             $stmt = $this->conn->prepareWrite(
-                "UPDATE 202_ltv_webhooks SET status = 'active', updated_at = ? WHERE webhook_id = ? AND user_id = ?"
+                "UPDATE 202_ltv_webhook_deliveries
+                 SET status = 'failed', last_status_code = NULL, last_response_body = ?, updated_at = ?
+                 WHERE webhook_id = ? AND user_id = ? AND status = 'pending'"
             );
-            $this->conn->bind($stmt, 'iii', [$now, $webhookId, $userId]);
-            $this->conn->executeUpdate($stmt);
+            $this->conn->bind($stmt, 'siii', [self::REVIVED_HELD_REASON, $now, $webhookId, $userId]);
+            $held = $this->conn->executeUpdate($stmt);
 
-            $stmt = $this->conn->prepareWrite(
-                "UPDATE 202_ltv_webhook_deliveries SET attempts = 0, updated_at = ?
-                 WHERE webhook_id = ? AND user_id = ? AND status = 'pending' AND attempts > 0"
-            );
-            $this->conn->bind($stmt, 'iii', [$now, $webhookId, $userId]);
-            $reset = $this->conn->executeUpdate($stmt);
+            return ['revived' => true, 'requeued' => 0, 'attempts_reset' => 0, 'held' => $held];
+        }
 
-            $requeued = 0;
-            if ($requeue) {
-                $stmt = $this->conn->prepareWrite(
-                    "UPDATE 202_ltv_webhook_deliveries
-                     SET status = 'pending', attempts = 0, next_attempt_at = ?, updated_at = ?
-                     WHERE webhook_id = ? AND user_id = ? AND status = 'failed' AND created_at >= ?"
-                );
-                $this->conn->bind($stmt, 'iiiii', [
-                    $now,
-                    $now,
-                    $webhookId,
-                    $userId,
-                    $now - WebhookDispatcher::MAX_AGE_SECONDS,
-                ]);
-                $requeued = $this->conn->executeUpdate($stmt);
-            }
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_ltv_webhook_deliveries SET attempts = 0, updated_at = ?
+             WHERE webhook_id = ? AND user_id = ? AND status = 'pending' AND attempts > 0"
+        );
+        $this->conn->bind($stmt, 'iii', [$now, $webhookId, $userId]);
+        $reset = $this->conn->executeUpdate($stmt);
 
-            return ['revived' => true, 'requeued' => $requeued, 'attempts_reset' => $reset];
-        });
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_ltv_webhook_deliveries
+             SET status = 'pending', attempts = 0, next_attempt_at = created_at, updated_at = ?
+             WHERE webhook_id = ? AND user_id = ? AND status = 'failed' AND created_at >= ?"
+        );
+        $this->conn->bind($stmt, 'iiii', [
+            $now,
+            $webhookId,
+            $userId,
+            $now - WebhookDispatcher::MAX_AGE_SECONDS,
+        ]);
+        $requeued = $this->conn->executeUpdate($stmt);
+
+        return ['revived' => true, 'requeued' => $requeued, 'attempts_reset' => $reset, 'held' => 0];
     }
 
     /**

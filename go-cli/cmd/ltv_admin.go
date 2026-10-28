@@ -336,10 +336,12 @@ var ltvWebhooksReviveCmd = &cobra.Command{
 	Short: "Make a dead webhook active again, and send what it missed in the last 7 days",
 	Long: "A webhook is marked dead when one delivery fails 6 times (about an hour of retries); while it\n" +
 		"is dead its deliveries are held, never tried. Reviving keeps its id, URL and secret (the Landing\n" +
-		"Page Optimizer's pairing goes on without pairing again) and starts its failure count again from 0.\n" +
-		"Every delivery it did not deliver from the last 7 days is sent again, oldest first, each with its\n" +
-		"own X-P202-Delivery; a delivered one never is. --requeue=false revives it for new events only.\n" +
-		"An active webhook is left as it is (revived: false).\n\n" +
+		"Page Optimizer's pairing goes on without pairing again). Every delivery it did not deliver from\n" +
+		"the last 7 days is sent, oldest first, each with its own X-P202-Delivery: again for the failed and\n" +
+		"held ones, and the ones still pending with their failure count back at 0; a delivered one never\n" +
+		"is. --requeue=false revives it for new events only, and holds the ones still pending too.\n" +
+		"An active webhook is left as it is (revived: false). A revival waits up to 20 seconds for a cron\n" +
+		"run that is sending; a 409 means it was still sending, and nothing changed.\n\n" +
 		"  p202 ltv webhooks revive 3\n" +
 		"  p202 ltv webhooks deliveries 3 --status pending",
 	Args: cobra.ExactArgs(1),
@@ -354,6 +356,11 @@ var ltvWebhooksReviveCmd = &cobra.Command{
 			return err
 		}
 		data, err := c.Put("ltv/webhooks/"+id, map[string]interface{}{"status": "active", "requeue": requeue})
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) && apiErr.Status == 409 {
+			return withHint(err, "Nothing was changed: a cron run was sending webhook deliveries. "+
+				"Run the same command again in a minute.")
+		}
 		if err != nil {
 			return ltvNotFound(err, ltvWebhookListHint)
 		}

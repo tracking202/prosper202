@@ -6,13 +6,16 @@
 #      next event's delivery fails 6 times, which marks the webhook dead;
 #   2. two events queued while it is dead are held by the dispatcher, never
 #      tried, and the delivery log says so ("held: …");
-#   3. revived (PUT /ltv/webhooks/{id}), it is active with its id and secret,
-#      and the next run of the cron job (202-cronjobs/index.php, the
-#      installer's line) sends the three it missed, oldest first, each once;
-#      the delivered one is not sent again, and the run after sends nothing;
-#   4. killed again and revived through the PHP CLI (bin/p202
-#      ltv:webhook:revive --no-requeue): active, nothing it missed is sent,
-#      and a new event is;
+#   3. a third event is queued and no run holds it before the revival (PUT
+#      /ltv/webhooks/{id}): it is active with its id and secret, and the next
+#      run of the cron job (202-cronjobs/index.php, the installer's line)
+#      sends the three it missed and the one still pending, oldest first,
+#      each once; the delivered one is not sent again, and the run after
+#      sends nothing;
+#   4. killed again, an event still pending, and revived through the PHP CLI
+#      (bin/p202 ltv:webhook:revive --no-requeue): active, the pending one is
+#      held ("held: … revived for new events only"), nothing it missed is
+#      sent, and a new event is;
 #   5. killed again and revived from LTV Settings' Revive button (the POST its
 #      script makes, with the page's own token), when P202_PASS is given.
 #
@@ -207,16 +210,18 @@ esac
 eq "$(received | wc -l | tr -d ' ')" 1 'the receiver has the delivered one only'
 
 say "3. revived through the API; the next cron run sends what it missed, once"
+revenue; PENDING=$(last_delivery)
+eq "$(delivery "$PENDING" status)" pending 'an event queued while dead is still pending at the revival'
 REVIVED=$(api -X PUT "$BASE/api/v3/ltv/webhooks/$WEBHOOK_ID" -d '{"status":"active"}')
-eq "$(printf '%s' "$REVIVED" | json data.revived)/$(printf '%s' "$REVIVED" | json data.requeued)" 'true/3' 'PUT answers revived, 3 sent again'
+eq "$(printf '%s' "$REVIVED" | json data.revived)/$(printf '%s' "$REVIVED" | json data.requeued)/$(printf '%s' "$REVIVED" | json data.held)" 'true/3/0' 'PUT answers revived, 3 sent again, none held'
 eq "$(printf '%s' "$REVIVED" | json data.webhook_id)/$(hook_status)" "$WEBHOOK_ID/active" 'the same webhook, active'
 eq "$(printf '%s' "$REVIVED" | json data.webhook_secret)" null 'the answer holds no secret'
 cron
-for id in "$KILLER" "$HELD1" "$HELD2"; do
+for id in "$KILLER" "$HELD1" "$HELD2" "$PENDING"; do
     eq "$(times_received "$id")" 1 "delivery $id received once"
     eq "$(delivery "$id" status)" delivered "delivery $id recorded as delivered"
 done
-eq "$(received | tail -3 | tr '\n' ' ')" "$KILLER $HELD1 $HELD2 " 'oldest first'
+eq "$(received | tail -4 | tr '\n' ' ')" "$KILLER $HELD1 $HELD2 $PENDING " 'oldest first'
 eq "$(times_received "$DELIVERED")" 1 'the one delivered before is not sent again'
 SIGNED=$(mine | tail -1 | "$PHP" -r '$r = json_decode(stream_get_contents(STDIN), true); echo hash_equals("sha256=" . hash_hmac("sha256", $r["body"], $argv[1]), (string) $r["signature"]) ? "yes" : "no";' "$SECRET")
 eq "$SIGNED" yes 'signed with the secret it had'
@@ -229,14 +234,22 @@ kill_webhook
 mkdir -p "$WORK/php-home"
 HOME="$WORK/php-home" "$PHP" "$ROOT/bin/p202" config:set-url "$BASE" >/dev/null
 HOME="$WORK/php-home" "$PHP" "$ROOT/bin/p202" config:set-key "$P202_API_KEY" >/dev/null
+revenue; UNSENT=$(last_delivery)
+eq "$(delivery "$UNSENT" status)" pending 'an event queued while dead is still pending at the revival'
 CLI=$(HOME="$WORK/php-home" "$PHP" "$ROOT/bin/p202" ltv:webhook:revive "$WEBHOOK_ID" --no-requeue --json 2>&1)
-eq "$(printf '%s' "$CLI" | json data.revived)/$(printf '%s' "$CLI" | json data.requeued)" 'true/0' 'bin/p202 ltv:webhook:revive --no-requeue'
+eq "$(printf '%s' "$CLI" | json data.revived)/$(printf '%s' "$CLI" | json data.requeued)/$(printf '%s' "$CLI" | json data.held)" 'true/0/1' 'bin/p202 ltv:webhook:revive --no-requeue: the pending one held'
 eq "$(hook_status)" active 'active again'
+eq "$(delivery "$UNSENT" "CONCAT(status, '/', attempts)")" 'failed/0' 'the pending one is set aside, 0 attempts'
+case "$(delivery "$UNSENT" last_response_body)" in
+    'held: its webhook was revived for new events only'*) ok 'its log says why' ;;
+    *) bad "its last response: $(delivery "$UNSENT" last_response_body)" ;;
+esac
 revenue; NEW=$(last_delivery)
 cron
 eq "$(times_received "$NEW")" 1 'a new event is sent'
 eq "$(times_received "$KILLER")" 0 'the missed one is not'
-eq "$(delivery "$KILLER" status)" failed 'and stays failed'
+eq "$(times_received "$UNSENT")" 0 'nor the one pending at the revival'
+eq "$(delivery "$KILLER" status)/$(delivery "$UNSENT" status)" failed/failed 'and both stay failed'
 
 if [ -n "$P202_PASS" ]; then
     say "5. killed again, revived from LTV Settings' Revive button"
@@ -252,8 +265,8 @@ if [ -n "$P202_PASS" ]; then
     TOKEN=$(grep -o "token: \"[0-9a-f]*\"" "$WORK/settings.html" | head -1 | sed 's/token: "//; s/"//')
     curl -sS -b "$JAR" -c "$JAR" -o "$WORK/revived.html" --data "action=revive_webhook&token=$TOKEN&webhook_id=$WEBHOOK_ID" \
         "$BASE/tracking202/ajax/ltv_settings.php"
-    grep -q "Webhook #$WEBHOOK_ID is active again; 2 delivery(ies) it missed" "$WORK/revived.html" \
-        && ok 'the page says it is active again, with the 2 it missed' || bad "the page's answer: $(grep -o 'Webhook #[^<]*' "$WORK/revived.html" | head -1)"
+    grep -q "Webhook #$WEBHOOK_ID is active again; 3 delivery(ies) it missed" "$WORK/revived.html" \
+        && ok 'the page says it is active again, with the 3 it missed' || bad "the page's answer: $(grep -o 'Webhook #[^<]*' "$WORK/revived.html" | head -1)"
     eq "$(hook_status)" active 'active again'
     cron
     eq "$(delivery "$KILLER" status)" delivered 'what it missed is sent'

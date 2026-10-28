@@ -507,6 +507,15 @@ func TestLtvWebhookReviveSendsTheRevival(t *testing.T) {
 	if exitCodeForError(err) != ExitValidation || !strings.Contains(hintFor(err), "`p202 ltv webhooks list`") {
 		t.Errorf("404: exit %d, hint %q", exitCodeForError(err), hintFor(err))
 	}
+	// A cron run still sending: nothing changed, and nothing "already exists".
+	newLtvServer(t, func(ltvRequest) (int, string) {
+		return 409, `{"error":true,"status":409,"message":"LTV webhook deliveries are being sent right now, and the run did not end within 20 seconds; nothing was changed. Try again in a minute."}`
+	})
+	_, _, err = executeCommand("ltv", "webhooks", "revive", "3")
+	if exitCodeForError(err) != ExitValidation || !strings.Contains(hintFor(err), "again in a minute") ||
+		strings.Contains(hintFor(err), "already exists") {
+		t.Errorf("409: exit %d, hint %q", exitCodeForError(err), hintFor(err))
+	}
 }
 
 func TestLtvWebhookDeliveriesReadsTheLog(t *testing.T) {

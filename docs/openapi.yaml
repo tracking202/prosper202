@@ -8536,11 +8536,14 @@ paths:
         Needs the `ltv:write` scope. A webhook is marked dead when one delivery fails 6 times (about an hour of
         retries); while it is dead its deliveries are held, never tried (`last_response_body` "held: …").
         `{"status": "active"}` makes it active again with the same id, URL and secret, so anything set up with them
-        (the Landing Page Optimizer's pairing) goes on without pairing again, and its pending deliveries' attempts
-        start again from 0. With `requeue` (default true) every delivery of it that was not delivered and was
-        queued in the last 7 days (the one that failed 6 times, and those held) is sent again, oldest first, each
-        with its own `X-P202-Delivery`; a delivered one is never sent again, and older ones stay failed.
-        `"requeue": false` revives it for new events only. An active webhook is left as it is (`revived` false).
+        (the Landing Page Optimizer's pairing) goes on without pairing again. With `requeue` (default true) every
+        delivery of it that was not delivered and was queued in the last 7 days is sent: the one that failed 6
+        times and those held are sent again, and those still pending are sent too, their attempts back at 0 (one
+        waiting out a retry's backoff keeps its time, at most 32 minutes); oldest first, each with its own
+        `X-P202-Delivery`. A delivered one is never sent again, and older ones stay failed. `"requeue": false`
+        revives it for new events only: those still pending are held as well (failed, "held: its webhook was
+        revived for new events only, …"). A revival waits up to 20 seconds for a cron run that is sending; one
+        still sending then is a `409`, and nothing changed. An active webhook is left as it is (`revived` false).
         Any other `status`, or another key, is a `422` naming it; another account's webhook is a `404`. LTV writes
         do not honor `Idempotency-Key`, cannot be staged and have no `dry_run` preview.
       operationId: ltvReviveWebhook
@@ -8601,12 +8604,22 @@ paths:
                       attempts_reset:
                         type: integer
                         description: Pending deliveries whose attempts went back to 0
+                      held:
+                        type: integer
+                        description: Pending deliveries "requeue" false set aside, never sent
                       requeue:
                         type: boolean
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: A cron run was still sending webhook deliveries after 20 seconds; nothing was changed. Send
+            the revival again in a minute
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           $ref: '#/components/responses/ValidationError'
     delete:
