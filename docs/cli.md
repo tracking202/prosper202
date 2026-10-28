@@ -687,6 +687,15 @@ failed poll ends it with that error's exit code (2–4); `--all`, `--offset`,
 p202 click get 12345
 ```
 
+`click list` and `click get` carry the ad platforms' click ids the click
+arrived with — `gclid`, `gbraid`, `wbraid` (Google Ads' iOS click ids),
+`ttclid` (TikTok's), `msclkid` (Microsoft Advertising's) and `fbclid`
+(Meta's) — each `null` when it came with none. Direct links and landing pages
+record them; a redirector click has none, and a click recorded before 1.9.79
+has only its gclid. In the table they are
+columns like any other (cut at 42 characters unless `--wide`); `--json` gives
+them whole.
+
 A click a redirector link re-clicked (`rtr.php?lpr=`) has a row for each
 visit: `click list` lists each, and `click get` answers the latest, the visit
 the reports count and a conversion credits. Every row carries the first
@@ -1030,7 +1039,37 @@ Summary/dashboard multi-profile selectors:
 | `--profiles <p1,p2,...>` | Query explicit profile list |
 | `--group <tag>` | Query all profiles tagged with `tag` |
 
-Multi-profile output includes per-profile rows, aggregated totals, and an `errors` list for partial failures.
+Multi-profile output is one row per profile, then a `TOTAL` row (also under
+`aggregated`), the profiles that failed in `errors`, and `meta`. The TOTAL is
+what `reports/summary` would answer for every profile's traffic at once:
+
+- `total_clicks`, `total_click_throughs`, `total_leads` and the money
+  (`total_income`, `total_cost`, `total_net`) are summed.
+- `epc`, `avg_cpc`, `conv_rate`, `roi` and `cpa` are computed again from those
+  sums by the server's formula, to the decimals the server answers them in
+  (`conv_rate` to 4, the others to 9; MySQL's division, truncated where it stops
+  and rounded half away from zero). Profiles at ROI 200% and 0% on equal cost
+  total ROI 100%, not 200%. A ratio whose denominator sums to 0 is 0, as the
+  server answers it.
+- Money is added only when every profile's server states the same currency
+  (`currency` in each row; servers before 1.9.79 do not state one). Otherwise
+  the TOTAL leaves out `total_income`, `total_cost`, `total_net`, `epc`,
+  `avg_cpc`, `roi` and `cpa`, and keeps the counts and `conv_rate`. With one
+  profile nothing is added, and its money stays.
+- A field this CLI does not know (a newer server's) stays in each profile's row
+  and is left out of the TOTAL: it may be a ratio, and a ratio is not summed.
+
+What the TOTAL leaves out is in `meta.not_totalled` (field: why) and
+`meta.warnings` under `--json`, and printed as `Warning:` lines on stderr
+otherwise; `meta.currencies` gives each profile's currency (`null` where its
+server does not state one). A profile whose request fails, whose role sees
+masked figures, or whose answer holds a count or amount that is not a number is
+named in `errors` (and on stderr) and left out of the TOTAL; when every profile
+fails, the command fails naming each (in profile order), with the failure's
+category, exit code and hint only when every profile failed with the same three
+(every server unreachable: `network`, exit 3). An answer that is not one JSON
+summary (malformed, or with anything but whitespace after it) is a failed
+profile, `server`.
 
 ### Breakdown
 
