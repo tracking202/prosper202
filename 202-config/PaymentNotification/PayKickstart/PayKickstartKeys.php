@@ -123,17 +123,18 @@ final class PayKickstartKeys
     }
 
     /**
-     * The page's Remove: the key at a place (from 1), named by the hint the
-     * page showed for it, so a list changed in another tab removes nothing.
+     * The page's Remove: the key at a place (from 1), named by the token the
+     * page gave its form (removalToken()), so a list changed in another tab
+     * removes nothing, a key with the same ending in that place included.
      *
      * @param list<string> $stored
      * @return list<string>
      * @throws InvalidArgumentException
      */
-    public static function removed(array $stored, string $place, string $hint): array
+    public static function removed(array $stored, string $place, string $token, string $secret): array
     {
         $index = preg_match('/^[1-9][0-9]?$/D', $place) === 1 ? (int) $place - 1 : -1;
-        if (!isset($stored[$index]) || !hash_equals(self::hint($stored[$index]), $hint)) {
+        if (!isset($stored[$index]) || !hash_equals(self::removalToken($stored[$index], $secret), $token)) {
             throw new InvalidArgumentException('The stored keys changed since this page was loaded, so nothing was'
                 . ' removed. Look again and remove it from the list below.');
         }
@@ -142,7 +143,22 @@ final class PayKickstartKeys
         return $stored;
     }
 
-    /** How the page tells stored keys apart: their last four characters. */
+    /**
+     * What a Remove form carries for a key: an HMAC of the whole key under a
+     * secret the server holds and the page never shows (the session's), so
+     * the page gives a reader nothing to match a guess against, and a form
+     * cannot be made for a key it was not given.
+     */
+    public static function removalToken(string $key, string $secret): string
+    {
+        if (strlen($secret) < 32) {
+            throw new \LogicException('a removal token needs a secret of at least 32 bytes');
+        }
+
+        return hash_hmac('sha256', 'paykickstart-ipn-key-removal|' . $key, $secret);
+    }
+
+    /** How the page shows stored keys: their last four characters. */
     public static function hint(string $key): string
     {
         return "\u{2026}" . substr($key, -4);

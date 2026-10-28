@@ -224,6 +224,16 @@ if (isset($_GET['delete_dni_network']) && !empty($_GET['delete_dni_network'])) {
 	p202_account_redirect('202-account/api-integrations.php#dni');
 }
 
+// A PayKickstart key's Remove form names the key by an HMAC of the whole key
+// under this session's secret, which never leaves the server
+// (PayKickstartKeys::removalToken()).
+if (!is_string($_SESSION['paykickstart_key_secret'] ?? null) || strlen($_SESSION['paykickstart_key_secret']) !== 64) {
+	withWritableSession(static function (): void {
+		$_SESSION['paykickstart_key_secret'] = bin2hex(random_bytes(32));
+	});
+}
+$pkSecret = $_SESSION['paykickstart_key_secret'];
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	// validate token
@@ -335,7 +345,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		try {
 			$pkKeys = $pkAction === 'add'
 				? PayKickstartKeys::added($pkOld, $pkPosted('paykickstart_ipn_secret_key'))
-				: PayKickstartKeys::removed($pkOld, $pkPosted('paykickstart_key_place'), $pkPosted('paykickstart_key_hint'));
+				: PayKickstartKeys::removed(
+					$pkOld,
+					$pkPosted('paykickstart_key_place'),
+					$pkPosted('paykickstart_key_token'),
+					$pkSecret
+				);
 			updateUserPreference(PayKickstartKeys::COLUMN, PayKickstartKeys::serialize($pkKeys), $_SESSION['user_id'], $db);
 		} catch (InvalidArgumentException $pkRefused) {
 			$error[$pkErrorKey] = $pkRefused->getMessage();
@@ -1130,7 +1145,8 @@ template_top('API Integrations');
 									<?php echo p202_account_token_field(); ?>
 									<input type="hidden" name="paykickstart_key_action" value="remove">
 									<input type="hidden" name="paykickstart_key_place" value="<?php echo (int) $pkPlace + 1; ?>">
-									<input type="hidden" name="paykickstart_key_hint" value="<?php echo $e(PayKickstartKeys::hint($pkKey)); ?>">
+									<input type="hidden" name="paykickstart_key_token"
+										value="<?php echo $e(PayKickstartKeys::removalToken($pkKey, $pkSecret)); ?>">
 									<button type="submit" class="p202-list__action p202-list__action--danger">remove</button>
 								</form></span>
 							</li>
