@@ -1214,9 +1214,10 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
   per source, the user it is in, each user whose traffic source accounts name
   it (with their accounts, clicks and conversions), `repair_to_user_id` and
   `ambiguous` (`owner_has_accounts`, `several_users`, `saved_after_rename`,
-  `no_such_user`). `repair <id>` moves a source to its `repair_to_user_id`; an
-  ambiguous one is refused (exit 1, nothing sent) unless `--to-user-id` names
-  one of its `named_by` users. Ask the user which before passing it: the same
+  `no_such_user`, `deleted_user`). `repair <id>` moves a source to its
+  `repair_to_user_id`; an ambiguous one is refused (exit 1, nothing sent)
+  unless `--to-user-id` names one of its `named_by` users, and never a deleted
+  one. Ask the user which before passing it: the same
   rows come from accounts the API put on another user's source before 1.9.77.
   `--all` leaves the ambiguous ones. Only the source's user changes. A move
   out of or into user 1's, or an Admin's, account is a 403 unless the key is

@@ -17,12 +17,14 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
     private const OWNER = 11;
     private const TAKER = 12;
     private const THIRD = 13;
+    private const OFF = 14;
     private const RENAMED = 2_000_000;
 
     private const USERS = [
-        self::OWNER => ['user_name' => 'owner', 'user_deleted' => false],
-        self::TAKER => ['user_name' => 'taker', 'user_deleted' => false],
-        self::THIRD => ['user_name' => 'third', 'user_deleted' => true],
+        self::OWNER => ['user_name' => 'owner', 'user_deleted' => false, 'user_active' => true],
+        self::TAKER => ['user_name' => 'taker', 'user_deleted' => false, 'user_active' => true],
+        self::THIRD => ['user_name' => 'third', 'user_deleted' => true, 'user_active' => true],
+        self::OFF => ['user_name' => 'off', 'user_deleted' => false, 'user_active' => false],
     ];
 
     /** @return array<string, mixed> a 202_ppc_networks row as mysqli answers it */
@@ -67,6 +69,7 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
             'user_id' => self::TAKER,
             'user_name' => 'taker',
             'user_deleted' => false,
+            'user_active' => true,
             'ppc_accounts' => 0,
             'removed_ppc_accounts' => 0,
             'ppc_account_ids' => [],
@@ -76,6 +79,7 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
             'user_id' => self::OWNER,
             'user_name' => 'owner',
             'user_deleted' => false,
+            'user_active' => true,
             'ppc_accounts' => 1,
             'removed_ppc_accounts' => 1,
             'ppc_account_ids' => [2, 3],
@@ -108,14 +112,14 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
     public function testAccountsOfTwoOtherUsersMakeItAmbiguous(): void
     {
         $entry = TrafficSourceOwners::classify(self::source(self::OWNER), [
-            self::account(5, self::THIRD, 1),
+            self::account(5, self::OFF, 1),
             self::account(2, self::TAKER, 1),
         ], self::USERS);
 
         self::assertSame([TrafficSourceOwners::SEVERAL_USERS], $entry['ambiguous']);
         self::assertNull($entry['repair_to_user_id']);
-        self::assertSame([self::TAKER, self::THIRD], array_column($entry['named_by'], 'user_id'));
-        self::assertTrue($entry['named_by'][1]['user_deleted']);
+        self::assertSame([self::TAKER, self::OFF], array_column($entry['named_by'], 'user_id'));
+        self::assertFalse($entry['named_by'][1]['user_active']);
     }
 
     /** The shape the API made before 1.9.77: an account put on another user's source after it was saved. */
@@ -145,6 +149,28 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
         self::assertNull($entry['repair_to_user_id']);
     }
 
+    /** A deleted user is nobody to go back to: once moved there, the source leaves the report for good. */
+    public function testADeletedUserMakesItAmbiguous(): void
+    {
+        $taken = self::source(self::TAKER);
+        $entry = TrafficSourceOwners::classify($taken, [self::account(2, self::THIRD, 1)], self::USERS);
+
+        self::assertSame([TrafficSourceOwners::DELETED_USER], $entry['ambiguous']);
+        self::assertNull($entry['repair_to_user_id']);
+        self::assertTrue($entry['named_by'][0]['user_deleted']);
+    }
+
+    /** A switched-off user can be switched on again; the source goes back, and the report says so. */
+    public function testASwitchedOffUserStillHasTheSourceToGoBackTo(): void
+    {
+        $taken = self::source(self::TAKER);
+        $entry = TrafficSourceOwners::classify($taken, [self::account(2, self::OFF, 1)], self::USERS);
+
+        self::assertSame([], $entry['ambiguous']);
+        self::assertSame(self::OFF, $entry['repair_to_user_id']);
+        self::assertFalse($entry['named_by'][0]['user_active']);
+    }
+
     public function testAUserWithNoRowMakesItAmbiguous(): void
     {
         $entry = TrafficSourceOwners::classify(self::source(self::TAKER), [self::account(2, 99, 1)], self::USERS);
@@ -161,6 +187,7 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
             self::account(2, self::OWNER, 20),
             self::account(3, 99, 5),
             self::account(4, self::TAKER, 5),
+            self::account(5, self::THIRD, 5),
         ], self::USERS);
 
         self::assertSame([
@@ -168,6 +195,7 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
             TrafficSourceOwners::SEVERAL_USERS,
             TrafficSourceOwners::SAVED_AFTER_RENAME,
             TrafficSourceOwners::NO_SUCH_USER,
+            TrafficSourceOwners::DELETED_USER,
         ], $entry['ambiguous']);
         self::assertTrue($entry['removed']);
     }

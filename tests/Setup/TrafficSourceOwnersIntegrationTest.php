@@ -317,6 +317,7 @@ final class TrafficSourceOwnersIntegrationTest extends TestCase
             'user_id' => self::TAKER,
             'user_name' => 'rp' . self::TAKER,
             'user_deleted' => false,
+            'user_active' => true,
             'ppc_accounts' => 0,
             'removed_ppc_accounts' => 0,
             'ppc_account_ids' => [],
@@ -328,6 +329,7 @@ final class TrafficSourceOwnersIntegrationTest extends TestCase
             'user_id' => self::OWNER,
             'user_name' => 'rp' . self::OWNER,
             'user_deleted' => false,
+            'user_active' => true,
             'ppc_accounts' => 1,
             'removed_ppc_accounts' => 1,
             'ppc_account_ids' => [870301, 870302],
@@ -495,6 +497,40 @@ final class TrafficSourceOwnersIntegrationTest extends TestCase
             self::assertStringContainsString('add_edit_delete_admin', $e->getMessage());
         }
         self::assertSame(self::TAKER, self::ownerOf(self::ADMINS_OWN), 'nothing was moved');
+    }
+
+    public function testASourceIsNotMovedIntoADeletedUsersAccount(): void
+    {
+        self::takeTheOldWay(self::TAKER, self::TAKEN, 'Taken');
+        self::q('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ' . self::OWNER);
+
+        $entry = self::listed()[self::TAKEN];
+        self::assertSame([TrafficSourceOwners::DELETED_USER], $entry['ambiguous']);
+        self::assertNull($entry['repair_to_user_id']);
+        self::assertTrue($entry['named_by'][0]['user_deleted']);
+
+        $source = ['ppc_network_id' => self::TAKEN];
+        self::assertStringContainsString('ambiguous (deleted_user)', self::refusal($source, 'to_user_id'));
+        self::assertStringContainsString(
+            'User ' . self::OWNER . ' is deleted',
+            self::refusal($source + ['to_user_id' => self::OWNER], 'to_user_id')
+        );
+        $all = self::controller(self::ADMIN)->repair(['all' => true])['data'];
+        self::assertNotContains(self::TAKEN, array_column($all['repaired'], 'ppc_network_id'));
+        self::assertSame(self::TAKER, self::ownerOf(self::TAKEN), 'nothing was moved');
+    }
+
+    public function testASourceGoesBackToASwitchedOffUser(): void
+    {
+        self::takeTheOldWay(self::TAKER, self::TAKEN, 'Taken');
+        self::q('UPDATE 202_users SET user_active = 0 WHERE user_id = ' . self::OWNER);
+
+        $entry = self::listed()[self::TAKEN];
+        self::assertSame([], $entry['ambiguous']);
+        self::assertFalse($entry['named_by'][0]['user_active']);
+
+        self::controller(self::ADMIN)->repair(['ppc_network_id' => self::TAKEN]);
+        self::assertSame(self::OWNER, self::ownerOf(self::TAKEN));
     }
 
     public function testASourceIsNotMovedToAUserWithNoRecord(): void

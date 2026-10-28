@@ -1701,10 +1701,11 @@ whatever source it was sent, and an admin may have moved a source on purpose.
 `show` marks a source `ambiguous` when its own user has accounts on it too
 (`owner_has_accounts`), accounts of several users name it (`several_users`),
 an account was saved after the source was, or in its second
-(`saved_after_rename`, the shape the API made), or a user has no record
-(`no_such_user`); such a source moves only
-with `--to-user-id`, naming one of the users whose accounts name it, and
-`--all` leaves it. A repair changes only the source's user: the name stays as
+(`saved_after_rename`, the shape the API made), a user has no record
+(`no_such_user`), or a user is deleted (`deleted_user`); such a source moves
+only with `--to-user-id`, naming one of the users whose accounts name it, and
+`--all` leaves it. No source moves into a deleted user's account; a
+switched-off user's is shown as such and still repaired. A repair changes only the source's user: the name stays as
 the rename left it and a removed source stays removed. Its accounts' clicks are
 queued for the cron job's report rollup, and the move is logged on the server.
 It needs a key whose user may act on both users, as Account › Users allows

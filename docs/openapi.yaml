@@ -858,9 +858,14 @@ paths:
         times are whole seconds, and the rename stamped
         `ppc_network_time`, so the accounts a source was taken from were all
         saved before it, while an account the API put on another user's
-        source was saved after that source), or the other user has no user
-        record (`no_such_user`). A source taken with no traffic source
-        account under it leaves no sign and is not listed.
+        source was saved after that source), the other user has no user
+        record (`no_such_user`), or the other user is deleted
+        (`deleted_user`: nobody signs in as them, and a source moved there
+        would leave this report for good, so no repair moves one there). A
+        switched-off user (`user_active: false`) can be switched on again;
+        the source is still theirs and the repair still moves it. A source
+        taken with no traffic source account under it leaves no sign and is
+        not listed.
 
         Admin (or Super user) with `access_to_settings`, and `system:read`:
         the report names every user's sources.
@@ -896,8 +901,8 @@ paths:
       description: |
         `{"ppc_network_id": N}` moves one source the report lists to its
         `repair_to_user_id`; with `"to_user_id"` it moves it to that user,
-        who must be one of its `named_by` users (the only way to move an
-        `ambiguous` source). `{"all": true}` moves every source the report
+        who must be one of its `named_by` users and not deleted (the only
+        way to move an `ambiguous` source). `{"all": true}` moves every source the report
         names a `repair_to_user_id` for and answers the rest under `skipped`
         (`reason`: `ambiguous`, `not_permitted`, or `changed`).
 
@@ -10686,6 +10691,10 @@ components:
         user_deleted:
           type: boolean
           nullable: true
+        user_active:
+          type: boolean
+          nullable: true
+          description: False for a user switched off in Account › Users
         ppc_accounts:
           type: integer
           description: Live traffic source accounts of this user that name the source
@@ -10731,7 +10740,7 @@ components:
           type: array
           items:
             type: string
-            enum: [owner_has_accounts, several_users, saved_after_rename, no_such_user]
+            enum: [owner_has_accounts, several_users, saved_after_rename, no_such_user, deleted_user]
 
     SystemIspLookup:
       type: object

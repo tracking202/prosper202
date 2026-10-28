@@ -32,6 +32,8 @@ const tsoNeeds = "Needs an Admin or Super user key whose role has access_to_sett
 type tsoParty struct {
 	UserID             int     `json:"user_id"`
 	UserName           *string `json:"user_name"`
+	UserDeleted        *bool   `json:"user_deleted"`
+	UserActive         *bool   `json:"user_active"`
 	PpcAccounts        int     `json:"ppc_accounts"`
 	RemovedPpcAccounts int     `json:"removed_ppc_accounts"`
 	Clicks             int64   `json:"clicks"`
@@ -104,6 +106,12 @@ func tsoUser(p tsoParty) string {
 	if p.UserName == nil {
 		return fmt.Sprintf("user %d (no such user)", p.UserID)
 	}
+	switch {
+	case p.UserDeleted != nil && *p.UserDeleted:
+		return fmt.Sprintf("user %d (%s, deleted)", p.UserID, *p.UserName)
+	case p.UserActive != nil && !*p.UserActive:
+		return fmt.Sprintf("user %d (%s, switched off)", p.UserID, *p.UserName)
+	}
 	return fmt.Sprintf("user %d (%s)", p.UserID, *p.UserName)
 }
 
@@ -157,8 +165,9 @@ var systemTrafficSourceOwnersShowCmd = &cobra.Command{
 		"their accounts, clicks and conversions), repair_to (the user `repair` moves it to without\n" +
 		"--to-user-id; blank when ambiguous) and why it is ambiguous: owner_has_accounts (its own user has\n" +
 		"accounts on it too), several_users, saved_after_rename (an account was saved after the source,\n" +
-		"or in its second: the shape the API made before 1.9.77), no_such_user. --json carries the\n" +
-		"account ids too.\n\n" +
+		"or in its second: the shape the API made before 1.9.77), no_such_user, deleted_user (a source\n" +
+		"never moves into a deleted user's account; a switched-off user's is shown and still repaired).\n" +
+		"--json carries the account ids too.\n\n" +
 		tsoNeeds + ", and system:read.",
 	Example: "  p202 system traffic-source-owners show\n  p202 system traffic-source-owners show --json",
 	Args:    cobra.NoArgs,
@@ -268,13 +277,19 @@ func runTsoRepair(cmd *cobra.Command, args []string) error {
 	body := map[string]interface{}{"ppc_network_id": sourceID}
 	if toUser != 0 {
 		body["to_user_id"] = toUser
-		found := false
-		for _, p := range entry.NamedBy {
-			found = found || p.UserID == toUser
+		var named *tsoParty
+		for i := range entry.NamedBy {
+			if entry.NamedBy[i].UserID == toUser {
+				named = &entry.NamedBy[i]
+			}
 		}
-		if !found {
+		if named == nil {
 			return validationError("no traffic source account of user %d names traffic source %d; it goes back only to one of users %s. Nothing was sent", toUser, sourceID, tsoUserIDs(entry.NamedBy)).
 				WithHint("Pass --to-user-id with one of the users `p202 system traffic-source-owners show` lists under named_by.")
+		}
+		if named.UserDeleted != nil && *named.UserDeleted {
+			return validationError("user %d is deleted, and a traffic source is never moved into a deleted user's account. Nothing was sent", toUser).
+				WithHint("Leave the source where it is, or name another user `p202 system traffic-source-owners show` lists under named_by.")
 		}
 	} else {
 		if entry.RepairTo == nil {

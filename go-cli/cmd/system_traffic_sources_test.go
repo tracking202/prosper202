@@ -22,7 +22,8 @@ const tsoReportBody = `{"data":{"sources":[
   "repair_to_user_id":2,"ambiguous":[]},
  {"ppc_network_id":9,"ppc_network_name":"Shared","removed":true,"ppc_network_time":1000000000,
   "owner":{"user_id":1,"user_name":"admin","user_deleted":false,"ppc_accounts":1,"removed_ppc_accounts":0,"ppc_account_ids":[8],"last_ppc_account_time":1000000000,"clicks":5,"conversions":0},
-  "named_by":[{"user_id":4,"user_name":"sub","user_deleted":false,"ppc_accounts":1,"removed_ppc_accounts":0,"ppc_account_ids":[10],"last_ppc_account_time":1200000000,"clicks":30,"conversions":1}],
+  "named_by":[{"user_id":4,"user_name":"sub","user_deleted":false,"user_active":false,"ppc_accounts":1,"removed_ppc_accounts":0,"ppc_account_ids":[10],"last_ppc_account_time":1200000000,"clicks":30,"conversions":1},
+   {"user_id":6,"user_name":"gone","user_deleted":true,"user_active":true,"ppc_accounts":1,"removed_ppc_accounts":0,"ppc_account_ids":[11],"last_ppc_account_time":900000000,"clicks":0,"conversions":0}],
   "repair_to_user_id":null,"ambiguous":["owner_has_accounts","saved_after_rename"]}
 ],"repairable":1,"ambiguous":1}}`
 
@@ -58,7 +59,8 @@ func TestTrafficSourceOwnersShowListsEachSource(t *testing.T) {
 	if len(*seen) != 1 || (*seen)[0].Method != "GET" || (*seen)[0].Path != "/system/traffic-source-owners" {
 		t.Errorf("requests = %+v", *seen)
 	}
-	for _, want := range []string{"Google Ads", "user 3 (taker)", "user 2 (owner): 3 traffic source account(s), 1 removed, 1200 click(s), 14 conversion(s)", "owner_has_accounts, saved_after_rename"} {
+	for _, want := range []string{"Google Ads", "user 3 (taker)", "user 2 (owner): 3 traffic source account(s), 1 removed, 1200 click(s), 14 conversion(s)", "owner_has_accounts, saved_after_rename",
+		"user 4 (sub, switched off)", "user 6 (gone, deleted)"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("the table lacks %q:\n%s", want, stdout)
 		}
@@ -152,6 +154,13 @@ func TestTrafficSourceOwnersRepairOfAnAmbiguousSourceNeedsItsUser(t *testing.T) 
 		t.Fatalf("requests = %+v", *seen)
 	}
 	assertTsoBody(t, (*seen)[1].Body, `{"ppc_network_id":9,"to_user_id":4}`)
+
+	seen = updateServer(t, tsoResponder(func(updateRequest) (int, string) { return 200, tsoRepairedOne }))
+	_, _, err = executeCommand("system", "traffic-source-owners", "repair", "9", "--to-user-id", "6", "--force")
+	assertValidationError(t, err)
+	if !strings.Contains(err.Error(), "user 6 is deleted") || len(*seen) != 1 {
+		t.Errorf("a deleted user named: error %q, requests %+v", err, *seen)
+	}
 
 	seen = updateServer(t, tsoResponder(func(updateRequest) (int, string) { return 200, tsoRepairedOne }))
 	_, _, err = executeCommand("system", "traffic-source-owners", "repair", "8", "--force")

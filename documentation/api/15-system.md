@@ -329,10 +329,10 @@ itself, and the upgrade neither looks nor moves.
     "sources": [
       {
         "ppc_network_id": 7, "ppc_network_name": "Google Ads", "removed": false, "ppc_network_time": 1100000000,
-        "owner": { "user_id": 3, "user_name": "taker", "user_deleted": false, "ppc_accounts": 0, "removed_ppc_accounts": 0,
+        "owner": { "user_id": 3, "user_name": "taker", "user_deleted": false, "user_active": true, "ppc_accounts": 0, "removed_ppc_accounts": 0,
                    "ppc_account_ids": [], "last_ppc_account_time": null, "clicks": 0, "conversions": 0 },
         "named_by": [
-          { "user_id": 2, "user_name": "owner", "user_deleted": false, "ppc_accounts": 2, "removed_ppc_accounts": 1,
+          { "user_id": 2, "user_name": "owner", "user_deleted": false, "user_active": true, "ppc_accounts": 2, "removed_ppc_accounts": 1,
             "ppc_account_ids": [4, 5, 6], "last_ppc_account_time": 1000000000, "clicks": 1200, "conversions": 14 }
         ],
         "repair_to_user_id": 2,
@@ -362,11 +362,20 @@ told; it is null, and `ambiguous` lists why, when:
 - `owner_has_accounts`: the user it is in has accounts on it too;
 - `several_users`: accounts of more than one other user name it;
 - `saved_after_rename`: an account of another user was saved after the source
-  was last saved, or in the same second (the times are whole seconds). The rename stamped `ppc_network_time`, so the accounts of the
-  user a source was taken from were all saved before it, while an account the
-  API put on another user's source was saved after that source. (A source
-  renamed by its own user after that reads as taken.)
-- `no_such_user`: a user it names has no user record.
+  was last saved, or in the same second (the times are whole seconds). The
+  rename stamped `ppc_network_time`, so the accounts of the user a source was
+  taken from were all saved before it, while an account the API put on another
+  user's source was saved after that source. (A source renamed by its own user
+  after that reads as taken.)
+- `no_such_user`: a user it names has no user record;
+- `deleted_user`: a user it names is deleted. Nobody signs in as a deleted
+  user, and a source moved into that account would leave the report for good,
+  so no repair moves a source there, named or not (`to_user_id` naming one is
+  a `422`).
+
+A switched-off user (`user_active: false`, Account › Users' Active switch) can
+be switched on again, and the source is still theirs, so it is shown and does
+not stop a repair.
 
 `POST /system/traffic-source-owners/repair`
 

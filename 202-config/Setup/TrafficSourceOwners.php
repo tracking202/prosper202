@@ -42,7 +42,12 @@ use Prosper202\Lpo\DimensionSync;
  *   was saved before it; an account the API put on another user's source was
  *   saved after that source. A source renamed by its own user after that
  *   reads as taken;
- * - no_such_user: another user it names has no 202_users row.
+ * - no_such_user: another user it names has no 202_users row;
+ * - deleted_user: another user it names is deleted. Nobody signs in as a
+ *   deleted user, and once a source is in that account the report no longer
+ *   lists it, so no repair moves it there, named or not. A switched-off user
+ *   (user_active = 0) can be switched on again, and its source is its own
+ *   either way, so that is shown (user_active) and does not stop a repair.
  *
  * An unmarked source has one user to go back to (repair_to_user_id), and the
  * repair takes it there without being told. A marked one moves only to a user
@@ -54,6 +59,7 @@ final class TrafficSourceOwners
     public const SEVERAL_USERS = 'several_users';
     public const SAVED_AFTER_RENAME = 'saved_after_rename';
     public const NO_SUCH_USER = 'no_such_user';
+    public const DELETED_USER = 'deleted_user';
 
     public function __construct(private readonly Connection $conn)
     {
@@ -192,7 +198,7 @@ final class TrafficSourceOwners
      *
      * @param array<string, mixed> $source its 202_ppc_networks row
      * @param list<array<string, mixed>> $accounts the 202_ppc_accounts rows naming it
-     * @param array<int, array{user_name: string, user_deleted: bool}> $users by user_id
+     * @param array<int, array{user_name: string, user_deleted: bool, user_active: bool}> $users by user_id
      * @return array<string, mixed>|null
      */
     public static function classify(array $source, array $accounts, array $users): ?array
@@ -234,6 +240,12 @@ final class TrafficSourceOwners
                 break;
             }
         }
+        foreach ($others as $user) {
+            if ($users[$user]['user_deleted'] ?? false) {
+                $ambiguous[] = self::DELETED_USER;
+                break;
+            }
+        }
 
         $party = static function (int $user) use ($byUser, $users): array {
             $mine = $byUser[$user] ?? ['ids' => [], 'live' => 0, 'removed' => 0, 'last' => 0];
@@ -243,6 +255,7 @@ final class TrafficSourceOwners
                 'user_id' => $user,
                 'user_name' => $users[$user]['user_name'] ?? null,
                 'user_deleted' => $users[$user]['user_deleted'] ?? null,
+                'user_active' => $users[$user]['user_active'] ?? null,
                 'ppc_accounts' => $mine['live'],
                 'removed_ppc_accounts' => $mine['removed'],
                 'ppc_account_ids' => $mine['ids'],
@@ -302,9 +315,14 @@ final class TrafficSourceOwners
                 . ' names traffic source ' . $sourceId . '; it goes back only to a user whose accounts name it:'
                 . ' one of ' . $candidates . '.' . $none);
         }
-        if (self::partyOf($entry, $named)['user_name'] === null) {
+        $target = self::partyOf($entry, $named);
+        if ($target['user_name'] === null) {
             throw new TrafficSourceRepairRefused('to_user_id', 'User ' . $named . ' does not exist on this install.'
                 . $none);
+        }
+        if ($target['user_deleted'] === true) {
+            throw new TrafficSourceRepairRefused('to_user_id', 'User ' . $named . ' is deleted: nobody signs in as'
+                . ' them, and a source moved there leaves the report for good.' . $none);
         }
 
         return ['from' => $from, 'to' => $named, 'entry' => $entry];
@@ -369,7 +387,7 @@ final class TrafficSourceOwners
      *
      * @param array<string, mixed> $source
      * @param list<array<string, mixed>> $accounts
-     * @return array<int, array{user_name: string, user_deleted: bool}>
+     * @return array<int, array{user_name: string, user_deleted: bool, user_active: bool}>
      */
     private function users(array $source, array $accounts): array
     {
@@ -378,7 +396,8 @@ final class TrafficSourceOwners
             array_map(static fn (array $row): int => (int) $row['user_id'], $accounts)
         )));
         $stmt = $this->conn->prepareWrite(
-            'SELECT user_id, user_name, user_deleted FROM 202_users WHERE user_id IN (' . self::marks($ids) . ')'
+            'SELECT user_id, user_name, user_deleted, user_active FROM 202_users'
+            . ' WHERE user_id IN (' . self::marks($ids) . ')'
         );
         $this->conn->bind($stmt, str_repeat('i', count($ids)), $ids);
         $users = [];
@@ -386,6 +405,7 @@ final class TrafficSourceOwners
             $users[(int) $row['user_id']] = [
                 'user_name' => (string) $row['user_name'],
                 'user_deleted' => (int) $row['user_deleted'] !== 0,
+                'user_active' => (int) $row['user_active'] === 1,
             ];
         }
 
