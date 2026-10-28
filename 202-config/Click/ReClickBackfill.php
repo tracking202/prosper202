@@ -37,14 +37,18 @@ use Prosper202\DataEngine\ClickRollupSql;
  *
  * A click that fails is logged, naming it, and the run ends there with the
  * cursor at that click, so the next run starts with it. The click, how many
- * runs in a row it failed and since when are kept with the cursor until a
- * run gets past it, and progress() says the walk is stopped there: a click
+ * runs it failed with an error of its own and since when are kept with the
+ * cursor until a run gets past it, and progress() says the walk is stopped
+ * there: a click
  * that fails every minute holds back every click after it, which a
- * percentage alone read as a walk under way. Once it has failed in
- * STEP_OVER_RUNS runs in a row over at least STEP_OVER_SECONDS, the failure
- * is the click's (a value its rows hold), not the moment's (a lock, a lost
- * connection): it is logged, counted and stepped over, and stays counted at
- * each visit, as every click the walk has not reached is. A click whose rows
+ * percentage alone read as a walk under way. Once it has failed with an
+ * error of its own in STEP_OVER_RUNS runs over at least STEP_OVER_SECONDS,
+ * with no run getting past it, the failure is the click's (a value its rows
+ * hold): it is logged, counted and stepped over, and stays counted at each
+ * visit, as every click the walk has not reached is. An error of the moment
+ * (MOMENT_ERRNOS: a lock, a timeout, a lost connection, a server that will
+ * not write) stops the run at the click the same way and counts towards
+ * nothing, however long it lasts; any other failure counts. A click whose rows
  * name more than one account is left as it is, logged, and counted.
  *
  * Two of a click's rows in its latest second are both its latest visit, and
@@ -60,11 +64,23 @@ final class ReClickBackfill
     /** How long one cron run walks. */
     public const RUN_SECONDS = 10;
 
-    /** Runs in a row a click fails before it is stepped over, with STEP_OVER_SECONDS. */
+    /** Runs a click fails with an error of its own before it is stepped over, with STEP_OVER_SECONDS. */
     public const STEP_OVER_RUNS = 10;
 
     /** How long a click fails, from its first failed run, before it is stepped over. */
     public const STEP_OVER_SECONDS = 3600;
+
+    /**
+     * The server's errors that say something about the moment, not the
+     * click: a lock wait or deadlock, a statement interrupted or timed out
+     * (1317, MariaDB's 1969, MySQL's 3024), a connection killed, refused or
+     * timed out (1927, 1040, 1203, 4031, and every client error, 2000-2999),
+     * a server shutting down (1053), out of memory (1037, 1038, 1041), full
+     * (1021, 1114) or read-only (1290, 1792, 1836).
+     */
+    public const MOMENT_ERRNOS = [
+        1205, 1213, 1317, 1969, 3024, 1927, 1040, 1203, 4031, 1053, 1037, 1038, 1041, 1021, 1114, 1290, 1792, 1836,
+    ];
 
     /** @var callable(): int */
     private $clock;
@@ -130,6 +146,7 @@ final class ReClickBackfill
             $done = ['reclicked_clicks' => 0, 'same_second_ties' => 0, 'mixed_accounts' => 0, 'skipped_clicks' => 0];
             $skipped = null;
             $failed = null;
+            $failedOwn = false;
             $stopped = null;
             foreach ($this->reClickedClicks($next, $end) as $clickId) {
                 if ($repairs > 0 && ($this->clock)() >= $deadline) {
@@ -149,7 +166,8 @@ final class ReClickBackfill
                             . ' account; they are left as they are');
                     }
                 } catch (\Throwable $e) {
-                    if ($this->stepsOver($state, $clickId)) {
+                    $own = !self::isTheMoments($e);
+                    if ($own && $this->stepsOver($state, $clickId)) {
                         self::logFailure($clickId, $e, $state['failed_runs'] + 1);
                         $done['skipped_clicks']++;
                         $skipped = $clickId;
@@ -157,6 +175,7 @@ final class ReClickBackfill
                     }
                     self::logFailure($clickId, $e);
                     $failed = $clickId;
+                    $failedOwn = $own;
                     break;
                 }
             }
@@ -165,8 +184,11 @@ final class ReClickBackfill
             $next = $failed ?? $stopped ?? max($end + 1, $chunkStart);
             $finished = $failed === null && $stopped === null && $next > $through;
             $this->moveCursor($chunkStart, $next, $done, $finished, $skipped);
-            if ($failed !== null) {
-                $this->recordFailure($failed);
+            // An error of the moment at the click the walk was already
+            // stopped at changes nothing (the run that stops there first
+            // moves nothing), and an UPDATE that changes nothing reports no row.
+            if ($failed !== null && ($failedOwn || $state['failed_click_id'] !== $failed)) {
+                $this->recordFailure($failed, $failedOwn);
             }
 
             foreach ($done as $count => $n) {
@@ -231,8 +253,9 @@ final class ReClickBackfill
      * What a report says while the walk is unfinished, or finished with
      * clicks stepped over: null when it is done with none (or never started),
      * else how far it is; when the run stopped at a click that failed, which
-     * click, in how many runs in a row and since when (stalled_at_click_id,
-     * failed_runs, failing_since; null, 0 and null while nothing fails); and
+     * click, in how many runs with an error of its own and since when
+     * (stalled_at_click_id, failed_runs, failing_since; null, 0 and null while
+     * nothing fails); and
      * how many clicks were stepped over, the latest by id.
      *
      * @return array{
@@ -255,11 +278,12 @@ final class ReClickBackfill
         if ($s['finished_at'] !== null) {
             $note = 'The walk is done.';
         } elseif ($s['failed_click_id'] !== null) {
-            $note = 'The walk is stopped at click ' . $s['failed_click_id'] . ', which has failed in '
-                . $s['failed_runs'] . ' run' . ($s['failed_runs'] === 1 ? '' : 's') . ' in a row; the server\'s'
-                . ' error log says why ("p202 re-click backfill: click ' . $s['failed_click_id'] . ' ..."), and each'
-                . ' cron run tries it again, stepping over it once it has failed in ' . self::STEP_OVER_RUNS
-                . ' runs in a row over an hour. Until then, reports over dates before the upgrade count it, and every'
+            $note = 'The walk is stopped at click ' . $s['failed_click_id'] . ', which has failed with an error of'
+                . ' its own in ' . $s['failed_runs'] . ' run' . ($s['failed_runs'] === 1 ? '' : 's') . ' (a lock,'
+                . ' a timeout or a lost connection counts in none); the server\'s error log says why ("p202'
+                . ' re-click backfill: click ' . $s['failed_click_id'] . ' ..."), and each cron run tries it again,'
+                . ' stepping over it once it has failed with its own error in ' . self::STEP_OVER_RUNS
+                . ' runs over an hour. Until then, reports over dates before the upgrade count it, and every'
                 . ' re-clicked click after it, at each of its visits.';
         }
         if ($s['skipped_clicks'] > 0) {
@@ -346,26 +370,28 @@ final class ReClickBackfill
     }
 
     /**
-     * Keep the click the run stopped at with the cursor: another run in a row
-     * for the same click, or the first for a new one. The assignments run
-     * left to right, so the click is written last.
+     * Keep the click the run stopped at with the cursor, and since when it
+     * fails: failed_runs counts its runs that failed with an error of its own
+     * ($own), which an error of the moment neither adds to nor resets. The
+     * assignments run left to right, so the click is written last.
      */
-    private function recordFailure(int $clickId): void
+    private function recordFailure(int $clickId, bool $own): void
     {
         $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_reclick_backfill SET failed_runs = IF(failed_click_id <=> ?, failed_runs + 1, 1),'
+            'UPDATE 202_reclick_backfill SET failed_runs = IF(failed_click_id <=> ?, failed_runs + ?, ?),'
             . ' failing_since = IF(failed_click_id <=> ?, failing_since, ?), failed_click_id = ?'
             . ' WHERE backfill_id = 1'
         );
-        $this->conn->bind($stmt, 'iiii', [$clickId, $clickId, ($this->clock)(), $clickId]);
+        $count = $own ? 1 : 0;
+        $this->conn->bind($stmt, 'iiiiii', [$clickId, $count, $count, $clickId, ($this->clock)(), $clickId]);
         if ($this->conn->executeUpdate($stmt) !== 1) {
             throw new \RuntimeException('the re-click backfill could not record that click ' . $clickId . ' failed');
         }
     }
 
     /**
-     * Whether the click the run stopped at last time, failing again now,
-     * has failed long enough to be stepped over.
+     * Whether the click the run stopped at last time, failing again now with
+     * an error of its own, has failed long enough to be stepped over.
      *
      * @param array{failed_click_id: int|null, failed_runs: int, failing_since: int|null} $state the run's start
      */
@@ -378,9 +404,26 @@ final class ReClickBackfill
     }
 
     /**
+     * Whether the failure carries one of MOMENT_ERRNOS anywhere in its chain:
+     * a mysqli_sql_exception's code, or the ` [errno N]` Connection puts last.
+     */
+    private static function isTheMoments(\Throwable $e): bool
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            $errno = $current instanceof \mysqli_sql_exception ? (int) $current->getCode()
+                : (preg_match('/ \[errno (\d+)\]\z/', $current->getMessage(), $m) === 1 ? (int) $m[1] : 0);
+            if (in_array($errno, self::MOMENT_ERRNOS, true) || ($errno >= 2000 && $errno <= 2999)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * One line per failed click, with the values the server's words quote
-     * taken out; $steppedOverAfter is the runs in a row it failed, when it is
-     * stepped over.
+     * taken out; $steppedOverAfter is the runs it failed with its own error,
+     * when it is stepped over.
      */
     private static function logFailure(int $clickId, \Throwable $e, ?int $steppedOverAfter = null): void
     {
@@ -391,7 +434,7 @@ final class ReClickBackfill
         error_log('p202 re-click backfill: click ' . $clickId . ' could not be brought to its first visit\'s'
             . ' source and its latest visit (' . $e::class . ': ' . p202FailedQueryMessage($errno, $message)
             . ($steppedOverAfter === null ? '); the next run starts with it'
-                : '); stepped over after failing in ' . $steppedOverAfter . ' runs in a row, so it is counted at each'
-                . ' of its visits'));
+                : '); stepped over after failing with its own error in ' . $steppedOverAfter . ' runs, so it is'
+                . ' counted at each of its visits'));
     }
 }

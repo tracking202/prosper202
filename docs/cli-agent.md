@@ -719,6 +719,10 @@ p202 <resource> delete  --ids N1,N2,... [--force] [--dry-run] [--json]
 |------|--------|------|
 | `--ppc-network-name` | (R) | string |
 
+`update` renames a source in place (its accounts keep it); `delete` removes
+the source alone, not its accounts (`ppc-account delete` them first if they
+are to go). The same holds for an `aff-network` and its campaigns.
+
 Custom variables (Setup > Traffic Sources > variables):
 
 ```
@@ -1120,7 +1124,7 @@ p202 user identity-key get    <user_id> [--json]          # the key your server 
 p202 user identity-key rotate <user_id> [--force] [--json]
                        # cust_sig = hex(HMAC-SHA256(key, "<cust_type>:<cust>")); rotating stops old signatures linking
 
-p202 user prefs get    <user_id> [--json]
+p202 user prefs get    <user_id> [--json]               # a secret only as {"stored": true|false}, never its value
 p202 user prefs update <user_id> [--user-tracking-domain S] [--user-daily-email never|00..23]
                        [--user-account-currency CODE] [--user-pref-time-predefined R] [--user-pref-limit N]
                        [--user-pref-privacy disabled|eu|all] [--cb-key S] [--user-ltv-score-weights S] ... [--json]
@@ -1241,6 +1245,11 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   (`https://mcp.tracking202.com/mcp`): the person approves the connection on
   their own install, signed in as their own user, and chooses read only,
   propose changes, or read and change. It needs Prosper202 1.9.78 on https.
+  One call there reads at most 1 MB of the install's answers, so its list
+  tools take no `all`: page with `limit` and `offset`. It decodes at most
+  80,000 JSON values from them and takes at most 1,000 in a call's
+  arguments; past either, the call is refused (`validation`) with how to ask
+  for less.
 
 If you are defining this CLI as a tool for an LLM some other way, here are
 recommendations:
