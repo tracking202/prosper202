@@ -6,6 +6,7 @@ include_once(str_repeat("../", 1) . '202-config/functions-api.php');
 include_once(str_repeat("../", 1) . '202-config/functions-utils.php');
 include_once(str_repeat("../", 1) . '202-config/functions-empty.php');
 require_once __DIR__ . '/../202-config/functions-account-ui.php';
+require_once __DIR__ . '/../202-config/functions-traffic-source-owners-ui.php';
 
 AUTH::require_user();
 
@@ -55,6 +56,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
 		p202_account_redirect('202-account/administration.php');
 	}
+}
+
+// A traffic source moved back from the panel: TrafficSourceOwnersController's
+// repair, behind the routes' checks (functions-traffic-source-owners-ui.php).
+if (isset($_POST['traffic_source_repair'])) {
+    p202_ts_owners_repair_posted($db, (int) $_SESSION['user_own_id'], $_POST);
 }
 
 if (isset($_POST['autocron'])) {
@@ -459,6 +466,21 @@ $yesNo = static fn (bool $on, string $yes = 'Yes', string $no = 'No'): string =>
 
 $user_log_result = _mysqli_query("SELECT * FROM 202_users_log ORDER BY login_id DESC LIMIT 50");
 
+// Traffic sources another user's accounts name: a notice to whoever GET
+// /system/traffic-source-owners answers, and the panel when they open it.
+$tsReview = ($_GET['traffic_sources'] ?? null) === 'review';
+$tsOwners = p202_ts_owners_read($db, (int) $_SESSION['user_own_id'], $tsReview);
+$tsPanel = null;
+if ($tsReview && $tsOwners['controller'] !== null && $tsOwners['report'] !== null) {
+    try {
+        $tsPanel = p202_ts_owners_panel($tsOwners['report'], $tsOwners['controller'], $self);
+    } catch (\Throwable $e) {
+        error_log('Account › Settings: the traffic source owners panel could not be drawn: ' . $e->getMessage());
+        $tsOwners['error'] = 'Who may move each traffic source could not be checked just now; the server log says why.'
+            . ' Reload the page to try again.';
+    }
+}
+
 template_top('Administration');
 ?>
 
@@ -476,6 +498,11 @@ if ($fieldErrors) {
 	$extra[] = ['kind' => 'bad', 'text' => 'That was not saved. The field below says why.'];
 }
 echo p202_account_render_flashes($extra);
+if ($tsOwners['error'] !== null) {
+    echo p202_flash('bad', $tsOwners['error']);
+} elseif ($tsOwners['report'] !== null && $tsOwners['report']['sources'] !== []) {
+    echo p202_ts_owners_notice($tsOwners['report'], $self);
+}
 ?>
 
 <div class="p202-tiles">
@@ -609,6 +636,12 @@ echo p202_account_render_flashes($extra);
 		</section>
 	</div>
 
+    <?php if ($tsPanel !== null) { ?>
+    <div class="col-12">
+        <?php echo $tsPanel['panel']; ?>
+    </div>
+    <?php } ?>
+
 	<div class="col-12">
 		<section class="p202-panel" id="logins">
 			<div class="p202-panel__head">
@@ -647,4 +680,6 @@ echo p202_account_render_flashes($extra);
 	</div>
 </div>
 
-<?php template_bottom();
+<?php
+echo $tsPanel['modals'] ?? '';
+template_bottom();

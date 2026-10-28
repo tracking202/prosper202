@@ -32,6 +32,10 @@ use Prosper202\Setup\TrafficSourceRepairRefused;
  * account into another's, so the caller must also be one who may act on both
  * users (Auth::requireSelfOrMayManageUser(), Account › Users' rule): only
  * user 1 moves a source into or out of user 1's account.
+ *
+ * Account › Settings runs this controller too, for the signed-in user
+ * (Auth::forSignedInUser()) behind the same two checks
+ * (202-config/functions-traffic-source-owners-ui.php).
  */
 final class TrafficSourceOwnersController
 {
@@ -44,10 +48,14 @@ final class TrafficSourceOwnersController
     ) {
     }
 
-    /** @return array{data: array<string, mixed>} */
-    public function report(): array
+    /**
+     * Without $counts, no clicks or conversions: Account › Settings' notice.
+     *
+     * @return array{data: array<string, mixed>}
+     */
+    public function report(bool $counts = true): array
     {
-        $sources = $this->guard(fn (): array => $this->owners()->report());
+        $sources = $this->guard(fn (): array => $this->owners()->report($counts));
         $repairable = count(array_filter($sources, static fn (array $s): bool => $s['repair_to_user_id'] !== null));
 
         return ['data' => [
@@ -166,8 +174,11 @@ final class TrafficSourceOwnersController
         return ['repaired' => $repaired, 'skipped' => $skipped];
     }
 
-    /** The caller may act on both users' accounts, as Account › Users asks. */
-    private function mayMove(int $from, int $to): void
+    /**
+     * The caller may act on both users' accounts, as Account › Users asks.
+     * Account › Settings asks it of each source before offering the move.
+     */
+    public function mayMove(int $from, int $to): void
     {
         $this->auth->requireSelfOrMayManageUser($this->db, $from);
         $this->auth->requireSelfOrMayManageUser($this->db, $to);

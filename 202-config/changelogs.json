@@ -13,7 +13,8 @@
       "Changed: When a cron run was recorded in the last five minutes, turning AutoCron on in Settings no longer simply refuses: it says why AutoCron may not be needed and offers to turn it on anyway, since anyone can open the cron address",
       "Fixed: Security. Reading a user's preferences through the API or the CLI showed the account's integration secrets (the ClickBank, JVZoo, Zaxaa and IPQS keys, the Slack webhook, RevContent and the Landing Page Optimizer's keys). It says only whether each one is stored. If anyone who should not see them held an API key, replace those secrets at each network",
       "Fixed: Security. A user who could open Setup could rename a traffic source of another user and take it into their own account. A traffic source is now renamed only by its own user. Update as soon as you can, then check each user's Setup › Traffic Sources for a source that is missing",
-      "New: An admin can list the traffic sources taken into another user's account before this fix, and move each back to the user whose traffic source accounts name it (GET /system/traffic-source-owners, p202 system traffic-source-owners). Nothing moves by itself: a source that may have been shared on purpose moves only to a user you name"
+      "New: An admin can list the traffic sources taken into another user's account before this fix, and move each back to the user whose traffic source accounts name it (GET /system/traffic-source-owners, p202 system traffic-source-owners). Nothing moves by itself: a source that may have been shared on purpose moves only to a user you name",
+      "New: Settings tells an admin when a traffic source is in another user's account, lists each one with whose accounts name it, and moves it back after a confirmation that says what will move. The same list and move as the API and the CLI, for owners who use neither"
     ]
   },
   "1.9.78": {

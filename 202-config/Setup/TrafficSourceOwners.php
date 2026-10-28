@@ -67,11 +67,13 @@ final class TrafficSourceOwners
 
     /**
      * Every source another user's accounts name, by id, each with the clicks
-     * and the counted conversions recorded on each user's accounts.
+     * and the counted conversions recorded on each user's accounts. Without
+     * $counts they are left out: they scan each account's clicks, and
+     * Account › Settings asks on every load only whether anything is listed.
      *
      * @return list<array<string, mixed>>
      */
-    public function report(): array
+    public function report(bool $counts = true): array
     {
         $stmt = $this->conn->prepareWrite(
             'SELECT DISTINCT pa.ppc_network_id FROM 202_ppc_accounts AS pa'
@@ -95,8 +97,10 @@ final class TrafficSourceOwners
             if ($entry === null) {
                 continue;
             }
-            $entry['owner'] = $this->withCounts($entry['owner']);
-            $entry['named_by'] = array_map($this->withCounts(...), $entry['named_by']);
+            if ($counts) {
+                $entry['owner'] = $this->withCounts($entry['owner']);
+                $entry['named_by'] = array_map($this->withCounts(...), $entry['named_by']);
+            }
             $entries[] = $entry;
         }
 
