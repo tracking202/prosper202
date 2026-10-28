@@ -151,8 +151,10 @@ under the first that does not:
 
 Each line's `Conversion Time` is the conversion's in the account's time zone
 with the offset in force at that instant (`2026-10-27T02:22:48-04:00`), or in
-UTC for Microsoft, whose time zones are its own names. Microsoft counts one
-conversion per msclkid and second, so of two conversions on one click in one
+UTC for Microsoft, whose time zones are its own names. Both platforms count
+one conversion per click and second, whatever its Order ID (Google's click
+is the line's gclid, or in a `google` file its gbraid or wbraid when it has
+no gclid; Microsoft's the msclkid), so of two conversions on one click in one
 second, the one recorded first keeps its time and the other is sent at the
 next second no conversion on that click holds, the same second on every
 download ([the guide](../features/offline-conversions.md#the-files) says

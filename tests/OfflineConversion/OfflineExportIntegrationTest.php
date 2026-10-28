@@ -320,11 +320,12 @@ final class OfflineExportIntegrationTest extends TestCase
 
     /**
      * Two sales on one click in one second, recorded by the ledger's writer,
-     * and one a second later: Microsoft keeps one conversion per msclkid and
-     * second, so the server reads the one recorded first first and the file
-     * sends the other at the next free second. Google's file keeps the times.
+     * and one a second later: Google and Microsoft keep one conversion per
+     * click and second, so the server reads the one recorded first first and
+     * each file sends the other at the next free second, at the same second
+     * on every fetch and after the first is deleted.
      */
-    public function testTwoConversionsOnOneClickInOneSecondAreTwoMicrosoftSeconds(): void
+    public function testTwoConversionsOnOneClickInOneSecondAreTwoSeconds(): void
     {
         $msclkid = '0123456789abcdef0123456789abc140';
         $this->click(140, 8, ['gclid' => 'EAIaIQ_140', 'msclkid' => $msclkid]);
@@ -336,35 +337,38 @@ final class OfflineExportIntegrationTest extends TestCase
         $second = $this->record(140, MatchMethod::CLICK_ID, $sale('2', $t));
         $later = $this->record(140, MatchMethod::CLICK_ID, $sale('3', $t + 1));
         $this->names();
-        $utc = static fn (int $ts): string => gmdate('Y-m-d\TH:i:s', $ts) . '+0000';
+        $ms = static fn (int $ts, string $value): string
+            => 'MS Sale,' . gmdate('Y-m-d\TH:i:s', $ts) . '+0000,' . $value . ',EUR,' . $msclkid . ',,';
+        $zone = new \DateTimeZone('America/New_York');
+        $name = '"Accumulated, ""8"""';
+        $google = static fn (int $ts, string $value, int $convId): string => 'EAIaIQ_140,,,' . $name . ','
+            . (new \DateTimeImmutable('@' . $ts))->setTimezone($zone)->format('Y-m-d\TH:i:sP')
+            . ',' . $value . ',EUR,P202-' . $convId . ',,';
+        $microsoftFile = new ExportOptions(Format::MICROSOFT, 30, $this->now);
+        $googleFile = new ExportOptions(Format::GOOGLE, 30, $this->now);
 
-        [$lines, $summary] = $this->file(new ExportOptions(Format::MICROSOFT, 30, $this->now));
-        self::assertSame([
-            'MS Sale,' . $utc($t + 1) . ',3,EUR,' . $msclkid . ',,',
-            'MS Sale,' . $utc($t) . ',1,EUR,' . $msclkid . ',,',
-            'MS Sale,' . $utc($t + 2) . ',2,EUR,' . $msclkid . ',,',
-        ], array_slice($lines, 2));
+        [$lines, $summary] = $this->file($microsoftFile);
+        self::assertSame([$ms($t + 1, '3'), $ms($t, '1'), $ms($t + 2, '2')], array_slice($lines, 2));
         self::assertSame(3, $summary->rows);
-        [$again] = $this->file(new ExportOptions(Format::MICROSOFT, 30, $this->now));
-        self::assertSame($lines, $again);
+        self::assertSame($lines, $this->file($microsoftFile)[0]);
+        [$lines] = $this->file($googleFile);
+        self::assertSame(
+            [$google($t + 1, '3', $later), $google($t, '1', $first), $google($t + 2, '2', $second)],
+            array_slice($lines, 1)
+        );
+        self::assertSame($lines, $this->file($googleFile)[0]);
 
         $this->repo->softDelete($first, self::USER);
-        [$lines] = $this->file(new ExportOptions(Format::MICROSOFT, 30, $this->now));
         self::assertSame(
-            'MS Sale,' . $utc($t + 2) . ',2,EUR,' . $msclkid . ',,',
-            $lines[3],
+            [$ms($t + 1, '3'), $ms($t + 2, '2')],
+            array_slice($this->file($microsoftFile)[0], 2),
             'a deleted conversion still holds its second'
         );
-
-        [$lines] = $this->file(new ExportOptions(Format::GOOGLE, 30, $this->now));
-        $zone = new \DateTimeZone('America/New_York');
-        $time = static fn (int $ts): string
-            => (new \DateTimeImmutable('@' . $ts))->setTimezone($zone)->format('Y-m-d\TH:i:sP');
-        $name = '"Accumulated, ""8"""';
-        self::assertSame([
-            'EAIaIQ_140,,,' . $name . ',' . $time($t + 1) . ',3,EUR,P202-' . $later . ',,',
-            'EAIaIQ_140,,,' . $name . ',' . $time($t) . ',2,EUR,P202-' . $second . ',,',
-        ], array_slice($lines, 1));
+        self::assertSame(
+            [$google($t + 1, '3', $later), $google($t + 2, '2', $second)],
+            array_slice($this->file($googleFile)[0], 1),
+            'a deleted conversion still holds its second'
+        );
     }
 
     /**

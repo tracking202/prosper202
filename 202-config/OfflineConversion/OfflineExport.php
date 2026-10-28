@@ -34,8 +34,8 @@ use Prosper202\Report\AccountZone;
  *
  * The rows are read as the server sends them (Connection::eachRow()) and
  * written as they come (FileLines), newest conversion first, so a window of
- * any size holds one row in memory, and for Microsoft the msclkids of the
- * last hour of it (ClickSeconds). A refund or a deletion after the platform
+ * any size holds one row in memory, and the click ids of the last hour of it
+ * (ClickSeconds). A refund or a deletion after the platform
  * fetched a conversion is not sent again: a fetch sends what counts now,
  * under the conversion's own Order ID, which Google reads as the same
  * conversion on every fetch.
@@ -212,11 +212,9 @@ final class OfflineExport
             $types .= 'i';
             $values[] = $options->campaignId;
         }
-        // Within one second, a platform that counts one conversion a second
-        // reads the conversion recorded first first: it keeps the second
-        // (ClickSeconds).
-        $sql .= ' ORDER BY cl.conv_time DESC, cl.conv_id '
-            . ($options->format->oneConversionPerSecondOf() === null ? 'DESC' : 'ASC');
+        // Within one second, the conversion recorded first first: it keeps
+        // the second (ClickSeconds).
+        $sql .= ' ORDER BY cl.conv_time DESC, cl.conv_id ASC';
 
         return [$sql, $types, $values];
     }

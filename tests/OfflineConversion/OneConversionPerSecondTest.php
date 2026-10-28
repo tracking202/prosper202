@@ -12,12 +12,13 @@ use Prosper202\OfflineConversion\Format;
 use Prosper202\OfflineConversion\OfflineExport;
 
 /**
- * Microsoft ignores every conversion after the first with the same
- * MicrosoftClickId and ConversionTime, to the second. Two conversions on one
- * click in one second are both sent, the one recorded first at its own
- * second and the other at the next second no conversion on the click holds,
- * and every fetch of the same conversions gives each the same second. Google
- * files are as they were.
+ * Google and Microsoft each keep one conversion per click and conversion
+ * time, to the second, whatever its Order ID. Two conversions on one click in
+ * one second are both sent, the one recorded first at its own second and the
+ * other at the next second no conversion on the click holds, and every fetch
+ * of the same conversions gives each the same second. Every format has a
+ * click to key on (the Uploads template its gclid), so no format's lines are
+ * left as they were.
  */
 final class OneConversionPerSecondTest extends TestCase
 {
@@ -25,6 +26,7 @@ final class OneConversionPerSecondTest extends TestCase
     private const T = self::NOW - 86400;
     private const CLICK = '0123456789abcdef0123456789abcdef';
     private const OTHER_CLICK = 'fedcba9876543210fedcba9876543210';
+    private const GCLID = 'EAIaIQ_' . self::CLICK;
 
     /** @return array<string, mixed> a row as OfflineExport::query() reads it, which every check passes */
     private static function row(int $convId, int $convTime, array $over = []): array
@@ -45,21 +47,16 @@ final class OneConversionPerSecondTest extends TestCase
     }
 
     /**
-     * The rows in the order query() reads them for the format: newest second
-     * first, and within one second the lowest conv_id first for a format that
-     * counts one conversion a second, the highest for the others.
+     * The rows in the order query() reads them: newest second first, and
+     * within one second the lowest conv_id first.
      *
      * @param list<array<string, mixed>> $rows
      * @return list<array<string, mixed>>
      */
-    private static function inReadOrder(array $rows, Format $format): array
+    private static function inReadOrder(array $rows): array
     {
-        $ascending = $format->oneConversionPerSecondOf() !== null;
-        usort($rows, static function (array $a, array $b) use ($ascending): int {
-            [$first, $then] = $ascending ? [$a, $b] : [$b, $a];
-
-            return [$b['conv_time'], $first['conv_id']] <=> [$a['conv_time'], $then['conv_id']];
-        });
+        usort($rows, static fn (array $a, array $b): int
+            => [$b['conv_time'], $a['conv_id']] <=> [$a['conv_time'], $b['conv_id']]);
 
         return $rows;
     }
@@ -73,7 +70,7 @@ final class OneConversionPerSecondTest extends TestCase
         $handle = fopen('php://memory', 'w+b');
         self::assertIsResource($handle);
         $lines = new FileLines(new ExportOptions($format, 30, self::NOW, null, null, $onlyName), 'UTC', 'USD', $handle);
-        foreach (self::inReadOrder($rows, $format) as $row) {
+        foreach (self::inReadOrder($rows) as $row) {
             $lines->add($row);
         }
         rewind($handle);
@@ -83,35 +80,106 @@ final class OneConversionPerSecondTest extends TestCase
         return $text === '' ? [] : explode("\r\n", substr($text, 0, -2));
     }
 
-    private static function utc(int $ts): string
+    /**
+     * Each line's value (its conversion's id, in these rows), its second,
+     * and the ids it names, which the platform keeps one conversion a second
+     * of.
+     *
+     * @param list<string> $lines
+     * @return list<array{0: int, 1: int, 2: string}>
+     */
+    private static function sent(array $lines, Format $format): array
     {
-        return gmdate('Y-m-d\TH:i:s', $ts) . '+0000';
+        [$time, $value, $ids] = match ($format) {
+            Format::GOOGLE => [4, 5, [0, 1, 2]],
+            Format::GOOGLE_UPLOADS => [2, 3, [0]],
+            Format::MICROSOFT => [1, 2, [4]],
+        };
+
+        return array_map(static function (string $line) use ($time, $value, $ids): array {
+            $cells = explode(',', $line);
+
+            return [
+                (int) $cells[$value],
+                (new \DateTimeImmutable($cells[$time]))->getTimestamp(),
+                implode(' ', array_map(static fn (int $i): string => $cells[$i], $ids)),
+            ];
+        }, $lines);
+    }
+
+    /** @param list<array{0: int, 1: int, 2: string}> $sent */
+    private static function assertOneASecond(array $sent, Format $format): void
+    {
+        $tuples = array_map(
+            static fn (array $line): string => ($format === Format::MICROSOFT ? strtolower($line[2]) : $line[2])
+                . ' ' . $line[1],
+            $sent
+        );
+        self::assertSame(array_values(array_unique($tuples)), $tuples, $format->value . ': one a click a second');
     }
 
     /**
-     * @param list<string> $lines Microsoft lines
-     * @return list<string> each line's msclkid and time, which Microsoft keeps one conversion of
+     * @param list<array{0: int, 1: int, 2: string}> $sent
+     * @return list<array{0: int, 1: int}> each line's conversion and second
      */
-    private static function tuples(array $lines): array
+    private static function seconds(array $sent): array
     {
-        return array_map(static function (string $line): string {
-            $cells = explode(',', $line);
+        return array_map(static fn (array $line): array => [$line[0], $line[1]], $sent);
+    }
 
-            return strtolower($cells[4]) . ' ' . $cells[1];
-        }, $lines);
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @return list<array{0: int, 1: int}> each line's conversion and second
+     */
+    private static function secondsOf(array $rows, Format $format): array
+    {
+        return self::seconds(self::sent(self::file($rows, $format), $format));
     }
 
     public function testTwoConversionsOnOneClickInOneSecondAreSentASecondApart(): void
     {
         $rows = [self::row(11, self::T), self::row(12, self::T), self::row(14, self::T + 1)];
-        $lines = self::file($rows, Format::MICROSOFT);
+        foreach (Format::cases() as $format) {
+            $lines = self::file($rows, $format);
+            $sent = self::sent($lines, $format);
+            self::assertSame(
+                [[14, self::T + 1], [11, self::T], [12, self::T + 2]],
+                self::seconds($sent),
+                $format->value . ': the one recorded first keeps its second; the other passes the one at T + 1'
+            );
+            self::assertOneASecond($sent, $format);
+            self::assertSame($lines, self::file($rows, $format), $format->value . ': the same rows, the same file');
+        }
+    }
+
+    /** The lines as each platform reads them, Order IDs and all. */
+    public function testEachFilesLinesAsWritten(): void
+    {
+        $rows = [self::row(11, self::T), self::row(12, self::T), self::row(14, self::T + 1)];
+        $at = static fn (int $ts, string $format): string => gmdate('Y-m-d\TH:i:s', $ts) . $format;
         self::assertSame([
-            'Sale,' . self::utc(self::T + 1) . ',14,USD,' . self::CLICK . ',,',
-            'Sale,' . self::utc(self::T) . ',11,USD,' . self::CLICK . ',,',
-            'Sale,' . self::utc(self::T + 2) . ',12,USD,' . self::CLICK . ',,',
-        ], $lines, 'the one recorded first keeps its second; the other passes the real conversion a second later');
-        self::assertSame(array_unique(self::tuples($lines)), self::tuples($lines));
-        self::assertSame($lines, self::file($rows, Format::MICROSOFT), 'the same conversions, the same file');
+            self::GCLID . ',,,Sale,' . $at(self::T + 1, '+00:00') . ',14,USD,P202-14,,',
+            self::GCLID . ',,,Sale,' . $at(self::T, '+00:00') . ',11,USD,P202-11,,',
+            self::GCLID . ',,,Sale,' . $at(self::T + 2, '+00:00') . ',12,USD,P202-12,,',
+        ], self::file($rows, Format::GOOGLE));
+        self::assertSame([
+            self::GCLID . ',Sale,' . $at(self::T + 1, '+0000') . ',14,USD,P202-14,,',
+            self::GCLID . ',Sale,' . $at(self::T, '+0000') . ',11,USD,P202-11,,',
+            self::GCLID . ',Sale,' . $at(self::T + 2, '+0000') . ',12,USD,P202-12,,',
+        ], self::file($rows, Format::GOOGLE_UPLOADS));
+        self::assertSame([
+            'Sale,' . $at(self::T + 1, '+0000') . ',14,USD,' . self::CLICK . ',,',
+            'Sale,' . $at(self::T, '+0000') . ',11,USD,' . self::CLICK . ',,',
+            'Sale,' . $at(self::T + 2, '+0000') . ',12,USD,' . self::CLICK . ',,',
+        ], self::file($rows, Format::MICROSOFT));
+        foreach (Format::cases() as $format) {
+            [$sql] = OfflineExport::query(new ExportOptions($format, 30, self::NOW), 1);
+            self::assertStringEndsWith(
+                ' ORDER BY cl.conv_time DESC, cl.conv_id ASC',
+                $sql,
+                $format->value . ': the one recorded first is read first'
+            );
+        }
     }
 
     public function testThreeInOneSecondTakeTheNextThreeFreeSeconds(): void
@@ -120,84 +188,113 @@ final class OneConversionPerSecondTest extends TestCase
             self::row(11, self::T), self::row(12, self::T), self::row(13, self::T), self::row(14, self::T + 1),
             self::row(15, self::T, ['msclkid' => self::OTHER_CLICK]),
         ];
-        $lines = self::file($rows, Format::MICROSOFT);
-        self::assertSame([
-            'Sale,' . self::utc(self::T + 1) . ',14,USD,' . self::CLICK . ',,',
-            'Sale,' . self::utc(self::T) . ',11,USD,' . self::CLICK . ',,',
-            'Sale,' . self::utc(self::T + 2) . ',12,USD,' . self::CLICK . ',,',
-            'Sale,' . self::utc(self::T + 3) . ',13,USD,' . self::CLICK . ',,',
-            'Sale,' . self::utc(self::T) . ',15,USD,' . self::OTHER_CLICK . ',,',
-        ], $lines, 'another click\'s conversion in the same second keeps it');
-        self::assertSame(array_unique(self::tuples($lines)), self::tuples($lines));
-        self::assertSame(
-            $lines,
-            self::file(array_reverse($rows), Format::MICROSOFT),
-            'the same conversions, the same file'
-        );
-    }
-
-    /** Google counts a conversion by its Order ID: its files keep every time as recorded, in their order. */
-    public function testAGoogleFileOfTheSameConversionsIsAsItWas(): void
-    {
-        $rows = [self::row(11, self::T), self::row(12, self::T), self::row(13, self::T), self::row(14, self::T + 1)];
-        $time = static fn (int $ts): string => gmdate('Y-m-d\TH:i:s', $ts);
-        $g = 'EAIaIQ_' . self::CLICK;
-        self::assertSame([
-            $g . ',,,Sale,' . $time(self::T + 1) . '+00:00,14,USD,P202-14,,',
-            $g . ',,,Sale,' . $time(self::T) . '+00:00,13,USD,P202-13,,',
-            $g . ',,,Sale,' . $time(self::T) . '+00:00,12,USD,P202-12,,',
-            $g . ',,,Sale,' . $time(self::T) . '+00:00,11,USD,P202-11,,',
-        ], self::file($rows, Format::GOOGLE));
-        self::assertSame([
-            $g . ',Sale,' . $time(self::T + 1) . '+0000,14,USD,P202-14,,',
-            $g . ',Sale,' . $time(self::T) . '+0000,13,USD,P202-13,,',
-            $g . ',Sale,' . $time(self::T) . '+0000,12,USD,P202-12,,',
-            $g . ',Sale,' . $time(self::T) . '+0000,11,USD,P202-11,,',
-        ], self::file($rows, Format::GOOGLE_UPLOADS));
-        [$sql] = OfflineExport::query(new ExportOptions(Format::GOOGLE, 30, self::NOW), 1);
-        self::assertStringEndsWith(' ORDER BY cl.conv_time DESC, cl.conv_id DESC', $sql);
-        [$sql] = OfflineExport::query(new ExportOptions(Format::MICROSOFT, 30, self::NOW), 1);
-        self::assertStringEndsWith(
-            ' ORDER BY cl.conv_time DESC, cl.conv_id ASC',
-            $sql,
-            'the one recorded first is read first'
-        );
+        foreach (Format::cases() as $format) {
+            $lines = self::file($rows, $format);
+            $sent = self::sent($lines, $format);
+            self::assertSame(
+                [[14, self::T + 1], [11, self::T], [12, self::T + 2], [13, self::T + 3], [15, self::T]],
+                self::seconds($sent),
+                $format->value . ': another click\'s conversion in the same second keeps it'
+            );
+            self::assertOneASecond($sent, $format);
+            self::assertSame(
+                $lines,
+                self::file(array_reverse($rows), $format),
+                $format->value . ': the same conversions, the same file'
+            );
+        }
     }
 
     /**
      * A conversion no longer sent still holds its second, so the one moved
-     * past it is sent at the second Microsoft already has it at.
+     * past it is sent at the second the platform already has it at.
      */
     public function testARefundOrADeletionMovesNothing(): void
     {
         $rows = [self::row(11, self::T), self::row(12, self::T), self::row(13, self::T)];
-        $before = self::file($rows, Format::MICROSOFT);
-        $rows[0]['counted_amount'] = null;
-        $rows[1]['match_method'] = 'same_ip';
-        self::assertSame([$before[2]], self::file($rows, Format::MICROSOFT));
+        foreach (Format::cases() as $format) {
+            $before = self::file($rows, $format);
+            $sent = self::seconds(self::sent($before, $format));
+            self::assertSame([[11, self::T], [12, self::T + 1], [13, self::T + 2]], $sent);
+            $changed = $rows;
+            $changed[0]['counted_amount'] = null;
+            $changed[1]['match_method'] = 'same_ip';
+            self::assertSame([$before[2]], self::file($changed, $format), $format->value);
+        }
     }
 
-    /** Microsoft keeps one conversion a second whatever its name: a file of one name leaves the others' seconds. */
+    /** The platforms keep one conversion a second whatever its name: a file of one name leaves the others' seconds. */
     public function testAFileOfOneNameLeavesTheOtherNamesSeconds(): void
     {
         $rows = [self::row(11, self::T, ['conversion_name' => 'Lead']), self::row(12, self::T)];
-        $all = self::file($rows, Format::MICROSOFT);
-        self::assertSame([
-            'Lead,' . self::utc(self::T) . ',11,USD,' . self::CLICK . ',,',
-            'Sale,' . self::utc(self::T + 1) . ',12,USD,' . self::CLICK . ',,',
-        ], $all);
-        self::assertSame([$all[0]], self::file($rows, Format::MICROSOFT, 'Lead'));
-        self::assertSame([$all[1]], self::file($rows, Format::MICROSOFT, 'Sale'));
+        foreach (Format::cases() as $format) {
+            $all = self::file($rows, $format);
+            self::assertSame([[11, self::T], [12, self::T + 1]], self::secondsOf($rows, $format), $format->value);
+            self::assertSame([$all[0]], self::file($rows, $format, 'Lead'), $format->value);
+            self::assertSame([$all[1]], self::file($rows, $format, 'Sale'), $format->value);
+        }
     }
 
-    public function testAnMsclkidIsOneClickInEitherCase(): void
+    /**
+     * An msclkid is a GUID's hex digits, one click in either case. Google's
+     * ids are base64url text, where Abc and abc are two clicks (CLAUDE.md
+     * #17): neither moves.
+     */
+    public function testAnMsclkidIsOneClickInEitherCaseAndAGoogleIdIsNot(): void
     {
-        $rows = [self::row(11, self::T), self::row(12, self::T, ['msclkid' => strtoupper(self::CLICK)])];
-        $lines = self::file($rows, Format::MICROSOFT);
-        self::assertSame([self::utc(self::T), self::utc(self::T + 1)], array_map(
-            static fn (string $line): string => explode(',', $line)[1],
-            $lines
-        ));
+        $rows = [
+            self::row(11, self::T, ['gclid' => 'EAIaIQ_abc']),
+            self::row(12, self::T, ['gclid' => 'EAIaIQ_ABC', 'msclkid' => strtoupper(self::CLICK)]),
+        ];
+        self::assertSame([[11, self::T], [12, self::T + 1]], self::secondsOf($rows, Format::MICROSOFT));
+        foreach ([Format::GOOGLE, Format::GOOGLE_UPLOADS] as $format) {
+            self::assertSame([[11, self::T], [12, self::T]], self::secondsOf($rows, $format), $format->value);
+        }
+        $braids = [
+            self::row(11, self::T, ['gclid' => '', 'gbraid' => '0AAAAbraid']),
+            self::row(12, self::T, ['gclid' => '', 'gbraid' => '0AAAABRAID']),
+            self::row(13, self::T, ['gclid' => '', 'wbraid' => 'CkIKwbraid']),
+            self::row(14, self::T, ['gclid' => '', 'wbraid' => 'CkIKWBRAID']),
+        ];
+        self::assertSame(
+            [[11, self::T], [12, self::T], [13, self::T], [14, self::T]],
+            self::secondsOf($braids, Format::GOOGLE)
+        );
+    }
+
+    /**
+     * A Data Manager line is counted under the first of its gclid, gbraid
+     * and wbraid: two lines under different kinds are two clicks, even with
+     * the same text, and two under one gbraid are one.
+     */
+    public function testADataManagerLineIsCountedUnderTheIdItIsSentUnder(): void
+    {
+        $rows = [
+            self::row(11, self::T, ['gclid' => '', 'gbraid' => 'same', 'msclkid' => '']),
+            self::row(12, self::T, ['gclid' => '', 'wbraid' => 'same', 'msclkid' => '']),
+            self::row(13, self::T, ['gclid' => 'same', 'msclkid' => '']),
+            self::row(14, self::T, ['gclid' => 'EAIaIQ_g', 'gbraid' => '0AAAA_b', 'msclkid' => '']),
+            self::row(15, self::T, ['gclid' => '', 'gbraid' => '0AAAA_b', 'msclkid' => '']),
+            self::row(16, self::T, ['gclid' => '', 'gbraid' => '0AAAA_b', 'msclkid' => '']),
+        ];
+        $sent = self::sent(self::file($rows, Format::GOOGLE), Format::GOOGLE);
+        self::assertSame(
+            [[11, self::T], [12, self::T], [13, self::T], [14, self::T], [15, self::T], [16, self::T + 1]],
+            self::seconds($sent),
+            'the gbraid of 15 and 16 is one click; 14 is counted under its gclid'
+        );
+        self::assertSame(['gbraid:same', 'wbraid:same', 'gclid:same', 'gclid:EAIaIQ_g', null], [
+            Format::GOOGLE->secondKey(['gbraid' => 'same']),
+            Format::GOOGLE->secondKey(['wbraid' => 'same']),
+            Format::GOOGLE->secondKey(['gclid' => 'same']),
+            Format::GOOGLE->secondKey(['gclid' => 'EAIaIQ_g', 'gbraid' => '0AAAA_b', 'wbraid' => 'CkIK']),
+            Format::GOOGLE->secondKey([]),
+        ]);
+        self::assertSame('gclid:Abc', Format::GOOGLE_UPLOADS->secondKey(['gclid' => 'Abc', 'gbraid' => 'x']));
+        self::assertSame(
+            'msclkid:' . self::CLICK,
+            Format::MICROSOFT->secondKey(['msclkid' => strtoupper(self::CLICK)])
+        );
     }
 
     /**
@@ -207,13 +304,15 @@ final class OneConversionPerSecondTest extends TestCase
     public function testALaterConversionAtAMovedOnesSecondTakesIt(): void
     {
         $rows = [self::row(11, self::T), self::row(12, self::T)];
-        self::assertSame(self::utc(self::T + 1), explode(',', self::file($rows, Format::MICROSOFT)[1])[1]);
-        $rows[] = self::row(15, self::T + 1);
-        $lines = self::file($rows, Format::MICROSOFT);
-        self::assertSame(
-            [self::utc(self::T + 1), self::utc(self::T), self::utc(self::T + 2)],
-            array_map(static fn (string $line): string => explode(',', $line)[1], $lines)
-        );
+        foreach (Format::cases() as $format) {
+            self::assertSame([[11, self::T], [12, self::T + 1]], self::secondsOf($rows, $format));
+            $later = array_merge($rows, [self::row(15, self::T + 1)]);
+            self::assertSame(
+                [[15, self::T + 1], [11, self::T], [12, self::T + 2]],
+                self::secondsOf($later, $format),
+                $format->value
+            );
+        }
     }
 
     public function testSecondsAreAskedInTheReadsOrder(): void
@@ -232,11 +331,11 @@ final class OneConversionPerSecondTest extends TestCase
     }
 
     /**
-     * Only the last HORIZON seconds' click ids are held, so a window of any
-     * size holds about an hour of them; and a click id's seconds are held as
+     * Only the last HORIZON seconds' clicks are held, so a window of any
+     * size holds about an hour of them; and a click's seconds are held as
      * long as a conversion on it could reach them.
      */
-    public function testOnlyTheLastHoursClickIdsAreHeld(): void
+    public function testOnlyTheLastHoursClicksAreHeld(): void
     {
         $seconds = new ClickSeconds();
         $held = new \ReflectionProperty(ClickSeconds::class, 'taken');

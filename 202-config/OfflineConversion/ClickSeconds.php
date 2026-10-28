@@ -5,21 +5,20 @@ declare(strict_types=1);
 namespace Prosper202\OfflineConversion;
 
 /**
- * The second each conversion of a file is sent at, for a platform that
- * counts one conversion per click id and second
- * (Format::oneConversionPerSecondOf()), where two conversions on one click
- * in one second would lose one.
+ * The second each conversion of a file is sent at. The platforms count one
+ * conversion per click and second (Format::secondKey()), so two conversions
+ * on one click in one second would lose one.
  *
  * The conversion recorded first (the lower conv_id) keeps its second, and
  * each other one moves to the next later second that no conversion on its
- * click id holds, past a real conversion a second later too. Seconds are
+ * click holds, past a real conversion a second later too. Seconds are
  * handed out as the file is read, newest second first, so a conversion's
- * second depends only on the conversions on its click id at its own second
- * or later: every one the read returns, sent or not.
+ * second depends only on the conversions on its click at its own second or
+ * later: every one the read returns, sent or not.
  *
- * The platform keeps a conversion by its second, and an adjustment there
- * names it by its second, so a sent conversion's second has to be the same
- * on every fetch, and is:
+ * The platform keeps a conversion by its click and second, and Microsoft's
+ * adjustments name it by them, so a sent conversion's second has to be the
+ * same on every fetch, and is:
  *  - after a refund, a deletion or a replacement of another conversion on
  *    its click: the ledger keeps that one's row (a deletion is a flag), so
  *    it is still read and still holds its second, though no longer sent;
@@ -38,18 +37,17 @@ namespace Prosper202\OfflineConversion;
  * click arrive in its last seconds; if the platform refuses it then, the
  * next fetch sends it at the same second, by then past.
  *
- * Only the click ids read in the last HORIZON seconds of conversion time
- * are held. A conversion read later reaches a second of one let go only
- * through more than HORIZON conversions on that one click in between.
+ * Only the clicks read in the last HORIZON seconds of conversion time are
+ * held. A conversion read later reaches a second of one let go only through
+ * more than HORIZON conversions on that one click in between.
  */
 final class ClickSeconds
 {
     public const HORIZON = 3600;
 
     /**
-     * Each click id's seconds taken, under the second of its latest
-     * conversion read (the lowest it holds), the click id read longest ago
-     * first.
+     * Each click's seconds taken, under the second of its latest conversion
+     * read (the lowest it holds), the click read longest ago first.
      *
      * @var array<string, array{0: int, 1: array<int, true>}>
      */
@@ -59,10 +57,11 @@ final class ClickSeconds
     private ?array $last = null;
 
     /**
-     * The second a conversion is sent at. Asked in the read's order: newest
-     * second first, and within one second the lowest conv_id first.
+     * The second a conversion on $click (Format::secondKey()) is sent at.
+     * Asked in the read's order: newest second first, and within one second
+     * the lowest conv_id first.
      */
-    public function take(string $clickId, int $convTime, int $convId): int
+    public function take(string $click, int $convTime, int $convId): int
     {
         if (
             $this->last !== null
@@ -81,14 +80,14 @@ final class ClickSeconds
             unset($this->taken[$id]);
         }
 
-        $seconds = $this->taken[$clickId][1] ?? [];
-        unset($this->taken[$clickId]);
+        $seconds = $this->taken[$click][1] ?? [];
+        unset($this->taken[$click]);
         $second = $convTime;
         while (isset($seconds[$second])) {
             $second++;
         }
         $seconds[$second] = true;
-        $this->taken[$clickId] = [$convTime, $seconds];
+        $this->taken[$click] = [$convTime, $seconds];
 
         return $second;
     }

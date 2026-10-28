@@ -32,16 +32,21 @@ so its values are rounded to three. A conversion with no value is sent as 0.
 
 `Order ID` is `P202-` and the conversion's own id. It is the same every time
 the conversion is sent, so Google counts a conversion it receives twice once.
-Microsoft has no order id column, and counts one conversion per click id
-and conversion time, to the second, ignoring any other. So when two
+Microsoft has no order id column.
+
+Both platforms also count one conversion per click and conversion time, to
+the second, ignoring any other, whatever its Order ID: Google's click is the
+gclid a line is sent with (in the Data Manager file, its gbraid or wbraid
+when it has no gclid), case and all; Microsoft's is the msclkid. So when two
 conversions on one click share a second (two sales an accumulate campaign
 records at once), the one recorded first is sent at its own second and the
 other at the next second no conversion on that click holds. A conversion is
 sent at the same second on every fetch, even after another on its click is
 refunded or deleted, and that second is the one to name when you retract or
-restate it in Microsoft Advertising. One case moves it: a conversion recorded
-later at exactly the second it was moved to takes that second, and Microsoft
-then counts the moved one twice and the later one not at all.
+restate it in Microsoft Advertising (Google's adjustments can name it by its
+Order ID). One case moves it: a conversion recorded later at exactly the
+second it was moved to takes that second, and the platform then counts the
+moved one twice and the later one not at all.
 
 ## Which conversions are sent
 

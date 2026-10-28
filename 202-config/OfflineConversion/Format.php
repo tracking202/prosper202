@@ -27,8 +27,10 @@ use Prosper202\Conversion\Ledger\Amount;
  *   time zones are Microsoft's own names, not the account's, so the times
  *   are UTC, stated as +0000 on the Parameters line and on every row.
  *   Microsoft takes at most 100,000 rows an upload and three decimals of a
- *   value; it has no order id and no consent columns, and counts one
- *   conversion per msclkid and second (oneConversionPerSecondOf()).
+ *   value; it has no order id and no consent columns.
+ *
+ * Each platform counts one conversion per click and second, whatever its
+ * Order ID (secondKey()).
  */
 enum Format: string
 {
@@ -147,17 +149,38 @@ enum Format: string
     }
 
     /**
-     * The click id column under which the platform counts one conversion a
-     * second, or null. Microsoft: "Duplicate offline conversions with the
-     * same MicrosoftClickId and ConversionTime will be ignored" (the
+     * The click a line is counted under, which the platform keeps one
+     * conversion a second of, or null for a line with no id: the id it is
+     * sent under, named with its kind so that a gclid and a gbraid of the
+     * same text are two clicks. ClickSeconds moves the second conversion on
+     * one key in one second to the next free second.
+     *
+     * Google: CLICK_CONVERSION_ALREADY_EXISTS, "The imported event has the
+     * same click and conversion_date_time as an existing conversion" (the
+     * Google Ads API's ConversionUploadError; its import guidelines name the
+     * conversion name too), whatever the Order ID. A Data Manager line names
+     * every id its click came with and is counted under the first of its
+     * gclid, gbraid and wbraid. Google's ids are held to base64url
+     * characters (wellFormedId()), where Abc and abc are two ids, so their
+     * case is kept.
+     * Microsoft: "Duplicate offline conversions with the same
+     * MicrosoftClickId and ConversionTime will be ignored" (the
      * OfflineConversion API reference; its help names the conversion name
-     * too), and its template's times are whole seconds. ClickSeconds moves
-     * the second conversion on one msclkid in one second to the next free
-     * second.
+     * too). An msclkid is a GUID's hex digits, the same GUID in either case.
+     * Both templates' times are whole seconds.
+     *
+     * @param array<string, string> $ids the line's ids, by 202_google column, as OfflineExport::ids() reads them
      */
-    public function oneConversionPerSecondOf(): ?string
+    public function secondKey(array $ids): ?string
     {
-        return $this === self::MICROSOFT ? 'msclkid' : null;
+        foreach ($this->idColumns() as $column) {
+            $id = $ids[$column] ?? '';
+            if ($id !== '') {
+                return $column . ':' . ($this === self::MICROSOFT ? strtolower($id) : $id);
+            }
+        }
+
+        return null;
     }
 
     /**

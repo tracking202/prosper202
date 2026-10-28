@@ -37,16 +37,12 @@ final class FileLines
         $format = $this->options->format;
         $convId = StoredRow::int($row, 'conv_id');
         $time = StoredRow::int($row, 'conv_time');
-        $column = $format->oneConversionPerSecondOf();
-        if ($column !== null) {
-            // Before the name filter: Microsoft's API reference keys a
-            // duplicate by click id and second alone, so a URL for one name
-            // leaves the other names' seconds to them. An msclkid is a
-            // GUID's hex digits, the same GUID in either case.
-            $clickId = strtolower(StoredRow::text($row, $column));
-            if ($clickId !== '') {
-                $time = $this->seconds->take($clickId, $time, $convId);
-            }
+        // Before the name filter: the platforms' API references key a
+        // duplicate by click and second alone, so a URL for one name leaves
+        // the other names' seconds to them.
+        $key = $format->secondKey(OfflineExport::ids($row, $format));
+        if ($key !== null) {
+            $time = $this->seconds->take($key, $time, $convId);
         }
         $stored = StoredRow::nullableText($row, 'conversion_name');
         $name = $this->options->conversionName ?? ($stored !== '' ? $stored : null);
