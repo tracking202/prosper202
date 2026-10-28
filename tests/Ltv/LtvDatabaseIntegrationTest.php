@@ -1577,16 +1577,26 @@ CHILD;
     }
 
     /**
-     * The fields of a customer answer that hold the caller's own text, which
-     * may be all digits.
+     * The fields of an LTV answer that hold text, the caller's own or a
+     * name, which may be all digits.
      */
-    private const CUSTOMER_TEXT_FIELDS = [
+    private const LTV_TEXT_FIELDS = [
         'primary_ref', 'first_name', 'last_name', 'email', 'phone', 'company', 'address_line1', 'address_line2',
         'city', 'region', 'postal_code', 'country', 'status', 'alias_type', 'alias_value', 'external_sub_id',
         'plan_name', 'currency', 'billing_interval', 'event_type', 'source', 'external_ref', 'transaction_id',
         'sku', 'product_name', 'event_name', 'campaign_name', 'landing_page', 'name', 'url', 'basis',
         'dry_run', 'action', 'resource', 'mode', 'effect',
+        'top_campaign_name', 'top_event_name', 'external_product_id', 'domain', 'normalized_name', 'webhook_url',
+        'subscribed_events', 'webhook_status', 'last_response_body', 'field_key', 'label', 'field_type', 'provider',
+        'cohort_month', 'timezone', 'breakdown', 'refused', 'fallback_reason',
     ];
+
+    /**
+     * Values typed by something other than the column: a custom field's by
+     * its field, a select field's choices (text), an integration's config
+     * (stored as sent).
+     */
+    private const LTV_FREE_FORM_FIELDS = ['custom_fields', 'options', 'config'];
 
     /**
      * Every customer read answers money as numbers and counts as integers,
@@ -1749,13 +1759,265 @@ CHILD;
     }
 
     /**
+     * Every /ltv read answers money and measures as JSON numbers and counts
+     * and times as integers, as the customer reads above do. The rest of
+     * /ltv answered mysqli's text: GET /ltv/subscriptions a subscription's
+     * amount ("29.99000") where the customer detail answered 29.99, the
+     * breakdowns every amount and their order counts ("4"), the products a
+     * price, the companies and ABM reads their money, averages and times.
+     * The reads are the router's own list, so a GET route added to the
+     * group fails here until it is held to the same.
+     */
+    public function testEveryLtvReadServesNumbers(): void
+    {
+        $seed = $this->seedEveryRead();
+        $answers = [];
+        foreach (self::everyLtvRead($seed) as $label => [$route, $read]) {
+            $answers[$label] = $read();
+            self::assertNoNumericText($answers[$label], $label);
+        }
+
+        $first = static fn (string $label): array => $answers[$label]['data'][0];
+        $sub = $first('GET /ltv/subscriptions');
+        self::assertSame([29.99, 29.99, 54.125, 1], [$sub['amount'], $sub['mrr'], $sub['customer_ltv'], $sub['billing_interval_count']]);
+        self::assertSame('7002', $sub['external_sub_id'], 'text stays text');
+
+        // The click-acquired customer: $20 on one order, $0.25 a click.
+        $acquisition = static fn (array $r): array => [
+            $r['customers'], $r['total_revenue'], $r['avg_ltv'], $r['total_orders'], $r['aov'], $r['repeat_rate'],
+            $r['mrr'], $r['spend'], $r['cac'], $r['ltv_cac'],
+        ];
+        self::assertSame([1, 20.0, 20.0, 1, 20.0, 0.0, 0.0, 0.5, 0.5, 40.0], $acquisition($first('GET /ltv/breakdown?by=campaign')));
+        $byAccount = $first('GET /ltv/breakdown?by=ppc_account');
+        self::assertSame([1, 20.0, 20.0, 1, 20.0, 0.0, 0.0, 0.25, 0.25, 80.0], $acquisition($byAccount));
+        self::assertSame('4455', $byAccount['name'], 'a name of digits stays text');
+        self::assertSame([['7001', 1, 1, 2.0, 49.0, 49.0, 49.0, 0.0], ['ADDON', 1, 1, 1.5, 10.125, 10.125, 10.125, 0.0]], array_map(
+            static fn (array $r): array => [
+                $r['sku'], $r['customers'], $r['orders'], $r['units'], $r['total_revenue'], $r['avg_revenue_per_customer'],
+                $r['aov'], $r['repeat_rate'],
+            ],
+            $answers['GET /ltv/breakdown?by=product']['data']
+        ), 'units is a measure (1.5)');
+
+        self::assertSame([12.5, null, null], array_column($answers['GET /ltv/products']['data'], 'price'), 'a product with no price stays null');
+        self::assertSame(12.5, $answers['PATCH /ltv/products/{id}']['data']['price']);
+        self::assertSame(12.5, $answers['DELETE /ltv/products/{id}?dry_run=1']['data']['record']['price']);
+
+        $rollup = static fn (array $r): array => [$r['contacts'], $r['order_count'], $r['total_revenue'], $r['mrr']];
+        [$acme, $beta] = $answers['GET /ltv/companies']['data'];
+        self::assertSame([1, 1, 20.0, 0.0], $rollup($acme));
+        self::assertGreaterThan(0, $acme['last_activity_time']);
+        self::assertSame([0, 0, 0.0, 0.0, 0], [...$rollup($beta), $beta['last_activity_time']], 'a company with no customer');
+
+        $account = $first('GET /ltv/abm');
+        self::assertSame(['Acme', 1, 20.0, 0.0, 1, 1, 30.0, 0.0], [
+            $account['company'], $account['contacts'], $account['total_revenue'], $account['mrr'],
+            $account['engagements'], $account['custom_events'], $account['avg_time_on_page'], $account['avg_scroll_depth'],
+        ]);
+        $contact = $first('GET /ltv/abm/company');
+        self::assertSame([1, 20.0, 0.0, 1, 30.0], [
+            $contact['order_count'], $contact['total_revenue'], $contact['mrr'], $contact['engagements'], $contact['avg_time_on_page'],
+        ]);
+        self::assertIsInt($contact['last_activity'], 'a time is an integer (GREATEST() answered text)');
+        self::assertGreaterThan(0, $contact['last_activity']);
+
+        $fields = array_column($answers['GET /ltv/fields']['data'], 'options', 'field_key');
+        self::assertSame(['10', '20'], $fields['tier'], "a select field's choices stay text");
+        self::assertSame(['plan' => '7'], $answers['GET /ltv/integrations']['data'][0]['config'], 'a config is as sent');
+    }
+
+    /**
+     * docs/openapi.yaml types every /ltv read: each one's 200 answer refers
+     * to a components schema, and the answer has that schema's keys, each of
+     * the JSON type it gives, into every schema it refers to. Until 1.9.79
+     * all but the customer reads were `additionalProperties: true`, and
+     * GET /ltv/abm's list was documented as an object.
+     */
+    public function testEveryLtvAnswerHasTheSpecsKeysAndTypes(): void
+    {
+        $seed = $this->seedEveryRead();
+        $schemas = self::specSchemas();
+        foreach (self::everyLtvRead($seed) as $label => [$route, $read, $schema, $shape]) {
+            [$method, $path] = explode(' ', (string) preg_replace('/\?.*/', '', $route), 2);
+            if ($shape !== 'record') {
+                // A dry run's answer is documented by its description alone, as every DELETE's is.
+                self::assertStringContainsString(
+                    "#/components/schemas/$schema",
+                    self::specOperation($path, strtolower($method)),
+                    "$label: docs/openapi.yaml's 200 answer for $method $path refers to $schema"
+                );
+            }
+            $data = $read()['data'];
+            $rows = match ($shape) {
+                'list' => $data,
+                'record' => [$data['record']],
+                default => [$data],
+            };
+            self::assertNotSame([], $rows, "$label has a row to compare");
+            foreach ($rows as $i => $row) {
+                self::assertIsArray($row, "$label: a $schema");
+                self::assertMatchesSchema($schemas, $schema, $row, "$label.$i");
+            }
+        }
+    }
+
+    /**
+     * Every /ltv read and the writes that answer a record the reads list,
+     * by label: [route, the answer, the schema of its data, and whether the
+     * data is that schema, a list of it, or a dry run's record]. The GET
+     * routes are held to the router's /ltv read group.
+     *
+     * @param array{ltv: \Api\V3\Controllers\LtvController, customer: int, product: int, company: int, webhook: int} $seed
+     * @return array<string, array{0: string, 1: callable(): array<string, mixed>, 2: string, 3: string}>
+     */
+    private static function everyLtvRead(array $seed): array
+    {
+        ['ltv' => $ltv, 'customer' => $id, 'product' => $product, 'company' => $company, 'webhook' => $webhook] = $seed;
+        $reads = [
+            'GET /ltv/summary' => [fn () => $ltv->summary([]), 'LtvSummary', 'object'],
+            'GET /ltv/customers' => [fn () => $ltv->customers([]), 'LtvCustomer', 'list'],
+            'GET /ltv/customers/{id}' => [fn () => $ltv->customerDetail($id), 'LtvCustomerDetail', 'object'],
+            'GET /ltv/customers/{id}/engagement' => [fn () => $ltv->customerEngagement($id, []), 'LtvCustomerEngagement', 'object'],
+            'GET /ltv/customers/{id}/next-offer' => [fn () => $ltv->customerNextOffer($id), 'LtvNextOffer', 'object'],
+            'GET /ltv/abm' => [fn () => $ltv->abm([]), 'LtvAbmAccount', 'list'],
+            'GET /ltv/abm/company' => [fn () => $ltv->abmCompany(['name' => 'Acme']), 'LtvAbmContact', 'list'],
+            'GET /ltv/breakdown?by=campaign' => [fn () => $ltv->breakdown([]), 'LtvAcquisitionBreakdownRow', 'list'],
+            'GET /ltv/breakdown?by=ppc_account' => [fn () => $ltv->breakdown(['by' => 'ppc_account']), 'LtvAcquisitionBreakdownRow', 'list'],
+            'GET /ltv/breakdown?by=landing_page' => [fn () => $ltv->breakdown(['by' => 'landing_page']), 'LtvAcquisitionBreakdownRow', 'list'],
+            'GET /ltv/breakdown?by=product' => [fn () => $ltv->breakdown(['by' => 'product']), 'LtvProductBreakdownRow', 'list'],
+            'GET /ltv/cohorts' => [fn () => $ltv->cohorts([]), 'LtvCohort', 'list'],
+            'GET /ltv/mrr' => [fn () => $ltv->mrr(), 'LtvMrr', 'object'],
+            'GET /ltv/predict' => [fn () => $ltv->predict([]), 'LtvPrediction', 'object'],
+            'GET /ltv/predict?by=campaign' => [fn () => $ltv->predict(['by' => 'campaign']), 'LtvPredictionByGroup', 'object'],
+            'GET /ltv/predict?by=product' => [fn () => $ltv->predict(['by' => 'product']), 'LtvPredictionByGroup', 'object'],
+            'GET /ltv/products' => [fn () => $ltv->products([]), 'LtvProduct', 'list'],
+            'GET /ltv/companies' => [fn () => $ltv->listCompanies([]), 'LtvCompanyRollup', 'list'],
+            'GET /ltv/subscriptions' => [fn () => $ltv->listSubscriptions([]), 'LtvSubscription', 'list'],
+            'GET /ltv/fields' => [fn () => $ltv->fieldsList(), 'LtvField', 'list'],
+            'GET /ltv/webhooks' => [fn () => $ltv->listWebhooks(), 'LtvWebhook', 'list'],
+            'GET /ltv/webhooks/{id}/deliveries' => [fn () => $ltv->webhookDeliveries($webhook, []), 'LtvWebhookDelivery', 'list'],
+            'GET /ltv/integrations' => [fn () => $ltv->listIntegrations(), 'LtvIntegration', 'list'],
+            'PATCH /ltv/products/{id}' => [fn () => $ltv->updateProduct($product, ['name' => 'Priced']), 'LtvProduct', 'object'],
+            'DELETE /ltv/products/{id}?dry_run=1' => [fn () => $ltv->deleteProductPreview($product), 'LtvProduct', 'record'],
+            'PATCH /ltv/companies/{id}' => [fn () => $ltv->patchCompany($company, ['name' => 'Acme']), 'LtvCompany', 'object'],
+            'DELETE /ltv/companies/{id}?dry_run=1' => [fn () => $ltv->deleteCompanyPreview($company), 'LtvCompany', 'record'],
+        ];
+
+        $covered = [];
+        foreach (array_keys($reads) as $label) {
+            if (str_starts_with($label, 'GET ')) {
+                $covered[] = preg_replace('/^GET |\?.*$/', '', $label);
+            }
+        }
+        $covered = array_values(array_unique($covered));
+        sort($covered);
+        self::assertSame(self::ltvReadRoutes(), $covered, "every GET in api/v3/index.php's /ltv group is read here");
+
+        $everyRead = [];
+        foreach ($reads as $label => [$read, $schema, $shape]) {
+            $everyRead[$label] = [$label, $read, $schema, $shape];
+        }
+
+        return $everyRead;
+    }
+
+    /**
+     * The GET routes api/v3/index.php registers in its /ltv groups, with the
+     * prefix: /ltv/customers/{id} as written there.
+     *
+     * @return list<string>
+     */
+    private static function ltvReadRoutes(): array
+    {
+        $index = (string) file_get_contents(dirname(__DIR__, 2) . '/api/v3/index.php');
+        $routes = [];
+        foreach (explode('$router->group(', $index) as $group) {
+            if (!str_starts_with($group, "'/ltv',")) {
+                continue;
+            }
+            preg_match_all('/\$r->get\(\s*\'([^\']+)\'/', $group, $gets);
+            foreach ($gets[1] as $path) {
+                $routes[] = '/ltv' . $path;
+            }
+        }
+        sort($routes);
+        self::assertContains('/ltv/summary', $routes, 'the /ltv read group is found in api/v3/index.php');
+
+        return $routes;
+    }
+
+    /** One operation of a path in docs/openapi.yaml, as text: from `  $path:` its `    $method:` up to the next. */
+    private static function specOperation(string $path, string $method): string
+    {
+        $spec = (string) file_get_contents(dirname(__DIR__, 2) . '/docs/openapi.yaml');
+        $start = strpos($spec, "\n  $path:\n");
+        self::assertNotFalse($start, "$path is in docs/openapi.yaml");
+        $end = strpos($spec, "\n  /", $start + 1);
+        $block = substr($spec, $start, $end === false ? null : $end - $start);
+        $op = strpos($block, "\n    $method:\n");
+        self::assertNotFalse($op, "$path has a $method operation");
+        $next = preg_match('/\n    (get|post|put|patch|delete):\n/', $block, $m, PREG_OFFSET_CAPTURE, $op + 1) === 1
+            ? $m[0][1]
+            : strlen($block);
+
+        return substr($block, $op, $next - $op);
+    }
+
+    /**
+     * seedCustomerReads(), and what the rest of /ltv reads: a customer
+     * acquired by a click on campaign 7 through traffic source account 3
+     * (named "4455") and landing page 4, at a company with an engagement
+     * event; a second company with no customer; a priced product; a select
+     * field whose choices are digits; a webhook with a delivery; an
+     * integration.
+     *
+     * @return array{ltv: \Api\V3\Controllers\LtvController, customer: int, product: int, company: int, webhook: int}
+     */
+    private function seedEveryRead(): array
+    {
+        [$ltv, $id] = $this->seedCustomerReads();
+        $db = self::$db;
+        foreach (['202_ppc_accounts', '202_landing_pages', '202_ltv_webhooks', '202_ltv_webhook_deliveries', '202_ltv_integrations'] as $table) {
+            $db->query('TRUNCATE TABLE ' . $table);
+        }
+        $db->query("INSERT INTO 202_ppc_accounts SET ppc_account_id=3, user_id=1, ppc_account_name='4455'");
+        $db->query("INSERT INTO 202_landing_pages SET landing_page_id=4, user_id=1, landing_page_url='https://lp.example.com/',
+            landing_page_nickname='LP'");
+        foreach (['202_clicks', '202_clicks_spy'] as $table) {
+            $db->query("INSERT INTO $table SET click_id=9701, user_id=1, aff_campaign_id=7, ppc_account_id=3, landing_page_id=4,
+                click_payout=20, click_cpc=0.25, click_lead=0, click_time=1700000000");
+        }
+        $log = $this->log(9701);
+        $log['click_payout'] = '20.0';
+        p202RecordConversion($db, $log, '', true, '20.0', 'EVERY-1', [
+            'customer_ref' => '0044', 'customer_crm' => ['company' => 'Acme'],
+        ], []);
+        $acquired = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref = '0044'");
+        $ltv->recordEngagementEvent(['customer_id' => $acquired, 'event' => 'time_on_page', 'value' => 30]);
+        $ltv->createCompany(['name' => 'Beta']);
+        $company = (int) $this->scalar("SELECT company_id FROM 202_companies WHERE name = 'Acme'");
+        $product = (int) $ltv->upsertProduct(['external_product_id' => '7003', 'name' => 'Priced', 'price' => 12.5])['data']['product_id'];
+        $ltv->createField(['field_key' => 'tier', 'field_type' => 'select', 'options' => ['10', '20']]);
+        $db->query("INSERT INTO 202_ltv_webhooks SET webhook_id=5, user_id=1, webhook_url='https://hooks.example.com/ltv',
+            webhook_secret='s', subscribed_events='', status='active', created_at=1, updated_at=1");
+        $db->query("INSERT INTO 202_ltv_webhook_deliveries SET webhook_id=5, user_id=1, event_name='revenue.recorded',
+            payload='{}', status='failed', attempts=6, next_attempt_at=0, last_status_code=500, last_response_body='502',
+            created_at=1, updated_at=1");
+        $ltv->createIntegration(['provider' => 'stripe', 'name' => '123', 'config' => ['plan' => '7']]);
+
+        return ['ltv' => $ltv, 'customer' => $id, 'product' => $product, 'company' => $company, 'webhook' => 5];
+    }
+
+    /**
      * Each components schema of docs/openapi.yaml whose properties are
      * written one to a line in flow style (`name: {type: number, ...}`), by
-     * name: each property's type and whether it is nullable, with an allOf's
-     * referenced schema folded in. Read as text, as LedgerReadsOpenApiTest
-     * reads the spec: no YAML library ships with the project.
+     * name: each property's type, whether it is nullable and the schema it
+     * refers to (`{$ref: ...}`, or an array's `items: {$ref: ...}`), with an
+     * allOf's referenced schema folded in, and its `required: [...]` list
+     * when it gives one. Read as text, as LedgerReadsOpenApiTest reads the
+     * spec: no YAML library ships with the project.
      *
-     * @return array<string, array<string, array{0: string, 1: bool}>>
+     * @return array<string, array{properties: array<string, array{0: string, 1: bool, 2: ?string}>, required: ?list<string>}>
      */
     private static function specSchemas(): array
     {
@@ -1764,39 +2026,63 @@ CHILD;
         $blocks = preg_split('/\n(?=    [A-Za-z]\w*:\n)/', $components) ?: [];
         $schemas = [];
         $allOf = [];
+        $refPattern = '\$ref: \'#\/components\/schemas\/(\w+)\'';
         foreach ($blocks as $block) {
             if (preg_match('/^    (\w+):\n/', $block, $name) !== 1) {
                 continue;
             }
+            $schemas[$name[1]] = ['properties' => [], 'required' => null];
             preg_match_all('/^ {8,10}(\w+): \{type: (\w+)(.*)\}$/m', $block, $props, PREG_SET_ORDER);
             foreach ($props as [, $property, $type, $rest]) {
-                $schemas[$name[1]][$property] = [$type, str_contains($rest, 'nullable: true')];
+                $items = preg_match('/items: \{' . $refPattern . '\}/', $rest, $item) === 1 ? $item[1] : null;
+                $schemas[$name[1]]['properties'][$property] = [$type, str_contains($rest, 'nullable: true'), $items];
             }
-            if (preg_match('/^      allOf:\n      - \$ref: \'#\/components\/schemas\/(\w+)\'$/m', $block, $ref) === 1) {
+            preg_match_all('/^ {8,10}(\w+): \{' . $refPattern . '\}$/m', $block, $refs, PREG_SET_ORDER);
+            foreach ($refs as [, $property, $ref]) {
+                $schemas[$name[1]]['properties'][$property] = ['object', false, $ref];
+            }
+            if (preg_match('/^      required: \[(.*)\]$/m', $block, $required) === 1) {
+                $schemas[$name[1]]['required'] = array_map('trim', explode(',', $required[1]));
+            }
+            if (preg_match('/^      allOf:\n      - ' . $refPattern . '$/m', $block, $ref) === 1) {
                 $allOf[$name[1]] = $ref[1];
             }
         }
         foreach ($allOf as $schema => $base) {
-            $schemas[$schema] = ($schemas[$base] ?? []) + ($schemas[$schema] ?? []);
+            $schemas[$schema]['properties'] = ($schemas[$base]['properties'] ?? []) + $schemas[$schema]['properties'];
         }
 
         return $schemas;
     }
 
     /**
-     * @param array<string, array<string, array{0: string, 1: bool}>> $schemas
+     * $row has the keys $schema documents, each of the JSON type it gives,
+     * and so on into each schema a property refers to. A schema with a
+     * `required` list may leave out the keys it does not name.
+     *
+     * @param array<string, array{properties: array<string, array{0: string, 1: bool, 2: ?string}>, required: ?list<string>}> $schemas
      * @param array<string, mixed> $row
      */
     private static function assertMatchesSchema(array $schemas, string $schema, array $row, string $where): void
     {
         self::assertArrayHasKey($schema, $schemas, "$schema is in docs/openapi.yaml with its properties");
-        $properties = $schemas[$schema];
+        self::assertNotSame([], $schemas[$schema]['properties'], "$schema has its properties in flow style");
+        $properties = $schemas[$schema]['properties'];
         $documented = array_keys($properties);
         $served = array_keys($row);
         sort($documented);
         sort($served);
-        self::assertSame($documented, $served, "$where: the keys $schema documents are the keys served");
-        foreach ($properties as $property => [$type, $nullable]) {
+        $required = $schemas[$schema]['required'];
+        if ($required === null) {
+            self::assertSame($documented, $served, "$where: the keys $schema documents are the keys served");
+        } else {
+            self::assertSame([], array_values(array_diff($served, $documented)), "$where: keys $schema does not document");
+            self::assertSame([], array_values(array_diff($required, $served)), "$where: keys $schema requires");
+        }
+        foreach ($properties as $property => [$type, $nullable, $ref]) {
+            if (!array_key_exists($property, $row)) {
+                continue;
+            }
             $value = $row[$property];
             if ($value === null) {
                 self::assertTrue($nullable, "$where: $property is null, which $schema does not say it may be");
@@ -1814,15 +2100,21 @@ CHILD;
                 default => false,
             };
             self::assertTrue($is, "$where: $property is " . get_debug_type($value) . " $json, $schema says $type");
+            if ($ref !== null && is_array($value)) {
+                foreach ($type === 'array' ? $value : [$value] as $i => $item) {
+                    self::assertIsArray($item, "$where.$property: $ref is an object");
+                    self::assertMatchesSchema($schemas, $ref, $item, $type === 'array' ? "$where.$property.$i" : "$where.$property");
+                }
+            }
         }
     }
 
-    /** A numeric string anywhere in $value but a text field (or a custom field, typed by its own field). */
+    /** A numeric string anywhere in $value but a text field (or a free-form one, LTV_FREE_FORM_FIELDS). */
     private static function assertNoNumericText(mixed $value, string $path): void
     {
         if (is_array($value)) {
             foreach ($value as $key => $item) {
-                if ($key !== 'custom_fields') {
+                if (!in_array($key, self::LTV_FREE_FORM_FIELDS, true)) {
                     self::assertNoNumericText($item, $path . '.' . $key);
                 }
             }
@@ -1830,8 +2122,8 @@ CHILD;
             return;
         }
         $field = substr($path, (int) strrpos($path, '.') + 1);
-        if (is_string($value) && is_numeric($value) && !in_array($field, self::CUSTOMER_TEXT_FIELDS, true)) {
-            self::fail("$path is the string \"$value\": money is a JSON number and a count an integer");
+        if (is_string($value) && is_numeric($value) && !in_array($field, self::LTV_TEXT_FIELDS, true)) {
+            self::fail("$path is the string \"$value\": money is a JSON number, and a count or a time an integer");
         }
     }
 

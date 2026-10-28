@@ -518,7 +518,7 @@ final class AccountAdministrationIntegrationTest extends TestCase
         $edited = $this->ltv()->updateProduct($id, ['name' => '  Renamed  ', 'price' => '12.5'])['data'];
         self::assertSame('Renamed', $edited['name']);
         self::assertSame('SKU-it-p1', $edited['sku'], 'a field not sent keeps its value');
-        self::assertSame('12.50000', (string) $edited['price']);
+        self::assertSame(12.5, $edited['price'], 'a number, as GET /ltv/products answers it');
         self::assertSame('it-p1', $edited['external_product_id']);
 
         $cleared = $this->ltv()->updateProduct($id, ['sku' => '', 'price' => null])['data'];

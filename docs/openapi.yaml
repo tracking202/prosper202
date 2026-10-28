@@ -6862,8 +6862,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvSummary'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -7244,8 +7243,9 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    allOf:
+                    - $ref: '#/components/schemas/LtvNextOffer'
+                    nullable: true
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -7445,8 +7445,11 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LtvAbmAccount'
+                  window_days:
+                    type: integer
         '403':
           $ref: '#/components/responses/Forbidden'
 
@@ -7481,8 +7484,13 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LtvAbmContact'
+                  company:
+                    type: string
+                  window_days:
+                    type: integer
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -7523,8 +7531,12 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      oneOf:
+                      - $ref: '#/components/schemas/LtvAcquisitionBreakdownRow'
+                      - $ref: '#/components/schemas/LtvProductBreakdownRow'
+                  breakdown:
+                    type: string
+                    description: The grouping; product rows are LtvProductBreakdownRow, the others LtvAcquisitionBreakdownRow
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -7561,8 +7573,7 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/LtvCohort'
                   months:
                     type: integer
                   timezone:
@@ -7589,8 +7600,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvMrr'
         '403':
           $ref: '#/components/responses/Forbidden'
 
@@ -7624,8 +7634,9 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    oneOf:
+                    - $ref: '#/components/schemas/LtvPrediction'
+                    - $ref: '#/components/schemas/LtvPredictionByGroup'
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -7652,8 +7663,7 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/LtvProduct'
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
@@ -7748,8 +7758,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvProduct'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -7804,8 +7813,9 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/LtvCompanyRollup'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
@@ -7881,8 +7891,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvCompany'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -7952,8 +7961,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvCompany'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -7999,8 +8007,9 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/LtvSubscription'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
@@ -8330,8 +8339,7 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/LtvField'
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
@@ -8471,8 +8479,7 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/LtvWebhook'
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
@@ -8594,33 +8601,7 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
-                      properties:
-                        delivery_id:
-                          type: integer
-                        event_name:
-                          type: string
-                        status:
-                          type: string
-                          enum:
-                          - pending
-                          - delivered
-                          - failed
-                        attempts:
-                          type: integer
-                        next_attempt_at:
-                          type: integer
-                          nullable: true
-                        last_status_code:
-                          type: integer
-                          nullable: true
-                        last_response_body:
-                          type: string
-                          nullable: true
-                        created_at:
-                          type: integer
-                        updated_at:
-                          type: integer
+                      $ref: '#/components/schemas/LtvWebhookDelivery'
                   meta:
                     type: object
                     properties:
@@ -8662,8 +8643,7 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/LtvIntegration'
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
@@ -12017,6 +11997,300 @@ components:
         event_value: {type: number, nullable: true, example: 75}
         occurred_at: {type: integer, description: "Unix seconds"}
         click_id: {type: integer, nullable: true}
+
+    LtvNextOffer:
+      type: object
+      description: The campaign to offer a customer next, and why; GET /ltv/customers/{id}/next-offer answers null when there is none.
+      properties:
+        campaign_id: {type: integer}
+        name: {type: string}
+        url: {type: string, description: "The campaign's URL, or empty when it is not http(s)"}
+        why: {type: object, additionalProperties: true, description: "basis (transition, engagement or account_top_recent) and the figures the pick was made from"}
+
+    LtvSummary:
+      type: object
+      description: >-
+        The customers acquired in the window and their realized value. Money and rates are JSON numbers and counts
+        integers, here and in every /ltv read since 1.9.79.
+      properties:
+        customers: {type: integer}
+        total_revenue: {type: number, example: 89.125}
+        refunded_amount: {type: number, example: 5}
+        total_orders: {type: integer}
+        avg_ltv: {type: number, example: 44.5625}
+        aov: {type: number, example: 22.28125, description: "Revenue per order"}
+        repeat_customers: {type: integer}
+        purchasing_customers: {type: integer}
+        repeat_rate: {type: number, example: 0.5, description: "Repeat customers over purchasing customers, 0 to 1"}
+        mrr: {type: number, example: 29.99}
+        active_subscriptions: {type: integer}
+
+    LtvAcquisitionBreakdownRow:
+      type: object
+      description: >-
+        One campaign, traffic source account or landing page (GET /ltv/breakdown with by=campaign, ppc_account or
+        landing_page) and the customers it acquired, by their first click. Until 1.9.79 every amount here was
+        MySQL's decimal text ("44.562500000") and total_orders the text "4".
+      properties:
+        id: {type: integer}
+        name: {type: string, description: "The campaign's name, the account's name or the landing page's URL"}
+        customers: {type: integer}
+        total_revenue: {type: number, example: 89.125}
+        avg_ltv: {type: number, example: 44.5625}
+        total_orders: {type: integer}
+        aov: {type: number, example: 22.28125}
+        repeat_rate: {type: number, example: 0.5, description: "0 to 1"}
+        mrr: {type: number, example: 29.99}
+        spend: {type: number, example: 0.75, description: "Click cost in the window"}
+        cac: {type: number, example: 0.375, description: "Spend per customer acquired"}
+        ltv_cac: {type: number, example: 118.833333333, description: "Revenue per ad dollar; 0 with no spend"}
+
+    LtvProductBreakdownRow:
+      type: object
+      description: >-
+        One product and the customers whose orders carried it (GET /ltv/breakdown?by=product). Until 1.9.79 the
+        amounts were decimal text, units text such as "1.500" and orders the text "1".
+      properties:
+        id: {type: integer, description: "The product id"}
+        name: {type: string, description: "Its name, else its sku, else its key"}
+        sku: {type: string, nullable: true}
+        customers: {type: integer}
+        orders: {type: integer}
+        units: {type: number, example: 1.5, description: "A sum of quantities, so it may be fractional"}
+        total_revenue: {type: number, example: 10.125}
+        avg_revenue_per_customer: {type: number, example: 10.125}
+        aov: {type: number, example: 10.125}
+        repeat_rate: {type: number, example: 0, description: "0 to 1"}
+        mrr: {type: number, example: 0, description: "Active subscriptions' MRR, split evenly across the products each bills for"}
+
+    LtvCohort:
+      type: object
+      properties:
+        cohort_month: {type: string, example: "2026-10", description: "The month first seen, Y-m, in the account's timezone"}
+        customers: {type: integer}
+        m0: {type: number, description: "Revenue in the month of acquisition"}
+        m1: {type: number}
+        m2: {type: number}
+        m3: {type: number}
+        m4: {type: number}
+        m5_plus: {type: number, description: "Revenue five or more months on"}
+        total_revenue: {type: number}
+        ltv_per_customer: {type: number}
+
+    LtvMrr:
+      type: object
+      properties:
+        mrr: {type: number, example: 29.99, description: "Active subscriptions' MRR"}
+        arr: {type: number, example: 359.88}
+        active_subscriptions: {type: integer}
+        trialing: {type: integer}
+        past_due: {type: integer}
+        paused: {type: integer}
+        canceled_total: {type: integer}
+        monthly_churn_rate: {type: number, example: 0.01}
+        churn_inputs: {$ref: '#/components/schemas/LtvChurnInputs'}
+
+    LtvChurnInputs:
+      type: object
+      properties:
+        window_days: {type: integer}
+        canceled_in_window: {type: integer}
+        at_risk_population: {type: integer}
+
+    LtvPrediction:
+      type: object
+      required: [basis, predicted_ltv_per_customer, predicted_subscriber_pool_value, inputs, caps_applied]
+      properties:
+        basis: {type: string, enum: [account, cohort, account_fallback]}
+        predicted_ltv_per_customer: {type: number}
+        predicted_subscriber_pool_value: {type: number}
+        inputs: {$ref: '#/components/schemas/LtvPredictionInputs'}
+        caps_applied: {type: array, items: {type: string}}
+        fallback_reason: {type: string, description: "Why a group took the account's projection; only with basis account_fallback"}
+
+    LtvPredictionInputs:
+      type: object
+      properties:
+        customers: {type: integer}
+        aov: {type: number}
+        repeat_rate: {type: number}
+        mrr: {type: number}
+        monthly_churn_rate: {type: number}
+
+    LtvPredictionByGroup:
+      type: object
+      description: GET /ltv/predict with `by`.
+      properties:
+        account: {$ref: '#/components/schemas/LtvPrediction'}
+        breakdown: {type: array, items: {$ref: '#/components/schemas/LtvPredictionGroup'}}
+
+    LtvPredictionGroup:
+      type: object
+      properties:
+        id: {type: integer, nullable: true}
+        name: {type: string, nullable: true}
+        customers: {type: integer}
+        prediction: {$ref: '#/components/schemas/LtvPrediction'}
+
+    LtvProduct:
+      type: object
+      description: >-
+        A catalog product, as GET /ltv/products lists it and PATCH /ltv/products/{id} answers it. Its price was
+        MySQL's decimal text ("12.50000") until 1.9.79.
+      properties:
+        product_id: {type: integer}
+        external_product_id: {type: string, description: "The product's key; sku:<sku> for one keyed by its sku"}
+        sku: {type: string, nullable: true}
+        name: {type: string, nullable: true}
+        price: {type: number, nullable: true, example: 12.5}
+        currency: {type: string}
+        created_at: {type: integer, description: "Unix seconds"}
+        updated_at: {type: integer, description: "Unix seconds"}
+
+    LtvCompanyRollup:
+      type: object
+      description: >-
+        A company with its attached customers' rollups (GET /ltv/companies). Until 1.9.79 order_count and
+        last_activity_time were text, and the money decimal text.
+      properties:
+        company_id: {type: integer}
+        name: {type: string}
+        domain: {type: string, nullable: true}
+        created_at: {type: integer, description: "Unix seconds"}
+        contacts: {type: integer}
+        order_count: {type: integer}
+        total_revenue: {type: number, example: 89.125}
+        mrr: {type: number, example: 29.99}
+        last_activity_time: {type: integer, description: "Unix seconds; 0 for a company with no customer"}
+
+    LtvCompany:
+      type: object
+      description: A company as PATCH /ltv/companies/{id} and a merge answer it, and a delete's dry_run record.
+      properties:
+        company_id: {type: integer}
+        name: {type: string}
+        normalized_name: {type: string}
+        domain: {type: string, nullable: true}
+        created_at: {type: integer, description: "Unix seconds"}
+        updated_at: {type: integer, description: "Unix seconds"}
+
+    LtvSubscription:
+      type: object
+      description: >-
+        A subscription with its customer (GET /ltv/subscriptions). Until 1.9.79 amount, mrr and customer_ltv were
+        decimal text here while the same subscription in GET /ltv/customers/{id} answered numbers.
+      properties:
+        subscription_id: {type: integer}
+        external_sub_id: {type: string}
+        plan_name: {type: string, nullable: true}
+        amount: {type: number, example: 29.99}
+        currency: {type: string}
+        billing_interval: {type: string, enum: [day, week, month, year]}
+        billing_interval_count: {type: integer}
+        status: {type: string, enum: [trialing, active, past_due, paused, canceled]}
+        mrr: {type: number, example: 29.99}
+        started_at: {type: integer, description: "Unix seconds"}
+        current_period_end: {type: integer, description: "Unix seconds"}
+        canceled_at: {type: integer, nullable: true, description: "Unix seconds"}
+        customer_id: {type: integer}
+        first_name: {type: string, nullable: true}
+        last_name: {type: string, nullable: true}
+        email: {type: string, nullable: true}
+        company: {type: string, nullable: true}
+        customer_ltv: {type: number, nullable: true, example: 54.125, description: "The customer's total_revenue"}
+
+    LtvAbmAccount:
+      type: object
+      description: >-
+        A company (the customers' CRM company) and its engagement in the window (GET /ltv/abm). Until 1.9.79 the
+        money and the averages were decimal text ("30.0000000").
+      properties:
+        company: {type: string}
+        contacts: {type: integer}
+        total_revenue: {type: number}
+        mrr: {type: number}
+        last_activity: {type: integer, description: "Unix seconds"}
+        engagements: {type: integer, description: "Tracked clicks and instrumented events in the window"}
+        custom_events: {type: integer}
+        top_campaign_name: {type: string, nullable: true}
+        top_event_name: {type: string, nullable: true}
+        avg_time_on_page: {type: number, description: "Seconds"}
+        avg_scroll_depth: {type: number, description: "Percent"}
+        avg_video_pct: {type: number, description: "Percent"}
+        engagement_score: {type: integer, description: "0 to 100"}
+
+    LtvAbmContact:
+      type: object
+      description: >-
+        One of a company's customers and its engagement in the window (GET /ltv/abm/company). Until 1.9.79 the
+        money, the averages and last_activity were text.
+      properties:
+        customer_id: {type: integer}
+        first_name: {type: string, nullable: true}
+        last_name: {type: string, nullable: true}
+        email: {type: string, nullable: true}
+        order_count: {type: integer}
+        total_revenue: {type: number}
+        mrr: {type: number}
+        last_activity_time: {type: integer, description: "Unix seconds"}
+        engagements: {type: integer}
+        avg_time_on_page: {type: number}
+        avg_scroll_depth: {type: number}
+        avg_video_pct: {type: number}
+        last_activity: {type: integer, description: "Unix seconds of the last click or event in the window; 0 for none"}
+        engagement_score: {type: integer, description: "0 to 100"}
+
+    LtvField:
+      type: object
+      required: [field_id, field_key, label, field_type, options, is_required, sort_order, created_at, updated_at]
+      properties:
+        field_id: {type: integer}
+        field_key: {type: string}
+        label: {type: string}
+        field_type: {type: string, enum: [text, number, date, boolean, select, email, url]}
+        options: {type: array, nullable: true, items: {type: string}, description: "A select field's choices"}
+        is_required: {type: integer, enum: [0, 1]}
+        sort_order: {type: integer}
+        created_at: {type: integer, description: "Unix seconds"}
+        updated_at: {type: integer, description: "Unix seconds"}
+        options_invalid: {type: boolean, description: "Present, true, when the stored options do not decode (options is then null)"}
+
+    LtvWebhook:
+      type: object
+      description: An outbound webhook, never its secret.
+      properties:
+        webhook_id: {type: integer}
+        webhook_url: {type: string}
+        subscribed_events: {type: string, description: "Comma-separated event names; empty for every event"}
+        status: {type: string, enum: [active, disabled, dead]}
+        created_at: {type: integer, description: "Unix seconds"}
+        updated_at: {type: integer, description: "Unix seconds"}
+
+    LtvWebhookDelivery:
+      type: object
+      properties:
+        delivery_id: {type: integer}
+        event_name: {type: string}
+        status: {type: string, enum: [pending, delivered, failed]}
+        attempts: {type: integer}
+        next_attempt_at: {type: integer, nullable: true, description: "Unix seconds; set while pending"}
+        last_status_code: {type: integer, nullable: true}
+        last_response_body: {type: string, nullable: true}
+        created_at: {type: integer, description: "Unix seconds"}
+        updated_at: {type: integer, description: "Unix seconds"}
+
+    LtvIntegration:
+      type: object
+      required: [integration_id, provider, name, config, status, created_at, updated_at]
+      properties:
+        integration_id: {type: integer}
+        provider: {type: string}
+        name: {type: string}
+        config: {type: object, nullable: true, additionalProperties: true, description: "The provider's settings as sent"}
+        status: {type: string}
+        created_at: {type: integer, description: "Unix seconds"}
+        updated_at: {type: integer, description: "Unix seconds"}
+        config_invalid: {type: boolean, description: "Present, true, when the stored config does not decode (config is then null)"}
 
     SyncProfile:
       type: object

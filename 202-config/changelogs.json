@@ -12,7 +12,8 @@
       "Changed: After an upgrade, tracking links look up their ids afresh instead of reading what the previous version cached, so the first clicks after an upgrade each make one more database read; so do the bot-range and browser checks",
       "Changed: When a cron run was recorded in the last five minutes, turning AutoCron on in Settings no longer simply refuses: it says why AutoCron may not be needed and offers to turn it on anyway, since anyone can open the cron address",
       "Fixed: Security. Reading a user's preferences through the API or the CLI showed the account's integration secrets (the ClickBank, JVZoo, Zaxaa and IPQS keys, the Slack webhook, RevContent and the Landing Page Optimizer's keys). It says only whether each one is stored. If anyone who should not see them held an API key, replace those secrets at each network",
-      "Changed: The API answers a customer's revenue, refunds and MRR (and its subscriptions', revenue events' and line items' amounts, and its engagement) as numbers, as the LTV summary does, rather than as text such as \"54.12500\", and its custom_fields as an object even when it holds none"
+      "Changed: The API answers a customer's revenue, refunds and MRR (and its subscriptions', revenue events' and line items' amounts, and its engagement) as numbers, as the LTV summary does, rather than as text such as \"54.12500\", and its custom_fields as an object even when it holds none",
+      "Changed: The rest of the API's LTV reads answer money, averages and rates as numbers and counts and times as whole numbers too: subscriptions, the LTV breakdowns by campaign, traffic source account, landing page and product, products, companies and the ABM views. They answered text such as \"29.99000\" and \"4\", so a subscription's amount was a number in a customer's detail and text in the subscription list"
     ]
   },
   "1.9.78": {
