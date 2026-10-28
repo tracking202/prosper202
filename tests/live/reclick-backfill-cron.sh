@@ -131,7 +131,7 @@ eq "$(walk | cut -d/ -f2 | sed 's/^[0-9]*$/done/')" "done" "the walk is finished
 eq "$(walk | cut -d/ -f3-)" "2/-/0/1/$BAD" "the third is brought over, the second counted as stepped over"
 eq "$(recorded $BAD)/$(recorded $LAST)" "0/1" "the stepped-over click keeps no record: it counts at each visit"
 eq "$(dataengine)" "[false,null,1,$BAD]" "GET /system/dataengine says it finished, stepping over that click"
-eq "$(grep -c "p202 re-click backfill: click $BAD .*stepped over after failing in 10 runs" "$OUT/cron.err")" 1 "the error log says so"
+eq "$(grep -c "p202 re-click backfill: click $BAD .*stepped over after failing with its own error in 10 runs" "$OUT/cron.err")" 1 "the error log says so"
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
