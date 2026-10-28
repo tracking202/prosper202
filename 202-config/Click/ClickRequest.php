@@ -42,6 +42,23 @@ final class ClickRequest
     }
 
     /**
+     * The ad platforms' click ids (ClickRecord::AD_CLICK_IDS) as text(), by
+     * name, uncut: a token or the writer cuts each to its column.
+     *
+     * @param array<array-key, mixed> $query
+     * @return array<string, string>
+     */
+    public static function adClickIds(array $query): array
+    {
+        $ids = [];
+        foreach (array_keys(ClickRecord::AD_CLICK_IDS) as $name) {
+            $ids[$name] = self::text($query, $name);
+        }
+
+        return $ids;
+    }
+
+    /**
      * $key's value as sent, or '' when it is absent or a list: for a URL the
      * click parses or keeps (a landing page's referer) and for an id, where
      * text()'s ? for a byte that is no UTF-8 could stand where a URL's query
