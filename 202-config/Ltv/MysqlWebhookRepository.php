@@ -10,11 +10,11 @@ use RuntimeException;
 
 /**
  * Outbound LTV webhooks: endpoint CRUD, SSRF validation, the delivery queue,
- * and the dispatch-side helpers used by 202-cronjobs/ltv_webhooks.php.
+ * and the dispatch-side helpers WebhookDispatcher uses.
  *
  * Enqueueing is a plain DB insert (safe inside request handling); actual HTTP
- * delivery happens ONLY in the cron dispatcher — never inline in ingest or
- * API writes.
+ * delivery happens ONLY in WebhookDispatcher, which the cron runs — never
+ * inline in ingest or API writes.
  */
 final class MysqlWebhookRepository
 {
@@ -348,24 +348,50 @@ final class MysqlWebhookRepository
     }
 
     /**
-     * Dispatch-side: claim due pending deliveries (joined to their endpoint).
+     * Dispatch-side: the pending deliveries due at $now (joined to their
+     * endpoint), oldest due first, after the cursor (next_attempt_at,
+     * delivery_id) of the last row a run read. A plain read: claimDelivery()
+     * decides who sends each one. The cursor lets a run step past rows it
+     * leaves due (WebhookDispatcher defers a slow webhook's) without reading
+     * them again.
      *
      * @return list<array<string, mixed>>
      */
-    public function duePending(int $limit): array
+    public function duePending(int $now, int $limit, int $afterDueAt = 0, int $afterId = 0): array
     {
         $stmt = $this->conn->prepareRead(
-            "SELECT d.delivery_id, d.webhook_id, d.user_id, d.event_name, d.payload, d.attempts,
+            "SELECT d.delivery_id, d.webhook_id, d.user_id, d.event_name, d.payload, d.attempts, d.next_attempt_at,
                     w.webhook_url, w.webhook_secret, w.status AS webhook_status
              FROM 202_ltv_webhook_deliveries d
              JOIN 202_ltv_webhooks w ON w.webhook_id = d.webhook_id
              WHERE d.status = 'pending' AND d.next_attempt_at <= ?
-             ORDER BY d.next_attempt_at ASC
+               AND (d.next_attempt_at > ? OR (d.next_attempt_at = ? AND d.delivery_id > ?))
+             ORDER BY d.next_attempt_at ASC, d.delivery_id ASC
              LIMIT ?"
         );
-        $this->conn->bind($stmt, 'ii', [time(), $limit]);
+        $this->conn->bind($stmt, 'iiiii', [$now, $afterDueAt, $afterDueAt, $afterId, $limit]);
 
         return $this->conn->fetchAll($stmt);
+    }
+
+    /**
+     * Dispatch-side: mark up to $limit deliveries queued before $queuedBefore
+     * and still waiting as failed, with $reason as their last response, and
+     * never send them. A delivery claimed by a run in flight (next_attempt_at
+     * past $now) is left to that run. The endpoint is not marked dead: it
+     * did nothing wrong. Answers how many were marked.
+     */
+    public function expireUnsent(int $now, int $queuedBefore, string $reason, int $limit): int
+    {
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_ltv_webhook_deliveries
+             SET status = 'failed', last_status_code = NULL, last_response_body = ?, updated_at = ?
+             WHERE status = 'pending' AND next_attempt_at <= ? AND created_at < ?
+             LIMIT ?"
+        );
+        $this->conn->bind($stmt, 'siiii', [substr($reason, 0, 1000), $now, $now, $queuedBefore, $limit]);
+
+        return $this->conn->executeUpdate($stmt);
     }
 
     /**
@@ -377,7 +403,10 @@ final class MysqlWebhookRepository
     public function recordAttempt(int $deliveryId, int $webhookId, bool $success, ?int $statusCode, string $responseBody): void
     {
         $now = time();
-        $truncated = substr($responseBody, 0, 1000);
+        // A receiver's body is any bytes. Cut mid-character, or not UTF-8 at
+        // all, it is refused under a strict sql_mode: the outcome would go
+        // unrecorded and the delivery be sent again once its claim lapsed.
+        $truncated = mb_strcut(mb_scrub($responseBody, 'UTF-8'), 0, 1000, 'UTF-8');
 
         if ($success) {
             $stmt = $this->conn->prepareWrite(

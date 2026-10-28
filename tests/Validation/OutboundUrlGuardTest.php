@@ -190,11 +190,33 @@ final class OutboundUrlGuardTest extends TestCase
             }
         }
 
-        self::assertStringContainsString(
-            'OutboundUrlGuard::curlOptions(',
-            $files['202-cronjobs/ltv_webhooks.php'],
-            '202-cronjobs/ltv_webhooks.php must apply OutboundUrlGuard::curlOptions()'
+        // The LTV dispatcher sends with WebhookDispatcher::requestOptions()
+        // alone (its values are in tests/Ltv/WebhookDispatcherTest): no option
+        // of the hardening set beside the guard's, one curl_setopt_array().
+        $ltv = '202-config/Ltv/WebhookDispatcher.php';
+        self::assertArrayHasKey($ltv, $files, "$ltv is gone; update this test");
+        self::assertStringContainsString('OutboundUrlGuard::curlOptions(', $files[$ltv], "$ltv applies the guard");
+        $ltvSet = [];
+        $ltvCode = '';
+        foreach (token_get_all($files[$ltv]) as $t) {
+            if (is_array($t) && $t[0] === T_STRING && str_starts_with($t[1], 'CURLOPT_')) {
+                $ltvSet[$t[1]] = true;
+            }
+            if (!is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                $ltvCode .= is_array($t) ? $t[1] : $t;
+            }
+        }
+        ksort($ltvSet);
+        self::assertSame(
+            ['CURLOPT_HTTPHEADER', 'CURLOPT_POST', 'CURLOPT_POSTFIELDS', 'CURLOPT_RETURNTRANSFER'],
+            array_keys($ltvSet),
+            "$ltv sets curl options of the hardening set beside the guard's; they can override the pin"
         );
+        self::assertSame(1, preg_match_all('/curl_setopt/', $ltvCode), "$ltv sets its options once");
+        self::assertStringContainsString('$options=self::requestOptions($delivery,', $ltvCode);
+        self::assertStringContainsString('if(!curl_setopt_array($ch,$options)){', $ltvCode);
+        $job = $files['202-cronjobs/ltv_webhooks.php'];
+        self::assertStringNotContainsString('curl_', $job, 'the job sends through WebhookDispatcher::post()');
         $cron = '202-cronjobs/process_dataengine_job.php';
         self::assertArrayHasKey($cron, $files, "$cron is gone; update this test");
         self::assertStringContainsString('SelfCall::curlOptions(', $files[$cron], "$cron must call with SelfCall::curlOptions()");
