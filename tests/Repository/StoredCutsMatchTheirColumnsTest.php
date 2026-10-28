@@ -49,6 +49,8 @@ final class StoredCutsMatchTheirColumnsTest extends TestCase
         ClickRecord::class . '::GBRAID_CHARS' => ['chars', ['202_google.gbraid']],
         ClickRecord::class . '::WBRAID_CHARS' => ['chars', ['202_google.wbraid']],
         ClickRecord::class . '::TTCLID_CHARS' => ['chars', ['202_google.ttclid']],
+        ClickRecord::class . '::MSCLKID_CHARS' => ['chars', ['202_google.msclkid']],
+        ClickRecord::class . '::FBCLID_CHARS' => ['chars', ['202_google.fbclid']],
     ];
 
     public function testEachCutIsItsColumnsWidthInItsColumnsUnit(): void

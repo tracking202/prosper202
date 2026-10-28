@@ -16,13 +16,13 @@ use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
 
 /**
- * A click's ad click ids (gclid, gbraid, wbraid, ttclid) on a real server in
- * the strict mode a MySQL 8 server runs with: read from the request as the
- * click scripts read them, stored as they came (cut to their columns, in
- * characters), and read back by the API, the traffic source pixels' tokens
- * and the token read the click path makes, with one "none": the API's null,
- * a token's ''. A ttclid is measured at 337 characters, more than the
- * gclid's 150, and is kept whole.
+ * A click's ad click ids (gclid, gbraid, wbraid, ttclid, msclkid, fbclid) on
+ * a real server in the strict mode a MySQL 8 server runs with: read from the
+ * request as the click scripts read them, stored as they came (cut to their
+ * columns, in characters), and read back by the API, the traffic source
+ * pixels' tokens and the token read the click path makes, with one "none":
+ * the API's null, a token's ''. A ttclid is measured at 337 characters and
+ * an fbclid at 200, more than the gclid's 150, and each is kept whole.
  *
  * @group integration
  */
@@ -36,6 +36,7 @@ final class AdClickIdsIntegrationTest extends TestCase
     private const GCLID = 'CjwKCAjwlbu2BhA3EiwA3yXyu3uy-Qsj7kZJBAglX5PQ8RfvBvZye9QVCmsV5CjLklkDgoHgcivQpBoCfzgQAvD_BwE';
     private const GBRAID = '0AAAAApp6U2mDWVO0HLPFIpTPe4XNESLc_';
     private const WBRAID = 'Cj8KCQjw8rW2BhD9ARIuAFWUJq8MotJsyHASXlAJUfdRtOmCfEOXuYOy4Ss-8nEi054Pk4tiN4hrohxJcRoCOfs';
+    private const MSCLKID = '9a3f6c1d2b7e4f08a1c5d9e3b6f2a7c4';
 
     private const TABLES = [
         '202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_variable',
@@ -74,6 +75,12 @@ final class AdClickIdsIntegrationTest extends TestCase
         return 'E.C.P.' . str_repeat('Cs0BrH-fsgVGkAOH', 20) . 'wv7TIPFQW9W';
     }
 
+    /** A real fbclid's shape and length, 200 characters, its case mixed. */
+    private static function fbclid(): string
+    {
+        return 'IwY2xjaw' . str_repeat('Fbc1d-Shape_aBcD', 11) . '_aem_0IiQMcYBgFH';
+    }
+
     /**
      * A landing page click with the request's ids, as record_simple.php
      * reads and builds it.
@@ -94,7 +101,7 @@ final class AdClickIdsIntegrationTest extends TestCase
     private static function stored(int $clickId): array
     {
         $result = self::requireScratch()->query(
-            "SELECT gclid, gbraid, wbraid, ttclid FROM 202_google WHERE click_id = $clickId"
+            "SELECT gclid, gbraid, wbraid, ttclid, msclkid, fbclid FROM 202_google WHERE click_id = $clickId"
         );
         self::assertInstanceOf(\mysqli_result::class, $result, self::$db->error);
         $rows = $result->fetch_all(MYSQLI_ASSOC);
@@ -116,7 +123,7 @@ final class AdClickIdsIntegrationTest extends TestCase
             'the read the click path makes of the ids 1.9.79 added'
         );
         self::assertSame(
-            ['gbraid' => '', 'wbraid' => '', 'ttclid' => ''],
+            ['gbraid' => '', 'wbraid' => '', 'ttclid' => '', 'msclkid' => '', 'fbclid' => ''],
             AdClickIdColumns::of(new Connection(self::$db), self::FIRST_CLICK + 98),
             'a click with no row has none'
         );
@@ -125,7 +132,10 @@ final class AdClickIdsIntegrationTest extends TestCase
     /** @return array<string, string> */
     private static function allIds(): array
     {
-        return ['gclid' => self::GCLID, 'gbraid' => self::GBRAID, 'wbraid' => self::WBRAID, 'ttclid' => self::ttclid()];
+        return [
+            'gclid' => self::GCLID, 'gbraid' => self::GBRAID, 'wbraid' => self::WBRAID, 'ttclid' => self::ttclid(),
+            'msclkid' => self::MSCLKID, 'fbclid' => self::fbclid(),
+        ];
     }
 
     /**
@@ -142,6 +152,8 @@ final class AdClickIdsIntegrationTest extends TestCase
             'gbraid' => ['0AAAA'],
             'wbraid' => "Cj8\xFFbad",
             'ttclid' => str_repeat('é', 1000) . 'tail',
+            'msclkid' => ['9a3f'],
+            'fbclid' => str_repeat('é', 999) . "\xFFtail",
         ]);
 
         self::assertSame([
@@ -149,7 +161,16 @@ final class AdClickIdsIntegrationTest extends TestCase
             'gbraid' => '',
             'wbraid' => 'Cj8?bad',
             'ttclid' => str_repeat('é', 1000),
+            'msclkid' => '',
+            'fbclid' => str_repeat('é', 999) . '?',
         ], self::stored($clickId));
+
+        $clickId = self::FIRST_CLICK + 8;
+        self::record($clickId, ['msclkid' => str_repeat('m', 151), 'fbclid' => ['IwAR']]);
+        self::assertSame(
+            [str_repeat('m', 150), ''],
+            [self::stored($clickId)['msclkid'], self::stored($clickId)['fbclid']]
+        );
     }
 
     /**
@@ -185,11 +206,15 @@ final class AdClickIdsIntegrationTest extends TestCase
     {
         $result = self::requireScratch()->query(
             "SELECT COLUMN_NAME, COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
-            . " AND TABLE_NAME = '202_google' AND COLUMN_NAME IN ('gbraid', 'wbraid', 'ttclid') ORDER BY COLUMN_NAME"
+            . " AND TABLE_NAME = '202_google' AND COLUMN_NAME IN ('gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid')"
+            . ' ORDER BY COLUMN_NAME'
         );
         self::assertInstanceOf(\mysqli_result::class, $result, self::$db->error);
         self::assertSame(
-            ['gbraid' => 'utf8mb4_bin', 'ttclid' => 'utf8mb4_bin', 'wbraid' => 'utf8mb4_bin'],
+            [
+                'fbclid' => 'utf8mb4_bin', 'gbraid' => 'utf8mb4_bin', 'msclkid' => 'utf8mb4_bin',
+                'ttclid' => 'utf8mb4_bin', 'wbraid' => 'utf8mb4_bin',
+            ],
             array_column($result->fetch_all(MYSQLI_ASSOC), 'COLLATION_NAME', 'COLUMN_NAME')
         );
 
@@ -198,6 +223,14 @@ final class AdClickIdsIntegrationTest extends TestCase
         $found = self::$db->query("SELECT COUNT(*) AS n FROM 202_google WHERE click_id = $clickId AND gbraid = 'abc'");
         self::assertInstanceOf(\mysqli_result::class, $found, self::$db->error);
         self::assertSame('0', (string) $found->fetch_assoc()['n'], "'abc' is not 'AbC'");
+        // Meta says its click id is case sensitive.
+        $clickId = self::FIRST_CLICK + 9;
+        self::record($clickId, ['fbclid' => 'IwAR2F4-dbP0']);
+        $found = self::$db->query(
+            "SELECT COUNT(*) AS n FROM 202_google WHERE click_id = $clickId AND fbclid = 'iwar2f4-dbp0'"
+        );
+        self::assertInstanceOf(\mysqli_result::class, $found, self::$db->error);
+        self::assertSame('0', (string) $found->fetch_assoc()['n'], "'iwar2f4-dbp0' is not 'IwAR2F4-dbP0'");
     }
 
     /**
@@ -227,8 +260,8 @@ final class AdClickIdsIntegrationTest extends TestCase
         $pick = static fn (array $row): array => array_intersect_key($row, self::allIds());
         $expected = [
             $with => self::allIds(),
-            $gclidOnly => ['gclid' => self::GCLID, 'gbraid' => null, 'wbraid' => null, 'ttclid' => null],
-            $redirector => ['gclid' => null, 'gbraid' => null, 'wbraid' => null, 'ttclid' => null],
+            $gclidOnly => ['gclid' => self::GCLID] + array_fill_keys(AdClickIdColumns::ADDED, null),
+            $redirector => array_fill_keys(array_keys(ClickRecord::AD_CLICK_IDS), null),
         ];
         $listed = array_column($clicks->list(['limit' => 500])['data'], null, 'click_id');
         foreach ($expected as $clickId => $ids) {
@@ -246,12 +279,12 @@ final class AdClickIdsIntegrationTest extends TestCase
      */
     public function testAClickWithTwoGoogleRowsIsServedOnceWithEachId(): void
     {
-        $twice = self::FIRST_CLICK + 9;
+        $twice = self::FIRST_CLICK + 20;
         self::record($twice, ['gclid' => self::GCLID, 'wbraid' => self::WBRAID]);
-        self::record(self::FIRST_CLICK + 10, ['ttclid' => self::ttclid()]);
+        self::record(self::FIRST_CLICK + 21, ['ttclid' => self::ttclid()]);
         self::q("INSERT INTO 202_google SET click_id = $twice, gclid = '', gbraid = '" . self::GBRAID . "',"
-            . " wbraid = '', ttclid = '', utm_source_id = 0, utm_medium_id = 0, utm_campaign_id = 0,"
-            . ' utm_term_id = 0, utm_content_id = 0');
+            . " wbraid = '', ttclid = '', msclkid = '" . self::MSCLKID . "', fbclid = '', utm_source_id = 0,"
+            . ' utm_medium_id = 0, utm_campaign_id = 0, utm_term_id = 0, utm_content_id = 0');
 
         $clicks = new ClicksController(self::$db, self::USER);
         $list = $clicks->list(['limit' => '500']);
@@ -259,7 +292,10 @@ final class AdClickIdsIntegrationTest extends TestCase
         $listed = array_map('intval', array_column($list['data'], 'click_id'));
         self::assertCount($total, $listed, 'the list serves as many rows as it counts');
         self::assertSame($listed, array_values(array_unique($listed)), 'each click once');
-        $ids = ['gclid' => self::GCLID, 'gbraid' => self::GBRAID, 'wbraid' => self::WBRAID, 'ttclid' => null];
+        $ids = [
+            'gclid' => self::GCLID, 'gbraid' => self::GBRAID, 'wbraid' => self::WBRAID, 'ttclid' => null,
+            'msclkid' => self::MSCLKID, 'fbclid' => null,
+        ];
         self::assertSame($ids, array_intersect_key($clicks->get($twice)['data'], $ids), 'GET /clicks/{id}');
         $row = array_column($list['data'], null, 'click_id')[$twice];
         self::assertSame($ids, array_intersect_key($row, $ids), 'GET /clicks names the ids GET /clicks/{id} does');
@@ -273,7 +309,7 @@ final class AdClickIdsIntegrationTest extends TestCase
         self::assertSame($listed, $paged, 'a page at a time is the list');
 
         self::assertSame(
-            ['gbraid' => self::GBRAID, 'wbraid' => self::WBRAID, 'ttclid' => ''],
+            ['gbraid' => self::GBRAID, 'wbraid' => self::WBRAID, 'ttclid' => '', 'msclkid' => self::MSCLKID, 'fbclid' => ''],
             AdClickIdColumns::of(new Connection(self::$db), $twice),
             'the token read names the same ids'
         );
@@ -286,18 +322,25 @@ final class AdClickIdsIntegrationTest extends TestCase
     public function testATrafficSourcesPixelTokensCarryEachId(): void
     {
         $clickId = self::FIRST_CLICK + 6;
-        self::record($clickId, ['gbraid' => self::GBRAID, 'ttclid' => self::ttclid()]);
+        self::record($clickId, [
+            'gbraid' => self::GBRAID, 'ttclid' => self::ttclid(),
+            'msclkid' => self::MSCLKID, 'fbclid' => self::fbclid(),
+        ]);
 
         $click = TrafficSourcePixels::clickTokens(new Connection(self::$db), self::USER, $clickId);
         self::assertNotNull($click);
         self::assertSame(
-            ['gclid' => '', 'gbraid' => self::GBRAID, 'wbraid' => '', 'ttclid' => self::ttclid()],
+            [
+                'gclid' => '', 'gbraid' => self::GBRAID, 'wbraid' => '', 'ttclid' => self::ttclid(),
+                'msclkid' => self::MSCLKID, 'fbclid' => self::fbclid(),
+            ],
             array_intersect_key($click['tokens'], self::allIds())
         );
         self::assertSame(
-            'https://ads.example/s2s?gb=' . self::GBRAID . '&wb=&tt=' . self::ttclid(),
+            'https://ads.example/s2s?gb=' . self::GBRAID . '&wb=&tt=' . self::ttclid() . '&ms=' . self::MSCLKID
+                . '&fb=' . self::fbclid(),
             TrafficSourcePixels::replaceTokens(
-                'https://ads.example/s2s?gb=[[gbraid]]&wb=[[wbraid]]&tt=[[TTCLID]]',
+                'https://ads.example/s2s?gb=[[gbraid]]&wb=[[wbraid]]&tt=[[TTCLID]]&ms=[[msclkid]]&fb=[[fbclid]]',
                 $click['tokens']
             )
         );

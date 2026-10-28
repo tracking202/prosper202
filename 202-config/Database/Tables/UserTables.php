@@ -72,6 +72,13 @@ final class UserTables
         );
     }
 
+    /**
+     * user_pref_privacy's DEFAULT is a new account's setting: every path that
+     * makes an account inserts this row naming user_id alone
+     * (NewAccountPrivacyIsTheColumnDefaultTest). 'eu' from 1.9.79, which the
+     * 1.9.78 -> 1.9.79 rung sets on an upgraded table; an account made
+     * before keeps what it had ('disabled', the default until then).
+     */
     public static function usersPref(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -106,7 +113,7 @@ final class UserTables
                 `user_pref_chart` varchar(255) NOT NULL DEFAULT 'net',
                 `user_cpc_or_cpv` char(3) NOT NULL DEFAULT 'cpc',
                 `user_keyword_searched_or_bidded` varchar(255) NOT NULL DEFAULT 'searched',
-                `user_pref_privacy` varchar(100) NOT NULL DEFAULT 'disabled',
+                `user_pref_privacy` varchar(100) NOT NULL DEFAULT 'eu',
                 `user_pref_referer_data` varchar(10) NOT NULL DEFAULT 'browser',
                 `user_tracking_domain` varchar(255) NOT NULL DEFAULT '',
                 `user_pref_group_2` tinyint(3) DEFAULT NULL,

@@ -24,7 +24,13 @@ Here's a full list of Prosper202 Tokens
 
 **[[ttclid]]** - TikTok's click id, which TikTok adds to its ad clicks. Kept to 1,000 characters (real ones run to about 340).
 
-The four click ids are recorded from direct links and from simple and advanced landing pages (the landing page script sends them on from the page's URL). The redirector records none of them, as it records no UTM values. Unlike the gclid, a direct link or a redirector also passes `gbraid`, `wbraid` and `ttclid` on to the offer under their own names, as it does every other parameter of the link, so an offer URL needs these tokens only to send them under another name (and a redirector's [[gbraid]], [[wbraid]] and [[ttclid]] are empty, since it records none).
+**[[msclkid]]** - Microsoft Advertising's click id, which its auto-tagging adds to ad clicks: what a Microsoft offline conversion upload matches on. Kept to 150 characters (Microsoft documents a 32-character id).
+
+**[[fbclid]]** - Meta's click id, which Facebook and Instagram add to outbound clicks: what Meta's `fbc` parameter is built from. Kept to 1,000 characters (real ones run to about 200). Meta says the id is case sensitive; it is kept and compared exactly as it came.
+
+The six click ids are recorded from direct links and from simple and advanced landing pages (the landing page script sends them on from the page's URL). The redirector records none of them, as it records no UTM values. A direct link or a redirector passes `gbraid`, `wbraid` and `ttclid` on to the offer under their own names, as it does every other parameter of the link, so an offer URL needs those tokens only to send them under another name (and a redirector's [[gbraid]], [[wbraid]] and [[ttclid]] are empty, since it records none). The gclid, msclkid and fbclid are not passed on: an offer URL that needs one names its token.
+
+[[msclkid]] and [[fbclid]] filled with nothing before 1.9.79: no version since at least 1.9.55 kept either id, so a click recorded before 1.9.79 has none.
 
 **[[utm_source]]** - This contains the value that was passed in the utm_source url parameter of your tracking links
 

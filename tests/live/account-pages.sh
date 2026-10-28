@@ -341,6 +341,7 @@ NEWUSER=$(Q "SELECT user_id FROM 202_users WHERE user_name='u6_live_user' AND us
 eq "$(Q "SELECT CONCAT_WS('|', user_fname, user_lname, user_email, user_active) FROM 202_users WHERE user_id=${NEWUSER:-0}")" "Live|User|u6-live@example.test|1" "the row carries every field"
 eq "$(Q "SELECT role_id FROM 202_user_role WHERE user_id=${NEWUSER:-0}")" "4" "role 4 stored"
 eq "$(Q "SELECT COUNT(*) FROM 202_users_pref WHERE user_id=${NEWUSER:-0}")" "1" "a preferences row was created"
+eq "$(Q "SELECT user_pref_privacy FROM 202_users_pref WHERE user_id=${NEWUSER:-0}")" "eu" "the new user starts at privacy eu"
 eq "$(Q "SELECT COUNT(*) FROM 202_attribution_models WHERE user_id=${NEWUSER:-0} AND is_default=1")" "1" "and its default attribution model, in the same save"
 HASH_NEW=$(Q "SELECT user_pass FROM 202_users WHERE user_id=${NEWUSER:-0}")
 if [[ "$HASH_NEW" == \$2y\$* ]]; then ok "the password is stored as a bcrypt hash"; else bad "password hash shape: ${HASH_NEW:0:7}"; fi

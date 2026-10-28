@@ -678,7 +678,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
 
     /**
      * The click's ad click ids and UTM values, or, while the 1.9.79 upgrade
-     * has not added gbraid, wbraid and ttclid (AdClickIdColumns), the row
+     * has not added the ids beside the gclid (AdClickIdColumns), the row
      * without them: dl.php and the landing pages do not ask whether the
      * database is upgraded either. A statement the server will not prepare
      * changes nothing, so the transaction stands and the row is written
@@ -689,13 +689,14 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     {
         try {
             $this->write(
-                'INSERT INTO 202_google (click_id, gclid, gbraid, wbraid, ttclid, utm_source_id, utm_medium_id,'
-                    . ' utm_campaign_id, utm_term_id, utm_content_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                'issssiiiii',
+                'INSERT INTO 202_google (click_id, gclid, gbraid, wbraid, ttclid, msclkid, fbclid, utm_source_id,'
+                    . ' utm_medium_id, utm_campaign_id, utm_term_id, utm_content_id)'
+                    . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'issssssiiiii',
                 [
                     $click->clickId, $click->gclid, $click->gbraid, $click->wbraid, $click->ttclid,
-                    $click->utmSourceId, $click->utmMediumId, $click->utmCampaignId, $click->utmTermId,
-                    $click->utmContentId,
+                    $click->msclkid, $click->fbclid, $click->utmSourceId, $click->utmMediumId,
+                    $click->utmCampaignId, $click->utmTermId, $click->utmContentId,
                 ]
             );
         } catch (\RuntimeException $e) {
@@ -703,7 +704,10 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                 throw $e;
             }
             $dropped = array_keys(array_filter(
-                ['gbraid' => $click->gbraid, 'wbraid' => $click->wbraid, 'ttclid' => $click->ttclid],
+                [
+                    'gbraid' => $click->gbraid, 'wbraid' => $click->wbraid, 'ttclid' => $click->ttclid,
+                    'msclkid' => $click->msclkid, 'fbclid' => $click->fbclid,
+                ],
                 static fn (string $id): bool => $id !== ''
             ));
             if ($dropped !== []) {

@@ -29,6 +29,8 @@ $_GET += [
     'gbraid' => '',
     'wbraid' => '',
     'ttclid' => '',
+    'msclkid' => '',
+    'fbclid' => '',
     'c1' => '',
     'c2' => '',
     'c3' => '',
@@ -151,7 +153,7 @@ $c4 = str_replace('%20', ' ', $c4);
 $c4_id = $trackingRepo->findOrCreateC4($c4);
 $mysql['c4_id'] = $db->real_escape_string((string) $c4_id);
 
-// The ad platforms' click ids (gclid, gbraid, wbraid, ttclid). Raw: the
+// The ad platforms' click ids (ClickRecord::AD_CLICK_IDS). Raw: the
 // writer binds them, so an escaped value was stored with its backslashes.
 foreach (ClickRequest::adClickIds($_GET) as $adClickIdName => $adClickId) {
     $mysql[$adClickIdName] = $adClickId;
