@@ -23,6 +23,12 @@ declare(strict_types=1);
  * Prints the page's output; a page that dies prints what it printed first.
  */
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 [, $page] = $argv + [null, ''];
 
 $root = dirname(__DIR__, 3);

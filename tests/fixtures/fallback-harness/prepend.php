@@ -1,6 +1,13 @@
 <?php
 
 // auto_prepend_file for FallbackRedirectScriptsTest: the request the script sees.
+
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 $p202Request = json_decode((string) getenv('P202_HARNESS'), true, 512, JSON_THROW_ON_ERROR);
 $_GET = $p202Request['get'];
 $_COOKIE = $p202Request['cookie'];
