@@ -1,0 +1,1181 @@
+{
+  "about": "Each case: the 202_dataengine rows of two or three profiles (clicks, click_out, leads, income, cost; null is NULL), what GET /reports/summary answers for each profile, and what it answers for all of their rows at once (union). The Go CLI's multi-profile TOTAL must equal union (go-cli/cmd/multi_report_test.go); tests/Api/V3/SummaryTotalVectorsIntegrationTest.php holds the answers to the server and rewrites them with P202_UPDATE_SUMMARY_TOTALS=1.",
+  "cases": [
+    {
+      "name": "ROI 200% and 0% at equal cost",
+      "profiles": [
+        {"rows": [["10","8","2","30.00000","10.00000"]],
+         "answer": {"total_clicks":10,"total_click_throughs":8,"total_leads":2,"total_income":30,"total_cost":10,"total_net":20,"epc":3,"avg_cpc":1,"conv_rate":25,"roi":200,"cpa":5,"currency":"USD"}},
+        {"rows": [["30","12","1","10.00000","10.00000"]],
+         "answer": {"total_clicks":30,"total_click_throughs":12,"total_leads":1,"total_income":10,"total_cost":10,"total_net":0,"epc":0.333333333,"avg_cpc":0.333333333,"conv_rate":8.3333,"roi":0,"cpa":10,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":40,"total_click_throughs":20,"total_leads":3,"total_income":40,"total_cost":20,"total_net":20,"epc":1,"avg_cpc":0.5,"conv_rate":15,"roi":100,"cpa":6.666666666,"currency":"USD"}
+    },
+    {
+      "name": "unequal weights",
+      "profiles": [
+        {"rows": [["900","450","1","0.00000","90.00000"]],
+         "answer": {"total_clicks":900,"total_click_throughs":450,"total_leads":1,"total_income":0,"total_cost":90,"total_net":-90,"epc":0,"avg_cpc":0.1,"conv_rate":0.2222,"roi":-100,"cpa":90,"currency":"USD"}},
+        {"rows": [["100","50","10","50.00000","10.00000"]],
+         "answer": {"total_clicks":100,"total_click_throughs":50,"total_leads":10,"total_income":50,"total_cost":10,"total_net":40,"epc":0.5,"avg_cpc":0.1,"conv_rate":20,"roi":400,"cpa":1,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":1000,"total_click_throughs":500,"total_leads":11,"total_income":50,"total_cost":100,"total_net":-50,"epc":0.05,"avg_cpc":0.1,"conv_rate":2.2,"roi":-50,"cpa":9.09090909,"currency":"USD"}
+    },
+    {
+      "name": "every denominator zero",
+      "profiles": [
+        {"rows": [["0","0","0","0.00000","0.00000"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["0","0","0","0.00000","0.00000"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "a profile with no rows",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["7","3","1","4.50000","2.10000"]],
+         "answer": {"total_clicks":7,"total_click_throughs":3,"total_leads":1,"total_income":4.5,"total_cost":2.1,"total_net":2.4,"epc":0.642857142,"avg_cpc":0.3,"conv_rate":33.3333,"roi":114.285714286,"cpa":2.1,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":7,"total_click_throughs":3,"total_leads":1,"total_income":4.5,"total_cost":2.1,"total_net":2.4,"epc":0.642857142,"avg_cpc":0.3,"conv_rate":33.3333,"roi":114.285714286,"cpa":2.1,"currency":"USD"}
+    },
+    {
+      "name": "no rows anywhere",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "conversion rate a third",
+      "profiles": [
+        {"rows": [["3","3","1","1.00000","1.00000"]],
+         "answer": {"total_clicks":3,"total_click_throughs":3,"total_leads":1,"total_income":1,"total_cost":1,"total_net":0,"epc":0.333333333,"avg_cpc":0.333333333,"conv_rate":33.3333,"roi":0,"cpa":1,"currency":"USD"}},
+        {"rows": [["3","0","0","0.00000","0.00000"]],
+         "answer": {"total_clicks":3,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":6,"total_click_throughs":3,"total_leads":1,"total_income":1,"total_cost":1,"total_net":0,"epc":0.166666666,"avg_cpc":0.166666666,"conv_rate":33.3333,"roi":0,"cpa":1,"currency":"USD"}
+    },
+    {
+      "name": "conversion rate a sixth rounds up",
+      "profiles": [
+        {"rows": [["6","6","1","1.00000","1.00000"]],
+         "answer": {"total_clicks":6,"total_click_throughs":6,"total_leads":1,"total_income":1,"total_cost":1,"total_net":0,"epc":0.166666666,"avg_cpc":0.166666666,"conv_rate":16.6667,"roi":0,"cpa":1,"currency":"USD"}},
+        {"rows": [["1","0","0","0.00000","0.00000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":7,"total_click_throughs":6,"total_leads":1,"total_income":1,"total_cost":1,"total_net":0,"epc":0.142857142,"avg_cpc":0.142857142,"conv_rate":16.6667,"roi":0,"cpa":1,"currency":"USD"}
+    },
+    {
+      "name": "conversion rate half a ten-thousandth",
+      "profiles": [
+        {"rows": [["2000000","2000000","1","1.00000","1.00000"]],
+         "answer": {"total_clicks":2000000,"total_click_throughs":2000000,"total_leads":1,"total_income":1,"total_cost":1,"total_net":0,"epc":5.0e-7,"avg_cpc":5.0e-7,"conv_rate":0.0001,"roi":0,"cpa":1,"currency":"USD"}},
+        {"rows": [["1","0","0","0.00000","0.00000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":2000001,"total_click_throughs":2000000,"total_leads":1,"total_income":1,"total_cost":1,"total_net":0,"epc":4.99e-7,"avg_cpc":4.99e-7,"conv_rate":0.0001,"roi":0,"cpa":1,"currency":"USD"}
+    },
+    {
+      "name": "conversion rate 1/128 rounds half away",
+      "profiles": [
+        {"rows": [["64","64","1","1.00000","1.00000"]],
+         "answer": {"total_clicks":64,"total_click_throughs":64,"total_leads":1,"total_income":1,"total_cost":1,"total_net":0,"epc":0.015625,"avg_cpc":0.015625,"conv_rate":1.5625,"roi":0,"cpa":1,"currency":"USD"}},
+        {"rows": [["64","64","0","0.00000","0.00000"]],
+         "answer": {"total_clicks":64,"total_click_throughs":64,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":128,"total_click_throughs":128,"total_leads":1,"total_income":1,"total_cost":1,"total_net":0,"epc":0.0078125,"avg_cpc":0.0078125,"conv_rate":0.7813,"roi":0,"cpa":1,"currency":"USD"}
+    },
+    {
+      "name": "epc truncated at nine decimals",
+      "profiles": [
+        {"rows": [["1","1","0","1.00000","1.00000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":0,"total_income":1,"total_cost":1,"total_net":0,"epc":1,"avg_cpc":1,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["2","0","0","1.00000","1.00000"]],
+         "answer": {"total_clicks":2,"total_click_throughs":0,"total_leads":0,"total_income":1,"total_cost":1,"total_net":0,"epc":0.5,"avg_cpc":0.5,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":3,"total_click_throughs":1,"total_leads":0,"total_income":2,"total_cost":2,"total_net":0,"epc":0.666666666,"avg_cpc":0.666666666,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "epc of a seventh",
+      "profiles": [
+        {"rows": [["3","1","0","1.00000","0.00000"]],
+         "answer": {"total_clicks":3,"total_click_throughs":1,"total_leads":0,"total_income":1,"total_cost":0,"total_net":1,"epc":0.333333333,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["4","1","0","1.00000","0.00000"]],
+         "answer": {"total_clicks":4,"total_click_throughs":1,"total_leads":0,"total_income":1,"total_cost":0,"total_net":1,"epc":0.25,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":7,"total_click_throughs":2,"total_leads":0,"total_income":2,"total_cost":0,"total_net":2,"epc":0.285714285,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "refunds make income negative",
+      "profiles": [
+        {"rows": [["10","10","1","-25.00000","5.00000"]],
+         "answer": {"total_clicks":10,"total_click_throughs":10,"total_leads":1,"total_income":-25,"total_cost":5,"total_net":-30,"epc":-2.5,"avg_cpc":0.5,"conv_rate":10,"roi":-600,"cpa":5,"currency":"USD"}},
+        {"rows": [["10","10","1","5.00000","5.00000"]],
+         "answer": {"total_clicks":10,"total_click_throughs":10,"total_leads":1,"total_income":5,"total_cost":5,"total_net":0,"epc":0.5,"avg_cpc":0.5,"conv_rate":10,"roi":0,"cpa":5,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":20,"total_click_throughs":20,"total_leads":2,"total_income":-20,"total_cost":10,"total_net":-30,"epc":-1,"avg_cpc":0.5,"conv_rate":10,"roi":-300,"cpa":5,"currency":"USD"}
+    },
+    {
+      "name": "income without cost: ROI 0",
+      "profiles": [
+        {"rows": [["10","10","1","25.00000","0.00000"]],
+         "answer": {"total_clicks":10,"total_click_throughs":10,"total_leads":1,"total_income":25,"total_cost":0,"total_net":25,"epc":2.5,"avg_cpc":0,"conv_rate":10,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["5","5","0","3.00000","0.00000"]],
+         "answer": {"total_clicks":5,"total_click_throughs":5,"total_leads":0,"total_income":3,"total_cost":0,"total_net":3,"epc":0.6,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":15,"total_click_throughs":15,"total_leads":1,"total_income":28,"total_cost":0,"total_net":28,"epc":1.866666666,"avg_cpc":0,"conv_rate":6.6667,"roi":0,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "cost summing to zero across profiles",
+      "profiles": [
+        {"rows": [["10","10","1","25.00000","4.00000"]],
+         "answer": {"total_clicks":10,"total_click_throughs":10,"total_leads":1,"total_income":25,"total_cost":4,"total_net":21,"epc":2.5,"avg_cpc":0.4,"conv_rate":10,"roi":525,"cpa":4,"currency":"USD"}},
+        {"rows": [["5","5","0","3.00000","-4.00000"]],
+         "answer": {"total_clicks":5,"total_click_throughs":5,"total_leads":0,"total_income":3,"total_cost":-4,"total_net":7,"epc":0.6,"avg_cpc":-0.8,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":15,"total_click_throughs":15,"total_leads":1,"total_income":28,"total_cost":0,"total_net":28,"epc":1.866666666,"avg_cpc":0,"conv_rate":6.6667,"roi":0,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "ROI half a billionth rounds away from zero",
+      "profiles": [
+        {"rows": [["1","1","1","2000000.00001","1000000.00000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":1,"total_income":2000000.00001,"total_cost":1000000,"total_net":1000000.00001,"epc":2000000.00001,"avg_cpc":1000000,"conv_rate":100,"roi":100.000000001,"cpa":1000000,"currency":"USD"}},
+        {"rows": [["1","1","1","0.00000","1000000.00000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":1,"total_income":0,"total_cost":1000000,"total_net":-1000000,"epc":0,"avg_cpc":1000000,"conv_rate":100,"roi":-100,"cpa":1000000,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":2,"total_click_throughs":2,"total_leads":2,"total_income":2000000.00001,"total_cost":2000000,"total_net":1.0e-5,"epc":1000000.000005,"avg_cpc":1000000,"conv_rate":100,"roi":1.0e-9,"cpa":1000000,"currency":"USD"}
+    },
+    {
+      "name": "ROI minus half a billionth",
+      "profiles": [
+        {"rows": [["1","1","1","1999999.99999","1000000.00000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":1,"total_income":1999999.99999,"total_cost":1000000,"total_net":999999.99999,"epc":1999999.99999,"avg_cpc":1000000,"conv_rate":100,"roi":99.999999999,"cpa":1000000,"currency":"USD"}},
+        {"rows": [["1","1","1","0.00000","1000000.00000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":1,"total_income":0,"total_cost":1000000,"total_net":-1000000,"epc":0,"avg_cpc":1000000,"conv_rate":100,"roi":-100,"cpa":1000000,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":2,"total_click_throughs":2,"total_leads":2,"total_income":1999999.99999,"total_cost":2000000,"total_net":-1.0e-5,"epc":999999.999995,"avg_cpc":1000000,"conv_rate":100,"roi":-1.0e-9,"cpa":1000000,"currency":"USD"}
+    },
+    {
+      "name": "ROI a third keeps eighteen digits",
+      "profiles": [
+        {"rows": [["1","1","1","2.00000","1.50000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":1,"total_income":2,"total_cost":1.5,"total_net":0.5,"epc":2,"avg_cpc":1.5,"conv_rate":100,"roi":33.333333333,"cpa":1.5,"currency":"USD"}},
+        {"rows": [["1","1","1","2.00000","1.50000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":1,"total_income":2,"total_cost":1.5,"total_net":0.5,"epc":2,"avg_cpc":1.5,"conv_rate":100,"roi":33.333333333,"cpa":1.5,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":2,"total_click_throughs":2,"total_leads":2,"total_income":4,"total_cost":3,"total_net":1,"epc":2,"avg_cpc":1.5,"conv_rate":100,"roi":33.333333333,"cpa":1.5,"currency":"USD"}
+    },
+    {
+      "name": "CPA of a cent over three",
+      "profiles": [
+        {"rows": [["1","1","1","0.00000","0.00001"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":1,"total_income":0,"total_cost":1.0e-5,"total_net":-1.0e-5,"epc":0,"avg_cpc":1.0e-5,"conv_rate":100,"roi":-100,"cpa":1.0e-5,"currency":"USD"}},
+        {"rows": [["1","1","2","0.00000","0.00000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":2,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":200,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":2,"total_click_throughs":2,"total_leads":3,"total_income":0,"total_cost":1.0e-5,"total_net":-1.0e-5,"epc":0,"avg_cpc":5.0e-6,"conv_rate":150,"roi":-100,"cpa":3.333e-6,"currency":"USD"}
+    },
+    {
+      "name": "tiny money over many clicks",
+      "profiles": [
+        {"rows": [["999999","500000","3","0.00001","0.00003"]],
+         "answer": {"total_clicks":999999,"total_click_throughs":500000,"total_leads":3,"total_income":1.0e-5,"total_cost":3.0e-5,"total_net":-2.0e-5,"epc":0,"avg_cpc":0,"conv_rate":0.0006,"roi":-66.666666667,"cpa":1.0e-5,"currency":"USD"}},
+        {"rows": [["1","1","0","0.00002","0.00000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":0,"total_income":2.0e-5,"total_cost":0,"total_net":2.0e-5,"epc":2.0e-5,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":1000000,"total_click_throughs":500001,"total_leads":3,"total_income":3.0e-5,"total_cost":3.0e-5,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0.0006,"roi":0,"cpa":1.0e-5,"currency":"USD"}
+    },
+    {
+      "name": "large figures",
+      "profiles": [
+        {"rows": [["1234567890","987654321","1234567","98765432.12345","12345678.98765"]],
+         "answer": {"total_clicks":1234567890,"total_click_throughs":987654321,"total_leads":1234567,"total_income":98765432.12345,"total_cost":12345678.98765,"total_net":86419753.1358,"epc":0.08,"avg_cpc":0.01,"conv_rate":0.125,"roi":700.0000018,"cpa":10.00000728,"currency":"USD"}},
+        {"rows": [["987654321","123456789","7654321","1234567.54321","7654321.12345"]],
+         "answer": {"total_clicks":987654321,"total_click_throughs":123456789,"total_leads":7654321,"total_income":1234567.54321,"total_cost":7654321.12345,"total_net":-6419753.58024,"epc":0.001249999,"avg_cpc":0.00775,"conv_rate":6.2,"roi":-83.870972705,"cpa":1.000000016,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":2222222211,"total_click_throughs":1111111110,"total_leads":8888888,"total_income":99999999.66666,"total_cost":20000000.1111,"total_net":79999999.55556,"epc":0.045,"avg_cpc":0.009,"conv_rate":0.8,"roi":399.999995556,"cpa":2.250000237,"currency":"USD"}
+    },
+    {
+      "name": "null columns (a rollup's LEFT JOIN)",
+      "profiles": [
+        {"rows": [["5",null,null,null,null]],
+         "answer": {"total_clicks":5,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["5","2","1","3.00000","1.00000"]],
+         "answer": {"total_clicks":5,"total_click_throughs":2,"total_leads":1,"total_income":3,"total_cost":1,"total_net":2,"epc":0.6,"avg_cpc":0.2,"conv_rate":50,"roi":200,"cpa":1,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":10,"total_click_throughs":2,"total_leads":1,"total_income":3,"total_cost":1,"total_net":2,"epc":0.3,"avg_cpc":0.1,"conv_rate":50,"roi":200,"cpa":1,"currency":"USD"}
+    },
+    {
+      "name": "only nulls",
+      "profiles": [
+        {"rows": [["5",null,null,null,null]],
+         "answer": {"total_clicks":5,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["0",null,null,null,null]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":5,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "three profiles, mixed",
+      "profiles": [
+        {"rows": [["10","5","1","7.25000","3.33333"]],
+         "answer": {"total_clicks":10,"total_click_throughs":5,"total_leads":1,"total_income":7.25,"total_cost":3.33333,"total_net":3.91667,"epc":0.725,"avg_cpc":0.333333,"conv_rate":20,"roi":117.5002175,"cpa":3.33333,"currency":"USD"}},
+        {"rows": [["20","4","0","0.00000","6.66667"],["1","1","1","9.99999","0.00001"]],
+         "answer": {"total_clicks":21,"total_click_throughs":5,"total_leads":1,"total_income":9.99999,"total_cost":6.66668,"total_net":3.33331,"epc":0.47619,"avg_cpc":0.317460952,"conv_rate":20,"roi":49.999550001,"cpa":6.66668,"currency":"USD"}},
+        {"rows": [["3","3","3","1.00000","2.00000"]],
+         "answer": {"total_clicks":3,"total_click_throughs":3,"total_leads":3,"total_income":1,"total_cost":2,"total_net":-1,"epc":0.333333333,"avg_cpc":0.666666666,"conv_rate":100,"roi":-50,"cpa":0.666666666,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":34,"total_click_throughs":13,"total_leads":5,"total_income":18.24999,"total_cost":12.00001,"total_net":6.24998,"epc":0.536764411,"avg_cpc":0.35294147,"conv_rate":38.4615,"roi":52.083123264,"cpa":2.400002,"currency":"USD"}
+    },
+    {
+      "name": "random 1",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["772","475","0","0.88322","566.28365"],["50","9","0","65061.75791","23676.14712"],["70","27","11","27.60145","0.00829"]],
+         "answer": {"total_clicks":892,"total_click_throughs":511,"total_leads":11,"total_income":65090.24258,"total_cost":24242.43906,"total_net":40847.80352,"epc":72.971123968,"avg_cpc":27.177622264,"conv_rate":2.1526,"roi":168.49708653,"cpa":2203.858096363,"currency":"USD"}},
+        {"rows": [["90","0","1","21.28151","14.17261"]],
+         "answer": {"total_clicks":90,"total_click_throughs":0,"total_leads":1,"total_income":21.28151,"total_cost":14.17261,"total_net":7.1089,"epc":0.236461222,"avg_cpc":0.157473444,"conv_rate":0,"roi":50.159427233,"cpa":14.17261,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":982,"total_click_throughs":511,"total_leads":12,"total_income":65111.52409,"total_cost":24256.61167,"total_net":40854.91242,"epc":66.305014348,"avg_cpc":24.701233879,"conv_rate":2.3483,"roi":168.427944413,"cpa":2021.384305833,"currency":"USD"}
+    },
+    {
+      "name": "random 2",
+      "profiles": [
+        {"rows": [["724","347","188","1802.74002","0.05408"],["45","26","7","79.96557","25.82659"],["20","15","11","2.17940","0.41899"]],
+         "answer": {"total_clicks":789,"total_click_throughs":388,"total_leads":206,"total_income":1884.88499,"total_cost":26.29966,"total_net":1858.58533,"epc":2.388954359,"avg_cpc":0.033332902,"conv_rate":53.0928,"roi":7066.955732508,"cpa":0.127668252,"currency":"USD"}},
+        {"rows": [["58924","10817","1124","8514.21701","17456.70016"],["1","0","0","0.00036","0.76166"]],
+         "answer": {"total_clicks":58925,"total_click_throughs":10817,"total_leads":1124,"total_income":8514.21737,"total_cost":17457.46182,"total_net":-8943.24445,"epc":0.144492445,"avg_cpc":0.296265792,"conv_rate":10.3911,"roi":-51.228778514,"cpa":15.531549661,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":59714,"total_click_throughs":11205,"total_leads":1330,"total_income":10399.10236,"total_cost":17483.76148,"total_net":-7084.65912,"epc":0.17414848,"avg_cpc":0.292791664,"conv_rate":11.8697,"roi":-40.521366801,"cpa":13.145685323,"currency":"USD"}
+    },
+    {
+      "name": "random 3",
+      "profiles": [
+        {"rows": [["607","379","248","782.58946","149.43079"],["799","680","389","955.07821","355.81666"]],
+         "answer": {"total_clicks":1406,"total_click_throughs":1059,"total_leads":637,"total_income":1737.66767,"total_cost":505.24745,"total_net":1232.42022,"epc":1.235894502,"avg_cpc":0.35935096,"conv_rate":60.1511,"roi":243.924085119,"cpa":0.793167111,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":1406,"total_click_throughs":1059,"total_leads":637,"total_income":1737.66767,"total_cost":505.24745,"total_net":1232.42022,"epc":1.235894502,"avg_cpc":0.35935096,"conv_rate":60.1511,"roi":243.924085119,"cpa":0.793167111,"currency":"USD"}
+    },
+    {
+      "name": "random 4",
+      "profiles": [
+        {"rows": [["59","32","19","9.71858","0.00102"]],
+         "answer": {"total_clicks":59,"total_click_throughs":32,"total_leads":19,"total_income":9.71858,"total_cost":0.00102,"total_net":9.71756,"epc":0.164721694,"avg_cpc":1.7288e-5,"conv_rate":59.375,"roi":952701.960784314,"cpa":5.3684e-5,"currency":"USD"}},
+        {"rows": [["1","0","0","0.28443","0.00000"]],
+         "answer": {"total_clicks":1,"total_click_throughs":0,"total_leads":0,"total_income":0.28443,"total_cost":0,"total_net":0.28443,"epc":0.28443,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["1","1","0","195.85041","27.63857"],["35","26","24","4.12489","0.97149"]],
+         "answer": {"total_clicks":36,"total_click_throughs":27,"total_leads":24,"total_income":199.9753,"total_cost":28.61006,"total_net":171.36524,"epc":5.554869444,"avg_cpc":0.794723888,"conv_rate":88.8889,"roi":598.968474725,"cpa":1.192085833,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":96,"total_click_throughs":59,"total_leads":43,"total_income":209.97831,"total_cost":28.61108,"total_net":181.36723,"epc":2.187274062,"avg_cpc":0.298032083,"conv_rate":72.8814,"roi":633.905570849,"cpa":0.665373953,"currency":"USD"}
+    },
+    {
+      "name": "random 5",
+      "profiles": [
+        {"rows": [["54","11","4","88.40490","0.77280"],["5","4","3","6.33787","4.33134"],["8","3","3","0.00656","2.21337"]],
+         "answer": {"total_clicks":67,"total_click_throughs":18,"total_leads":10,"total_income":94.74933,"total_cost":7.31751,"total_net":87.43182,"epc":1.414169104,"avg_cpc":0.109216567,"conv_rate":55.5556,"roi":1194.830208637,"cpa":0.731751,"currency":"USD"}},
+        {"rows": [["1","1","1","0.00078","0.00847"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":1,"total_income":0.00078,"total_cost":0.00847,"total_net":-0.00769,"epc":0.00078,"avg_cpc":0.00847,"conv_rate":100,"roi":-90.791027155,"cpa":0.00847,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":68,"total_click_throughs":19,"total_leads":11,"total_income":94.75011,"total_cost":7.32598,"total_net":87.42413,"epc":1.39338397,"avg_cpc":0.107735,"conv_rate":57.8947,"roi":1193.343825672,"cpa":0.665998181,"currency":"USD"}
+    },
+    {
+      "name": "random 6",
+      "profiles": [
+        {"rows": [["765","106","100","1633.45654","0.00000"]],
+         "answer": {"total_clicks":765,"total_click_throughs":106,"total_leads":100,"total_income":1633.45654,"total_cost":0,"total_net":1633.45654,"epc":2.135237307,"avg_cpc":0,"conv_rate":94.3396,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["93","48","0","0.00335","0.00109"],["1","1","0","0.00039","0.54118"]],
+         "answer": {"total_clicks":94,"total_click_throughs":49,"total_leads":0,"total_income":0.00374,"total_cost":0.54227,"total_net":-0.53853,"epc":3.9787e-5,"avg_cpc":0.005768829,"conv_rate":0,"roi":-99.310306674,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":859,"total_click_throughs":155,"total_leads":100,"total_income":1633.46028,"total_cost":0.54227,"total_net":1632.91801,"epc":1.901583562,"avg_cpc":0.00063128,"conv_rate":64.5161,"roi":301126.378003578,"cpa":0.0054227,"currency":"USD"}
+    },
+    {
+      "name": "random 7",
+      "profiles": [
+        {"rows": [["518","518","324","165.50355","6.06643"],["13167","349","339","53529.58085","3.35011"]],
+         "answer": {"total_clicks":13685,"total_click_throughs":867,"total_leads":663,"total_income":53695.0844,"total_cost":9.41654,"total_net":53685.66786,"epc":3.923645188,"avg_cpc":0.000688092,"conv_rate":76.4706,"roi":570120.955892504,"cpa":0.014202926,"currency":"USD"}},
+        {"rows": [["69808","0","0","0.62690","4.36710"]],
+         "answer": {"total_clicks":69808,"total_click_throughs":0,"total_leads":0,"total_income":0.6269,"total_cost":4.3671,"total_net":-3.7402,"epc":8.98e-6,"avg_cpc":6.2558e-5,"conv_rate":0,"roi":-85.644935999,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":83493,"total_click_throughs":867,"total_leads":663,"total_income":53695.7113,"total_cost":13.78364,"total_net":53681.92766,"epc":0.643116324,"avg_cpc":0.000165087,"conv_rate":76.4706,"roi":389461.184853928,"cpa":0.020789803,"currency":"USD"}
+    },
+    {
+      "name": "random 8",
+      "profiles": [
+        {"rows": [["1","0","1","2.19889","0.07736"],["7","0","0","1203.65039","0.00000"]],
+         "answer": {"total_clicks":8,"total_click_throughs":0,"total_leads":1,"total_income":1205.84928,"total_cost":0.07736,"total_net":1205.77192,"epc":150.73116,"avg_cpc":0.00967,"conv_rate":0,"roi":1558650.361944157,"cpa":0.07736,"currency":"USD"}},
+        {"rows": [["0","0","0","0.76212","0.75317"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0.76212,"total_cost":0.75317,"total_net":0.00895,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":1.18831074,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":8,"total_click_throughs":0,"total_leads":1,"total_income":1206.6114,"total_cost":0.83053,"total_net":1205.78087,"epc":150.826425,"avg_cpc":0.10381625,"conv_rate":0,"roi":145182.096974221,"cpa":0.83053,"currency":"USD"}
+    },
+    {
+      "name": "random 9",
+      "profiles": [
+        {"rows": [["67080","47289","0","88.20100","9.90762"],["0","0","1","0.33574","0.00010"]],
+         "answer": {"total_clicks":67080,"total_click_throughs":47289,"total_leads":1,"total_income":88.53674,"total_cost":9.90772,"total_net":78.62902,"epc":0.001319867,"avg_cpc":0.0001477,"conv_rate":0.0021,"roi":793.613666918,"cpa":9.90772,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":67080,"total_click_throughs":47289,"total_leads":1,"total_income":88.53674,"total_cost":9.90772,"total_net":78.62902,"epc":0.001319867,"avg_cpc":0.0001477,"conv_rate":0.0021,"roi":793.613666918,"cpa":9.90772,"currency":"USD"}
+    },
+    {
+      "name": "random 10",
+      "profiles": [
+        {"rows": [["0","0","0","0.78905","0.69049"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0.78905,"total_cost":0.69049,"total_net":0.09856,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":14.273921418,"cpa":0,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0.78905,"total_cost":0.69049,"total_net":0.09856,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":14.273921418,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 11",
+      "profiles": [
+        {"rows": [["36169","5187","2307","96906.73478","0.86181"]],
+         "answer": {"total_clicks":36169,"total_click_throughs":5187,"total_leads":2307,"total_income":96906.73478,"total_cost":0.86181,"total_net":96905.87297,"epc":2.679276031,"avg_cpc":2.3827e-5,"conv_rate":44.4766,"roi":11244459.10003365,"cpa":0.000373563,"currency":"USD"}},
+        {"rows": [["517","112","0","0.03129","405.10856"]],
+         "answer": {"total_clicks":517,"total_click_throughs":112,"total_leads":0,"total_income":0.03129,"total_cost":405.10856,"total_net":-405.07727,"epc":6.0522e-5,"avg_cpc":0.783575551,"conv_rate":0,"roi":-99.992276144,"cpa":0,"currency":"USD"}},
+        {"rows": [["63074","0","0","77756.55759","5.27679"],["4","1","1","0.19449","3.33261"],["56881","33092","16902","67.10784","0.00000"]],
+         "answer": {"total_clicks":119959,"total_click_throughs":33093,"total_leads":16903,"total_income":77823.85992,"total_cost":8.6094,"total_net":77815.25052,"epc":0.648753823,"avg_cpc":7.1769e-5,"conv_rate":51.0773,"roi":903840.575649871,"cpa":0.000509341,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":156645,"total_click_throughs":38392,"total_leads":19210,"total_income":174730.62599,"total_cost":414.57977,"total_net":174316.04622,"epc":1.115456133,"avg_cpc":0.002646619,"conv_rate":50.0365,"roi":42046.442888422,"cpa":0.021581456,"currency":"USD"}
+    },
+    {
+      "name": "random 12",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["449","255","0","39.59798","278.82018"],["2","1","0","-0.91067","0.01685"]],
+         "answer": {"total_clicks":451,"total_click_throughs":256,"total_leads":0,"total_income":38.68731,"total_cost":278.83703,"total_net":-240.14972,"epc":0.085781175,"avg_cpc":0.618263924,"conv_rate":0,"roi":-86.125476232,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":451,"total_click_throughs":256,"total_leads":0,"total_income":38.68731,"total_cost":278.83703,"total_net":-240.14972,"epc":0.085781175,"avg_cpc":0.618263924,"conv_rate":0,"roi":-86.125476232,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 13",
+      "profiles": [
+        {"rows": [["268","218","22","0.19416","545.72762"]],
+         "answer": {"total_clicks":268,"total_click_throughs":218,"total_leads":22,"total_income":0.19416,"total_cost":545.72762,"total_net":-545.53346,"epc":0.000724477,"avg_cpc":2.036297089,"conv_rate":10.0917,"roi":-99.964421812,"cpa":24.805800909,"currency":"USD"}},
+        {"rows": [["0","0","1","2.05326","0.20758"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":1,"total_income":2.05326,"total_cost":0.20758,"total_net":1.84568,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":889.141535793,"cpa":0.20758,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":268,"total_click_throughs":218,"total_leads":23,"total_income":2.24742,"total_cost":545.9352,"total_net":-543.68778,"epc":0.008385895,"avg_cpc":2.037071641,"conv_rate":10.5505,"roi":-99.588335759,"cpa":23.736313043,"currency":"USD"}
+    },
+    {
+      "name": "random 14",
+      "profiles": [
+        {"rows": [["3","1","1","8.54613","7.65588"],["51455","20996","0","-96585.34860","98981.29067"]],
+         "answer": {"total_clicks":51458,"total_click_throughs":20997,"total_leads":1,"total_income":-96576.80247,"total_cost":98988.94655,"total_net":-195565.74902,"epc":-1.876808318,"avg_cpc":1.923684296,"conv_rate":0.0048,"roi":-197.563218759,"cpa":98988.94655,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":51458,"total_click_throughs":20997,"total_leads":1,"total_income":-96576.80247,"total_cost":98988.94655,"total_net":-195565.74902,"epc":-1.876808318,"avg_cpc":1.923684296,"conv_rate":0.0048,"roi":-197.563218759,"cpa":98988.94655,"currency":"USD"}
+    },
+    {
+      "name": "random 15",
+      "profiles": [
+        {"rows": [["901","256","169","0.79371","955.77970"]],
+         "answer": {"total_clicks":901,"total_click_throughs":256,"total_leads":169,"total_income":0.79371,"total_cost":955.7797,"total_net":-954.98599,"epc":0.000880921,"avg_cpc":1.060798779,"conv_rate":66.0156,"roi":-99.916956805,"cpa":5.655501183,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":901,"total_click_throughs":256,"total_leads":169,"total_income":0.79371,"total_cost":955.7797,"total_net":-954.98599,"epc":0.000880921,"avg_cpc":1.060798779,"conv_rate":66.0156,"roi":-99.916956805,"cpa":5.655501183,"currency":"USD"}
+    },
+    {
+      "name": "random 16",
+      "profiles": [
+        {"rows": [["2","1","1","0.42206","2.48442"],["74999","43887","29862","297675.85417","126.78156"]],
+         "answer": {"total_clicks":75001,"total_click_throughs":43888,"total_leads":29863,"total_income":297676.27623,"total_cost":129.26598,"total_net":297547.01025,"epc":3.968964096,"avg_cpc":0.001723523,"conv_rate":68.0437,"roi":230181.993939937,"cpa":0.004328633,"currency":"USD"}},
+        {"rows": [["94098","63158","52122","63.75385","47211.73851"]],
+         "answer": {"total_clicks":94098,"total_click_throughs":63158,"total_leads":52122,"total_income":63.75385,"total_cost":47211.73851,"total_net":-47147.98466,"epc":0.000677526,"avg_cpc":0.501729457,"conv_rate":82.5264,"roi":-99.864961868,"cpa":0.905792918,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":169099,"total_click_throughs":107046,"total_leads":81985,"total_income":297740.03008,"total_cost":47341.00449,"total_net":250399.02559,"epc":1.760743884,"avg_cpc":0.279960286,"conv_rate":76.5886,"roi":528.926304559,"cpa":0.577434951,"currency":"USD"}
+    },
+    {
+      "name": "random 17",
+      "profiles": [
+        {"rows": [["896","156","0","2791.89987","4.59412"]],
+         "answer": {"total_clicks":896,"total_click_throughs":156,"total_leads":0,"total_income":2791.89987,"total_cost":4.59412,"total_net":2787.30575,"epc":3.115959676,"avg_cpc":0.005127366,"conv_rate":0,"roi":60671.156826552,"cpa":0,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":896,"total_click_throughs":156,"total_leads":0,"total_income":2791.89987,"total_cost":4.59412,"total_net":2787.30575,"epc":3.115959676,"avg_cpc":0.005127366,"conv_rate":0,"roi":60671.156826552,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 18",
+      "profiles": [
+        {"rows": [["0","0","0","0.52913","0.24314"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0.52913,"total_cost":0.24314,"total_net":0.28599,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":117.623591347,"cpa":0,"currency":"USD"}},
+        {"rows": [["163","132","65","1691.43204","0.00000"],["5","5","0","172.15738","18.29416"]],
+         "answer": {"total_clicks":168,"total_click_throughs":137,"total_leads":65,"total_income":1863.58942,"total_cost":18.29416,"total_net":1845.29526,"epc":11.092794166,"avg_cpc":0.108893809,"conv_rate":47.4453,"roi":10086.799612554,"cpa":0.281448615,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":168,"total_click_throughs":137,"total_leads":65,"total_income":1864.11855,"total_cost":18.5373,"total_net":1845.58125,"epc":11.09594375,"avg_cpc":0.110341071,"conv_rate":47.4453,"roi":9956.04133288,"cpa":0.28518923,"currency":"USD"}
+    },
+    {
+      "name": "random 19",
+      "profiles": [
+        {"rows": [["64681","61010","33853","52.74996","9.14929"]],
+         "answer": {"total_clicks":64681,"total_click_throughs":61010,"total_leads":33853,"total_income":52.74996,"total_cost":9.14929,"total_net":43.60067,"epc":0.00081554,"avg_cpc":0.000141452,"conv_rate":55.4876,"roi":476.547032611,"cpa":0.000270265,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":64681,"total_click_throughs":61010,"total_leads":33853,"total_income":52.74996,"total_cost":9.14929,"total_net":43.60067,"epc":0.00081554,"avg_cpc":0.000141452,"conv_rate":55.4876,"roi":476.547032611,"cpa":0.000270265,"currency":"USD"}
+    },
+    {
+      "name": "random 20",
+      "profiles": [
+        {"rows": [["9","7","0","3.77409","7.99795"]],
+         "answer": {"total_clicks":9,"total_click_throughs":7,"total_leads":0,"total_income":3.77409,"total_cost":7.99795,"total_net":-4.22386,"epc":0.419343333,"avg_cpc":0.888661111,"conv_rate":0,"roi":-52.811783019,"cpa":0,"currency":"USD"}},
+        {"rows": [["8","7","4","2.85763","4.52729"]],
+         "answer": {"total_clicks":8,"total_click_throughs":7,"total_leads":4,"total_income":2.85763,"total_cost":4.52729,"total_net":-1.66966,"epc":0.35720375,"avg_cpc":0.56591125,"conv_rate":57.1429,"roi":-36.879899454,"cpa":1.1318225,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":17,"total_click_throughs":14,"total_leads":4,"total_income":6.63172,"total_cost":12.52524,"total_net":-5.89352,"epc":0.390101176,"avg_cpc":0.736778823,"conv_rate":28.5714,"roi":-47.053150279,"cpa":3.13131,"currency":"USD"}
+    },
+    {
+      "name": "random 21",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["0","0","0","0.94647","0.00006"],["52084","38493","18058","-59492.41987","9900.03458"]],
+         "answer": {"total_clicks":52084,"total_click_throughs":38493,"total_leads":18058,"total_income":-59491.4734,"total_cost":9900.03464,"total_net":-69391.50804,"epc":-1.142221668,"avg_cpc":0.190078232,"conv_rate":46.9124,"roi":-700.921871118,"cpa":0.548235388,"currency":"USD"}},
+        {"rows": [["65799","34011","0","76385.73107","13179.56860"],["314","22","17","271.04329","4.78038"]],
+         "answer": {"total_clicks":66113,"total_click_throughs":34033,"total_leads":17,"total_income":76656.77436,"total_cost":13184.34898,"total_net":63472.42538,"epc":1.159481105,"avg_cpc":0.199421429,"conv_rate":0.05,"roi":481.422522085,"cpa":775.54994,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":118197,"total_click_throughs":72526,"total_leads":18075,"total_income":17165.30096,"total_cost":23084.38362,"total_net":-5919.08266,"epc":0.145226198,"avg_cpc":0.19530431,"conv_rate":24.9221,"roi":-25.641068687,"cpa":1.277144321,"currency":"USD"}
+    },
+    {
+      "name": "random 22",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["1","0","0","0.74678","0.00002"],["76354","20711","0","88846.58329","40471.89765"]],
+         "answer": {"total_clicks":76355,"total_click_throughs":20711,"total_leads":0,"total_income":88847.33007,"total_cost":40471.89767,"total_net":48375.4324,"epc":1.163608539,"avg_cpc":0.530049082,"conv_rate":0,"roi":119.528451061,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":76355,"total_click_throughs":20711,"total_leads":0,"total_income":88847.33007,"total_cost":40471.89767,"total_net":48375.4324,"epc":1.163608539,"avg_cpc":0.530049082,"conv_rate":0,"roi":119.528451061,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 23",
+      "profiles": [
+        {"rows": [["945","909","0","18.53959","374.03499"],["155","112","0","618.89310","0.04138"]],
+         "answer": {"total_clicks":1100,"total_click_throughs":1021,"total_leads":0,"total_income":637.43269,"total_cost":374.07637,"total_net":263.35632,"epc":0.579484263,"avg_cpc":0.340069427,"conv_rate":0,"roi":70.401752455,"cpa":0,"currency":"USD"}},
+        {"rows": [["456","73","16","-684.91084","326.61873"],["996","0","1","74.88257","0.00000"],["31071","13178","0","53.75035","3274.45234"]],
+         "answer": {"total_clicks":32523,"total_click_throughs":13251,"total_leads":17,"total_income":-556.27792,"total_cost":3601.07107,"total_net":-4157.34899,"epc":-0.017104139,"avg_cpc":0.110723828,"conv_rate":0.1283,"roi":-115.447568492,"cpa":211.82771,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":33623,"total_click_throughs":14272,"total_leads":17,"total_income":81.15477,"total_cost":3975.14744,"total_net":-3893.99267,"epc":0.002413668,"avg_cpc":0.11822703,"conv_rate":0.1191,"roi":-97.958446291,"cpa":233.832202352,"currency":"USD"}
+    },
+    {
+      "name": "random 24",
+      "profiles": [
+        {"rows": [["27","4","0","0.08457","0.00039"],["937","694","275","92.93304","44.98966"],["0","0","0","0.00100","0.35806"]],
+         "answer": {"total_clicks":964,"total_click_throughs":698,"total_leads":275,"total_income":93.01861,"total_cost":45.34811,"total_net":47.6705,"epc":0.096492334,"avg_cpc":0.047041607,"conv_rate":39.3983,"roi":105.121249816,"cpa":0.164902218,"currency":"USD"}},
+        {"rows": [["62","31","14","3.88268","18.45117"]],
+         "answer": {"total_clicks":62,"total_click_throughs":31,"total_leads":14,"total_income":3.88268,"total_cost":18.45117,"total_net":-14.56849,"epc":0.06262387,"avg_cpc":0.297599516,"conv_rate":45.1613,"roi":-78.956998391,"cpa":1.317940714,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":1026,"total_click_throughs":729,"total_leads":289,"total_income":96.90129,"total_cost":63.79928,"total_net":33.10201,"epc":0.094445701,"avg_cpc":0.062182534,"conv_rate":39.6433,"roi":51.884613745,"cpa":0.220758754,"currency":"USD"}
+    },
+    {
+      "name": "random 25",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["1","1","1","0.00064","0.00005"],["2","2","0","9.87482","0.05744"],["1","1","1","0.04092","0.68130"]],
+         "answer": {"total_clicks":4,"total_click_throughs":4,"total_leads":2,"total_income":9.91638,"total_cost":0.73879,"total_net":9.17759,"epc":2.479095,"avg_cpc":0.1846975,"conv_rate":50,"roi":1242.246105118,"cpa":0.369395,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":4,"total_click_throughs":4,"total_leads":2,"total_income":9.91638,"total_cost":0.73879,"total_net":9.17759,"epc":2.479095,"avg_cpc":0.1846975,"conv_rate":50,"roi":1242.246105118,"cpa":0.369395,"currency":"USD"}
+    },
+    {
+      "name": "random 26",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["14","10","0","537.50599","0.05674"],["10","6","6","0.00402","0.00035"],["31726","25622","23119","9.49959","55770.87023"]],
+         "answer": {"total_clicks":31750,"total_click_throughs":25638,"total_leads":23125,"total_income":547.0096,"total_cost":55770.92732,"total_net":-55223.91772,"epc":0.017228648,"avg_cpc":1.75656464,"conv_rate":90.1981,"roi":-99.019185037,"cpa":2.411715776,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":31750,"total_click_throughs":25638,"total_leads":23125,"total_income":547.0096,"total_cost":55770.92732,"total_net":-55223.91772,"epc":0.017228648,"avg_cpc":1.75656464,"conv_rate":90.1981,"roi":-99.019185037,"cpa":2.411715776,"currency":"USD"}
+    },
+    {
+      "name": "random 27",
+      "profiles": [
+        {"rows": [["175","162","0","36.98079","373.13656"]],
+         "answer": {"total_clicks":175,"total_click_throughs":162,"total_leads":0,"total_income":36.98079,"total_cost":373.13656,"total_net":-336.15577,"epc":0.2113188,"avg_cpc":2.132208914,"conv_rate":0,"roi":-90.089207554,"cpa":0,"currency":"USD"}},
+        {"rows": [["0","0","1","0.15450","0.00000"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":1,"total_income":0.1545,"total_cost":0,"total_net":0.1545,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":175,"total_click_throughs":162,"total_leads":1,"total_income":37.13529,"total_cost":373.13656,"total_net":-336.00127,"epc":0.212201657,"avg_cpc":2.132208914,"conv_rate":0.6173,"roi":-90.047801802,"cpa":373.13656,"currency":"USD"}
+    },
+    {
+      "name": "random 28",
+      "profiles": [
+        {"rows": [["46","28","25","248.08386","0.00166"],["9","2","1","13.02954","0.09618"],["12","0","0","2.78989","0.80452"]],
+         "answer": {"total_clicks":67,"total_click_throughs":30,"total_leads":26,"total_income":263.90329,"total_cost":0.90236,"total_net":263.00093,"epc":3.938855074,"avg_cpc":0.013468059,"conv_rate":86.6667,"roi":29145.898532736,"cpa":0.034706153,"currency":"USD"}},
+        {"rows": [["74356","0","0","11066.14987","49507.86442"],["6","2","0","0.42871","9.57814"],["593","90","0","256.27691","363.80557"]],
+         "answer": {"total_clicks":74955,"total_click_throughs":92,"total_leads":0,"total_income":11322.85549,"total_cost":49881.24813,"total_net":-38558.39264,"epc":0.151062043,"avg_cpc":0.665482597,"conv_rate":0,"roi":-77.300376565,"cpa":0,"currency":"USD"}},
+        {"rows": [["3","3","0","6.82536","0.00044"],["669","126","7","348.25768","4.42661"],["0","0","0","0.93078","0.00794"]],
+         "answer": {"total_clicks":672,"total_click_throughs":129,"total_leads":7,"total_income":356.01382,"total_cost":4.43499,"total_net":351.57883,"epc":0.52978247,"avg_cpc":0.006599687,"conv_rate":5.4264,"roi":7927.387209441,"cpa":0.63357,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":75694,"total_click_throughs":251,"total_leads":33,"total_income":11942.7726,"total_cost":49886.58548,"total_net":-37943.81288,"epc":0.157777004,"avg_cpc":0.659056008,"conv_rate":13.1474,"roi":-76.060152273,"cpa":1511.714711515,"currency":"USD"}
+    },
+    {
+      "name": "random 29",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["10","0","0","18.10008","0.00647"],["0","0","1","1.24516","0.00089"],["43","2","0","-63.86731","15.65383"]],
+         "answer": {"total_clicks":53,"total_click_throughs":2,"total_leads":1,"total_income":-44.52207,"total_cost":15.66119,"total_net":-60.18326,"epc":-0.840039056,"avg_cpc":0.29549415,"conv_rate":50,"roi":-384.282803542,"cpa":15.66119,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":53,"total_click_throughs":2,"total_leads":1,"total_income":-44.52207,"total_cost":15.66119,"total_net":-60.18326,"epc":-0.840039056,"avg_cpc":0.29549415,"conv_rate":50,"roi":-384.282803542,"cpa":15.66119,"currency":"USD"}
+    },
+    {
+      "name": "random 30",
+      "profiles": [
+        {"rows": [["85415","0","0","55887.04050","45328.41614"]],
+         "answer": {"total_clicks":85415,"total_click_throughs":0,"total_leads":0,"total_income":55887.0405,"total_cost":45328.41614,"total_net":10558.62436,"epc":0.65430007,"avg_cpc":0.530684494,"conv_rate":0,"roi":23.293609747,"cpa":0,"currency":"USD"}},
+        {"rows": [["74011","20703","0","17.95667","3057.98972"]],
+         "answer": {"total_clicks":74011,"total_click_throughs":20703,"total_leads":0,"total_income":17.95667,"total_cost":3057.98972,"total_net":-3040.03305,"epc":0.000242621,"avg_cpc":0.041318043,"conv_rate":0,"roi":-99.412794952,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":159426,"total_click_throughs":20703,"total_leads":0,"total_income":55904.99717,"total_cost":48386.40586,"total_net":7518.59131,"epc":0.35066424,"avg_cpc":0.303503856,"conv_rate":0,"roi":15.538643915,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 31",
+      "profiles": [
+        {"rows": [["53663","33082","0","6494.31623","46944.12599"]],
+         "answer": {"total_clicks":53663,"total_click_throughs":33082,"total_leads":0,"total_income":6494.31623,"total_cost":46944.12599,"total_net":-40449.80976,"epc":0.121020372,"avg_cpc":0.874795035,"conv_rate":0,"roi":-86.165859747,"cpa":0,"currency":"USD"}},
+        {"rows": [["18102","13995","12364","74070.80953","10310.93977"],["977","349","298","2798.86339","0.00334"],["94558","7209","0","4777.12971","0.76436"]],
+         "answer": {"total_clicks":113637,"total_click_throughs":21553,"total_leads":12662,"total_income":81646.80263,"total_cost":10311.70747,"total_net":71335.09516,"epc":0.718487839,"avg_cpc":0.090742517,"conv_rate":58.7482,"roi":691.787420925,"cpa":0.814382204,"currency":"USD"}},
+        {"rows": [["7","7","1","-0.04033","0.95378"],["95100","72519","15711","-42.38673","2.18157"]],
+         "answer": {"total_clicks":95107,"total_click_throughs":72526,"total_leads":15712,"total_income":-42.42706,"total_cost":3.13535,"total_net":-45.56241,"epc":-0.000446098,"avg_cpc":3.2966e-5,"conv_rate":21.664,"roi":-1453.184174016,"cpa":0.000199551,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":262407,"total_click_throughs":127161,"total_leads":28374,"total_income":88098.6918,"total_cost":57258.96881,"total_net":30839.72299,"epc":0.335733009,"avg_cpc":0.218206712,"conv_rate":22.3134,"roi":53.86007403,"cpa":2.018008346,"currency":"USD"}
+    },
+    {
+      "name": "random 32",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["0","0","0","0.00062","0.00177"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0.00062,"total_cost":0.00177,"total_net":-0.00115,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":-64.971751412,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0.00062,"total_cost":0.00177,"total_net":-0.00115,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":-64.971751412,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 33",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["61","31","0","76.40952","40.07964"]],
+         "answer": {"total_clicks":61,"total_click_throughs":31,"total_leads":0,"total_income":76.40952,"total_cost":40.07964,"total_net":36.32988,"epc":1.252615081,"avg_cpc":0.657043278,"conv_rate":0,"roi":90.644227343,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":61,"total_click_throughs":31,"total_leads":0,"total_income":76.40952,"total_cost":40.07964,"total_net":36.32988,"epc":1.252615081,"avg_cpc":0.657043278,"conv_rate":0,"roi":90.644227343,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 34",
+      "profiles": [
+        {"rows": [["0","0","1","0.03793","0.00914"],["7","0","0","25.36788","0.05187"]],
+         "answer": {"total_clicks":7,"total_click_throughs":0,"total_leads":1,"total_income":25.40581,"total_cost":0.06101,"total_net":25.3448,"epc":3.629401428,"avg_cpc":0.008715714,"conv_rate":0,"roi":41542.042288149,"cpa":0.06101,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":7,"total_click_throughs":0,"total_leads":1,"total_income":25.40581,"total_cost":0.06101,"total_net":25.3448,"epc":3.629401428,"avg_cpc":0.008715714,"conv_rate":0,"roi":41542.042288149,"cpa":0.06101,"currency":"USD"}
+    },
+    {
+      "name": "random 35",
+      "profiles": [
+        {"rows": [["31","26","11","0.02703","0.80781"],["0","0","0","0.12552","0.00009"]],
+         "answer": {"total_clicks":31,"total_click_throughs":26,"total_leads":11,"total_income":0.15255,"total_cost":0.8079,"total_net":-0.65535,"epc":0.004920967,"avg_cpc":0.02606129,"conv_rate":42.3077,"roi":-81.117712588,"cpa":0.073445454,"currency":"USD"}},
+        {"rows": [["77297","21259","5583","-63119.06929","0.00000"],["1","1","0","0.42975","0.47662"],["147","64","29","5.18205","0.09333"]],
+         "answer": {"total_clicks":77445,"total_click_throughs":21324,"total_leads":5612,"total_income":-63113.45749,"total_cost":0.56995,"total_net":-63114.02744,"epc":-0.814945541,"avg_cpc":7.359e-6,"conv_rate":26.3178,"roi":-11073607.762084393,"cpa":0.000101559,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":77476,"total_click_throughs":21350,"total_leads":5623,"total_income":-63113.30494,"total_cost":1.37785,"total_net":-63114.68279,"epc":-0.814617493,"avg_cpc":1.7784e-5,"conv_rate":26.3372,"roi":-4580664.280582066,"cpa":0.000245038,"currency":"USD"}
+    },
+    {
+      "name": "random 36",
+      "profiles": [
+        {"rows": [["95462","10685","9377","69769.92063","38380.93742"]],
+         "answer": {"total_clicks":95462,"total_click_throughs":10685,"total_leads":9377,"total_income":69769.92063,"total_cost":38380.93742,"total_net":31388.98321,"epc":0.7308659,"avg_cpc":0.402054612,"conv_rate":87.7585,"roi":81.782742476,"cpa":4.093093464,"currency":"USD"}},
+        {"rows": [["68705","53821","5451","3385.15245","8.73821"]],
+         "answer": {"total_clicks":68705,"total_click_throughs":53821,"total_leads":5451,"total_income":3385.15245,"total_cost":8.73821,"total_net":3376.41424,"epc":0.049270831,"avg_cpc":0.000127184,"conv_rate":10.128,"roi":38639.655490083,"cpa":0.001603047,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":164167,"total_click_throughs":64506,"total_leads":14828,"total_income":73155.07308,"total_cost":38389.67563,"total_net":34765.39745,"epc":0.445613753,"avg_cpc":0.233845265,"conv_rate":22.987,"roi":90.559237294,"cpa":2.588998896,"currency":"USD"}
+    },
+    {
+      "name": "random 37",
+      "profiles": [
+        {"rows": [["21","9","2","0.05443","0.00000"]],
+         "answer": {"total_clicks":21,"total_click_throughs":9,"total_leads":2,"total_income":0.05443,"total_cost":0,"total_net":0.05443,"epc":0.002591904,"avg_cpc":0,"conv_rate":22.2222,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["613","477","0","0.35797","4.70639"],["0","0","0","0.00054","0.00085"]],
+         "answer": {"total_clicks":613,"total_click_throughs":477,"total_leads":0,"total_income":0.35851,"total_cost":4.70724,"total_net":-4.34873,"epc":0.000584845,"avg_cpc":0.007679021,"conv_rate":0,"roi":-92.383859756,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":634,"total_click_throughs":486,"total_leads":2,"total_income":0.41294,"total_cost":4.70724,"total_net":-4.2943,"epc":0.000651324,"avg_cpc":0.007424668,"conv_rate":0.4115,"roi":-91.22755585,"cpa":2.35362,"currency":"USD"}
+    },
+    {
+      "name": "random 38",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 39",
+      "profiles": [
+        {"rows": [["53","20","4","0.00625","0.00000"]],
+         "answer": {"total_clicks":53,"total_click_throughs":20,"total_leads":4,"total_income":0.00625,"total_cost":0,"total_net":0.00625,"epc":0.000117924,"avg_cpc":0,"conv_rate":20,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["68302","13050","0","76.78336","98370.62464"]],
+         "answer": {"total_clicks":68302,"total_click_throughs":13050,"total_leads":0,"total_income":76.78336,"total_cost":98370.62464,"total_net":-98293.84128,"epc":0.001124174,"avg_cpc":1.440230515,"conv_rate":0,"roi":-99.921944828,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":68355,"total_click_throughs":13070,"total_leads":4,"total_income":76.78961,"total_cost":98370.62464,"total_net":-98293.83503,"epc":0.001123394,"avg_cpc":1.439113812,"conv_rate":0.0306,"roi":-99.921938475,"cpa":24592.65616,"currency":"USD"}
+    },
+    {
+      "name": "random 40",
+      "profiles": [
+        {"rows": [["0","0","0","0.49854","0.00007"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0.49854,"total_cost":7.0e-5,"total_net":0.49847,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":712100,"cpa":0,"currency":"USD"}},
+        {"rows": [["621","445","163","20.26344","0.05258"]],
+         "answer": {"total_clicks":621,"total_click_throughs":445,"total_leads":163,"total_income":20.26344,"total_cost":0.05258,"total_net":20.21086,"epc":0.032630338,"avg_cpc":8.4669e-5,"conv_rate":36.6292,"roi":38438.303537467,"cpa":0.000322576,"currency":"USD"}},
+        {"rows": [["0","0","0","1.33119","0.48359"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":1.33119,"total_cost":0.48359,"total_net":0.8476,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":175.272441531,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":621,"total_click_throughs":445,"total_leads":163,"total_income":22.09317,"total_cost":0.53624,"total_net":21.55693,"epc":0.035576763,"avg_cpc":0.00086351,"conv_rate":36.6292,"roi":4020.01529166,"cpa":0.003289815,"currency":"USD"}
+    },
+    {
+      "name": "random 41",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["1","1","0","0.00009","0.00000"],["308","277","0","0.00523","0.03947"],["1","1","0","0.00033","0.03273"]],
+         "answer": {"total_clicks":310,"total_click_throughs":279,"total_leads":0,"total_income":0.00565,"total_cost":0.0722,"total_net":-0.06655,"epc":1.8225e-5,"avg_cpc":0.000232903,"conv_rate":0,"roi":-92.174515235,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":310,"total_click_throughs":279,"total_leads":0,"total_income":0.00565,"total_cost":0.0722,"total_net":-0.06655,"epc":1.8225e-5,"avg_cpc":0.000232903,"conv_rate":0,"roi":-92.174515235,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 42",
+      "profiles": [
+        {"rows": [["37","7","3","1.36894","19.31282"],["560","368","0","645.62670","0.01836"],["163","0","0","937.17773","56.85774"]],
+         "answer": {"total_clicks":760,"total_click_throughs":375,"total_leads":3,"total_income":1584.17337,"total_cost":76.18892,"total_net":1507.98445,"epc":2.084438644,"avg_cpc":0.100248578,"conv_rate":0.8,"roi":1979.270017215,"cpa":25.396306666,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":760,"total_click_throughs":375,"total_leads":3,"total_income":1584.17337,"total_cost":76.18892,"total_net":1507.98445,"epc":2.084438644,"avg_cpc":0.100248578,"conv_rate":0.8,"roi":1979.270017215,"cpa":25.396306666,"currency":"USD"}
+    },
+    {
+      "name": "random 43",
+      "profiles": [
+        {"rows": [["91719","81360","54252","61844.34138","0.00000"]],
+         "answer": {"total_clicks":91719,"total_click_throughs":81360,"total_leads":54252,"total_income":61844.34138,"total_cost":0,"total_net":61844.34138,"epc":0.674280589,"avg_cpc":0,"conv_rate":66.6814,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":91719,"total_click_throughs":81360,"total_leads":54252,"total_income":61844.34138,"total_cost":0,"total_net":61844.34138,"epc":0.674280589,"avg_cpc":0,"conv_rate":66.6814,"roi":0,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 44",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["72515","58526","13244","275750.02223","8.05288"]],
+         "answer": {"total_clicks":72515,"total_click_throughs":58526,"total_leads":13244,"total_income":275750.02223,"total_cost":8.05288,"total_net":275741.96935,"epc":3.802661824,"avg_cpc":0.000111051,"conv_rate":22.6293,"roi":3424141.04457039,"cpa":0.000608039,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":72515,"total_click_throughs":58526,"total_leads":13244,"total_income":275750.02223,"total_cost":8.05288,"total_net":275741.96935,"epc":3.802661824,"avg_cpc":0.000111051,"conv_rate":22.6293,"roi":3424141.04457039,"cpa":0.000608039,"currency":"USD"}
+    },
+    {
+      "name": "random 45",
+      "profiles": [
+        {"rows": [["4","2","2","2.18645","0.00048"],["1","1","1","0.00028","0.00008"]],
+         "answer": {"total_clicks":5,"total_click_throughs":3,"total_leads":3,"total_income":2.18673,"total_cost":0.00056,"total_net":2.18617,"epc":0.437346,"avg_cpc":0.000112,"conv_rate":100,"roi":390387.5,"cpa":0.000186666,"currency":"USD"}},
+        {"rows": [["530","157","157","0.99296","9.93751"]],
+         "answer": {"total_clicks":530,"total_click_throughs":157,"total_leads":157,"total_income":0.99296,"total_cost":9.93751,"total_net":-8.94455,"epc":0.001873509,"avg_cpc":0.018750018,"conv_rate":100,"roi":-90.00795974,"cpa":0.063296242,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":535,"total_click_throughs":160,"total_leads":160,"total_income":3.17969,"total_cost":9.93807,"total_net":-6.75838,"epc":0.005943345,"avg_cpc":0.018575831,"conv_rate":100,"roi":-68.004954684,"cpa":0.062112937,"currency":"USD"}
+    },
+    {
+      "name": "random 46",
+      "profiles": [
+        {"rows": [["14","2","2","194.54863","0.64939"],["65","51","0","-5.25704","0.00000"],["98","5","2","0.08221","0.00551"]],
+         "answer": {"total_clicks":177,"total_click_throughs":58,"total_leads":4,"total_income":189.3738,"total_cost":0.6549,"total_net":188.7189,"epc":1.069908474,"avg_cpc":0.0037,"conv_rate":6.8966,"roi":28816.445258818,"cpa":0.163725,"currency":"USD"}},
+        {"rows": [["0","0","1","0.08045","0.77628"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":1,"total_income":0.08045,"total_cost":0.77628,"total_net":-0.69583,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":-89.636471376,"cpa":0.77628,"currency":"USD"}},
+        {"rows": [["240","108","36","80.69657","345.29351"]],
+         "answer": {"total_clicks":240,"total_click_throughs":108,"total_leads":36,"total_income":80.69657,"total_cost":345.29351,"total_net":-264.59694,"epc":0.336235708,"avg_cpc":1.438722958,"conv_rate":33.3333,"roi":-76.629572331,"cpa":9.591486388,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":417,"total_click_throughs":166,"total_leads":41,"total_income":270.15082,"total_cost":346.72469,"total_net":-76.57387,"epc":0.647843693,"avg_cpc":0.831474076,"conv_rate":24.6988,"roi":-22.084919883,"cpa":8.456699756,"currency":"USD"}
+    },
+    {
+      "name": "random 47",
+      "profiles": [
+        {"rows": [["90297","77297","46935","6361.39451","82232.27913"]],
+         "answer": {"total_clicks":90297,"total_click_throughs":77297,"total_leads":46935,"total_income":6361.39451,"total_cost":82232.27913,"total_net":-75870.88462,"epc":0.070449677,"avg_cpc":0.910686724,"conv_rate":60.7203,"roi":-92.264115044,"cpa":1.752046002,"currency":"USD"}},
+        {"rows": [["0","0","0","2.13670","0.63383"],["59841","9947","3826","32.34943","0.00000"],["1","1","0","0.06447","0.81993"]],
+         "answer": {"total_clicks":59842,"total_click_throughs":9948,"total_leads":3826,"total_income":34.5506,"total_cost":1.45376,"total_net":33.09684,"epc":0.000577363,"avg_cpc":2.4293e-5,"conv_rate":38.46,"roi":2276.637134052,"cpa":0.000379968,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":150139,"total_click_throughs":87245,"total_leads":50761,"total_income":6395.94511,"total_cost":82233.73289,"total_net":-75837.78778,"epc":0.042600157,"avg_cpc":0.547717334,"conv_rate":58.1821,"roi":-92.222236684,"cpa":1.620017984,"currency":"USD"}
+    },
+    {
+      "name": "random 48",
+      "profiles": [
+        {"rows": [["1","0","0","0.00086","0.71800"]],
+         "answer": {"total_clicks":1,"total_click_throughs":0,"total_leads":0,"total_income":0.00086,"total_cost":0.718,"total_net":-0.71714,"epc":0.00086,"avg_cpc":0.718,"conv_rate":0,"roi":-99.880222841,"cpa":0,"currency":"USD"}},
+        {"rows": [["105","22","4","0.53016","206.38019"],["3","3","2","0.73683","3.25280"],["30","8","3","21.55583","31.29005"]],
+         "answer": {"total_clicks":138,"total_click_throughs":33,"total_leads":9,"total_income":22.82282,"total_cost":240.92304,"total_net":-218.10022,"epc":0.165382753,"avg_cpc":1.74581913,"conv_rate":27.2727,"roi":-90.526925113,"cpa":26.769226666,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":139,"total_click_throughs":33,"total_leads":9,"total_income":22.82368,"total_cost":241.64104,"total_net":-218.81736,"epc":0.164199136,"avg_cpc":1.738424748,"conv_rate":27.2727,"roi":-90.55471703,"cpa":26.849004444,"currency":"USD"}
+    },
+    {
+      "name": "random 49",
+      "profiles": [
+        {"rows": [["868","708","105","839.86239","0.01796"]],
+         "answer": {"total_clicks":868,"total_click_throughs":708,"total_leads":105,"total_income":839.86239,"total_cost":0.01796,"total_net":839.84443,"epc":0.967583398,"avg_cpc":2.0691e-5,"conv_rate":14.8305,"roi":4676193.930957684,"cpa":0.000171047,"currency":"USD"}},
+        {"rows": [["62426","20936","11161","5915.90571","0.00000"]],
+         "answer": {"total_clicks":62426,"total_click_throughs":20936,"total_leads":11161,"total_income":5915.90571,"total_cost":0,"total_net":5915.90571,"epc":0.094766695,"avg_cpc":0,"conv_rate":53.3101,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["1","1","0","0.00062","0.35125"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":0,"total_income":0.00062,"total_cost":0.35125,"total_net":-0.35063,"epc":0.00062,"avg_cpc":0.35125,"conv_rate":0,"roi":-99.823487544,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":63295,"total_click_throughs":21645,"total_leads":11266,"total_income":6755.76872,"total_cost":0.36921,"total_net":6755.39951,"epc":0.106734634,"avg_cpc":5.833e-6,"conv_rate":52.049,"roi":1829690.287370331,"cpa":3.2772e-5,"currency":"USD"}
+    },
+    {
+      "name": "random 50",
+      "profiles": [
+        {"rows": [["40","21","9","179.75823","0.00678"]],
+         "answer": {"total_clicks":40,"total_click_throughs":21,"total_leads":9,"total_income":179.75823,"total_cost":0.00678,"total_net":179.75145,"epc":4.49395575,"avg_cpc":0.0001695,"conv_rate":42.8571,"roi":2651201.327433628,"cpa":0.000753333,"currency":"USD"}},
+        {"rows": [["936","596","0","0.35394","2.64315"]],
+         "answer": {"total_clicks":936,"total_click_throughs":596,"total_leads":0,"total_income":0.35394,"total_cost":2.64315,"total_net":-2.28921,"epc":0.000378141,"avg_cpc":0.002823878,"conv_rate":0,"roi":-86.609159526,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":976,"total_click_throughs":617,"total_leads":9,"total_income":180.11217,"total_cost":2.64993,"total_net":177.46224,"epc":0.184541157,"avg_cpc":0.002715092,"conv_rate":1.4587,"roi":6696.865200213,"cpa":0.294436666,"currency":"USD"}
+    },
+    {
+      "name": "random 51",
+      "profiles": [
+        {"rows": [["0","0","1","0.08013","0.00170"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":1,"total_income":0.08013,"total_cost":0.0017,"total_net":0.07843,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":4613.529411765,"cpa":0.0017,"currency":"USD"}},
+        {"rows": [["6","4","0","0.60319","0.00081"],["6","2","0","-0.08897","8.68439"],["1","0","1","0.27517","0.00771"]],
+         "answer": {"total_clicks":13,"total_click_throughs":6,"total_leads":1,"total_income":0.78939,"total_cost":8.69291,"total_net":-7.90352,"epc":0.060722307,"avg_cpc":0.668685384,"conv_rate":16.6667,"roi":-90.919151354,"cpa":8.69291,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":13,"total_click_throughs":6,"total_leads":2,"total_income":0.86952,"total_cost":8.69461,"total_net":-7.82509,"epc":0.066886153,"avg_cpc":0.668816153,"conv_rate":33.3333,"roi":-89.999321419,"cpa":4.347305,"currency":"USD"}
+    },
+    {
+      "name": "random 52",
+      "profiles": [
+        {"rows": [["1","1","0","7.16031","4.03893"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":0,"total_income":7.16031,"total_cost":4.03893,"total_net":3.12138,"epc":7.16031,"avg_cpc":4.03893,"conv_rate":0,"roi":77.282349533,"cpa":0,"currency":"USD"}},
+        {"rows": [["0","0","0","0.00072","0.91250"],["2","2","2","0.00876","8.51358"]],
+         "answer": {"total_clicks":2,"total_click_throughs":2,"total_leads":2,"total_income":0.00948,"total_cost":9.42608,"total_net":-9.4166,"epc":0.00474,"avg_cpc":4.71304,"conv_rate":100,"roi":-99.89942797,"cpa":4.71304,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":3,"total_click_throughs":3,"total_leads":2,"total_income":7.16979,"total_cost":13.46501,"total_net":-6.29522,"epc":2.38993,"avg_cpc":4.488336666,"conv_rate":66.6667,"roi":-46.752434644,"cpa":6.732505,"currency":"USD"}
+    },
+    {
+      "name": "random 53",
+      "profiles": [
+        {"rows": [["2","0","1","-0.00219","0.00008"],["1","0","1","0.44744","0.00005"]],
+         "answer": {"total_clicks":3,"total_click_throughs":0,"total_leads":2,"total_income":0.44525,"total_cost":0.00013,"total_net":0.44512,"epc":0.148416666,"avg_cpc":4.3333e-5,"conv_rate":0,"roi":342400,"cpa":6.5e-5,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":3,"total_click_throughs":0,"total_leads":2,"total_income":0.44525,"total_cost":0.00013,"total_net":0.44512,"epc":0.148416666,"avg_cpc":4.3333e-5,"conv_rate":0,"roi":342400,"cpa":6.5e-5,"currency":"USD"}
+    },
+    {
+      "name": "random 54",
+      "profiles": [
+        {"rows": [["816","594","130","12.51498","0.04132"]],
+         "answer": {"total_clicks":816,"total_click_throughs":594,"total_leads":130,"total_income":12.51498,"total_cost":0.04132,"total_net":12.47366,"epc":0.015336985,"avg_cpc":5.0637e-5,"conv_rate":21.8855,"roi":30187.947725073,"cpa":0.000317846,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["1","0","1","0.00004","0.04262"]],
+         "answer": {"total_clicks":1,"total_click_throughs":0,"total_leads":1,"total_income":4.0e-5,"total_cost":0.04262,"total_net":-0.04258,"epc":4.0e-5,"avg_cpc":0.04262,"conv_rate":0,"roi":-99.906147349,"cpa":0.04262,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":817,"total_click_throughs":594,"total_leads":131,"total_income":12.51502,"total_cost":0.08394,"total_net":12.43108,"epc":0.015318261,"avg_cpc":0.000102741,"conv_rate":22.0539,"roi":14809.482964022,"cpa":0.000640763,"currency":"USD"}
+    },
+    {
+      "name": "random 55",
+      "profiles": [
+        {"rows": [["87","68","0","277.15145","0.25045"],["303","124","50","2100.55630","413.34036"],["27381","8078","0","84.26541","0.00000"]],
+         "answer": {"total_clicks":27771,"total_click_throughs":8270,"total_leads":50,"total_income":2461.97316,"total_cost":413.59081,"total_net":2048.38235,"epc":0.088652665,"avg_cpc":0.014892903,"conv_rate":0.6046,"roi":495.267859071,"cpa":8.2718162,"currency":"USD"}},
+        {"rows": [["1","1","0","0.67195","0.00069"],["0","0","0","17.00465","0.00000"],["5","2","0","26.29389","4.07300"]],
+         "answer": {"total_clicks":6,"total_click_throughs":3,"total_leads":0,"total_income":43.97049,"total_cost":4.07369,"total_net":39.8968,"epc":7.328415,"avg_cpc":0.678948333,"conv_rate":0,"roi":979.377419489,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":27777,"total_click_throughs":8273,"total_leads":50,"total_income":2505.94365,"total_cost":417.6645,"total_net":2088.27915,"epc":0.090216497,"avg_cpc":0.015036343,"conv_rate":0.6044,"roi":499.989620856,"cpa":8.35329,"currency":"USD"}
+    },
+    {
+      "name": "random 56",
+      "profiles": [
+        {"rows": [["72183","69317","37144","72423.72805","0.00000"],["843","688","0","1447.68048","451.49417"],["0","0","0","0.00665","0.20822"]],
+         "answer": {"total_clicks":73026,"total_click_throughs":70005,"total_leads":37144,"total_income":73871.41518,"total_cost":451.70239,"total_net":73419.71279,"epc":1.011576906,"avg_cpc":0.0061855,"conv_rate":53.0591,"roi":16254.001399018,"cpa":0.012160844,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":73026,"total_click_throughs":70005,"total_leads":37144,"total_income":73871.41518,"total_cost":451.70239,"total_net":73419.71279,"epc":1.011576906,"avg_cpc":0.0061855,"conv_rate":53.0591,"roi":16254.001399018,"cpa":0.012160844,"currency":"USD"}
+    },
+    {
+      "name": "random 57",
+      "profiles": [
+        {"rows": [["1","1","0","0.26810","0.00000"],["400","384","200","115782.24453","724.97722"],["5","4","0","2.81397","0.00091"]],
+         "answer": {"total_clicks":406,"total_click_throughs":389,"total_leads":200,"total_income":115785.3266,"total_cost":724.97813,"total_net":115060.34847,"epc":285.185533497,"avg_cpc":1.785660418,"conv_rate":51.4139,"roi":15870.871645466,"cpa":3.62489065,"currency":"USD"}},
+        {"rows": [["1","0","0","0.10589","0.00420"],["95253","77015","44038","6240.52334","2.44165"]],
+         "answer": {"total_clicks":95254,"total_click_throughs":77015,"total_leads":44038,"total_income":6240.62923,"total_cost":2.44585,"total_net":6238.18338,"epc":0.065515665,"avg_cpc":2.5677e-5,"conv_rate":57.1811,"roi":255051.756240162,"cpa":5.5539e-5,"currency":"USD"}},
+        {"rows": [["939","238","0","-27.78890","0.01881"]],
+         "answer": {"total_clicks":939,"total_click_throughs":238,"total_leads":0,"total_income":-27.7889,"total_cost":0.01881,"total_net":-27.80771,"epc":-0.029594142,"avg_cpc":2.0031e-5,"conv_rate":0,"roi":-147834.715576821,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":96599,"total_click_throughs":77642,"total_leads":44238,"total_income":121998.16693,"total_cost":727.44279,"total_net":121270.72414,"epc":1.262934056,"avg_cpc":0.007530541,"conv_rate":56.9769,"roi":16670.826325738,"cpa":0.016443844,"currency":"USD"}
+    },
+    {
+      "name": "random 58",
+      "profiles": [
+        {"rows": [["0","0","1","0.05665","0.00000"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":1,"total_income":0.05665,"total_cost":0,"total_net":0.05665,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["8","3","2","21.47096","3.71106"],["26184","6565","0","4797.74550","925.57941"],["15","9","7","142.95277","0.00000"]],
+         "answer": {"total_clicks":26207,"total_click_throughs":6577,"total_leads":9,"total_income":4962.16923,"total_cost":929.29047,"total_net":4032.87876,"epc":0.189345183,"avg_cpc":0.035459627,"conv_rate":0.1368,"roi":433.973971561,"cpa":103.254496666,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":26207,"total_click_throughs":6577,"total_leads":10,"total_income":4962.22588,"total_cost":929.29047,"total_net":4032.93541,"epc":0.189347345,"avg_cpc":0.035459627,"conv_rate":0.152,"roi":433.98006761,"cpa":92.929047,"currency":"USD"}
+    },
+    {
+      "name": "random 59",
+      "profiles": [
+        {"rows": [["1","0","1","0.06838","0.00002"],["1","0","0","0.07069","0.00199"]],
+         "answer": {"total_clicks":2,"total_click_throughs":0,"total_leads":1,"total_income":0.13907,"total_cost":0.00201,"total_net":0.13706,"epc":0.069535,"avg_cpc":0.001005,"conv_rate":0,"roi":6818.905472637,"cpa":0.00201,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["14","8","0","6.54346","0.52019"],["4","0","0","0.00071","0.08574"]],
+         "answer": {"total_clicks":18,"total_click_throughs":8,"total_leads":0,"total_income":6.54417,"total_cost":0.60593,"total_net":5.93824,"epc":0.363565,"avg_cpc":0.033662777,"conv_rate":0,"roi":980.020794481,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":20,"total_click_throughs":8,"total_leads":1,"total_income":6.68324,"total_cost":0.60794,"total_net":6.0753,"epc":0.334162,"avg_cpc":0.030397,"conv_rate":12.5,"roi":999.325591341,"cpa":0.60794,"currency":"USD"}
+    },
+    {
+      "name": "random 60",
+      "profiles": [
+        {"rows": [["0","0","0","0.01141","0.02998"],["51118","0","1","7522.15685","863.72240"]],
+         "answer": {"total_clicks":51118,"total_click_throughs":0,"total_leads":1,"total_income":7522.16826,"total_cost":863.75238,"total_net":6658.41588,"epc":0.147153023,"avg_cpc":0.016897225,"conv_rate":0,"roi":770.870915574,"cpa":863.75238,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":51118,"total_click_throughs":0,"total_leads":1,"total_income":7522.16826,"total_cost":863.75238,"total_net":6658.41588,"epc":0.147153023,"avg_cpc":0.016897225,"conv_rate":0,"roi":770.870915574,"cpa":863.75238,"currency":"USD"}
+    },
+    {
+      "name": "random 61",
+      "profiles": [
+        {"rows": [["89013","49398","5886","8918.59317","1831.69456"],["351","292","159","797.69140","350.52015"]],
+         "answer": {"total_clicks":89364,"total_click_throughs":49690,"total_leads":6045,"total_income":9716.28457,"total_cost":2182.21471,"total_net":7534.06986,"epc":0.108727055,"avg_cpc":0.024419393,"conv_rate":12.1654,"roi":345.248789016,"cpa":0.360994989,"currency":"USD"}},
+        {"rows": [["21","19","3","88.56353","7.13991"],["6","3","3","0.00020","0.00000"]],
+         "answer": {"total_clicks":27,"total_click_throughs":22,"total_leads":6,"total_income":88.56373,"total_cost":7.13991,"total_net":81.42382,"epc":3.280138148,"avg_cpc":0.264441111,"conv_rate":27.2727,"roi":1140.404010695,"cpa":1.189985,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":89391,"total_click_throughs":49712,"total_leads":6051,"total_income":9804.8483,"total_cost":2189.35462,"total_net":7615.49368,"epc":0.10968496,"avg_cpc":0.02449189,"conv_rate":12.1721,"roi":347.841944399,"cpa":0.361816992,"currency":"USD"}
+    },
+    {
+      "name": "random 62",
+      "profiles": [
+        {"rows": [["605","148","38","0.64559","191.84816"]],
+         "answer": {"total_clicks":605,"total_click_throughs":148,"total_leads":38,"total_income":0.64559,"total_cost":191.84816,"total_net":-191.20257,"epc":0.00106709,"avg_cpc":0.317104396,"conv_rate":25.6757,"roi":-99.663489084,"cpa":5.048635789,"currency":"USD"}},
+        {"rows": [["49","29","14","19.87621","77.54505"]],
+         "answer": {"total_clicks":49,"total_click_throughs":29,"total_leads":14,"total_income":19.87621,"total_cost":77.54505,"total_net":-57.66884,"epc":0.405636938,"avg_cpc":1.58255204,"conv_rate":48.2759,"roi":-74.36817695,"cpa":5.538932142,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":654,"total_click_throughs":177,"total_leads":52,"total_income":20.5218,"total_cost":269.39321,"total_net":-248.87141,"epc":0.031378899,"avg_cpc":0.411916223,"conv_rate":29.3785,"roi":-92.382213345,"cpa":5.180638653,"currency":"USD"}
+    },
+    {
+      "name": "random 63",
+      "profiles": [
+        {"rows": [["1","1","1","0.00008","0.69350"],["21177","0","1","94795.32910","0.00000"]],
+         "answer": {"total_clicks":21178,"total_click_throughs":1,"total_leads":2,"total_income":94795.32918,"total_cost":0.6935,"total_net":94794.63568,"epc":4.476122824,"avg_cpc":3.2746e-5,"conv_rate":200,"roi":13669017.401586156,"cpa":0.34675,"currency":"USD"}},
+        {"rows": [["0","0","0","0.06798","0.00010"],["0","0","0","0.05627","0.90108"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0.12425,"total_cost":0.90118,"total_net":-0.77693,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":-86.212521361,"cpa":0,"currency":"USD"}},
+        {"rows": [["0","0","1","-19.05233","9.60397"],["1","0","1","0.02922","0.00569"],["680","387","0","18.89469","7.37854"]],
+         "answer": {"total_clicks":681,"total_click_throughs":387,"total_leads":2,"total_income":-0.12842,"total_cost":16.9882,"total_net":-17.11662,"epc":-0.000188575,"avg_cpc":0.024945961,"conv_rate":0.5168,"roi":-100.755936474,"cpa":8.4941,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":21859,"total_click_throughs":388,"total_leads":4,"total_income":94795.32501,"total_cost":18.58288,"total_net":94776.74213,"epc":4.336672538,"avg_cpc":0.000850124,"conv_rate":1.0309,"roi":510021.816478393,"cpa":4.64572,"currency":"USD"}
+    },
+    {
+      "name": "random 64",
+      "profiles": [
+        {"rows": [["237","0","0","2227.69682","0.00000"]],
+         "answer": {"total_clicks":237,"total_click_throughs":0,"total_leads":0,"total_income":2227.69682,"total_cost":0,"total_net":2227.69682,"epc":9.399564641,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["80","0","0","56.70098","0.00544"]],
+         "answer": {"total_clicks":80,"total_click_throughs":0,"total_leads":0,"total_income":56.70098,"total_cost":0.00544,"total_net":56.69554,"epc":0.70876225,"avg_cpc":6.8e-5,"conv_rate":0,"roi":1042197.426470588,"cpa":0,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":317,"total_click_throughs":0,"total_leads":0,"total_income":2284.3978,"total_cost":0.00544,"total_net":2284.39236,"epc":7.206302208,"avg_cpc":1.716e-5,"conv_rate":0,"roi":41992506.61764706,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 65",
+      "profiles": [
+        {"rows": [["904","480","384","1688.60980","292.12355"],["1","0","0","0.00374","7.14672"],["1","1","1","0.00010","0.38535"]],
+         "answer": {"total_clicks":906,"total_click_throughs":481,"total_leads":385,"total_income":1688.61364,"total_cost":299.65562,"total_net":1388.95802,"epc":1.863811964,"avg_cpc":0.330745717,"conv_rate":80.0416,"roi":463.518094538,"cpa":0.778326285,"currency":"USD"}},
+        {"rows": [["77","24","5","24.34894","26.17567"]],
+         "answer": {"total_clicks":77,"total_click_throughs":24,"total_leads":5,"total_income":24.34894,"total_cost":26.17567,"total_net":-1.82673,"epc":0.31622,"avg_cpc":0.339943766,"conv_rate":20.8333,"roi":-6.978732541,"cpa":5.235134,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":983,"total_click_throughs":505,"total_leads":390,"total_income":1712.96258,"total_cost":325.83129,"total_net":1387.13129,"epc":1.742586551,"avg_cpc":0.331466215,"conv_rate":77.2277,"roi":425.720712704,"cpa":0.835464846,"currency":"USD"}
+    },
+    {
+      "name": "random 66",
+      "profiles": [
+        {"rows": [["430","399","0","0.99348","0.08585"],["848","621","361","0.06281","47.19817"]],
+         "answer": {"total_clicks":1278,"total_click_throughs":1020,"total_leads":361,"total_income":1.05629,"total_cost":47.28402,"total_net":-46.22773,"epc":0.000826517,"avg_cpc":0.03699845,"conv_rate":35.3922,"roi":-97.766074035,"cpa":0.130980664,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["42","3","3","0.07552","0.00516"]],
+         "answer": {"total_clicks":42,"total_click_throughs":3,"total_leads":3,"total_income":0.07552,"total_cost":0.00516,"total_net":0.07036,"epc":0.001798095,"avg_cpc":0.000122857,"conv_rate":100,"roi":1363.565891473,"cpa":0.00172,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":1320,"total_click_throughs":1023,"total_leads":364,"total_income":1.13181,"total_cost":47.28918,"total_net":-46.15737,"epc":0.000857431,"avg_cpc":0.035825136,"conv_rate":35.5816,"roi":-97.606619527,"cpa":0.129915329,"currency":"USD"}
+    },
+    {
+      "name": "random 67",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["46","16","14","274.05660","0.00501"],["13","3","2","88.24421","0.02131"]],
+         "answer": {"total_clicks":59,"total_click_throughs":19,"total_leads":16,"total_income":362.30081,"total_cost":0.02632,"total_net":362.27449,"epc":6.140691694,"avg_cpc":0.000446101,"conv_rate":84.2105,"roi":1376422.834346505,"cpa":0.001645,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":59,"total_click_throughs":19,"total_leads":16,"total_income":362.30081,"total_cost":0.02632,"total_net":362.27449,"epc":6.140691694,"avg_cpc":0.000446101,"conv_rate":84.2105,"roi":1376422.834346505,"cpa":0.001645,"currency":"USD"}
+    },
+    {
+      "name": "random 68",
+      "profiles": [
+        {"rows": [["9","0","0","0.24492","3.13247"],["44378","44063","7616","68939.74239","0.05352"]],
+         "answer": {"total_clicks":44387,"total_click_throughs":44063,"total_leads":7616,"total_income":68939.98731,"total_cost":3.18599,"total_net":68936.80132,"epc":1.55315717,"avg_cpc":7.1777e-5,"conv_rate":17.2843,"roi":2163748.201344009,"cpa":0.000418328,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":44387,"total_click_throughs":44063,"total_leads":7616,"total_income":68939.98731,"total_cost":3.18599,"total_net":68936.80132,"epc":1.55315717,"avg_cpc":7.1777e-5,"conv_rate":17.2843,"roi":2163748.201344009,"cpa":0.000418328,"currency":"USD"}
+    },
+    {
+      "name": "random 69",
+      "profiles": [
+        {"rows": [["1","0","0","0.10717","0.00006"],["92094","43417","23355","5402.08205","2304.78103"],["917","114","84","174.68446","162.90642"]],
+         "answer": {"total_clicks":93012,"total_click_throughs":43531,"total_leads":23439,"total_income":5576.87368,"total_cost":2467.68751,"total_net":3109.18617,"epc":0.059958647,"avg_cpc":0.02653085,"conv_rate":53.8444,"roi":125.995943871,"cpa":0.105281262,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["22621","1486","1177","-566.26925","125.10934"]],
+         "answer": {"total_clicks":22621,"total_click_throughs":1486,"total_leads":1177,"total_income":-566.26925,"total_cost":125.10934,"total_net":-691.37859,"epc":-0.0250329,"avg_cpc":0.005530672,"conv_rate":79.2059,"roi":-552.619484684,"cpa":0.106295106,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":115633,"total_click_throughs":45017,"total_leads":24616,"total_income":5010.60443,"total_cost":2592.79685,"total_net":2417.80758,"epc":0.043331959,"avg_cpc":0.022422637,"conv_rate":54.6816,"roi":93.250945596,"cpa":0.105329738,"currency":"USD"}
+    },
+    {
+      "name": "random 70",
+      "profiles": [
+        {"rows": [["31","24","2","-88.21669","37.36393"],["21355","13771","13137","32551.74245","432.36482"]],
+         "answer": {"total_clicks":21386,"total_click_throughs":13795,"total_leads":13139,"total_income":32463.52576,"total_cost":469.72875,"total_net":31993.79701,"epc":1.517980256,"avg_cpc":0.02196431,"conv_rate":95.2447,"roi":6811.12173994,"cpa":0.035750723,"currency":"USD"}},
+        {"rows": [["9","2","0","0.20418","0.00000"],["1","1","0","0.83467","7.60295"],["160","114","100","16.19145","0.04763"]],
+         "answer": {"total_clicks":170,"total_click_throughs":117,"total_leads":100,"total_income":17.2303,"total_cost":7.65058,"total_net":9.57972,"epc":0.101354705,"avg_cpc":0.045003411,"conv_rate":85.4701,"roi":125.215604569,"cpa":0.0765058,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":21556,"total_click_throughs":13912,"total_leads":13239,"total_income":32480.75606,"total_cost":477.37933,"total_net":32003.37673,"epc":1.50680813,"avg_cpc":0.022146007,"conv_rate":95.1624,"roi":6703.972023674,"cpa":0.036058564,"currency":"USD"}
+    },
+    {
+      "name": "random 71",
+      "profiles": [
+        {"rows": [["0","0","0","0.01033","0.67333"],["1","0","1","0.04870","0.42148"]],
+         "answer": {"total_clicks":1,"total_click_throughs":0,"total_leads":1,"total_income":0.05903,"total_cost":1.09481,"total_net":-1.03578,"epc":0.05903,"avg_cpc":1.09481,"conv_rate":0,"roi":-94.608196856,"cpa":1.09481,"currency":"USD"}},
+        {"rows": [["0","0","0","0.00098","0.00757"],["17","9","5","74.55037","0.15220"]],
+         "answer": {"total_clicks":17,"total_click_throughs":9,"total_leads":5,"total_income":74.55135,"total_cost":0.15977,"total_net":74.39158,"epc":4.385373529,"avg_cpc":0.009398235,"conv_rate":55.5556,"roi":46561.669900482,"cpa":0.031954,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":18,"total_click_throughs":9,"total_leads":6,"total_income":74.61038,"total_cost":1.25458,"total_net":73.3558,"epc":4.145021111,"avg_cpc":0.069698888,"conv_rate":66.6667,"roi":5847.040443814,"cpa":0.209096666,"currency":"USD"}
+    },
+    {
+      "name": "random 72",
+      "profiles": [
+        {"rows": [["2","0","0","5.84040","2.91142"],["81847","58033","0","26276.98835","88488.69347"],["55591","0","0","98768.03975","51.77441"]],
+         "answer": {"total_clicks":137440,"total_click_throughs":58033,"total_leads":0,"total_income":125050.8685,"total_cost":88543.3793,"total_net":36507.4892,"epc":0.90985789,"avg_cpc":0.644232969,"conv_rate":0,"roi":41.231190281,"cpa":0,"currency":"USD"}},
+        {"rows": [["424","328","234","59.77943","15.11540"]],
+         "answer": {"total_clicks":424,"total_click_throughs":328,"total_leads":234,"total_income":59.77943,"total_cost":15.1154,"total_net":44.66403,"epc":0.140989221,"avg_cpc":0.035649528,"conv_rate":71.3415,"roi":295.486920624,"cpa":0.064595726,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":137864,"total_click_throughs":58361,"total_leads":234,"total_income":125110.64793,"total_cost":88558.4947,"total_net":36552.15323,"epc":0.907493239,"avg_cpc":0.642361274,"conv_rate":0.401,"roi":41.274587327,"cpa":378.455105555,"currency":"USD"}
+    },
+    {
+      "name": "random 73",
+      "profiles": [
+        {"rows": [["0","0","0","0.14574","0.02956"]],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0.14574,"total_cost":0.02956,"total_net":0.11618,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":393.031123139,"cpa":0,"currency":"USD"}},
+        {"rows": [["2","0","1","0.00182","0.49465"]],
+         "answer": {"total_clicks":2,"total_click_throughs":0,"total_leads":1,"total_income":0.00182,"total_cost":0.49465,"total_net":-0.49283,"epc":0.00091,"avg_cpc":0.247325,"conv_rate":0,"roi":-99.632063075,"cpa":0.49465,"currency":"USD"}},
+        {"rows": [["20788","7800","1723","21895.56165","23510.16674"]],
+         "answer": {"total_clicks":20788,"total_click_throughs":7800,"total_leads":1723,"total_income":21895.56165,"total_cost":23510.16674,"total_net":-1614.60509,"epc":1.053278894,"avg_cpc":1.130948948,"conv_rate":22.0897,"roi":-6.867688808,"cpa":13.644902344,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":20790,"total_click_throughs":7800,"total_leads":1724,"total_income":21895.70921,"total_cost":23510.69095,"total_net":-1614.98174,"epc":1.053184666,"avg_cpc":1.130865365,"conv_rate":22.1026,"roi":-6.869137719,"cpa":13.637291734,"currency":"USD"}
+    },
+    {
+      "name": "random 74",
+      "profiles": [
+        {"rows": [["45","22","11","3.89916","0.26153"]],
+         "answer": {"total_clicks":45,"total_click_throughs":22,"total_leads":11,"total_income":3.89916,"total_cost":0.26153,"total_net":3.63763,"epc":0.086648,"avg_cpc":0.005811777,"conv_rate":50,"roi":1390.903529232,"cpa":0.023775454,"currency":"USD"}},
+        {"rows": [["0","0","1","0.06604","0.00000"],["88383","42861","0","26.82500","55296.53068"]],
+         "answer": {"total_clicks":88383,"total_click_throughs":42861,"total_leads":1,"total_income":26.89104,"total_cost":55296.53068,"total_net":-55269.63964,"epc":0.000304255,"avg_cpc":0.625646681,"conv_rate":0.0023,"roi":-99.95136939,"cpa":55296.53068,"currency":"USD"}},
+        {"rows": [["4","1","1","223.73330","0.18828"]],
+         "answer": {"total_clicks":4,"total_click_throughs":1,"total_leads":1,"total_income":223.7333,"total_cost":0.18828,"total_net":223.54502,"epc":55.933325,"avg_cpc":0.04707,"conv_rate":100,"roi":118730.093477799,"cpa":0.18828,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":88432,"total_click_throughs":42884,"total_leads":13,"total_income":254.5235,"total_cost":55296.98049,"total_net":-55042.45699,"epc":0.002878183,"avg_cpc":0.625305098,"conv_rate":0.0303,"roi":-99.539715374,"cpa":4253.613883846,"currency":"USD"}
+    },
+    {
+      "name": "random 75",
+      "profiles": [
+        {"rows": [["20","1","0","0.01800","0.57447"]],
+         "answer": {"total_clicks":20,"total_click_throughs":1,"total_leads":0,"total_income":0.018,"total_cost":0.57447,"total_net":-0.55647,"epc":0.0009,"avg_cpc":0.0287235,"conv_rate":0,"roi":-96.866677111,"cpa":0,"currency":"USD"}},
+        {"rows": [["945","680","662","195.81204","2.99414"]],
+         "answer": {"total_clicks":945,"total_click_throughs":680,"total_leads":662,"total_income":195.81204,"total_cost":2.99414,"total_net":192.8179,"epc":0.207208507,"avg_cpc":0.003168402,"conv_rate":97.3529,"roi":6439.842492335,"cpa":0.00452287,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":965,"total_click_throughs":681,"total_leads":662,"total_income":195.83004,"total_cost":3.56861,"total_net":192.26143,"epc":0.202932683,"avg_cpc":0.003698041,"conv_rate":97.21,"roi":5387.571911753,"cpa":0.005390649,"currency":"USD"}
+    },
+    {
+      "name": "random 76",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 77",
+      "profiles": [
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["30","0","1","58.59590","364.34099"]],
+         "answer": {"total_clicks":30,"total_click_throughs":0,"total_leads":1,"total_income":58.5959,"total_cost":364.34099,"total_net":-305.74509,"epc":1.953196666,"avg_cpc":12.144699666,"conv_rate":0,"roi":-83.917291326,"cpa":364.34099,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":30,"total_click_throughs":0,"total_leads":1,"total_income":58.5959,"total_cost":364.34099,"total_net":-305.74509,"epc":1.953196666,"avg_cpc":12.144699666,"conv_rate":0,"roi":-83.917291326,"cpa":364.34099,"currency":"USD"}
+    },
+    {
+      "name": "random 78",
+      "profiles": [
+        {"rows": [["9","8","0","5.70723","35.19329"],["72","59","0","13.26533","40.71614"]],
+         "answer": {"total_clicks":81,"total_click_throughs":67,"total_leads":0,"total_income":18.97256,"total_cost":75.90943,"total_net":-56.93687,"epc":0.234229135,"avg_cpc":0.937153456,"conv_rate":0,"roi":-75.006320032,"cpa":0,"currency":"USD"}},
+        {"rows": [["0","0","0","0.00005","0.05773"],["11","0","1","0.48905","0.00000"],["10","0","1","15.50086","6.84105"]],
+         "answer": {"total_clicks":21,"total_click_throughs":0,"total_leads":2,"total_income":15.98996,"total_cost":6.89878,"total_net":9.09118,"epc":0.761426666,"avg_cpc":0.328513333,"conv_rate":0,"roi":131.779532033,"cpa":3.44939,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":102,"total_click_throughs":67,"total_leads":2,"total_income":34.96252,"total_cost":82.80821,"total_net":-47.84569,"epc":0.342769803,"avg_cpc":0.811845196,"conv_rate":2.9851,"roi":-57.778920713,"cpa":41.404105,"currency":"USD"}
+    },
+    {
+      "name": "random 79",
+      "profiles": [
+        {"rows": [["16406","9272","5414","46028.87988","27363.95011"],["740","441","214","473.78949","216.29524"]],
+         "answer": {"total_clicks":17146,"total_click_throughs":9713,"total_leads":5628,"total_income":46502.66937,"total_cost":27580.24535,"total_net":18922.42402,"epc":2.712158484,"avg_cpc":1.608552744,"conv_rate":57.943,"roi":68.60861381,"cpa":4.900541106,"currency":"USD"}},
+        {"rows": [["446","160","0","1110.87481","0.04263"]],
+         "answer": {"total_clicks":446,"total_click_throughs":160,"total_leads":0,"total_income":1110.87481,"total_cost":0.04263,"total_net":1110.83218,"epc":2.490750695,"avg_cpc":9.5582e-5,"conv_rate":0,"roi":2605752.240206427,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":17592,"total_click_throughs":9873,"total_leads":5628,"total_income":47613.54418,"total_cost":27580.28798,"total_net":20033.2562,"epc":2.706545258,"avg_cpc":1.567774441,"conv_rate":57.004,"roi":72.636138588,"cpa":4.900548681,"currency":"USD"}
+    },
+    {
+      "name": "random 80",
+      "profiles": [
+        {"rows": [["1","0","0","0.16683","0.00009"]],
+         "answer": {"total_clicks":1,"total_click_throughs":0,"total_leads":0,"total_income":0.16683,"total_cost":9.0e-5,"total_net":0.16674,"epc":0.16683,"avg_cpc":9.0e-5,"conv_rate":0,"roi":185266.666666667,"cpa":0,"currency":"USD"}},
+        {"rows": [["0","0","0","0.00086","0.59001"],["0","0","0","0.35445","0.96857"],["53","15","2","287.98180","37.88320"]],
+         "answer": {"total_clicks":53,"total_click_throughs":15,"total_leads":2,"total_income":288.33711,"total_cost":39.44178,"total_net":248.89533,"epc":5.44032283,"avg_cpc":0.744184528,"conv_rate":13.3333,"roi":631.044871707,"cpa":19.72089,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":54,"total_click_throughs":15,"total_leads":2,"total_income":288.50394,"total_cost":39.44187,"total_net":249.06207,"epc":5.342665555,"avg_cpc":0.730405,"conv_rate":13.3333,"roi":631.466180483,"cpa":19.720935,"currency":"USD"}
+    },
+    {
+      "name": "random 81",
+      "profiles": [
+        {"rows": [["1","1","0","0.00092","0.12072"]],
+         "answer": {"total_clicks":1,"total_click_throughs":1,"total_leads":0,"total_income":0.00092,"total_cost":0.12072,"total_net":-0.1198,"epc":0.00092,"avg_cpc":0.12072,"conv_rate":0,"roi":-99.237905898,"cpa":0,"currency":"USD"}},
+        {"rows": [["121","93","75","0.96830","4.48511"]],
+         "answer": {"total_clicks":121,"total_click_throughs":93,"total_leads":75,"total_income":0.9683,"total_cost":4.48511,"total_net":-3.51681,"epc":0.008002479,"avg_cpc":0.037067024,"conv_rate":80.6452,"roi":-78.410785912,"cpa":0.059801466,"currency":"USD"}},
+        {"rows": [["5","4","0","0.00761","0.00081"]],
+         "answer": {"total_clicks":5,"total_click_throughs":4,"total_leads":0,"total_income":0.00761,"total_cost":0.00081,"total_net":0.0068,"epc":0.001522,"avg_cpc":0.000162,"conv_rate":0,"roi":839.50617284,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":127,"total_click_throughs":98,"total_leads":75,"total_income":0.97683,"total_cost":4.60664,"total_net":-3.62981,"epc":0.007691574,"avg_cpc":0.036272755,"conv_rate":76.5306,"roi":-78.795173923,"cpa":0.061421866,"currency":"USD"}
+    },
+    {
+      "name": "random 82",
+      "profiles": [
+        {"rows": [["59","0","0","0.01829","13.73253"],["78926","14487","0","4035.04436","2.64733"]],
+         "answer": {"total_clicks":78985,"total_click_throughs":14487,"total_leads":0,"total_income":4035.06265,"total_cost":16.37986,"total_net":4018.68279,"epc":0.051086442,"avg_cpc":0.000207379,"conv_rate":0,"roi":24534.292661842,"cpa":0,"currency":"USD"}},
+        {"rows": [["538","120","43","0.65064","395.44564"],["26627","2279","1949","6478.05949","0.00000"]],
+         "answer": {"total_clicks":27165,"total_click_throughs":2399,"total_leads":1992,"total_income":6478.71013,"total_cost":395.44564,"total_net":6083.26449,"epc":0.238494759,"avg_cpc":0.014557174,"conv_rate":83.0346,"roi":1538.331410102,"cpa":0.198516887,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":106150,"total_click_throughs":16886,"total_leads":1992,"total_income":10513.77278,"total_cost":411.8255,"total_net":10101.94728,"epc":0.099046375,"avg_cpc":0.003879656,"conv_rate":11.7968,"roi":2452.967890526,"cpa":0.206739708,"currency":"USD"}
+    },
+    {
+      "name": "random 83",
+      "profiles": [
+        {"rows": [["1","1","0","1.59552","0.00001"],["0","0","1","0.00032","0.48137"],["360","248","227","332.91303","7.11201"]],
+         "answer": {"total_clicks":361,"total_click_throughs":249,"total_leads":228,"total_income":334.50887,"total_cost":7.59339,"total_net":326.91548,"epc":0.926617368,"avg_cpc":0.021034321,"conv_rate":91.5663,"roi":4305.263920331,"cpa":0.033304342,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":361,"total_click_throughs":249,"total_leads":228,"total_income":334.50887,"total_cost":7.59339,"total_net":326.91548,"epc":0.926617368,"avg_cpc":0.021034321,"conv_rate":91.5663,"roi":4305.263920331,"cpa":0.033304342,"currency":"USD"}
+    },
+    {
+      "name": "random 84",
+      "profiles": [
+        {"rows": [["22","9","4","9.97164","0.00406"]],
+         "answer": {"total_clicks":22,"total_click_throughs":9,"total_leads":4,"total_income":9.97164,"total_cost":0.00406,"total_net":9.96758,"epc":0.453256363,"avg_cpc":0.000184545,"conv_rate":44.4444,"roi":245506.896551724,"cpa":0.001015,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":22,"total_click_throughs":9,"total_leads":4,"total_income":9.97164,"total_cost":0.00406,"total_net":9.96758,"epc":0.453256363,"avg_cpc":0.000184545,"conv_rate":44.4444,"roi":245506.896551724,"cpa":0.001015,"currency":"USD"}
+    },
+    {
+      "name": "random 85",
+      "profiles": [
+        {"rows": [["21612","17471","0","1872.09150","942.60862"],["8","3","2","4.34014","0.00000"]],
+         "answer": {"total_clicks":21620,"total_click_throughs":17474,"total_leads":2,"total_income":1876.43164,"total_cost":942.60862,"total_net":933.82302,"epc":0.086791472,"avg_cpc":0.043598918,"conv_rate":0.0114,"roi":99.067948265,"cpa":471.30431,"currency":"USD"}},
+        {"rows": [["19","0","0","0.08884","0.00396"]],
+         "answer": {"total_clicks":19,"total_click_throughs":0,"total_leads":0,"total_income":0.08884,"total_cost":0.00396,"total_net":0.08488,"epc":0.004675789,"avg_cpc":0.000208421,"conv_rate":0,"roi":2143.434343434,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":21639,"total_click_throughs":17474,"total_leads":2,"total_income":1876.52048,"total_cost":942.61258,"total_net":933.9079,"epc":0.086719371,"avg_cpc":0.043560819,"conv_rate":0.0114,"roi":99.076536831,"cpa":471.30629,"currency":"USD"}
+    },
+    {
+      "name": "random 86",
+      "profiles": [
+        {"rows": [["153","42","0","36.51856","0.01944"],["4","1","1","0.00237","0.00002"],["62556","0","0","88702.30969","0.00937"]],
+         "answer": {"total_clicks":62713,"total_click_throughs":43,"total_leads":1,"total_income":88738.83062,"total_cost":0.02883,"total_net":88738.80179,"epc":1.414998973,"avg_cpc":4.59e-7,"conv_rate":2.3256,"roi":307800214.3253555,"cpa":0.02883,"currency":"USD"}},
+        {"rows": [["95","89","0","293.07072","34.67281"],["30","14","13","4.78689","48.21209"],["0","0","1","-2.39973","0.00006"]],
+         "answer": {"total_clicks":125,"total_click_throughs":103,"total_leads":14,"total_income":295.45788,"total_cost":82.88496,"total_net":212.57292,"epc":2.36366304,"avg_cpc":0.66307968,"conv_rate":13.5922,"roi":256.467421834,"cpa":5.920354285,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":62838,"total_click_throughs":146,"total_leads":15,"total_income":89034.2885,"total_cost":82.91379,"total_net":88951.37471,"epc":1.416886095,"avg_cpc":0.001319484,"conv_rate":10.274,"roi":107281.761827556,"cpa":5.527586,"currency":"USD"}
+    },
+    {
+      "name": "random 87",
+      "profiles": [
+        {"rows": [["88","62","0","222.87719","0.80109"],["748","0","1","43.66580","880.33752"]],
+         "answer": {"total_clicks":836,"total_click_throughs":62,"total_leads":1,"total_income":266.54299,"total_cost":881.13861,"total_net":-614.59562,"epc":0.318831327,"avg_cpc":1.053993552,"conv_rate":1.6129,"roi":-69.750163371,"cpa":881.13861,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":836,"total_click_throughs":62,"total_leads":1,"total_income":266.54299,"total_cost":881.13861,"total_net":-614.59562,"epc":0.318831327,"avg_cpc":1.053993552,"conv_rate":1.6129,"roi":-69.750163371,"cpa":881.13861,"currency":"USD"}
+    },
+    {
+      "name": "random 88",
+      "profiles": [
+        {"rows": [["7","1","0","0.00310","0.00034"]],
+         "answer": {"total_clicks":7,"total_click_throughs":1,"total_leads":0,"total_income":0.0031,"total_cost":0.00034,"total_net":0.00276,"epc":0.000442857,"avg_cpc":4.8571e-5,"conv_rate":0,"roi":811.764705882,"cpa":0,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":7,"total_click_throughs":1,"total_leads":0,"total_income":0.0031,"total_cost":0.00034,"total_net":0.00276,"epc":0.000442857,"avg_cpc":4.8571e-5,"conv_rate":0,"roi":811.764705882,"cpa":0,"currency":"USD"}
+    },
+    {
+      "name": "random 89",
+      "profiles": [
+        {"rows": [["7","1","1","16.01012","2.63088"]],
+         "answer": {"total_clicks":7,"total_click_throughs":1,"total_leads":1,"total_income":16.01012,"total_cost":2.63088,"total_net":13.37924,"epc":2.28716,"avg_cpc":0.37584,"conv_rate":100,"roi":508.546189868,"cpa":2.63088,"currency":"USD"}},
+        {"rows": [["51939","43412","28014","15517.18393","386.85856"]],
+         "answer": {"total_clicks":51939,"total_click_throughs":43412,"total_leads":28014,"total_income":15517.18393,"total_cost":386.85856,"total_net":15130.32537,"epc":0.298757849,"avg_cpc":0.007448325,"conv_rate":64.5305,"roi":3911.074210171,"cpa":0.013809472,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":51946,"total_click_throughs":43413,"total_leads":28015,"total_income":15533.19405,"total_cost":389.48944,"total_net":15143.70461,"epc":0.299025796,"avg_cpc":0.007497967,"conv_rate":64.5314,"roi":3888.091191895,"cpa":0.013902889,"currency":"USD"}
+    },
+    {
+      "name": "random 90",
+      "profiles": [
+        {"rows": [["578","2","2","0.58452","9.56494"]],
+         "answer": {"total_clicks":578,"total_click_throughs":2,"total_leads":2,"total_income":0.58452,"total_cost":9.56494,"total_net":-8.98042,"epc":0.00101128,"avg_cpc":0.016548339,"conv_rate":100,"roi":-93.88893187,"cpa":4.78247,"currency":"USD"}},
+        {"rows": [],
+         "answer": {"total_clicks":0,"total_click_throughs":0,"total_leads":0,"total_income":0,"total_cost":0,"total_net":0,"epc":0,"avg_cpc":0,"conv_rate":0,"roi":0,"cpa":0,"currency":"USD"}},
+        {"rows": [["70948","19224","12821","9842.09002","872.77857"],["2","1","0","-6.68292","1.25412"],["76","27","18","1067.97488","89.81927"]],
+         "answer": {"total_clicks":71026,"total_click_throughs":19252,"total_leads":12839,"total_income":10903.38198,"total_cost":963.85196,"total_net":9939.53002,"epc":0.153512544,"avg_cpc":0.01357041,"conv_rate":66.6892,"roi":1031.229943237,"cpa":0.075072198,"currency":"USD"}}
+      ],
+      "union": {"total_clicks":71604,"total_click_throughs":19254,"total_leads":12841,"total_income":10903.9665,"total_cost":973.4169,"total_net":9930.5496,"epc":0.152281527,"avg_cpc":0.013594448,"conv_rate":66.6926,"roi":1020.174356948,"cpa":0.075805381,"currency":"USD"}
+    }
+  ]
+}

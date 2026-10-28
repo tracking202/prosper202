@@ -75,6 +75,10 @@ SAFARI='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KH
 
 TAG="rb-pass $(date +%s)"
 START=$(($(date +%s) - 5))
+# The breakdown counts the rotator's clicks, recorded from this machine.
+# shellcheck source=tests/live/privacy.sh
+. "$HERE/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" || exit 2
 
 say "setup: a campaign, a landing page, two rotators and a redirector tracker ($TAG)"
 must "$(api POST /aff-networks "{\"aff_network_name\":\"$TAG\"}")" "category"

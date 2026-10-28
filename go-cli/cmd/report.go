@@ -95,20 +95,7 @@ var reportSummaryCmd = &cobra.Command{
 		}
 		params := collectReportParams(cmd)
 		if len(profiles) > 0 {
-			profileData, errorsOut, err := fetchMultiProfileObjects("reports/summary", params, profiles)
-			if err != nil {
-				return err
-			}
-			aggregated, err := aggregateNumericFields(profileData)
-			if err != nil {
-				return err
-			}
-			payload, err := buildMultiProfilePayload(profileData, aggregated, errorsOut)
-			if err != nil {
-				return err
-			}
-			render(payload)
-			return nil
+			return runMultiProfileSummary(params, profiles)
 		}
 
 		c, err := api.NewFromConfig()
