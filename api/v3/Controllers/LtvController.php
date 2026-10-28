@@ -29,6 +29,7 @@ use Prosper202\Ltv\MysqlCustomerRepository;
 use Prosper202\Ltv\MysqlIntegrationRepository;
 use Prosper202\Ltv\RecordNotFoundException;
 use Prosper202\Ltv\MysqlLtvRepository;
+use Prosper202\Ltv\LtvNumbers;
 use Prosper202\Ltv\MysqlSubscriptionRepository;
 use Prosper202\Ltv\MysqlWebhookRepository;
 use Prosper202\Ltv\RevenueReplay;
@@ -184,13 +185,13 @@ class LtvController
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
             $stmt = $this->conn->prepareRead(
-                'SELECT product_id, external_product_id, sku, name, price, currency, created_at, updated_at
+                'SELECT ' . self::PRODUCT_COLUMNS . '
                  FROM 202_products WHERE user_id = ?
                  ORDER BY product_id DESC LIMIT ? OFFSET ?'
             );
             $this->conn->bind($stmt, 'iii', [$this->userId, $limit, $offset]);
 
-            return ['data' => $this->conn->fetchAll($stmt)];
+            return ['data' => array_map(self::presentProduct(...), $this->conn->fetchAll($stmt))];
         });
     }
 
@@ -942,8 +943,20 @@ class LtvController
     {
         $stmt = $this->conn->prepareRead('SELECT ' . self::PRODUCT_COLUMNS . ' FROM 202_products WHERE product_id = ? AND user_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'ii', [$productId, $this->userId]);
+        $product = $this->conn->fetchOne($stmt);
 
-        return $this->conn->fetchOne($stmt);
+        return $product === null ? null : self::presentProduct($product);
+    }
+
+    /**
+     * A catalog product with its price a number, or null when it has none.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function presentProduct(array $row): array
+    {
+        return LtvNumbers::decimals($row, ['price']);
     }
 
     private function productLineItems(int $productId): int

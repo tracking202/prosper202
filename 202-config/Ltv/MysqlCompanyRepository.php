@@ -311,12 +311,6 @@ final class MysqlCompanyRepository
     }
 
     /**
-     * Companies with contact/revenue rollups aggregated live from attached
-     * customers (merged customer records excluded).
-     *
-     * @return array{rows: list<array<string, mixed>>, total: int}
-     */
-    /**
      * Type-ahead search for the merge picker: match name or domain
      * (LIKE-escaped), excluding one id (the merge target itself), with the
      * attached-contact count for display.
@@ -343,6 +337,13 @@ final class MysqlCompanyRepository
         return $this->conn->fetchAll($stmt);
     }
 
+    /**
+     * Companies with contact/revenue rollups aggregated live from attached
+     * customers (merged customer records excluded). last_activity_time is 0
+     * for a company with no customer.
+     *
+     * @return array{rows: list<array<string, mixed>>, total: int}
+     */
     public function listWithRollups(int $userId, int $limit = 50, int $offset = 0): array
     {
         $stmt = $this->conn->prepareRead(
@@ -361,7 +362,10 @@ final class MysqlCompanyRepository
              LIMIT ? OFFSET ?'
         );
         $this->conn->bind($stmt, 'iii', [$userId, max(1, $limit), max(0, $offset)]);
-        $rows = $this->conn->fetchAll($stmt);
+        $rows = array_map(static fn (array $row): array => LtvNumbers::integers(
+            LtvNumbers::decimals($row, ['total_revenue', 'mrr']),
+            ['contacts', 'order_count', 'last_activity_time']
+        ), $this->conn->fetchAll($stmt));
 
         $countStmt = $this->conn->prepareRead(
             'SELECT COUNT(*) AS total FROM 202_companies WHERE user_id = ?'
