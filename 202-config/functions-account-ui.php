@@ -342,9 +342,10 @@ function p202_account_save_currency(\Prosper202\Database\Connection $conn, int $
  * by $onCreate inside the same transaction, so an account never commits
  * without them; it must not open a transaction of its own.
  *
- * An edit that switches the user off deletes their remember-me keys in the
- * same transaction (RememberMeKeys): a browser kept signed in must not sign
- * back in when they are switched on again.
+ * An edit that switches the user off, or sets their password, deletes their
+ * remember-me keys in the same transaction (RememberMeKeys): a browser kept
+ * signed in must not sign back in when they are switched on again, nor a
+ * stolen cookie outlive the password an admin reset.
  *
  * @param array<string, string|int|null> $userSet  202_users column => value; the
  *   column names are the caller's own literals, never the request's
@@ -368,10 +369,10 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
         $types .= is_int($value) || $value === null ? 'i' : 's';
     }
     $values = array_values($userSet);
-    $switchesOff = array_key_exists('user_active', $userSet)
-        && !\Prosper202\User\UserStanding::isActive($userSet['user_active']);
+    $revokes = array_key_exists('user_pass', $userSet) || (array_key_exists('user_active', $userSet)
+        && !\Prosper202\User\UserStanding::isActive($userSet['user_active']));
 
-    return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId, $onCreate, $switchesOff): int {
+    return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId, $onCreate, $revokes): int {
         if ($editUserId !== null) {
             $stmt = $conn->prepareWrite('SELECT `user_id` FROM `202_users` WHERE `user_id` = ? AND `user_deleted` != 1 FOR UPDATE');
             $conn->bind($stmt, 'i', [$editUserId]);
@@ -382,7 +383,7 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
             $conn->bind($stmt, $types . 'i', [...$values, $editUserId]);
             $conn->executeUpdate($stmt);
             $userId = $editUserId;
-            if ($switchesOff) {
+            if ($revokes) {
                 \Prosper202\User\RememberMeKeys::revokeAll($conn, $userId);
             }
             $stmt = $conn->prepareWrite('DELETE FROM `202_user_role` WHERE `user_id` = ?');

@@ -1669,7 +1669,7 @@ p202 user update 1 --user-fname "Jane" --user-lname "Doe"
 p202 user delete 2
 ```
 
-When creating a user without `--user-pass`, the CLI asks for the password without echo (twice, so a typo is caught), or reads it as one line of stdin when piped. To change a password on update, use `--set-password` (the same prompt or pipe); changing your **own** password also needs `--current-password`, read first. A `--user-pass` value works on both but stays in shell history.
+When creating a user without `--user-pass`, the CLI asks for the password without echo (twice, so a typo is caught), or reads it as one line of stdin when piped. To change a password on update, use `--set-password` (the same prompt or pipe); changing your **own** password also needs `--current-password`, read first. A new password ends every browser the user is kept signed in on ("Keep me signed in"): their remember-me keys are deleted with it. A `--user-pass` value works on both but stays in shell history.
 
 | Flag              | Required (create) | Description         |
 |-------------------|-------------------|---------------------|
@@ -1810,6 +1810,7 @@ When server capabilities expose `async_jobs`, the CLI routes sync execution thro
 Server-side jobs are queue-driven; run the worker endpoint or cron worker (`202-cronjobs/sync-worker.php`) in environments where asynchronous processing is enabled.
 A server-side sync is run by the `--from` profile's install, which calls both profiles' URLs: only public `https://` addresses, with no redirect followed. A profile URL it refuses (`localhost`, a private or loopback address, plain `http://` to the internet, a link-local or metadata address) is a validation error (exit 1) whose hint names the profile to repoint with `p202 --profile <name> config set-url https://…`; the CLI does not then run the sync itself. Two installs on one machine or one private network sync once that install's `202-config.php` admits the other's address with `P202_WEBHOOK_ALLOW_NETWORKS` (write it as `http://127.0.0.1:8001`, not `localhost`), which also allows `http://` there. A job stopped by a refusal, a host that does not resolve, or one of the sync's caps (8 MiB of one answer, 200 pages of 500 records of one list, 900 seconds in all) carries `error_code` (see [the Sync API](../documentation/api/16-sync.md)) and exits 5 with that reason's next step.
 Server-side rotator rule re-sync after updates can be controlled with the server environment variable `SYNC_ROTATOR_RULE_RESYNC_ENABLED=0|1` (enabled by default).
+A server-side sync writes a redirector's rules on the target as one set (`PUT /rotators/{id}/rules`), which the target takes whole or refuses with nothing written; the refusal names the source rule. A target from before 1.9.79, which has no such route, has its rules replaced one at a time.
 
 ### Server-side sync capabilities not yet exposed in CLI
 

@@ -152,6 +152,15 @@ Never reference DB columns, tables, or config keys without verifying they exist 
 ### 3. Ordering dependencies — using values before they're initialized
 Config constants, DB connections, and other resources must be initialized before use. Example: checking `defined('SOME_CONSTANT')` before the file that defines it is loaded guarantees false. Trace the initialization order when adding code that depends on global state.
 
+A sign-in is initialization too. connect.php read the session's user, the
+roles every page asks, before the page tried the remember-me cookie that
+signs a closed browser back in, so on the cookie's first request the User
+was nobody's and the Super user was refused Account › Users (found in a live
+pass). Whatever builds an object from the session has to run after
+everything that can still change who the session is: the cookie is tried
+in connect.php before the read now, and `SessionSignInPathsTest` holds the
+order.
+
 ### 4. Silent data loss on malformed input
 Never use `json_decode(...) ?? []` or similar fallbacks that silently discard bad input. Malformed JSON, invalid formats, and parse failures must produce explicit errors. The user needs to know their input was rejected, not silently ignored.
 
@@ -348,6 +357,17 @@ its next use: `AUTH::signOut()` deletes the key its cookie names, and every
 write that switches a user off deletes all of theirs in its transaction
 (`RememberMeKeys`); `RememberMeKeysRevokedTest` holds every writer of
 `user_active`/`user_deleted` and every sign-out to that.
+
+A new password is the same act, and it was missed one fix later: the owner
+of a stolen cookie changes the password to lock the thief out, and the
+cookie went on signing in (measured live). Every writer of `user_pass`
+deletes the keys in its transaction now. One writer is not a change: the
+sign-in stores the password it has just verified again under a newer hash,
+and deleting there would sign every remembered browser out whenever the
+algorithm moves. A scan cannot tell those two apart, so the test lists each
+writer as one or the other and holds them to opposite answers. When a
+predicate decides what a write means, ask whether every write of the column
+means it.
 
 A row's change stamp is the same sweep over its writers. Every write of a
 customer's company set `updated_at` but the LTV maintenance job's link, so a

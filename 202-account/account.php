@@ -732,19 +732,26 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 		$passSaved = false;
         $passError = '';
         try {
-            $passConn = new \Prosper202\Database\Connection($db);
-            $update_stmt = $passConn->prepareWrite('UPDATE 202_users SET user_pass = ? WHERE user_id = ?');
-            $passConn->bind($update_stmt, 'si', [$new_hash, (int) ($_SESSION['user_own_id'] ?? 0)]);
-            $passConn->executeUpdate($update_stmt);
+            // The password and every remember-me key of the user, this
+            // browser's too (a stolen cookie is a copy of one), in one
+            // transaction; the session goes on.
+            \Prosper202\User\PasswordChange::store(
+                new \Prosper202\Database\Connection($db),
+                (int) ($_SESSION['user_own_id'] ?? 0),
+                $new_hash,
+                false
+            );
             $passSaved = true;
-        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+        } catch (\RuntimeException | \mysqli_sql_exception $e) {
             $passError = p202FailedQueryMessage(0, $e->getMessage());
         }
 		if (!$passSaved) {
             prosper_log('account', 'Failed to update password: ' . $passError);
 			$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your password could not be changed. Your old password still works; try again.'];
 		} else {
-			p202_account_flash('ok', 'Your password is changed.');
+			// Its key is gone with the rest: the cookie would only be refused.
+			AUTH::forgetRememberMeCookie();
+			p202_account_flash('ok', 'Your password is changed. Browsers kept signed in now need it to sign in again; this one stays signed in.');
 			p202_account_redirect('202-account/account.php#password');
 		}
 	}

@@ -434,4 +434,126 @@ final class SessionEndsWithUserIntegrationTest extends TestCase
             $password['output'] . $cookie['output'] . $session['output']
         );
     }
+
+    /**
+     * A browser holding only USER's remember-me cookie, on its first request.
+     * The licence service is not asked: a proxy that refuses answers as a
+     * network failure, which the licence check lets through, as it does when
+     * the service is down.
+     *
+     * @return array<string, string>
+     */
+    private static function cookieOnly(): array
+    {
+        return [
+            'P202_SU_SESSION' => 'none',
+            'P202_SU_REMEMBER' => self::cookie(self::USER),
+            'HTTPS_PROXY' => 'http://127.0.0.1:9',
+            'https_proxy' => 'http://127.0.0.1:9',
+            'NO_PROXY' => '',
+            'no_proxy' => '',
+        ];
+    }
+
+    /**
+     * The cookie signs the browser in in connect.php, before the user is
+     * read, so the first request has the user's roles: tried by the page,
+     * after the read, the User was nobody's and that request had none.
+     */
+    public function testTheFirstRequestByCookieHasTheUsersRoles(): void
+    {
+        $booted = self::request('call:booted', self::cookieOnly());
+        self::assertNull($booted['result']['uncaught'], $booted['output']);
+        self::assertSame(
+            ['user_id', 'user_own_id', 'user_name', 'session_fingerprint'],
+            $booted['result']['answer']['identity'],
+            'signed in before any page code runs'
+        );
+        self::assertTrue($booted['result']['answer']['may_change_settings']);
+
+        $may = self::request('call:may', self::cookieOnly() + ['P202_SU_PERMISSION' => 'add_users']);
+        self::assertNull($may['result']['uncaught'], $may['output']);
+        self::assertSame(
+            ['signed_in_as' => self::USER, 'may' => true],
+            $may['result']['answer'],
+            "hasPermission('add_users') on the first request"
+        );
+    }
+
+    public function testAPermissionGatedPageIsServedOnTheFirstRequestByCookie(): void
+    {
+        $page = self::request('202-account/user-management.php', self::cookieOnly());
+        self::assertNull($page['result']['uncaught'], $page['output']);
+        // No status set is a 200; the refusal was a redirect to the account page.
+        self::assertContains(
+            $page['result']['status'],
+            [false, 200],
+            'Account › Users is served, not sent to the account page'
+        );
+        self::assertFalse($page['result']['denied']);
+        self::assertStringContainsString('name="user_fname"', $page['output'], 'the add-a-user form');
+        self::assertContains('user_id', $page['result']['session_keys']);
+        self::assertSame(1, self::rows('202_auth_keys', self::USER), 'the key is kept for the next session');
+    }
+
+    /** A session signed in already is not replaced by a cookie, and the cookie is not read. */
+    public function testASignedInSessionIsNotReplacedByAnotherUsersCookie(): void
+    {
+        $may = self::request('call:may', [
+            'P202_SU_REMEMBER' => self::cookie(self::OTHER),
+            'P202_SU_PERMISSION' => 'add_users',
+        ]);
+        self::assertNull($may['result']['uncaught'], $may['output']);
+        self::assertSame(['signed_in_as' => self::USER, 'may' => true], $may['result']['answer']);
+        self::assertTrue($may['result']['cookie_kept']);
+    }
+
+    /** The statements a request sent, from the runner's count. */
+    private static function questions(array $request): int
+    {
+        $count = $request['result']['questions'];
+        self::assertIsInt($count, $request['output']);
+
+        return $count;
+    }
+
+    /**
+     * A session signed in already reads nothing more for carrying a cookie:
+     * the cookie is tried only for a session that claims no sign-in, and that
+     * claim is the session's own fields, not a read of the user.
+     */
+    public function testASignedInSessionReadsNothingMoreForItsCookie(): void
+    {
+        $without = self::request('call:booted');
+        $with = self::request('call:booted', ['P202_SU_REMEMBER' => self::cookie(self::USER)]);
+        self::assertNull($with['result']['uncaught'], $with['output']);
+        self::assertSame(self::questions($without), self::questions($with));
+    }
+
+    /**
+     * A request reads its cookie once: the sign-in page, which asks for the
+     * cookie after connect.php did, reads nothing again. A forged cookie costs
+     * the one read of the key it names.
+     */
+    public function testACookieIsReadOnceARequest(): void
+    {
+        $forged = self::USER . '-key' . self::USER . '-' . str_repeat('0', 64);
+        $none = self::request('202-login.php', ['P202_SU_SESSION' => 'none']);
+        $refused = self::request('202-login.php', ['P202_SU_SESSION' => 'none', 'P202_SU_REMEMBER' => $forged]);
+        self::assertNull($refused['result']['uncaught'], $refused['output']);
+        self::assertNotContains('user_id', $refused['result']['session_keys']);
+        self::assertSame(1, self::questions($refused) - self::questions($none), 'the key read, once');
+    }
+
+    /**
+     * The sign-in page, which asks for the cookie itself, finds the browser
+     * signed in by connect.php and sends it on to the app.
+     */
+    public function testTheSignInPageSendsABrowserSignedInByItsCookieOn(): void
+    {
+        $page = self::request('202-login.php', self::cookieOnly());
+        self::assertNull($page['result']['uncaught'], $page['output']);
+        self::assertSame(302, $page['result']['status']);
+        self::assertContains('user_id', $page['result']['session_keys']);
+    }
 }

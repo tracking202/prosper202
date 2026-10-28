@@ -14,15 +14,19 @@
  *       | call:logged_in            AUTH::logged_in(), with connect.php's User
  *       | call:logged_in_unread     the same with no User read this request
  *       | call:remember             AUTH::logged_in_with_remember()
+ *       | call:may                  who the session is signed in as, and whether
+ *                                   connect.php's User has P202_SU_PERMISSION
  *       | call:sign_out             AUTH::signOut()
  *       | call:authenticate         AUTH::authenticate(P202_SU_NAME, P202_SU_PASS)
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_SU_USER, P202_SU_SESSION_DIR,
- *       P202_SU_SESSION (none: no session), P202_SU_OWN (user_own_id, when not
- *       P202_SU_USER), P202_SU_REMEMBER (the remember_me cookie),
+ *       P202_SU_SESSION (none: no session; anonymous: a session holding only
+ *       its token, as a browser that has not signed in has), P202_SU_OWN
+ *       (user_own_id, when not P202_SU_USER), P202_SU_REMEMBER (the
+ *       remember_me cookie), P202_SU_GET (a JSON object: the query string),
  *       P202_SU_POST (a JSON object: a POST; "token": "SESSION" sends the
  *       session's), P202_SU_AJAX=1 (X-Requested-With, as jQuery sends it) or
  *       fetch (Sec-Fetch-Dest: empty, as a browser marks fetch()),
- *       P202_SU_NAME, P202_SU_PASS
+ *       P202_SU_NAME, P202_SU_PASS, P202_SU_PERMISSION (call:may)
  *
  * Prints what the page printed, then one line: "@@RESULT " and a JSON object
  * with the status, whether 202-access-denied.php answered, the session's id
@@ -72,15 +76,20 @@ if (getenv('P202_SU_AJAX') === 'fetch') {
     $_SERVER['HTTP_SEC_FETCH_DEST'] = 'empty';
     $_SERVER['HTTP_SEC_FETCH_MODE'] = 'cors';
 }
-$_GET = [];
+$_GET = json_decode((string) (getenv('P202_SU_GET') ?: '{}'), true, 8, JSON_THROW_ON_ERROR);
 $_POST = $post;
-$_REQUEST = $post;
+$_REQUEST = array_merge($_GET, $post);
 $remember = (string) getenv('P202_SU_REMEMBER');
 $_COOKIE = $remember === '' ? [] : ['remember_me' => $remember];
 
 $runnerToken = 'p202sessionuserrunnertoken000000';
 session_save_path($sessionDir);
-if (getenv('P202_SU_SESSION') !== 'none') {
+if (getenv('P202_SU_SESSION') === 'anonymous') {
+    session_id('p202su' . bin2hex(random_bytes(8)));
+    session_start();
+    $_SESSION = ['token' => $runnerToken];
+    session_write_close();
+} elseif (getenv('P202_SU_SESSION') !== 'none') {
     session_id('p202su' . bin2hex(random_bytes(8)));
     session_start();
     $_SESSION = [
@@ -109,7 +118,19 @@ $answer = null;
 $uncaught = null;
 register_shutdown_function(static function () use (&$answer, &$uncaught, $root, $signedInAs): void {
     $denied = in_array(realpath($root . '/202-access-denied.php'), array_map('realpath', get_included_files()), true);
+    // The statements the app's connection was sent, this one and the
+    // runner's own included: a count to compare between two requests.
+    $questions = null;
+    if (class_exists('DB', false)) {
+        try {
+            $status = DB::getInstance()->getConnection()->query("SHOW SESSION STATUS LIKE 'Questions'");
+            $questions = $status instanceof mysqli_result ? (int) ($status->fetch_row()[1] ?? -1) : null;
+        } catch (\Throwable) {
+            $questions = null;
+        }
+    }
     echo "\n@@RESULT ", json_encode([
+        'questions' => $questions,
         'status' => http_response_code(),
         'denied' => $denied,
         'signed_in_as' => $signedInAs,
@@ -185,6 +206,11 @@ if ($call !== null) {
             return AUTH::logged_in();
         })(),
         'remember' => AUTH::logged_in_with_remember(),
+        'may' => [
+            'signed_in_as' => (int) ($_SESSION['user_id'] ?? 0),
+            'may' => $GLOBALS['userObj'] instanceof User
+                && $GLOBALS['userObj']->hasPermission((string) getenv('P202_SU_PERMISSION')),
+        ],
         'sign_out' => (static function (): bool {
             AUTH::signOut();
             return true;

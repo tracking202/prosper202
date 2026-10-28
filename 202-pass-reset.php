@@ -66,24 +66,23 @@ if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 	if (!$error) {
 
 		$hasher = function_exists('hash_user_pass') ? 'hash_user_pass' : 'salt_user_pass';
-		$user_pass = $hasher($_POST['user_pass']);
-		$mysql['user_pass'] = $db->real_escape_string($user_pass);
+		$user_pass = (string) $hasher($_POST['user_pass']);
 
-		$mysql['user_id'] = $db->real_escape_string($user_row['user_id']);
-
-		// Clear the reset key as well as the timestamp so the link is single-use
-		// and cannot be replayed even before the 3-day window elapses.
-		$user_sql = "UPDATE 	202_users
-						  SET		user_pass='" . $mysql['user_pass'] . "',
-									user_pass_key=NULL,
-									user_pass_time='0'
-						  WHERE	user_id='" . $mysql['user_id'] . "'";
-		$user_result = _mysqli_query($db, $user_sql);
-
-		if ($user_result === false) {
-			$error['user_pass'] = '<div class="error">Could not save your new password, please try again.</div>';
-		} else {
+		// The password, the reset key and its time cleared (the link is
+		// single-use, even inside its 3 days), and every remember-me key of the
+		// user deleted, in one transaction: a reset is how an owner locks out
+		// whoever holds a stolen cookie.
+		try {
+			\Prosper202\User\PasswordChange::store(
+				new \Prosper202\Database\Connection($db),
+				(int) $user_row['user_id'],
+				$user_pass,
+				true
+			);
 			$success = true;
+		} catch (\RuntimeException | \mysqli_sql_exception $e) {
+			error_log('202-pass-reset.php: the new password was not stored: ' . p202FailedQueryMessage(0, $e->getMessage()));
+			$error['user_pass'] = '<div class="error">Could not save your new password, please try again.</div>';
 		}
 	}
 }

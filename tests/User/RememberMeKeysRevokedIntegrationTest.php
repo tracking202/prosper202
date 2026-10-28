@@ -13,16 +13,19 @@ use Prosper202\User\UserDataPurge;
 /**
  * A remember-me key ends with what ends its sign-in: the sign-out deletes the
  * key of the browser signing out (and no other), and every writer that leaves
- * a user unable to act deletes all of theirs in the same transaction, so the
- * cookie is refused afterwards, also once the user is switched on again.
+ * a user unable to act, or gives them a new password, deletes all of theirs in
+ * the same transaction, so the cookie is refused afterwards, also once the
+ * user is switched on again. A rehash of the password at sign-in keeps them.
  *
- * The sign-out runs as the web server runs it, in a process of its own
- * (tests/Auth/fixtures/session-user-runner.php); the writers run here on the
- * scratch database: Account › Users' save (p202_account_save_user(), lifted
- * from functions-account-ui.php), PUT /users/{id} (UsersController::update()),
- * MysqlUserRepository::update() and the delete (UserDataPurge::deleteUser()).
- * A revocation that fails rolls the switch-off back, and a sign-out whose
- * revocation fails still ends the session and says so.
+ * The sign-out, Personal settings' password change and the reset page run as
+ * the web server runs them, in a process of their own
+ * (tests/Auth/fixtures/session-user-runner.php); the other writers run here on
+ * the scratch database: Account › Users' save (p202_account_save_user(),
+ * lifted from functions-account-ui.php), PUT /users/{id}
+ * (UsersController::update()), MysqlUserRepository::update(),
+ * PasswordChange::store() and the delete (UserDataPurge::deleteUser()). A
+ * revocation that fails rolls the switch-off or the password back, and a
+ * sign-out whose revocation fails still ends the session and says so.
  *
  * Needs a 202-config.php (connect.php exits without one) and P202_TEST_DB_*.
  *
@@ -51,6 +54,7 @@ final class RememberMeKeysRevokedIntegrationTest extends TestCase
             return;
         }
         require_once $root . '/202-config/version.php';
+        require_once $root . '/202-config/functions-auth.php';
         require_once $root . '/tests/Config/fixtures/lift-function.php';
         if (!function_exists('p202_account_save_user')) {
             eval(lift_function($root . '/202-config/functions-account-ui.php', 'p202_account_save_user'));
@@ -344,5 +348,258 @@ final class RememberMeKeysRevokedIntegrationTest extends TestCase
         self::assertSame([self::key(self::OTHER, 'a')], self::keys(self::OTHER));
         self::q('UPDATE 202_users SET user_deleted = 0 WHERE user_id = ' . self::USER);
         self::assertFalse(self::signsIn(self::cookie(self::USER, 'a')), 'restored, the old cookie signs nobody in');
+    }
+
+    private const OLD_PASSWORD = 'old-password-1';
+    private const NEW_PASSWORD = 'new-password-2';
+
+    private static function setPassword(int $user, string $stored): void
+    {
+        self::q('UPDATE 202_users SET user_pass = ' . self::str($stored) . " WHERE user_id = $user");
+    }
+
+    private static function stored(int $user, string $column = 'user_pass'): ?string
+    {
+        $result = self::$db->query("SELECT `$column` FROM 202_users WHERE user_id = $user");
+        self::assertInstanceOf(\mysqli_result::class, $result);
+        $value = $result->fetch_row()[0] ?? null;
+
+        return $value === null ? null : (string) $value;
+    }
+
+    private static function passwordIs(int $user, string $plain): bool
+    {
+        return \verify_user_pass($plain, (string) self::stored($user))['valid'];
+    }
+
+    /** What Personal settings' password form posts, with the session's token. */
+    private static function passwordForm(string $current, string $new): string
+    {
+        return json_encode([
+            'change_user_pass' => '1',
+            'token' => 'SESSION',
+            'user_pass' => $current,
+            'new_user_pass' => $new,
+            'retype_new_user_pass' => $new,
+        ], JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * The user changes their own password in a remembered browser: every key
+     * of theirs goes, that browser's too (a stolen cookie is a copy of one),
+     * and that browser's session goes on, its cookie cleared.
+     */
+    public function testChangingYourOwnPasswordRevokesEveryKeyAndTheChangingBrowserStaysSignedIn(): void
+    {
+        self::setPassword(self::USER, password_hash(self::OLD_PASSWORD, PASSWORD_DEFAULT));
+
+        $page = self::request('202-account/account.php', [
+            'P202_SU_REMEMBER' => self::cookie(self::USER, 'a'),
+            'P202_SU_POST' => self::passwordForm(self::OLD_PASSWORD, self::NEW_PASSWORD),
+        ]);
+        $r = $page['result'];
+        self::assertNull($r['uncaught'], $page['output']);
+        self::assertSame(303, $r['status'], 'the form redirects as saved');
+        self::assertTrue(self::passwordIs(self::USER, self::NEW_PASSWORD), 'the new password is stored');
+
+        self::assertFalse($r['denied']);
+        self::assertSame($r['signed_in_as'], $r['session_id'], 'the same session');
+        self::assertContains('user_id', $r['session_keys'], 'still signed in');
+        self::assertFileExists(self::$sessions . '/sess_' . $r['session_id']);
+        self::assertFalse($r['cookie_kept'], "the browser's cookie is cleared: its key is gone");
+
+        self::assertSame([], self::keys(self::USER), "every key of the user, the changing browser's included");
+        self::assertSame([self::key(self::OTHER, 'a')], self::keys(self::OTHER), "and no one else's");
+        self::assertFalse(self::signsIn(self::cookie(self::USER, 'a')), "a copy of the changing browser's cookie");
+        self::assertFalse(self::signsIn(self::cookie(self::USER, 'b')), "the user's other remembered browser");
+    }
+
+    public function testAPasswordChangeWhoseRevocationFailsIsNotSaved(): void
+    {
+        $old = password_hash(self::OLD_PASSWORD, PASSWORD_DEFAULT);
+        self::setPassword(self::USER, $old);
+        try {
+            $page = self::request('202-account/account.php', [
+                'P202_SU_REMEMBER' => self::cookie(self::USER, 'a'),
+                'P202_SU_POST' => self::passwordForm(self::OLD_PASSWORD, self::NEW_PASSWORD),
+                'P202_SU_AFTER_BOOT_SQL' => 'RENAME TABLE 202_auth_keys TO 202_auth_keys_away',
+            ]);
+        } finally {
+            self::q('RENAME TABLE 202_auth_keys_away TO 202_auth_keys');
+        }
+        self::assertNull($page['result']['uncaught'], $page['output']);
+        self::assertStringContainsString('Your password could not be changed.', $page['output']);
+        self::assertSame($old, self::stored(self::USER), 'the old password stands');
+        self::assertCount(2, self::keys(self::USER));
+        self::assertTrue($page['result']['cookie_kept']);
+    }
+
+    private static function startReset(int $user, string $key): void
+    {
+        self::q('UPDATE 202_users SET user_pass_key = ' . self::str($key) . ', user_pass_time = ' . time()
+            . " WHERE user_id = $user");
+    }
+
+    /**
+     * The reset page's form, posted by a browser that has not signed in.
+     *
+     * @param array<string, string> $env
+     * @return array{output: string, result: array<string, mixed>}
+     */
+    private static function reset(string $key, string $password, array $env = []): array
+    {
+        return self::request('202-pass-reset.php', $env + [
+            'P202_SU_SESSION' => 'anonymous',
+            'P202_SU_GET' => json_encode(['key' => $key], JSON_THROW_ON_ERROR),
+            'P202_SU_POST' => json_encode(
+                ['token' => 'SESSION', 'user_pass' => $password, 'verify_user_pass' => $password],
+                JSON_THROW_ON_ERROR
+            ),
+        ]);
+    }
+
+    public function testAResetRevokesEveryKeyOfTheUser(): void
+    {
+        $key = str_repeat('ab', 32);
+        self::startReset(self::USER, $key);
+
+        $page = self::reset($key, self::NEW_PASSWORD);
+        self::assertNull($page['result']['uncaught'], $page['output']);
+        self::assertStringContainsString('Your password has been reset.', $page['output']);
+        self::assertTrue(self::passwordIs(self::USER, self::NEW_PASSWORD));
+        self::assertNull(self::stored(self::USER, 'user_pass_key'), 'the link is used up');
+
+        self::assertSame([], self::keys(self::USER));
+        self::assertSame([self::key(self::OTHER, 'a')], self::keys(self::OTHER));
+        self::assertFalse(self::signsIn(self::cookie(self::USER, 'a')));
+    }
+
+    public function testAResetWhoseRevocationFailsIsNotSaved(): void
+    {
+        $key = str_repeat('cd', 32);
+        self::startReset(self::USER, $key);
+        try {
+            $page = self::reset($key, self::NEW_PASSWORD, [
+                'P202_SU_AFTER_BOOT_SQL' => 'RENAME TABLE 202_auth_keys TO 202_auth_keys_away',
+            ]);
+        } finally {
+            self::q('RENAME TABLE 202_auth_keys_away TO 202_auth_keys');
+        }
+        self::assertNull($page['result']['uncaught'], $page['output']);
+        self::assertStringContainsString('Could not save your new password', $page['output']);
+        self::assertSame('x', self::stored(self::USER), 'the old password stands');
+        self::assertSame($key, self::stored(self::USER, 'user_pass_key'), 'and the link still works');
+        self::assertCount(2, self::keys(self::USER));
+    }
+
+    /**
+     * Each writer that sets another user's password (or, through the API,
+     * the user's own with the current one).
+     *
+     * @return array<string, array{callable(\mysqli, int, string): void}>
+     */
+    public static function passwordWriters(): array
+    {
+        $page = static function (\mysqli $db, int $user, string $password): void {
+            p202_account_save_user(new Connection($db), $user, ['user_pass' => \hash_user_pass($password)], 2);
+        };
+        $admin = static function (\mysqli $db, int $user, string $password): void {
+            (new \Api\V3\Controllers\UsersController($db))->update($user, ['user_pass' => $password], 1);
+        };
+        $own = static function (\mysqli $db, int $user, string $password): void {
+            self::setPassword($user, password_hash(self::OLD_PASSWORD, PASSWORD_DEFAULT));
+            (new \Api\V3\Controllers\UsersController($db))
+                ->update($user, ['user_pass' => $password, 'current_password' => self::OLD_PASSWORD], $user);
+        };
+        $repository = static function (\mysqli $db, int $user, string $password): void {
+            (new MysqlUserRepository(new Connection($db)))->update($user, ['user_pass' => $password]);
+        };
+        $store = static function (\mysqli $db, int $user, string $password): void {
+            \Prosper202\User\PasswordChange::store(new Connection($db), $user, \hash_user_pass($password), false);
+        };
+
+        return [
+            'Account › Users (p202_account_save_user)' => [$page],
+            "PUT /users/{id}, another user's" => [$admin],
+            'PUT /users/{id}, your own' => [$own],
+            'MysqlUserRepository::update' => [$repository],
+            'PasswordChange::store' => [$store],
+        ];
+    }
+
+    /**
+     * @dataProvider passwordWriters
+     * @param callable(\mysqli, int, string): void $write
+     */
+    public function testSettingAPasswordRevokesEveryKeyOfTheUser(callable $write): void
+    {
+        $write(self::$db, self::USER, self::NEW_PASSWORD);
+        self::assertTrue(self::passwordIs(self::USER, self::NEW_PASSWORD));
+        self::assertSame([], self::keys(self::USER));
+        self::assertSame([self::key(self::OTHER, 'a')], self::keys(self::OTHER));
+        self::assertFalse(self::signsIn(self::cookie(self::USER, 'b')), 'the old cookie signs nobody in');
+    }
+
+    /**
+     * @dataProvider passwordWriters
+     * @param callable(\mysqli, int, string): void $write
+     */
+    public function testAPasswordWhoseRevocationFailsIsNotStored(callable $write): void
+    {
+        self::q('RENAME TABLE 202_auth_keys TO 202_auth_keys_away');
+        try {
+            $write(self::$db, self::USER, self::NEW_PASSWORD);
+            $threw = null;
+        } catch (\Throwable $e) {
+            $threw = $e;
+        } finally {
+            self::q('RENAME TABLE 202_auth_keys_away TO 202_auth_keys');
+        }
+        self::assertNotNull($threw, 'the writer said nothing of a failed revocation');
+        $chain = '';
+        for ($e = $threw; $e !== null; $e = $e->getPrevious()) {
+            $chain .= get_class($e) . ': ' . $e->getMessage() . "\n";
+        }
+        self::assertStringContainsString('Revoking the remember-me keys of user ' . self::USER . ' failed', $chain);
+        self::assertFalse(self::passwordIs(self::USER, self::NEW_PASSWORD), 'the new password was rolled back');
+        self::assertCount(2, self::keys(self::USER));
+    }
+
+    public function testAPasswordForAUserWhoIsNotThereStoresNothingAndRevokesNothing(): void
+    {
+        try {
+            $hash = \hash_user_pass('x-password');
+            \Prosper202\User\PasswordChange::store(new Connection(self::$db), 990899, $hash, false);
+            $threw = null;
+        } catch (\RuntimeException $e) {
+            $threw = $e->getMessage();
+        }
+        self::assertSame('Storing the password of user 990899 changed no row', $threw);
+        self::assertCount(2, self::keys(self::USER));
+        self::assertCount(1, self::keys(self::OTHER));
+    }
+
+    /**
+     * The same password, stored again under a newer hash as the user signs
+     * in, is not a new password: every remembered browser stays.
+     */
+    public function testARehashAtSignInKeepsTheKeys(): void
+    {
+        $legacy = md5('202' . md5(self::OLD_PASSWORD . '202'));
+        self::setPassword(self::USER, $legacy);
+
+        $signIn = self::request('call:authenticate', [
+            'P202_SU_SESSION' => 'none',
+            'P202_SU_NAME' => 'rk' . self::USER,
+            'P202_SU_PASS' => self::OLD_PASSWORD,
+        ]);
+        self::assertNull($signIn['result']['uncaught'], $signIn['output']);
+        self::assertTrue($signIn['result']['answer'], 'the legacy password signs in');
+        self::assertNotSame($legacy, self::stored(self::USER), 'and is stored again, rehashed');
+        self::assertNotNull(password_get_info((string) self::stored(self::USER))['algo']);
+        self::assertTrue(self::passwordIs(self::USER, self::OLD_PASSWORD), 'the same password');
+
+        self::assertCount(2, self::keys(self::USER), 'every remembered browser stays');
+        self::assertTrue(self::signsIn(self::cookie(self::USER, 'a')));
     }
 }
