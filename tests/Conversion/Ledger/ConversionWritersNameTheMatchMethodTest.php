@@ -63,6 +63,7 @@ final class ConversionWritersNameTheMatchMethodTest extends TestCase
     private const OTHER_RECORDS = [
         'api/v3/Apps/Android/InstallIntake.php' => [1, 'InstallIntake::record(), the intake\'s own write of the install'],
         '202-login.php' => [1, 'SignInRecord::record(), the sign-in log'],
+        '202-config/PaymentNotification/Processor.php' => [2, 'Processor::record(), the receiver\'s wrapper of the writer: a notification names its click by id'],
     ];
 
     /** The files that insert into the two tables, and the inserts each names match_method in. */
