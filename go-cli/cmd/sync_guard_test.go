@@ -135,7 +135,8 @@ func TestServerSidePathsStopOnARefusedProfileURL(t *testing.T) {
 // Any other answer to the request still runs the command on this machine,
 // as before: a server without the route (a 404, or a 405 from what serves
 // it), and a refusal of something else, such as an entity this CLI knows and
-// that server does not.
+// that server does not. The JSON answers are a 1.9.79 install's, measured
+// live; the 405 is a web server's in front of one, since the API gives none.
 func TestServerSidePathsStillFallBackForAnyOtherAnswer(t *testing.T) {
 	for _, answer := range []struct {
 		name   string
@@ -144,7 +145,7 @@ func TestServerSidePathsStillFallBackForAnyOtherAnswer(t *testing.T) {
 	}{
 		{"404", 404, `{"error":true,"message":"Not found","status":404}`},
 		{"405", 405, `<html><head><title>405 Not Allowed</title></head></html>`},
-		{"422 entity", 422, `{"error":true,"message":"Unsupported entity","status":422,"field_errors":{"entity":"Valid values: all, aff-networks"}}`},
+		{"422 entity", 422, `{"error":true,"message":"Unsupported entity","status":422,"field_errors":{"entity":"Valid values: all, aff-networks, ppc-networks, ppc-accounts, campaigns, landing-pages, text-ads, rotators, trackers"}}`},
 		{"422 source.nmae", 422, `{"error":true,"message":"Invalid source.nmae","status":422,"field_errors":{"source.nmae":"is not a field of a sync profile (accepted: url, api_key, name)"}}`},
 	} {
 		for _, path := range serverSidePaths {
