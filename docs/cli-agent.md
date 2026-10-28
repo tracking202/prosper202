@@ -293,6 +293,8 @@ A row is one stored value: clicks with no value for the dimension (no referer, n
 
 Rows tied on the sort column come back in id order, so paging with `--offset` (offset = rows read so far) neither skips nor repeats a row. `--sort` takes any metric column (`cpa`, `avg_cpc`, `total_click_throughs` included); an unknown one is refused by name.
 
+`report losers`, `report winners`, `report crosstab` and `campaign optimize` (its offers' `epc`) list the breakdown's figures unchanged under its names (`total_cost`, `avg_cpc`, `total_net`, `epc`, …), so they can be compared with `report breakdown` field by field; a sub-cent CPC is not rounded in `--json`. With `--payout`, losers and winners add `payout_net` (sales × payout − `total_cost`, what they classify and sort on): read that for profit at your stated value, and `total_net` for profit at the recorded revenue.
+
 Narrow any report with the Analyze pages' filters, which combine:
 
 ```bash

@@ -1055,6 +1055,12 @@ A row is one stored value; clicks with no value for the dimension (no referer, n
 
 Rows tied on the sort column come back in id order, so paging with `--offset` neither skips nor repeats a row.
 
+`report losers`, `report winners`, `report crosstab` and `campaign optimize` (its offers' `epc`) read these rows, and
+a figure they list under a breakdown column's name (`total_cost`, `avg_cpc`, `total_net`, `epc`, …) is the breakdown's
+as the server sent it: a $0.00125 CPC is 0.00125 in `--json` and `--csv`, and only the table rounds it, as it does for
+every report. A figure a command computes has a name of its own: with `--payout`, losers and winners add `payout_net`
+(sales × payout − `total_cost`, what the rows are classified and sorted on) beside the breakdown's `total_net`.
+
 ### Analytics shorthand
 
 ```bash
