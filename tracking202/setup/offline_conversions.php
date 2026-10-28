@@ -128,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($action === 'replace_key' || $action === 'delete_feed') {
-        $feedId = preg_match('/\A[1-9][0-9]{0,9}\z/D', (string) ($_POST['feed_id'] ?? '')) === 1 ? (int) $_POST['feed_id'] : 0;
+        $feedId = \Prosper202\Http\PostedId::read($_POST['feed_id'] ?? null) ?? 0;
         if ($action === 'replace_key') {
             $key = $feedId > 0 ? $feedStore->replaceKey($userId, $feedId, $now) : null;
             if ($key !== null) {
