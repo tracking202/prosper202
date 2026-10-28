@@ -62,15 +62,22 @@ URL with `t202id` added to its query (the parameters go before any `#fragment`,
 where a browser sends them). A rotator tracker links to
 `tracking202/redirect/rtr.php`, any other to `tracking202/redirect/dl.php`.
 
-**The base.** The tracking domain set in **Settings → Personal** (user 1's, as
-every page uses), or, when none is set, the host this request arrived at — the
+**The base.** The tracking domain the key's user set in **Settings →
+Personal**, or, when none is set, the host this request arrived at — the
 address you called the API on, port included — followed by the directory
 Prosper202 is installed in. (It was the server's own name and port, which
 behind a reverse proxy or a published container port is an address only the
-server can reach.) A domain stored with `http://` or `https://` keeps that
-scheme; otherwise the link uses the scheme this request arrived on, as a proxy
-reports it (`X-Forwarded-Proto`). Set a tracking domain before handing links
-out: the address you reach the API on is not always one a visitor can.
+server can reach.) Set a tracking domain before handing links out: the address
+you reach the API on is not always one a visitor can.
+
+**The scheme.** `https` unless the install is explicitly http-only. A domain
+stored with `https://` or `http://` keeps that scheme, whichever way the request
+came; a domain stored without one, or none at all, takes the scheme this
+request arrived on, as a proxy that terminates TLS reports it
+(`X-Forwarded-Proto`). Setup › Get Links builds its links on the same rule, so
+the page and this endpoint give one URL for the same tracker and request; to
+have links on `https://` from a client that calls the API over plain HTTP,
+store the domain as `https://track.example.com`.
 
 **The variables.** After `t202id` come the traffic source's custom variables
 (set on the traffic source in Setup → Traffic Sources), each as

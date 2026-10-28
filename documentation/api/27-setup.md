@@ -94,7 +94,7 @@ page's own script writes the same strings; a test runs it and compares):
 | `amount` | empty (pays the campaign's payout) | A number or the network's payout macro, e.g. `{payout}` |
 | `subid` | empty (`subid=` for you to fill) | The network's sub id macro: `{aff_sub}` (HasOffers), `#s2#` (Cake), `xxC1xx` (HitPath), `[=SID=]` (LinkTrust) |
 | `campaign_id` | none | The advanced pixel's `cid`: one of your live campaigns |
-| `scheme` | the tracking domain's | `http` or `https` |
+| `scheme` | the one the tracking domain is saved with, else the request's (as the page and tracker links decide it) | `http` or `https` |
 
 `amount` and `subid` are written in as given, so what would break a URL, an
 HTML attribute or a JavaScript string is refused: whitespace, quotes, `<`, `>`,

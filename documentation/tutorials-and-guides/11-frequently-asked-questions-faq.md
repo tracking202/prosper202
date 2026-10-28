@@ -32,6 +32,8 @@ In general it is best to install Prosper on its own standalone domain but people
 
 Serve it over HTTPS if you can. The click cookies a landing page or a conversion pixel on another site relies on are `Secure; SameSite=None`, and browsers only keep those over HTTPS.
 
+Tracking links, pixels and postback URLs (Get Links, Postback / Pixel, API integrations, and the API and CLI) use https:// unless your install is explicitly http-only: a tracking domain saved with `https://` or `http://` keeps that scheme, and one saved without a scheme takes the one you reach Prosper202 on. Save it as `https://track.example.com` to hand out https:// links whichever way you sign in, or as `http://track.example.com` on a domain with no certificate.
+
 Over plain HTTP, Prosper202 reads each click cookie's second copy (`tracking202subid-legacy` and so on), which browsers keep on the usual first-party terms:
 
 - A landing page or thank-you page on the tracking domain's own site works. An example is a tracker at `track.example.com` with a landing page at `www.example.com`.

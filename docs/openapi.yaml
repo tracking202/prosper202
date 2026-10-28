@@ -1396,10 +1396,11 @@ paths:
         The link to put in the traffic source, built as Setup > Get Links builds it.
         A landing-page tracker links to the landing page's URL with t202id added
         (before any #fragment); a rotator tracker to tracking202/redirect/rtr.php;
-        any other to tracking202/redirect/dl.php. The base is user 1's tracking
+        any other to tracking202/redirect/dl.php. The base is the caller's tracking
         domain, or the host this request arrived at (port included) when none is
-        set, plus the install directory; a domain stored with a scheme keeps it,
-        otherwise the request's scheme is used. After t202id come the traffic source's custom variables
+        set, plus the install directory; a domain stored with https:// or http://
+        keeps that scheme, otherwise the request's scheme is used (X-Forwarded-Proto
+        behind a TLS-terminating proxy), as Get Links builds it. After t202id come the traffic source's custom variables
         (parameter=placeholder), then each built-in token that has a value, and
         t202kw always. Values are written into the link as given and may not
         contain &, #, ?, whitespace or control characters; any other query
@@ -9499,7 +9500,7 @@ paths:
         - name: scheme
           in: query
           required: false
-          description: The URLs' scheme; by default the one the tracking domain is reached on.
+          description: The URLs' scheme; by default the one the tracking domain is saved with, or else the one this request arrived on, as Setup › Postback / Pixel decides it.
           schema:
             type: string
             enum: [http, https]

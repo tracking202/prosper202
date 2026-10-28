@@ -958,7 +958,7 @@ echo p202_account_render_flashes($extraFlashes);
 									<div class="col-12">
 										<label class="form-label" for="user_tracking_domain">Tracking domain</label>
 										<input type="text" class="form-control<?php echo p202_account_invalid($profileErrors, 'user_tracking_domain'); ?>" id="user_tracking_domain" name="user_tracking_domain" placeholder="<?php echo $e(\Prosper202\Http\RequestHost::fromServer($_SERVER) ?? ''); ?>" value="<?php echo $e($profileValue('user_tracking_domain', 'user_tracking_domain')); ?>">
-										<div class="form-text">Leave empty to build tracking links on this install's own domain.</div>
+										<div class="form-text">Leave empty to build tracking links on this install's own domain. Start it with https:// or http:// to choose the links' scheme; without one they use the scheme you reach Prosper202 on.</div>
 										<?php echo p202_account_field_error($profileErrors, 'user_tracking_domain'); ?>
 									</div>
 								</div>

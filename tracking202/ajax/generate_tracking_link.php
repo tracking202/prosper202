@@ -229,6 +229,11 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
     if ($get_variables_result === false) {
         record_mysql_error($get_variables);
     }
+    // And the link's base, the one GET /trackers/{id}/url builds the same
+    // link on: https unless the tracking domain is saved with http://, or
+    // saved without a scheme and this request came over plain HTTP.
+    $storedDomain = p202StoredTrackingDomain();
+    $linkBase = p202TrackingBaseForResponse($storedDomain);
 
     // The transaction opens BEFORE the edit path's DELETE. Editing a tracker is
     // implemented as delete-then-recreate, and with the DELETE outside the
@@ -549,38 +554,51 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 	}
 	
 
-	// ── The answer ─────────────────────────────────────────────────────
-	$trackingLinkParts = [];
-	if (($_POST['method_of_promotion'] ?? '') == 'directlink') {
-		$trackingLinkParts[] = 'http://' . getTrackingDomain() . get_absolute_url() . 'tracking202/redirect/dl.php?t202id=' . $tracker_id_public . $tracking_variable_string;
-	}
-	if (($_POST['tracker_type'] ?? '') == 2) {
-		$trackingLinkParts[] = 'http://' . getTrackingDomain() . get_absolute_url() . 'tracking202/redirect/rtr.php?t202id=' . $tracker_id_public . $tracking_variable_string;
-	}
-	if ((($_POST['method_of_promotion'] ?? '') == 'landingpage') or (($_POST['tracker_type'] ?? '') == 1)) {
-		$destination_url = ($parsed_url['scheme'] ?? 'http') . '://' .
-		                   ($parsed_url['host'] ?? '') .
-		                   (!empty($parsed_url['port']) ? ':' . $parsed_url['port'] : '') .
-		                   ($parsed_url['path'] ?? '') . '?';
-		if (!empty($parsed_url['query'])) {
-			$destination_url .= $parsed_url['query'] . '&';
-		}
-		// The variables go before the page's #fragment: after it, a browser
-		// never sends them, and the click arrives with no keyword or c1-c4.
-		// GET /trackers/{id}/url builds the same link.
-		$destination_url .= 't202id=' . $tracker_id_public . $tracking_variable_string;
-		if (!empty($parsed_url['fragment'])) {
-			$destination_url .= '#' . $parsed_url['fragment'];
-		}
-		$trackingLinkParts[] = $destination_url;
-	}
+    // ── The answer ─────────────────────────────────────────────────────
+    $trackingLinkParts = [];
+    $onLinkBase = false;
+    if (($_POST['method_of_promotion'] ?? '') == 'directlink') {
+        $trackingLinkParts[] = $linkBase . 'tracking202/redirect/dl.php?t202id=' . $tracker_id_public
+            . $tracking_variable_string;
+        $onLinkBase = true;
+    }
+    if (($_POST['tracker_type'] ?? '') == 2) {
+        $trackingLinkParts[] = $linkBase . 'tracking202/redirect/rtr.php?t202id=' . $tracker_id_public
+            . $tracking_variable_string;
+        $onLinkBase = true;
+    }
+    if ((($_POST['method_of_promotion'] ?? '') == 'landingpage') or (($_POST['tracker_type'] ?? '') == 1)) {
+        $destination_url = ($parsed_url['scheme'] ?? 'http') . '://' .
+                           ($parsed_url['host'] ?? '') .
+                           (!empty($parsed_url['port']) ? ':' . $parsed_url['port'] : '') .
+                           ($parsed_url['path'] ?? '') . '?';
+        if (!empty($parsed_url['query'])) {
+            $destination_url .= $parsed_url['query'] . '&';
+        }
+        // The variables go before the page's #fragment: after it, a browser
+        // never sends them, and the click arrives with no keyword or c1-c4.
+        // GET /trackers/{id}/url builds the same link.
+        $destination_url .= 't202id=' . $tracker_id_public . $tracking_variable_string;
+        if (!empty($parsed_url['fragment'])) {
+            $destination_url .= '#' . $parsed_url['fragment'];
+        }
+        $trackingLinkParts[] = $destination_url;
+    }
 
-	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) {
-		echo p202_flash('ok', 'Tracker updated. Your tracking link stays the same.');
-	}
-	foreach ($trackingLinkParts as $trackingLink) {
-		echo p202_setup_code_box($trackingLink, ['label' => 'Destination URL']);
-	}
+    if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) {
+        echo p202_flash('ok', 'Tracker updated. Your tracking link stays the same.');
+    }
+    foreach ($trackingLinkParts as $trackingLink) {
+        echo p202_setup_code_box($trackingLink, ['label' => 'Destination URL']);
+    }
+    if ($onLinkBase) {
+        echo p202_setup_link_scheme_note(
+            $linkBase,
+            \Prosper202\Click\TrackingBaseUrl::storedSchemeForResponse($storedDomain),
+            get_absolute_url() . '202-account/account.php#profile',
+            'This link uses'
+        );
+    }
 	?>
 <p class="form-text">Use this as the destination URL in your campaign at the traffic source. It carries everything set above, so when you change the cost, the account or the ad, get a new link. To track keywords, put your traffic source's keyword token right after <code>t202kw=</code>. Test the link yourself before you run traffic to it.</p>
 <details class="p202-disclosure" data-p202-remember="setup-get-links-keywords">
