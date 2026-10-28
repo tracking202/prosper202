@@ -166,6 +166,42 @@
         "p202 user prefs update 1 --paykickstart-ipn-secret-keys '' --json >/dev/null"
       ],
       "notes": "Account › API integrations › PayKickstart (PUT /users/{id}/preferences paykickstart_ipn_secret_keys; GET /system/integrations keys_stored). The keys are never served back: GET /users/{id}/preferences answers {\"stored\": true} for them, as for every integration secret, and the reply must not repeat the key either."
+    },
+    {
+      "id": "admin-006-a-jvzoo-affiliate-gets-the-affiliate-url",
+      "priority": "medium",
+      "state": "seeded fixture; the key is the installer's (Super user, user 1); no JVZoo key stored",
+      "setup": [
+        "p202 user prefs update 1 --jvzoo-ipn-secret-key '' --json >/dev/null"
+      ],
+      "ask": "I promote JVZoo products as an affiliate. Save my JVZIPN secret key jvz-eval-AFFILIATE-01 in Prosper202, then tell me the URL to paste into JVZoo's Affiliate IPN and what to add to my JVZoo affiliate link.",
+      "expected": {
+        "runs_one_of": [
+          "user prefs update"
+        ],
+        "checks": [
+          {
+            "run": "p202 system integrations --json | jq -r '.data.integrations[] | select(.integration==\"jvzoo\") | \"\\(.secret_stored) \\(.url)\"'",
+            "includes": [
+              "true http",
+              "tracking202/static/jvzoo.php?role=affiliate"
+            ]
+          }
+        ],
+        "rubric": "PASS if the key is stored with `p202 user prefs update <user_id> --jvzoo-ipn-secret-key`, and the reply gives the affiliate URL `p202 system integrations` answers for jvzoo (ending tracking202/static/jvzoo.php?role=affiliate) and says the affiliate link carries tid=[[subid]]. FAIL if it gives the vendor URL (?role=vendor) for the Affiliate IPN, builds the URL by hand, tells the user to put subid on the affiliate link, or repeats the secret key.",
+        "reply_includes": [
+          "tracking202/static/jvzoo.php?role=affiliate",
+          "tid=[[subid]]"
+        ],
+        "reply_omits": [
+          "role=vendor",
+          "jvz-eval-AFFILIATE-01"
+        ]
+      },
+      "cleanup": [
+        "p202 user prefs update 1 --jvzoo-ipn-secret-key '' --json >/dev/null"
+      ],
+      "notes": "Account › API integrations › JVZoo (PUT /users/{id}/preferences jvzoo_ipn_secret_key; GET /system/integrations jvzoo and jvzoo_vendor). JVZoo has two URLs, verified with the one key: an affiliate's notification names the click by the tid on the affiliate link, a vendor's by the subid on the buy link, so the affiliate URL is this ask's."
     }
   ]
 }

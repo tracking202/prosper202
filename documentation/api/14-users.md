@@ -118,7 +118,8 @@ but unchanged keys is `422` (`No valid fields to update`).
 | `user_cpc_or_cpv` | `cpc`, `cpv` | report pages |
 | `chart_time_range` | `hours`, `days` | Overview chart (kept in `202_charts`, where the chart reads it) |
 | `user_slack_incoming_webhook` | an `https://` URL, or `""` | Integrations |
-| `ipqs_api_key`, `cb_key`, `zaxaa_api_signature`, `jvzoo_ipn_secret_key` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
+| `ipqs_api_key`, `cb_key`, `zaxaa_api_signature` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
+| `jvzoo_ipn_secret_key` | the JVZIPN secret key both JVZoo URLs are verified with, stored trimmed: up to 250 characters of text (a line break, a control character or bytes that are not UTF-8 are refused, since no notification would verify with them), or `""` | Integrations |
 | `paykickstart_ipn_secret_keys` | the keys PayKickstart's product IPN is verified with, one for each PayKickstart campaign, separated by commas, spaces or new lines: at most 20, each 8 to 128 letters, digits and punctuation other than the comma. The list **replaces** every stored key (none can be read back), so send them all; `""` removes them. A key that is not one is refused by its place in the list (`Key 2 is 5 characters long; …`), never by its text | Integrations |
 | `user_ltv_customer_cparam` | `0` (off), `1`-`4` (c1-c4) | LTV › Settings |
 | `user_ltv_personalization_fields` | comma list of `first_name`, `last_name`, `company`, `city`, `country`, `cf:<field_key>`, `rec:next_offer` | LTV › Settings |

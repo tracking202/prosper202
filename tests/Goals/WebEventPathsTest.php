@@ -44,6 +44,8 @@ final class WebEventPathsTest extends TestCase
         // Its events are PayKickstart's (sales, refund), each decided by the
         // payment-notification processor, never a template's `event=`.
         'tracking202/static/paykickstart.php' => 'PayKickstart\'s IPN names its own events',
+        // JVZoo's JVZIPN names its own transaction types (SALE, RFND, ...).
+        'tracking202/static/jvzoo.php' => 'JVZoo\'s JVZIPN names its own events',
     ];
 
     /**
@@ -178,7 +180,8 @@ final class WebEventPathsTest extends TestCase
             static fn (string $p): string => substr($p, strlen(self::root()) + 1),
             glob(self::root() . '/tracking202/static/*.php') ?: []
         );
-        self::assertSame(['tracking202/static/paykickstart.php'], array_values(array_filter(
+        $builders = ['tracking202/static/jvzoo.php', 'tracking202/static/paykickstart.php'];
+        self::assertSame($builders, array_values(array_filter(
             $endpoints,
             static fn (string $relative): bool => self::constructions(self::tokens($relative)) !== []
         )), 'the scan reads the endpoint that builds the Receiver');

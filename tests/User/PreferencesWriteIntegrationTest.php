@@ -213,4 +213,25 @@ final class PreferencesWriteIntegrationTest extends TestCase
         $users->updatePreferences(self::USER, [$column => '']);
         self::assertSame(['stored' => false], $this->prefs()[$column]);
     }
+
+    /** The JVZIPN key is stored as the endpoint signs with it, or refused before anything is written. */
+    public function testTheJvzooKeyIsStoredTrimmedOrRefused(): void
+    {
+        $users = new UsersController(self::$db);
+        $column = 'jvzoo_ipn_secret_key';
+        $users->updatePreferences(self::USER, [$column => ' 7hQe2LmZp4WvX9cRb31 ']);
+        $stored = static fn (): ?string => self::$db->query("SELECT $column FROM 202_users_pref WHERE user_id = "
+            . self::USER)->fetch_row()[0];
+        self::assertSame('7hQe2LmZp4WvX9cRb31', $stored());
+
+        try {
+            $users->updatePreferences(self::USER, [$column => "7hQe2LmZp4Wv\nCvEEEE1"]);
+            self::fail('a key that is not one was written');
+        } catch (ValidationException $e) {
+            self::assertStringStartsWith('The key has a character that is not text', $e->getFieldErrors()[$column]);
+        }
+        self::assertSame('7hQe2LmZp4WvX9cRb31', $stored(), 'nothing written');
+        $users->updatePreferences(self::USER, [$column => '']);
+        self::assertSame('', $stored());
+    }
 }

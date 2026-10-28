@@ -19,6 +19,7 @@ enum ConversionSource: string
     case LEGACY_PIXEL = 'legacy_pixel';
     case CLICKBANK = 'clickbank';
     case PAYKICKSTART = 'paykickstart';
+    case JVZOO = 'jvzoo';
     case APP_INSTALL = 'app_install';
     case GOAL = 'goal';
     case LEGACY_BASELINE = 'legacy_baseline';
@@ -52,6 +53,7 @@ enum ConversionSource: string
             self::LEGACY_PIXEL => 'Campaign pixel',
             self::CLICKBANK => 'ClickBank',
             self::PAYKICKSTART => 'PayKickstart',
+            self::JVZOO => 'JVZoo',
             self::APP_INSTALL => 'App install',
             self::GOAL => 'Goal',
             self::LEGACY_BASELINE => 'Value before the ledger',

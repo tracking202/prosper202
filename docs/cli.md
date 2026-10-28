@@ -773,7 +773,7 @@ p202 conversion list --all
 | `--time-from`   |         | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset |
 | `--time-to`     |         | End, inclusive: the same forms |
 | `--click-id`    |         | Only this click's conversions |
-| `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `app_install`, `goal`, `legacy_baseline` |
+| `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `app_install`, `goal`, `legacy_baseline` |
 | `--match-method` |        | Only conversions whose click was found this way: `click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown` |
 | `--goal`        |         | Only this goal's outcomes (every version) |
 | `--all`         | false   | Fetch all rows across pages |

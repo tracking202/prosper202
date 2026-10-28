@@ -12,6 +12,8 @@ use Api\V3\Support\PayloadKeys;
 use Prosper202\Click\ClickRetention;
 use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\JVZoo\JVZooKey;
+use Prosper202\PaymentNotification\JVZoo\JVZooRole;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 use Prosper202\User\SignInOutcome;
 
@@ -77,11 +79,13 @@ final class AdministrationController
      * The integrations that receive a notification at a URL of this
      * install, as the Integrations page lists them: key => [name, what the
      * page calls the URL, the script, the preference holding its secret
-     * (null: it needs none)].
+     * (null: it needs none), the URL's query when it has one]. JVZoo has two
+     * URLs, one for each role, verified with the same key (JVZooRole).
      */
     private const INTEGRATIONS = [
         'clickbank' => ['ClickBank', 'INS URL', 'tracking202/static/cb202.php', 'cb_key'],
-        'jvzoo' => ['JVZoo', 'IPN URL', 'tracking202/static/jvzoo.php', 'jvzoo_ipn_secret_key'],
+        'jvzoo' => ['JVZoo', 'Affiliate IPN URL', JVZooRole::SCRIPT, JVZooKey::COLUMN, 'role=affiliate'],
+        'jvzoo_vendor' => ['JVZoo', 'Vendor JVZIPN URL', JVZooRole::SCRIPT, JVZooKey::COLUMN, 'role=vendor'],
         'zaxaa' => ['Zaxaa', 'ZPN URL', 'tracking202/static/zpn.php', 'zaxaa_api_signature'],
         'slack' => ['Slack', 'Prosper202 webhook', 'tracking202/static/slack.php', 'user_slack_incoming_webhook'],
         'paykickstart' => [
@@ -673,16 +677,23 @@ final class AdministrationController
             ) ?? [];
 
             $list = [];
-            foreach (self::INTEGRATIONS as $key => [$name, $label, $script, $secret]) {
+            foreach (self::INTEGRATIONS as $key => $integration) {
+                [$name, $label, $script, $secret] = $integration;
+                $query = $integration[4] ?? '';
                 $entry = [
                     'integration' => $key,
                     'name' => $name,
                     'label' => $label,
-                    'url' => $base . $script,
+                    'url' => $base . $script . ($query !== '' ? '?' . $query : ''),
                     'secret_stored' => $secret === null ? null : trim((string) ($prefs[$secret] ?? '')) !== '',
                 ];
                 if ($key === 'clickbank') {
                     $entry['verified'] = (int) ($prefs['cb_verified'] ?? 0) === 1;
+                }
+                if ($secret === JVZooKey::COLUMN) {
+                    // The key the endpoint signs with: one it cannot use is not stored.
+                    $jvzooKey = $prefs[$secret] ?? null;
+                    $entry['secret_stored'] = JVZooKey::stored(is_string($jvzooKey) ? $jvzooKey : null) !== null;
                 }
                 if ($key === 'paykickstart') {
                     // One key for each PayKickstart campaign; never the keys.

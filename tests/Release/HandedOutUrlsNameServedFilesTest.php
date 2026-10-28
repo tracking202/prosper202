@@ -16,9 +16,10 @@ use Tests\Support\SourceScan;
  * as PayKickstart's IPN URL under "No setup needed", and GET
  * /system/integrations and `p202 system integrations` listed it, from the
  * day it was written: the file never existed, so every PayKickstart IPN sent
- * there was a 404 nobody in Prosper202 saw. jvzoo.php, zpn.php and slack.php
- * were handed out the same way, and are listed below until their own
- * changes remove them; the list only shrinks.
+ * there was a 404 nobody in Prosper202 saw. jvzoo.php (written in 1.9.79
+ * too), zpn.php and slack.php were handed out the same way; the ones still
+ * missing are listed below until their own changes remove them, and the list
+ * only shrinks.
  *
  * What it reads: every string literal in a served PHP file (SourceScan, so
  * not the tests) that names a script under tracking202/ or a 202-*
@@ -36,7 +37,6 @@ final class HandedOutUrlsNameServedFilesTest extends TestCase
 
     /** Handed out, never written: path => where, until the change that removes it. */
     private const KNOWN_DEAD = [
-        'tracking202/static/jvzoo.php' => 'JVZoo\'s IPN URL on Account › API integrations and GET /system/integrations',
         'tracking202/static/zpn.php' => 'Zaxaa\'s ZPN URL on Account › API integrations and GET /system/integrations',
         'tracking202/static/slack.php' => 'Slack\'s webhook on Account › API integrations, GET /system/integrations',
     ];

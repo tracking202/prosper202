@@ -93,7 +93,7 @@ var conversionListCmd = &cobra.Command{
 // conversionSources is what a ledger row's source can be
 // (ConversionSource in 202-config/Conversion/Ledger), in the server's order.
 var conversionSources = []string{"pixel", "postback", "universal_pixel", "api", "subid_upload", "revenue_upload",
-	"legacy_pixel", "clickbank", "paykickstart", "app_install", "goal", "legacy_baseline"}
+	"legacy_pixel", "clickbank", "paykickstart", "jvzoo", "app_install", "goal", "legacy_baseline"}
 
 // conversionMatchMethods is how a conversion's click can have been found
 // (MatchMethod in 202-config/Conversion/Ledger), in the server's order.

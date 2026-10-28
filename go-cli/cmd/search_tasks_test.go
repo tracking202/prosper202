@@ -233,6 +233,7 @@ func TestSearchFindsSpyByWhatPeopleCallIt(t *testing.T) {
 // other task's command comes first.
 var searchKnownMisses = map[string]string{
 	"admin-005-a-paykickstart-key-is-stored-never-repeated":                 "save a key and give the URL to paste: two tasks; system integrations first, user prefs update second",
+	"admin-006-a-jvzoo-affiliate-gets-the-affiliate-url":                    "save a key and give the URL to paste: two tasks; system integrations first, user prefs update second",
 	"attribution-003-development-postbacks-count-only-once-the-app-opts-in": "register an app and count its postbacks: two tasks; app report first, app create second",
 	"breakdown-002-no-such-transaction-is-said-not-invented":                "the expected command is a lookup step (conversion list), not the task asked",
 	"ios-sdk-001-encode-a-funnel-goal":                                      "describes the encoding's meaning, not the command; app encoding create third",

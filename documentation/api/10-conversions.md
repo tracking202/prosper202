@@ -27,7 +27,7 @@ uploading a revenue report — the UI's Update section — are in the
 | `time_from` | string | — | Start, inclusive: unix seconds, a date (`2026-10-01`, from its first second in the account's timezone) or a time with its offset (`2026-10-01T09:30:00Z`) |
 | `time_to` | string | — | End, inclusive: the same forms; a date runs through its last second |
 | `click_id` | integer | — | Only this click's conversions |
-| `source` | string | — | Only conversions this source produced (`pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `app_install`, `goal`, `legacy_baseline`) |
+| `source` | string | — | Only conversions this source produced (`pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `app_install`, `goal`, `legacy_baseline`) |
 | `match_method` | string | — | Only conversions whose click was found this way (`click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown`; [below](#how-each-conversions-click-was-found)) |
 | `goal` | integer | — | Only this goal's outcomes, under every version of it |
 
