@@ -19,7 +19,7 @@ use WeakMap;
  *
  * This is the edge where the bootstrap's globals are read: whether memcache
  * answered ($memcacheWorking, with getCache()/setCache()), and the install's
- * cache namespace (systemHash()).
+ * cache namespace (systemHash(), with this code's version: cacheNamespace()).
  */
 final class LookupRepositoryFactory
 {
@@ -96,8 +96,27 @@ final class LookupRepositoryFactory
                 static fn (string $key, string $entry, int $ttl): mixed
                     => \setCache($key, $entry, $ttl),
             ),
-            \systemHash()
+            self::cacheNamespace()
         );
+    }
+
+    /**
+     * The install (systemHash()) and this code's version. A cached id is
+     * right only while its row stands and the lookup answers as it did, and
+     * an upgrade can change either, so ids another version cached are not
+     * read: each upgrade starts cold, one database read per lookup until
+     * the cache fills. Entries cached between deploying the files and
+     * running the upgrade are this version's, so a step that removes lookup
+     * rows still changes the key subjects (MemcacheIdCache), and a restored
+     * database still needs memcached flushed. The click path's user-agent
+     * parse and bot-range verdict, kept 30 days, take it too; every key on
+     * the bare install hash is listed with why (CacheKeyNamespaceTest).
+     */
+    public static function cacheNamespace(): string
+    {
+        require_once dirname(__DIR__) . '/version.php';
+
+        return \systemHash() . "\0" . \PROSPER202_VERSION;
     }
 
     /**

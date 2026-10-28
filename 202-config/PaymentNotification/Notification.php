@@ -15,6 +15,9 @@ final class Notification
     /** An exact decimal, never negative: no sign, no exponent, no separators. */
     private const AMOUNT = '/^\d+(?:\.\d+)?$/D';
 
+    /** The last second a conversion row's int(10) conv_time holds. */
+    public const LAST_TIME = 2147483647;
+
     /**
      * @param string $event the provider's own name for the event ("sales", "refund")
      * @param string|null $transactionId the provider's id for this payment (for a
@@ -26,7 +29,8 @@ final class Notification
      * @param string|null $currency ISO 4217, when the provider states one
      * @param int|null $clickId the click the payment came from; null when the
      *        notification names none
-     * @param int|null $occurredAt when the provider says it happened (Unix time)
+     * @param int|null $occurredAt when the provider says it happened (Unix
+     *        time), which dates the row; null when the notification states none
      */
     public function __construct(
         public readonly NotificationKind $kind,
@@ -43,6 +47,9 @@ final class Notification
         }
         if ($clickId !== null && $clickId <= 0) {
             throw new InvalidArgumentException('a notification\'s click id is a positive integer');
+        }
+        if ($occurredAt !== null && ($occurredAt <= 0 || $occurredAt > self::LAST_TIME)) {
+            throw new InvalidArgumentException('a notification\'s time is a Unix time a conversion row can hold');
         }
     }
 }

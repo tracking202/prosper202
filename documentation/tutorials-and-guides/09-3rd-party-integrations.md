@@ -55,10 +55,17 @@ is answered with a 2xx):
 | a notification no stored key decrypts | nothing | `403` |
 | a key more than one account stores | nothing | `409` |
 | an account that counts in a currency other than USD | nothing: ClickBank's amounts are USD, and Prosper202 does not convert them | `422` |
-| a malformed field (a tracking code such as `42.9`, an amount such as `1,000.00`) | nothing | `400`, naming the field |
+| a malformed field (a tracking code such as `42.9`, an amount such as `1,000.00`, a `transactionTime` without its offset) | nothing | `400`, naming the field |
 | a legacy notification (version 4.0 or earlier, signed with `cverify`) | nothing | `415`, saying to choose version 8.0 |
 | a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
 | a notification that could not be recorded just now | nothing that a retry would double: a receipt is recorded once | `500` |
+
+A sale is dated by its `transactionTime`, read with the offset it carries
+(`2023-10-05T13:47:51-06:00`, or 7.0's `20231005T134751-0600`), so one
+ClickBank sends again hours later still falls on the day it happened; without
+one, it is dated when it arrives. A time before the click is dated at the
+click, and one ahead of this server's clock at its arrival; the answer says
+so.
 
 Each notification is logged in the server's error log in one line: the
 outcome, the type, the click, the receipt and the account, never a key or the
@@ -95,17 +102,24 @@ What each IPN does, and what PayKickstart's IPN log shows for it:
 | IPN | Prosper202 | Status |
 | --- | ---------- | ------ |
 | `sales` (a first payment or a rebill) | a conversion on the click, source `paykickstart`, under its `transaction_id`, worth its `amount` | `200 recorded` |
-| the same `sales` again | nothing; a retry stating another amount is refused | `200 duplicate` / `409` |
+| the same `sales` again | nothing; a retry stating another amount is refused, and so is a sale whose refund is on file, naming the reversal to delete if the refund was undone | `200 duplicate` / `409` |
 | `refund` | a reversal of the sale its `transaction_id` names, by its `amount` (the whole sale when it carries none or 0); a sale is reversed once | `200 reversed`, `404` when no such sale is on the click |
-| a `refund` of a sale already reversed | nothing; a refund that takes back another amount than the one on file is refused, naming both: a full refund after a partial one says how much is still credited | `200 duplicate` / `409` |
+| a `refund` of a sale already reversed | nothing; a refund that takes back another amount than the one on file is refused, naming both: a full refund after a partial one says how much is still credited. Once that reversal is deleted, a later refund reverses the sale again; the deleted one's own refund, sent again unchanged, changes nothing | `200 duplicate` / `409` |
 | test mode (`mode=test`) | nothing | `200 test` |
 | `subscription-payment` and every other event | nothing (`sales` already counts every payment) | `200 ignored` |
 | a sale whose checkout carried no subid | nothing: no click to credit | `200 no_click` |
 | a `custom_subid` that is not a click of the account | nothing | `404` |
 | a hash no stored key verifies | nothing | `403` |
-| a malformed field (an amount such as `1,000`, `custom_subid=[[subid]]`) | nothing | `400`, naming the field |
+| a malformed field (an amount such as `1,000`, `custom_subid=[[subid]]`, a `transaction_time` that is not a Unix time) | nothing | `400`, naming the field |
 | an IPN that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
 | an IPN that could not be recorded just now | nothing that a retry would double: a transaction id is recorded once | `500` |
+
+A sale or refund is dated by its `transaction_time`, so one PayKickstart sends
+again days later still falls on the day it happened; without one, it is
+dated when it arrives. A time before the click (for a refund, before its
+sale) is dated at the click (the sale), and one ahead of this server's
+clock at its arrival; the answer says so. Reports by click day (`p202
+report`) are unchanged by this: they count a conversion on its click's day.
 
 Each IPN is logged in the server's error log in one line: the outcome, the
 event, the click, the transaction and the account, never a key or the

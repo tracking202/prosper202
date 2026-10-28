@@ -103,6 +103,12 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
         return ConversionSource::CLICKBANK;
     }
 
+    /** ClickBank encrypts the order rather than signing it: what does not verify is the encryption. */
+    public function signatureField(): string
+    {
+        return 'encryption';
+    }
+
     public function storedSecrets(Connection $conn): array
     {
         $stmt = $conn->prepareRead(
@@ -203,7 +209,8 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
                 null,
                 $amount,
                 'USD',
-                self::clickId($order, $shown, $receipt)
+                self::clickId($order, $shown, $receipt),
+                self::occurredAt($order)
             );
         }
 
@@ -217,7 +224,8 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
             $receipt,
             $amount === null || preg_match('/^0+(?:\.0+)?$/D', $amount) === 1 ? null : $amount,
             'USD',
-            self::clickId($order, $shown, $receipt)
+            self::clickId($order, $shown, $receipt),
+            self::occurredAt($order)
         );
     }
 
@@ -395,6 +403,48 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
         }
 
         return str_contains($text, '.') ? rtrim(rtrim($text, '0'), '.') : $text;
+    }
+
+    /**
+     * transactionTime as a Unix time, read with the offset it carries, or
+     * null when the order states none (the row is then dated on arrival).
+     * 6.0 and 8.0 send RFC 3339 (2023-10-05T13:47:51-06:00), 7.0's notes ISO
+     * 8601's basic form (20200819T144359-0700); a time that is neither, or
+     * names no real moment (a 13th month), is refused rather than replaced
+     * by the time it arrived (CLAUDE.md #4).
+     *
+     * @param array<string, mixed> $order
+     */
+    private static function occurredAt(array $order): ?int
+    {
+        $raw = $order['transactionTime'] ?? null;
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+        $formats = [
+            '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/D' => ['!Y-m-d\TH:i:sP', '+00:00'],
+            '/^\d{8}T\d{6}(?:Z|[+-]\d{4})$/D' => ['!Ymd\THisO', '+0000'],
+        ];
+        foreach ($formats as $shape => [$format, $utc]) {
+            if (!is_string($raw) || preg_match($shape, $raw) !== 1) {
+                continue;
+            }
+            // UTC, however it is written, as the format writes it back.
+            $text = (string) preg_replace('/(?:Z|-00:00|-0000)$/D', $utc, $raw);
+            $time = \DateTimeImmutable::createFromFormat($format, $text);
+            if ($time !== false && $time->format(substr($format, 1)) === $text) {
+                $at = $time->getTimestamp();
+                if ($at > 0 && $at <= Notification::LAST_TIME) {
+                    return $at;
+                }
+            }
+            break;
+        }
+
+        throw self::malformed(
+            'transactionTime is ' . (is_string($raw) ? '"' . self::shown($raw) . '"' : gettype($raw)) . '; ClickBank'
+            . ' sends a time with its offset, such as 2023-10-05T13:47:51-06:00 (or 20231005T134751-0600).'
+        );
     }
 
     /** A value of the request as an answer or the log may show it. */

@@ -131,16 +131,18 @@ final class Processor
             return $currency;
         }
 
+        [$time, $dated] = self::dated($n->occurredAt, $this->latestVisitTime($n->clickId), 'the click');
         $result = $this->record($n->clickId, $owner, $provider, $request, [
             'transaction_id' => $transactionId,
             'use_pixel_payout' => true,
             'payout' => $amount,
+            'conv_time' => $time,
         ]);
         $on = 'Transaction ' . $transactionId . ' on click ' . $n->clickId;
         if ($result['recorded']) {
             return new Outcome(
                 OutcomeKind::RECORDED,
-                'Recorded transaction ' . $transactionId . ' on click ' . $n->clickId . ' at ' . $amount . '.',
+                'Recorded transaction ' . $transactionId . ' on click ' . $n->clickId . ' at ' . $amount . '.' . $dated,
                 $result['conv_id'],
                 $owner
             );
@@ -152,6 +154,19 @@ final class Processor
                     OutcomeKind::CONFLICT,
                     'Transaction ' . $transactionId . ' is already recorded on click ' . $n->clickId . ' at '
                     . self::plain($stored) . '; this notification states ' . $amount . '. Nothing was changed.',
+                    $result['conv_id'],
+                    $owner
+                );
+            }
+            // A sale sent again after its refund (JVZoo's when a refund is
+            // undone) is not on file as counted, so it is no duplicate.
+            $reversal = $this->liveReversalOf($result['conv_id'], $owner);
+            if ($reversal !== null) {
+                return new Outcome(
+                    OutcomeKind::CONFLICT,
+                    'Transaction ' . $transactionId . ' on click ' . $n->clickId . ' is recorded and reversed by'
+                    . ' conversion ' . $reversal . '; this ' . $n->event . ' states the sale again. Nothing was'
+                    . ' changed: if the refund was undone, delete conversion ' . $reversal . ' to count the sale.',
                     $result['conv_id'],
                     $owner
                 );
@@ -202,8 +217,17 @@ final class Processor
         }
 
         // A refund with an id of its own is told apart from another refund
-        // of the same sale by it; without one, a sale is reversed once.
-        $reference = $n->transactionId !== null && $n->transactionId !== $original ? $n->transactionId : '';
+        // of the same sale by that id. One without is keyed by its body: a
+        // retry sent again unchanged is that refund, whether or not its
+        // reversal still stands, and any other is compared with the reversal
+        // that stands (a sale is reversed once), or reverses the sale again
+        // when none does: the one on file was deleted.
+        $ownId = $n->transactionId !== null && $n->transactionId !== $original;
+        $reference = $ownId ? (string) $n->transactionId : 'body:' . self::fingerprint($request->fields);
+        $on = 'Transaction ' . $original . ' on click ' . $n->clickId;
+        // A refund is dated when it happened, the sale keeping its own day;
+        // never before the sale it takes back.
+        [$time, $dated] = self::dated($n->occurredAt, $this->saleTime($n->clickId, $original, $owner), 'the sale');
         try {
             $result = $this->record($n->clickId, $owner, $provider, $request, [
                 'transaction_id' => $original,
@@ -211,8 +235,16 @@ final class Processor
                 'reversal_ref' => $reference,
                 'use_pixel_payout' => $n->amount !== null,
                 'payout' => $n->amount ?? '',
+                'conv_time' => $time,
             ]);
         } catch (ReversalException $e) {
+            $standing = !$ownId && $e->kind === ReversalException::CONFLICT
+                ? $this->liveReversalOfTransaction($n->clickId, $original, $owner)
+                : null;
+            if ($standing !== null) {
+                return $this->repeatedReversal($n, $on, $standing, $owner);
+            }
+
             return new Outcome(
                 $e->kind === ReversalException::CONFLICT ? OutcomeKind::CONFLICT : OutcomeKind::NOTHING_TO_REVERSE,
                 $e->getMessage() . ' Nothing was changed.',
@@ -220,44 +252,17 @@ final class Processor
                 $owner
             );
         }
-        $on = 'Transaction ' . $original . ' on click ' . $n->clickId;
         if ($result['recorded']) {
             return new Outcome(
                 OutcomeKind::REVERSED,
                 'Reversed transaction ' . $original . ' on click ' . $n->clickId . ' by '
-                . ($n->amount ?? 'its full amount') . '.',
+                . ($n->amount ?? 'its full amount') . '.' . $dated,
                 $result['conv_id'],
                 $owner
             );
         }
         if ($result['reason'] === 'duplicate') {
-            // A refund that states no amount takes back the whole sale, so it
-            // repeats the reversal on file only when that one took it all too.
-            $stored = $this->storedReversal($result['conv_id'], $owner);
-            $stated = $n->amount !== null ? Amount::toUnits($n->amount) : $stored['sale'];
-            if ($stated !== $stored['reversed']) {
-                $rest = $stored['sale'] - $stored['reversed'];
-                $credited = $rest > 0
-                    ? ', and ' . self::units($rest) . ' of its ' . self::units($stored['sale']) . ' is still credited'
-                    : '';
-
-                return new Outcome(
-                    OutcomeKind::CONFLICT,
-                    $on . ' is already reversed by ' . self::units($stored['reversed']) . $credited
-                    . '; this ' . $n->event . ' states '
-                    . ($n->amount ?? 'its full amount, ' . self::units($stored['sale']))
-                    . ', and a sale is reversed once. Nothing was changed.',
-                    $result['conv_id'],
-                    $owner
-                );
-            }
-
-            return new Outcome(
-                OutcomeKind::DUPLICATE,
-                $on . ' is already reversed; nothing was changed.',
-                $result['conv_id'],
-                $owner
-            );
+            return $this->repeatedReversal($n, $on, $result['conv_id'], $owner);
         }
         if ($result['reason'] === 'unknown_click' || $result['reason'] === 'foreign_click') {
             return self::unknownClick($n->clickId);
@@ -309,6 +314,66 @@ final class Processor
         return $verification->verifies($owner) ? $owner : null;
     }
 
+    /**
+     * When the row is dated: the time the notification says the payment or
+     * refund happened, held between the earliest it can be (the click a sale
+     * credits, the sale a refund takes back) and its arrival, which a clock
+     * ahead of this server's would pass. Refusing either would lose the
+     * payment over a clock, and the provider would send the same time again.
+     * With no time stated, its arrival.
+     *
+     * @return array{int, string} the time, and what the answer says when it is not the one stated
+     */
+    private static function dated(?int $stated, int $earliest, string $after): array
+    {
+        $now = time();
+        $earliest = min($earliest, $now);
+        if ($stated === null) {
+            return [$now, ''];
+        }
+        if ($stated > $now) {
+            return [$now, ' Dated when it arrived, ' . self::utc($now) . ': the time it states, ' . self::utc($stated)
+                . ', is later than this server\'s clock.'];
+        }
+        if ($stated < $earliest) {
+            return [$earliest, ' Dated at ' . $after . ', ' . self::utc($earliest) . ': the time it states, '
+                . self::utc($stated) . ', is before ' . $after . '.'];
+        }
+
+        return [$stated, ''];
+    }
+
+    private static function utc(int $time): string
+    {
+        return gmdate('Y-m-d\\TH:i:s\\Z', $time);
+    }
+
+    /** The time of the click's latest visit, the one a conversion credits. */
+    private function latestVisitTime(int $clickId): int
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead('SELECT c.click_time FROM ' . LatestVisit::of('?') . ' AS c LIMIT 1');
+        $conn->bind($stmt, 'i', [$clickId]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? 0 : (int) $row['click_time'];
+    }
+
+    /** When the sale a transaction id names on a click is dated (the writer's target), or 0 with none. */
+    private function saleTime(int $clickId, string $transactionId, int $owner): int
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead(
+            'SELECT conv_time FROM 202_conversion_logs'
+            . ' WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL AND user_id = ?'
+            . ' ORDER BY conv_id LIMIT 1'
+        );
+        $conn->bind($stmt, 'isi', [$clickId, $transactionId, $owner]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? 0 : (int) $row['conv_time'];
+    }
+
     /** An amount in another currency is refused: nothing here converts it. */
     private function currencyRefusal(Notification $n, int $owner): ?Outcome
     {
@@ -352,16 +417,84 @@ final class Processor
     }
 
     /**
+     * A refund that repeats a reversal on file: a duplicate only when it takes
+     * back what that reversal took back (one that states no amount takes the
+     * whole sale), and refused naming both otherwise (CLAUDE.md #15).
+     */
+    private function repeatedReversal(Notification $n, string $on, int $reversalId, int $owner): Outcome
+    {
+        $stored = $this->storedReversal($reversalId, $owner);
+        $stated = $n->amount !== null ? Amount::toUnits($n->amount) : $stored['sale'];
+        $by = self::units($stored['reversed']);
+        if ($stated !== $stored['reversed']) {
+            $states = '; this ' . $n->event . ' states '
+                . ($n->amount ?? 'its full amount, ' . self::units($stored['sale']));
+            if ($stored['deleted']) {
+                return new Outcome(
+                    OutcomeKind::CONFLICT,
+                    $on . ' was reversed by ' . $by . ' in conversion ' . $reversalId . ', since deleted, under this '
+                    . $n->event . '\'s id' . $states . '. Nothing was changed.',
+                    $reversalId,
+                    $owner
+                );
+            }
+            $rest = $stored['sale'] - $stored['reversed'];
+            $credited = $rest > 0
+                ? ', and ' . self::units($rest) . ' of its ' . self::units($stored['sale']) . ' is still credited'
+                : '';
+
+            return new Outcome(
+                OutcomeKind::CONFLICT,
+                $on . ' is already reversed by ' . $by . $credited . $states
+                . ', and a sale is reversed once. Nothing was changed.',
+                $reversalId,
+                $owner
+            );
+        }
+
+        return new Outcome(
+            OutcomeKind::DUPLICATE,
+            $stored['deleted']
+                ? $on . ' was reversed by conversion ' . $reversalId . ', since deleted; this ' . $n->event
+                    . ' is that refund sent again, so nothing was changed.'
+                : $on . ' is already reversed; nothing was changed.',
+            $reversalId,
+            $owner
+        );
+    }
+
+    /**
+     * The reversal that stands against the sale a transaction id names on a
+     * click (the sale the writer reverses: its first row under that id), or
+     * null when none does.
+     */
+    private function liveReversalOfTransaction(int $clickId, string $transactionId, int $owner): ?int
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead(
+            'SELECT r.conv_id FROM 202_conversion_logs s'
+            . ' JOIN 202_conversion_logs r ON r.reverses_conv_id = s.conv_id AND r.user_id = s.user_id'
+            . ' AND r.deleted = 0'
+            . ' WHERE s.click_id = ? AND s.transaction_id = ? AND s.reverses_conv_id IS NULL AND s.user_id = ?'
+            . ' ORDER BY s.conv_id, r.conv_id LIMIT 1'
+        );
+        $conn->bind($stmt, 'isi', [$clickId, $transactionId, $owner]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? null : (int) $row['conv_id'];
+    }
+
+    /**
      * How much a reversal on file took back and how much the sale it
-     * reverses holds, both as positive units.
+     * reverses holds, both as positive units, and whether it was deleted.
      *
-     * @return array{reversed: int, sale: int}
+     * @return array{deleted: bool, reversed: int, sale: int}
      */
     private function storedReversal(int $conversionId, int $owner): array
     {
         $conn = new Connection($this->db);
         $stmt = $conn->prepareRead(
-            'SELECT r.click_payout AS reversed, s.click_payout AS sale FROM 202_conversion_logs r'
+            'SELECT r.click_payout AS reversed, r.deleted, s.click_payout AS sale FROM 202_conversion_logs r'
             . ' JOIN 202_conversion_logs s ON s.conv_id = r.reverses_conv_id AND s.user_id = r.user_id'
             . ' WHERE r.conv_id = ? AND r.user_id = ? LIMIT 1'
         );
@@ -374,9 +507,24 @@ final class Processor
         }
 
         return [
+            'deleted' => (int) $row['deleted'] === 1,
             'reversed' => abs(Amount::toUnits((string) $row['reversed'])),
             'sale' => abs(Amount::toUnits((string) $row['sale'])),
         ];
+    }
+
+    /** The reversal that still nets a conversion, or null when none does. */
+    private function liveReversalOf(int $conversionId, int $owner): ?int
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead(
+            'SELECT conv_id FROM 202_conversion_logs WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0'
+            . ' ORDER BY conv_id LIMIT 1'
+        );
+        $conn->bind($stmt, 'ii', [$conversionId, $owner]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? null : (int) $row['conv_id'];
     }
 
     private static function units(int $units): string
@@ -391,6 +539,33 @@ final class Processor
             'There is no click ' . $clickId . ' in the account whose secret key signed this notification;'
             . ' nothing was recorded.'
         );
+    }
+
+    /**
+     * The request's body, which a retry sent unchanged repeats: its fields in
+     * name order, lists included.
+     *
+     * @param array<array-key, mixed> $fields
+     */
+    private static function fingerprint(array $fields): string
+    {
+        return hash('sha256', serialize(self::byName($fields)));
+    }
+
+    /**
+     * @param array<array-key, mixed> $value
+     * @return array<array-key, mixed>
+     */
+    private static function byName(array $value): array
+    {
+        ksort($value, SORT_STRING);
+        foreach ($value as $key => $item) {
+            if (is_array($item)) {
+                $value[$key] = self::byName($item);
+            }
+        }
+
+        return $value;
     }
 
     /** A stored decimal(11,5) without its trailing zeros: 47.00000 reads 47. */

@@ -61,7 +61,9 @@ with the old key. Clicks already linked stay linked.
 
 One switch turns all of it off:
 
-- `p202_consent=0` on a tracking link;
+- `p202_consent=0` on a tracking link. Present, anything but `1` refuses
+  (`false`, `off`, an empty value), on the tracking link and on the landing
+  page alike;
 - `p202.consent(false)` on a landing page (remembered, and sent on every
   pageview and followed link); `p202.consent(true)` turns it back on. The
   pageview is sent once the page's scripts have run, so a consent tool that

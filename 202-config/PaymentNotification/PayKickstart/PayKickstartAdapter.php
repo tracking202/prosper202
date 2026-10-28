@@ -50,6 +50,11 @@ final class PayKickstartAdapter implements ProviderAdapter
         return ConversionSource::PAYKICKSTART;
     }
 
+    public function signatureField(): string
+    {
+        return 'hash';
+    }
+
     public function storedSecrets(Connection $conn): array
     {
         $stmt = $conn->prepareRead(
@@ -150,10 +155,16 @@ final class PayKickstartAdapter implements ProviderAdapter
             );
         }
         $clickId = self::clickId($fields);
-        $occurredAt = self::text($fields, 'transaction_time');
-        $occurredAt = $occurredAt !== null && preg_match('/^[1-9]\d{0,10}$/D', $occurredAt) === 1
-            ? (int) $occurredAt
-            : null;
+        // When it happened, which dates the row: a time that cannot be read is
+        // refused, never replaced by the time it arrived (CLAUDE.md #4).
+        $time = self::text($fields, 'transaction_time');
+        if ($time !== null && (preg_match('/^[1-9]\d{0,9}$/D', $time) !== 1 || (int) $time > Notification::LAST_TIME)) {
+            throw self::malformed(
+                'transaction_time is "' . self::shown($time) . '"; PayKickstart sends it as a Unix time (seconds since'
+                . ' 1970, such as 1469014598).'
+            );
+        }
+        $occurredAt = $time !== null ? (int) $time : null;
 
         if ($kind === NotificationKind::SALE) {
             $rebill = self::text($fields, 'is_rebill');
