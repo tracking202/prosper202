@@ -32,7 +32,8 @@ it up for itself, under **Account › API integrations › ClickBank**:
    Tools). Each notification is encrypted with it, and the account whose key
    decrypts it is the one it records for. A key that two Prosper202 accounts
    store is refused (`409`), since it cannot say whose sale it is: keep it in
-   the account it belongs to.
+   the account it belongs to. A deleted account's key decrypts nothing, so it
+   is no second account.
 3. In ClickBank, paste the page's INS URL
    (`https://<your tracking domain>/tracking202/static/cb202.php`), choose
    version 8.0, and press **Test URL**: the test marks the key Verified on the
@@ -95,7 +96,8 @@ PayKickstart**:
 3. Store the **IPN secret key** of each PayKickstart campaign on the page (every
    campaign has its own, in its settings). Prosper202 verifies each IPN's
    `hash` with the stored keys, and the account whose key verifies it is the
-   one it records for; an IPN no stored key verifies is refused. The keys are
+   one it records for (a deleted account's keys verify nothing); an IPN no
+   stored key verifies is refused. The keys are
    never shown back: the page lists their last four characters, and the API
    (`PUT /users/{id}/preferences`, `p202 user prefs update
    --paykickstart-ipn-secret-keys`) how many are stored.

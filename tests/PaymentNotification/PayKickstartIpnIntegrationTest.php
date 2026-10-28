@@ -37,12 +37,16 @@ final class PayKickstartIpnIntegrationTest extends TestCase
     private const ACCOUNT = 990401;
     private const OTHER = 990402;
     private const SHARING = 990403;
+    /** An account deleted in Account › Users, whose preferences row still holds its keys. */
+    private const DELETED = 990404;
     private const CLICK = 99040101;
     private const OTHER_CLICK = 99040111;
     private const SHARING_CLICK = 99040121;
+    private const DELETED_CLICK = 99040131;
     private const CAMPAIGN = 990461;
     private const OTHER_CAMPAIGN = 990462;
     private const SHARING_CAMPAIGN = 990463;
+    private const DELETED_CAMPAIGN = 990464;
 
     private const KEY_1 = 'campaign-one-KEY-0001';
     private const KEY_2 = 'campaign-two-KEY-0002';
@@ -68,6 +72,7 @@ final class PayKickstartIpnIntegrationTest extends TestCase
             self::ACCOUNT => self::CAMPAIGN,
             self::OTHER => self::OTHER_CAMPAIGN,
             self::SHARING => self::SHARING_CAMPAIGN,
+            self::DELETED => self::DELETED_CAMPAIGN,
         ];
         foreach ($campaigns as $user => $campaign) {
             self::user($user);
@@ -78,6 +83,7 @@ final class PayKickstartIpnIntegrationTest extends TestCase
                 . ' aff_campaign_payout = 30, aff_campaign_time = 1, aff_campaign_foreign_payout = 30,'
                 . " payout_mode = 'accumulate'");
         }
+        self::q('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ' . self::DELETED);
     }
 
     public static function tearDownAfterClass(): void
@@ -99,10 +105,12 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         self::keys(self::ACCOUNT, self::KEY_1 . "\n" . self::KEY_2);
         self::keys(self::OTHER, self::OTHER_KEY);
         self::keys(self::SHARING, null);
+        self::keys(self::DELETED, null);
         $repo = new MysqlClickRepository(new Connection($db));
         foreach (
             [self::CLICK => [self::ACCOUNT, self::CAMPAIGN], self::OTHER_CLICK => [self::OTHER, self::OTHER_CAMPAIGN],
-            self::SHARING_CLICK => [self::SHARING, self::SHARING_CAMPAIGN]] as $click => [$user, $campaign]
+            self::SHARING_CLICK => [self::SHARING, self::SHARING_CAMPAIGN],
+            self::DELETED_CLICK => [self::DELETED, self::DELETED_CAMPAIGN]] as $click => [$user, $campaign]
         ) {
             $repo->recordClick(new ClickRecord(
                 clickId: $click,
@@ -134,7 +142,7 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         foreach ([...self::CLICK_TABLES, '202_conversion_logs'] as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
         }
-        $users = self::ACCOUNT . ', ' . self::OTHER . ', ' . self::SHARING;
+        $users = self::ACCOUNT . ', ' . self::OTHER . ', ' . self::SHARING . ', ' . self::DELETED;
         self::q("DELETE FROM 202_aff_campaigns WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users_pref WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users WHERE user_id IN ($users)");
@@ -561,6 +569,41 @@ final class PayKickstartIpnIntegrationTest extends TestCase
             [(string) self::SHARING, (string) self::ACCOUNT],
             array_column(self::conversions(), 'user_id')
         );
+    }
+
+    /**
+     * A deleted account owns no key: one it still stores verifies nothing,
+     * its clicks are credited by no one's, and an account that stores the
+     * same key now is the only one it verifies. An account switched off in
+     * Account › Users still owns its keys.
+     */
+    public function testADeletedAccountsStoredKeyVerifiesNothing(): void
+    {
+        self::keys(self::DELETED, self::KEY_1 . "\n" . 'deleted-account-KEY-9');
+
+        $ours = $this->post(self::fields(['transaction_id' => 'PK-TX-D1']), self::KEY_1);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $ours);
+        self::assertSame(self::ACCOUNT, $ours->accountId);
+
+        $deletedClick = ['custom_subid' => (string) self::DELETED_CLICK, 'transaction_id' => 'PK-TX-D2'];
+        self::assertOutcome(OutcomeKind::UNKNOWN_CLICK, 404, $this->post(self::fields($deletedClick), self::KEY_1));
+        $onlyDeleted = $this->post(self::fields($deletedClick), 'deleted-account-KEY-9');
+        self::assertOutcome(OutcomeKind::UNVERIFIED, 403, $onlyDeleted);
+        self::assertSame([[(string) self::CLICK, (string) self::ACCOUNT]], array_map(
+            static fn (array $r): array => [$r['click_id'], $r['user_id']],
+            self::conversions()
+        ));
+
+        self::keys(self::SHARING, self::OTHER_KEY . '-off');
+        self::q('UPDATE 202_users SET user_active = 0 WHERE user_id = ' . self::SHARING);
+        try {
+            $off = $this->post(self::fields(['custom_subid' => (string) self::SHARING_CLICK,
+                'transaction_id' => 'PK-TX-D3']), self::OTHER_KEY . '-off');
+        } finally {
+            self::q('UPDATE 202_users SET user_active = 1 WHERE user_id = ' . self::SHARING);
+        }
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $off);
+        self::assertSame(self::SHARING, $off->accountId);
     }
 
     public function testTestModeOtherEventsAndASaleWithNoClickRecordNothing(): void
