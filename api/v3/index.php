@@ -1113,7 +1113,7 @@ try {
 
             // Preferences (Personal settings: yours with the page's
             // permission, or a user you may manage; they hold the account's
-            // integration secrets)
+            // integration secrets, which GET answers only as stored or not)
             $r->get('/{id}/preferences', function ($ctx) use ($auth, $make, $db) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
                 return $make()->getPreferences(PathId::of($ctx));
