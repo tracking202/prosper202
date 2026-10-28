@@ -175,13 +175,13 @@ eq "$(rows $CLICK_G)" 2 "a pixel that carries a transaction id is still a second
 
 say "cb202.php: one row per ClickBank receipt, payout from the order total"
 CBKEY="livepasskey123"
-mysql_q "$DB" -e "UPDATE 202_users_pref SET cb_key='$CBKEY' WHERE user_id=1"
+mysql_q "$DB" -e "UPDATE 202_users_pref SET cb_key='$CBKEY' WHERE user_id=$USER_ID"
 cb_post() { # $1 receipt, $2 click, $3 amount, $4 type
   php -r '
     [$key,$receipt,$click,$amount,$type] = array_slice($argv,1);
     $order = json_encode(["transactionType"=>$type,"receipt"=>$receipt,"trackingCodes"=>[$click],"totalAccountAmount"=>$amount]);
     $iv = random_bytes(16);
-    $enc = openssl_encrypt($order,"AES-128-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
+    $enc = openssl_encrypt($order,"AES-256-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
     echo json_encode(["notification"=>base64_encode($enc),"iv"=>base64_encode($iv)]);
   ' "$CBKEY" "$1" "$2" "$3" "$4" > "$OUT/cb.json"
   curl -sS -o "$OUT/cb.out" -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$OUT/cb.json" "$BASE/tracking202/static/cb202.php"
@@ -196,23 +196,23 @@ eq "$(cb_post RCPT-B $CLICK_D 10.00 SALE)" 200 "a second receipt answers 200"
 eq "$(rows $CLICK_D)" 2 "a second sale on the click is a second row"
 eq "$(method $CLICK_D)" click_id "ClickBank's tracking code named the click"
 eq "$(cb_post RCPT-X 910099999 5.00 SALE)" 404 "a sale naming an unknown click is a 404, not a silent 200"
-grep -q 'Unknown tracking code' "$OUT/cb.out" && ok "the 404 names the cause" || bad "the 404 names the cause"
+grep -q 'There is no click' "$OUT/cb.out" && ok "the 404 names the cause" || bad "the 404 names the cause"
 eq "$(cb_post RCPT-F $CLICK_E 5.00 SALE)" 404 "a sale naming another account's click is a 404 (scoped to the key's account)"
 eq "$(rows $CLICK_E)" 0 "and nothing was written in the other account"
 eq "$(cb_post RCPT-G $CLICK_D.9 5.00 SALE)" 400 "a fractional tracking code is a 400"
 eq "$(cb_post '' $CLICK_D 5.00 SALE)" 400 "a sale without a receipt is a 400"
-grep -q 'Missing receipt' "$OUT/cb.out" && ok "the 400 names the missing receipt" || bad "the 400 names the missing receipt"
+grep -q 'carries no receipt' "$OUT/cb.out" && ok "the 400 names the missing receipt" || bad "the 400 names the missing receipt"
 php -r '
   $key="'"$CBKEY"'"; $iv=random_bytes(16);
   $order=json_encode(["transactionType"=>"SALE","receipt"=>"RCPT-H","trackingCodes"=>["'"$CLICK_D"'"]]);
-  $enc=openssl_encrypt($order,"AES-128-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
+  $enc=openssl_encrypt($order,"AES-256-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
   echo json_encode(["notification"=>base64_encode($enc),"iv"=>base64_encode($iv)]);' > "$OUT/cbnototal.json"
 eq "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$OUT/cbnototal.json" "$BASE/tracking202/static/cb202.php")" 400 "a sale with no total at all is a 400, not a zero-value sale"
 eq "$(rows $CLICK_D)" 2 "and neither wrote anything"
 php -r '
   $key="'"$CBKEY"'"; $iv=random_bytes(16);
   $order=json_encode(["transactionType"=>"SALE","receipt"=>"RCPT-Z","trackingCodes"=>["'"$CLICK_D"'"],"totalAccountAmount"=>"lots"]);
-  $enc=openssl_encrypt($order,"AES-128-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
+  $enc=openssl_encrypt($order,"AES-256-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
   echo json_encode(["notification"=>base64_encode($enc),"iv"=>base64_encode($iv)]);' > "$OUT/cbbad.json"
 eq "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$OUT/cbbad.json" "$BASE/tracking202/static/cb202.php")" 400 "a non-numeric order total is a 400, not a zero-value sale"
 eq "$(rows $CLICK_D)" 2 "and it wrote nothing"

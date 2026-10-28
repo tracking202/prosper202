@@ -37,16 +37,44 @@ final class Processor
         InboundRequest $request
     ): Outcome {
         $event = $notification->event;
+        $accounts = $verification->accounts();
+        $account = count($accounts) === 1 ? $accounts[0] : null;
         if ($notification->kind === NotificationKind::TEST) {
+            if ($account !== null && $provider instanceof ConfirmsTestNotifications) {
+                try {
+                    $provider->confirmTest(new Connection($this->db), $account);
+                } catch (\Throwable $e) {
+                    error_log(sprintf(
+                        '%s notification: the %s verified for account %d, which could not be marked verified: %s',
+                        $provider->name(),
+                        $event,
+                        $account,
+                        $e->getMessage()
+                    ));
+
+                    return new Outcome(
+                        OutcomeKind::FAILED,
+                        'The ' . $event . ' notification verified, but Prosper202 could not mark the key verified'
+                        . ' just now. Send the test again.',
+                        null,
+                        $account
+                    );
+                }
+            }
+
             return new Outcome(
                 OutcomeKind::TEST,
-                'Verified. This is a test-mode ' . $event . ' notification, so nothing was recorded.'
+                'Verified. This is a test-mode ' . $event . ' notification, so nothing was recorded.',
+                null,
+                $account
             );
         }
         if ($notification->kind === NotificationKind::IGNORED) {
             return new Outcome(
                 OutcomeKind::IGNORED,
-                'Verified. Prosper202 records sales and refunds; a ' . $event . ' notification records nothing.'
+                'Verified. Prosper202 records sales and refunds; a ' . $event . ' notification records nothing.',
+                null,
+                $account
             );
         }
 

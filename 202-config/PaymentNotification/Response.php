@@ -26,7 +26,7 @@ final class Response
             OutcomeKind::UNVERIFIED => 403,
             OutcomeKind::UNKNOWN_CLICK, OutcomeKind::NOTHING_TO_REVERSE => 404,
             OutcomeKind::METHOD_NOT_ALLOWED => 405,
-            OutcomeKind::CONFLICT => 409,
+            OutcomeKind::CONFLICT, OutcomeKind::AMBIGUOUS_ACCOUNT => 409,
             OutcomeKind::UNSUPPORTED_BODY => 415,
             OutcomeKind::CURRENCY_MISMATCH => 422,
             OutcomeKind::FAILED => 500,
