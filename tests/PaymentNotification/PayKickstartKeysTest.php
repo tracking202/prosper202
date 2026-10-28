@@ -106,21 +106,4 @@ final class PayKickstartKeysTest extends TestCase
     {
         self::assertSame("\u{2026}AB12", PayKickstartKeys::hint('secret-key-AB12'));
     }
-
-    public function testAPreferencesRowAnswersHowManyKeysNeverTheKeys(): void
-    {
-        $row = PayKickstartKeys::withoutKeys([
-            'user_id' => 5, 'cb_key' => 'kept', PayKickstartKeys::COLUMN => "good-key-0001\ngood-key-0002\nshort",
-        ]);
-        self::assertSame(['user_id' => 5, 'cb_key' => 'kept', 'paykickstart_ipn_keys_stored' => 2], $row);
-        self::assertSame(
-            ['paykickstart_ipn_keys_stored' => 0],
-            PayKickstartKeys::withoutKeys([PayKickstartKeys::COLUMN => null])
-        );
-        self::assertSame(
-            ['user_id' => 5],
-            PayKickstartKeys::withoutKeys(['user_id' => 5]),
-            'a row read without the column'
-        );
-    }
 }

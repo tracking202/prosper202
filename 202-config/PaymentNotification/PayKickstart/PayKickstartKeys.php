@@ -11,15 +11,13 @@ use InvalidArgumentException;
  * campaign it sells through (PayKickstart gives every campaign its own), in
  * 202_users_pref.paykickstart_ipn_secret_keys, one per line. The page and
  * PUT /users/{id}/preferences both write through parse(), and nothing ever
- * answers with a key: the page shows the last characters of each, and the
- * API how many are stored.
+ * answers with a key: the page shows the last characters of each, GET
+ * /users/{id}/preferences whether any is stored, and GET /system/integrations
+ * how many.
  */
 final class PayKickstartKeys
 {
     public const COLUMN = 'paykickstart_ipn_secret_keys';
-
-    /** What GET /users/{id}/preferences answers in the column's place. */
-    public const COUNT_FIELD = 'paykickstart_ipn_keys_stored';
 
     public const MAX_KEYS = 20;
     public const MIN_LENGTH = 8;
@@ -148,25 +146,6 @@ final class PayKickstartKeys
     public static function hint(string $key): string
     {
         return "\u{2026}" . substr($key, -4);
-    }
-
-    /**
-     * A preferences row as the API answers it: the keys' column replaced by
-     * how many keys it holds.
-     *
-     * @param array<string, mixed> $row
-     * @return array<string, mixed>
-     */
-    public static function withoutKeys(array $row): array
-    {
-        if (!array_key_exists(self::COLUMN, $row)) {
-            return $row;
-        }
-        $value = $row[self::COLUMN];
-        unset($row[self::COLUMN]);
-        $row[self::COUNT_FIELD] = count(self::stored(is_string($value) ? $value : null)['keys']);
-
-        return $row;
     }
 
     private static function problem(string $key): ?string

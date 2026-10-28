@@ -2,6 +2,9 @@
 
 package cmd
 
+// hostedBuild: this build is the hosted relay's engine (mcpHostedRun).
+const hostedBuild = true
+
 // hostedArgsRefusal is the js/wasm build's entry check, run by Execute before
 // cobra. That build is the hosted relay's engine, which runs one command per
 // instance: `p202 mcp call`, `p202 mcp tools`, --version, and `p202 search` in
