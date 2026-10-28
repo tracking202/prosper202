@@ -211,7 +211,8 @@ if (!isset($_SESSION['privacy'])) {
             ? $privacy['user_pref_privacy']
             : 'all';
     } else {
-        // No preferences row: nothing was set, the column's own default.
+        // No preferences row: nothing was set, 'disabled' as before 1.9.79,
+        // though a new account's row now starts at 'eu' (PrivacySetting).
         $_SESSION['privacy'] = 'disabled';
     }
 }

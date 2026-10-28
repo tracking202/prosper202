@@ -13009,7 +13009,14 @@ components:
         user_keyword_searched_or_bidded: {type: string, enum: [searched, bidded]}
         user_pref_referer_data: {type: string, enum: [browser, t202ref]}
         user_pref_dynamic_bid: {type: integer, enum: [0, 1]}
-        user_pref_privacy: {type: string, enum: [disabled, eu, all]}
+        user_pref_privacy:
+          type: string
+          enum: [disabled, eu, all]
+          description: >-
+            Which visitors get no tracking cookies and a masked address
+            (disabled nobody, eu those GeoIP does not place outside Europe,
+            all everyone). An account made from 1.9.79 on starts at eu; one
+            made before keeps what it had.
         user_pref_cloak_referer: {type: string, enum: [origin, never]}
         user_pref_ad_settings: {type: string, enum: [show_all, hide_login, hide_all]}
         user_account_currency:
