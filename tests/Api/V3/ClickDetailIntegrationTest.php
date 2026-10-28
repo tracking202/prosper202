@@ -147,9 +147,12 @@ final class ClickDetailIntegrationTest extends TestCase
      */
     public function testOfTwoVisitsInOneSecondTheOneOnTheClicksRouteIsTheClick(bool $currentFirst): void
     {
+        // One time for both rows: UNIX_TIMESTAMP() in each statement can fall
+        // either side of a second, and the visits are then a second apart.
+        $at = time() + 60;
         $visit = static fn (string $cpc, int $redirect): string => 'INSERT INTO 202_clicks SET click_id = 960001,'
             . ' user_id = ' . self::USER . ", aff_campaign_id = 0, ppc_account_id = 0, click_cpc = $cpc,"
-            . " click_time = UNIX_TIMESTAMP() + 60, rotator_id = 5, rule_id = $redirect";
+            . " click_time = $at, rotator_id = 5, rule_id = $redirect";
         $current = $visit('0.5', 12);
         $earlier = $visit('0.25', 11);
         foreach ($currentFirst ? [$current, $earlier] : [$earlier, $current] as $sql) {
