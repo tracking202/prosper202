@@ -1576,6 +1576,265 @@ CHILD;
         self::assertSame([1, 12.0, 0.0, 12.0], [$ny[0]['customers'], $ny[0]['total_revenue'], $ny[0]['m5_plus'], $ny[0]['ltv_per_customer']], 'numbers, not DECIMAL strings');
     }
 
+    /**
+     * The fields of a customer answer that hold the caller's own text, which
+     * may be all digits.
+     */
+    private const CUSTOMER_TEXT_FIELDS = [
+        'primary_ref', 'first_name', 'last_name', 'email', 'phone', 'company', 'address_line1', 'address_line2',
+        'city', 'region', 'postal_code', 'country', 'status', 'alias_type', 'alias_value', 'external_sub_id',
+        'plan_name', 'currency', 'billing_interval', 'event_type', 'source', 'external_ref', 'transaction_id',
+        'sku', 'product_name', 'event_name', 'campaign_name', 'landing_page', 'name', 'url', 'basis',
+        'dry_run', 'action', 'resource', 'mode', 'effect',
+    ];
+
+    /**
+     * Every customer read answers money as numbers and counts as integers,
+     * as GET /ltv/summary has since 1.9.77. GET /ltv/customers and
+     * /ltv/customers/{id} (its subscriptions, revenue events and line items)
+     * answered mysqli's DECIMAL strings ("54.12500", a quantity of "1.500"),
+     * and the engagement SUM()'s "1" for conversions, so one field read as
+     * a number from one endpoint and as text from another. Through the
+     * controller, on a real server: the types are the server's, which a fake
+     * connection would only repeat. Each answer is walked whole, so a
+     * DECIMAL column added later is seen as well as the ones named here.
+     */
+    public function testCustomerReadsServeNumbers(): void
+    {
+        [$ltv, $id] = $this->seedCustomerReads();
+        $answers = [
+            'summary' => $ltv->summary([]),
+            'customers' => $ltv->customers([]),
+            'customer' => $ltv->customerDetail($id),
+            'engagement' => $ltv->customerEngagement($id, []),
+            'next-offer' => $ltv->customerNextOffer($id),
+            'erase preview' => $ltv->deleteCustomerPreview($id),
+        ];
+        foreach ($answers as $read => $answer) {
+            self::assertNoNumericText($answer, $read);
+        }
+
+        $rollups = [54.125, 5.0, 29.99, 2, 1];
+        $of = static fn (array $c, string $orders, string $subs): array
+            => [$c['total_revenue'], $c['refunded_amount'], $c['mrr'], $c[$orders], $c[$subs]];
+        $summary = $answers['summary']['data'];
+        self::assertSame($rollups, $of($summary, 'total_orders', 'active_subscriptions'), 'the summary');
+        $customers = [
+            'list row' => $answers['customers']['data'][0],
+            'detail' => $answers['customer']['data'],
+            'erase preview' => $answers['erase preview']['data']['record'],
+        ];
+        foreach ($customers as $read => $customer) {
+            self::assertSame($rollups, $of($customer, 'order_count', 'active_subscription_count'), $read);
+            self::assertSame('0042', $customer['primary_ref'], "$read: text stays text");
+        }
+
+        $detail = $answers['customer']['data'];
+        self::assertSame(['5551234', '02134'], [$detail['phone'], $detail['postal_code']]);
+        self::assertSame(42.5, $detail['custom_fields']['score']);
+        self::assertSame('98765', $detail['aliases'][1]['alias_value']);
+        $sub = $detail['subscriptions'][0];
+        self::assertSame(
+            ['7002', 29.99, 29.99, 1],
+            [$sub['external_sub_id'], $sub['amount'], $sub['mrr'], $sub['billing_interval_count']]
+        );
+        self::assertSame([-5.0, 10.125, 49.0], array_column($detail['recent_events'], 'amount'));
+        self::assertSame('1001', $detail['recent_events'][2]['transaction_id']);
+        $items = array_merge(...array_column($detail['recent_events'], 'items'));
+        self::assertSame(
+            [['ADDON', 1.5, null, 10.125], ['7001', 2.0, 24.5, 49.0]],
+            array_map(
+                static fn (array $i): array => [$i['sku'], $i['quantity'], $i['unit_price'], $i['amount']],
+                $items
+            ),
+            'a quantity is a measure (1.5), and a unit price never sent stays null'
+        );
+
+        $engagement = $answers['engagement']['data'];
+        self::assertSame([[7, 1, 1]], array_map(
+            static fn (array $b): array => [$b['campaign_id'], $b['clicks'], $b['conversions']],
+            $engagement['browsing']
+        ));
+        self::assertSame([['signed_up', null], ['scroll_depth', 75.0]], array_map(
+            static fn (array $e): array => [$e['event_name'], $e['event_value']],
+            $engagement['events']
+        ), 'an event with no value stays null');
+
+        $offer = $answers['next-offer']['data'];
+        self::assertSame(
+            [7, 'engagement', 1],
+            [$offer['campaign_id'], $offer['why']['basis'], $offer['why']['clicks']]
+        );
+    }
+
+    /**
+     * docs/openapi.yaml's customer schemas name every key the answers carry,
+     * each with the JSON type it is served as, and no key they do not carry.
+     * A customer with no custom field value answered custom_fields as [], a
+     * list, where one with a value answered an object.
+     */
+    public function testCustomerAnswersHaveTheSpecsKeysAndTypes(): void
+    {
+        [$ltv, $id] = $this->seedCustomerReads();
+        $plain = (int) $ltv->upsertCustomer(['customer_ref' => '0043'])['data']['customer_id'];
+        $schemas = self::specSchemas();
+
+        foreach ($ltv->customers([])['data'] as $row) {
+            self::assertMatchesSchema($schemas, 'LtvCustomer', $row, 'GET /ltv/customers');
+        }
+        $plainDetail = $ltv->customerDetail($plain)['data'];
+        self::assertMatchesSchema($schemas, 'LtvCustomerDetail', $plainDetail, 'a customer with no custom field value');
+        $detail = $ltv->customerDetail($id)['data'];
+        self::assertMatchesSchema($schemas, 'LtvCustomerDetail', $detail, 'GET /ltv/customers/{id}');
+        $rows = [
+            'LtvCustomerAlias' => $detail['aliases'],
+            'LtvCustomerSubscription' => $detail['subscriptions'],
+            'LtvCustomerRevenueEvent' => $detail['recent_events'],
+            'LtvCustomerLineItem' => array_merge(...array_column($detail['recent_events'], 'items')),
+        ];
+        $engagement = $ltv->customerEngagement($id, [])['data'];
+        self::assertMatchesSchema($schemas, 'LtvCustomerEngagement', $engagement, 'GET /ltv/customers/{id}/engagement');
+        $rows['LtvBrowsedCampaign'] = $engagement['browsing'];
+        $rows['LtvEngagementEvent'] = $engagement['events'];
+        foreach ($rows as $schema => $list) {
+            self::assertNotSame([], $list, "$schema has a row to compare");
+            foreach ($list as $row) {
+                self::assertMatchesSchema($schemas, $schema, $row, $schema);
+            }
+        }
+    }
+
+    /**
+     * One customer with every part the customer reads answer: a number
+     * custom field, an alias, two sales with line items (one line with no
+     * unit price, a fractional quantity), a refund, a subscription, two
+     * engagement events (one with no value) and a converted click on
+     * campaign 7. Its references, phone, postal code and one sku are all
+     * digits, as a caller's may be.
+     *
+     * @return array{0: \Api\V3\Controllers\LtvController, 1: int}
+     */
+    private function seedCustomerReads(): array
+    {
+        self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id=7, user_id=1,
+            aff_campaign_name='Offer A', aff_campaign_url='https://example.com/a'");
+        $ltv = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        $ltv->createField(['field_key' => 'score', 'field_type' => 'number']);
+        $id = (int) $ltv->upsertCustomer([
+            'customer_ref' => '0042', 'phone' => '5551234', 'postal_code' => '02134',
+            'aliases' => [['type' => 'esp_id', 'value' => '98765']], 'custom_fields' => ['score' => 42.5],
+        ])['data']['customer_id'];
+        $ltv->recordRevenue([
+            'customer_id' => $id, 'amount' => 49, 'idempotency_key' => 'num-1', 'transaction_id' => '1001',
+            'items' => [['sku' => '7001', 'quantity' => 2, 'unit_price' => 24.5]],
+        ]);
+        $ltv->recordRevenue([
+            'customer_id' => $id, 'amount' => 10.125, 'idempotency_key' => 'num-2',
+            'items' => [['sku' => 'ADDON', 'quantity' => 1.5, 'amount' => 10.125]],
+        ]);
+        $ltv->recordRevenue([
+            'customer_id' => $id, 'amount' => -5, 'event_type' => 'refund', 'idempotency_key' => 'num-3',
+        ]);
+        $ltv->upsertSubscription([
+            'customer_id' => $id, 'external_sub_id' => '7002', 'plan_name' => 'Pro', 'amount' => 29.99,
+        ]);
+        $ltv->recordEngagementEvent(['customer_id' => $id, 'event' => 'scroll_depth', 'value' => 75]);
+        $ltv->recordEngagementEvent(['customer_id' => $id, 'event' => 'signed_up']);
+        self::$db->query('INSERT INTO 202_clicks SET click_id=9700, user_id=1, aff_campaign_id=7, click_payout=12.5,
+            click_cpc=0.25, click_lead=1, click_time=UNIX_TIMESTAMP() - 600');
+        self::$db->query("INSERT INTO 202_clicks_tracking SET click_id=9700, c1_id=0, c2_id=0, c3_id=0, c4_id=0,
+            customer_id=$id");
+
+        return [$ltv, $id];
+    }
+
+    /**
+     * Each components schema of docs/openapi.yaml whose properties are
+     * written one to a line in flow style (`name: {type: number, ...}`), by
+     * name: each property's type and whether it is nullable, with an allOf's
+     * referenced schema folded in. Read as text, as LedgerReadsOpenApiTest
+     * reads the spec: no YAML library ships with the project.
+     *
+     * @return array<string, array<string, array{0: string, 1: bool}>>
+     */
+    private static function specSchemas(): array
+    {
+        $spec = (string) file_get_contents(dirname(__DIR__, 2) . '/docs/openapi.yaml');
+        $components = substr($spec, (int) strpos($spec, "\ncomponents:\n"));
+        $blocks = preg_split('/\n(?=    [A-Za-z]\w*:\n)/', $components) ?: [];
+        $schemas = [];
+        $allOf = [];
+        foreach ($blocks as $block) {
+            if (preg_match('/^    (\w+):\n/', $block, $name) !== 1) {
+                continue;
+            }
+            preg_match_all('/^ {8,10}(\w+): \{type: (\w+)(.*)\}$/m', $block, $props, PREG_SET_ORDER);
+            foreach ($props as [, $property, $type, $rest]) {
+                $schemas[$name[1]][$property] = [$type, str_contains($rest, 'nullable: true')];
+            }
+            if (preg_match('/^      allOf:\n      - \$ref: \'#\/components\/schemas\/(\w+)\'$/m', $block, $ref) === 1) {
+                $allOf[$name[1]] = $ref[1];
+            }
+        }
+        foreach ($allOf as $schema => $base) {
+            $schemas[$schema] = ($schemas[$base] ?? []) + ($schemas[$schema] ?? []);
+        }
+
+        return $schemas;
+    }
+
+    /**
+     * @param array<string, array<string, array{0: string, 1: bool}>> $schemas
+     * @param array<string, mixed> $row
+     */
+    private static function assertMatchesSchema(array $schemas, string $schema, array $row, string $where): void
+    {
+        self::assertArrayHasKey($schema, $schemas, "$schema is in docs/openapi.yaml with its properties");
+        $properties = $schemas[$schema];
+        $documented = array_keys($properties);
+        $served = array_keys($row);
+        sort($documented);
+        sort($served);
+        self::assertSame($documented, $served, "$where: the keys $schema documents are the keys served");
+        foreach ($properties as $property => [$type, $nullable]) {
+            $value = $row[$property];
+            if ($value === null) {
+                self::assertTrue($nullable, "$where: $property is null, which $schema does not say it may be");
+                continue;
+            }
+            // A list or an object as JSON writes it: PHP's [] is a list.
+            $json = (string) json_encode($value);
+            $is = match ($type) {
+                'integer' => is_int($value),
+                'number' => is_float($value) || is_int($value),
+                'string' => is_string($value),
+                'boolean' => is_bool($value),
+                'array' => str_starts_with($json, '['),
+                'object' => str_starts_with($json, '{'),
+                default => false,
+            };
+            self::assertTrue($is, "$where: $property is " . get_debug_type($value) . " $json, $schema says $type");
+        }
+    }
+
+    /** A numeric string anywhere in $value but a text field (or a custom field, typed by its own field). */
+    private static function assertNoNumericText(mixed $value, string $path): void
+    {
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                if ($key !== 'custom_fields') {
+                    self::assertNoNumericText($item, $path . '.' . $key);
+                }
+            }
+
+            return;
+        }
+        $field = substr($path, (int) strrpos($path, '.') + 1);
+        if (is_string($value) && is_numeric($value) && !in_array($field, self::CUSTOMER_TEXT_FIELDS, true)) {
+            self::fail("$path is the string \"$value\": money is a JSON number and a count an integer");
+        }
+    }
+
     public function testNextOfferRebuildAndScoringEndToEnd(): void
     {
         foreach ([[7, 'Offer A'], [8, 'Offer B'], [9, 'Offer C'], [10, 'Offer D']] as [$id, $name]) {

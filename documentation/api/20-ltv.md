@@ -107,6 +107,21 @@ one). A value off a list, or a `limit` that is not a whole number in range
 (`abc`, `1000`), is a `422` naming the parameter and its range — never one
 row, never the first 500 read as all of them.
 
+**Numbers.** The summary and the customer reads answer money as a JSON
+number and a count as an integer: a customer's `total_revenue`,
+`refunded_amount` and `mrr`; in the detail each subscription's `amount` and
+`mrr`, each revenue event's `amount`, and each line item's `quantity` (a
+measure, so `1.5` as well as `2`), `unit_price` (`null` when the line was
+sent without one) and `amount`; in the engagement each campaign's
+`conversions` and each event's `event_value` (a number, or `null`). Until
+1.9.79 `GET /ltv/customers`, `/ltv/customers/{id}` (and every write that
+answers a customer) and the engagement answered MySQL's decimal text
+(`"54.12500"`, a quantity of `"1.500"`, conversions of `"1"`). A reference,
+an alias, a transaction id, a sku or a postal code stays a string, digits or
+not. A customer's `custom_fields` is an object keyed by field, `{}` when it
+holds no value (it was `[]`, a list). `docs/openapi.yaml` gives each field's
+type (`LtvCustomer`, `LtvCustomerDetail`, `LtvCustomerEngagement`).
+
 ```bash
 p202 ltv summary --period last30
 p202 ltv customers --search acme --segment repeat --sort total_revenue

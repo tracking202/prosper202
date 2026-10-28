@@ -11,7 +11,8 @@
       "Changed: The page that connects an AI assistant shows the app's name and site as what the approval link says, and that whoever started the connection gets the access; it no longer calls them verified. Allow a connection only if you started it yourself",
       "Changed: After an upgrade, tracking links look up their ids afresh instead of reading what the previous version cached, so the first clicks after an upgrade each make one more database read; so do the bot-range and browser checks",
       "Changed: When a cron run was recorded in the last five minutes, turning AutoCron on in Settings no longer simply refuses: it says why AutoCron may not be needed and offers to turn it on anyway, since anyone can open the cron address",
-      "Fixed: Security. Reading a user's preferences through the API or the CLI showed the account's integration secrets (the ClickBank, JVZoo, Zaxaa and IPQS keys, the Slack webhook, RevContent and the Landing Page Optimizer's keys). It says only whether each one is stored. If anyone who should not see them held an API key, replace those secrets at each network"
+      "Fixed: Security. Reading a user's preferences through the API or the CLI showed the account's integration secrets (the ClickBank, JVZoo, Zaxaa and IPQS keys, the Slack webhook, RevContent and the Landing Page Optimizer's keys). It says only whether each one is stored. If anyone who should not see them held an API key, replace those secrets at each network",
+      "Changed: The API answers a customer's revenue, refunds and MRR (and its subscriptions', revenue events' and line items' amounts, and its engagement) as numbers, as the LTV summary does, rather than as text such as \"54.12500\", and its custom_fields as an object even when it holds none"
     ]
   },
   "1.9.78": {

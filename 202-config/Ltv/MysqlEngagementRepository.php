@@ -133,7 +133,12 @@ final class MysqlEngagementRepository
         );
         $this->conn->bind($stmt, 'iiii', [$userId, $customerId, $since, $limit]);
 
-        return $this->conn->fetchAll($stmt);
+        // A number, not the DECIMAL string mysqli hands back ("75.000").
+        return array_map(static function (array $row): array {
+            $row['event_value'] = $row['event_value'] === null ? null : (float) $row['event_value'];
+
+            return $row;
+        }, $this->conn->fetchAll($stmt));
     }
 
     /**
@@ -164,7 +169,12 @@ final class MysqlEngagementRepository
         );
         $this->conn->bind($stmt, 'iiii', [$userId, $customerId, $since, $limit]);
 
-        return $this->conn->fetchAll($stmt);
+        // A count, not the DECIMAL string SUM() answers ("1").
+        return array_map(static function (array $row): array {
+            $row['conversions'] = (int) $row['conversions'];
+
+            return $row;
+        }, $this->conn->fetchAll($stmt));
     }
 
     /**

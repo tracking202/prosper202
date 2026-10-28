@@ -128,7 +128,23 @@ class LtvController
             throw new NotFoundException('Customer not found');
         }
 
-        return ['data' => $customer];
+        return ['data' => self::presentCustomer($customer)];
+    }
+
+    /**
+     * custom_fields is an object keyed by field. With no value it is PHP's
+     * empty array, which JSON writes as [], a list.
+     *
+     * @param array<string, mixed> $customer
+     * @return array<string, mixed>
+     */
+    private static function presentCustomer(array $customer): array
+    {
+        if ($customer['custom_fields'] === []) {
+            $customer['custom_fields'] = new \stdClass();
+        }
+
+        return $customer;
     }
 
     public function breakdown(array $params): array
@@ -1398,7 +1414,7 @@ class LtvController
                 'action' => 'erase',
                 'resource' => 'ltv-customers',
                 'mode' => 'anonymize',
-                'record' => $customer,
+                'record' => self::presentCustomer($customer),
                 'effect' => 'Erases the customer\'s personal data in one transaction: first_name, last_name, email, '
                     . 'phone, company, address_line1, address_line2, city, region, postal_code and country are '
                     . 'cleared, the company link is removed, primary_ref becomes erased:' . $customerId

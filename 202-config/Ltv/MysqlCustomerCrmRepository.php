@@ -77,6 +77,7 @@ final class MysqlCustomerCrmRepository
         if ($customer === null) {
             return null;
         }
+        $customer = self::decimals($customer, ['total_revenue', 'refunded_amount', 'mrr']);
 
         $stmt = $this->conn->prepareRead(
             'SELECT alias_id, alias_type, alias_value, created_at FROM 202_customer_aliases
@@ -113,7 +114,10 @@ final class MysqlCustomerCrmRepository
              ORDER BY subscription_id DESC'
         );
         $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
-        $customer['subscriptions'] = $this->conn->fetchAll($stmt);
+        $customer['subscriptions'] = array_map(
+            static fn (array $sub): array => self::decimals($sub, ['amount', 'mrr']),
+            $this->conn->fetchAll($stmt)
+        );
 
         // LEFT join: only subscription-sourced events carry a subscription_id;
         // direct purchases keep flowing through with plan_name = NULL.
@@ -128,7 +132,10 @@ final class MysqlCustomerCrmRepository
              ORDER BY re.occurred_at DESC, re.event_id DESC LIMIT ?'
         );
         $this->conn->bind($stmt, 'iii', [$customerId, $userId, $eventLimit]);
-        $events = $this->conn->fetchAll($stmt);
+        $events = array_map(
+            static fn (array $event): array => self::decimals($event, ['amount']),
+            $this->conn->fetchAll($stmt)
+        );
 
         if ($events !== []) {
             $eventIds = array_map(static fn (array $e): int => (int) $e['event_id'], $events);
@@ -140,7 +147,8 @@ final class MysqlCustomerCrmRepository
             $this->conn->bind($stmt, str_repeat('i', count($eventIds)), $eventIds);
             $itemsByEvent = [];
             foreach ($this->conn->fetchAll($stmt) as $item) {
-                $itemsByEvent[(int) $item['event_id']][] = $item;
+                // quantity is DECIMAL(12,3): a measure, 1.5 as well as 2.
+                $itemsByEvent[(int) $item['event_id']][] = self::decimals($item, ['quantity', 'unit_price', 'amount']);
             }
             foreach ($events as &$event) {
                 $event['items'] = $itemsByEvent[(int) $event['event_id']] ?? [];
@@ -150,6 +158,26 @@ final class MysqlCustomerCrmRepository
         $customer['recent_events'] = $events;
 
         return $customer;
+    }
+
+    /**
+     * DECIMAL columns as numbers, as MysqlLtvRepository::summary() answers
+     * them: mysqli hands them back as strings ("54.12500") beside integer
+     * columns that are numbers. A NULL stays null.
+     *
+     * @param array<string, mixed> $row
+     * @param list<string> $columns
+     * @return array<string, mixed>
+     */
+    private static function decimals(array $row, array $columns): array
+    {
+        foreach ($columns as $column) {
+            if (isset($row[$column]) && is_string($row[$column]) && is_numeric($row[$column])) {
+                $row[$column] = (float) $row[$column];
+            }
+        }
+
+        return $row;
     }
 
     /**
