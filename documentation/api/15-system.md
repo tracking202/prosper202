@@ -21,6 +21,7 @@ System health checks, diagnostics, and administration.
 | `GET` | `/system/integrations` | Admin + `access_to_api_integrations` | The notification URLs to paste into ClickBank, JVZoo, Zaxaa, Slack, PayKickstart |
 | `GET` | `/system/traffic-source-owners` | Admin + `access_to_settings` | Traffic sources another user's traffic source accounts name (taken by Setup's rename before 1.9.79); Account › Settings shows the same in a notice and a panel |
 | `POST` | `/system/traffic-source-owners/repair` | Admin + `access_to_settings`, and a user who may act on both users | Move one back, or every one the report names a user for |
+| `POST` | `/system/traffic-source-owners/split` | Admin + `access_to_settings`, and a user who may act on each user it names | Give each user whose accounts name a source a copy of their own: what clears a source accounts of more than one user name |
 
 ## Health Check
 
@@ -414,9 +415,9 @@ accounts stayed with their user, whose `GET /ppc-networks/{id}` then answered
 `404`, and whose reports put each click those accounts recorded from then on
 under no traffic source: a report row takes the source only from the click's
 own account. 1.9.79 refuses the
-rename of another user's source; these two routes find the sources taken
-before, and move one back on an operator's say-so. Nothing is moved by
-itself, and the upgrade neither looks nor moves.
+rename of another user's source; these routes find the sources taken
+before, and move one back, or split one, on an operator's say-so. Nothing is
+moved by itself, and the upgrade neither looks nor moves.
 
 `GET /system/traffic-source-owners`
 
@@ -433,7 +434,8 @@ itself, and the upgrade neither looks nor moves.
             "ppc_account_ids": [4, 5, 6], "last_ppc_account_time": 1000000000, "clicks": 1200, "conversions": 14 }
         ],
         "repair_to_user_id": 2,
-        "ambiguous": []
+        "ambiguous": [],
+        "custom_variables": 2
       }
     ],
     "repairable": 1,
@@ -446,9 +448,10 @@ A source is listed when traffic source accounts (live or removed) of a user
 other than its own name it: `owner` is the user it is in now, `named_by` each
 user whose accounts name it. For each, the accounts, the clicks recorded on
 them (each click once, whatever its visits) and the conversions that count on
-those clicks (a reversal is not counted again). The takeover changed nothing
-else, so a source taken with no account under it leaves no sign and is not
-listed.
+those clicks (a reversal is not counted again). `custom_variables` is how
+many live custom variables the source has, which a split copies. The takeover
+changed nothing else, so a source taken with no account under it leaves no
+sign and is not listed.
 
 The same rows have other origins: before 1.9.77 the API put a traffic source
 account under whatever source it was sent (an account a user made on a source
@@ -522,16 +525,84 @@ after it was read are each a `422` naming the field; nothing is moved.
 With `all`, a failure after some sources moved is a `500` naming them; sending
 the request again moves only what the report still names a user for.
 
-Both routes need an Admin or Super user key whose role has
+`POST /system/traffic-source-owners/split`
+
+No move clears a source marked `owner_has_accounts` or `several_users`:
+whichever user it is in, another user's accounts still name it, and the
+report lists it again. The split leaves it where it is and gives each other
+user a copy of their own.
+
+- `{"ppc_network_id": 9}` leaves source 9 in the account it is in, untouched,
+  and gives each of its `named_by` users a new source in their own account,
+  with its name, its removed mark and its live custom variables (a removed
+  variable is not copied). That user's traffic source accounts naming it,
+  removed ones too, move onto their copy; a report filter of theirs set to the
+  source (`user_pref_ppc_network_id`) is set to the copy; and those accounts
+  are queued for the cron job's report rollup. The source's own user's
+  accounts stay on it.
+- `"owner_user_id"` and `"copy_to_user_ids"` send back the report's
+  `owner.user_id` and its `named_by` user ids as you read them:
+  `{"ppc_network_id": 9, "owner_user_id": 1, "copy_to_user_ids": [4, 6]}`. A
+  source that is in another account by now, or would give copies to other
+  users, is a `422` naming the field rather than copies for users you were
+  never shown. The CLI always sends them.
+- There is no `to_user_id` and no `all`. To have the source end up with
+  another user, move it there first (`repair` with `to_user_id`); the user it
+  leaves, if their accounts name it, is then listed under `named_by`, and a
+  split gives them a copy.
+
+```json
+{ "data": { "ppc_network_id": 9, "ppc_network_name": "Shared", "removed": false, "owner_user_id": 1,
+  "copies": [ { "user_id": 4, "ppc_network_id": 21, "ppc_account_ids": [10], "custom_variables": 2 },
+              { "user_id": 6, "ppc_network_id": 22, "ppc_account_ids": [11], "custom_variables": 2 } ],
+  "queued_ppc_accounts": 2 } }
+```
+
+The clicks already on the moved accounts are reported under the copy once the
+cron job has re-rolled them: until the split, a report row took no source for
+them (it takes the source only from the click's own account, and the source
+was another user's), so the breakdown by traffic source left them out. Pages
+that look a click's source up through its account (the Overview, Visitors,
+`GET /clicks`) show the copy at once. The custom variable values recorded on
+those clicks before the split stay recorded against the source's own
+variables, which the copy does not share: Analyze › Variables lists them under
+the copy with the names those variables have, beside the values recorded
+against the copy's own from then on.
+
+It is one transaction: the users (a user being deleted is waited for, then
+read as deleted), then the accounts that move, by id, then the source are
+locked, in the order a click's report rollup takes an account and then its
+source, so the two do not deadlock; everything is read again, and nothing is
+written unless it still resolves the same way. A failure part way leaves
+nothing written. A rebuild of an hour that reads a click of the source's own
+user and then one of a user who gets a copy takes the rows in that order
+instead, and can deadlock with a split: measured, the server rolled the
+rebuild back, and the cron job takes its hour again on its next run. If the
+split is the one rolled back, it answers `500` with nothing written, and can
+be sent again. Each split is written to the PHP error log: `Prosper202
+traffic source split: traffic source 9 ("Shared") stays in user 1's account;
+user 4's 1 traffic source account(s) now name its copy, traffic source 21;
+user 6's 1 traffic source account(s) now name its copy, traffic source 22; at
+user 1's request`.
+
+A source the report does not list, one a `named_by` user of which has no user
+record or is deleted (nothing is copied into a deleted account), an
+`owner_user_id` or `copy_to_user_ids` the report no longer gives, and a source
+that changed after it was read are each a `422` naming the field; nothing is
+copied.
+
+All three routes need an Admin or Super user key whose role has
 `access_to_settings`, like the rest of Account › Settings: the report names
 every user's sources. A repair moves a source out of one user's account into
 another's, so the key's user must also be one that may act on both, as
 Account › Users allows: only user 1 moves a source into or out of user 1's
 account, and an Admin's or the Super user's account needs
-`add_edit_delete_admin` (a `403` otherwise). Reads need `system:read`, the
-repair `system:write`. Neither can be staged, and the repair has no preview
-(`?dry_run=1` is a `422`): the report is what it would do. The CLI is
-`p202 system traffic-source-owners show` and `repair`.
+`add_edit_delete_admin` (a `403` otherwise). A split asks the same of the user
+the source is in and of each user who gets a copy. Reads need `system:read`,
+the repair and the split `system:write`. None can be staged, and neither the
+repair nor the split has a preview (`?dry_run=1` is a `422`): the report is
+what they would do. The CLI is `p202 system traffic-source-owners show`,
+`repair` and `split`.
 
 ### On Account › Settings
 
@@ -558,3 +629,12 @@ when the source has changed since the page was read. The form carries the
 session's token, and a post without it moves nothing. A source both users have
 traffic source accounts on stays listed wherever it is: whichever user it is
 in, the other's accounts name it.
+
+For such a source (`owner_has_accounts` or `several_users`) the row also has
+**Split…**, whose confirmation names the user it stays with, each user who
+gets a copy with the accounts that move onto it, and what is copied. Saying
+yes posts what `POST /system/traffic-source-owners/split` takes, with the
+`owner_user_id` and `copy_to_user_ids` the panel showed, and the page answers
+as it does a move: what was copied, or why nothing was. The split is not
+offered when it would be refused for a user it names (one you may not act on,
+or one who is deleted or has no record), and the row says why.

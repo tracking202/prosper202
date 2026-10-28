@@ -7,11 +7,12 @@ namespace Tests\Api\V3;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The report of traffic sources another user's accounts name, and its repair,
- * answer only behind Admin and access_to_settings, as the install settings
- * do: the report names every user's sources and users. Neither is stageable.
- * The repair's own check that the caller may act on both users is
- * TrafficSourceOwnersIntegrationTest's.
+ * The report of traffic sources another user's accounts name, its repair and
+ * its split answer only behind Admin and access_to_settings, as the install
+ * settings do: the report names every user's sources and users. None is
+ * stageable. The repair's and the split's own checks that the caller may act
+ * on each user they change are TrafficSourceOwnersIntegrationTest's and
+ * TrafficSourceSplitIntegrationTest's.
  *
  * Read from api/v3/index.php through ReadsRouteRegistrations, as
  * AdministrationRoutesPermissionTest reads its routes.
@@ -24,6 +25,7 @@ final class TrafficSourceOwnersRoutesTest extends TestCase
     private const ROUTES = [
         'GET /system/traffic-source-owners' => 'report',
         'POST /system/traffic-source-owners/repair' => 'repair',
+        'POST /system/traffic-source-owners/split' => 'split',
     ];
 
     public function testTheRoutesAnswerBehindAdminAndTheSettingsPermission(): void
@@ -49,8 +51,14 @@ final class TrafficSourceOwnersRoutesTest extends TestCase
             );
         }
 
-        $repair = $registrations[($main->match('POST', '/system/traffic-source-owners/repair')['handler'])()];
-        self::assertStringContainsString('->repair($payload)', $repair['handler'], 'the repair reads the body alone');
+        foreach (['repair', 'split'] as $write) {
+            $route = $registrations[($main->match('POST', '/system/traffic-source-owners/' . $write)['handler'])()];
+            self::assertStringContainsString(
+                '->' . $write . '($payload)',
+                $route['handler'],
+                "the $write reads the body alone"
+            );
+        }
 
         foreach ($registrations as $route) {
             if (str_contains($route['handler'] . $route['group'], 'TrafficSourceOwnersController')) {
@@ -64,7 +72,7 @@ final class TrafficSourceOwnersRoutesTest extends TestCase
         }
     }
 
-    public function testNeitherIsStageable(): void
+    public function testNoneIsStageable(): void
     {
         $registrations = $this->registrations(self::indexSource());
         $stageable = $this->router($registrations, '$stageableRouter');

@@ -18,7 +18,8 @@ use PHPUnit\Framework\TestCase;
  * TAKER (a Campaign manager) holds OWNER's source TAKEN, which OWNER's
  * accounts name and nobody else's: it goes back to OWNER. SHARED is in
  * TAKER's account and accounts of OWNER and THIRD name it: it moves only to
- * a user the operator chooses. ADMIN is an Admin; VIEWER's role has
+ * a user the operator chooses, and no move clears it, so the panel offers
+ * to split it (a copy each for OWNER and THIRD). ADMIN is an Admin; VIEWER's role has
  * access_to_settings and is not an admin role, so the page opens for VIEWER
  * and the routes refuse it.
  *
@@ -173,6 +174,8 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
         foreach (['202_user_role', '202_users_pref', '202_users', '202_clicks', '202_dirty_hours'] as $table) {
             self::q("DELETE FROM $table WHERE user_id IN ($users)");
         }
+        // A split's copies are in these users' accounts.
+        self::q("DELETE FROM 202_ppc_networks WHERE user_id IN ($users)");
         self::q('DELETE FROM 202_ppc_networks WHERE ppc_network_id IN (' . self::TAKEN . ', ' . self::SHARED . ')');
         self::q('DELETE FROM 202_ppc_accounts WHERE ppc_account_id BETWEEN 880300 AND 880399');
         $roles = self::SETTINGS_ROLE . ', ' . self::BARE_ADMIN_ROLE;
@@ -286,6 +289,63 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
         return $m[0];
     }
 
+    /** The split confirmation the panel drew for a source. */
+    private static function splitModalOf(string $out, int $sourceId): string
+    {
+        $found = preg_match('#<div class="modal fade" id="ts-split-' . $sourceId . '".*?</form>#s', $out, $m);
+        self::assertSame(1, $found, "a split confirmation for $sourceId");
+
+        return $m[0];
+    }
+
+    /**
+     * The body a confirmation's form posts: its hidden fields, a `name[]`
+     * field as a list, and the session's token.
+     *
+     * @return array<string, string|list<string>>
+     */
+    private static function posted(string $form): array
+    {
+        preg_match_all(
+            '/<input type="hidden" name="([a-z_]+)(\[\])?" value="([^"]*)">/',
+            $form,
+            $fields,
+            PREG_SET_ORDER
+        );
+        $post = [];
+        foreach ($fields as [, $name, $list, $value]) {
+            if ($list === '') {
+                $post[$name] = $value;
+            } else {
+                $post[$name][] = $value;
+            }
+        }
+        $post['token'] = 'SESSION';
+
+        return $post;
+    }
+
+    /** @return array<int, int> this class's accounts => the source each names */
+    private static function accountSources(): array
+    {
+        $found = self::$db->query('SELECT ppc_account_id, ppc_network_id FROM 202_ppc_accounts'
+            . ' WHERE ppc_account_id BETWEEN 880300 AND 880399 ORDER BY ppc_account_id');
+        $named = [];
+        foreach ($found instanceof \mysqli_result ? $found->fetch_all(MYSQLI_ASSOC) : [] as $row) {
+            $named[(int) $row['ppc_account_id']] = (int) $row['ppc_network_id'];
+        }
+
+        return $named;
+    }
+
+    private static function sourcesNamed(string $name): int
+    {
+        $found = self::$db->query('SELECT COUNT(*) FROM 202_ppc_networks WHERE ppc_network_name = '
+            . self::str($name));
+
+        return (int) ($found instanceof \mysqli_result ? $found->fetch_row()[0] : -1);
+    }
+
     /** "name (user N)" as the panel writes a user. */
     private static function named(int $user): string
     {
@@ -389,6 +449,89 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
                 $choose
             );
         }
+    }
+
+    public function testASourceNoMoveClearsIsOfferedASplitThatNamesWhatItCopiesAndMoves(): void
+    {
+        $out = self::settings(self::ADMIN, self::REVIEW)['out'];
+        self::assertStringNotContainsString('ts-split-' . self::TAKEN, $out, 'a source a move clears is not split');
+
+        $shared = self::rowOf($out, self::SHARED);
+        self::assertStringContainsString('data-bs-target="#ts-split-' . self::SHARED . '">Split…</button>', $shared);
+        self::assertStringContainsString('data-bs-target="#ts-repair-' . self::SHARED . '"', $shared, 'the move stays');
+
+        $confirm = self::splitModalOf($out, self::SHARED);
+        self::assertSame([
+            'token' => 'SESSION',
+            'traffic_source_split' => (string) self::SHARED,
+            'owner_user_id' => (string) self::TAKER,
+            'copy_to_user_ids' => [(string) self::OWNER, (string) self::THIRD],
+        ], self::posted($confirm), 'it sends back what it shows');
+        self::assertStringContainsString('name="token" value="p202pagerunnertoken"', $confirm);
+        self::assertStringContainsString('Give each user their own “Shared Source”?', $confirm);
+        self::assertStringContainsString(
+            '&ldquo;Shared Source&rdquo; stays in the account of ' . self::named(self::TAKER) . '. Each user below gets'
+                . ' a copy of their own, named &ldquo;Shared Source&rdquo; with no custom variables, and their'
+                . ' traffic source accounts move onto it:',
+            $confirm
+        );
+        foreach ([[self::OWNER, 880303], [self::THIRD, 880304]] as [$user, $account]) {
+            self::assertStringContainsString(
+                '<li>' . self::named($user) . ': 1 traffic source account (' . $account . ')'
+                    . ' · 0 clicks · 0 conversions</li>',
+                $confirm,
+                "user $user's accounts, as they move"
+            );
+        }
+    }
+
+    public function testASplitFromThePanelGivesEachUserACopyAndItLeavesTheList(): void
+    {
+        $post = self::posted(self::splitModalOf(self::settings(self::ADMIN, self::REVIEW)['out'], self::SHARED));
+        $text = self::flash(self::settings(self::ADMIN, [], $post), 'ok');
+
+        $accounts = self::accountSources();
+        self::assertSame(self::TAKER, self::ownerOf(self::SHARED), 'it stays where it was');
+        self::assertNotSame(self::SHARED, $accounts[880303]);
+        self::assertNotSame(self::SHARED, $accounts[880304]);
+        self::assertNotSame($accounts[880303], $accounts[880304], 'a copy each');
+        self::assertSame(self::OWNER, self::ownerOf($accounts[880303]));
+        self::assertSame(self::THIRD, self::ownerOf($accounts[880304]));
+        self::assertSame(3, self::sourcesNamed('Shared Source'));
+        self::assertSame(
+            'Traffic source "Shared Source" (' . self::SHARED . ') stays in user ' . self::TAKER . '\'s account.'
+                . ' User ' . self::OWNER . '\'s 1 traffic source account(s) now name a copy of their own (traffic'
+                . ' source ' . $accounts[880303] . '). User ' . self::THIRD . '\'s 1 traffic source account(s) now'
+                . ' name a copy of their own (traffic source ' . $accounts[880304] . '). Their clicks are reported'
+                . ' under the copy after the cron job\'s next run.',
+            $text
+        );
+        self::assertSame(2, self::queued('ppc_account_id IN (880303, 880304)'), 'the moved accounts are queued');
+
+        $out = self::settings(self::ADMIN, self::REVIEW)['out'];
+        self::assertStringNotContainsString('data-ppc-network-id="' . self::SHARED . '"', $out);
+        self::assertStringContainsString('1 traffic source is in one user&#039;s account', $out, 'TAKEN is left');
+    }
+
+    public function testASplitOfASourceThatChangedAfterThePanelWasReadIsRefused(): void
+    {
+        $post = self::posted(self::splitModalOf(self::settings(self::ADMIN, self::REVIEW)['out'], self::SHARED));
+        // Meanwhile THIRD's account goes to another source.
+        self::q('UPDATE 202_ppc_accounts SET ppc_network_id = ' . self::TAKEN . ' WHERE ppc_account_id = 880304');
+
+        $text = self::flash(self::settings(self::ADMIN, [], $post), 'bad');
+        self::assertStringContainsString(
+            'would now give a copy to users ' . self::OWNER . ', not to users ' . self::OWNER . ', ' . self::THIRD,
+            $text
+        );
+        self::assertStringContainsString('Nothing was copied.', $text);
+        self::assertSame(1, self::sourcesNamed('Shared Source'), 'nothing was copied');
+        self::assertSame(self::SHARED, self::accountSources()[880303]);
+        self::assertSame(0, self::queued('ppc_account_id = 880303'));
+
+        unset($post['token']);
+        self::assertSame(\P202_ACCOUNT_TOKEN_REFUSED, self::flash(self::settings(self::ADMIN, [], $post), 'bad'));
+        self::assertSame(1, self::sourcesNamed('Shared Source'), 'nor without the session token');
     }
 
     public function testARepairMovesTheSourceBackAndItLeavesTheList(): void
@@ -499,8 +642,14 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
         );
         self::assertStringNotContainsString('data-bs-target', $taken);
         self::assertStringNotContainsString('id="ts-repair-' . self::TAKEN . '"', $out);
-        self::assertStringContainsString('No user you may act on can take it.', self::rowOf($out, self::SHARED));
+        $shared = self::rowOf($out, self::SHARED);
+        self::assertStringContainsString('No user you may act on can take it.', $shared);
+        self::assertStringContainsString(
+            'Not offered to split: Changing an Admin or Super user account needs the &#039;add_edit_delete_admin&#039;',
+            $shared
+        );
         self::assertStringNotContainsString('id="ts-repair-' . self::SHARED . '"', $out);
+        self::assertStringNotContainsString('id="ts-split-' . self::SHARED . '"', $out);
 
         $text = self::flash(self::settings(self::ADMIN, [], self::repairOfTaken()), 'bad');
         self::assertStringContainsString("needs the 'add_edit_delete_admin' permission", $text);

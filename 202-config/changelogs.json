@@ -68,7 +68,8 @@
       "Fixed: The same with P202_SERVER_STATE_DIR set (the Coolify stack's api_state volume): each install keeps its API state in a directory of its own inside it, so a database installed again starts with none of the old one's. What an earlier version kept at the top of the directory is left there, and the server log says what to copy or remove. After restoring the database from a backup, still empty the install's directory before the first API request",
       "New: Settings tells an admin when a traffic source is in another user's account, lists each one with whose accounts name it, and moves it back after a confirmation that says what will move. The same list and move as the API and the CLI, for owners who use neither",
       "Fixed: The answer to a PayKickstart, JVZoo or ClickBank notification naming a click the account does not have now names that platform's own field and the link variable that fills it (custom_subid, JVZoo's tid or the buy link's subid, ClickBank's tracking code or extclid), as the answer to one naming no click does, and one rule words both for every platform",
-      "Fixed: p202 diff stops on a profile URL the server will not call, as p202 sync does, with the same hint naming the profile to repoint and P202_WEBHOOK_ALLOW_NETWORKS. It diffed from your machine instead, making the calls the server had refused and never showing why"
+      "Fixed: p202 diff stops on a profile URL the server will not call, as p202 sync does, with the same hint naming the profile to repoint and P202_WEBHOOK_ALLOW_NETWORKS. It diffed from your machine instead, making the calls the server had refused and never showing why",
+      "New: A traffic source that more than one user's traffic source accounts name, which moving it back never cleared, can be split from Settings (or the API and CLI): it stays where it is and each other user gets a copy of their own, which their accounts then name"
     ]
   },
   "1.9.78": {

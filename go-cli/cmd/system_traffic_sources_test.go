@@ -344,3 +344,135 @@ func TestTrafficSourceOwnersRepairRefusalsSayNothingMoved(t *testing.T) {
 		t.Errorf("exit %d, hint %q", code, hintFor(err))
 	}
 }
+
+// Source 9 as a split can take it: user 6, deleted in tsoReportBody, is not.
+var tsoSplitReportBody = strings.Replace(strings.Replace(tsoReportBody, `"user_name":"gone","user_deleted":true`, `"user_name":"other","user_deleted":false`, 1),
+	`"ambiguous":["owner_has_accounts","saved_after_rename"]}`, `"ambiguous":["owner_has_accounts","several_users"],"custom_variables":2}`, 1)
+
+const tsoSplitOne = `{"data":{"ppc_network_id":9,"ppc_network_name":"Shared","removed":true,"owner_user_id":1,"copies":[` +
+	`{"user_id":4,"ppc_network_id":21,"ppc_account_ids":[10],"custom_variables":2},` +
+	`{"user_id":6,"ppc_network_id":22,"ppc_account_ids":[11],"custom_variables":2}],"queued_ppc_accounts":2}}`
+
+func tsoSplitResponder(write func(r updateRequest) (int, string)) func(updateRequest) (int, string) {
+	return func(r updateRequest) (int, string) {
+		if r.Method == "GET" {
+			return 200, tsoSplitReportBody
+		}
+		return write(r)
+	}
+}
+
+func TestTrafficSourceOwnersSplitAsksThenSendsWhatTheReportShowed(t *testing.T) {
+	t.Run("no cancels after the read", func(t *testing.T) {
+		seen := updateServer(t, tsoSplitResponder(func(updateRequest) (int, string) { return 200, tsoSplitOne }))
+		answerPrompts(t, "n\n")
+		_, stderr, err := executeCommand("system", "traffic-source-owners", "split", "9")
+		if err != nil || len(*seen) != 1 || !strings.Contains(stderr, "Cancelled") {
+			t.Errorf("err %v, requests %+v, stderr %q", err, *seen, stderr)
+		}
+		want := `Traffic source 9 ("Shared") stays in user 1 (admin)'s account. Each of these users gets a copy of their own, named "Shared" with 2 custom variable(s), removed as it is, and their traffic source accounts move onto it: user 4 (sub, switched off): 1 traffic source account(s), 30 click(s), 1 conversion(s); user 6 (other): 1 traffic source account(s), 0 click(s), 0 conversion(s).`
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the question should say what is copied and what moves:\n%s", stderr)
+		}
+	})
+	t.Run("yes sends the source, its owner and the users shown", func(t *testing.T) {
+		seen := updateServer(t, tsoSplitResponder(func(updateRequest) (int, string) { return 200, tsoSplitOne }))
+		answerPrompts(t, "y\n")
+		stdout, stderr, err := executeCommand("system", "traffic-source-owners", "split", "9", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(*seen) != 2 || (*seen)[1].Method != "POST" || (*seen)[1].Path != "/system/traffic-source-owners/split" {
+			t.Fatalf("requests = %+v", *seen)
+		}
+		assertTsoBody(t, (*seen)[1].Body, `{"ppc_network_id":9,"owner_user_id":1,"copy_to_user_ids":[4,6]}`)
+		if !strings.Contains(stdout, `"copies"`) {
+			t.Errorf("--json prints the answer:\n%s", stdout)
+		}
+		if !strings.Contains(stderr, `Split traffic source 9 ("Shared"): it stays in user 1's account; user 4's 1 account(s) now name traffic source 21; user 6's 1 account(s) now name traffic source 22.`) {
+			t.Errorf("stderr = %q", stderr)
+		}
+	})
+	t.Run("--force asks nothing", func(t *testing.T) {
+		seen := updateServer(t, tsoSplitResponder(func(updateRequest) (int, string) { return 200, tsoSplitOne }))
+		answerPrompts(t, "")
+		if _, _, err := executeCommand("system", "traffic-source-owners", "split", "9", "--force"); err != nil || len(*seen) != 2 {
+			t.Errorf("err %v, requests %+v", err, *seen)
+		}
+	})
+}
+
+func TestTrafficSourceOwnersSplitRefusesWhatItCannotCopyBeforeAnyWrite(t *testing.T) {
+	seen := updateServer(t, tsoResponder(func(updateRequest) (int, string) { return 200, tsoSplitOne }))
+	_, _, err := executeCommand("system", "traffic-source-owners", "split", "9", "--force")
+	assertValidationError(t, err)
+	if !strings.Contains(err.Error(), "user 6, whose traffic source accounts name traffic source 9, is deleted") ||
+		!strings.Contains(hintFor(err), "repair 9 --to-user-id") || len(*seen) != 1 {
+		t.Errorf("a deleted user named: error %q, hint %q, requests %+v", err, hintFor(err), *seen)
+	}
+
+	seen = updateServer(t, tsoResponder(func(updateRequest) (int, string) { return 200, tsoSplitOne }))
+	_, _, err = executeCommand("system", "traffic-source-owners", "split", "8", "--force")
+	assertValidationError(t, err)
+	if !strings.Contains(err.Error(), "traffic source 8 is not in the report") || len(*seen) != 1 {
+		t.Errorf("error %q, requests %+v", err, *seen)
+	}
+
+	t.Cleanup(func() { api.SetStagedMode(false) })
+	for _, args := range [][]string{{}, {"abc"}, {"07"}, {"0"}, {"16777216"}} {
+		seen := updateServer(t, tsoSplitResponder(func(updateRequest) (int, string) { return 200, tsoSplitOne }))
+		_, _, err := executeCommand(append([]string{"system", "traffic-source-owners", "split", "--force"}, args...)...)
+		assertValidationError(t, err)
+		if hintFor(err) == "" || len(*seen) != 0 {
+			t.Errorf("%v: hint %q, sent %+v", args, hintFor(err), *seen)
+		}
+	}
+	seen = updateServer(t, tsoSplitResponder(func(updateRequest) (int, string) { return 200, tsoSplitOne }))
+	_, _, err = executeCommand("system", "traffic-source-owners", "split", "9", "10", "--force")
+	if err == nil || len(*seen) != 0 {
+		t.Errorf("two sources: err %v, sent %+v", err, *seen)
+	}
+	seen = updateServer(t, tsoSplitResponder(func(updateRequest) (int, string) { return 200, tsoSplitOne }))
+	_, _, err = executeCommand("--staged", "system", "traffic-source-owners", "split", "9", "--force")
+	assertValidationError(t, err)
+	if !strings.Contains(err.Error(), "--staged cannot apply") || len(*seen) != 0 {
+		t.Errorf("error %q, sent %+v under --staged", err, *seen)
+	}
+}
+
+func TestTrafficSourceOwnersSplitRefusalsSayNothingWasCopied(t *testing.T) {
+	updateServer(t, tsoSplitResponder(func(updateRequest) (int, string) {
+		return 422, `{"error":true,"status":422,"message":"Traffic source 9 would now give a copy to users 4, not to users 4, 6 as the report you read said. Nothing was copied. Read the report again.","field_errors":{"copy_to_user_ids":"…"}}`
+	}))
+	_, _, err := executeCommand("system", "traffic-source-owners", "split", "9", "--force")
+	if code := exitCodeForError(err); code != ExitValidation || !strings.Contains(hintFor(err), "Nothing was copied") {
+		t.Errorf("exit %d, hint %q", code, hintFor(err))
+	}
+
+	updateServer(t, tsoSplitResponder(func(updateRequest) (int, string) {
+		return 403, `{"error":true,"status":403,"message":"Changing an Admin or Super user account needs the 'add_edit_delete_admin' permission, which only the Super user role has."}`
+	}))
+	_, _, err = executeCommand("system", "traffic-source-owners", "split", "9", "--force")
+	if code := exitCodeForError(err); code != ExitAuth || !strings.Contains(hintFor(err), "user 1's key") {
+		t.Errorf("exit %d, hint %q", code, hintFor(err))
+	}
+
+	updateServer(t, tsoSplitResponder(func(updateRequest) (int, string) {
+		return 200, strings.Replace(tsoSplitOne, `"ppc_network_id":9,`, `"ppc_network_id":12,`, 1)
+	}))
+	stdout, _, err := executeCommand("system", "traffic-source-owners", "split", "9", "--force")
+	if code := exitCodeForError(err); code != ExitServer || stdout != "" {
+		t.Errorf("an answer naming another source: exit %d (%v), stdout %q", code, err, stdout)
+	}
+
+	updateServer(t, func(r updateRequest) (int, string) {
+		if r.Method == "GET" {
+			return 200, tsoSplitReportBody
+		}
+		return 404, `{"error":true,"status":404,"message":"Not found"}`
+	})
+	_, _, err = executeCommand("system", "traffic-source-owners", "split", "9", "--force")
+	if !strings.Contains(hintFor(err), "features.traffic_source_owners") {
+		t.Errorf("a server without the split: hint %q", hintFor(err))
+	}
+}

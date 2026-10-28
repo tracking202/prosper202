@@ -7,9 +7,10 @@
  * tests/Setup/TrafficSourceOwnersSettingsPanelIntegrationTest holds what the
  * page answers, refusals included. What is here is what only a browser sees:
  * the notice where an admin looks, its link opening the panel, the
- * confirmation that names what moves (saying no moves nothing), and the
- * answer said where the page lands, at two sizes where landing on the panel
- * scrolls past the top of the page.
+ * confirmation that names what moves (saying no moves nothing), the answer
+ * said where the page lands, at two sizes where landing on the panel scrolls
+ * past the top of the page, and the split of a source both users' accounts
+ * name, which no move clears.
  *
  * Each scenario plants its own takeover the way the old rename made one: an
  * UPDATE of the source's user_id, its accounts left in their user's account.
@@ -75,12 +76,28 @@ async function openPanel(app, ui) {
 }
 
 /** Open this source's confirmation from the panel, and wait for it to show. */
-async function openConfirmation(ui, state) {
-  await ui.click('tr[data-ppc-network-id="' + state.source + '"] button[data-bs-toggle="modal"]');
-  await ui.untilInPage((id) => {
-    const modal = document.getElementById(id);
+async function openConfirmation(ui, state, kind = 'repair') {
+  const id = 'ts-' + kind + '-' + state.source;
+  await ui.click('tr[data-ppc-network-id="' + state.source + '"] button[data-bs-target="#' + id + '"]');
+  await ui.untilInPage((modalId) => {
+    const modal = document.getElementById(modalId);
     return modal !== null && modal.classList.contains('show') && getComputedStyle(modal).display === 'block';
-  }, 'ts-repair-' + state.source, { describe: 'the confirmation to open' });
+  }, id, { describe: 'the confirmation to open' });
+}
+
+/**
+ * The source back as setup made it, then taken into the taker's account with
+ * an account of the taker's own on it: both users' accounts name it, so it is
+ * listed whichever account it is in.
+ */
+function plantShared(db, state) {
+  db.write("DELETE FROM 202_ppc_networks WHERE ppc_network_name = '" + SOURCE + "' AND ppc_network_id <> " + state.source);
+  db.write('UPDATE 202_ppc_accounts SET ppc_network_id = ' + state.source + ' WHERE user_id = ' + state.owner
+    + " AND ppc_account_name LIKE 'TSO Browser %'");
+  db.write("DELETE FROM 202_ppc_accounts WHERE ppc_account_name = 'TSO Browser Taker'");
+  plant(db, state);
+  db.write('INSERT INTO 202_ppc_accounts (user_id, ppc_network_id, ppc_account_name, ppc_account_time) VALUES ('
+    + state.taker + ', ' + state.source + ", 'TSO Browser Taker', UNIX_TIMESTAMP() + 120)");
 }
 
 module.exports = {
@@ -227,6 +244,56 @@ module.exports = {
               expect.skip(at + 'the notice goes', 'another source on this instance is still listed');
             }
           });
+        }
+      },
+    },
+
+    {
+      name: 'A source both users\' accounts name is split from the panel, saying no copies nothing, and the notice goes',
+      async run(ctx) {
+        const { app, ui, db, expect, state } = ctx;
+        plantShared(db, state);
+        await openPanel(app, ui);
+        const row = 'tr[data-ppc-network-id="' + state.source + '"]';
+        expect.ok(await ui.visible(row + ' button[data-bs-target="#ts-split-' + state.source + '"]'),
+          'the row offers the split');
+        await checks.baseline(ctx);
+        await checks.componentClassesAreStyled(ctx);
+        await checks.flexContainersKeepTheirSpaces(ctx);
+
+        await openConfirmation(ui, state, 'split');
+        const modal = '#ts-split-' + state.source;
+        const said = (await ui.text(modal + ' .modal-body')).replace(/\s+/g, ' ');
+        expect.ok(said.includes('“' + SOURCE + '” stays in the account of ' + TAKER), 'it names the user it stays with', said);
+        expect.match(said, new RegExp(OWNER + ' \\(user \\d+\\): 2 traffic source accounts \\(\\d+, \\d+\\)'),
+          'and the user who gets a copy, with the accounts that move onto it', said);
+        expect.eq(await ui.text(modal + ' .modal-title'), 'Give each user their own “' + SOURCE + '”?', 'its title asks');
+        await ui.click(modal + ' button:has-text("Keep it as it is")');
+        await ui.untilInPage((id) => !document.getElementById(id).classList.contains('show'), 'ts-split-' + state.source,
+          { describe: 'the confirmation to close' });
+        expect.eq(db.value("SELECT COUNT(*) FROM 202_ppc_networks WHERE ppc_network_name = '" + SOURCE + "'"), '1',
+          'saying no copies nothing');
+
+        await openConfirmation(ui, state, 'split');
+        await app.submit(modal + ' button[type="submit"]');
+        const flashes = await ui.text('[data-p202-flashes]');
+        expect.match(flashes, new RegExp('Traffic source "' + SOURCE + '" \\(' + state.source + '\\) stays in user '
+          + state.taker + "'s account\\. User " + state.owner + "'s 2 traffic source account\\(s\\) now name a copy of their own"),
+          'the split is said', flashes);
+        expect.ok(await ui.exists('#traffic-source-owners [data-p202-flashes]'), 'in the panel the page lands on');
+        expect.eq(db.value('SELECT COUNT(*) FROM 202_ppc_accounts AS pa INNER JOIN 202_ppc_networks AS pn'
+          + ' ON pn.ppc_network_id = pa.ppc_network_id AND pn.user_id = pa.user_id'
+          + " WHERE pa.ppc_account_name LIKE 'TSO Browser %' AND pn.ppc_network_name = '" + SOURCE + "'"), '3',
+          'every account names a source of its own user\'s');
+        expect.eq(holder(db, state), String(state.taker), 'the source stays where it was');
+        expect.notOk(await ui.exists(row), 'and has left the panel');
+        await checks.baseline(ctx);
+
+        if (listed(db) === 0) {
+          await app.goto('/202-account/administration.php');
+          expect.notOk(await ui.exists(NOTICE), 'Settings no longer shows the notice');
+        } else {
+          expect.skip('the notice goes', 'another source on this instance is still listed');
         }
       },
     },

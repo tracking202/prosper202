@@ -1211,14 +1211,16 @@ try {
 
         // ── Traffic sources another user's accounts name ─────────────────
         // What Setup › Traffic Sources' rename could leave before 1.9.79, and
-        // the repair an operator runs on it. Gated as the install settings
-        // above (it names every user's sources); a repair also asks that the
-        // caller may act on both users (TrafficSourceOwnersController). Not
-        // stageable, and no preview: the GET is what a repair would do.
+        // the repair and split an operator runs on it. Gated as the install
+        // settings above (it names every user's sources); a repair or split
+        // also asks that the caller may act on each user it changes
+        // (TrafficSourceOwnersController). Not stageable, and no preview: the
+        // GET is what a repair or split would do.
         $router->group('/system', function (Router $r) use ($db, $auth, $payload) {
             $make = fn() => new \Api\V3\Controllers\TrafficSourceOwnersController($db, $auth);
             $r->get('/traffic-source-owners', fn() => $make()->report());
             $r->post('/traffic-source-owners/repair', fn() => $make()->repair($payload));
+            $r->post('/traffic-source-owners/split', fn() => $make()->split($payload));
         }, [$auth->requireAdmin(...), $settingsPage]);
 
         // ── API root ─────────────────────────────────────────────────────
@@ -1247,7 +1249,7 @@ try {
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'events'        => '/events',
                 'users'         => '/users',
-                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|traffic-source-owners|traffic-source-owners/repair}',
+                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
                 'changes'       => '/changes/{entity}',
                 'audit'         => '/audit/sync-jobs',

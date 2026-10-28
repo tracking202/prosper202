@@ -3,11 +3,13 @@
 /**
  * Plans and repairs one traffic source as POST
  * /system/traffic-source-owners/repair does (TrafficSourceOwners::plan(),
- * then repair()), on a connection of its own: TrafficSourceOwnersIntegrationTest
- * holds a user row the way UserDataPurge::deleteUser() does in another, and
- * deletes the user once the server shows this one waiting.
+ * then repair()), or splits it as POST /system/traffic-source-owners/split
+ * does (planSplit(), then split()), on a connection of its own:
+ * TrafficSourceOwnersIntegrationTest and TrafficSourceSplitIntegrationTest
+ * hold rows the way another writer does in another, and act once the server
+ * shows this one waiting.
  *
- * argv: <ppc_network_id> <acting user id>
+ * argv: <ppc_network_id> <acting user id> [repair|split]
  * Prints this connection's id on the first line, then `ok`, `refused: …` or
  * the failure.
  *
@@ -23,7 +25,7 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-[, $sourceId, $actor] = $argv + [null, '0', '0'];
+[, $sourceId, $actor, $action] = $argv + [null, '0', '0', 'repair'];
 
 require __DIR__ . '/../../../vendor/autoload.php';
 
@@ -42,8 +44,13 @@ echo $db->thread_id, "\n";
 
 try {
     $owners = new \Prosper202\Setup\TrafficSourceOwners(new \Prosper202\Database\Connection($db));
-    $plan = $owners->plan((int) $sourceId, null);
-    $owners->repair((int) $sourceId, $plan['from'], $plan['to'], null, (int) $actor);
+    if ($action === 'split') {
+        $plan = $owners->planSplit((int) $sourceId);
+        $owners->split((int) $sourceId, $plan['owner'], $plan['copies'], (int) $actor);
+    } else {
+        $plan = $owners->plan((int) $sourceId, null);
+        $owners->repair((int) $sourceId, $plan['from'], $plan['to'], null, (int) $actor);
+    }
     echo "ok\n";
 } catch (\Prosper202\Setup\TrafficSourceRepairRefused $e) {
     echo 'refused: ', $e->getMessage(), "\n";

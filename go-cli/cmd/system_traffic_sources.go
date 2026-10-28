@@ -16,11 +16,12 @@ import (
 
 // The traffic sources Setup › Traffic Sources' rename moved out of their
 // accounts' user before 1.9.79, over GET /system/traffic-source-owners and
-// POST /system/traffic-source-owners/repair:
+// POST /system/traffic-source-owners/repair and /split:
 //
 //	p202 system traffic-source-owners show
 //	p202 system traffic-source-owners repair <ppc_network_id> [--to-user-id N]
 //	p202 system traffic-source-owners repair --all
+//	p202 system traffic-source-owners split <ppc_network_id>
 //
 // The server lists, and repairs, only on an Admin or Super user key whose role
 // has access_to_settings; a repair also needs a key whose user may act on both
@@ -29,6 +30,7 @@ import (
 // Each request sends back the owner and repair_to_user_id it showed, so the
 // server refuses a source that has changed since rather than move it from or
 // to a user nobody was shown; --all is one such request per source shown.
+// split sends back the owner and the named_by users it showed the same way.
 
 const tsoNeeds = "Needs an Admin or Super user key whose role has access_to_settings (as Account › Settings asks)"
 
@@ -51,6 +53,9 @@ type tsoEntry struct {
 	NamedBy        []tsoParty `json:"named_by"`
 	RepairTo       *int       `json:"repair_to_user_id"`
 	Ambiguous      []string   `json:"ambiguous"`
+	// CustomVariables is what a split copies; a server before the split
+	// sends none.
+	CustomVariables int `json:"custom_variables"`
 }
 
 // tsoReport is GET /system/traffic-source-owners, read strictly: a missing
@@ -73,6 +78,21 @@ type tsoSkipped struct {
 	PpcNetworkID int    `json:"ppc_network_id"`
 	Reason       string `json:"reason"`
 	Message      string `json:"message"`
+}
+
+type tsoCopy struct {
+	UserID       int   `json:"user_id"`
+	PpcNetworkID int   `json:"ppc_network_id"`
+	AccountIDs   []int `json:"ppc_account_ids"`
+}
+
+type tsoSplitAnswer struct {
+	Data struct {
+		PpcNetworkID int       `json:"ppc_network_id"`
+		Name         string    `json:"ppc_network_name"`
+		Owner        int       `json:"owner_user_id"`
+		Copies       []tsoCopy `json:"copies"`
+	} `json:"data"`
 }
 
 type tsoRepairAnswer struct {
@@ -181,13 +201,15 @@ func tsoUserIDs(parties []tsoParty) string {
 
 var systemTrafficSourceOwnersCmd = &cobra.Command{
 	Use:   "traffic-source-owners",
-	Short: "Traffic sources in one user's account that another user's traffic source accounts name (taken before 1.9.79): show, repair",
+	Short: "Traffic sources in one user's account that another user's traffic source accounts name (taken before 1.9.79): show, repair, split",
 	Long: "Before 1.9.79, renaming a traffic source on Setup › Traffic Sources moved it into the account of\n" +
 		"the user who saved the rename, whoever's it was; its traffic source accounts stayed behind. `show`\n" +
 		"lists every source other users' accounts name, with the counts on each user's accounts; `repair`\n" +
-		"moves one back, or every one the report names a user for. Nothing is moved by itself: the same rows\n" +
-		"also come from accounts the API put on another user's source before 1.9.77, or a move made on\n" +
-		"purpose, and the report marks those it cannot tell apart (ambiguous).\n\n" + tsoNeeds + ".",
+		"moves one back, or every one the report names a user for; `split` gives each user whose accounts\n" +
+		"name one a copy of their own, which clears a source accounts of more than one user name. Nothing is\n" +
+		"moved by itself: the same rows also come from accounts the API put on another user's source before\n" +
+		"1.9.77, or a move made on purpose, and the report marks those it cannot tell apart (ambiguous).\n\n" +
+		tsoNeeds + ".",
 }
 
 var systemTrafficSourceOwnersShowCmd = &cobra.Command{
@@ -199,7 +221,8 @@ var systemTrafficSourceOwnersShowCmd = &cobra.Command{
 		"accounts on it too), several_users, saved_after_rename (an account was saved after the source,\n" +
 		"or in its second: the shape the API made before 1.9.77), no_such_user, deleted_user (a source\n" +
 		"never moves into a deleted user's account; a switched-off user's is shown and still repaired).\n" +
-		"--json carries the account ids too.\n\n" +
+		"No move clears a source marked owner_has_accounts or several_users: another user's accounts still\n" +
+		"name it wherever it is. `split` does. --json carries the account ids and custom variables too.\n\n" +
 		tsoNeeds + ", and system:read.",
 	Example: "  p202 system traffic-source-owners show\n  p202 system traffic-source-owners show --json",
 	Args:    cobra.NoArgs,
@@ -476,10 +499,133 @@ var systemTrafficSourceOwnersRepairCmd = &cobra.Command{
 	RunE: runTsoRepair,
 }
 
+// tsoSplitPlan is the sentence that says what a split of e copies and moves.
+func tsoSplitPlan(e tsoEntry) string {
+	parties := make([]string, 0, len(e.NamedBy))
+	for _, p := range e.NamedBy {
+		parties = append(parties, tsoUser(p)+": "+tsoAccounts(p))
+	}
+	removed := ""
+	if e.Removed {
+		removed = ", removed as it is"
+	}
+	return fmt.Sprintf("Traffic source %d (%q) stays in %s's account. Each of these users gets a copy of their own, named %q with %d custom variable(s)%s, and their traffic source accounts move onto it: %s.",
+		e.PpcNetworkID, e.PpcNetworkName, tsoUser(e.Owner), e.PpcNetworkName, e.CustomVariables, removed, strings.Join(parties, "; "))
+}
+
+func runTsoSplit(cmd *cobra.Command, args []string) error {
+	if err := refuseStagedSystem(cmd); err != nil {
+		return err
+	}
+	force, _ := cmd.Flags().GetBool("force")
+	if len(args) != 1 {
+		return validationError("name the traffic source to split (its ppc_network_id)").
+			WithHint("`p202 system traffic-source-owners show` lists them.")
+	}
+	sourceID, err := strconv.Atoi(args[0])
+	if err != nil || sourceID < 1 || sourceID > 16777215 || strconv.Itoa(sourceID) != args[0] {
+		return validationError("the traffic source id must be a whole number from 1 to 16777215, got %q", args[0]).
+			WithHint("`p202 system traffic-source-owners show` lists the sources by id.")
+	}
+
+	c, err := api.NewFromConfig()
+	if err != nil {
+		return err
+	}
+	_, report, err := readTsoReport(c)
+	if err != nil {
+		return err
+	}
+	var entry *tsoEntry
+	for i := range report.Data.Sources {
+		if report.Data.Sources[i].PpcNetworkID == sourceID {
+			entry = &report.Data.Sources[i]
+		}
+	}
+	if entry == nil {
+		return validationError("traffic source %d is not in the report: no other user's traffic source account names it, or there is no such source. Nothing was sent", sourceID).
+			WithHint("`p202 system traffic-source-owners show` lists the sources a split can copy.")
+	}
+	copyTo := make([]int, 0, len(entry.NamedBy))
+	for _, p := range entry.NamedBy {
+		gone := ""
+		switch {
+		case p.UserName == nil:
+			gone = "does not exist on this server"
+		case p.UserDeleted != nil && *p.UserDeleted:
+			gone = "is deleted"
+		}
+		if gone != "" {
+			return validationError("user %d, whose traffic source accounts name traffic source %d, %s, and nothing is copied for them, so it cannot be split. Nothing was sent", p.UserID, sourceID, gone).
+				WithHint("Leave it as it is, or move it to one of the other users with `p202 system traffic-source-owners repair %d --to-user-id <user_id>`.", sourceID)
+		}
+		copyTo = append(copyTo, p.UserID)
+	}
+
+	if !force {
+		fmt.Fprintln(os.Stderr, tsoSplitPlan(*entry))
+		ok, err := confirmAction(cmd, "Split traffic source %d?", sourceID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
+		}
+	}
+	body := map[string]interface{}{"ppc_network_id": sourceID, "owner_user_id": entry.Owner.UserID, "copy_to_user_ids": copyTo}
+	data, err := c.Post("system/traffic-source-owners/split", body)
+	if err != nil {
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) && apiErr.Status == 422 {
+			return withHint(err, "Nothing was copied. Run `p202 system traffic-source-owners show` to see the source as it is now.")
+		}
+		if errors.As(err, &apiErr) && tsoUserRule(apiErr) {
+			return withHint(err, "Nothing was copied: the user the source is in, or one who would get a copy, is the Super user or an Admin, and only the Super user (user 1) acts on those accounts. Run it with user 1's key.")
+		}
+		return tsoError(err)
+	}
+	var answer tsoSplitAnswer
+	if err := json.Unmarshal(data, &answer); err != nil || answer.Data.PpcNetworkID != sourceID || len(answer.Data.Copies) != len(copyTo) {
+		if err == nil {
+			err = fmt.Errorf("the answer names traffic source %d and %d copies, not %d and %d", answer.Data.PpcNetworkID, len(answer.Data.Copies), sourceID, len(copyTo))
+		}
+		return systemMalformed("splitting the traffic source", err)
+	}
+	render(data)
+	copies := make([]string, 0, len(answer.Data.Copies))
+	for _, cp := range answer.Data.Copies {
+		copies = append(copies, fmt.Sprintf("user %d's %d account(s) now name traffic source %d", cp.UserID, len(cp.AccountIDs), cp.PpcNetworkID))
+	}
+	output.Success("Split traffic source %d (%q): it stays in user %d's account; %s. Their clicks are queued for the cron job's report rollup.",
+		answer.Data.PpcNetworkID, answer.Data.Name, answer.Data.Owner, strings.Join(copies, "; "))
+	return nil
+}
+
+var systemTrafficSourceOwnersSplitCmd = &cobra.Command{
+	Use:   "split <ppc_network_id>",
+	Short: "Give each user whose traffic source accounts name a source a copy of their own (asks first)",
+	Long: "For a source that accounts of more than one user name (owner_has_accounts, several_users), which\n" +
+		"no move clears. The source stays in the account it is in; each user `show` lists under named_by\n" +
+		"gets a new source in their own account with its name, its custom variables and its removed mark,\n" +
+		"their traffic source accounts move onto it, a report filter of theirs set to the source is set to\n" +
+		"the copy, and those accounts' clicks are queued for the cron job's report rollup. To have the\n" +
+		"source end up with another user, move it there first with `repair --to-user-id`, then split it.\n" +
+		"It reads the report first, says what it would copy and asks (--force skips the question), and\n" +
+		"sends back the owner and users it showed: a source that changed since is refused. Nothing is\n" +
+		"copied for a deleted user. One transaction; logged on the server. Cannot be staged.\n\n" +
+		tsoNeeds + ", whose user may act on the user it is in and on each who gets a copy, and system:write.",
+	Example: "  p202 system traffic-source-owners split 12\n" +
+		"  p202 system traffic-source-owners split 12 --force --json",
+	Args: cobra.MaximumNArgs(1),
+	RunE: runTsoSplit,
+}
+
 func init() {
+	systemTrafficSourceOwnersSplitCmd.Flags().BoolP("force", "f", false, "Split it without asking")
 	systemTrafficSourceOwnersRepairCmd.Flags().String("to-user-id", "", "Move it to this user, one whose traffic source accounts name it")
 	systemTrafficSourceOwnersRepairCmd.Flags().Bool("all", false, "Move every source the report names a user for")
 	systemTrafficSourceOwnersRepairCmd.Flags().BoolP("force", "f", false, "Move it without asking")
-	systemTrafficSourceOwnersCmd.AddCommand(systemTrafficSourceOwnersShowCmd, systemTrafficSourceOwnersRepairCmd)
+	systemTrafficSourceOwnersCmd.AddCommand(systemTrafficSourceOwnersShowCmd, systemTrafficSourceOwnersRepairCmd, systemTrafficSourceOwnersSplitCmd)
 	systemCmd.AddCommand(systemTrafficSourceOwnersCmd)
 }

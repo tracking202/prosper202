@@ -6,14 +6,14 @@
  * could leave before 1.9.79 (Prosper202\Setup\TrafficSourceOwners says how,
  * and what else the same rows can mean).
  *
- * Nothing here decides who may see or move a source, or how one moves: the
- * page runs TrafficSourceOwnersController, the code GET
+ * Nothing here decides who may see, move or split a source, or how: the page
+ * runs TrafficSourceOwnersController, the code GET
  * /system/traffic-source-owners and POST /system/traffic-source-owners/repair
- * run, for an Api\V3\Auth of the signed-in user, after the two checks the
- * routes' group runs (requireAdmin(), then access_to_settings). The repair's
- * locks, its re-read and its refusals are the controller's and the domain
- * class's; this file turns a form into the API's body and the answer into a
- * sentence.
+ * and /split run, for an Api\V3\Auth of the signed-in user, after the two
+ * checks the routes' group runs (requireAdmin(), then access_to_settings).
+ * The locks, the re-read and the refusals are the controller's and the
+ * domain class's; this file turns a form into the API's body and the answer
+ * into a sentence.
  */
 
 declare(strict_types=1);
@@ -40,6 +40,12 @@ const P202_TS_OWNERS_REASONS = [
     'no_such_user' => 'a user it names no longer exists',
     'deleted_user' => 'a user it names is deleted, and nothing moves into a deleted account',
 ];
+
+/**
+ * The marks no move clears: whichever account the source is in, another
+ * user's accounts still name it. The panel offers the split for these.
+ */
+const P202_TS_OWNERS_SPLIT_MARKS = ['owner_has_accounts', 'several_users'];
 
 /**
  * The controller, for the signed-in user, behind the routes' own checks.
@@ -142,6 +148,67 @@ function p202_ts_owners_repair_posted(\mysqli $db, int $userId, array $post): ne
     p202_account_redirect($back);
 }
 
+/**
+ * A split posted from the panel, as p202_ts_owners_repair_posted() posts a
+ * move: the form's fields are the body POST
+ * /system/traffic-source-owners/split takes, and the controller's split()
+ * copies the source or refuses.
+ *
+ * @param array<string, mixed> $post
+ */
+function p202_ts_owners_split_posted(\mysqli $db, int $userId, array $post): never
+{
+    $back = '202-account/administration.php?' . P202_TS_OWNERS_REVIEW . '#' . P202_TS_OWNERS_PANEL;
+    if (!AUTH::csrf_token_matches($post['token'] ?? null)) {
+        p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+        p202_account_redirect($back);
+    }
+    $source = $post['traffic_source_split'] ?? null;
+    $payload = ['ppc_network_id' => $source];
+    foreach (['owner_user_id', 'copy_to_user_ids'] as $field) {
+        if (array_key_exists($field, $post)) {
+            $payload[$field] = $post[$field];
+        }
+    }
+    $which = is_string($source) && ctype_digit($source) ? 'traffic source ' . $source : 'the traffic source';
+    try {
+        $split = p202_ts_owners_controller($db, $userId)->split($payload)['data'];
+        p202_account_flash('ok', sprintf(
+            'Traffic source "%s" (%d) stays in user %d\'s account. %s Their clicks are reported under the copy'
+            . ' after the cron job\'s next run.',
+            $split['ppc_network_name'],
+            $split['ppc_network_id'],
+            $split['owner_user_id'],
+            implode(' ', array_map(
+                static fn (array $copy): string => sprintf(
+                    'User %d\'s %d traffic source account(s) now name a copy of their own (traffic source %d).',
+                    $copy['user_id'],
+                    count($copy['ppc_account_ids']),
+                    $copy['ppc_network_id']
+                ),
+                $split['copies']
+            ))
+        ));
+    } catch (ValidationException $e) {
+        p202_account_flash('bad', p202_ts_owners_refusal($e));
+    } catch (AuthException $e) {
+        if ($e->getCode() >= 500) {
+            error_log('Account › Settings: whether user ' . $userId . ' may split ' . $which . ' could not be'
+                . ' checked: ' . $e->getMessage());
+            p202_account_flash('bad', 'Whether you may split ' . $which . ' could not be checked just now,'
+                . ' so nothing was copied. Try again.');
+        } else {
+            p202_account_flash('bad', $e->getMessage() . ' Nothing was copied.');
+        }
+    } catch (\Throwable $e) {
+        error_log('Account › Settings: splitting ' . $which . ' failed: ' . $e->getMessage()
+            . ($e->getPrevious() !== null ? ' (' . $e->getPrevious()->getMessage() . ')' : ''));
+        p202_account_flash('bad', 'Splitting ' . $which . ' failed, and the server log says why.'
+            . ' Nothing was copied.');
+    }
+    p202_account_redirect($back);
+}
+
 /** A 422's sentences: the refusal's own, or each field's when it names them. */
 function p202_ts_owners_refusal(ValidationException $e): string
 {
@@ -220,12 +287,19 @@ function p202_ts_owners_panel(array $report, TrafficSourceOwnersController $cont
         // scrolling frame, so it sits at the table's right edge and widens
         // the page on a phone (measured: 599px at 390).
         $panel .= '<p class="text-secondary">Each source below is in one user\'s account while traffic source'
-            . ' accounts of another user name it. Moving one back changes only whose account it is in.</p>'
+            . ' accounts of another user name it. Moving one back changes only whose account it is in. Where'
+            . ' accounts of more than one user name a source, no move clears it, and splitting it gives each other'
+            . ' user a copy of their own.</p>'
             . '<div class="p202-table-wrap"><table class="table p202-table" id="traffic-source-owners-table">'
             . '<thead><tr><th>Traffic source</th><th>In the account of</th><th>Named by</th><th>Goes to</th>'
             . '</tr></thead><tbody>';
         foreach ($sources as $entry) {
             [$cell, $modal] = p202_ts_owners_action($entry, $controller, $action);
+            if (array_intersect(P202_TS_OWNERS_SPLIT_MARKS, $entry['ambiguous']) !== []) {
+                [$splitCell, $splitModal] = p202_ts_owners_split_action($entry, $controller, $action);
+                $cell = $splitCell . ' ' . $cell;
+                $modal = $splitModal . $modal;
+            }
             $panel .= '<tr data-ppc-network-id="' . (int) $entry['ppc_network_id'] . '">'
                 . '<td><strong>' . $h($entry['ppc_network_name']) . '</strong> <span class="text-secondary">#'
                 . (int) $entry['ppc_network_id'] . '</span>'
@@ -257,9 +331,16 @@ function p202_ts_owners_panel(array $report, TrafficSourceOwnersController $cont
         . ' whose account the source is in. Its name stays as it is, a removed source stays removed, and its'
         . ' accounts\' clicks are reported under it again after the cron job\'s next run. A source taken with no'
         . ' traffic source account under it leaves no sign and is not listed.</p>'
-        . '<p class="mb-0">The same list and move are <code>GET /api/v3/system/traffic-source-owners</code> and'
-        . ' <code>POST /api/v3/system/traffic-source-owners/repair</code>, and'
-        . ' <code>p202 system traffic-source-owners show</code> and <code>repair</code> in the CLI.</p>'
+        . '<p>A source that accounts of more than one user name is listed again after any move, since another'
+        . ' user\'s accounts still name it. A split leaves it where it is and gives each other user a copy of'
+        . ' their own, with its name, its custom variables and its removed mark, and moves their traffic source'
+        . ' accounts onto it. Their clicks are reported under the copy after the cron job\'s next run; the custom'
+        . ' variable values recorded on them before the split stay recorded against the source\'s own'
+        . ' variables.</p>'
+        . '<p class="mb-0">The same list, move and split are <code>GET /api/v3/system/traffic-source-owners</code>,'
+        . ' <code>POST /api/v3/system/traffic-source-owners/repair</code> and <code>/split</code>, and'
+        . ' <code>p202 system traffic-source-owners show</code>, <code>repair</code> and <code>split</code> in the'
+        . ' CLI.</p>'
         . '</div></details>';
     $panel .= '</div></section>';
 
@@ -440,6 +521,89 @@ function p202_ts_owners_action(array $entry, TrafficSourceOwnersController $cont
         . '</form></div></div></div>';
     $cell = '<button type="button" class="btn btn-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#'
         . $modalId . '">Move back…</button>';
+
+    return [$cell, $modal];
+}
+
+/**
+ * A row's split, for a source no move clears: the button that opens its
+ * confirmation, and the confirmation, which names the user it stays with,
+ * each user who gets a copy and the accounts that move onto it, and what is
+ * copied. Not offered when the split would be refused for a user it names
+ * (TrafficSourceOwnersController::maySplit(), or a user who is deleted or
+ * missing), and the cell says why.
+ *
+ * @param array<string, mixed> $entry
+ * @return array{0: string, 1: string} the cell, the modal
+ */
+function p202_ts_owners_split_action(array $entry, TrafficSourceOwnersController $controller, string $action): array
+{
+    $h = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+    $id = (int) $entry['ppc_network_id'];
+    $owner = (int) $entry['owner']['user_id'];
+    $name = (string) $entry['ppc_network_name'];
+    $modalId = 'ts-split-' . $id;
+
+    $why = null;
+    foreach ($entry['named_by'] as $party) {
+        if ($party['user_name'] === null || $party['user_deleted'] === true) {
+            $why = 'user ' . (int) $party['user_id']
+                . ($party['user_name'] === null ? ' does not exist' : ' is deleted')
+                . ', and nothing is copied for them.';
+            break;
+        }
+    }
+    if ($why === null) {
+        try {
+            $controller->maySplit($owner, array_map(
+                static fn (array $party): int => (int) $party['user_id'],
+                $entry['named_by']
+            ));
+        } catch (AuthException $e) {
+            if ($e->getCode() >= 500) {
+                throw $e;
+            }
+            $why = $e->getMessage();
+        }
+    }
+    if ($why !== null) {
+        return ['<div class="text-secondary">Not offered to split: ' . $h($why) . '</div>', ''];
+    }
+
+    $fields = p202_account_token_field()
+        . '<input type="hidden" name="traffic_source_split" value="' . $id . '">'
+        . '<input type="hidden" name="owner_user_id" value="' . $owner . '">';
+    $copies = '';
+    foreach ($entry['named_by'] as $party) {
+        $fields .= '<input type="hidden" name="copy_to_user_ids[]" value="' . (int) $party['user_id'] . '">';
+        $copies .= '<li>' . p202_ts_owners_user($party) . ': ' . p202_ts_owners_holdings($party) . '</li>';
+    }
+    $variables = (int) ($entry['custom_variables'] ?? 0);
+    $copied = $variables === 0 ? 'no custom variables'
+        : ($variables === 1 ? 'its custom variable' : 'its ' . $variables . ' custom variables');
+    $own = $entry['owner']['ppc_account_ids'] === [] ? ''
+        : ', with their own ' . p202_ts_owners_accounts($entry['owner']);
+
+    $body = '<p>&ldquo;' . $h($name) . '&rdquo; stays in the account of ' . p202_ts_owners_user($entry['owner'])
+        . $h($own) . '. Each user below gets a copy of their own, named &ldquo;' . $h($name) . '&rdquo; with '
+        . $h($copied) . ($entry['removed'] ? ' and removed as it is' : '') . ', and their traffic source'
+        . ' accounts move onto it:</p>'
+        . '<ul>' . $copies . '</ul>'
+        . '<p class="mb-0">Nothing else changes. Their clicks are reported under the copy after the cron job\'s'
+        . ' next run, and a report filter of theirs set to this source is set to the copy. If it has changed'
+        . ' since this page was read, nothing is copied and the page says so.</p>';
+    $modal = '<div class="modal fade" id="' . $modalId . '" tabindex="-1" aria-labelledby="' . $modalId . '-title"'
+        . ' aria-hidden="true"><div class="modal-dialog"><div class="modal-content">'
+        . '<form method="post" action="' . $h($action) . '">' . $fields
+        . '<div class="modal-header"><h5 class="modal-title" id="' . $modalId . '-title">'
+        . $h('Give each user their own “' . $name . '”?') . '</h5>'
+        . '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>'
+        . '<div class="modal-body">' . $body . '</div>'
+        . '<div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">'
+        . 'Keep it as it is</button><button type="submit" class="btn btn-primary">Split it</button></div>'
+        . '</form></div></div></div>';
+    $cell = '<button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#'
+        . $modalId . '">Split…</button>';
 
     return [$cell, $modal];
 }
