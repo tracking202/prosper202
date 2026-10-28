@@ -602,8 +602,9 @@ final class MysqlWebhookRepository
 
     /**
      * For each of the account's webhooks, how many deliveries revive() with
-     * requeue would send again: not delivered, queued within
-     * WebhookDispatcher::MAX_AGE_SECONDS.
+     * requeue would send: the failed ones it requeues and the pending ones it
+     * leaves to be sent (queued since the webhook died, or waiting out a
+     * retry), each queued within WebhookDispatcher::MAX_AGE_SECONDS.
      *
      * @return array<int, int> webhook id => count, only webhooks that have some
      */
@@ -611,7 +612,7 @@ final class MysqlWebhookRepository
     {
         $stmt = $this->conn->prepareRead(
             "SELECT webhook_id, COUNT(*) AS c FROM 202_ltv_webhook_deliveries
-             WHERE user_id = ? AND status = 'failed' AND created_at >= ?
+             WHERE user_id = ? AND status IN ('failed', 'pending') AND created_at >= ?
              GROUP BY webhook_id"
         );
         $this->conn->bind($stmt, 'ii', [$userId, $now - WebhookDispatcher::MAX_AGE_SECONDS]);

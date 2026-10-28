@@ -242,8 +242,10 @@ final class WebhookReviveIntegrationTest extends TestCase
         $delivered = (string) array_key_first(self::deliveries());
         $killer = self::kill($hook['webhookId']);
 
-        // While dead: queued, then held at the next run, never tried.
+        // While dead: queued, then held at the next run, never tried. Until
+        // that run they are pending, and a revival would send them too.
         self::queue(2);
+        self::assertSame([$hook['webhookId'] => 3], self::repo()->missedCounts(self::USER, time()));
         $report = self::dispatch();
         self::assertSame(
             [2, 0, 0],
