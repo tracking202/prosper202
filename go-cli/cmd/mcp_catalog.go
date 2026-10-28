@@ -35,6 +35,31 @@ const mcpMaxResultChars = 60000
 // mcpMaxInputBytes bounds one call's JSON arguments.
 const mcpMaxInputBytes = 256 * 1024
 
+// hostedAnswerValues bounds the JSON values a hosted call decodes from the
+// install's answers, all of them together (api.LimitAnswerValues). The
+// relay's 1 MiB read budget bounds bytes, and an engine's memory follows
+// values: 1 MiB of {"a":0} is 260,000 of them and grew an engine to 83 MiB
+// (136.5 on report_timeseries, which decodes its answer twice), where 1 MiB
+// of report rows takes 31.
+//
+// 80,000 is the lowest round bound that no real answer within the budget
+// reaches. The densest measured, compact breakdown rows of zero traffic, hold
+// 78,500 values a MiB (report rows 62,600, click rows 57,500, campaigns
+// 31,400); at 60,000, 1 MiB of report rows was refused on 36 of the 37 read
+// tools, and the tools that read more than they print (crosstab, a list with
+// its stats) do read that much. The worst shapes measured just under it left
+// an engine at 38 MiB, and at 54.6 on report_timeseries; 100,000 left 44 and
+// 64, and admits no real answer that 80,000 refuses.
+const hostedAnswerValues = 80_000
+
+// hostedArgumentValues bounds the JSON values in a hosted call's arguments.
+// They are decoded too, and each item of a list becomes a flag its command
+// parses (pflag gives each item of a list flag a 4 KiB reader): 256 KiB of
+// landing_page_code offers, 131,000 of them, grew an engine to 588 MiB,
+// where 1,000 took 17. A tool takes 29 arguments at most, and
+// landing_page_code, the one that takes a list, at most 100 offers.
+const hostedArgumentValues = 1_000
+
 type mcpKind string
 
 const (

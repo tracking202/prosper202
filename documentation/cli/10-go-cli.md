@@ -537,7 +537,10 @@ later, on https), choosing read only, propose changes, or read and change. The
 connection is an API key labelled `AI: <app> via mcp.tracking202.com` in
 My Account › Personal Settings › API keys; remove it there to disconnect. It needs a ClickServer Pro
 licence. One call there reads at most 1 MB of the install's answers, so its list
-tools take no `all`: page with `limit` and `offset`.
+tools take no `all`: page with `limit` and `offset`. It also decodes at most
+80,000 JSON values from them (a megabyte of real rows holds fewer), and takes at
+most 1,000 in a call's arguments; past either, the call is refused with how to
+ask for less.
 
 To improve the connector, the hosted server records which tools the app calls, the names (not the
 values) of their arguments, whether they work, with the error when one fails (quoted values taken
