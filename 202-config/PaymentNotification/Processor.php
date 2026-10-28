@@ -131,16 +131,18 @@ final class Processor
             return $currency;
         }
 
+        [$time, $dated] = self::dated($n->occurredAt, $this->latestVisitTime($n->clickId), 'the click');
         $result = $this->record($n->clickId, $owner, $provider, $request, [
             'transaction_id' => $transactionId,
             'use_pixel_payout' => true,
             'payout' => $amount,
+            'conv_time' => $time,
         ]);
         $on = 'Transaction ' . $transactionId . ' on click ' . $n->clickId;
         if ($result['recorded']) {
             return new Outcome(
                 OutcomeKind::RECORDED,
-                'Recorded transaction ' . $transactionId . ' on click ' . $n->clickId . ' at ' . $amount . '.',
+                'Recorded transaction ' . $transactionId . ' on click ' . $n->clickId . ' at ' . $amount . '.' . $dated,
                 $result['conv_id'],
                 $owner
             );
@@ -223,6 +225,9 @@ final class Processor
         $ownId = $n->transactionId !== null && $n->transactionId !== $original;
         $reference = $ownId ? (string) $n->transactionId : 'body:' . self::fingerprint($request->fields);
         $on = 'Transaction ' . $original . ' on click ' . $n->clickId;
+        // A refund is dated when it happened, the sale keeping its own day;
+        // never before the sale it takes back.
+        [$time, $dated] = self::dated($n->occurredAt, $this->saleTime($n->clickId, $original, $owner), 'the sale');
         try {
             $result = $this->record($n->clickId, $owner, $provider, $request, [
                 'transaction_id' => $original,
@@ -230,6 +235,7 @@ final class Processor
                 'reversal_ref' => $reference,
                 'use_pixel_payout' => $n->amount !== null,
                 'payout' => $n->amount ?? '',
+                'conv_time' => $time,
             ]);
         } catch (ReversalException $e) {
             $standing = !$ownId && $e->kind === ReversalException::CONFLICT
@@ -250,7 +256,7 @@ final class Processor
             return new Outcome(
                 OutcomeKind::REVERSED,
                 'Reversed transaction ' . $original . ' on click ' . $n->clickId . ' by '
-                . ($n->amount ?? 'its full amount') . '.',
+                . ($n->amount ?? 'its full amount') . '.' . $dated,
                 $result['conv_id'],
                 $owner
             );
@@ -306,6 +312,66 @@ final class Processor
         $owner = (int) $row['user_id'];
 
         return $verification->verifies($owner) ? $owner : null;
+    }
+
+    /**
+     * When the row is dated: the time the notification says the payment or
+     * refund happened, held between the earliest it can be (the click a sale
+     * credits, the sale a refund takes back) and its arrival, which a clock
+     * ahead of this server's would pass. Refusing either would lose the
+     * payment over a clock, and the provider would send the same time again.
+     * With no time stated, its arrival.
+     *
+     * @return array{int, string} the time, and what the answer says when it is not the one stated
+     */
+    private static function dated(?int $stated, int $earliest, string $after): array
+    {
+        $now = time();
+        $earliest = min($earliest, $now);
+        if ($stated === null) {
+            return [$now, ''];
+        }
+        if ($stated > $now) {
+            return [$now, ' Dated when it arrived, ' . self::utc($now) . ': the time it states, ' . self::utc($stated)
+                . ', is later than this server\'s clock.'];
+        }
+        if ($stated < $earliest) {
+            return [$earliest, ' Dated at ' . $after . ', ' . self::utc($earliest) . ': the time it states, '
+                . self::utc($stated) . ', is before ' . $after . '.'];
+        }
+
+        return [$stated, ''];
+    }
+
+    private static function utc(int $time): string
+    {
+        return gmdate('Y-m-d\\TH:i:s\\Z', $time);
+    }
+
+    /** The time of the click's latest visit, the one a conversion credits. */
+    private function latestVisitTime(int $clickId): int
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead('SELECT c.click_time FROM ' . LatestVisit::of('?') . ' AS c LIMIT 1');
+        $conn->bind($stmt, 'i', [$clickId]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? 0 : (int) $row['click_time'];
+    }
+
+    /** When the sale a transaction id names on a click is dated (the writer's target), or 0 with none. */
+    private function saleTime(int $clickId, string $transactionId, int $owner): int
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead(
+            'SELECT conv_time FROM 202_conversion_logs'
+            . ' WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL AND user_id = ?'
+            . ' ORDER BY conv_id LIMIT 1'
+        );
+        $conn->bind($stmt, 'isi', [$clickId, $transactionId, $owner]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? 0 : (int) $row['conv_time'];
     }
 
     /** An amount in another currency is refused: nothing here converts it. */

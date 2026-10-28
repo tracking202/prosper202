@@ -106,6 +106,7 @@ final class PayKickstartAdapterTest extends TestCase
 
         self::assertNull($adapter->verify(self::request(['amount' => '470.00'] + $signed), $secrets));
         self::assertNull($adapter->verify(self::request(['custom_subid' => '43'] + $signed), $secrets));
+        self::assertNull($adapter->verify(self::request(['transaction_time' => '1600000000'] + $signed), $secrets));
         self::assertNull(self::verified('not-a-stored-key', $secrets));
         self::assertNull($adapter->verify(self::request($signed), []));
         $upper = self::request(['hash' => strtoupper($signed['hash'])] + $signed);
@@ -159,6 +160,9 @@ final class PayKickstartAdapterTest extends TestCase
         $noAmount = array_diff_key(self::sale(['event' => 'refund']), ['amount' => 1]);
         self::assertNull((new PayKickstartAdapter())->parse(self::request($noAmount))->amount);
         self::assertSame('0', self::parsed(['amount' => '0'])->amount, 'a free sale is a sale at 0');
+        $noTime = array_diff_key(self::sale(), ['transaction_time' => 1]);
+        self::assertNull((new PayKickstartAdapter())->parse(self::request($noTime))->occurredAt, 'no time: none');
+        self::assertNull(self::parsed(['transaction_time' => ' '])->occurredAt);
     }
 
     public function testTestModeAndEveryOtherEventRecordNothing(): void
@@ -202,6 +206,11 @@ final class PayKickstartAdapterTest extends TestCase
             'more than the column holds' => [['amount' => '1000000'], 'amount is "1000000"; ' . self::AMOUNT_RULE],
             'six decimals' => [['amount' => '1.000001'], 'amount is "1.000001"; ' . self::AMOUNT_RULE],
             'is_rebill not 0 or 1' => [['is_rebill' => 'yes'], 'is_rebill is "yes"; PayKickstart sends 0 or 1.'],
+            'a date, not a Unix time' => [['transaction_time' => '2026-10-07'], self::notATime('2026-10-07')],
+            'a time of 0' => [['transaction_time' => '0'], self::notATime('0')],
+            'a fraction of a second' => [['transaction_time' => '1469014598.5'], self::notATime('1469014598.5')],
+            'milliseconds' => [['transaction_time' => '1469014598000'], self::notATime('1469014598000')],
+            'past what a row holds' => [['transaction_time' => '2147483648'], self::notATime('2147483648')],
             'a subid that is not a click id' => [
                 ['custom_subid' => '12abc'],
                 'custom_subid is "12abc"' . self::NOT_A_CLICK,
@@ -212,6 +221,12 @@ final class PayKickstartAdapterTest extends TestCase
                 'custom_subid arrived as a list; PayKickstart sends it as one value.',
             ],
         ];
+    }
+
+    private static function notATime(string $sent): string
+    {
+        return 'transaction_time is "' . $sent . '"; PayKickstart sends it as a Unix time (seconds since 1970, such as'
+            . ' 1469014598).';
     }
 
     /**

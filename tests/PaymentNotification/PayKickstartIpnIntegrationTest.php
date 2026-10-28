@@ -177,6 +177,32 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         return (new Receiver(new PayKickstartAdapter(), self::requireScratch()))->receive($request);
     }
 
+    private static function recordClick(int $click, int $time): void
+    {
+        (new MysqlClickRepository(new Connection(self::requireScratch())))->recordClick(new ClickRecord(
+            clickId: $click,
+            userId: self::ACCOUNT,
+            clickTime: $time,
+            affCampaignId: self::CAMPAIGN,
+            clickPayout: '30.00',
+            recordsCampaignRows: false,
+        ));
+    }
+
+    /** @return list<array{int, string}> each row's conv_time and amount, in order */
+    private static function datedRows(int $click): array
+    {
+        $result = self::requireScratch()->query(
+            'SELECT conv_time, click_payout FROM 202_conversion_logs WHERE click_id = ' . $click . ' ORDER BY conv_id'
+        );
+        self::assertInstanceOf(\mysqli_result::class, $result);
+
+        return array_map(
+            static fn (array $r): array => [(int) $r[0], (string) $r[1]],
+            $result->fetch_all(MYSQLI_NUM)
+        );
+    }
+
     private static function conversionRepository(): MysqlConversionRepository
     {
         return new MysqlConversionRepository(new Connection(self::requireScratch()));
@@ -385,6 +411,86 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         $partial = $this->post(self::fields(['event' => 'refund', 'amount' => '5']), self::KEY_1);
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $partial);
         self::assertCount(3, self::conversions());
+    }
+
+    /**
+     * PayKickstart retries a delivery for days: a late notification is dated
+     * when the payment or refund happened, not when it arrived.
+     */
+    public function testALateNotificationIsDatedWhenItHappened(): void
+    {
+        $click = self::CLICK + 5;
+        self::recordClick($click, time() - 5 * 86400);
+        $sold = time() - 3 * 86400;
+        $refunded = time() - 2 * 86400;
+        $late = ['custom_subid' => (string) $click, 'transaction_id' => 'PK-LATE-0001'];
+
+        $sale = $this->post(self::fields(['transaction_time' => (string) $sold] + $late), self::KEY_1);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $sale);
+        self::assertSame('Recorded transaction PK-LATE-0001 on click ' . $click . ' at 47.00.', $sale->message);
+        $refund = $this->post(
+            self::fields(['event' => 'refund', 'amount' => '', 'transaction_time' => (string) $refunded] + $late),
+            self::KEY_1
+        );
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+        self::assertSame([[$sold, '47.00000'], [$refunded, '-47.00000']], self::datedRows($click));
+
+        // A refund that states a time after the click but before its sale is dated at the sale.
+        $second = ['custom_subid' => (string) $click, 'transaction_id' => 'PK-LATE-0002'];
+        $this->post(self::fields(['amount' => '9', 'transaction_time' => (string) $sold] + $second), self::KEY_1);
+        $early = $this->post(self::fields(
+            ['event' => 'refund', 'amount' => '', 'transaction_time' => (string) ($sold - 86400)] + $second
+        ), self::KEY_1);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $early);
+        self::assertStringEndsWith(', is before the sale.', $early->message);
+        self::assertSame([$sold, '-9.00000'], self::datedRows($click)[3]);
+
+        // The time is signed: one changed after signing verifies with no key.
+        $signed = PayKickstartAdapterTest::signed(
+            self::fields(['transaction_time' => (string) $sold] + $late),
+            self::KEY_1
+        );
+        $moved = $this->deliver(['transaction_time' => (string) ($sold - 86400)] + $signed);
+        self::assertOutcome(OutcomeKind::UNVERIFIED, 403, $moved);
+    }
+
+    /**
+     * A time before the click a sale credits, or before the sale a refund
+     * takes back, or ahead of this server's clock, is held to them and the
+     * answer says so: the payment happened, and only a clock disagrees.
+     */
+    public function testATimeOutsideTheClickAndItsArrivalIsHeldToThemSayingSo(): void
+    {
+        $result = self::requireScratch()->query('SELECT click_time FROM 202_clicks WHERE click_id = ' . self::CLICK);
+        self::assertInstanceOf(\mysqli_result::class, $result);
+        $clickTime = (int) $result->fetch_row()[0];
+        $early = $clickTime - 86400;
+        $sale = $this->post(self::fields(['transaction_time' => (string) $early]), self::KEY_1);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $sale);
+        self::assertSame('Recorded transaction PK-TX-0001 on click ' . self::CLICK . ' at 47.00. Dated at the click, '
+            . gmdate('Y-m-d\\TH:i:s\\Z', $clickTime) . ': the time it states, ' . gmdate('Y-m-d\\TH:i:s\\Z', $early)
+            . ', is before the click.', $sale->message);
+
+        $refund = $this->post(
+            self::fields(['event' => 'refund', 'amount' => '5', 'transaction_time' => (string) $early]),
+            self::KEY_1
+        );
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+        self::assertStringEndsWith('Dated at the sale, ' . gmdate('Y-m-d\\TH:i:s\\Z', $clickTime) . ': the time it'
+            . ' states, ' . gmdate('Y-m-d\\TH:i:s\\Z', $early) . ', is before the sale.', $refund->message);
+
+        $before = time();
+        $ahead = $this->post(
+            self::fields(['transaction_id' => 'PK-TX-AHEAD', 'transaction_time' => (string) ($before + 86400)]),
+            self::KEY_1
+        );
+        $after = time();
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $ahead);
+        self::assertStringContainsString(', is later than this server\'s clock.', $ahead->message);
+        $rows = self::datedRows(self::CLICK);
+        self::assertSame([[$clickTime, '47.00000'], [$clickTime, '-5.00000']], array_slice($rows, 0, 2));
+        self::assertGreaterThanOrEqual($before, $rows[2][0]);
+        self::assertLessThanOrEqual($after, $rows[2][0]);
     }
 
     public function testARefundOfASaleNotOnFileIsA404SayingSo(): void

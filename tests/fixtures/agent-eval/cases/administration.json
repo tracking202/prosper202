@@ -144,9 +144,9 @@
             ]
           },
           {
-            "run": "p202 user prefs get 1 --json",
+            "run": "p202 user prefs get 1 --json | jq -c '.data.paykickstart_ipn_secret_keys'; p202 user prefs get 1 --json",
             "includes": [
-              "\"paykickstart_ipn_keys_stored\": 1"
+              "{\"stored\":true}"
             ],
             "omits": [
               "pk-eval-CAMPAIGN-0001"
@@ -165,7 +165,7 @@
       "cleanup": [
         "p202 user prefs update 1 --paykickstart-ipn-secret-keys '' --json >/dev/null"
       ],
-      "notes": "Account › API integrations › PayKickstart (PUT /users/{id}/preferences paykickstart_ipn_secret_keys; GET /system/integrations keys_stored). The keys are never served back: GET /users/{id}/preferences answers paykickstart_ipn_keys_stored, and the reply must not repeat the key either."
+      "notes": "Account › API integrations › PayKickstart (PUT /users/{id}/preferences paykickstart_ipn_secret_keys; GET /system/integrations keys_stored). The keys are never served back: GET /users/{id}/preferences answers {\"stored\": true} for them, as for every integration secret, and the reply must not repeat the key either."
     }
   ]
 }
