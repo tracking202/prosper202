@@ -14,7 +14,9 @@ var campaignOptimizeCmd = &cobra.Command{
 	Use:   "optimize <campaign_id>",
 	Short: "Diagnose a campaign and recommend a salvage offer for its traffic",
 	Long: "Summarizes the campaign's break-even/ROI status and ranks other offers by EPC,\n" +
-		"so you can route losing traffic to the offer that monetizes it best.",
+		"so you can route losing traffic to the offer that monetizes it best.\n" +
+		"The break-even CPC is the payout × conversions per click (\"% of clicks\"); conv_rate is the reports'\n" +
+		"conversions ÷ click-throughs, which is higher on landing-page traffic.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -53,12 +55,14 @@ var campaignOptimizeCmd = &cobra.Command{
 		cost := toFloat(s["total_cost"])
 		income := toFloat(s["total_income"])
 		net := income - cost
-		cvr, epc, be := 0.0, 0.0, 0.0
+		// A click is what the traffic costs, so break-even prices one: payout × conversions per click. The reports'
+		// conv_rate is conversions ÷ click-throughs, higher on landing-page traffic, and the diagnosis names both.
+		leadsPerClick, epc := 0.0, 0.0
 		if clicks > 0 {
-			cvr = leads / clicks
+			leadsPerClick = leads / clicks
 			epc = income / clicks
 		}
-		be = payout * cvr
+		be := payout * leadsPerClick
 
 		// 2. Rank other offers by EPC over the same period (the salvage candidates).
 		portParams := collectReportParams(cmd)
@@ -94,8 +98,12 @@ var campaignOptimizeCmd = &cobra.Command{
 		}
 
 		// Print a human report to stderr; emit the structured rows on stdout.
-		fmt.Fprintf(os.Stderr, "\nCampaign %s — %.0f clicks, %.0f conv (%.1f%% CVR), EPC $%.3f, break-even CPC $%.3f\n",
-			id, clicks, leads, cvr*100, epc, be)
+		rates := fmt.Sprintf("%.1f%% of clicks", leadsPerClick*100)
+		if v, ok := s["conv_rate"]; ok {
+			rates = fmt.Sprintf("conv_rate %.1f%% of click-throughs, %s", toFloat(v), rates)
+		}
+		fmt.Fprintf(os.Stderr, "\nCampaign %s — %.0f clicks, %.0f conv (%s), EPC $%.3f, break-even CPC $%.3f\n",
+			id, clicks, leads, rates, epc, be)
 		fmt.Fprintf(os.Stderr, "P&L: revenue $%.2f − cost $%.2f = $%.2f  (%s)\n", income, cost, net,
 			map[bool]string{true: "PROFITABLE", false: "LOSING"}[net >= 0])
 		if net < 0 && len(best) > 0 {
