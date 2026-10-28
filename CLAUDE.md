@@ -324,6 +324,20 @@ kept reading and writing with every key they held, under their role.
 deactivated user (and `DeactivatedUserKeyInstanceTest` proves it over HTTP).
 When a state means "this person may not act", list every way a person acts.
 
+That list missed the one every browser uses: a session already signed in.
+The sign-in asked the row once and the session kept the answer, refreshing
+its own time on every request, so a user switched off or removed kept every
+page, AJAX endpoint and form for as long as they kept clicking (measured
+live: a switched-off Admin minted a REST API key). A session is a cached
+"may act" (#11), and its expiry is not a re-check. connect.php now reads the
+user's standing with the role and ends a session whose user may not act
+before any page runs, `AUTH::logged_in()` asks it of any session it is
+handed, and the sign-in, the cookie and the session ask one rule
+(`UserStanding`); `SessionSignInPathsTest` holds the bootstrap's check, who
+opens a session and who writes its identity, and
+`SessionEndsWithUserIntegrationTest` executes the refusal and the agreement.
+When a check runs at sign-in, ask what carries its answer afterwards.
+
 A row's change stamp is the same sweep over its writers. Every write of a
 customer's company set `updated_at` but the LTV maintenance job's link, so a
 customer it attached answered the time of its last save on `GET

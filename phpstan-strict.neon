@@ -34,6 +34,7 @@ parameters:
         - api/v3/Controllers/OfflineConversionsController.php
         - 202-config/User/InstallAccount.php
         - 202-config/User/SignInRecord.php
+        - 202-config/User/UserStanding.php
         - tracking202/Report/ReportFiltersDidNotFit.php
     # getCache(), setCache() and systemHash(), which LookupRepositoryFactory
     # calls: read for their signatures, not analysed.

@@ -448,7 +448,7 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 if (!AUTH::csrf_token_usable($_SESSION['token'] ?? null)) {
     withWritableSession(static function (): void {
         if (!AUTH::csrf_token_usable($_SESSION['token'] ?? null)) {
-            $_SESSION['token'] = bin2hex(random_bytes(16));
+            $_SESSION['token'] = AUTH::mintCsrfToken();
         }
     });
 }
@@ -503,6 +503,11 @@ if (!str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php')) {
 } else {
     $userObj = null;
 }
+
+// A session whose user has been switched off, removed or deleted since it
+// signed in ends here, on the row just read, before any page reads it
+// (SessionSignInPathsTest holds it here).
+AUTH::endSessionIfItsUserCannotAct($userObj);
 
 if (!isset($_SESSION['ipv6']) || !$_SESSION['ipv6']) {
     $sql = "select inet6_ntoa(0x00000000000000000000000000000001) as ipv6";
