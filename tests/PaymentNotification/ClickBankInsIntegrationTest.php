@@ -437,11 +437,12 @@ final class ClickBankInsIntegrationTest extends TestCase
         $outcome = $this->post(['trackingCodes' => []], self::FIRST_KEY);
 
         self::assertOutcome(OutcomeKind::NO_CLICK, 200, $outcome);
-        self::assertSame('Verified. The SALE of receipt CWOGBZLN carries no tracking code (the HopLink had no'
-            . ' tid=[[subid]]), so it names no click; nothing was recorded.', $outcome->message);
+        self::assertSame('Verified. The SALE notification of transaction CWOGBZLN carries no tracking code or'
+            . ' extclid (the HopLink had no tid=[[subid]] or extclid=[[subid]]), so it names no click and nothing was'
+            . ' recorded.', $outcome->message);
         self::assertSame([], self::conversions());
         self::assertStringContainsString(
-            'ClickBank notification from 203.0.113.9: no_click (200): Verified. The SALE of receipt CWOGBZLN',
+            'ClickBank notification: no_click (200), SALE (sale), transaction CWOGBZLN: Verified. The SALE',
             (string) file_get_contents($this->log)
         );
         self::assertOutcome(
@@ -759,6 +760,54 @@ final class ClickBankInsIntegrationTest extends TestCase
         $noClick = $this->post(['transactionType' => 'RFND', 'trackingCodes' => []], self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::NO_CLICK, 200, $noClick);
         self::assertCount(1, self::conversions());
+    }
+
+    /**
+     * The answers about the click name ClickBank's tracking code, extclid and
+     * the HopLink's variables, and no other provider's (ClickAnswersAreWordedByTheProviderTest).
+     */
+    public function testNoClickAndAnUnknownClickAreAnsweredInClickBanksNames(): void
+    {
+        $missing = (string) (self::CLICK + 98);
+        $other = (string) self::SECOND_CLICK;
+        $cases = [
+            'a sale with no click' => ['SALE', [], OutcomeKind::NO_CLICK, 200],
+            'a refund with no click' => ['RFND', [], OutcomeKind::NO_CLICK, 200],
+            'a sale on a click that is not there' => ['SALE', [$missing], OutcomeKind::UNKNOWN_CLICK, 404],
+            'a sale on another account\'s click' => ['SALE', [$other], OutcomeKind::UNKNOWN_CLICK, 404],
+            'a rebill on a click that is not there' => ['BILL', [$missing], OutcomeKind::UNKNOWN_CLICK, 404],
+            'a chargeback on a click that is not there' => ['CGBK', [$missing], OutcomeKind::UNKNOWN_CLICK, 404],
+        ];
+        $answers = [];
+        foreach ($cases as $what => [$type, $codes, $kind, $status]) {
+            $outcome = $this->post(['transactionType' => $type, 'trackingCodes' => $codes], self::FIRST_KEY);
+            self::assertOutcome($kind, $status, $outcome);
+            ClickAnswersAreWordedByTheProviderTest::assertNamesOnlyItsOwnField(
+                new ClickBankAdapter(),
+                $outcome->message
+            );
+            $answers[$what] = $outcome->message;
+        }
+        $extclid = $this->post(
+            ['trackingCodes' => [], 'affiliateTrackingParameters' => ['extclid' => $missing]],
+            self::FIRST_KEY
+        );
+        self::assertOutcome(OutcomeKind::UNKNOWN_CLICK, 404, $extclid);
+
+        self::assertSame('Verified. The RFND notification of transaction CWOGBZLN carries no tracking code or extclid'
+            . ' (the HopLink had no tid=[[subid]] or extclid=[[subid]]), so it names no click and there is no sale to'
+            . ' reverse.', $answers['a refund with no click']);
+        self::assertSame('There is no click ' . $missing . ' in the account whose secret key verified this'
+            . ' notification; nothing was recorded. The click is the notification\'s tracking code or extclid, which'
+            . ' the HopLink\'s tid=[[subid]] or extclid=[[subid]] carries when the buyer comes through a tracker of'
+            . ' that account.', $answers['a sale on a click that is not there']);
+        self::assertSame($answers['a sale on a click that is not there'], $extclid->message);
+        self::assertSame(
+            str_replace((string) self::SECOND_CLICK, 'N', $answers['a sale on another account\'s click']),
+            str_replace($missing, 'N', $answers['a sale on a click that is not there']),
+            'a click of another account answers as one that does not exist'
+        );
+        self::assertSame([], self::conversions());
     }
 
     private static function conversionRepository(): MysqlConversionRepository

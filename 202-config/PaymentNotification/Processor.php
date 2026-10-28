@@ -118,15 +118,11 @@ final class Processor
             );
         }
         if ($n->clickId === null) {
-            return new Outcome(
-                OutcomeKind::NO_CLICK,
-                'Verified. Transaction ' . $transactionId . ' names no click (the checkout link carried no subid),'
-                . ' so nothing was recorded.'
-            );
+            return self::noClick($n, $transactionId, $provider->clickField(), 'nothing was recorded');
         }
         $owner = $this->owner($n->clickId, $verification);
         if ($owner === null) {
-            return self::unknownClick($n->clickId);
+            return self::unknownClick($n->clickId, $provider->clickField());
         }
         $currency = $this->currencyRefusal($n, $owner);
         if ($currency !== null) {
@@ -183,7 +179,7 @@ final class Processor
             );
         }
         if ($result['reason'] === 'unknown_click' || $result['reason'] === 'foreign_click') {
-            return self::unknownClick($n->clickId);
+            return self::unknownClick($n->clickId, $provider->clickField());
         }
 
         throw new \RuntimeException($on . ': the conversion writer answered "' . $result['reason'] . '"');
@@ -203,15 +199,11 @@ final class Processor
             );
         }
         if ($n->clickId === null) {
-            return new Outcome(
-                OutcomeKind::NO_CLICK,
-                'Verified. The ' . $n->event . ' of transaction ' . $original . ' names no click (the checkout'
-                . ' link carried no subid), so there is no sale to reverse.'
-            );
+            return self::noClick($n, $original, $provider->clickField(), 'there is no sale to reverse');
         }
         $owner = $this->owner($n->clickId, $verification);
         if ($owner === null) {
-            return self::unknownClick($n->clickId);
+            return self::unknownClick($n->clickId, $provider->clickField());
         }
         $currency = $this->currencyRefusal($n, $owner);
         if ($currency !== null) {
@@ -272,7 +264,7 @@ final class Processor
             return $this->repeatedReversal($n, $on, $result['conv_id'], $owner);
         }
         if ($result['reason'] === 'unknown_click' || $result['reason'] === 'foreign_click') {
-            return self::unknownClick($n->clickId);
+            return self::unknownClick($n->clickId, $provider->clickField());
         }
 
         throw new \RuntimeException($on . ': the conversion writer answered "' . $result['reason'] . '"');
@@ -548,12 +540,30 @@ final class Processor
         return self::plain(Amount::fromUnits($units));
     }
 
-    private static function unknownClick(int $clickId): Outcome
+    /** A verified notification whose field for the click is empty, in its provider's names. */
+    private static function noClick(Notification $n, string $transactionId, ClickField $click, string $so): Outcome
+    {
+        return new Outcome(
+            OutcomeKind::NO_CLICK,
+            'Verified. The ' . $n->event . ' notification of transaction ' . $transactionId . ' carries no '
+            . $click->field . ' (' . $click->link . ' had no ' . $click->variable . '), so it names no click and '
+            . $so . '.'
+        );
+    }
+
+    /**
+     * A click no account whose secret verified the notification has: one of
+     * another account reads the same, so the answer tells no key holder which
+     * click ids another account has.
+     */
+    private static function unknownClick(int $clickId, ClickField $click): Outcome
     {
         return new Outcome(
             OutcomeKind::UNKNOWN_CLICK,
-            'There is no click ' . $clickId . ' in the account whose secret key signed this notification;'
-            . ' nothing was recorded.'
+            'There is no click ' . $clickId . ' in the account whose secret key verified this notification;'
+            . ' nothing was recorded. The click is the notification\'s ' . $click->field . ', which '
+            . $click->link . '\'s ' . $click->variable . ' carries when the buyer comes through a tracker of that'
+            . ' account.'
         );
     }
 

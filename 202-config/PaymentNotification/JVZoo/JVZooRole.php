@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification\JVZoo;
 
+use Prosper202\PaymentNotification\ClickField;
+
 /**
  * Whose notification the URL receives, which decides the field that names
  * the click. A JVZIPN carries both: `caffitid`, the tid on the affiliate's
@@ -27,6 +29,15 @@ enum JVZooRole: string
     public static function fromQuery(mixed $value): ?self
     {
         return is_string($value) ? self::tryFrom($value) : null;
+    }
+
+    /** The field this role reads the click from, and the link variable that puts it there. */
+    public function clickField(): ClickField
+    {
+        return match ($this) {
+            self::AFFILIATE => new ClickField('caffitid', 'the JVZoo affiliate link', '?tid=[[subid]]'),
+            self::VENDOR => new ClickField('subid in cvendthru', 'the buy link', '?subid=[[subid]]'),
+        };
     }
 
     /** This role's URL on a tracking base ("https://track.example.com/"). */
