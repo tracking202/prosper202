@@ -332,7 +332,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					'user_pref_dynamic_bid' => (int)$_POST['user_bid'],
 					'user_pref_ad_settings' => (string)$_POST['user_pref_ad_settings'],
 					'user_pref_privacy' => (string)$_POST['user_pref_privacy'],
-					'user_pref_same_ip_fallback' => (int)$_POST['user_pref_same_ip_fallback'],
+					'user_pref_same_ip_fallback' => (string)$_POST['user_pref_same_ip_fallback'] === '1' ? 1 : 0,
 					'user_daily_email' => (string)$_POST['user_daily_email'],
 				];
 

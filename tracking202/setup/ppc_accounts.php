@@ -177,9 +177,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         // A Postback URL the server would refuse to call is refused here, as
         // the API refuses it; what the account's pixels hold now is taken as
         // it is.
-        $heldPostbacks = $editing
+        $editAccountKey = $editing ? \Prosper202\Http\PostedId::read($_GET['edit_ppc_account_id'] ?? null) : null;
+        if ($editing && $editAccountKey === null) {
+            $error['wrong_user'] = 'Pick the traffic source account to edit from the list.';
+        }
+        $heldPostbacks = $editAccountKey !== null
             ? (new \Prosper202\Setup\AccountPixels(new \Prosper202\Database\Connection($db)))
-                ->storedPostbacks((int) $_SESSION['user_id'], (int) $_GET['edit_ppc_account_id'])
+                ->storedPostbacks((int) $_SESSION['user_id'], $editAccountKey)
             : [];
         \Prosper202\Setup\AccountPixels::refusePostbacks($pixelRows, $heldPostbacks, $error);
 

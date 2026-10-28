@@ -74,7 +74,8 @@
       "Fixed: Security. Signing out left the browser's remember-me key valid, so a copy of its cookie still signed in for up to 14 days, and switching a user off left all of theirs valid, so a remembered browser signed back in once the user was switched on again. Signing out now deletes that browser's key (the user's other remembered browsers stay signed in), and switching a user off in My Account, Users or through the API deletes every one of theirs",
       "Fixed: A sync writes a redirector's rules on the other install whole or not at all. When the other install refused one (since this version, a rule with no criterion), its redirector was left with its own rules removed and only the synced rules before the refused one",
       "Fixed: Security. Changing a password left every browser kept signed in able to sign in again by its cookie, a stolen copy included. A new password (Personal settings, the reset link, My Account, Users, or the API) now ends them all; the browser making the change on Personal settings stays signed in. A browser already signed in stays signed in until it signs out or its session ends",
-      "Fixed: The first page opened with only a remember-me cookie (Keep me signed in) ran without the user's roles, so a page such as My Account, Users sent the user away. It has them now"
+      "Fixed: The first page opened with only a remember-me cookie (Keep me signed in) ran without the user's roles, so a page such as My Account, Users sent the user away. It has them now",
+      "Fixed: Setup › Traffic Sources refuses an account edit whose link names the account with more than its id (12abc), where it saved the change to account 12"
     ]
   },
   "1.9.78": {
