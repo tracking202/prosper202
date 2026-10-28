@@ -446,12 +446,13 @@ final class WebhookDispatchIntegrationTest extends TestCase
         self::assertSame('pending', $byHook[$loopback['webhookId']]['status']);
         self::assertSame('1', $byHook[$loopback['webhookId']]['attempts']);
         self::assertNull($byHook[$loopback['webhookId']]['last_status_code']);
-        self::assertSame(
-            'blocked: webhook_url resolves to a private or reserved address',
+        self::assertStringStartsWith(
+            'blocked: 127.0.0.1, which is a loopback address',
             $byHook[$loopback['webhookId']]['last_response_body']
         );
         $nowhereRow = $byHook[$nowhere['webhookId']];
-        self::assertSame('blocked: webhook_url host does not resolve', $nowhereRow['last_response_body']);
+        self::assertStringStartsWith('blocked: ', $nowhereRow['last_response_body']);
+        self::assertStringContainsString('does not resolve to an address', $nowhereRow['last_response_body']);
         $throwsRow = $byHook[$throws['webhookId']];
         self::assertSame('pending/1', $throwsRow['status'] . '/' . $throwsRow['attempts']);
         self::assertSame('error: the send broke', $throwsRow['last_response_body']);

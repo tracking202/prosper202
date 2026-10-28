@@ -1989,7 +1989,7 @@ CHILD;
         }
         $log = $this->log(9701);
         $log['click_payout'] = '20.0';
-        p202RecordConversion($db, $log, '', true, '20.0', 'EVERY-1', [
+        p202RecordConversion($db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '20.0', 'EVERY-1', [
             'customer_ref' => '0044', 'customer_crm' => ['company' => 'Acme'],
         ], []);
         $acquired = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref = '0044'");
