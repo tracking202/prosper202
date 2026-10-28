@@ -103,7 +103,7 @@ final class RollupWritersAreMarkedTest extends TestCase
         // Writers whose table the scan cannot read (a variable, a property,
         // a sprintf %s), each with the tables it can reach.
         '202-config/Database/Schema/SchemaBuilder.php' => 'unread: assembles CREATE TABLE IF NOT EXISTS from a definition; no row',
-        '202-config/Database/SchemaReconciler.php' => 'unread: adds missing columns and keys, and lets a column take NULL where the definition does with the same type; no value changes',
+        '202-config/Database/SchemaReconciler.php' => 'unread: adds missing columns and keys, lets a column take NULL where the definition does with the same type, and gives a column a step names its declared DEFAULT; no value changes',
         '202-config/Crud/MysqlCrudRepository.php' => 'unread: writes the table its TableConfig names, and every TableConfig (202-config/Crud/TableConfig.php) names a setup table',
         'api/v3/Controller.php' => 'unread: creates, updates and deletes the table a controller names in tableName(), and every subclass names a setup or app table (networks, traffic sources and accounts, campaigns, landing pages, text ads, trackers, forecast events, app registrations and SKAN encodings)',
         '202-config/Repository/Mysql/MysqlTrackingRepository.php' => 'unread: inserts a c1-c4 or UTM value, when it is absent, into the dictionary table its kind names (202_tracking_c*, 202_utm_*); names are looked up when a report runs, never summed',

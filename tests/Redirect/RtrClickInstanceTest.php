@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Redirect;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\InstancePrivacy;
 
 /**
  * rtr.php over HTTP, against a running instance: P202_BASE (default
@@ -39,9 +40,15 @@ final class RtrClickInstanceTest extends TestCase
     /** @var array<string, int> */
     private static array $ids = [];
     private static string $tracker = '';
+    /** The install's privacy setting before the run, put back after. */
+    private static ?string $privacy = null;
 
     public static function setUpBeforeClass(): void
     {
+        // The Agent Evals job runs this suite on composer's --no-dev
+        // autoloader, which maps no Tests\ class
+        // (InstanceSuitesLoadWithoutTheDevAutoloaderTest).
+        require_once __DIR__ . '/../Support/InstancePrivacy.php';
         self::$base = rtrim((string) (getenv('P202_BASE') ?: 'http://localhost:8000'), '/');
         [$status] = self::request(self::$base . '/api/v3/system/health');
         if ($status === 0) {
@@ -56,6 +63,8 @@ final class RtrClickInstanceTest extends TestCase
 
         $run = self::$run = 'rtr' . bin2hex(random_bytes(4));
         try {
+            // A re-click is found by the click cookie this runner is given.
+            self::$privacy = InstancePrivacy::trackInFull(self::$base, self::$key);
             $network = self::$ids['network'] = self::create(
                 'aff-networks',
                 ['aff_network_name' => "$run network"],
@@ -116,6 +125,13 @@ final class RtrClickInstanceTest extends TestCase
             }
         } catch (\RuntimeException $e) {
             self::$setupError = $e->getMessage();
+        }
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        if (self::$privacy !== null) {
+            InstancePrivacy::restore(self::$base, self::$key, self::$privacy);
         }
     }
 
