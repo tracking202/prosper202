@@ -52,7 +52,7 @@ bash tests/live/analyze-mobile-apps.sh
 | `P202_DB_USER` / `P202_DB_PASS` | `root` / empty | MySQL credentials |
 | `P202_DB_HOST` / `P202_DB_PORT` | empty (the client's default, the local socket) | where MySQL listens; set both for a server reached over TCP, as CI does |
 | `P202_USER` / `P202_PASS` | `evalci` / **required by the two mobile-apps passes** | the account to log in as; `upgrade-csrf.sh` needs no login |
-| `P202_API_KEY` | **required by `app-core.sh`** | the admin's REST API key (`install-instance.sh` prints it) |
+| `P202_API_KEY` | **required by `app-core.sh` and by every pass that sources `privacy.sh`** | the admin's REST API key (`install-instance.sh` prints it) |
 
 `seed-mobile-apps.sh` writes rows and makes no request, so it takes the three
 `P202_DB*` variables only and needs no login. Those three are exported by
@@ -64,11 +64,41 @@ seeder fails, rather than checking whatever the previous run left behind.
 `tests/fixtures/agent-eval/ci/install-instance.sh` stands up an instance from
 nothing if you do not have one.
 
+A fresh install's account starts at privacy `eu` (1.9.79), which holds back a
+visitor GeoIP cannot place, and that is every click a pass makes from
+127.0.0.1 or a TEST-NET address: the address is stored masked and no click or
+`p202vid` cookie is set. A pass whose subject is not privacy expects every
+visitor tracked in full, so each pass that records a click, or reads a click
+cookie or a stored address, sets that up itself: it sources `privacy.sh` and
+calls `p202_track_in_full "$BASE" "$P202_API_KEY" [USER_ID...]`, which sets
+user 1 (the install's setting, applied with the link owner's), the key's own
+account and each account named to `disabled` through
+`PUT /users/{id}/preferences`, and puts each back on exit, signals included.
+It runs ahead of the pass's own EXIT trap, so a pass calls it after setting
+that trap; one that sets its trap again later calls `p202_privacy_restore`
+from it (`android-abuse-limits.sh`), and one that ends with the database out
+of reach calls it before the outage (`outage-fallback.sh`). No setting is
+needed by hand, and `legacy-pixels.sh` now needs `P202_API_KEY` for it.
+
+The passes that source it: `click-path-reads.sh`, `legacy-pixels.sh`,
+`identity-graph.sh`, `web-events.sh`, `offer-rotator-routing.sh`,
+`rotator-breakdown.sh`, `scheduled-deletion.sh`, `click-write-failure.sh`,
+`outage-fallback.sh`, `android-intake.sh`, `android-abuse-limits.sh`,
+`android-sdk.sh`, `play-integrity.sh`, `mobile-apps-ui.sh`, `mta-engine.sh`
+and `mta-ui.sh`. The rest record no click through the click path (rows are
+seeded by SQL, or the pass reads pages and the API), or test privacy itself
+(`account-pages.sh`). Measured on fresh, unseeded instances at `eu` before
+the passes sourced it: `legacy-pixels.sh` (2 failures), `identity-graph.sh`
+(18), `android-intake.sh` (4), `mta-engine.sh` (16), `scheduled-deletion.sh`
+(7) and `mta-ui.sh` (7) failed; with it, each passes, and the account is at
+`eu` again after the run.
+
 ## The passes
 
 | script | |
 |---|---|
 | `guard.sh` | the scratch-database check the other passes source. Not a pass. |
+| `privacy.sh` | `p202_track_in_full`: the privacy setting a pass that clicks runs under, set to `disabled` for its run and put back on exit (above). Not a pass. |
 | `loopback-postbacks.sh` | for the passes whose traffic source posts back to this machine (conversion-ledger, web-events, the Android passes, mobile-apps-ui): admits `127.0.0.1/32` with `P202_WEBHOOK_ALLOW_NETWORKS` in the instance's `202-config.php` (this checkout's, or `P202_ROOT`'s) for the pass's duration and puts the file back on exit, since the postback sender calls only public addresses. Not a pass. |
 | `postback-guard.sh` | Traffic-source postbacks go only to public addresses: a Postback pixel aimed at 127.0.0.1, 169.254.169.254, `localhost`, with a password or another scheme is refused when saved through the API and Setup › Traffic Sources, naming the field; one stored before the check is not called when gpb.php or upx.php records a conversion (both answer as before), its outbox row is `failed` at once with the reason and is not retried by the request or the worker, and the server log names pixel and host without the query; a listener on 127.0.0.2, admitted for the pass by `P202_WEBHOOK_ALLOW_NETWORKS`, is called, and its redirect to the loopback listener is not followed; with `P202_PUBLIC_HOST` (default httpbin.org) reachable without a proxy, a public host by name, its redirect to loopback (not followed) and to its own https URL (followed). Run from the served instance's root (it writes and restores `202-config.php`); needs `P202_API_KEY`, `P202_PASS` and `P202_SERVER_LOG`; listens on `P202_INSIDE_PORT` (8122) and `P202_NETWORK_PORT` (8121). |
 | `ltv-webhook-guard.sh` | LTV webhooks go only to public addresses (J0F7): POST /ltv/webhooks refuses, as a 422 on `url` with nothing written, the URLs the old guard approved (`168.63.129.16`, `[::ffff:127.x]`, `[::ffff:169.254.169.254]`, `[::ffff:a9fe:a9fe]`, `[64:ff9b::a9fe:a9fe]`); the same URLs stored as an older version stored them, and names the caller puts in `/etc/hosts` (`P202_INTERNAL_NAME`, `P202_MAPPED_NAME`, empty to skip), are not sent to when a revenue event's deliveries go out through `202-cronjobs/ltv_webhooks.php`: a TCP listener on `P202_INTERNAL_ADDR` (default 127.0.82.10) port 8443 hears nothing, and each delivery's log, in the table and GET /ltv/webhooks/{id}/deliveries, is `blocked: …` with the reason; a public receiver by name (`P202_PUBLIC_HOST`, default httpbin.org, empty to skip) gets its delivery, signed. Needs `P202_API_KEY`; removes its webhooks, deliveries and customer. A name whose AAAA answer is a mapped address needs a DNS server of one's own: `tests/Ltv/DeliverySenderTest` resolves one through a stub. |
@@ -94,5 +124,6 @@ nothing if you do not have one.
 | `offer-rotator-routing.sh` | Where the offer rotator (`record_adv.php`, then `offrtr.php`) sends a click that matched a rule, told apart by browser: a redirect weighted 0 beside one weighted 100 takes none of the clicks, an even split reaches both redirects over sixteen clicks, a rule that sends to a landing page sends to that one and not the rotator default's, a rule whose redirects are all weighted 0 sends to its first, and each click records the redirect it was sent to (`202_clicks_rotator.rule_redirect_id`, `202_clicks.rule_id`); the redirector tracker (`rtr.php`) sends the same visitors to the same places. Additive: it creates its own records and truncates nothing. Needs `P202_API_KEY`. |
 | `session-token-reseed.sh` | A signed-in session whose anti-CSRF token is set but unusable — an empty string, `false`, an array, each planted in the PHP session file (`P202_SESSION_DIR`, default `/var/lib/php/sessions`) and asserted to have landed — gets a new 32-character token on its next page: the form that posts carries it, the session file holds it, the form submitted as rendered writes its category, and the same form without its token is refused in the page's own sentence. Before `connect.php` seeded such a token again, every form of that session was refused until sign-out. Additive: it writes categories named `RESEED …` and removes them. Needs `P202_PASS`. |
 | `signin-not-completed.sh` | A sign-in whose password is right but which a database failure stops: with a trigger refusing an UPDATE of the pass's own two users (asserted to have landed), the right password past the per-user throttle limit is told each time that the sign-in could not be completed, logged as `login_success = 2` and never throttled, as is a legacy MD5 password whose rehash is refused; with the trigger gone it signs in at once; Account › Settings shows those attempts as Not completed, `GET /system/login-log` answers `status: not_completed` (`login_success` false) and `?status=` selects them, as `p202 system login-log --status` does with `P202_BIN`; then ten wrong passwords still lock the user out, the right one included. Creates its own users, key and trigger and removes them, with every log row of theirs, on any exit; touches no other user, so it may run against a shared instance (it does not source `guard.sh`). |
+| `dni-own-account.sh` | Account › API integrations as an account other than user 1 (`P202_USER`, whose role has access_to_api_integrations): the page lists the account's own Direct Network Integrations and not user 1's, holds no network's API key anywhere (no Reveal attribute, no poller data, no install hash) and shows a saved key by its last four; an edit holds no key, a save that leaves the key empty keeps it and one that types a key replaces it, a keep-the-key save naming user 1's network or moving to another network is refused with nothing changed, and the progress endpoint asks about the account's own importing networks only. Writes its own rows (networkId `yy12-*`) directly, since a test instance cannot reach the hosted DNI service, and removes them; the saves authenticate against licence-stub.sh, which answers every DNI call. Needs `P202_PASS`. |
 
 Each prints `N passed, M failed` and exits non-zero on a failure.
