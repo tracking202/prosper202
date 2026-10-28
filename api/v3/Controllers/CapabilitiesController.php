@@ -153,6 +153,12 @@ class CapabilitiesController
                     // /system/isp-lookup (+ PUT), /system/integrations.
                     // Not stageable.
                     'administration' => true,
+                    // GET /system/traffic-source-owners and POST
+                    // /system/traffic-source-owners/repair: the traffic
+                    // sources Setup's rename moved out of their accounts'
+                    // user before 1.9.79, and the repair an operator runs.
+                    // Admin with access_to_settings. Not stageable.
+                    'traffic_source_owners' => true,
                     // App measurement. `app_platforms` is what the registry
                     // (/apps) accepts a registration for. `app_postbacks` is
                     // one entry per platform-signed postback protocol the

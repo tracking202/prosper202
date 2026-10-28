@@ -1391,6 +1391,16 @@ or, for a table owned through its parent, to a listed check that runs first.
 It reads SQL only: a write a page makes through a class it calls is the
 class's to tie, and a user id is trusted by its name.
 
+Closing the write leaves what already went through it. The sources the
+rename took stay in the taker's account, and the sign they leave, a traffic
+source account whose user is not its source's, is also what the API wrote
+before 1.9.77 for an account put on a source an admin set up for a user. A
+sign with two origins is a report, not a repair: `TrafficSourceOwners` lists
+each source with what tells the origins apart (whether its own user has
+accounts on it, which was saved first) and moves one only on an admin's
+say-so, never in the upgrade. When a fix closes a hole, ask what the hole left
+behind, and what else leaves the same rows.
+
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 17305ee made the API answer money as numbers rather than mysqli's decimal
 strings — right at the edge, and every PHP suite stayed green. It broke four

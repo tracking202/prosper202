@@ -110,6 +110,10 @@ final class AccountScopedJoinTest extends TestCase
     private const DATA_SCOPE = 'ranks an install-wide region or ISP by the clicks the report reads: `2st.user_id = ` the integer DataScope::userId() returns, or every account\'s for the session that sees every campaign (DataScope); it names nothing an account owns';
     private const INSTALL_LICENCE_KEY = 'the install\'s licence key, read across the users of one install on purpose: the lowest active user on the requesting user\'s install_hash that holds a key, as AUTH::determineAccountOwnerId() resolves it for the web app; the key only asks my.tracking202.com whether the install is licensed for the Go CLI, and nothing of that row is answered to the caller';
     private const UPGRADE = 'an upgrade or migration step over every account\'s rows: it serves nothing on one account\'s behalf';
+    private const OWNERSHIP_REPORT = 'finds, on purpose, the traffic sources whose accounts are another user\'s'
+        . ' (`pa.user_id <> pn.user_id`): the install-wide report GET /system/traffic-source-owners serves only to an'
+        . ' Admin with access_to_settings (TrafficSourceOwnersRoutesTest), and the repair moves a source only to a user'
+        . ' its accounts name';
     private const FIRST_VISIT = 'one click\'s own rows by its id (`?` or its digits, checked), ordered to its'
         . ' first visit, standing where the statement read `202_clicks` as its driving row; each caller ties it to'
         . ' an account: `fv.user_id = ?` (LastClickFromAddress::find()), `c.user_id = ?`'
@@ -244,6 +248,9 @@ final class AccountScopedJoinTest extends TestCase
         ],
         '202-config/ReportSummaryForm.class.php' => [
             'table built at runtime | \\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope) | LEFT OUTER JOIN {\\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope)} AS lcp ON ( `2c`.click_id = lcp.' => self::LEDGER_PARTS,
+        ],
+        '202-config/Setup/TrafficSourceOwners.php' => [
+            'no user_id tie | 202_ppc_networks | pn.ppc_network_id = pa.ppc_network_id' => self::OWNERSHIP_REPORT,
         ],
         '202-config/Update/SubidBatch.php' => [
             'no user_id tie | 202_conversion_logs | cl.click_id = c.click_id AND cl.deleted = 0' => self::SAME_CLICK_CONVERSIONS,

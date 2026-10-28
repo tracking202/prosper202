@@ -830,6 +830,171 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /system/traffic-source-owners:
+    get:
+      tags: [System]
+      summary: Traffic sources another user's traffic source accounts name
+      description: |
+        Before 1.9.79, renaming a traffic source on Setup › Traffic Sources
+        also moved it into the account of the user who saved the rename, and
+        nothing checked whose source it was: a user who could open Setup
+        could take another user's source. Its traffic source accounts stayed
+        in their user's account. This lists every source that traffic source
+        accounts of a user other than its own name, with the user it is in
+        now (`owner`), each user whose accounts name it (`named_by`), and on
+        each user's accounts the traffic source accounts (live and removed,
+        with their ids), the clicks (each click once) and the conversions
+        that count.
+
+        The same rows also arise without a takeover: before 1.9.77 the API
+        put a traffic source account under whatever source it was sent, and
+        an admin may have moved a source on purpose. Nothing is moved by
+        itself, the upgrade included. `repair_to_user_id` is the one user a
+        repair takes a source to without being told; it is null, and
+        `ambiguous` says why, when the source's own user has accounts on it
+        too (`owner_has_accounts`), accounts of several other users name it
+        (`several_users`), an account of the other user was saved after the
+        source was last saved (`saved_after_rename`: the rename stamped
+        `ppc_network_time`, so the accounts a source was taken from were all
+        saved before it, while an account the API put on another user's
+        source was saved after that source), or the other user has no user
+        record (`no_such_user`). A source taken with no traffic source
+        account under it leaves no sign and is not listed.
+
+        Admin (or Super user) with `access_to_settings`, and `system:read`:
+        the report names every user's sources.
+      operationId: systemTrafficSourceOwners
+      responses:
+        "200":
+          description: The sources, by id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      sources:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TrafficSourceOwnerMismatch"
+                      repairable:
+                        type: integer
+                        description: Sources with a `repair_to_user_id`
+                      ambiguous:
+                        type: integer
+                        description: Sources a repair moves only to a user named for it
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /system/traffic-source-owners/repair:
+    post:
+      tags: [System]
+      summary: Move a traffic source back to the user whose accounts name it
+      description: |
+        `{"ppc_network_id": N}` moves one source the report lists to its
+        `repair_to_user_id`; with `"to_user_id"` it moves it to that user,
+        who must be one of its `named_by` users (the only way to move an
+        `ambiguous` source). `{"all": true}` moves every source the report
+        names a `repair_to_user_id` for and answers the rest under `skipped`
+        (`reason`: `ambiguous`, `not_permitted`, or `changed`).
+
+        Each source is moved in a transaction of its own: the source and the
+        accounts naming it are locked and read again, and nothing is written
+        unless they still lead to the same two users. Only `user_id` changes;
+        the name stays as the rename left it. A removed source stays removed.
+        Every account naming it is queued for the cron job's report rollup,
+        so report rows take the source from it again. Each move is written to
+        the PHP error log (the source, both users, and who asked).
+
+        A source not in the report, an ambiguous one without `to_user_id`, a
+        `to_user_id` that is not one of its `named_by` users, or a source
+        that changed after it was read is a `422` naming the field; nothing
+        is moved. With `all`, a failure after some sources were moved is a
+        `500` naming those; sending the request again moves only what the
+        report still names a user for.
+
+        Admin (or Super user) with `access_to_settings`, and `system:write`,
+        who may also act on both users as Account › Users allows (only user
+        1 moves a source into or out of user 1's account; an Admin's or the
+        Super user's account needs `add_edit_delete_admin`), else a `403`.
+        Not stageable, and no preview (`?dry_run=1` is a `422`): the report
+        is what a repair would do.
+      operationId: systemRepairTrafficSourceOwner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                ppc_network_id:
+                  type: integer
+                  minimum: 1
+                  maximum: 16777215
+                to_user_id:
+                  type: integer
+                  minimum: 1
+                  maximum: 16777215
+                all:
+                  type: boolean
+      responses:
+        "200":
+          description: What was moved, and what was not
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      repaired:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            ppc_network_id:
+                              type: integer
+                            ppc_network_name:
+                              type: string
+                            removed:
+                              type: boolean
+                            from_user_id:
+                              type: integer
+                            to_user_id:
+                              type: integer
+                            ppc_accounts:
+                              type: integer
+                              description: The traffic source accounts of `to_user_id` that name it, removed ones included
+                            queued_ppc_accounts:
+                              type: integer
+                              description: The accounts naming it queued for the report rollup
+                      skipped:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            ppc_network_id:
+                              type: integer
+                            ppc_network_name:
+                              type: string
+                            reason:
+                              type: string
+                              enum: [ambiguous, not_permitted, changed]
+                            ambiguous:
+                              type: array
+                              items:
+                                type: string
+                            message:
+                              type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /system/dataengine:
     get:
       tags: [System]
@@ -10507,6 +10672,65 @@ components:
                   description: An id an earlier version scheduled (the clicks below it are deleted); null for a time
                 clicks_remaining:
                   type: integer
+
+    TrafficSourceOwnerParty:
+      type: object
+      properties:
+        user_id:
+          type: integer
+        user_name:
+          type: string
+          nullable: true
+          description: Null when the user has no user record
+        user_deleted:
+          type: boolean
+          nullable: true
+        ppc_accounts:
+          type: integer
+          description: Live traffic source accounts of this user that name the source
+        removed_ppc_accounts:
+          type: integer
+        ppc_account_ids:
+          type: array
+          items:
+            type: integer
+        last_ppc_account_time:
+          type: integer
+          nullable: true
+          description: When the last of them was saved (unix seconds); null with none
+        clicks:
+          type: integer
+          description: Clicks recorded on those accounts, each click once
+        conversions:
+          type: integer
+          description: Conversions that count on those clicks (a reversal is not counted again)
+
+    TrafficSourceOwnerMismatch:
+      type: object
+      properties:
+        ppc_network_id:
+          type: integer
+        ppc_network_name:
+          type: string
+        removed:
+          type: boolean
+        ppc_network_time:
+          type: integer
+          description: When the source was created or last renamed on Setup (unix seconds)
+        owner:
+          $ref: "#/components/schemas/TrafficSourceOwnerParty"
+        named_by:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrafficSourceOwnerParty"
+        repair_to_user_id:
+          type: integer
+          nullable: true
+        ambiguous:
+          type: array
+          items:
+            type: string
+            enum: [owner_has_accounts, several_users, saved_after_rename, no_such_user]
 
     SystemIspLookup:
       type: object
