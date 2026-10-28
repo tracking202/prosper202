@@ -27,7 +27,8 @@ use Prosper202\Conversion\Ledger\Amount;
  *   time zones are Microsoft's own names, not the account's, so the times
  *   are UTC, stated as +0000 on the Parameters line and on every row.
  *   Microsoft takes at most 100,000 rows an upload and three decimals of a
- *   value; it has no order id and no consent columns.
+ *   value; it has no order id and no consent columns, and counts one
+ *   conversion per msclkid and second (oneConversionPerSecondOf()).
  */
 enum Format: string
 {
@@ -143,6 +144,20 @@ enum Format: string
     public function rowLimit(): ?int
     {
         return $this === self::MICROSOFT ? self::MICROSOFT_ROW_LIMIT : null;
+    }
+
+    /**
+     * The click id column under which the platform counts one conversion a
+     * second, or null. Microsoft: "Duplicate offline conversions with the
+     * same MicrosoftClickId and ConversionTime will be ignored" (the
+     * OfflineConversion API reference; its help names the conversion name
+     * too), and its template's times are whole seconds. ClickSeconds moves
+     * the second conversion on one msclkid in one second to the next free
+     * second.
+     */
+    public function oneConversionPerSecondOf(): ?string
+    {
+        return $this === self::MICROSOFT ? 'msclkid' : null;
     }
 
     /**

@@ -151,7 +151,12 @@ under the first that does not:
 
 Each line's `Conversion Time` is the conversion's in the account's time zone
 with the offset in force at that instant (`2026-10-27T02:22:48-04:00`), or in
-UTC for Microsoft, whose time zones are its own names. `Conversion Value` is
+UTC for Microsoft, whose time zones are its own names. Microsoft counts one
+conversion per msclkid and second, so of two conversions on one click in one
+second, the one recorded first keeps its time and the other is sent at the
+next second no conversion on that click holds, the same second on every
+download ([the guide](../features/offline-conversions.md#the-files) says
+when it moves). `Conversion Value` is
 the amount the conversion counts for, as the ledger records it in the
 account's currency (`Conversion Currency`), three decimals for Microsoft.
 `Order ID` is `P202-` and the conversion's id: the same on every download, so

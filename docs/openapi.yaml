@@ -2066,7 +2066,11 @@ paths:
         - `microsoft`: Microsoft Advertising's template: `Parameters:TimeZone=+0000`,
           then `Conversion Name`, `Conversion Time` (UTC), `Conversion Value`
           (three decimals), `Conversion Currency`, `Microsoft Click ID` and the
-          two hashed contact columns, empty.
+          two hashed contact columns, empty. Microsoft counts one conversion
+          per msclkid and second, so of two conversions on one click in one
+          second the one recorded first keeps its time and the other is sent
+          at the next second no conversion on that click holds, the same on
+          every fetch.
 
         A conversion is a line when it counts now (net of partial refunds; one
         refunded in full, deleted, replaced on its click or not payable is

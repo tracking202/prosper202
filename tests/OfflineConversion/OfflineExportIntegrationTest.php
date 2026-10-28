@@ -319,6 +319,55 @@ final class OfflineExportIntegrationTest extends TestCase
     }
 
     /**
+     * Two sales on one click in one second, recorded by the ledger's writer,
+     * and one a second later: Microsoft keeps one conversion per msclkid and
+     * second, so the server reads the one recorded first first and the file
+     * sends the other at the next free second. Google's file keeps the times.
+     */
+    public function testTwoConversionsOnOneClickInOneSecondAreTwoMicrosoftSeconds(): void
+    {
+        $msclkid = '0123456789abcdef0123456789abc140';
+        $this->click(140, 8, ['gclid' => 'EAIaIQ_140', 'msclkid' => $msclkid]);
+        $t = $this->now - 86400;
+        $sale = static fn (string $payout, int $time): array => [
+            'payout' => $payout, 'transaction_id' => 'T' . $payout, 'conv_time' => $time,
+        ];
+        $first = $this->record(140, MatchMethod::CLICK_ID, $sale('1', $t));
+        $second = $this->record(140, MatchMethod::CLICK_ID, $sale('2', $t));
+        $later = $this->record(140, MatchMethod::CLICK_ID, $sale('3', $t + 1));
+        $this->names();
+        $utc = static fn (int $ts): string => gmdate('Y-m-d\TH:i:s', $ts) . '+0000';
+
+        [$lines, $summary] = $this->file(new ExportOptions(Format::MICROSOFT, 30, $this->now));
+        self::assertSame([
+            'MS Sale,' . $utc($t + 1) . ',3,EUR,' . $msclkid . ',,',
+            'MS Sale,' . $utc($t) . ',1,EUR,' . $msclkid . ',,',
+            'MS Sale,' . $utc($t + 2) . ',2,EUR,' . $msclkid . ',,',
+        ], array_slice($lines, 2));
+        self::assertSame(3, $summary->rows);
+        [$again] = $this->file(new ExportOptions(Format::MICROSOFT, 30, $this->now));
+        self::assertSame($lines, $again);
+
+        $this->repo->softDelete($first, self::USER);
+        [$lines] = $this->file(new ExportOptions(Format::MICROSOFT, 30, $this->now));
+        self::assertSame(
+            'MS Sale,' . $utc($t + 2) . ',2,EUR,' . $msclkid . ',,',
+            $lines[3],
+            'a deleted conversion still holds its second'
+        );
+
+        [$lines] = $this->file(new ExportOptions(Format::GOOGLE, 30, $this->now));
+        $zone = new \DateTimeZone('America/New_York');
+        $time = static fn (int $ts): string
+            => (new \DateTimeImmutable('@' . $ts))->setTimezone($zone)->format('Y-m-d\TH:i:sP');
+        $name = '"Accumulated, ""8"""';
+        self::assertSame([
+            'EAIaIQ_140,,,' . $name . ',' . $time($t + 1) . ',3,EUR,P202-' . $later . ',,',
+            'EAIaIQ_140,,,' . $name . ',' . $time($t) . ',2,EUR,P202-' . $second . ',,',
+        ], array_slice($lines, 1));
+    }
+
+    /**
      * Whose click is asked only of the visits in the file's range: a click
      * re-clicked within it is the account's whatever its first visit, and
      * another account's re-clicked click is still another account's.

@@ -33,8 +33,9 @@ use Prosper202\Report\AccountZone;
  *    import nothing older, and may not have processed a newer one yet).
  *
  * The rows are read as the server sends them (Connection::eachRow()) and
- * written as they come, newest conversion first, so a window of any size
- * holds one row in memory. A refund or a deletion after the platform
+ * written as they come (FileLines), newest conversion first, so a window of
+ * any size holds one row in memory, and for Microsoft the msclkids of the
+ * last hour of it (ClickSeconds). A refund or a deletion after the platform
  * fetched a conversion is not sent again: a fetch sends what counts now,
  * under the conversion's own Order ID, which Google reads as the same
  * conversion on every fetch.
@@ -78,62 +79,12 @@ final class OfflineExport
         [$sql, $types, $values] = self::query($options, $userId);
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $values);
-
-        $leftOut = array_fill_keys(LeftOut::values(), 0);
-        $conversions = 0;
-        $rows = 0;
-        $limit = $format->rowLimit();
-        $this->conn->eachRow($stmt, static function (array $row) use (
-            $options,
-            $format,
-            $zone,
-            $currency,
-            $handle,
-            $limit,
-            &$leftOut,
-            &$conversions,
-            &$rows
-        ): void {
-            $convId = StoredRow::int($row, 'conv_id');
-            $stored = StoredRow::nullableText($row, 'conversion_name');
-            $name = $options->conversionName ?? ($stored !== '' ? $stored : null);
-            if ($options->onlyConversionName !== null && $name !== $options->onlyConversionName) {
-                return;
-            }
-            $conversions++;
-            $reason = self::reasonFor($row, $options, $name);
-            if ($reason === null && $limit !== null && $rows >= $limit) {
-                $reason = LeftOut::OVER_ROW_LIMIT;
-            }
-            if ($reason !== null) {
-                $leftOut[$reason->value]++;
-                return;
-            }
-            if ($handle !== null && $name !== null) {
-                self::put($handle, $format->cells(
-                    self::ids($row, $format),
-                    $name,
-                    $format->time(StoredRow::int($row, 'conv_time'), $zone),
-                    $format->value(Amount::toUnits(StoredRow::text($row, 'counted_amount'))),
-                    $currency,
-                    $convId,
-                    $options->adUserData,
-                    $options->adPersonalization
-                ));
-            }
-            $rows++;
+        $lines = new FileLines($options, $zone, $currency, $handle);
+        $this->conn->eachRow($stmt, static function (array $row) use ($lines): void {
+            $lines->add($row);
         });
 
-        return new ExportSummary(
-            $format,
-            $options->from(),
-            $options->now,
-            $zone,
-            $currency,
-            $conversions,
-            $rows,
-            $leftOut
-        );
+        return $lines->summary();
     }
 
     /**
@@ -261,7 +212,11 @@ final class OfflineExport
             $types .= 'i';
             $values[] = $options->campaignId;
         }
-        $sql .= ' ORDER BY cl.conv_time DESC, cl.conv_id DESC';
+        // Within one second, a platform that counts one conversion a second
+        // reads the conversion recorded first first: it keeps the second
+        // (ClickSeconds).
+        $sql .= ' ORDER BY cl.conv_time DESC, cl.conv_id '
+            . ($options->format->oneConversionPerSecondOf() === null ? 'DESC' : 'ASC');
 
         return [$sql, $types, $values];
     }
