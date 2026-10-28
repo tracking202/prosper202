@@ -4471,6 +4471,9 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // 202_google gains gbraid, wbraid, ttclid, msclkid and fbclid
+                // (Prosper202\Click\ClickRecord).
+                \Prosper202\Database\Tables\TrackingTables::google(),
                 \Prosper202\Database\Tables\UserTables::usersPref(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
@@ -4482,7 +4485,7 @@ class UPGRADE
                         . 'leaving version at 1.9.78 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: the re-click tables or 202_users_pref could not be reconciled,'
+                error_log('Prosper202 upgrade: the re-click tables, 202_google or 202_users_pref could not be reconciled,'
                     . ' the new accounts\' privacy default set or the re-click backfill marked; leaving version'
                     . ' at 1.9.78 so the next run retries.');
             }
