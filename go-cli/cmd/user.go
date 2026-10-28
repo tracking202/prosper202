@@ -660,7 +660,9 @@ var userPrefsCmd = &cobra.Command{
 var userPrefsGetCmd = &cobra.Command{
 	Use:   "get <user_id>",
 	Short: "Get user preferences",
-	Args:  cobra.ExactArgs(1),
+	Long: "Get user preferences. A secret is never shown, only whether one is stored: (stored) or (not stored),\n" +
+		"and {\"stored\": true} under --json.",
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -670,7 +672,7 @@ var userPrefsGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
+		renderPrefs(data)
 		return nil
 	},
 }
@@ -681,7 +683,8 @@ var userPrefsUpdateCmd = &cobra.Command{
 	Long: "Sets the preferences the settings pages set: Personal settings (time zone is on `user update`), the report\n" +
 		"defaults, Integrations' network keys and LTV › Settings. Each value is checked against the page's own choices\n" +
 		"before any request; a free-text value given as \"\" clears it. Changing --user-account-currency re-prices every\n" +
-		"campaign's payout into the new currency, as Personal settings does, through the exchange-rate service.",
+		"campaign's payout into the new currency, as Personal settings does, through the exchange-rate service. A secret\n" +
+		"is shown back only as (stored) or (not stored).",
 	Example: "  p202 user prefs update 1 --user-daily-email 07 --user-pref-time-predefined last7\n" +
 		"  p202 user prefs update 1 --user-tracking-domain \"\"     # back to this install's own domain\n" +
 		"  p202 user prefs update 1 --user-account-currency EUR",

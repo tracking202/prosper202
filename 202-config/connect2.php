@@ -913,7 +913,9 @@ class PLATFORMS
         if ($memcacheWorking) {
             // Not "user-agent": entries under that subject name a device
             // model found by its name alone, of whatever type clicked first.
-            $key = md5("user-agent-typed" . $ua . systemHash());
+            // The code's version is in the namespace: the parse that makes
+            // the entry is this code's, and it lives 30 days.
+            $key = md5("user-agent-typed" . $ua . \Prosper202\Repository\LookupRepositoryFactory::cacheNamespace());
             $device_info = $memcache->get($key);
 
             // A miss as well: an entry without ua_device_family
@@ -1011,8 +1013,12 @@ class PLATFORMS
             $ip->address = $address;
         }
 
-        if ($memcacheWorking && $ip && isset($ip->address)) {
-            $getFromCache = $memcache->get(md5("ip-bot" . $ip->address . systemHash()));
+        // The ranges below are this code's: its version is in the namespace.
+        $ipBotKey = $ip && isset($ip->address)
+            ? md5("ip-bot" . $ip->address . \Prosper202\Repository\LookupRepositoryFactory::cacheNamespace())
+            : null;
+        if ($memcacheWorking && $ipBotKey !== null) {
+            $getFromCache = $memcache->get($ipBotKey);
         } else {
             $getFromCache = false;
         }
@@ -1064,8 +1070,8 @@ class PLATFORMS
 
             foreach ($ranges as $value) {
                 if (PLATFORMS::check_ip_range($ip, $value)) {
-                    if ($memcacheWorking) {
-                        setCache(md5("ip-bot" . $ip->address . systemHash()), true);
+                    if ($memcacheWorking && $ipBotKey !== null) {
+                        setCache($ipBotKey, true);
                     }
 
                     return true;

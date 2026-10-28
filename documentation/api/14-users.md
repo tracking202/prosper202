@@ -63,7 +63,7 @@ API keys are masked after the first 8 characters in list responses. The full key
 
 | Method | Path | Auth | Description |
 | ------ | ---- | ---- | ----------- |
-| `GET` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Get user preferences (they include the account's integration secrets) |
+| `GET` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Get user preferences (an integration secret only as whether one is stored, never the secret) |
 | `PUT` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Update preferences |
 
 ## User Fields
@@ -85,7 +85,21 @@ API keys are masked after the first 8 characters in list responses. The full key
 the rule of the settings page that owns it, before anything is written; a key
 not in this table is refused with `422` naming it rather than dropped, and a
 free-text value given as `""` clears it. `GET` returns the whole preferences
-row.
+row, and never an integration secret: each one is answered as whether one is
+stored, `"cb_key": {"stored": true}` (or `false`). Those are the ClickBank,
+JVZoo, Zaxaa and IPQS keys, the Slack webhook, the RevContent id and secret,
+and the Landing Page Optimizer's `lpo_site_key` and `lpo_bridge_config`. A
+column is served as stored only once it is on the list of columns that hold
+no credential (`Prosper202\User\ServedPreferences`), so a new one is a secret
+until someone decides otherwise.
+
+A body `GET` answered can be sent back whole. Each key it holds that is not
+in the table below (`user_id`, `cb_verified`, the report filters, …) is
+read-only: accepted with the value `GET` gave it and refused with any other. A secret's
+`{"stored": …}` sent back as `GET` gave it keeps the secret; any other object
+is refused naming the field, so `{"stored": false}` does not remove one (send
+`""`), and to change one send the new secret as a string. A body of nothing
+but unchanged keys is `422` (`No valid fields to update`).
 
 | Field | Values | Set on |
 | ----- | ------ | ------ |
