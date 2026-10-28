@@ -6,6 +6,12 @@
 
 declare(strict_types=1);
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 require __DIR__ . '/harness-functions.php';
 
 $p202Harness = json_decode((string) getenv('P202_HARNESS'), true, 512, JSON_THROW_ON_ERROR);

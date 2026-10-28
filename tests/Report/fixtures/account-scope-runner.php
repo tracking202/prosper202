@@ -46,6 +46,12 @@ declare(strict_types=1);
  * Prints "RETURNED <json>", or "THREW <class>: <message>".
  */
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 [, $reader] = $argv + [null, ''];
 
 $root = dirname(__DIR__, 3);

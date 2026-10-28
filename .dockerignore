@@ -19,6 +19,10 @@ build/staging-config.php
 .claude
 .DS_Store
 
+# The test suite: its runner scripts act on a database with no sign-in, and the
+# image serves whatever it holds (TestScriptsAreNotServedTest).
+tests
+
 # Dependencies are installed during the image build (composer) or not needed
 # at runtime (node).
 vendor
