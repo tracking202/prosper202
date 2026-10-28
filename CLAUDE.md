@@ -434,7 +434,10 @@ Two amplifiers, both of which turned this from a blip into a breach:
   when: the click path's ids are cached for 30 days, and an upgrade can
   change which rows stand or what a lookup answers, so the namespace carries
   the code's version too (`LookupRepositoryFactory::cacheNamespace()`) and
-  each upgrade starts cold.
+  each upgrade starts cold. The fix gave it to the lookup ids alone, and the
+  user-agent parse and the bot-range verdict, this code's answers kept 30
+  days, stayed on the bare install hash (found by review);
+  `CacheKeyNamespaceTest` now lists every key on it with why.
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not
@@ -458,7 +461,12 @@ cannot read. `p202_consent` withheld the visitor's signals only for `0`, so
 `false`, `off`, `00` and a list gave consent, while `campaignAllows()` twenty
 lines below read anything but `1` as off: #5 inside one class. Present, it
 gives consent only as `1` now, on the tracking link and on the landing page
-(`IdentitySignalsTest`, `identity-landing.spec.js`).
+(`IdentitySignalsTest`, `identity-landing.spec.js`). The landing script then
+read the parameter by its exact name, and PHP files `p202.consent`,
+`p202 consent`, `p202[consent` and `p202_consent[]` under it, so each was a
+refusal to the tracker and consent to the script (found by review). A second
+reader of a request value reads it as the first one's parser does:
+`p202PhpParam()` was held to `parse_str()` on 36 spellings.
 
 State found where this install's own state would be is the same question.
 `ServerStateStore` renamed the pre-1.9.75 shared temp directory into a new
@@ -1077,7 +1085,11 @@ The name is the whole heuristic: a version held in `$v` or `$latest` is not
 seen, so a comparison of values that came out of `202_version`, a feed or a
 `changelog()` entry needs `version_compare()` whatever it is called. Equality
 is not covered either, and is not safe in general: `"1.9" == "1.90"` is true,
-because both are numeric strings.
+because both are numeric strings. And `!==` is not a direction:
+`SchemaVersion` answered "needs an upgrade" for any stored version that was
+not the code's, so files rolled back behind their database sent the operator
+to `upgrade.php`, which cannot mend that (found by review). Older and newer
+are `version_compare()`'s to say (`SchemaVersionIntegrationTest`).
 
 ### 24. A validation in a hydration path fails the batch, not the record
 `ExportWebhook`'s constructor ran the SSRF guard. That constructor is also the
@@ -1651,7 +1663,11 @@ The walk the upgrade starts has the same question one level down: a click
 whose repair always fails held back every click after it, for good (#24's
 batch); one that has failed for an hour of runs is stepped over, counted
 and named (`ReClickBackfill`, `tests/live/reclick-backfill-cron.sh` through
-the real cron job).
+the real cron job). The first draft counted every failure, so an hour of
+lock waits on one click, a read-only server or a lost connection stepped it
+over for good (found by review): a decision that cannot be undone counts only
+the failures that are the click's, and an errno it can name as the
+moment's (`ReClickBackfill::MOMENT_ERRNOS`) counts in none.
 
 ### 36. A lock does not move the snapshot
 The ledger's click lock read the click's values with the locking read itself,

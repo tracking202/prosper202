@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"p202/internal/api"
@@ -108,6 +109,56 @@ func runUserPrefsUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	render(data)
+	renderPrefs(data)
 	return nil
+}
+
+// renderPrefs renders a preferences answer. The server serves a secret only
+// as whether one is stored, {"stored": true}; a table shows that as
+// (stored) or (not stored), and --json, --ndjson and --quiet get the answer
+// as the API gave it.
+func renderPrefs(data []byte) {
+	if jsonOutput || ndjsonOutput || quietOutput {
+		render(data)
+		return
+	}
+	render(withStoredStates(data))
+}
+
+// withStoredStates puts (stored) or (not stored) in place of each
+// {"stored": <bool>} in the answer's data; anything else is left as it is.
+func withStoredStates(data []byte) []byte {
+	var answer map[string]json.RawMessage
+	if json.Unmarshal(data, &answer) != nil {
+		return data
+	}
+	var prefs map[string]json.RawMessage
+	if json.Unmarshal(answer["data"], &prefs) != nil || prefs == nil {
+		return data
+	}
+	for key, raw := range prefs {
+		var state map[string]json.RawMessage
+		if json.Unmarshal(raw, &state) != nil || len(state) != 1 {
+			continue
+		}
+		var stored bool
+		if json.Unmarshal(state["stored"], &stored) != nil {
+			continue
+		}
+		label := `"(not stored)"`
+		if stored {
+			label = `"(stored)"`
+		}
+		prefs[key] = json.RawMessage(label)
+	}
+	encoded, err := json.Marshal(prefs)
+	if err != nil {
+		return data
+	}
+	answer["data"] = encoded
+	out, err := json.Marshal(answer)
+	if err != nil {
+		return data
+	}
+	return out
 }
