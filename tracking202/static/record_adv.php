@@ -16,27 +16,32 @@ $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 $trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 
 $_GET += [
-	'lpip' => '',
-	't202id' => '',
-	't202b' => '',
-	't202kw' => '',
-	't202ref' => '',
-	'OVKEY' => '',
-	'OVRAW' => '',
-	'target_passthrough' => '',
-	'keyword' => '',
-	'gclid' => '',
-	'c1' => '',
-	'c2' => '',
-	'c3' => '',
-	'c4' => '',
-	'utm_source' => '',
-	'utm_medium' => '',
-	'utm_campaign' => '',
-	'utm_term' => '',
-	'utm_content' => '',
-	'referer' => '',
-	'ua' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+    'lpip' => '',
+    't202id' => '',
+    't202b' => '',
+    't202kw' => '',
+    't202ref' => '',
+    'OVKEY' => '',
+    'OVRAW' => '',
+    'target_passthrough' => '',
+    'keyword' => '',
+    'gclid' => '',
+    'gbraid' => '',
+    'wbraid' => '',
+    'ttclid' => '',
+    'msclkid' => '',
+    'fbclid' => '',
+    'c1' => '',
+    'c2' => '',
+    'c3' => '',
+    'c4' => '',
+    'utm_source' => '',
+    'utm_medium' => '',
+    'utm_campaign' => '',
+    'utm_term' => '',
+    'utm_content' => '',
+    'referer' => '',
+    'ua' => $_SERVER['HTTP_USER_AGENT'] ?? '',
 ];
 
 // The landing page, by its id exactly: compared as text, MySQL read 12abc as 12.
@@ -148,9 +153,11 @@ $c4 = str_replace('%20', ' ', $c4);
 $c4_id = $trackingRepo->findOrCreateC4($c4);
 $mysql['c4_id'] = $db->real_escape_string((string) $c4_id);
 
-// Raw: the writer binds it, so an escaped value was stored with its backslashes.
-$gclid = ClickRequest::text($_GET, 'gclid');
-$mysql['gclid'] = $gclid;
+// The ad platforms' click ids (ClickRecord::AD_CLICK_IDS). Raw: the
+// writer binds them, so an escaped value was stored with its backslashes.
+foreach (ClickRequest::adClickIds($_GET) as $adClickIdName => $adClickId) {
+    $mysql[$adClickIdName] = $adClickId;
+}
 
 
 $custom_var_ids = [];
