@@ -209,6 +209,21 @@ const rotatorRuleSetHint = "A rule set is every rule the redirector is to have, 
 // rotatorMaxRuleSetBytes is the API's body limit.
 const rotatorMaxRuleSetBytes = 1 << 20
 
+// readAtMost reads no more than limit bytes of path, so a path naming
+// something huge (or endless, like /dev/zero) is refused by the size check
+// rather than read into memory first.
+func readAtMost(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return data, err
+}
+
 var rotatorSetRulesCmd = &cobra.Command{
 	Use:   "set-rules <rotator_id>",
 	Short: "Replace a redirector's whole rule set, in the order the rules are tried, in one write",
@@ -277,7 +292,7 @@ func readRotatorRuleSet(cmd *cobra.Command) (map[string]interface{}, error) {
 			}
 			data, err = io.ReadAll(io.LimitReader(os.Stdin, rotatorMaxRuleSetBytes+1))
 		} else {
-			data, err = os.ReadFile(file)
+			data, err = readAtMost(file, rotatorMaxRuleSetBytes+1)
 		}
 		if err != nil {
 			return nil, validationError("reading %s: %v", file, err).WithHint("Pass a readable path, or - to read the set from stdin.")

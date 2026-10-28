@@ -81,6 +81,25 @@ func TestRotatorSetRulesReadsAFile(t *testing.T) {
 	}
 }
 
+// A path naming something larger than the limit is read only up to it:
+// /dev/zero never ends, so reading it whole never returns.
+func TestRotatorSetRulesReadsAFileOnlyUpToTheLimit(t *testing.T) {
+	if _, err := os.Stat("/dev/zero"); err != nil {
+		t.Skip("no /dev/zero here")
+	}
+	_, seen := goalServer(t, 200, `{"data":{}}`)
+	_, _, err := executeCommand("rotator", "set-rules", "7", "--file", "/dev/zero")
+	if err == nil || !strings.Contains(err.Error(), "over the server's 1 MB limit") {
+		t.Fatalf("err = %v, want the 1 MB refusal", err)
+	}
+	if code := exitCodeForError(err); code != ExitValidation {
+		t.Errorf("exit %d, want %d", code, ExitValidation)
+	}
+	if len(*seen) != 0 {
+		t.Errorf("requests = %+v, want none", *seen)
+	}
+}
+
 // What the command can judge itself is refused before any request, with a
 // next step; a misshapen set never reaches the server.
 func TestRotatorSetRulesRefusesWhatIsNotARuleSet(t *testing.T) {
