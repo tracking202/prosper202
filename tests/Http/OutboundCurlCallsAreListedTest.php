@@ -82,7 +82,7 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         ],
         'api/v3/Support/RemoteApiClient.php' => [
             1,
-            'UNGUARDED: the POST /sync profile URLs, any URL, no address check or pin, the answer read back',
+            "a sync profile's url: WebhookGuard::checkSync() at every request, pinned, no proxy, no redirects",
         ],
     ];
 

@@ -7,11 +7,14 @@ namespace Api\V3\Controllers;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\RemoteApiException;
+use Api\V3\Exception\SyncException;
 use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\PayloadKeys;
+use Api\V3\Support\RemoteApiClient;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
+use Api\V3\Support\SyncProfileKeys;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\RequestFlag;
 
@@ -19,12 +22,25 @@ class SyncController
 {
     private readonly SyncEngine $engine;
 
-    public function __construct(\mysqli $db, private readonly int $userId, private readonly ServerStateStore $store = new ServerStateStore(), ?SyncEngine $engine = null)
-    {
+    /** The statuses a job ends in: it runs no more, and keeps no key. */
+    private const FINISHED = ['succeeded', 'failed', 'cancelled', 'partial'];
+
+    public function __construct(
+        private readonly \mysqli $db,
+        private readonly int $userId,
+        private readonly ServerStateStore $store = new ServerStateStore(),
+        ?SyncEngine $engine = null,
+        private ?SyncProfileKeys $keys = null,
+    ) {
         if ($db->connect_errno !== 0) {
             throw new DatabaseException('Database connection unavailable for sync controller');
         }
         $this->engine = $engine ?? new SyncEngine($this->store);
+    }
+
+    private function keys(): SyncProfileKeys
+    {
+        return $this->keys ??= SyncProfileKeys::fromDatabase($this->db);
     }
 
     /** What a sync job body may carry; resolveSyncOptions() and resolveProfiles() read them. */
@@ -113,6 +129,10 @@ class SyncController
         }
 
         $jobPayload['request_hash'] = $requestHash;
+        // The keys are sealed in the job file and dropped when it ends
+        // (SyncProfileKeys); the fingerprint above is of the request as sent.
+        $jobPayload['source'] = $this->keys()->seal($source, 'source');
+        $jobPayload['target'] = $this->keys()->seal($target, 'target');
         $job = $this->store->createJob($jobPayload, $this->userId);
         $job['attempts'] = 0;
         $job['max_attempts'] = $maxAttempts;
@@ -147,7 +167,7 @@ class SyncController
         if ($job === null) {
             throw new NotFoundException('Sync job not found');
         }
-        if (in_array((string)($job['status'] ?? ''), ['succeeded', 'failed', 'cancelled', 'partial'], true)) {
+        if (in_array((string)($job['status'] ?? ''), self::FINISHED, true)) {
             return ['data' => $this->sanitizeJobForResponse($job)];
         }
 
@@ -155,6 +175,7 @@ class SyncController
         if ((string)($job['status'] ?? '') === 'queued') {
             $job['status'] = 'cancelled';
             $job['next_run_at'] = null;
+            $job = self::withoutKeys($job);
             $this->store->incrementMetric('jobs_cancelled', 1);
             $this->appendAuditForJob($job);
         }
@@ -188,7 +209,18 @@ class SyncController
     {
         \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['limit'], 'a worker run');
         $limit = QueryInt::param($payload, 'limit', 10, 1, 100, 'queued jobs to run');
-        $jobs = $this->store->listJobs(['queued'], $limit);
+        $all = $this->store->listJobs([], 0);
+        // A job that ended before 1.9.79 still holds both keys as sent; a
+        // finished job needs none.
+        foreach ($all as $job) {
+            if (in_array((string)($job['status'] ?? ''), self::FINISHED, true) && self::holdsKey($job)) {
+                $this->store->saveJob(self::withoutKeys($job));
+            }
+        }
+        $jobs = array_slice(array_values(array_filter(
+            $all,
+            static fn (array $job): bool => (string)($job['status'] ?? '') === 'queued'
+        )), 0, $limit);
 
         $processed = 0;
         $succeeded = 0;
@@ -333,7 +365,7 @@ class SyncController
             throw new NotFoundException('Sync job not found');
         }
         $status = (string)($job['status'] ?? '');
-        if (in_array($status, ['succeeded', 'failed', 'cancelled', 'partial'], true)) {
+        if (in_array($status, self::FINISHED, true)) {
             return $job;
         }
         if (!in_array($status, ['queued', 'running'], true)) {
@@ -354,6 +386,7 @@ class SyncController
             $job = $this->store->getJob($jobId) ?? $job;
             if ((bool)($job['cancel_requested'] ?? false)) {
                 $job['status'] = 'cancelled';
+                $job = self::withoutKeys($job);
                 $this->store->saveJob($job);
                 $this->store->appendJobEvent($jobId, 'warning', 'Job cancelled before execution');
                 $this->store->incrementMetric('jobs_cancelled', 1);
@@ -366,6 +399,15 @@ class SyncController
             $target = is_array($request['target'] ?? null) ? $request['target'] : [];
             $entity = trim((string)($request['entity'] ?? 'all'));
             $options = is_array($request['options'] ?? null) ? $request['options'] : [];
+            // A job queued before 1.9.79 holds its keys as sent: sealed now,
+            // so nothing this run saves holds them.
+            if (SyncProfileKeys::holdsPlainKey($source) || SyncProfileKeys::holdsPlainKey($target)) {
+                $source = $this->keys()->seal($source, 'source');
+                $target = $this->keys()->seal($target, 'target');
+                $job['request']['source'] = $source;
+                $job['request']['target'] = $target;
+                $this->store->saveJob($job);
+            }
 
             $pairKey = SyncEngine::pairKeyFor($source, $target);
             $manifest = $this->store->loadSyncManifest($pairKey);
@@ -382,6 +424,8 @@ class SyncController
                 $this->store->saveJob($job);
                 $this->store->appendJobEvent($jobId, 'info', 'Job started', ['attempt' => $job['attempts']]);
 
+                $source = $this->keys()->open($source, 'source');
+                $target = $this->keys()->open($target, 'target');
                 $results = $this->engine->execute(
                     $source,
                     $target,
@@ -395,6 +439,8 @@ class SyncController
                 $summary = $this->summarizeJobResults($results);
                 $job['results'] = $results;
                 $job['error'] = null;
+                $job['error_code'] = null;
+                $job['written'] = null;
                 $job['conflict'] = null;
                 $job['next_run_at'] = null;
                 // Re-read the persisted flag: a cancel may have landed while
@@ -426,6 +472,7 @@ class SyncController
                 }
                 $this->store->saveSyncManifest($pairKey, $manifest);
 
+                $job = self::withoutKeys($job);
                 $this->store->saveJob($job);
                 $this->store->appendJobEvent($jobId, 'info', 'Job completed', ['status' => $job['status']]);
                 $this->appendAuditForJob($job);
@@ -446,11 +493,16 @@ class SyncController
             // so the caller can look before re-running.
             $conflict = $e instanceof SyncRecordException ? $e->conflict : null;
             $job['conflict'] = $conflict;
+            // Nor is a URL this server will not call, a cap the sync reached
+            // or a key that does not open: the next try meets the same.
+            $cause = SyncException::in($e);
+            $job['error_code'] = $cause?->errorCode;
+            $job['written'] = $e instanceof SyncRecordException ? $e->written : null;
 
             if ((bool)($job['cancel_requested'] ?? false)) {
                 $job['status'] = 'cancelled';
                 $this->store->incrementMetric('jobs_cancelled', 1);
-            } elseif ($conflict === null && $attempts < $maxAttempts) {
+            } elseif ($conflict === null && ($cause === null || $cause->retryable) && $attempts < $maxAttempts) {
                 $job['status'] = 'queued';
                 $backoff = min(900, 15 * (2 ** max(0, $attempts - 1)));
                 $job['next_run_at'] = time() + $backoff;
@@ -460,6 +512,9 @@ class SyncController
                 $job['next_run_at'] = null;
                 $this->store->incrementMetric('jobs_failed', 1);
                 $this->appendAuditForJob($job);
+            }
+            if ($job['status'] !== 'queued') {
+                $job = self::withoutKeys($job);
             }
 
             $this->store->saveJob($job);
@@ -561,7 +616,11 @@ class SyncController
     /** What a source or target profile carries; resolveProfileEntry() reads them. */
     private const PROFILE_KEYS = ['url', 'api_key', 'name'];
 
-    private function resolveProfiles(array $payload, bool $requireApiKey = true): array
+    /**
+     * @param bool $forCalls the profiles will be called (a plan, a job): each
+     *        needs a key and a URL this server may call
+     */
+    private function resolveProfiles(array $payload, bool $forCalls = true): array
     {
         // A profile is an object of PROFILE_KEYS, each a string (or null,
         // read as not given): a key it does not take was dropped (`nmae`
@@ -583,13 +642,13 @@ class SyncController
         }
         PayloadKeys::refuse($errors);
 
-        $source = $this->resolveProfileEntry($payload['source'] ?? $payload['from'] ?? null, 'source', $requireApiKey);
-        $target = $this->resolveProfileEntry($payload['target'] ?? $payload['to'] ?? null, 'target', $requireApiKey);
+        $source = $this->resolveProfileEntry($payload['source'] ?? $payload['from'] ?? null, 'source', $forCalls);
+        $target = $this->resolveProfileEntry($payload['target'] ?? $payload['to'] ?? null, 'target', $forCalls);
 
         return [$source, $target];
     }
 
-    private function resolveProfileEntry(mixed $entry, string $label, bool $requireApiKey): array
+    private function resolveProfileEntry(mixed $entry, string $label, bool $forCalls): array
     {
         if (!is_array($entry)) {
             throw new ValidationException('Validation failed', [$label => 'Must be an object with url/api_key']);
@@ -602,8 +661,17 @@ class SyncController
         if ($url === '') {
             throw new ValidationException('Validation failed', [$label . '.url' => 'Required']);
         }
-        if ($requireApiKey && $apiKey === '') {
+        if ($forCalls && $apiKey === '') {
             throw new ValidationException('Validation failed', [$label . '.api_key' => 'Required']);
+        }
+        // What can be told without a resolver; each request is checked again,
+        // resolved and pinned, when it is sent (RemoteApiClient).
+        $refused = $forCalls ? RemoteApiClient::profileUrlRefusal($url) : null;
+        if ($refused !== null) {
+            throw new ValidationException(
+                'This server does not call the sync ' . $label . '\'s url',
+                [$label . '.url' => $refused]
+            );
         }
 
         return [
@@ -611,6 +679,34 @@ class SyncController
             'url' => $url,
             'api_key' => $apiKey,
         ];
+    }
+
+    /** @param array<string, mixed> $job */
+    private static function holdsKey(array $job): bool
+    {
+        foreach (['source', 'target'] as $side) {
+            $profile = $job['request'][$side] ?? null;
+            if (is_array($profile) && SyncProfileKeys::forget($profile) !== $profile) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed> $job
+     * @return array<string, mixed>
+     */
+    private static function withoutKeys(array $job): array
+    {
+        foreach (['source', 'target'] as $side) {
+            if (isset($job['request'][$side]) && is_array($job['request'][$side])) {
+                $job['request'][$side] = SyncProfileKeys::forget($job['request'][$side]);
+            }
+        }
+
+        return $job;
     }
 
     private function profileLabel(array $profile): string
@@ -656,11 +752,10 @@ class SyncController
         $copy = $job;
         if (isset($copy['request']) && is_array($copy['request'])) {
             $copy['request'] = $this->store->sanitize($copy['request']);
-            if (isset($copy['request']['source']) && is_array($copy['request']['source'])) {
-                unset($copy['request']['source']['api_key']);
-            }
-            if (isset($copy['request']['target']) && is_array($copy['request']['target'])) {
-                unset($copy['request']['target']['api_key']);
+            foreach (['source', 'target'] as $side) {
+                if (isset($copy['request'][$side]) && is_array($copy['request'][$side])) {
+                    $copy['request'][$side] = SyncProfileKeys::forget($copy['request'][$side]);
+                }
             }
         }
         if (isset($copy['results']) && is_array($copy['results'])) {

@@ -157,6 +157,11 @@ final class OutboundUrlGuardTest extends TestCase
      * tests/DataEngine/SelfCallTest), and its caller sets nothing but the
      * URL: the cron's own defaults were merged in front of the pin and turned
      * redirects on, and a redirect to another name or port leaves the pin.
+     *
+     * Api\V3\Support\RemoteApiClient (a sync's two remotes, checked by
+     * WebhookGuard::checkSync()) pins its own requests: they are GET, PUT and
+     * DELETE as well as POST, and read answers of megabytes, which neither
+     * sender does. Its values are in tests/Api/V3/RemoteApiClientTest.
      */
     public function testEveryPinnedDispatcherCarriesTheWholeHardeningSet(): void
     {
@@ -165,6 +170,7 @@ final class OutboundUrlGuardTest extends TestCase
             '202-config/Attribution/WebhookSender.php',
             '202-config/Notifications/PostbackSender.php',
             '202-config/DataEngine/SelfCall.php',
+            'api/v3/Support/RemoteApiClient.php',
         ];
         $files = \Tests\Support\SourceScan::phpFiles();
 

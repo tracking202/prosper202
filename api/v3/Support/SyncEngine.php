@@ -6,6 +6,7 @@ namespace Api\V3\Support;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\RemoteApiException;
+use Api\V3\Exception\SyncException;
 use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
 
@@ -249,8 +250,12 @@ class SyncEngine
                     'updated_since' => self::UPDATED_SINCE_REFUSAL,
                 ]);
             }
-            $sourceData = $this->fetchPortableData($sourceClient);
-            $targetData = $this->fetchPortableData($targetClient);
+            try {
+                $sourceData = $this->fetchPortableData($sourceClient);
+                $targetData = $this->fetchPortableData($targetClient);
+            } catch (SyncException $e) {
+                throw $e->beforeAnyWrite();
+            }
 
             $sourceLookups = $this->buildEntityLookups($sourceData);
             $targetLookups = $this->buildEntityLookups($targetData);
@@ -375,7 +380,7 @@ class SyncEngine
                             $op = $putLanded ? 'update (applied; its rules then failed)' : 'update';
                             $refused = !$putLanded;
                             if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, $op, $targetId, $refused)) {
-                                throw $this->stopped($result, $entity, $key, $op, $e);
+                                throw $this->stopped($results, $dryRun, $result, $entity, $key, $op, $e, $putLanded);
                             }
                             continue;
                         }
@@ -394,7 +399,7 @@ class SyncEngine
                     $payload = $this->buildSyncPayload($entity, $sourceRow, $sourceLookups, $targetLookups);
                 } catch (\Throwable $e) {
                     if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'create')) {
-                        throw $this->stopped($result, $entity, $key, 'create', $e);
+                        throw $this->stopped($results, $dryRun, $result, $entity, $key, 'create', $e);
                     }
                     continue;
                 }
@@ -408,7 +413,7 @@ class SyncEngine
                     $created = $targetClient->post(self::ENTITY_ENDPOINTS[$entity], $payload);
                 } catch (\Throwable $e) {
                     if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'create', '', true)) {
-                        throw $this->stopped($result, $entity, $key, 'create', $e);
+                        throw $this->stopped($results, $dryRun, $result, $entity, $key, 'create', $e);
                     }
                     continue;
                 }
@@ -433,7 +438,7 @@ class SyncEngine
                         } catch (\Throwable $e) {
                             $op = 'create (applied; its rules then failed)';
                             if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, $op, $createdId)) {
-                                throw $this->stopped($result, $entity, $key, $op, $e);
+                                throw $this->stopped($results, $dryRun, $result, $entity, $key, $op, $e);
                             }
                         }
                     }
@@ -494,7 +499,7 @@ class SyncEngine
                     } catch (\Throwable $e) {
                         $recorded = $this->recordSyncError($result, $entity, $targetKey, $e, $skipErrors, 'delete', $targetId, true);
                         if (!$recorded) {
-                            throw $this->stopped($result, $entity, $targetKey, 'delete', $e);
+                            throw $this->stopped($results, $dryRun, $result, $entity, $targetKey, 'delete', $e);
                         }
                     }
                 }
@@ -687,10 +692,18 @@ class SyncEngine
         $this->postRotatorRules($targetClient, $targetRotatorId, $sourceRules, $sourceLookups, $targetLookups);
     }
 
+    /** The two remotes of one sync, sharing its deadline (RemoteApiClient::MAX_SECONDS). */
     protected function buildClients(array $sourceProfile, array $targetProfile): array
     {
-        $source = new RemoteApiClient((string)($sourceProfile['url'] ?? ''), (string)($sourceProfile['api_key'] ?? ''));
-        $target = new RemoteApiClient((string)($targetProfile['url'] ?? ''), (string)($targetProfile['api_key'] ?? ''));
+        $deadline = microtime(true) + RemoteApiClient::MAX_SECONDS;
+        $client = static fn (array $profile, string $side): RemoteApiClient => new RemoteApiClient(
+            (string)($profile['url'] ?? ''),
+            (string)($profile['api_key'] ?? ''),
+            $deadline,
+            $side
+        );
+        $source = $client($sourceProfile, 'source');
+        $target = $client($targetProfile, 'target');
 
         return [$source, $target];
     }
@@ -729,6 +742,8 @@ class SyncEngine
                         $detailData = is_array($detail['data'] ?? null) ? $detail['data'] : [];
                         $rules = $detailData['rules'] ?? [];
                         $row['rules'] = is_array($rules) ? $rules : [];
+                    } catch (SyncException $e) {
+                        throw $e;
                     } catch (\Throwable $e) {
                         // Do not map a failed detail fetch to "no rules": the
                         // diff would see a rule-less rotator and a force_update
@@ -1214,6 +1229,10 @@ class SyncEngine
      * after a re-read would force the source over whatever change the 409
      * protected (CLAUDE.md #13); re-running the sync is the caller's call.
      *
+     * A failure that stops the whole sync (SyncException: a URL refused, a
+     * cap reached) stops it with skip_errors too: the next record would meet
+     * it again.
+     *
      * @param array<string, mixed> $result
      * @return bool whether to go on (skip_errors)
      */
@@ -1246,6 +1265,9 @@ class SyncEngine
                     . 'the sync to compare against the target as it is now (plan first to see the difference).',
             ];
         }
+        if (SyncException::in($error)?->stopsSync === true) {
+            return false;
+        }
         return $skipErrors;
     }
 
@@ -1256,25 +1278,48 @@ class SyncEngine
     }
 
     /**
-     * What a run without skip_errors stops with: the record and operation
-     * named, the cause described, and the conflict record when the cause is
-     * one (the job runner does not retry a conflict).
+     * What a run stops with: the record and operation named, the cause
+     * described, the conflict record when the cause is one (the job runner
+     * does not retry a conflict), and what the run had written by then
+     * (CLAUDE.md #13): the entities finished, and this one so far.
      *
-     * @param array<string, mixed> $result after recordSyncError()
+     * @param array<string, array<string, mixed>> $results the entities finished
+     * @param array<string, mixed> $result this entity's, after recordSyncError()
+     * @param bool $updated whether this record's own update landed before what failed after it
      */
     private function stopped(
+        array $results,
+        bool $dryRun,
         array $result,
         string $entity,
         string $key,
         string $operation,
-        \Throwable $error
+        \Throwable $error,
+        bool $updated = false
     ): SyncRecordException {
         $conflicts = is_array($result['conflicts'] ?? null) ? $result['conflicts'] : [];
         $last = $conflicts !== [] ? $conflicts[array_key_last($conflicts)] : null;
         $conflict = is_array($last) && ($last['key'] ?? null) === $key && ($last['operation'] ?? null) === $operation
             && $error instanceof RemoteApiException && $error->isConflict() ? $last : null;
 
-        return new SyncRecordException($entity, $key, $operation, self::describeFailure($error), $conflict, $error);
+        $written = [];
+        if (!$dryRun) {
+            $result['updated'] = (int) ($result['updated'] ?? 0) + ($updated ? 1 : 0);
+            foreach ($results + [$entity => $result] as $name => $counts) {
+                $done = array_filter([
+                    'created' => (int) ($counts['created'] ?? 0),
+                    'updated' => (int) ($counts['updated'] ?? 0),
+                    'pruned' => (int) ($counts['pruned'] ?? 0),
+                ]);
+                if ($done !== []) {
+                    $written[$name] = $done;
+                }
+            }
+        }
+
+        $what = self::describeFailure($error);
+
+        return new SyncRecordException($entity, $key, $operation, $what, $conflict, $error, $written);
     }
 
     /** @param array<string, array<string, string>> $mappings */

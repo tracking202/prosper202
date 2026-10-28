@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -757,7 +758,12 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	}
 	resp, err := orchestrator.Post(endpoint, payload)
 	if err != nil {
-
+		// A profile url the server will not call is its answer, not "server
+		// sync unavailable": falling back would run the sync from this
+		// machine instead and the refusal would never be read.
+		if refused := syncURLRefusal(err, fromProfile, toProfile); refused != nil {
+			return true, refused
+		}
 		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
@@ -789,8 +795,12 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 					// partial or cancelled job exited 0 here, read by a
 					// script as a sync that happened.
 					if status != "succeeded" {
+						hint := syncJobErrorHint(scalarString(jobObj["error_code"]))
+						if hint == "" {
+							hint = "Fix the cause and run the same sync again: records already synced are found on the target by their natural key, not created twice. `p202 sync history` lists past runs."
+						}
 						return true, partialFailureError("sync job %s ended %s; the job above lists what failed", jobID, status).
-							WithHint("Fix the cause and run the same sync again: records already synced are found on the target by their natural key, not created twice. `p202 sync history` lists past runs.")
+							WithHint("%s", hint)
 					}
 					return true, nil // server-side sync ran; the caller must not fall back
 				}
@@ -810,6 +820,54 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	// nilerr is right that an error was seen and nil is returned; that is
 	// deliberate here and the warning above says so.
 	return true, nil //nolint:nilerr // the job exists server-side; falling back would run the sync twice
+}
+
+// syncURLHint is the next step for a profile url the server that runs the
+// sync will not call (WebhookGuard::checkSync()).
+func syncURLHint(profile string) string {
+	point := "Point the profile the error names (--from or --to) at its install's public https:// URL: `p202 --profile <name> config set-url https://…`. "
+	if profile != "" {
+		point = fmt.Sprintf("Point profile %q at its install's public https:// URL: `p202 --profile %s config set-url https://…`. ", profile, profile)
+	}
+	return "The server that runs the sync (the --from profile's install) calls both profiles' urls, and only public https:// addresses. " +
+		point +
+		"For an install on that server's own machine or network, its operator can admit the address with " +
+		"P202_WEBHOOK_ALLOW_NETWORKS in that install's 202-config.php (for example 127.0.0.1/32 for the same machine), " +
+		"which also allows http:// there; link-local and cloud metadata addresses are never admitted."
+}
+
+// syncURLRefusal is the 422 a sync job is refused with when a profile's url
+// is one the server will not call, with its hint; nil for any other error.
+func syncURLRefusal(err error, fromProfile, toProfile string) error {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
+		return nil
+	}
+	if _, ok := apiErr.FieldErrors["source.url"]; ok {
+		return withHint(err, "%s", syncURLHint(fromProfile))
+	}
+	if _, ok := apiErr.FieldErrors["target.url"]; ok {
+		return withHint(err, "%s", syncURLHint(toProfile))
+	}
+	return nil
+}
+
+// syncJobErrorHint is the next step for a server-side job that stopped for
+// one of the reasons it names by error_code (SyncException); "" for the rest.
+func syncJobErrorHint(code string) string {
+	switch code {
+	case "sync_url_refused":
+		return syncURLHint("")
+	case "sync_url_unresolved":
+		return "A profile's host does not resolve from the server that runs the sync; the job tries again by itself. " +
+			"Check the name in `p202 config list-profiles`, and that the server can resolve it."
+	case "sync_limit":
+		return "A remote answered more, or more slowly, than a sync reads (the error names the cap and the remote): " +
+			"a Prosper202 API does not, so check that install with `p202 --profile <name> system health` before running the same sync again."
+	case "sync_key_unreadable":
+		return "The job's stored API key could not be opened on the server. Run the same `p202 sync` again: it queues a new job with the profiles' keys."
+	}
+	return ""
 }
 
 func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
