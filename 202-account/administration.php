@@ -212,7 +212,7 @@ if (isset($_POST['geoip_action'])) {
             p202_account_redirect('202-account/administration.php#geoip');
         } elseif ($geoipAction === 'refresh') {
             // A download of tens of megabytes: let it finish if the tab closes.
-            @set_time_limit(\Prosper202\GeoIp\GuardedCurlTransport::TIMEOUT + 120);
+            @set_time_limit(\Prosper202\GeoIp\GeoIpRefresh::BUDGET_SECONDS + 120);
             ignore_user_abort(true);
             $refresh = (new \Prosper202\GeoIp\GeoIpRefresh($geoipStore, new \Prosper202\GeoIp\DatabaseInstaller()))
                 ->run();

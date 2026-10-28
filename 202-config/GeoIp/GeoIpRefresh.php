@@ -18,10 +18,14 @@ use Prosper202\Database\Connection;
  * and swaps it in, or leaves the installed file alone. Every failure is
  * logged and recorded with its reason, which Settings and GET /system/info
  * show. One run at a time: a lock file beside the database, so the cron job
- * and a Settings click never unpack into the same directory together.
+ * and a Settings click never unpack into the same directory together. A run's
+ * requests share BUDGET_SECONDS, well inside the ten minutes after which the
+ * cron job reads its own lock as stale and starts another run.
  */
 final class GeoIpRefresh
 {
+    public const BUDGET_SECONDS = 300;
+
     /** @var \Closure(): int */
     private readonly \Closure $clock;
 
@@ -87,7 +91,10 @@ final class GeoIpRefresh
     {
         try {
             $this->installer->cleanLeftovers();
-            $download = $this->download !== null ? ($this->download)() : MaxMindDownload::fromEnvironment();
+            $this->installer->refuseALink();
+            $download = $this->download !== null
+                ? ($this->download)()
+                : MaxMindDownload::fromEnvironment(time() + self::BUDGET_SECONDS);
             $published = $download->checksum($credentials);
             $state = $this->store->read();
             $installed = CityDatabase::status($this->installer->target(), ($this->clock)());
@@ -162,12 +169,38 @@ final class GeoIpRefresh
             throw new RefreshFailed('The refresh could not make its lock file ' . $path . '. '
                 . DatabaseInstaller::whoNeedsAccess(dirname($target)));
         }
-        if (!flock($handle, LOCK_EX | LOCK_NB)) {
-            fclose($handle);
+        try {
+            if (!self::tryLock($handle)) {
+                fclose($handle);
 
-            return null;
+                return null;
+            }
+        } catch (RefreshFailed $e) {
+            fclose($handle);
+            throw $e;
         }
 
         return $handle;
+    }
+
+    /**
+     * True once the lock is held, false while another run holds it. A lock
+     * that fails for any other reason (a filesystem without locks) throws:
+     * read as "busy", it would skip every run with nothing recorded.
+     *
+     * @param resource $handle
+     * @throws RefreshFailed
+     */
+    public static function tryLock($handle): bool
+    {
+        $wouldBlock = 0;
+        if (flock($handle, LOCK_EX | LOCK_NB, $wouldBlock)) {
+            return true;
+        }
+        if ($wouldBlock === 1) {
+            return false;
+        }
+        throw new RefreshFailed('The refresh could not lock its lock file, so it did not run: the filesystem'
+            . ' holding the GeoIP database may not support locks.');
     }
 }

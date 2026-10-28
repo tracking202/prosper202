@@ -44,12 +44,18 @@ What a refresh does:
   only, to public addresses only, pinned to the address it checked, never
   through a proxy. A server that can reach the internet only through a proxy
   cannot refresh.
+- A refresh has five minutes for all of its requests; one that runs out stops
+  and fails, and the installed database stays.
 - A refresh that fails leaves the installed database as it was, logs why in the
   server's error log, and shows the reason in the panel. The cron job tries
   again a day later; MaxMind allows 30 GeoLite downloads a day.
 
 The user the cron job and the web server run as needs write access to
-`202-config/geo/`, or every refresh fails saying so. On a container deployment,
+`202-config/geo/`, or every refresh fails saying so. The new database is
+readable by every user and writable by its owner alone. A
+`GeoLite2-City.mmdb` that is a symbolic link is not refreshed: the refresh
+would put a file in the link's place. Keep the file it points to current where
+it is kept, or put the file itself in `202-config/geo/`. On a container deployment,
 a redeploy puts back the image's copy; the cron job notices that the file is not
 the one it installed and refreshes it within the hour.
 

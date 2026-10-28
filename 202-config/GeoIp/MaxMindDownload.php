@@ -43,16 +43,19 @@ final class MaxMindDownload
      *
      * @throws RefreshFailed
      */
-    public static function fromEnvironment(): self
+    public static function fromEnvironment(?int $deadline = null): self
     {
         $override = getenv(self::ENV_ORIGIN);
         if ($override === false || $override === '') {
-            return new self(new GuardedCurlTransport());
+            return new self(new GuardedCurlTransport(null, null, $deadline));
         }
         $origin = self::loopbackOrigin($override);
         $ca = getenv(self::ENV_CA_FILE);
 
-        return new self(new GuardedCurlTransport($origin, $ca === false || $ca === '' ? null : $ca), $origin);
+        return new self(
+            new GuardedCurlTransport($origin, $ca === false || $ca === '' ? null : $ca, $deadline),
+            $origin
+        );
     }
 
     /** @throws RefreshFailed */
@@ -68,8 +71,9 @@ final class MaxMindDownload
             || !in_array($parts['path'] ?? '', ['', '/'], true)
             || $origin === null
         ) {
-            throw new RefreshFailed(self::ENV_ORIGIN . ' is set to "' . $value . '", and only an https:// origin on'
-                . ' 127.0.0.1 or [::1] is taken there (it is for tests), so nothing was downloaded.');
+            // The value is not repeated: it may carry user info.
+            throw new RefreshFailed(self::ENV_ORIGIN . ' is set, and only an https:// origin on 127.0.0.1 or [::1]'
+                . ' is taken there (it is for tests), so nothing was downloaded.');
         }
 
         return $origin;

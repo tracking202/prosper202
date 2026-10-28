@@ -194,6 +194,38 @@ final class DatabaseInstallerTest extends TestCase
         self::assertFileExists($this->target);
     }
 
+    public function testTheNewFileIsWritableByItsOwnerAloneWhateverTheOldOneAllowed(): void
+    {
+        chmod($this->target, 0666);
+
+        $this->install(GeoIpFixture::archive(GeoIpFixture::mmdb(self::NEW)));
+
+        clearstatcache();
+        self::assertSame(self::NEW, GeoIpFixture::buildEpoch($this->target));
+        self::assertSame(0644, fileperms($this->target) & 0777, 'no group or other write on the new database');
+    }
+
+    public function testADatabaseThatIsASymbolicLinkIsLeftAsALink(): void
+    {
+        $kept = $this->dir . '/kept-elsewhere.mmdb';
+        rename($this->target, $kept);
+        symlink($kept, $this->target);
+        $before = (string) file_get_contents($kept);
+
+        try {
+            $this->install(GeoIpFixture::archive(GeoIpFixture::mmdb(self::NEW)));
+            self::fail('a symbolic link was replaced by a file');
+        } catch (RefreshFailed $e) {
+            self::assertStringContainsString('is a symbolic link to ' . $kept, $e->getMessage());
+        }
+        clearstatcache();
+        self::assertTrue(is_link($this->target), 'the link is still a link');
+        self::assertSame($kept, readlink($this->target));
+        self::assertSame($before, file_get_contents($kept), 'the file it points to is unchanged');
+        self::assertFileDoesNotExist($this->target . '.previous');
+        self::assertNothingLeftBeside();
+    }
+
     private function install(string $archive): \Prosper202\GeoIp\InstallOutcome
     {
         return (new DatabaseInstaller($this->target, 'GeoLite2-City', static fn (): int => self::NOW))

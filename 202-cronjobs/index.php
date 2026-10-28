@@ -266,11 +266,13 @@ function RunHourlyCronJob()
         // spends one of an event's five attempts.
         DeliverPendingAnalytics();
 
-        // The GeoIP database, refreshed with the operator's MaxMind account
-        // when a refresh is due (weekly once one has succeeded).
-        RefreshGeoIpDatabase();
-
         cronQuery($db, $insert_sql, 'the hourly tier\'s record of this hour\'s run');
+
+        // The GeoIP database, refreshed with the operator's MaxMind account
+        // when a refresh is due (weekly once one has succeeded). After the
+        // hour is recorded: a download that outlasts this run's lock must not
+        // have the next run take the whole hourly tier again beside it.
+        RefreshGeoIpDatabase();
 
         echo 'Done<br>';
         ob_flush();

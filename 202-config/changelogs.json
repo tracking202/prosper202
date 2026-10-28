@@ -12,7 +12,8 @@
       "Changed: After an upgrade, tracking links look up their ids afresh instead of reading what the previous version cached, so the first clicks after an upgrade each make one more database read; so do the bot-range and browser checks",
       "Changed: When a cron run was recorded in the last five minutes, turning AutoCron on in Settings no longer simply refuses: it says why AutoCron may not be needed and offers to turn it on anyway, since anyone can open the cron address",
       "Fixed: Security. Reading a user's preferences through the API or the CLI showed the account's integration secrets (the ClickBank, JVZoo, Zaxaa and IPQS keys, the Slack webhook, RevContent and the Landing Page Optimizer's keys). It says only whether each one is stored. If anyone who should not see them held an API key, replace those secrets at each network",
-      "New: Settings shows how old the GeoIP database behind visitor locations is (the one Prosper202 ships is from 2018), and can keep it current: enter your free MaxMind GeoLite account ID and licence key, and the cron job downloads the new database weekly, checks it and swaps it in. A failed download keeps the database you have and says why"
+      "New: Settings shows how old the GeoIP database behind visitor locations is (the one Prosper202 ships is from 2018), and can keep it current: enter your free MaxMind GeoLite account ID and licence key, and the cron job downloads the new database weekly, checks it and swaps it in. A failed download keeps the database you have and says why",
+      "Fixed: A GeoIP database that cannot be opened no longer stops a click; the visitor is recorded without a location, and the error log says why"
     ]
   },
   "1.9.78": {

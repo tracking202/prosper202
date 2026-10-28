@@ -147,6 +147,26 @@ final class CityDatabaseTest extends TestCase
         );
     }
 
+    /**
+     * GET /system/health answers without a key and health.php to any
+     * signed-in user, whatever their role: both serve the health fields,
+     * never toArray()'s path and reader error.
+     */
+    public function testTheHealthProbesServeTheHealthFields(): void
+    {
+        $root = \Tests\Support\SourceScan::repoRoot();
+        $api = (string) file_get_contents($root . '/api/v3/index.php');
+        self::assertSame(1, preg_match("#if \(\\\$path === '/system/health'.*?\n    \}\n#s", $api, $m));
+        $probes = ['GET /system/health' => $m[0], '202-cronjobs/health.php' => (string) file_get_contents(
+            $root . '/202-cronjobs/health.php'
+        )];
+        foreach ($probes as $probe => $source) {
+            self::assertStringContainsString('CityDatabase::status()', $source, $probe);
+            self::assertStringContainsString('->healthFields()', $source, $probe);
+            self::assertStringNotContainsString('->toArray()', $source, $probe . ' serves no path');
+        }
+    }
+
     private function write(string $bytes): string
     {
         $path = $this->dir . '/' . bin2hex(random_bytes(4)) . '.mmdb';

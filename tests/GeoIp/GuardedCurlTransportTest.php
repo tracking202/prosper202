@@ -79,6 +79,75 @@ final class GuardedCurlTransportTest extends TestCase
         self::assertSame('', $options[CURLOPT_PROXY]);
     }
 
+    /** @return iterable<string, array{0: GuardedCurlTransport, 1: string}> */
+    public static function urlsCarryingASecret(): iterable
+    {
+        $signed = '/r2/GeoLite2-City.tar.gz?X-Amz-Credential=MMKEY&X-Amz-Signature=sekrit';
+        yield 'a redirect the guard refuses' => [new GuardedCurlTransport(), 'https://1.1.1.1:8443' . $signed];
+        yield 'user info' => [new GuardedCurlTransport(), 'https://user:sekrit@1.1.1.1:8443/x'];
+        yield 'another origin in test mode' => [
+            new GuardedCurlTransport('https://127.0.0.1:8151'),
+            'https://127.0.0.1:8152' . $signed,
+        ];
+        yield 'after the deadline' => [new GuardedCurlTransport(null, null, time() - 1), 'https://1.1.1.1' . $signed];
+    }
+
+    /** @dataProvider urlsCarryingASecret */
+    public function testARefusedUrlIsNamedByItsOriginAlone(GuardedCurlTransport $transport, string $url): void
+    {
+        try {
+            $transport->get($url, ['1', 'key'], null, 1024);
+            self::fail('fetched ' . $url);
+        } catch (RefreshFailed $e) {
+            self::assertStringNotContainsString('sekrit', $e->getMessage(), 'logged, stored and shown in Settings');
+            self::assertStringNotContainsString('MMKEY', $e->getMessage());
+            self::assertStringContainsString((string) parse_url($url, PHP_URL_HOST), $e->getMessage());
+        }
+    }
+
+    public function testEveryRequestOfARunIsLimitedToTheTimeTheRunHasLeft(): void
+    {
+        $options = (new GuardedCurlTransport(null, null, time() + 100))->pinnedOptions('https://1.1.1.1/x');
+        self::assertGreaterThanOrEqual(99, $options[CURLOPT_TIMEOUT]);
+        self::assertLessThanOrEqual(100, $options[CURLOPT_TIMEOUT]);
+
+        $this->expectException(RefreshFailed::class);
+        $this->expectExceptionMessage('ran out of time');
+        (new GuardedCurlTransport(null, null, time()))->get('https://1.1.1.1/x', ['1', 'key'], null, 1024);
+    }
+
+    public function testAnOptionCurlWillNotSetStopsTheRequest(): void
+    {
+        $ch = curl_init();
+        self::assertNotFalse($ch);
+        try {
+            GuardedCurlTransport::apply($ch, [CURLOPT_SSLVERSION => 999, CURLOPT_PROXY => ''], 'pinned');
+            self::fail('curl_setopt_array() stopped at an option and the request would have gone on without the rest');
+        } catch (RefreshFailed $e) {
+            self::assertStringContainsString('so nothing was sent', $e->getMessage());
+        } finally {
+            curl_close($ch);
+        }
+    }
+
+    public function testEveryOptionTheTransportSetsGoesThroughApply(): void
+    {
+        $source = (string) file_get_contents(\Tests\Support\SourceScan::repoRoot()
+            . '/202-config/GeoIp/GuardedCurlTransport.php');
+        $calls = [];
+        foreach (\PhpToken::tokenize($source) as $token) {
+            $name = ltrim(strtolower($token->text), '\\');
+            $setsOptions = in_array($name, ['curl_setopt', 'curl_setopt_array'], true);
+            if ($token->is([T_STRING, T_NAME_FULLY_QUALIFIED]) && $setsOptions) {
+                $calls[] = $token->line;
+            }
+        }
+        self::assertCount(1, $calls, 'one call sets curl options, the one apply() checks');
+        $apply = strpos($source, 'public static function apply(');
+        self::assertNotFalse($apply);
+        self::assertGreaterThan(substr_count(substr($source, 0, $apply), "\n") + 1, $calls[0]);
+    }
+
     public function testInTestModeNoOtherOriginIsFetched(): void
     {
         $transport = new GuardedCurlTransport('https://127.0.0.1:8151', null);

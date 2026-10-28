@@ -12,13 +12,17 @@ namespace Prosper202\GeoIp;
  *
  * Reads ustar and GNU tar (a GNU long name, type L, names the entry after
  * it); every other entry is skipped by its size. An archive that ends early,
- * a header whose checksum does not add up, or a member larger than the
- * caller allows is refused with the reason.
+ * a header whose checksum does not add up, a member larger than the caller
+ * allows, or more entries or other bytes before the member than a GeoLite
+ * archive holds (a few text files) is refused with the reason, so what is
+ * unpacked is bounded by the caller's limit and not by the archive.
  */
 final class TarGzMember
 {
     private const BLOCK = 512;
     private const CHUNK = 1048576;
+    public const MAX_ENTRIES = 64;
+    public const MAX_OTHER_BYTES = 16777216;
 
     private function __construct()
     {
@@ -45,7 +49,13 @@ final class TarGzMember
         }
         try {
             $longName = null;
+            $entries = 0;
+            $otherBytes = 0;
             while (true) {
+                if (++$entries > self::MAX_ENTRIES) {
+                    throw new RefreshFailed('The archive has more than ' . self::MAX_ENTRIES . ' entries before '
+                        . $member . ', so it is not one MaxMind builds.');
+                }
                 $header = self::read($gz, self::BLOCK);
                 if (strlen($header) < self::BLOCK) {
                     throw new RefreshFailed('The archive ended before it held ' . $member
@@ -78,6 +88,11 @@ final class TarGzMember
                     self::copy($gz, $sink, $size, $member);
 
                     return $size;
+                }
+                $otherBytes += $size;
+                if ($otherBytes > self::MAX_OTHER_BYTES) {
+                    throw new RefreshFailed('The archive holds more than ' . self::MAX_OTHER_BYTES . ' bytes of other'
+                        . ' files before ' . $member . ', so it is not one MaxMind builds.');
                 }
                 self::skip($gz, $size + $padding, $member);
             }
@@ -178,7 +193,8 @@ final class TarGzMember
     private static function name(string $header): string
     {
         $name = rtrim(substr($header, 0, 100), "\0");
-        if (substr($header, 257, 5) === 'ustar') {
+        // POSIX ustar only: GNU tar's "ustar  " header keeps times where ustar keeps the prefix.
+        if (substr($header, 257, 6) === "ustar\0") {
             $prefix = rtrim(substr($header, 345, 155), "\0");
             if ($prefix !== '') {
                 $name = $prefix . '/' . $name;

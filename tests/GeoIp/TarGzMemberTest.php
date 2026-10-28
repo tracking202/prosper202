@@ -112,6 +112,29 @@ final class TarGzMemberTest extends TestCase
         $this->extract(GeoIpFixture::tarGz(['dir/GeoLite2-City.mmdb' => str_repeat('m', 1001)]), 1000);
     }
 
+    public function testMoreEntriesThanAGeoLiteArchiveHoldsAreNotWalked(): void
+    {
+        $entries = [];
+        for ($i = 1; $i < TarGzMember::MAX_ENTRIES; $i++) {
+            $entries['dir/empty' . $i] = '';
+        }
+        $member = ['dir/GeoLite2-City.mmdb' => 'the database'];
+        self::assertSame('the database', $this->extract(GeoIpFixture::tarGz($entries + $member))[0]);
+
+        $entries['dir/one-too-many'] = '';
+        $this->expectRefusal('more than ' . TarGzMember::MAX_ENTRIES . ' entries before GeoLite2-City.mmdb');
+        $this->extract(GeoIpFixture::tarGz($entries + $member));
+    }
+
+    public function testMoreOtherBytesThanAGeoLiteArchiveHoldsAreNotUnpacked(): void
+    {
+        $this->expectRefusal('more than ' . TarGzMember::MAX_OTHER_BYTES . ' bytes of other files');
+        $this->extract(GeoIpFixture::tarGz([
+            'dir/README.txt' => str_repeat("\0", TarGzMember::MAX_OTHER_BYTES + 1),
+            'dir/GeoLite2-City.mmdb' => 'the database',
+        ]));
+    }
+
     /** @return array{0: string, 1: int} */
     private function extract(string $archive, int $max = 1 << 30): array
     {

@@ -15,7 +15,12 @@ namespace Prosper202\GeoIp;
  *     lookups, and was built after the installed one (the same build is
  *     "current", an older one is refused);
  *  4. the installed file is kept as GeoLite2-City.mmdb.previous, and the new
- *     one, readable by every user as the old one was, is renamed over it.
+ *     one, on disk (fsync) and readable by every user but writable by its
+ *     owner alone, is renamed over it.
+ *
+ * A database that is a symbolic link is refused: the rename would put a file
+ * where the link was, and the file it points to, which something else may
+ * keep current, would no longer be read.
  *
  * A lookup that opened the old file keeps reading it until it closes; the
  * next one opens the new file. Every temporary file is a dot-file beside
@@ -101,12 +106,24 @@ final class DatabaseInstaller
                 . substr($expected, 0, 16) . ' MaxMind published for it, so it was not installed.');
         }
 
+        $this->refuseALink();
         [$candidate, $handle] = $this->createTemporary('mmdb');
         try {
             try {
                 TarGzMember::extract($archive, $this->edition . '.mmdb', $handle, self::MAX_DATABASE_BYTES);
+                // On disk before the rename makes it the database: after a
+                // crash, a renamed file whose blocks were never written is an
+                // empty database every lookup fails on.
+                error_clear_last();
+                if (!fflush($handle) || !fsync($handle)) {
+                    throw new RefreshFailed('The unpacked database could not be written to disk ('
+                        . self::lastError() . '), so it was not installed.');
+                }
             } finally {
-                fclose($handle);
+                $closed = fclose($handle);
+            }
+            if (!$closed) {
+                throw new RefreshFailed('The unpacked database could not be closed, so it was not installed.');
             }
             $new = $this->check($candidate);
             $installed = CityDatabase::status($this->target, ($this->clock)());
@@ -128,6 +145,19 @@ final class DatabaseInstaller
                 @unlink($candidate);
             }
         }
+    }
+
+    /** @throws RefreshFailed */
+    public function refuseALink(): void
+    {
+        if (!is_link($this->target)) {
+            return;
+        }
+        $points = @readlink($this->target);
+        throw new RefreshFailed('The GeoIP database at ' . $this->target . ' is a symbolic link'
+            . (is_string($points) ? ' to ' . $points : '') . ', and a refresh would put a file in its place, so'
+            . ' the file it points to would no longer be read; it was left as it is. Keep that file current where'
+            . ' it is, or put the database itself at ' . $this->target . '.');
     }
 
     /**
@@ -222,9 +252,10 @@ final class DatabaseInstaller
         $mode = is_file($this->target) ? ((int) fileperms($this->target) & 0777) : 0644;
         // Readable by every user: the cron job and the web server are often
         // different users, and a file only its writer can read is a database
-        // no lookup can open.
+        // no lookup can open. Writable by no one else, whatever the old one
+        // allowed: a file anyone can rewrite is a database anyone can choose.
         error_clear_last();
-        if (!@chmod($candidate, $mode | 0444)) {
+        if (!@chmod($candidate, ($mode | 0444) & ~0022)) {
             throw new RefreshFailed('The new database\'s permissions could not be set (' . self::lastError()
                 . '), so it was not installed.');
         }

@@ -96,7 +96,9 @@ try {
     $isLocked = file_exists($lockFile);
     $lockAge = $isLocked ? (time() - filemtime($lockFile)) : null;
     
-    // The GeoIP database's build date and age, from the file's own metadata.
+    // The GeoIP database's build date and age, from the file's own metadata:
+    // its state and date only, since any signed-in user may read this page
+    // (Account › Settings shows the path and the reader's error to admins).
     $geoip = \Prosper202\GeoIp\CityDatabase::status();
 
     // Build response
@@ -110,7 +112,7 @@ try {
         'lockAge' => $lockAge,
         'lockAgeFormatted' => $lockAge ? formatTimeDiff($lockAge) : null,
         'dataEngine' => $dataEngineStatus,
-        'geoipDatabase' => $geoip->toArray(),
+        'geoipDatabase' => $geoip->healthFields(),
         'serverTime' => date('Y-m-d H:i:s'),
         'serverTimestamp' => time()
     ];

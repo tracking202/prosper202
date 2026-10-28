@@ -15,7 +15,12 @@ use Prosper202\Validation\OutboundUrlGuard;
  * address, no proxy, no redirects, TLS verified. The one value changed is
  * the time limit, which the guard sets at 15 seconds for a webhook and a
  * download of tens of megabytes needs longer; a transfer slower than 1 KB/s
- * for a minute is stopped instead.
+ * for a minute is stopped instead. Given a deadline, every request of a run
+ * shares it: each is limited to the time left, and none starts after it.
+ * Options curl refuses to set stop the request (curl_setopt_array() stops at
+ * the first it cannot set and leaves the rest of the pin unset), and a URL is
+ * named in a message by its origin alone: a presigned redirect's query is a
+ * credential.
  *
  * Tests and the live pass cannot reach MaxMind: constructed with a loopback
  * origin (MaxMindDownload::fromEnvironment(), P202_GEOIP_DOWNLOAD_ORIGIN),
@@ -30,9 +35,11 @@ final class GuardedCurlTransport implements HttpTransport
     public const LOW_SPEED_TIME = 60;
     private const ERROR_BODY_BYTES = 4096;
 
+    /** @param int|null $deadline when every request of this run must be done by (a Unix time) */
     public function __construct(
         private readonly ?string $loopbackOrigin = null,
         private readonly ?string $caFile = null,
+        private readonly ?int $deadline = null,
     ) {
     }
 
@@ -115,9 +122,14 @@ final class GuardedCurlTransport implements HttpTransport
             $request[CURLOPT_HTTPAUTH] = CURLAUTH_BASIC;
             $request[CURLOPT_USERPWD] = $basicAuth[0] . ':' . $basicAuth[1];
         }
-        curl_setopt_array($ch, $request);
-        // Last, so nothing set above can loosen the pin (CLAUDE.md #24).
-        curl_setopt_array($ch, $pinned);
+        try {
+            self::apply($ch, $request, 'request');
+            // Last, so nothing set above can loosen the pin (CLAUDE.md #24).
+            self::apply($ch, $pinned, 'pinned');
+        } catch (RefreshFailed $e) {
+            curl_close($ch);
+            throw $e;
+        }
         $done = curl_exec($ch);
         $error = curl_error($ch);
         curl_close($ch);
@@ -148,8 +160,17 @@ final class GuardedCurlTransport implements HttpTransport
      */
     public function pinnedOptions(string $url): array
     {
+        $timeout = self::TIMEOUT;
+        if ($this->deadline !== null) {
+            $left = $this->deadline - time();
+            if ($left < 1) {
+                throw new RefreshFailed('The refresh ran out of time before ' . self::shown($url) . ' was asked,'
+                    . ' so it was stopped; the next refresh tries again.');
+            }
+            $timeout = min($timeout, $left);
+        }
         $download = [
-            CURLOPT_TIMEOUT => self::TIMEOUT,
+            CURLOPT_TIMEOUT => $timeout,
             CURLOPT_LOW_SPEED_LIMIT => self::LOW_SPEED_LIMIT,
             CURLOPT_LOW_SPEED_TIME => self::LOW_SPEED_TIME,
         ];
@@ -157,7 +178,7 @@ final class GuardedCurlTransport implements HttpTransport
         if ($this->loopbackOrigin !== null) {
             if (MaxMindDownload::originOf($url) !== $this->loopbackOrigin) {
                 throw new RefreshFailed('In test mode (' . MaxMindDownload::ENV_ORIGIN . ') only '
-                    . $this->loopbackOrigin . ' is fetched, and ' . $url . ' is not on it.');
+                    . $this->loopbackOrigin . ' is fetched, and ' . self::shown($url) . ' is not it.');
             }
             $addresses = [trim((string) parse_url($url, PHP_URL_HOST), '[]')];
             if ($this->caFile !== null) {
@@ -169,7 +190,26 @@ final class GuardedCurlTransport implements HttpTransport
 
             return array_replace(OutboundUrlGuard::curlOptions($url, $addresses), $download);
         } catch (OutboundUrlException $e) {
-            throw new RefreshFailed('The outbound guard refused ' . $url . ': ' . $e->getMessage() . '.');
+            throw new RefreshFailed('The outbound guard refused ' . self::shown($url) . ': '
+                . str_replace($url, self::shown($url), $e->getMessage()) . '.');
         }
+    }
+
+    /**
+     * @param array<int, mixed> $options
+     * @throws RefreshFailed
+     */
+    public static function apply(\CurlHandle $ch, array $options, string $which): void
+    {
+        if (!@curl_setopt_array($ch, $options)) {
+            throw new RefreshFailed('curl would not take one of the download\'s ' . $which . ' options, so nothing'
+                . ' was sent.');
+        }
+    }
+
+    /** A URL as a message names it: its origin, never its path's query or user info. */
+    public static function shown(string $url): string
+    {
+        return MaxMindDownload::originOf($url) ?? 'a URL that does not parse';
     }
 }
