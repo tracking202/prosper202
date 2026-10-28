@@ -283,6 +283,43 @@ final class SessionGenerationIntegrationTest extends TestCase
         self::assertTrue(self::next($admins, self::ADMIN)[0], 'the admin\'s is not');
     }
 
+    /** A sign-in after a change begins at the new generation, and stays signed in. */
+    public function testASignInAfterAChangeStaysSignedIn(): void
+    {
+        (new \Api\V3\Controllers\UsersController(self::$db))
+            ->update(self::USER, ['user_pass' => self::NEW_PASSWORD], self::ADMIN);
+
+        $signIn = self::request('202-login.php', [
+            'P202_SU_SESSION' => 'anonymous',
+            'P202_SU_POST' => json_encode(
+                ['token' => 'SESSION', 'user_name' => 'gen' . self::USER, 'user_pass' => self::NEW_PASSWORD],
+                JSON_THROW_ON_ERROR
+            ),
+        ]);
+        $r = $signIn['result'];
+        self::assertNull($r['uncaught'], $signIn['output']);
+        self::assertContains('user_id', $r['session_keys'], 'signed in');
+        self::assertSame(1, $r['generation'], 'at the generation the change made');
+        self::assertTrue(self::next($r['session_id'])[0], 'and still signed in on its next request');
+    }
+
+    /**
+     * Ending a session from before the change revokes no key: the change
+     * revoked the user's keys in its own transaction, and a key made since
+     * is a later sign-in's.
+     */
+    public function testAnEndedSessionLeavesTheKeysOfALaterSignIn(): void
+    {
+        $old = self::browser();
+        (new \Api\V3\Controllers\UsersController(self::$db))
+            ->update(self::USER, ['user_pass' => self::NEW_PASSWORD], self::ADMIN);
+        self::row('202_auth_keys', ['user_id' => self::USER, 'auth_key' => 'laterkey', 'expires' => time() + 86400]);
+
+        self::assertFalse(self::next($old)[0], 'the old session is ended');
+        $kept = self::$db->query('SELECT COUNT(*) FROM 202_auth_keys WHERE user_id = ' . self::USER);
+        self::assertSame(1, (int) $kept->fetch_row()[0], 'the later sign-in\'s key is kept');
+    }
+
     /** The same password, stored again under a newer hash as the user signs in, ends nothing. */
     public function testARehashAtSignInEndsNoSession(): void
     {

@@ -1653,7 +1653,7 @@ p202 user update 1 --user-fname "Jane" --user-lname "Doe"
 p202 user delete 2
 ```
 
-When creating a user without `--user-pass`, the CLI asks for the password without echo (twice, so a typo is caught), or reads it as one line of stdin when piped. To change a password on update, use `--set-password` (the same prompt or pipe); changing your **own** password also needs `--current-password`, read first. A new password ends every browser the user is kept signed in on ("Keep me signed in"): their remember-me keys are deleted with it. A `--user-pass` value works on both but stays in shell history.
+When creating a user without `--user-pass`, the CLI asks for the password without echo (twice, so a typo is caught), or reads it as one line of stdin when piped. To change a password on update, use `--set-password` (the same prompt or pipe); changing your **own** password also needs `--current-password`, read first. A new password ends every browser the user is signed in on, those kept signed in ("Keep me signed in") included: their sessions end at their next request and their remember-me keys are deleted with it. A `--user-pass` value works on both but stays in shell history.
 
 | Flag              | Required (create) | Description         |
 |-------------------|-------------------|---------------------|
