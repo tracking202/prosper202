@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -106,7 +107,7 @@ func TestTrafficSourceOwnersRepairAsksThenSendsTheSource(t *testing.T) {
 			t.Errorf("hint %q, requests %+v", hintFor(err), *seen)
 		}
 	})
-	t.Run("yes sends the source and nothing else", func(t *testing.T) {
+	t.Run("yes sends the source and what the report showed", func(t *testing.T) {
 		seen := updateServer(t, tsoResponder(func(updateRequest) (int, string) { return 200, tsoRepairedOne }))
 		answerPrompts(t, "y\n")
 		_, stderr, err := executeCommand("system", "traffic-source-owners", "repair", "7")
@@ -116,7 +117,7 @@ func TestTrafficSourceOwnersRepairAsksThenSendsTheSource(t *testing.T) {
 		if len(*seen) != 2 || (*seen)[1].Method != "POST" || (*seen)[1].Path != "/system/traffic-source-owners/repair" {
 			t.Fatalf("requests = %+v", *seen)
 		}
-		assertTsoBody(t, (*seen)[1].Body, `{"ppc_network_id":7}`)
+		assertTsoBody(t, (*seen)[1].Body, `{"ppc_network_id":7,"owner_user_id":3,"repair_to_user_id":2}`)
 		if !strings.Contains(stderr, `Moved traffic source 7 ("Google Ads") from user 3 to user 2`) {
 			t.Errorf("stderr = %q", stderr)
 		}
@@ -153,7 +154,7 @@ func TestTrafficSourceOwnersRepairOfAnAmbiguousSourceNeedsItsUser(t *testing.T) 
 	if len(*seen) != 2 {
 		t.Fatalf("requests = %+v", *seen)
 	}
-	assertTsoBody(t, (*seen)[1].Body, `{"ppc_network_id":9,"to_user_id":4}`)
+	assertTsoBody(t, (*seen)[1].Body, `{"ppc_network_id":9,"owner_user_id":1,"to_user_id":4}`)
 
 	seen = updateServer(t, tsoResponder(func(updateRequest) (int, string) { return 200, tsoRepairedOne }))
 	_, _, err = executeCommand("system", "traffic-source-owners", "repair", "9", "--to-user-id", "6", "--force")
@@ -200,26 +201,81 @@ func TestTrafficSourceOwnersRepairRefusesBadArgumentsBeforeAnyRequest(t *testing
 	}
 }
 
-func TestTrafficSourceOwnersRepairAllSendsAllAndSaysWhatMoved(t *testing.T) {
-	seen := updateServer(t, tsoResponder(func(updateRequest) (int, string) {
-		return 200, `{"data":{"repaired":[{"ppc_network_id":7,"ppc_network_name":"Google Ads","removed":false,"from_user_id":3,"to_user_id":2,"ppc_accounts":3,"queued_ppc_accounts":3},` +
-			`{"ppc_network_id":11,"ppc_network_name":"New","removed":false,"from_user_id":3,"to_user_id":2,"ppc_accounts":1,"queued_ppc_accounts":1}],` +
-			`"skipped":[{"ppc_network_id":9,"ppc_network_name":"Shared","reason":"ambiguous","ambiguous":["owner_has_accounts"],"message":"…"}]}}`
-	}))
+// Sources 7 and 12 go to user 2 and 13 to user 5; 9 is ambiguous.
+var tsoReportAllBody = strings.Replace(tsoReportBody, `],"repairable":1`, `,
+ {"ppc_network_id":12,"ppc_network_name":"Bing","removed":false,"ppc_network_time":1100000000,
+  "owner":{"user_id":3,"user_name":"taker","user_deleted":false,"ppc_accounts":0,"removed_ppc_accounts":0,"ppc_account_ids":[],"last_ppc_account_time":null,"clicks":0,"conversions":0},
+  "named_by":[{"user_id":2,"user_name":"owner","user_deleted":false,"ppc_accounts":1,"removed_ppc_accounts":0,"ppc_account_ids":[12],"last_ppc_account_time":1000000000,"clicks":0,"conversions":0}],
+  "repair_to_user_id":2,"ambiguous":[]},
+ {"ppc_network_id":13,"ppc_network_name":"Meta","removed":false,"ppc_network_time":1100000000,
+  "owner":{"user_id":3,"user_name":"taker","user_deleted":false,"ppc_accounts":0,"removed_ppc_accounts":0,"ppc_account_ids":[],"last_ppc_account_time":null,"clicks":0,"conversions":0},
+  "named_by":[{"user_id":5,"user_name":"admin2","user_deleted":false,"ppc_accounts":1,"removed_ppc_accounts":0,"ppc_account_ids":[13],"last_ppc_account_time":1000000000,"clicks":0,"conversions":0}],
+  "repair_to_user_id":5,"ambiguous":[]}],"repairable":3`, 1)
+
+func tsoRepairedAs(id int, name string, to int) string {
+	return fmt.Sprintf(`{"data":{"repaired":[{"ppc_network_id":%d,"ppc_network_name":%q,"removed":false,"from_user_id":3,"to_user_id":%d,"ppc_accounts":1,"queued_ppc_accounts":1}],"skipped":[]}}`, id, name, to)
+}
+
+// tsoAllServer answers the report, then each repair by its source.
+func tsoAllServer(t *testing.T, answers map[int][2]interface{}) *[]updateRequest {
+	return updateServer(t, func(r updateRequest) (int, string) {
+		if r.Method == "GET" {
+			return 200, tsoReportAllBody
+		}
+		id, _ := r.Body["ppc_network_id"].(float64)
+		a, ok := answers[int(id)]
+		if !ok {
+			t.Errorf("a repair of source %v was sent: %v", r.Body["ppc_network_id"], r.Body)
+			return 500, `{"error":true,"status":500,"message":"unexpected"}`
+		}
+		return a[0].(int), a[1].(string)
+	})
+}
+
+func TestTrafficSourceOwnersRepairAllMovesWhatItShowedOneByOne(t *testing.T) {
+	seen := tsoAllServer(t, map[int][2]interface{}{
+		7:  {200, tsoRepairedAs(7, "Google Ads", 2)},
+		12: {422, `{"error":true,"status":422,"message":"Traffic source 12 is now in user 4's account, not in user 3's as the report you read said. Nothing was moved. Read the report again.","field_errors":{"owner_user_id":"…"}}`},
+		13: {403, `{"error":true,"status":403,"message":"Changing an Admin or Super user account needs the 'add_edit_delete_admin' permission, which only the Super user role has."}`},
+	})
 	answerPrompts(t, "y\n")
-	_, stderr, err := executeCommand("system", "traffic-source-owners", "repair", "--all")
+	stdout, stderr, err := executeCommand("system", "traffic-source-owners", "repair", "--all", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(*seen) != 2 {
+	if len(*seen) != 4 {
 		t.Fatalf("requests = %+v", *seen)
 	}
-	assertTsoBody(t, (*seen)[1].Body, `{"all":true}`)
-	for _, want := range []string{"This moves it to user 2 (owner).", "1 ambiguous source(s) are left as they are", "Move these 1 traffic source(s)?",
-		"Moved 2 traffic source(s); 1 left as they are", "Moved without being listed above", ": 11."} {
+	assertTsoBody(t, (*seen)[1].Body, `{"ppc_network_id":7,"owner_user_id":3,"repair_to_user_id":2}`)
+	assertTsoBody(t, (*seen)[2].Body, `{"ppc_network_id":12,"owner_user_id":3,"repair_to_user_id":2}`)
+	assertTsoBody(t, (*seen)[3].Body, `{"ppc_network_id":13,"owner_user_id":3,"repair_to_user_id":5}`)
+	for _, want := range []string{"This moves it to user 2 (owner).", "This moves it to user 5 (admin2).", "1 ambiguous source(s) are left as they are",
+		"Move these 3 traffic source(s)?", "Moved 1 traffic source(s); 3 left as they are"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
+	}
+	var answer struct {
+		Data struct {
+			Repaired []tsoRepaired `json:"repaired"`
+			Skipped  []tsoSkipped  `json:"skipped"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &answer); err != nil {
+		t.Fatalf("stdout is not the answer: %v\n%s", err, stdout)
+	}
+	if len(answer.Data.Repaired) != 1 || answer.Data.Repaired[0].PpcNetworkID != 7 || answer.Data.Repaired[0].To != 2 {
+		t.Errorf("repaired = %+v", answer.Data.Repaired)
+	}
+	reasons := map[int]string{}
+	for _, s := range answer.Data.Skipped {
+		reasons[s.PpcNetworkID] = s.Reason
+	}
+	if !reflect.DeepEqual(reasons, map[int]string{9: "ambiguous", 12: "changed", 13: "not_permitted"}) {
+		t.Errorf("skipped = %+v", answer.Data.Skipped)
+	}
+	if !strings.Contains(stdout, "not in user 3's as the report you read said") {
+		t.Errorf("a changed source carries the server's reason:\n%s", stdout)
 	}
 
 	seen = updateServer(t, func(updateRequest) (int, string) {
@@ -229,13 +285,32 @@ func TestTrafficSourceOwnersRepairAllSendsAllAndSaysWhatMoved(t *testing.T) {
 	if err != nil || len(*seen) != 1 || !strings.Contains(stderr, "Nothing was sent") {
 		t.Errorf("nothing repairable sends nothing: err %v, requests %+v, stderr %q", err, *seen, stderr)
 	}
+}
 
-	updateServer(t, tsoResponder(func(updateRequest) (int, string) {
-		return 500, `{"error":true,"status":500,"message":"Traffic sources 7 were moved back, and moving traffic source 11 failed, so nothing after it was tried."}`
-	}))
+func TestTrafficSourceOwnersRepairAllStopsAtAFailureAndNamesWhatMoved(t *testing.T) {
+	failed := `{"error":true,"status":500,"message":"traffic source owners: Lock wait timeout exceeded"}`
+	seen := tsoAllServer(t, map[int][2]interface{}{7: {200, tsoRepairedAs(7, "Google Ads", 2)}, 12: {500, failed}})
+	stdout, _, err := executeCommand("system", "traffic-source-owners", "repair", "--all", "--force")
+	if code := exitCodeForError(err); code != ExitServer {
+		t.Errorf("exit %d (%v)", code, err)
+	}
+	if !strings.Contains(hintFor(err), "Traffic source(s) 7 were moved before traffic source 12 failed") || !strings.Contains(hintFor(err), "lists what remains") {
+		t.Errorf("hint %q", hintFor(err))
+	}
+	if len(*seen) != 3 || stdout != "" {
+		t.Errorf("nothing after the failure is sent, and stdout stays empty: requests %+v, stdout %q", *seen, stdout)
+	}
+
+	tsoAllServer(t, map[int][2]interface{}{7: {500, failed}})
 	_, _, err = executeCommand("system", "traffic-source-owners", "repair", "--all", "--force")
-	if code := exitCodeForError(err); code != ExitServer || !strings.Contains(hintFor(err), "lists what remains") {
-		t.Errorf("exit %d, hint %q", code, hintFor(err))
+	if code := exitCodeForError(err); code != ExitServer || strings.Contains(hintFor(err), "were moved") {
+		t.Errorf("a failure before any move: exit %d, hint %q", code, hintFor(err))
+	}
+
+	tsoAllServer(t, map[int][2]interface{}{7: {200, tsoRepairedAs(12, "Bing", 2)}})
+	_, _, err = executeCommand("system", "traffic-source-owners", "repair", "--all", "--force")
+	if code := exitCodeForError(err); code != ExitServer || !strings.Contains(err.Error(), "not 7") {
+		t.Errorf("an answer naming another source: exit %d (%v)", code, err)
 	}
 }
 

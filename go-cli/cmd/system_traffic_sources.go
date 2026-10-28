@@ -26,6 +26,9 @@ import (
 // has access_to_settings; a repair also needs a key whose user may act on both
 // users (Account › Users' rule). Nothing is moved by itself: repair reads the
 // report first, says what it would move, and asks (--force skips the question).
+// Each request sends back the owner and repair_to_user_id it showed, so the
+// server refuses a source that has changed since rather than move it from or
+// to a user nobody was shown; --all is one such request per source shown.
 
 const tsoNeeds = "Needs an Admin or Super user key whose role has access_to_settings (as Account › Settings asks)"
 
@@ -137,6 +140,35 @@ func tsoPlan(e tsoEntry, to int) string {
 	}
 	return fmt.Sprintf("Traffic source %d (%q) is in %s's account; %s of %s name it. This moves it to %s.%s",
 		e.PpcNetworkID, e.PpcNetworkName, tsoUser(e.Owner), tsoAccounts(target), tsoUser(target), tsoUser(target), removed)
+}
+
+// tsoRepairBody moves e to toUser when one is named, else to the user the
+// report named, and says what the report showed: the server refuses the
+// move when the source is no longer there or would go to someone else.
+func tsoRepairBody(e tsoEntry, toUser int) map[string]interface{} {
+	body := map[string]interface{}{"ppc_network_id": e.PpcNetworkID, "owner_user_id": e.Owner.UserID}
+	if toUser != 0 {
+		body["to_user_id"] = toUser
+	} else if e.RepairTo != nil {
+		body["repair_to_user_id"] = *e.RepairTo
+	}
+	return body
+}
+
+// tsoUserRule is Auth::requireMayManageUser()'s refusal: the key is an
+// admin's, but one of the two users is the Super user or holds an admin role.
+func tsoUserRule(apiErr *api.APIError) bool {
+	return apiErr.Status == 403 && (strings.Contains(apiErr.Message, "Super user") || strings.Contains(apiErr.Message, "add_edit_delete_admin"))
+}
+
+func tsoSkip(e tsoEntry, reason, message string) map[string]interface{} {
+	return map[string]interface{}{
+		"ppc_network_id":   e.PpcNetworkID,
+		"ppc_network_name": e.PpcNetworkName,
+		"reason":           reason,
+		"ambiguous":        e.Ambiguous,
+		"message":          message,
+	}
 }
 
 func tsoUserIDs(parties []tsoParty) string {
@@ -274,9 +306,7 @@ func runTsoRepair(cmd *cobra.Command, args []string) error {
 			WithHint("`p202 system traffic-source-owners show` lists the sources a repair can move.")
 	}
 	to := toUser
-	body := map[string]interface{}{"ppc_network_id": sourceID}
 	if toUser != 0 {
-		body["to_user_id"] = toUser
 		var named *tsoParty
 		for i := range entry.NamedBy {
 			if entry.NamedBy[i].UserID == toUser {
@@ -311,15 +341,13 @@ func runTsoRepair(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	}
-	data, err := c.Post("system/traffic-source-owners/repair", body)
+	data, err := c.Post("system/traffic-source-owners/repair", tsoRepairBody(*entry, toUser))
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Status == 422 {
 			return withHint(err, "Nothing was moved. Run `p202 system traffic-source-owners show` to see the source as it is now.")
 		}
-		// Auth::requireMayManageUser(): the key is an admin's, but one of the
-		// two users is the Super user or holds an admin role.
-		if errors.As(err, &apiErr) && apiErr.Status == 403 && (strings.Contains(apiErr.Message, "Super user") || strings.Contains(apiErr.Message, "add_edit_delete_admin")) {
+		if errors.As(err, &apiErr) && tsoUserRule(apiErr) {
 			return withHint(err, "Nothing was moved: one of the two users is the Super user or an Admin, and only the Super user (user 1) moves a source into or out of those accounts. Run it with user 1's key.")
 		}
 		return tsoError(err)
@@ -338,26 +366,31 @@ func runTsoRepair(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runTsoRepairAll moves the sources the report it read names a user for, one
+// request each, saying what was shown: the server's {"all": true} would move
+// whatever its own reading names, which can be a source nobody saw here.
 func runTsoRepairAll(cmd *cobra.Command, c *api.Client, report tsoReport, force bool) error {
-	shown := map[int]bool{}
+	var shown []tsoEntry
+	skipped := []map[string]interface{}{}
 	for _, e := range report.Data.Sources {
 		if e.RepairTo != nil {
-			shown[e.PpcNetworkID] = true
+			shown = append(shown, e)
+			continue
 		}
+		skipped = append(skipped, tsoSkip(e, "ambiguous", fmt.Sprintf(
+			"It is moved only to a user you name: `p202 system traffic-source-owners repair %d --to-user-id <user_id>` with one of users %s.",
+			e.PpcNetworkID, tsoUserIDs(e.NamedBy))))
 	}
-	ambiguous := len(report.Data.Sources) - len(shown)
 	if len(shown) == 0 {
-		output.Success("No traffic source can be moved without naming its user (%d ambiguous). Nothing was sent.", ambiguous)
+		output.Success("No traffic source can be moved without naming its user (%d ambiguous). Nothing was sent.", len(skipped))
 		return nil
 	}
 	if !force {
-		for _, e := range report.Data.Sources {
-			if e.RepairTo != nil {
-				fmt.Fprintln(os.Stderr, tsoPlan(e, *e.RepairTo))
-			}
+		for _, e := range shown {
+			fmt.Fprintln(os.Stderr, tsoPlan(e, *e.RepairTo))
 		}
-		if ambiguous > 0 {
-			fmt.Fprintf(os.Stderr, "%d ambiguous source(s) are left as they are; repair each by itself with --to-user-id.\n", ambiguous)
+		if len(skipped) > 0 {
+			fmt.Fprintf(os.Stderr, "%d ambiguous source(s) are left as they are; repair each by itself with --to-user-id.\n", len(skipped))
 		}
 		ok, err := confirmAction(cmd, "Move these %d traffic source(s)?", len(shown))
 		if err != nil {
@@ -368,32 +401,56 @@ func runTsoRepairAll(cmd *cobra.Command, c *api.Client, report tsoReport, force 
 			return nil
 		}
 	}
-	data, err := c.Post("system/traffic-source-owners/repair", map[string]interface{}{"all": true})
+	repaired := []json.RawMessage{}
+	var moved []string
+	stopped := func(err error, id int) error {
+		if len(moved) == 0 {
+			return err
+		}
+		return withHint(err, "Traffic source(s) %s were moved before traffic source %d failed, and nothing after it was tried. `p202 system traffic-source-owners show` lists what remains; running this again moves only that.",
+			strings.Join(moved, ", "), id)
+	}
+	for _, e := range shown {
+		data, err := c.Post("system/traffic-source-owners/repair", tsoRepairBody(e, 0))
+		if err != nil {
+			var apiErr *api.APIError
+			switch {
+			case errors.As(err, &apiErr) && apiErr.Status == 422:
+				skipped = append(skipped, tsoSkip(e, "changed", apiErr.Message))
+				continue
+			case errors.As(err, &apiErr) && tsoUserRule(apiErr):
+				skipped = append(skipped, tsoSkip(e, "not_permitted", apiErr.Message))
+				continue
+			}
+			return stopped(tsoError(err), e.PpcNetworkID)
+		}
+		var answer struct {
+			Data struct {
+				Repaired []json.RawMessage `json:"repaired"`
+			} `json:"data"`
+		}
+		var one tsoRepaired
+		if err := json.Unmarshal(data, &answer); err != nil || len(answer.Data.Repaired) != 1 {
+			if err == nil {
+				err = errors.New("repaired does not name the one source")
+			}
+			return stopped(systemMalformed("moving the traffic sources", err), e.PpcNetworkID)
+		}
+		if err := json.Unmarshal(answer.Data.Repaired[0], &one); err != nil || one.PpcNetworkID != e.PpcNetworkID {
+			if err == nil {
+				err = fmt.Errorf("repaired names traffic source %d, not %d", one.PpcNetworkID, e.PpcNetworkID)
+			}
+			return stopped(systemMalformed("moving the traffic sources", err), e.PpcNetworkID)
+		}
+		repaired = append(repaired, answer.Data.Repaired[0])
+		moved = append(moved, strconv.Itoa(e.PpcNetworkID))
+	}
+	encoded, err := json.Marshal(map[string]interface{}{"data": map[string]interface{}{"repaired": repaired, "skipped": skipped}})
 	if err != nil {
-		var apiErr *api.APIError
-		if errors.As(err, &apiErr) && apiErr.Status >= 500 {
-			return withHint(err, "Some sources may have been moved before the failure (the message names them). `p202 system traffic-source-owners show` lists what remains; running this again moves only that.")
-		}
-		return tsoError(err)
+		return fmt.Errorf("encoding the answer: %w", err)
 	}
-	var answer tsoRepairAnswer
-	if err := json.Unmarshal(data, &answer); err != nil || answer.Data.Repaired == nil || answer.Data.Skipped == nil {
-		if err == nil {
-			err = errors.New("repaired or skipped is missing")
-		}
-		return systemMalformed("moving the traffic sources", err)
-	}
-	render(data)
-	var unshown []string
-	for _, r := range answer.Data.Repaired {
-		if !shown[r.PpcNetworkID] {
-			unshown = append(unshown, strconv.Itoa(r.PpcNetworkID))
-		}
-	}
-	output.Success("Moved %d traffic source(s); %d left as they are (skipped lists why).", len(answer.Data.Repaired), len(answer.Data.Skipped))
-	if len(unshown) > 0 {
-		output.Success("Moved without being listed above, because the report named a user for them by the time of the move: %s.", strings.Join(unshown, ", "))
-	}
+	render(encoded)
+	output.Success("Moved %d traffic source(s); %d left as they are (skipped lists why).", len(repaired), len(skipped))
 	return nil
 }
 
@@ -403,9 +460,9 @@ var systemTrafficSourceOwnersRepairCmd = &cobra.Command{
 	Long: "Moves the source to the user `show` names under repair_to; --to-user-id moves it to another user\n" +
 		"whose accounts name it, the only way to move an ambiguous source. --all moves every source the\n" +
 		"report names a user for, and leaves the ambiguous ones. It reads the report first, says what it\n" +
-		"would move and asks (--force skips the question). Only the source's user changes: its name stays,\n" +
-		"and a removed source stays removed. Its accounts' clicks are queued for the cron job's report\n" +
-		"rollup. Each move is logged on the server. Cannot be staged.\n\n" +
+		"would move and asks (--force skips the question); one changed since is left (skipped: changed).\n" +
+		"Only the source's user changes. Its accounts' clicks are queued for the cron job's report rollup.\n" +
+		"Each move is logged on the server. Cannot be staged.\n\n" +
 		tsoNeeds + ", whose user may act on both users (Account › Users' rule), and system:write.",
 	Example: "  p202 system traffic-source-owners repair 12\n" +
 		"  p202 system traffic-source-owners repair 12 --to-user-id 3\n" +

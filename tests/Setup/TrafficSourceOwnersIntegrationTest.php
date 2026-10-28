@@ -566,6 +566,13 @@ final class TrafficSourceOwnersIntegrationTest extends TestCase
             [['all' => 'yes'], 'all'],
             [['ppc_network_id' => self::OWN, 'dry_run' => 1], 'dry_run'],
             [['ppc_network_id' => self::OWN, 'user_id' => 1], 'user_id'],
+            [['ppc_network_id' => self::OWN, 'to_user_id' => self::OWNER, 'repair_to_user_id' => self::OWNER],
+                'repair_to_user_id'],
+            [['all' => true, 'repair_to_user_id' => self::OWNER], 'repair_to_user_id'],
+            [['all' => true, 'owner_user_id' => self::TAKER], 'owner_user_id'],
+            [['ppc_network_id' => self::OWN, 'owner_user_id' => 'x'], 'owner_user_id'],
+            [['ppc_network_id' => self::OWN, 'repair_to_user_id' => 0], 'repair_to_user_id'],
+            [['ppc_network_id' => self::OWN, 'repair_to_user_id' => null], 'repair_to_user_id'],
         ];
         foreach ($bodies as [$payload, $field]) {
             self::refusal($payload, $field);
@@ -627,6 +634,17 @@ final class TrafficSourceOwnersIntegrationTest extends TestCase
     /** @return array{resource, array<int, resource>} the child, once it waits on a lock */
     private static function waitingRepair(int $sourceId): array
     {
+        [$proc, $pipes, $thread] = self::repairInChild($sourceId);
+        if (self::settle($proc, $thread) === 'waiting') {
+            return [$proc, $pipes];
+        }
+        self::fail("The repair on connection $thread never waited for the user being deleted: "
+            . stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]));
+    }
+
+    /** @return array{resource, array<int, resource>, string} the child, its pipes and its connection id */
+    private static function repairInChild(int $sourceId): array
+    {
         $proc = proc_open(
             [
                 PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/fixtures/traffic-source-repair-runner.php',
@@ -638,19 +656,113 @@ final class TrafficSourceOwnersIntegrationTest extends TestCase
         self::assertIsResource($proc);
         $thread = trim((string) fgets($pipes[1]));
         self::assertMatchesRegularExpression('/\A[1-9][0-9]*\z/', $thread, 'the runner names its connection');
+
+        return [$proc, $pipes, $thread];
+    }
+
+    /** 'waiting' once the server shows the child waiting on a lock, 'exited' once it has ended. */
+    private static function settle($proc, string $thread): string
+    {
         $deadline = microtime(true) + 15;
         do {
+            if (!proc_get_status($proc)['running']) {
+                return 'exited';
+            }
             $waiting = self::$db->query('SELECT COUNT(*) FROM information_schema.INNODB_TRX'
                 . " WHERE trx_mysql_thread_id = $thread AND trx_state = 'LOCK WAIT'");
             self::assertInstanceOf(\mysqli_result::class, $waiting, self::$db->error);
             if ((int) $waiting->fetch_row()[0] === 1) {
-                return [$proc, $pipes];
+                return 'waiting';
             }
             // The server refreshes INNODB_TRX only once it has gone 0.1s unread.
             usleep(250000);
         } while (microtime(true) < $deadline);
-        self::fail("The repair on connection $thread never waited for the user being deleted: "
-            . stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]));
+        self::fail("The repair on connection $thread neither ended nor waited on a lock");
+    }
+
+    /**
+     * A click's report rollup (ClickRollupSql's INSERT … SELECT) share-locks
+     * the click's traffic source account and then the account's source. A
+     * repair that held the source and then locked the accounts naming it
+     * deadlocked with one. The rollup's two reads are taken here by hand, on
+     * either side of a repair in a child process.
+     */
+    public function testARepairDoesNotDeadlockWithARollupReadingTheSource(): void
+    {
+        self::takeTheOldWay(self::TAKER, self::TAKEN, 'Taken');
+        $rollup = self::connect();
+        self::assertTrue($rollup->query('SET SESSION innodb_lock_wait_timeout = 15'), $rollup->error);
+        try {
+            self::assertTrue($rollup->begin_transaction(), $rollup->error);
+            $account = $rollup->query('SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_account_id = 870301'
+                . ' LOCK IN SHARE MODE');
+            self::assertInstanceOf(\mysqli_result::class, $account, $rollup->error);
+            self::assertSame([['870301']], $account->fetch_all());
+            [$proc, $pipes, $thread] = self::repairInChild(self::TAKEN);
+            self::settle($proc, $thread);
+            try {
+                $source = $rollup->query('SELECT ppc_network_id FROM 202_ppc_networks WHERE ppc_network_id = '
+                    . self::TAKEN . ' LOCK IN SHARE MODE');
+                $read = $source instanceof \mysqli_result ? 'read' : $rollup->error;
+            } catch (\mysqli_sql_exception $e) {
+                $read = $e->getMessage();
+            }
+            $rollup->query('COMMIT');
+        } finally {
+            $rollup->close();
+        }
+        $out = trim((string) stream_get_contents($pipes[1]));
+        $err = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($proc);
+
+        self::assertSame('read', $read, "the rollup's read of the source");
+        self::assertSame('ok', $out, $err);
+        self::assertSame(self::OWNER, self::ownerOf(self::TAKEN));
+    }
+
+    /**
+     * owner_user_id and repair_to_user_id are what the operator was shown
+     * (`p202 system traffic-source-owners repair` sends them): a source that
+     * has moved since, or would go to another user, is not moved.
+     */
+    public function testARepairOfWhatTheReportShowedIsRefusedOnceItSaysOtherwise(): void
+    {
+        self::takeTheOldWay(self::TAKER, self::TAKEN, 'Taken');
+        $shown = self::listed()[self::TAKEN];
+        self::assertSame([self::TAKER, self::OWNER], [$shown['owner']['user_id'], $shown['repair_to_user_id']]);
+        $body = [
+            'ppc_network_id' => self::TAKEN,
+            'owner_user_id' => self::TAKER,
+            'repair_to_user_id' => self::OWNER,
+        ];
+
+        // In another account now, and still going to OWNER.
+        self::takeTheOldWay(self::THIRD, self::TAKEN, 'Taken again');
+        self::assertSame(self::OWNER, self::listed()[self::TAKEN]['repair_to_user_id']);
+        self::assertStringContainsString(
+            'is now in user ' . self::THIRD . "'s account, not in user " . self::TAKER . "'s",
+            self::refusal($body, 'owner_user_id')
+        );
+        self::assertSame(self::THIRD, self::ownerOf(self::TAKEN), 'nothing was moved');
+
+        // In TAKER's account again, and now going to another user: OWNER's
+        // accounts went to another source and THIRD's named this one.
+        self::takeTheOldWay(self::TAKER, self::TAKEN, 'Taken');
+        self::q('UPDATE 202_ppc_accounts SET ppc_network_id = ' . self::OWN . ' WHERE user_id = ' . self::OWNER
+            . ' AND ppc_network_id = ' . self::TAKEN);
+        self::account(870310, self::THIRD, self::TAKEN, self::CREATED + 10);
+        self::assertSame(self::THIRD, self::listed()[self::TAKEN]['repair_to_user_id']);
+        self::assertStringContainsString(
+            'would now go to user ' . self::THIRD . ', not to user ' . self::OWNER,
+            self::refusal($body, 'repair_to_user_id')
+        );
+        self::assertSame(self::TAKER, self::ownerOf(self::TAKEN), 'nothing was moved');
+
+        $moved = self::controller(self::ADMIN)->repair(['repair_to_user_id' => self::THIRD] + $body)['data'];
+        self::assertSame(self::THIRD, $moved['repaired'][0]['to_user_id'], 'what the report says now is moved');
+        self::assertSame(self::THIRD, self::ownerOf(self::TAKEN));
     }
 
     public function testARepairOfRowsThatChangedAfterTheyWereReadMovesNothing(): void

@@ -61,6 +61,9 @@ final class TrafficSourceOwnersController
      * {"ppc_network_id": N} moves one source to the user the report names;
      * with "to_user_id" it moves it to that user, who must be one whose
      * accounts name it (the one way to move an ambiguous source).
+     * "owner_user_id" and "repair_to_user_id", the report's values sent back,
+     * refuse the move when the source is no longer in that account or would
+     * no longer go to that user.
      * {"all": true} moves every source the report names a user for, each in
      * a transaction of its own; the rest are answered as skipped.
      *
@@ -69,15 +72,17 @@ final class TrafficSourceOwnersController
      */
     public function repair(array $payload): array
     {
-        PayloadKeys::refuseUnknown($payload, ['ppc_network_id', 'to_user_id', 'all'], 'a traffic source repair', [
+        $keys = ['ppc_network_id', 'to_user_id', 'owner_user_id', 'repair_to_user_id'];
+        PayloadKeys::refuseUnknown($payload, [...$keys, 'all'], 'a traffic source repair', [
             'dry_run' => 'is not taken: GET /system/traffic-source-owners says what a repair would do',
         ]);
         $all = RequestFlag::param($payload, 'all', false);
         if ($all) {
-            $named = array_values(array_intersect(['ppc_network_id', 'to_user_id'], array_keys($payload)));
+            $named = array_values(array_intersect($keys, array_keys($payload)));
             if ($named !== []) {
                 $why = 'is not taken with all: true, which repairs every source GET /system/traffic-source-owners'
-                    . ' names a repair_to_user_id for. Send one source by itself to name its user.';
+                    . ' names a repair_to_user_id for as it reads it then. Send each source by itself to name'
+                    . ' its user, or what the report showed you.';
                 throw new ValidationException('all names no source', array_fill_keys($named, $why));
             }
 
@@ -91,9 +96,21 @@ final class TrafficSourceOwnersController
         $sourceId = QueryInt::required($payload, 'ppc_network_id', 1, self::MAX_ID, 'the traffic source to move back');
         $toUserId = QueryInt::param($payload, 'to_user_id', 0, 1, self::MAX_ID, 'the user to move it to');
         $named = $toUserId === 0 ? null : $toUserId;
+        if ($named !== null && array_key_exists('repair_to_user_id', $payload)) {
+            throw new ValidationException('to_user_id and repair_to_user_id', [
+                'repair_to_user_id' => 'is not taken with to_user_id, which names the user: send one of the two',
+            ]);
+        }
+        // A source's user_id can be 0 (no user), which the report shows as its owner.
+        $shownOwner = array_key_exists('owner_user_id', $payload)
+            ? QueryInt::required($payload, 'owner_user_id', 0, self::MAX_ID, 'the owner the report showed')
+            : null;
+        $shownTo = array_key_exists('repair_to_user_id', $payload)
+            ? QueryInt::required($payload, 'repair_to_user_id', 1, self::MAX_ID, 'the user the report showed')
+            : null;
 
         $owners = $this->owners();
-        $plan = $this->refused(fn (): array => $owners->plan($sourceId, $named));
+        $plan = $this->refused(fn (): array => $owners->plan($sourceId, $named, $shownOwner, $shownTo));
         $this->mayMove($plan['from'], $plan['to']);
         $actor = $this->auth->userId();
         $moved = $this->refused(fn (): array => $owners->repair($sourceId, $plan['from'], $plan['to'], $named, $actor));

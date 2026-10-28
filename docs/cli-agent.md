@@ -1219,9 +1219,13 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
   unless `--to-user-id` names one of its `named_by` users, and never a deleted
   one. Ask the user which before passing it: the same
   rows come from accounts the API put on another user's source before 1.9.77.
-  `--all` leaves the ambiguous ones. Only the source's user changes. A move
-  out of or into user 1's, or an Admin's, account is a 403 unless the key is
-  user 1's.
+  `--all` leaves the ambiguous ones and repairs the rest one request at a
+  time. Each request sends back the owner and `repair_to_user_id` the report
+  showed: a source that changed since is refused (exit 1; under `--all`,
+  `skipped` with `reason: changed`), so read the report again before retrying.
+  `--all` stops at any other failure, names the sources already moved, and
+  prints nothing to stdout. Only the source's user changes. A move out of or
+  into user 1's, or an Admin's, account is a 403 unless the key is user 1's.
 - None of the `system` writes can be staged; `--staged` is refused before any
   request. AutoCron and "update available" are not exposed (they call a remote
   Prosper202 service).

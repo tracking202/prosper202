@@ -1732,6 +1732,21 @@ partition; and a join to `202_clicks_rotator` held its gap on a click with no
 route row, so every new redirector click's route waited for the conversion's
 commit. Measure a locking read on the path it runs on, joins included.
 
+Lock order is the other half, and a statement that only reads can hold one:
+under REPEATABLE READ an `INSERT … SELECT` share-locks the rows it reads, in
+its join order. The traffic source repair locked the source and then the
+accounts naming it; a click's rollup share-locks the click's account and then
+that account's source, and the two deadlocked on the first try (measured;
+`TrafficSourceOwnersIntegrationTest` holds it). Before adding a lock, list the
+statements that lock the same tables, rollups and other `INSERT … SELECT`
+copies included, and take the rows in their order or lock fewer of them. A
+re-check under the lock covers the window after the plan, not the one before
+it: the repair compared its rows with the plan it had made a moment earlier
+in the same request, while the operator had been shown a report read minutes
+before (and the CLI's `--all` sent `{"all": true}`, which moved whatever the
+server's own reading named). A confirmation carries what was shown, and the
+server compares with that (`owner_user_id`, `repair_to_user_id`).
+
 What the refusal does not see: a statement run on the raw handle
 (`writeConnection()`), which Connection never classifies; a read
 `isPlainRead()` does not recognise from its text (it knows `SELECT` and

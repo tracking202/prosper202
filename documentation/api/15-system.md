@@ -382,19 +382,35 @@ not stop a repair.
 - `{"ppc_network_id": 7}` moves the source to its `repair_to_user_id`.
 - `{"ppc_network_id": 9, "to_user_id": 4}` moves it to a user you name, who
   must be one of its `named_by` users; the only way to move an ambiguous one.
+- `"owner_user_id"` and `"repair_to_user_id"` send back the report's
+  `owner.user_id` and `repair_to_user_id` as you read them (send
+  `repair_to_user_id` only without `to_user_id`). The report can change
+  between your read and the request: another admin's repair, an
+  account added or moved. With them, a source that is in another account by
+  now, or would go to another user, is a `422` naming the field rather than a
+  move from or to a user you were never shown:
+  `{"ppc_network_id": 7, "owner_user_id": 3, "repair_to_user_id": 2}`. The
+  CLI always sends them.
 - `{"all": true}` moves every source the report names a `repair_to_user_id`
-  for, and answers the others under `skipped` with a `reason`: `ambiguous`,
-  `not_permitted` (the caller may not act on one of the users) or `changed`.
+  for as the server reads it then, and answers the others under `skipped`
+  with a `reason`: `ambiguous`, `not_permitted` (the caller may not act on one
+  of the users) or `changed`. It takes neither field above, so it can move a
+  source that came into the report after you read it; the CLI's `--all` sends
+  one request per source it showed you instead.
 
 ```json
 { "data": { "repaired": [ { "ppc_network_id": 7, "ppc_network_name": "Google Ads", "removed": false, "from_user_id": 3, "to_user_id": 2, "ppc_accounts": 3, "queued_ppc_accounts": 3 } ], "skipped": [] } }
 ```
 
-Each source moves in a transaction of its own: the two users, then the source
-and the accounts naming it, are locked and read again, and nothing is written
-unless they still lead to the same two users. The users are locked first, as a
-user's deletion locks the user first, so a repair waits for a user being
-deleted and then reads them as deleted. Only the source's `user_id` changes: its name stays
+Each source moves in a transaction of its own: the two users, then the source,
+are locked, everything is read again, and nothing is written unless it still
+leads to the same two users. The users are locked first, as a user's deletion
+locks the user first, so a repair waits for a user being deleted and then
+reads them as deleted. The accounts naming the source are read, not locked: a
+click's report rollup share-locks the click's account and then its source, so
+a repair holding the source and waiting for an account deadlocked with it.
+Only the source's own user can add an account to it, and one added meanwhile
+leaves the source in the report. Only the source's `user_id` changes: its name stays
 as the rename left it, its custom variables go with it, and a removed source
 stays removed. Every account naming it is queued for the cron job's report
 rollup, so the report rows take the source from it again on the cron job's
@@ -403,8 +419,9 @@ source repair: traffic source 7 ("Google Ads") moved from user 3 to user 2,
 whose 3 traffic source account(s) name it, at user 1's request`.
 
 A source the report does not list, an ambiguous one without `to_user_id`, a
-`to_user_id` that is not one of its `named_by` users, and a source that
-changed after it was read are each a `422` naming the field; nothing is moved.
+`to_user_id` that is not one of its `named_by` users, an `owner_user_id` or
+`repair_to_user_id` the report no longer gives, and a source that changed
+after it was read are each a `422` naming the field; nothing is moved.
 With `all`, a failure after some sources moved is a `500` naming them; sending
 the request again moves only what the report still names a user for.
 

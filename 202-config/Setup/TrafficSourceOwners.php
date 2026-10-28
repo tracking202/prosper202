@@ -82,8 +82,8 @@ final class TrafficSourceOwners
         if ($ids === []) {
             return [];
         }
-        $sources = $this->sources($ids, false);
-        $accounts = $this->accounts($ids, false);
+        $sources = $this->sources($ids);
+        $accounts = $this->accounts($ids);
 
         $entries = [];
         foreach ($ids as $id) {
@@ -106,25 +106,41 @@ final class TrafficSourceOwners
     /**
      * Where a repair of $sourceId would take it: to $toUserId when the
      * operator names one, else to the one user the report names.
+     * $shownOwner and $shownTo are the owner and repair_to_user_id the
+     * operator was shown, when the caller sends them back: by now the source
+     * may be in another account, or go to another user, and the move is then
+     * refused rather than made from or to a user nobody saw.
      *
      * @return array{from: int, to: int, entry: array<string, mixed>}
      * @throws TrafficSourceRepairRefused when it is not listed, or not to there
      */
-    public function plan(int $sourceId, ?int $toUserId): array
+    public function plan(int $sourceId, ?int $toUserId, ?int $shownOwner = null, ?int $shownTo = null): array
     {
-        $sources = $this->sources([$sourceId], false);
-        $accounts = $this->accounts([$sourceId], false);
+        $sources = $this->sources([$sourceId]);
+        $accounts = $this->accounts([$sourceId]);
+        $plan = $this->resolve($sourceId, $sources[$sourceId] ?? null, $accounts[$sourceId] ?? [], $toUserId);
+        $again = ' Nothing was moved. Read the report again.';
+        if ($shownOwner !== null && $plan['from'] !== $shownOwner) {
+            throw new TrafficSourceRepairRefused('owner_user_id', 'Traffic source ' . $sourceId . ' is now in user '
+                . $plan['from'] . "'s account, not in user " . $shownOwner . "'s as the report you read said."
+                . $again);
+        }
+        if ($shownTo !== null && $plan['to'] !== $shownTo) {
+            throw new TrafficSourceRepairRefused('repair_to_user_id', 'Traffic source ' . $sourceId
+                . ' would now go to user ' . $plan['to'] . ', not to user ' . $shownTo
+                . ' as the report you read said.' . $again);
+        }
 
-        return $this->resolve($sourceId, $sources[$sourceId] ?? null, $accounts[$sourceId] ?? [], $toUserId);
+        return $plan;
     }
 
     /**
      * Move the source from $fromUserId to $toUserId, as plan() answered them,
-     * in a transaction of its own: the two users, then the source and the
-     * accounts naming it, are locked and read again first, and nothing is
-     * written unless they still resolve to the same two users. Every account
-     * naming it is queued for the report rollup, whose rows take the source
-     * from it (RollupRefresh). The move is logged.
+     * in a transaction of its own: the two users and the source are locked,
+     * everything is read again, and nothing is written unless it still
+     * resolves to the same two users. Every account naming it is queued for
+     * the report rollup, whose rows take the source from it (RollupRefresh).
+     * The move is logged.
      *
      * @return array<string, mixed>
      * @throws TrafficSourceRepairRefused when it no longer resolves so
@@ -136,11 +152,15 @@ final class TrafficSourceOwners
             // current (CLAUDE.md #36). The users come first, as
             // UserDataPurge::deleteUser() locks the user it deletes before
             // anything else: a delete in flight is waited for, and the user is
-            // then read as deleted; the delete touches no source or account,
-            // so neither waits on the other's second lock.
+            // then read as deleted; the delete touches no source or account.
+            // The accounts are read, not locked: a click's rollup (INSERT …
+            // SELECT, ClickRollupSql) share-locks its account and then the
+            // source, so a repair holding the source and waiting for an
+            // account deadlocked with it. Only the source's own user can put an
+            // account on it, and one put there meanwhile is listed again.
             $this->lockUsers([$fromUserId, $toUserId]);
             $sources = $this->sources([$sourceId], true);
-            $accounts = $this->accounts([$sourceId], true);
+            $accounts = $this->accounts([$sourceId]);
             $now = $this->resolve($sourceId, $sources[$sourceId] ?? null, $accounts[$sourceId] ?? [], $named);
             if ($now['from'] !== $fromUserId || $now['to'] !== $toUserId) {
                 throw new TrafficSourceRepairRefused('ppc_network_id', 'Traffic source ' . $sourceId
@@ -369,7 +389,7 @@ final class TrafficSourceOwners
      * @param list<int> $ids
      * @return array<int, array<string, mixed>> by ppc_network_id
      */
-    private function sources(array $ids, bool $lock): array
+    private function sources(array $ids, bool $lock = false): array
     {
         $stmt = $this->conn->prepareWrite(
             'SELECT ppc_network_id, user_id, ppc_network_name, ppc_network_deleted, ppc_network_time'
@@ -389,12 +409,11 @@ final class TrafficSourceOwners
      * @param list<int> $ids
      * @return array<int, list<array<string, mixed>>> by ppc_network_id
      */
-    private function accounts(array $ids, bool $lock): array
+    private function accounts(array $ids): array
     {
         $stmt = $this->conn->prepareWrite(
             'SELECT ppc_account_id, ppc_network_id, user_id, ppc_account_deleted, ppc_account_time'
             . ' FROM 202_ppc_accounts WHERE ppc_network_id IN (' . self::marks($ids) . ') ORDER BY ppc_account_id'
-            . ($lock ? ' FOR UPDATE' : '')
         );
         $this->conn->bind($stmt, str_repeat('i', count($ids)), $ids);
         $bySource = [];
