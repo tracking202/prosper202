@@ -1632,6 +1632,7 @@ request. A free-text flag given `""` clears it.
 | `--user-daily-email` | `never`, `00`-`23` (hour, your time zone) |
 | `--user-account-currency` | 3-letter code; re-prices every campaign's payout into it |
 | `--user-keyword-searched-or-bidded`, `--user-pref-referer-data`, `--user-pref-dynamic-bid`, `--user-pref-privacy`, `--user-pref-cloak-referer`, `--user-pref-ad-settings` | Personal settings' choices |
+| `--user-pref-same-ip-fallback` | `1`: a pixel that names no click credits your latest click from the visitor's IP address (a guess, `same_ip`); `0`: none. New accounts start at `0` |
 | `--user-pref-time-predefined`, `--user-pref-limit`, `--user-cpc-or-cpv`, `--chart-time-range` | report and chart defaults |
 | `--user-slack-incoming-webhook`, `--ipqs-api-key`, `--cb-key`, `--zaxaa-api-signature`, `--jvzoo-ipn-secret-key` | Integrations (a value here stays in shell history) |
 | `--paykickstart-ipn-secret-keys` | PayKickstart's IPN secret keys, one for each PayKickstart campaign, separated by commas. The list replaces every stored key, so send them all; `""` removes them. `user prefs get` shows only whether any is stored (`{"stored": true}`) and `system integrations` how many, never the keys |

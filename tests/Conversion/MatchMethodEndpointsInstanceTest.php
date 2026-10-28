@@ -21,10 +21,13 @@ use PHPUnit\Framework\TestCase;
  * request through them exercises; MatchMethodIntegrationTest holds the
  * writers they call to storing what they are handed.
  *
- * The address fallback reads the install's first account's latest click
- * from the address (gpx.php, upx.php) or the campaign owner's (px.php), so
- * each such test clicks right before it converts: the click it converts is
- * the latest from this machine's address.
+ * The address fallback reads the latest click from the address of the
+ * account whose campaign the pixel names (cid on gpx.php and upx.php, acip
+ * on px.php), so each such test clicks right before it converts: the click
+ * it converts is the latest from this machine's address. The fallback is an
+ * account's setting, off for an account made on 1.9.79 (a fresh install's),
+ * so the suite turns it on for the run and puts it back
+ * (SameIpFallbackInstanceTest holds the setting itself).
  *
  * @group integration
  * @group instance
@@ -41,6 +44,8 @@ final class MatchMethodEndpointsInstanceTest extends TestCase
     private static int $campaign = 0;
     private static string $acip = '';
     private static string $tracker = '';
+    /** @var array<string, mixed>|null user 1's settings as found */
+    private static ?array $restore = null;
 
     public static function setUpBeforeClass(): void
     {
@@ -57,6 +62,12 @@ final class MatchMethodEndpointsInstanceTest extends TestCase
         }
         $run = self::$run = 'mm' . bin2hex(random_bytes(4));
         try {
+            $prefs = self::get('users/1/preferences')['data'];
+            self::$restore = [
+                'user_pref_privacy' => $prefs['user_pref_privacy'],
+                'user_pref_same_ip_fallback' => (int) $prefs['user_pref_same_ip_fallback'],
+            ];
+            self::putPrefs(['user_pref_privacy' => 'disabled', 'user_pref_same_ip_fallback' => 1]);
             $network = (int) self::createRow('aff-networks', ['aff_network_name' => "$run network"])['aff_network_id'];
             $campaign = self::createRow('campaigns', [
                 'aff_campaign_name' => "$run campaign",
@@ -78,10 +89,30 @@ final class MatchMethodEndpointsInstanceTest extends TestCase
         }
     }
 
+    public static function tearDownAfterClass(): void
+    {
+        if (self::$restore !== null) {
+            self::putPrefs(self::$restore);
+        }
+    }
+
     protected function setUp(): void
     {
         if (self::$setupError !== null) {
             self::fail(self::$setupError);
+        }
+    }
+
+    /** @param array<string, mixed> $values */
+    private static function putPrefs(array $values): void
+    {
+        [$status, , $body] = self::request(self::$base . '/api/v3/users/1/preferences', [
+            CURLOPT_CUSTOMREQUEST => 'PUT',
+            CURLOPT_POSTFIELDS => json_encode($values, JSON_THROW_ON_ERROR),
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . self::$key, 'Content-Type: application/json'],
+        ]);
+        if ($status !== 200) {
+            throw new \RuntimeException("PUT /users/1/preferences answered $status: " . substr($body, 0, 300));
         }
     }
 
@@ -112,7 +143,7 @@ final class MatchMethodEndpointsInstanceTest extends TestCase
     /** Nothing names a click: each pixel converts the latest click from the address, a guess. */
     public function testAPixelThatIsNamedNoClickGuessesItFromTheAddress(): void
     {
-        foreach (['gpx.php?amount=1', 'upx.php?amount=1', 'px.php?acip=' . self::$acip] as $pixel) {
+        foreach (['gpx.php?cid=' . self::$campaign . '&amount=1', 'upx.php?cid=' . self::$campaign . '&amount=1', 'px.php?acip=' . self::$acip] as $pixel) {
             $click = self::click();
             self::convert($pixel, 0);
             self::assertSame(['same_ip'], self::methodsOf($click), "$pixel converted the latest click from the address, by a guess");
@@ -131,7 +162,7 @@ final class MatchMethodEndpointsInstanceTest extends TestCase
         self::assertSame('click_id', json_decode($body, true)['data']['match_method'] ?? null, 'POST /conversions named the click');
 
         $guessed = self::click();
-        self::convert('gpx.php?amount=1', 0);
+        self::convert('gpx.php?cid=' . self::$campaign . '&amount=1', 0);
         $listed = self::get('conversions?match_method=same_ip&campaign_id=' . self::$campaign . '&limit=500');
         self::assertContains($guessed, array_map(static fn (array $r): int => (int) $r['click_id'], $listed['data']));
         self::assertSame(['same_ip'], array_values(array_unique(array_column($listed['data'], 'match_method'))));

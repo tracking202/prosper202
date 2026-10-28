@@ -30,6 +30,8 @@ use Prosper202\Database\Connection;
  * under privacy at all. Now a masked address answers only when one click in
  * the window matches it, which no neighbour can share; two or more are
  * nobody's to choose between, and the miss is logged (CLAUDE.md #17, #30).
+ * The conversion pixels no longer ask for a visitor held back
+ * (p202SameIpFallbackClick()); off.php and rtr.php still do.
  */
 final class LastClickFromAddress
 {

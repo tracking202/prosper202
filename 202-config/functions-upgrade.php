@@ -507,6 +507,65 @@ if (!function_exists('_upgrade_reclick_backfill_mark')) {
     }
 }
 
+if (!function_exists('_upgrade_same_ip_fallback')) {
+    /**
+     * 202_users_pref.user_pref_same_ip_fallback (Prosper202\Conversion\
+     * SameIpFallback): whether a pixel that names no click may credit the
+     * account's latest click from the visitor's address. Its DEFAULT, off, is
+     * an account made from 1.9.79 on; every account already here converted
+     * that way, so the column arrives on for each, in the one statement that
+     * adds it, and then takes the installer's DEFAULT.
+     *
+     * Run before the reconciler meets the table, which would add the column
+     * with that DEFAULT, off for everyone: on whichever step reconciles it
+     * first (the 1.9.76 step, on an install older than 1.9.77). Probed first,
+     * so a re-run after a failure finishes what is left and a column already
+     * there keeps every value it holds.
+     */
+    function _upgrade_same_ip_fallback(): bool
+    {
+        $table = _upgrade_query("SHOW TABLES LIKE '202\\_users\\_pref'");
+        if (!$table instanceof \mysqli_result) {
+            error_log('Prosper202 upgrade: could not read whether 202_users_pref exists; the same-IP fallback'
+                . ' setting will be added on the next run.');
+            return false;
+        }
+        $exists = $table->num_rows > 0;
+        $table->free();
+        if (!$exists) {
+            // Made below from the installer's definition, with no account in it.
+            return true;
+        }
+        $defaults = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_users_pref`', 'Field', 'Default');
+        if ($defaults === null) {
+            error_log('Prosper202 upgrade: could not read the columns of 202_users_pref; the same-IP fallback'
+                . ' setting will be added on the next run.');
+            return false;
+        }
+        if (!array_key_exists('user_pref_same_ip_fallback', $defaults)) {
+            // The installer's column (UserTables::usersPref()), DEFAULT on.
+            $add = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_same_ip_fallback` tinyint(1) NOT NULL DEFAULT '1'"
+                . ' AFTER `user_pref_dynamic_bid`';
+            if (_upgrade_query($add) === false) {
+                error_log('Prosper202 upgrade: failed to add 202_users_pref.user_pref_same_ip_fallback; it will be'
+                    . ' added on the next run.');
+                return false;
+            }
+            $defaults['user_pref_same_ip_fallback'] = '1';
+        }
+        if ($defaults['user_pref_same_ip_fallback'] !== '0') {
+            $off = "ALTER TABLE `202_users_pref` ALTER COLUMN `user_pref_same_ip_fallback` SET DEFAULT '0'";
+            if (_upgrade_query($off) === false) {
+                error_log('Prosper202 upgrade: failed to make the same-IP fallback off for new accounts'
+                    . ' (202_users_pref.user_pref_same_ip_fallback); the next run retries.');
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_measurement_tables')) {
     /**
      * Create the measurement tables — the app registry and the Apple
@@ -564,6 +623,18 @@ if (!function_exists('_upgrade_measurement_tables')) {
         foreach ($definitions as $definition) {
             if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::CONVERSION_LOGS) {
                 if (!_upgrade_conversion_ledger()) {
+                    return false;
+                }
+                break;
+            }
+        }
+
+        // The same-IP fallback setting arrives on for the accounts already
+        // there, before the reconciler would add it off for them
+        // (_upgrade_same_ip_fallback()).
+        foreach ($definitions as $definition) {
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::USERS_PREF) {
+                if (!_upgrade_same_ip_fallback()) {
                     return false;
                 }
                 break;
@@ -4487,6 +4558,10 @@ class UPGRADE
             // MatchMethod): 202_conversion_logs.match_method, and the same on
             // 202_goal_events for the outcomes an event reaches. Every row
             // already there takes the default, 'unknown'.
+            // The same-IP fallback becomes an account's setting
+            // (202_users_pref.user_pref_same_ip_fallback): on for every
+            // account already here, off for an account made from now on
+            // (_upgrade_same_ip_fallback()).
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),

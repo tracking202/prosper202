@@ -78,6 +78,12 @@ final class UserTables
      * (NewAccountPrivacyIsTheColumnDefaultTest). 'eu' from 1.9.79, which the
      * 1.9.78 -> 1.9.79 rung sets on an upgraded table; an account made
      * before keeps what it had ('disabled', the default until then).
+     *
+     * user_pref_same_ip_fallback's DEFAULT, off, is a new account's: an
+     * account made from 1.9.79 on credits no conversion by address until it
+     * turns the guess on (Prosper202\Conversion\SameIpFallback). The 1.9.78
+     * -> 1.9.79 rung turns it on for every account already there, which is
+     * how they converted until then (_upgrade_same_ip_fallback()).
      */
     public static function usersPref(): SchemaDefinition
     {
@@ -107,6 +113,7 @@ final class UserTables
                 `user_pref_subid` bigint(20) unsigned DEFAULT NULL,
                 `user_pref_ip` varchar(100) DEFAULT NULL,
                 `user_pref_dynamic_bid` tinyint(1) NOT NULL DEFAULT '0',
+                `user_pref_same_ip_fallback` tinyint(1) NOT NULL DEFAULT '0',
                 `user_pref_referer` varchar(100) DEFAULT NULL,
                 `user_pref_keyword` varchar(100) DEFAULT NULL,
                 `user_pref_breakdown` varchar(100) NOT NULL DEFAULT 'day',

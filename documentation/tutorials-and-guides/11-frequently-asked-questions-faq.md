@@ -38,7 +38,7 @@ Over plain HTTP, Prosper202 reads each click cookie's second copy (`tracking202s
 
 - A landing page or thank-you page on the tracking domain's own site works. An example is a tracker at `track.example.com` with a landing page at `www.example.com`.
 - The Get LP Code redirect page (options 2 and 3) works from any site. It finds the click through a cookie on the landing page itself.
-- A plain `lp.php` link or a pixel on another site cannot carry the click. A browser will not keep or send the tracker's cookie there. A pixel then falls back to the visitor's last click from the same IP address.
+- A plain `lp.php` link or a pixel on another site cannot carry the click. A browser will not keep or send the tracker's cookie there. Pass the subid in the pixel. Without one, a pixel can fall back to the visitor's last click from the same IP address, a guess, only for an account with **Match conversions by IP address** on (Personal Settings, under Advanced): an account made on 1.9.79 or later starts with it off ([Same-IP fallback](../api/14-users.md#same-ip-fallback-user_pref_same_ip_fallback)).
 
 ## Where does the password reset email link to?
 
