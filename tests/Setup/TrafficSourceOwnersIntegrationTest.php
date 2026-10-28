@@ -478,6 +478,21 @@ final class TrafficSourceOwnersIntegrationTest extends TestCase
         }
     }
 
+    public function testAllReadsNoClicks(): void
+    {
+        self::takeTheOldWay(self::TAKER, self::TAKEN, 'Taken');
+        // With the clicks table out of reach, any read of it fails the call.
+        self::q('RENAME TABLE 202_clicks TO 202_clicks_tso_hidden');
+        try {
+            $answer = self::controller(self::ADMIN)->repair(['all' => true])['data'];
+        } finally {
+            self::q('RENAME TABLE 202_clicks_tso_hidden TO 202_clicks');
+        }
+
+        self::assertContains(self::TAKEN, array_column($answer['repaired'], 'ppc_network_id'));
+        self::assertSame(self::OWNER, self::ownerOf(self::TAKEN));
+    }
+
     public function testARepairIntoAnAdminsAccountNeedsACallerWhoMayActOnIt(): void
     {
         self::row('202_ppc_networks', [

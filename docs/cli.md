@@ -1926,6 +1926,9 @@ of any other kind stops the run and names the sources already moved.
 It needs a key whose user may act on both users, as Account › Users allows
 (only user 1 moves a source into or out of user 1's account). A source taken
 with no traffic source account under it leaves no sign and is not listed.
+Account › Settings shows the same list to the same admins, as a notice whose
+Review link opens a panel that moves each source back through the same code
+and the same checks.
 
 For an https base URL, `system health` checks the host's TLS certificate before it calls the API:
 a verified handshake on its own connection, with no HTTP request. It adds `tls_status`,

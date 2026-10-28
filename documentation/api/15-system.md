@@ -19,7 +19,7 @@ System health checks, diagnostics, and administration.
 | `POST` | `/system/retention/delete-before` | Admin + `access_to_settings` | Schedule the deletion of click data from before a day (`?dry_run=1` previews) |
 | `GET` `PUT` | `/system/isp-lookup` | Admin + `access_to_settings` | MaxMind ISP and carrier lookup |
 | `GET` | `/system/integrations` | Admin + `access_to_api_integrations` | The notification URLs to paste into ClickBank, JVZoo, Zaxaa, Slack, PayKickstart |
-| `GET` | `/system/traffic-source-owners` | Admin + `access_to_settings` | Traffic sources another user's traffic source accounts name (taken by Setup's rename before 1.9.79) |
+| `GET` | `/system/traffic-source-owners` | Admin + `access_to_settings` | Traffic sources another user's traffic source accounts name (taken by Setup's rename before 1.9.79); Account › Settings shows the same in a notice and a panel |
 | `POST` | `/system/traffic-source-owners/repair` | Admin + `access_to_settings`, and a user who may act on both users | Move one back, or every one the report names a user for |
 
 ## Health Check
@@ -532,3 +532,29 @@ account, and an Admin's or the Super user's account needs
 repair `system:write`. Neither can be staged, and the repair has no preview
 (`?dry_run=1` is a `422`): the report is what it would do. The CLI is
 `p202 system traffic-source-owners show` and `repair`.
+
+### On Account › Settings
+
+An owner who uses neither the API nor the CLI finds the same report on
+Account › Settings. The page shows it to the users these routes answer: an
+Admin or the Super user whose role has `access_to_settings`, asked through the
+same checks, in the same order. When the report lists a source, a notice above
+the tiles says how many are listed and how many need a user chosen; its
+**Review** link opens the panel (`administration.php?traffic_sources=review`,
+landing on `#traffic-source-owners`), which lists each source as `GET` does:
+the user it is in, each user whose accounts name it with their accounts,
+clicks and conversions, and the user it goes to or why you choose. The notice
+reads only whether anything is listed; the clicks and conversions are counted
+when the panel is open.
+
+Each row's **Move back…** opens a confirmation that names the source, the user
+it leaves and the user it goes to, or, for an ambiguous source, asks which of
+the users whose accounts name it, as `to_user_id` does. Saying yes posts what
+`POST /system/traffic-source-owners/repair` takes, with the `owner_user_id`
+and `repair_to_user_id` the panel showed, and the page runs the same code: the
+same check that you may act on both users (a user you may not is not offered),
+the same locks, and the same refusal, said in the panel the page lands on,
+when the source has changed since the page was read. The form carries the
+session's token, and a post without it moves nothing. A source both users have
+traffic source accounts on stays listed wherever it is: whichever user it is
+in, the other's accounts name it.

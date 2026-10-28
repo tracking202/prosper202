@@ -93,6 +93,7 @@ Every Update write previews with `?dry_run=1` (`--dry-run`).
 | Settings: login log | `/system/login-log` | `p202 system login-log` | ✅ |
 | Settings: click-data retention, delete before a date | `/system/retention`, `/system/retention/delete-before` | `p202 system retention show/set/delete-before` | ✅ |
 | Settings: ISP lookup | `/system/isp-lookup` | `p202 system isp-lookup show/enable/disable` | ✅ |
+| Settings: traffic sources in another user's account (the notice and its panel) | `/system/traffic-source-owners`, `/system/traffic-source-owners/repair` | `p202 system traffic-source-owners show/repair` | ✅ |
 | Settings: AutoCron, "update available" | — | — | — hosted service |
 | 3rd Party API Integrations: secrets (IPQS, ClickBank, JVZoo, Zaxaa, Slack, PayKickstart's IPN keys) | `/users/{id}/preferences` | `p202 user prefs update` | ✅ |
 | 3rd Party API Integrations: the URLs to paste into each network | `/system/integrations` | `p202 system integrations` | ✅ |
