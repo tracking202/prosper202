@@ -232,6 +232,35 @@ numbers; every report now sends numbers, as this table always said.
 | `roi` | float | Return on investment (%) |
 | `cpa` | float | Cost per action |
 
+`GET /reports/summary` also answers `currency`, the account currency its
+money is in (the code the report pages print it with, `USD` when the account
+has none set; from 1.9.79). A client adding two servers' summaries needs it:
+`p202 report summary --profiles` adds money only across profiles that state
+the same currency.
+
+### How the ratios are computed
+
+Each ratio is computed from the sums of the rows the report covers, never as
+an average of other ratios, so the ratio of two windows or two servers is the
+ratio of their summed counts and money, not the sum or average of their
+ratios. Each is 0 when its denominator is not above 0.
+
+| Ratio | Formula | Decimals |
+| ----- | ------- | -------- |
+| `epc` | `total_income / total_clicks` | 9 |
+| `avg_cpc` | `total_cost / total_clicks` | 9 |
+| `conv_rate` | `total_leads / total_click_throughs × 100` | 4 |
+| `roi` | `total_net / total_cost × 100` | 9 |
+| `cpa` | `total_cost / total_leads` | 9 |
+
+The arithmetic is MySQL's DECIMAL division: the quotient is truncated where
+the server stops dividing (9 decimals, 18 for `roi`), multiplied by 100 for a
+percentage, and rounded half away from zero to the decimals above. So one lead
+in six click-throughs is a `conv_rate` of `16.6667`, and income of 2 over 3
+clicks an `epc` of `0.666666666`. The group report (`/reports/groups`) is the
+exception: it divides the same sums in floating point, unrounded
+(`16.666666666666664`).
+
 ## A click a redirector link re-clicked
 
 A visitor who comes back through a redirector link with `?lpr=` re-clicks

@@ -627,6 +627,58 @@ final class ReportsControllerTest extends TestCase
         }
     }
 
+    /**
+     * The summary says which currency its money is in: the account's, read
+     * as the report pages read it, so a client adding two servers' amounts
+     * can tell USD from EUR.
+     */
+    public function testTheSummaryStatesTheAccountsCurrency(): void
+    {
+        foreach (['EUR' => 'EUR', 'gbp ' => 'GBP', 'XYZ' => 'USD', '' => 'USD'] as $stored => $want) {
+            $prepared = [];
+            $binds = [];
+            $db = $this->bindRecordingDb(
+                ['FROM 202_users_pref' => $stored === '' ? [] : ['user_account_currency' => $stored]],
+                $prepared,
+                $binds
+            );
+            $data = (new ReportsController($db, 7))->summary([])['data'];
+
+            self::assertSame($want, $data['currency'], "stored '$stored'");
+            $read = array_values(array_filter(
+                $binds,
+                static fn (array $b): bool => str_contains($b['sql'], '202_users_pref')
+            ));
+            self::assertCount(1, $read);
+            self::assertSame([7], $read[0]['values'], "the key's own account's currency");
+        }
+    }
+
+    /** A currency that could not be read is not USD: the summary fails. */
+    public function testAFailedCurrencyReadIsAnErrorNotTheDefault(): void
+    {
+        /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
+        $db = $this->getMockBuilder(\mysqli::class)->disableOriginalConstructor()->getMock();
+        $db->method('prepare')->willReturnCallback(function (string $sql): \mysqli_stmt {
+            /** @var \mysqli_stmt&\PHPUnit\Framework\MockObject\MockObject $stmt */
+            $stmt = $this->getMockBuilder(\mysqli_stmt::class)->disableOriginalConstructor()->getMock();
+            $stmt->method('bind_param')->willReturn(true);
+            $stmt->method('execute')->willReturn(true);
+            $stmt->method('get_result')->willReturnCallback(
+                fn () => str_contains($sql, '202_users_pref') ? false : $this->buildResultMock($sql, [])
+            );
+
+            return $stmt;
+        });
+
+        try {
+            (new ReportsController($db, 1))->summary([]);
+            self::fail('a failed currency read answered a summary');
+        } catch (DatabaseException $e) {
+            self::assertSame('Failed to read the account currency', $e->getPrevious()?->getMessage());
+        }
+    }
+
     /** A false get_result() is a failure, never "no rows" (CLAUDE.md #1). */
     public function testAFailedResultFetchIsAnErrorForEveryReport(): void
     {

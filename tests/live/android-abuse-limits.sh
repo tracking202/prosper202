@@ -155,6 +155,10 @@ cleanup
 VERSION_BEFORE=$(Q "SELECT version FROM 202_version LIMIT 1")
 restore_version() { Q "UPDATE 202_version SET version = '$VERSION_BEFORE'"; }
 trap 'cleanup; restore_version' EXIT
+# The clicks set their cookies and the intake stores the device's address.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" || exit 2
 
 # ─────────────────────────────────────────────────────────────────────
 say "setup: an Android app with the default limits, a linked campaign, a traffic source"
@@ -282,7 +286,8 @@ has "$OUT/body" "event_cap_per_minute = 100" "and the answer names it"
 say "refunds: a request admitted and then failed spends nothing"
 fail_inserts() { mysql_q "$DB" -e "CREATE TRIGGER p202_live_planted_failure BEFORE INSERT ON $1 FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'planted failure'"; }
 stop_failing() { mysql_q "$DB" -e "DROP TRIGGER IF EXISTS p202_live_planted_failure"; }
-trap 'stop_failing; cleanup; restore_version' EXIT
+# This trap replaces the one privacy.sh chained onto, so it restores too.
+trap 'p202_privacy_restore; stop_failing; cleanup; restore_version' EXIT
 U7=$(uuid); install_body "$OUT/i7.json" "$U7" "" "$T3" 40
 eq "$(device POST /apps/installs "$TOKEN" "$OUT/i7.json")" 200 "a fresh install, its event budget untouched"
 IROW7=$(row "$U7" install_row_id)
