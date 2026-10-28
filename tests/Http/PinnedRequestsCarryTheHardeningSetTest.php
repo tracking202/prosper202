@@ -76,8 +76,9 @@ final class PinnedRequestsCarryTheHardeningSetTest extends TestCase
 
     /**
      * Every LTV webhook request is WebhookSender's: no file of the LTV code
-     * or its cron names a curl function or option, and the cron sends each
-     * delivery through DeliverySender, which hands it to WebhookSender::post().
+     * or its cron names a curl function or option, and the dispatcher (which
+     * both cron entry points run) sends each delivery through DeliverySender,
+     * which hands it to WebhookSender::post().
      */
     public function testTheLtvWebhooksSendOnlyThroughTheWebhookSender(): void
     {
@@ -101,9 +102,10 @@ final class PinnedRequestsCarryTheHardeningSetTest extends TestCase
         $code = self::code($files['202-config/Ltv/DeliverySender.php']);
         self::assertStringContainsString('$this->sender??=newWebhookSender();$sent=$this->sender->post(', $code);
         self::assertStringContainsString('MysqlWebhookRepository::PORTS);', $code);
-        $cron = self::code($files['202-cronjobs/ltv_webhooks.php']);
-        self::assertStringContainsString('[$success,$statusCode,$responseBody]=$sender->post($delivery);', $cron);
-        self::assertStringContainsString('$sender=newDeliverySender();', $cron);
+        $dispatcher = self::code($files['202-config/Ltv/WebhookDispatcher.php']);
+        self::assertStringContainsString('return(newDeliverySender())->post($delivery);', $dispatcher);
+        self::assertStringContainsString('return DeliverySender::headers($delivery);', self::spaced($files['202-config/Ltv/WebhookDispatcher.php']));
+        self::assertStringContainsString('self::post(...)', $dispatcher, 'the run sends through post()');
     }
 
     /**
@@ -124,6 +126,11 @@ final class PinnedRequestsCarryTheHardeningSetTest extends TestCase
         }
 
         return $names;
+    }
+
+    private static function spaced(string $source): string
+    {
+        return (string) preg_replace('/\s+/', ' ', $source);
     }
 
     private static function code(string $source): string

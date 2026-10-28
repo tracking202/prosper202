@@ -38,6 +38,10 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             1,
             'an export webhook or an LTV webhook delivery: WebhookGuard::check(), pinned, no proxy, no redirects',
         ],
+        '202-config/GeoIp/GuardedCurlTransport.php' => [
+            1,
+            "MaxMind's download and each URL it redirects to: WebhookGuard::check() at every hop, PostbackSender's pin, no proxy, no redirects",
+        ],
         '202-cronjobs/process_dataengine_job.php' => [2, "this server's own listener: DataEngine\\SelfCall's pin"],
         'tracking202/Apps/StoreListing.php' => [
             1,

@@ -4,17 +4,18 @@ declare(strict_types=1);
 
 namespace Prosper202\GeoIp;
 
-use Prosper202\Validation\OutboundUrlException;
-use Prosper202\Validation\OutboundUrlGuard;
+use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Attribution\WebhookRefused;
+use Prosper202\Notifications\PostbackSender;
 
 /**
  * The GeoIP download's HTTP: every URL, MaxMind's and each one it
- * redirects to, is approved by OutboundUrlGuard::assertAllowed() (https, port
- * 443, every address it resolves to public) and fetched with the guard's
- * curlOptions(), the set the webhook senders use: pinned to an approved
- * address, no proxy, no redirects, TLS verified. The one value changed is
- * the time limit, which the guard sets at 15 seconds for a webhook and a
- * download of tens of megabytes needs longer; a transfer slower than 1 KB/s
+ * redirects to, is approved by WebhookGuard::check() (https, port 443, every
+ * address it resolves to public) and fetched with PostbackSender::curlOptions(),
+ * the set the senders pin a request with: pinned to an approved address, no
+ * proxy, no redirects, TLS verified. The values changed are the time limit,
+ * which the sender sets for a postback and a download of tens of megabytes
+ * needs longer, and the protocols (https only); a transfer slower than 1 KB/s
  * for a minute is stopped instead. Given a deadline, every request of a run
  * shares it: each is limited to the time left, and none starts after it.
  * Options curl refuses to set stop the request (curl_setopt_array() stops at
@@ -151,9 +152,9 @@ final class GuardedCurlTransport implements HttpTransport
     }
 
     /**
-     * Every curl option the request is pinned and hardened by: the guard's
-     * set with the download's time limit (and, on the loopback test origin,
-     * its CA file) put in place of the guard's.
+     * Every curl option the request is pinned and hardened by: the sender's
+     * set with the download's time limit and protocols (and, on the loopback
+     * test origin, its CA file) put in place of the sender's.
      *
      * @return array<int, mixed>
      * @throws RefreshFailed when the guard, or the loopback origin, refuses the URL
@@ -173,23 +174,27 @@ final class GuardedCurlTransport implements HttpTransport
             CURLOPT_TIMEOUT => $timeout,
             CURLOPT_LOW_SPEED_LIMIT => self::LOW_SPEED_LIMIT,
             CURLOPT_LOW_SPEED_TIME => self::LOW_SPEED_TIME,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_USERAGENT => 'Prosper202-GeoIP-Refresh',
         ];
-        $addresses = null;
+        $guard = new WebhookGuard();
+        $ports = [443];
         if ($this->loopbackOrigin !== null) {
             if (MaxMindDownload::originOf($url) !== $this->loopbackOrigin) {
                 throw new RefreshFailed('In test mode (' . MaxMindDownload::ENV_ORIGIN . ') only '
                     . $this->loopbackOrigin . ' is fetched, and ' . self::shown($url) . ' is not it.');
             }
-            $addresses = [trim((string) parse_url($url, PHP_URL_HOST), '[]')];
+            // The one address the guard is told to admit: the test origin's own.
+            $guard = new WebhookGuard(null, '127.0.0.0/8,::1/128');
+            $ports = [];
             if ($this->caFile !== null) {
                 $download[CURLOPT_CAINFO] = $this->caFile;
             }
         }
         try {
-            $addresses ??= OutboundUrlGuard::assertAllowed($url, 'The GeoIP download URL', [443]);
-
-            return array_replace(OutboundUrlGuard::curlOptions($url, $addresses), $download);
-        } catch (OutboundUrlException $e) {
+            return array_replace(PostbackSender::curlOptions($guard->check($url, $ports), $timeout), $download);
+        } catch (WebhookRefused $e) {
             throw new RefreshFailed('The outbound guard refused ' . self::shown($url) . ': '
                 . str_replace($url, self::shown($url), $e->getMessage()) . '.');
         }
