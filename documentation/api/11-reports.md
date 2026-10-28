@@ -166,9 +166,13 @@ A group is the sum of its children. Unlike a breakdown, which leaves out the
 clicks with no value for its dimension, a group keeps them as a child with
 `id` and `name` null (the page's "[No keyword]" row), listed last. Children
 come in name order, or by `sort` (`name` or any metric) and `sort_dir`.
-Amounts are summed exactly at five decimals; ratios are each group's own,
-computed from its sums. Metrics are numbers, as every report's are (see
-[Metrics Returned](#metrics-returned)). Names the visitor wrote are cleaned as a breakdown's are.
+Every group's metrics, and the totals, are computed by the database from
+that group's own rows, with the formula and to the decimals the summary and
+the breakdown use: a group answers what `GET /reports/breakdown` and
+`GET /reports/summary` answer for the same rows, to the last digit (before
+1.9.79 the group report divided in floating point, so a `conv_rate` of
+`33.3333` there was `33.33333333333333` here). Metrics are numbers, as every
+report's are (see [Metrics Returned](#metrics-returned)). Names the visitor wrote are cleaned as a breakdown's are.
 More than 5,000 groups at the innermost level is a `422` naming `by` — fewer
 levels, a shorter window or a filter — never a cut list.
 
