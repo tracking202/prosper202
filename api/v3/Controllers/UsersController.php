@@ -8,6 +8,7 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\HttpException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
@@ -16,6 +17,7 @@ use Prosper202\Report\AccountZone;
 use Prosper202\User\CurrencyChange;
 use Prosper202\User\ExchangeRates;
 use Prosper202\User\PreferenceRules;
+use Prosper202\User\ServedPreferences;
 
 class UsersController
 {
@@ -811,7 +813,14 @@ class UsersController
 
     // --- Preferences ---
 
+    /** The row as it is served: a secret only as whether one is stored (ServedPreferences). */
     public function getPreferences(int $userId): array
+    {
+        return ['data' => ServedPreferences::serve($this->preferencesRow($userId))];
+    }
+
+    /** @return array<string, mixed> the row as stored, secrets included: never served */
+    private function preferencesRow(int $userId): array
     {
         $stmt = $this->prepare('SELECT * FROM 202_users_pref WHERE user_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $userId);
@@ -850,7 +859,7 @@ class UsersController
             $row['chart_time_range'] = $chartRow['chart_time_range'];
         }
 
-        return ['data' => $row];
+        return $row;
     }
 
     /**
@@ -872,7 +881,7 @@ class UsersController
     public function accountCurrency(int $userId): string
     {
         try {
-            $preferences = $this->getPreferences($userId)['data'];
+            $preferences = $this->preferencesRow($userId);
         } catch (\Throwable) {
             return self::DEFAULT_CURRENCY;
         }
@@ -900,7 +909,10 @@ class UsersController
     /**
      * Write preferences, each held to the rule of the page that owns it
      * (Prosper202\User\PreferenceRules). A key that is not a preference this
-     * endpoint writes is refused by name rather than dropped.
+     * endpoint writes is refused by name rather than dropped, unless GET
+     * answers it: a GET body comes back whole, its other keys accepted with
+     * the value GET gave them and a secret's `{"stored": …}` keeping the
+     * secret (ServedPreferences::withoutEchoes()).
      *
      * Side effects the pages have, kept here:
      * - `user_account_currency` re-prices the account's campaigns into the
@@ -924,14 +936,23 @@ class UsersController
     {
         // PreferenceRules::validate() refuses them too; refused here first,
         // before anything is read, like every other body.
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, PreferenceRules::columns(), 'the preferences this endpoint writes');
-        $current = $this->getPreferences($userId)['data'];
+        \Api\V3\Support\PayloadKeys::refuseUnknown(
+            $payload,
+            array_values(array_unique([...PreferenceRules::columns(), ...ServedPreferences::columns()])),
+            'the preferences this endpoint writes or GET answers'
+        );
+        $current = $this->preferencesRow($userId);
         if ($payload === []) {
             throw new ValidationException('No valid fields to update');
         }
-        [$clean, $errors] = PreferenceRules::validate($payload, self::SUPPORTED_CURRENCIES);
+        [$writes, $echoErrors] = ServedPreferences::withoutEchoes($payload, ServedPreferences::serve($current));
+        [$clean, $errors] = PreferenceRules::validate($writes, self::SUPPORTED_CURRENCIES);
+        $errors += $echoErrors;
         if ($errors !== []) {
             throw new ValidationException('Validation failed', $errors);
+        }
+        if ($clean === []) {
+            throw new NothingToUpdateException('No valid fields to update: every key holds what GET answers for it');
         }
 
         $conn = new Connection($this->db);
