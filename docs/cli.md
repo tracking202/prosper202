@@ -822,7 +822,9 @@ holds and why each other one is left out (`GET
 
 A file the platform fetches by itself on a schedule is a fetch URL made on
 Setup › Offline Conversions; the CLI does not make one, because its key is
-shown once, on that page.
+shown once, on that page. The CLI downloads at most 64 MB: a larger file is
+refused whole, nothing written, and the hint names `--days` and
+`--aff-campaign-id` for a smaller one (a fetch URL has no such limit).
 
 ### Get a conversion
 

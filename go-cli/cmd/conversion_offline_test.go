@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,5 +151,52 @@ func TestOfflineExportNamesTheNextStepForTheServersRefusals(t *testing.T) {
 	other := &api.APIError{Status: 422, FieldErrors: map[string]string{"days": "A whole number"}}
 	if got, want := hintFor(offlineExportError(other)), hintFor(other); got != want {
 		t.Errorf("another refusal keeps the class-wide hint: got %q, want %q", got, want)
+	}
+}
+
+// A file over the 64 MB the client downloads is refused whole, and the next
+// step names this command's own ways to a smaller file, not --time-from and
+// --time-to, which it does not take.
+func TestOfflineExportTooLargeNamesItsOwnWayToASmallerFile(t *testing.T) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/conversions/offline-export") {
+			w.WriteHeader(404)
+			return
+		}
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		chunk := bytes.Repeat([]byte("x"), 1<<20)
+		for i := 0; i < 64; i++ {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	out := filepath.Join(tmp, "google.csv")
+	_, _, err := executeCommand("conversion", "offline-export", "--format", "google", "--output", out)
+	if err == nil {
+		t.Fatal("a file over the cap was accepted")
+	}
+	if code := exitCodeForError(err); code != ExitValidation {
+		t.Errorf("exit code = %d, want %d (the file is too big, nothing failed)", code, ExitValidation)
+	}
+	hint := hintFor(err)
+	for _, want := range []string{"--days", "--aff-campaign-id", "p202 campaign list", "fetch URL"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint %q should name %s", hint, want)
+		}
+	}
+	for _, foreign := range []string{"--time-from", "--time-to", "--group-by"} {
+		if strings.Contains(hint, foreign) {
+			t.Errorf("hint %q names %s, which this command does not take", hint, foreign)
+		}
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("a refused download left a file behind")
 	}
 }

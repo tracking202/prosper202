@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -123,8 +124,14 @@ func offlineExportParams(cmd *cobra.Command) (map[string]string, bool, error) {
 	return params, summary, nil
 }
 
-// offlineExportError adds the next step for the two refusals this command meets.
+// offlineExportError adds the next step for the refusals this command meets.
 func offlineExportError(err error) error {
+	var reqErr *api.RequestError
+	if errors.As(err, &reqErr) && reqErr.Op == api.OpDownloadTooLarge {
+		return withHint(err, "Nothing was written. Ask for a smaller file: fewer days with --days, or one campaign at a time "+
+			"with --aff-campaign-id (ids from `p202 campaign list`). A fetch URL made on Setup › Offline Conversions "+
+			"hands the platform the whole file, with no download limit.")
+	}
 	var apiErr *api.APIError
 	if asAPIError(err, &apiErr) {
 		switch apiErr.Status {
