@@ -60,6 +60,16 @@ const hostedAnswerValues = 80_000
 // landing_page_code, the one that takes a list, at most 100 offers.
 const hostedArgumentValues = 1_000
 
+// hostedDocumentArgumentValues is hostedArgumentValues for a tool that takes
+// a JSON document (mcpToolSpec.JSON), which goes to its command as one flag's
+// text (TestMCPRuleSetArgumentIsJSON), not a flag an item. A call of 5,000
+// values of rule set allocated 5.5 MB, one of 1,000 list items 5.1
+// (TestHostedCallTakesARuleSetAsLargeAsRotatorGetAnswers). A set of 100 rules
+// with a criterion and two destinations each is 3,303 values, and 55,128
+// characters as rotator_get answers it, about the most that answer holds
+// under mcpMaxResultChars; at hostedArgumentValues a hosted call could send
+// back 30 of those rules.
+const hostedDocumentArgumentValues = 5_000
 
 type mcpKind string
 
