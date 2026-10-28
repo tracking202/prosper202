@@ -918,9 +918,11 @@ Report filter flags (all optional, all combine): `--aff-campaign-id`, `--ppc-acc
 `dashboard` defaults `period=today` if omitted.
 
 Multi-profile report output includes:
-- per-profile result objects
-- aggregated numeric totals
-- partial error list (`errors`) if one or more profiles fail
+- one row per profile (`profile`, the summary's fields, `currency` from 1.9.79 servers), then a `TOTAL` row, also under `aggregated`
+- the TOTAL is what `reports/summary` would answer for all the profiles' traffic at once: counts and money summed, `epc`, `avg_cpc`, `conv_rate`, `roi` and `cpa` computed again from those sums (never added), 0 where a denominator sums to 0
+- money is added only when every profile states the same `currency`; otherwise the TOTAL leaves out `total_income`, `total_cost`, `total_net`, `epc`, `avg_cpc`, `roi`, `cpa`. A field the CLI does not know is left out too
+- `meta.not_totalled` (field: why), `meta.warnings` and `meta.currencies` (profile: currency, `null` when not stated); without `--json` the warnings are `Warning:` lines on stderr
+- partial error list (`errors`) if one or more profiles fail; a failed profile is not in the TOTAL
 
 ### Rotators
 
@@ -1351,6 +1353,7 @@ Visitor-authored (or visitor-derived) fields returned by this CLI:
 | Referrer, landing and outbound URLs | The visitor's browser (`Referer`) and the tracking link's query | `click list`/`click get` (`referer`, `landing`, `outbound`), `report breakdown`/`analytics` by `referer` (the domain) and `referer_url` |
 | SubIDs `c1`--`c4` | Query parameters on the tracking link | `click get` (`c1`..`c4`), `report breakdown`/`analytics` by `c1`..`c4` |
 | UTM values | `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` on the tracking link | `report breakdown`/`analytics` by `utm_source` .. `utm_content` |
+| Ad click ids | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid` on the tracking or landing URL | `click list`/`click get` (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`; capped at 1,000 characters, not 512) |
 | IP addresses | The visitor's connection (or the `X-Forwarded-For` header the redirect honours) | `report breakdown`/`analytics` by `ip` |
 | Browser, platform, device names | Parsed from the visitor's user-agent string | `click list`/`click get` resolved names, `report breakdown`/`analytics` by `browser`/`platform`/`device` |
 | Region, city, ISP names | GeoIP resolution of the visitor's IP | `click list`/`click get`, `report breakdown`/`analytics` by `region`/`city`/`isp` |
