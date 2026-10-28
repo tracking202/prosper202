@@ -143,6 +143,40 @@ final class RotatorRuleSetInstanceTest extends TestCase
         self::assertSame("https://default.example/$run", self::click('198.51.100.31'), 'the rule left out is gone');
     }
 
+    /**
+     * splittest is Setup › Redirectors' switch and the redirects never read
+     * it: two destinations sent with splittest 0 are taken, and the clicks
+     * are split between them by weight, a destination weighted 0 taking none.
+     * The set refused such a rule as sending every visitor to one destination.
+     */
+    public function testTwoDestinationsSplitTheClicksByWeightWhateverSplittestSays(): void
+    {
+        $run = self::$run;
+        $a = "https://split-a.example/$run";
+        $b = "https://split-b.example/$run";
+        $paused = "https://paused.example/$run";
+        $set = self::setRules([
+            ['rule_name' => 'even', 'splittest' => 0, 'criteria' => [['type' => 'ip', 'value' => '203.0.113.34']],
+                'redirects' => [['redirect_url' => $a, 'weight' => 50], ['redirect_url' => $b, 'weight' => 50]]],
+            ['rule_name' => 'one paused', 'splittest' => 0, 'criteria' => [['type' => 'ip', 'value' => '203.0.113.35']],
+                'redirects' => [['redirect_url' => $a, 'weight' => 100], ['redirect_url' => $paused, 'weight' => 0]]],
+        ]);
+        self::assertSame([0, 0], array_map('intval', array_column($set['rules'], 'splittest')));
+
+        $even = [];
+        for ($i = 0; $i < 24; $i++) {
+            $even[self::click('203.0.113.34')] = true;
+        }
+        ksort($even);
+        // All 24 clicks on one of two even destinations is a 1 in 8 million chance.
+        self::assertSame([$a, $b], array_keys($even), 'the clicks reach both destinations');
+        $one = [];
+        for ($i = 0; $i < 8; $i++) {
+            $one[self::click('203.0.113.35')] = true;
+        }
+        self::assertSame([$a], array_keys($one), 'and none reaches the one weighted 0');
+    }
+
     public function testARefusedSetChangesNothingTheRedirectsRead(): void
     {
         $run = self::$run;

@@ -107,10 +107,11 @@ the set is written in one transaction: all of it, or nothing.
   redirect is drawn by weight, so their order decides nothing). Reordering
   them alone changes nothing.
 - As on the page, each rule needs a `rule_name`, at least one criterion (the
-  value `ALL` matches every visitor) and at least one redirect; a rule that is
-  not a split test has exactly one redirect; each redirect of a split test
-  needs a `weight`, and at least one weight above 0. A set has 1 to 200 rules,
-  a rule at most 100 criteria and 100 redirects.
+  value `ALL` matches every visitor) and at least one redirect. Each redirect
+  of a rule with more than one needs a `weight`, and at least one weight above
+  0: the redirects split such a rule's visitors by weight, whatever its
+  `splittest` says (see Rule Fields). A set has 1 to 200 rules, a rule at most
+  100 criteria and 100 redirects.
 - Every problem in the set is refused in one `422`, each named by its place
   (`rules.1.redirects.0.redirect_campaign`), with nothing written.
 
@@ -164,8 +165,8 @@ sending a destination beside it is a `422`.
 `POST /rotators/{id}/rules` adds one rule, and `PUT
 /rotators/{id}/rules/{ruleId}` changes one. Both check the rule as the set
 does and refuse it in the same words: a `rule_name`, at least one criterion
-and at least one redirect, one redirect unless it is a split test, and a
-`weight` on each redirect of a split test with at least one above 0.
+and at least one redirect, and a `weight` on each redirect of a rule with
+more than one, at least one above 0, whatever its `splittest` says.
 
 - **A `PUT` writes the criteria and redirects it sends as the set does.** One
   sent with its `id` is that entry, changed to what is sent: it keeps the id,
@@ -178,8 +179,9 @@ and at least one redirect, one redirect unless it is a split test, and a
 - **A `PUT` keeps what it leaves out**, as stored and unchecked: a rule
   renamed keeps its criteria and redirects. The checks of the rule as a whole
   are made of the rule the write would leave, kept parts included, so
-  `{"splittest": 0}` on a rule with two redirects is a `422`, and so is
-  `{"criteria": []}`.
+  `{"criteria": []}` is a `422`, and so is a rename of a rule stored with two
+  redirects both weighted 0. `{"splittest": 0}` on a rule with two redirects
+  is taken: the redirects split them by weight either way.
 - **A rule with no criterion matches every visitor.** These two calls wrote
   one before 1.9.79 when `criteria` was left out (`p202 rotator rule-create`
   without `--criteria-json`), and that rule took all of the redirector's
@@ -213,10 +215,10 @@ and at least one redirect, one redirect unless it is a split test, and a
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
 | `rule_name` | string | Yes | Rule name (1-255 characters) |
-| `splittest` | integer | No | `1` splits by the redirects' weights; `0` (default) |
+| `splittest` | integer | No | `1` shows the rule on Setup → Redirectors as a split test, each redirect with its weight; `0` (default). The redirects do not read it: a rule with one redirect sends every visitor it matches there, and one with more splits them by weight either way (every weight 0 sends them all to the first). The page shows a rule with more than one redirect as a split test whatever this says, and saves it with `1` |
 | `status` | integer | No | `1` active (default), `0` paused |
 | `criteria` | array | Yes, on a create | At least one; every criterion has to match |
-| `redirects` | array | Yes, on a create | At least one; exactly one unless `splittest` is `1` |
+| `redirects` | array | Yes, on a create | At least one; with more than one, each needs a `weight`, at least one above 0 |
 
 ### Criteria Object
 
@@ -233,7 +235,7 @@ and at least one redirect, one redirect unless it is a split test, and a
 | `redirect_url` | string | Destination: an http(s) URL |
 | `redirect_campaign` | integer | Destination: one of your live campaigns |
 | `redirect_lp` | integer | Destination: one of your live landing pages |
-| `weight` | integer | Traffic weight, 0-100 (default 100) |
+| `weight` | integer | Traffic weight, 0-100 (default 100). A rule with more than one redirect needs it on each: each takes its weight over the total of the rule's visitors, and a weight of 0 takes none |
 | `name` | string | Variant name for reporting |
 
 Each redirect has exactly one destination; the other two are stored as NULL.
