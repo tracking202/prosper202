@@ -19,6 +19,8 @@ class UserPreferencesUpdateCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Update user preferences')
+            ->setHelp('The answer shows each integration secret only as (stored) or (not stored), and {"stored": true} '
+                . 'under --json.')
             ->addArgument('user_id', InputArgument::REQUIRED, 'User ID')
             ->addOption('user-tracking-domain', null, InputOption::VALUE_REQUIRED, 'Tracking domain')
             ->addOption('user-account-currency', null, InputOption::VALUE_REQUIRED, 'Currency (3-letter code)')
@@ -34,7 +36,9 @@ class UserPreferencesUpdateCommand extends BaseCommand
             $output->writeln('<error>Provide at least one preference to update</error>');
             return Command::FAILURE;
         }
-        $this->render($output, $this->client()->put('users/' . $input->getArgument('user_id') . '/preferences', $body), $input);
+        $answer = $this->client()->put('users/' . $input->getArgument('user_id') . '/preferences', $body);
+        $shown = $this->isJson($input) ? $answer : UserPreferencesGetCommand::withStoredStates($answer);
+        $this->render($output, $shown, $input);
         return Command::SUCCESS;
     }
 }
