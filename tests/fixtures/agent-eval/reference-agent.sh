@@ -112,6 +112,27 @@ case "$ask" in
             --redirects-json '[{"redirect_url":"https://eval-ip-rule.example/landing","weight":"100","name":"EVAL IP rule"}]' --json >/dev/null
         printf 'Added rule "EVAL IP 203.0.113.50" to EVAL Geo Split (redirector %s): visitors from 203.0.113.50 go to https://eval-ip-rule.example/landing; everyone else still follows the existing rules and the default.\n' "$rotator"
         ;;
+    # A redirector's rule set (rotator-rules.json): a rule ahead of the
+    # catch-all is a change to the set's order, so the set is read, edited
+    # and sent back whole; the catch-all goes back with its id.
+    *"EVAL Rule Set redirector, split visitors from 203.0.113.60"*)
+        rotator=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name=="EVAL Rule Set")][0].id')
+        rules=$(p202 rotator get "$rotator" --json | jq -c '[{rule_name: "EVAL 203.0.113.60 split", splittest: 1,
+            criteria: [{type: "ip", value: "203.0.113.60"}],
+            redirects: [{redirect_url: "https://eval-split-a.example/", weight: 50, name: "A"},
+                        {redirect_url: "https://eval-split-b.example/", weight: 50, name: "B"}]}] + .data.rules')
+        p202 rotator set-rules "$rotator" --rules "$rules" --dry-run --json >/dev/null
+        p202 rotator set-rules "$rotator" --rules "$rules" --json >/dev/null
+        printf 'EVAL Rule Set (redirector %s) now tries a new first rule: visitors from 203.0.113.60 are split 50/50 between https://eval-split-a.example/ and https://eval-split-b.example/. The catch-all rule is kept as it was, second, so everyone else still goes to https://eval-catchall.example/.\n' "$rotator"
+        ;;
+    *"EVAL Rule Set redirector sent visitors from 203.0.113.62"*)
+        rotator=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name=="EVAL Rule Set")][0].id')
+        rules=$(p202 rotator get "$rotator" --json | jq -c '[{rule_name: "EVAL 203.0.113.62", criteria: [{type: "ip", value: "203.0.113.62"}],
+            redirects: [{redirect_url: "https://eval-preview.example/"}]}] + .data.rules')
+        changes=$(p202 rotator set-rules "$rotator" --rules "$rules" --dry-run --json |
+            jq -r '[.data.changes.rules[] | "\(.action) \(.rule_name)\(if .position then " at \(.position)" else "" end)"] | join("; ")')
+        printf 'Nothing is changed yet. Per `p202 rotator set-rules %s --dry-run`, the set would be: %s. The new rule sends visitors from 203.0.113.62 to https://eval-preview.example/, ahead of the catch-all, which stays as it is for everyone else. Say so and I will make the change.\n' "$rotator" "$changes"
+        ;;
     # The Update section (update.json). First, because two of the asks say
     # "delete" or "cost" and must not fall through to the general branches.
     *"Record that cost"*)

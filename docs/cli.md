@@ -1272,6 +1272,37 @@ page counted by the chosen redirect's id, so its per-rule rows can differ.
 Needs read scope on rotators and reports. `--breakdown rotator_rule` gives
 every rule of every rotator in one breakdown, without the defaults.
 
+### Set the whole rule set
+
+```bash
+p202 rotator get 5 --json | jq '.data.rules' > rules.json   # edit rules.json
+p202 rotator set-rules 5 --file rules.json --dry-run          # what would change; writes nothing
+p202 rotator set-rules 5 --file rules.json
+p202 rotator set-rules 5 --rules '[{"rule_name":"Mobile","criteria":[{"type":"device","value":"mobile"}],"redirects":[{"redirect_campaign":12}]}]'
+```
+
+`set-rules` is Setup › Redirector's save as one command (`PUT
+/rotators/{id}/rules`): the set is every rule the redirector is to have, in the
+order the redirects try them (the first active rule whose criteria all match
+sends the visitor), and it is written in one transaction or not at all. A rule
+sent with its `id` keeps it (its clicks stay its own), and so do criteria and
+destinations sent with theirs; a rule without an `id` is added; a rule left out
+is removed (the role needs `remove_rotator_rule`). A rule needs a `rule_name`,
+at least one criterion (`ALL` matches everyone) and at least one destination; a
+split test (`splittest` 1) needs a `weight` on each destination, and a rule
+that is not one has one destination. A kept rule sent without `splittest` or
+`status` keeps its own.
+
+| Flag        | Description |
+|-------------|-------------|
+| `--rules`   | The set as JSON: an array of rules (as `rotator get --json` shows them under `data.rules`), or `{"rules": [...]}` |
+| `--file`, `-F` | Read the set from a file (`-` for stdin) |
+| `--dry-run` | Answer the set as it would be stored and each rule's change (`add`, `update` with what changed, `keep`, `remove`), writing nothing |
+
+Everything is checked before anything is written, and every problem is named
+by its place (`rules.1.redirects.0.redirect_campaign`). Under `--staged` the
+set becomes a proposal; `--dry-run` is a read and is never staged.
+
 ### Create a rule
 
 ```bash
@@ -1291,8 +1322,12 @@ p202 rotator rule-create 5 \
 
 Both JSON fields are checked for syntax before sending, and the server checks
 the rest before writing anything: an unknown criterion type, a country written
-as a bare code (`US` never matches), a redirect with no destination or two, or
-a campaign or landing page that is not yours is refused naming the entry.
+as a bare code (`US` never matches), a device in capitals (the redirects compare
+it in lower case), a redirect with no destination or two, or a campaign or
+landing page that is not yours is refused naming the entry. A value list is
+stored as the Redirector page stores it: each value trimmed, the empty ones
+dropped. A rule created here is tried after the redirector's others; to put it
+anywhere else, use `set-rules`.
 
 ### Delete a rule
 

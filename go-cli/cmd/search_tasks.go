@@ -66,6 +66,8 @@ var searchTasks = []searchTask{
 	{Run: "p202 text-ad list", Pages: []string{"Setup › Text Ads"}},
 	{Run: "p202 rotator list", Pages: []string{"Setup › Redirector"},
 		Phrases: []string{"rotators", "split test offers", "redirect rules"}},
+	{Run: "p202 rotator set-rules",
+		Phrases: []string{"redirector rules", "rotator rules", "rule order", "reorder rules", "weighted split", "split traffic by weight"}},
 	{Run: "p202 app list", Pages: []string{"Setup › Mobile Apps"},
 		Phrases: []string{"registered apps"}},
 	{Run: "p202 landing-page code", Pages: []string{"Setup › Get LP Code"},
@@ -127,6 +129,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"install settings", "versions", "database size"}},
 	{Run: "p202 system integrations", Pages: []string{"3rd Party API Integrations"},
 		Phrases: []string{"clickbank url", "jvzoo url", "instant notification url"}},
+	// The CLI's own setting: the docs call it the install's base URL.
+	{Run: "p202 config set-url", Phrases: []string{"base url", "instance url"}},
 	{Run: "p202 user list", Pages: []string{"User Management"},
 		Phrases: []string{"team members"}},
 	{Run: "p202 attribution breakdown", Pages: []string{"Attribution"},

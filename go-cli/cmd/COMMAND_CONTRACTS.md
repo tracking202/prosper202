@@ -21,6 +21,8 @@ This file captures the API paths and payload/query expectations used by upcoming
   - Deletes a specific key by key string
 - `PUT /api/v3/rotators/{id}/rules/{ruleId}`
   - Partial rule update (`rule_name`, `splittest`, `status`, `criteria`, `redirects`)
+- `PUT /api/v3/rotators/{id}/rules` (`?dry_run=1` previews)
+  - `rotator set-rules <id>` (MCP `rotator_set_rules`): body `{"rules": [...]}` from `--rules` or `--file` (`-` stdin), either a JSON array of rules or an object holding `rules` (sent as it is, so the server refuses any other key); an API answer (`{"data": ...}`), an object without `rules`, a scalar, more than one JSON value, a key given twice anywhere in the set, or a body over 1 MB is refused (exit 1) before any request, as is a non-numeric id. `--dry-run` adds `dry_run=1` (never `staged=1`); `--staged` stamps `staged=1`. Response `data.dry_run`, `data.rotator_id`, `data.rules` (as `GET /rotators/{id}/rules`), `data.changes` (`added`, `updated`, `unchanged`, `removed`, `rules[]` of `action`, `id`, `rule_name`, `position`, `changed`). A 404 "Rotator not found" hints `p202 rotator list`; the router's bare 404 (a server without the route) hints the upgrade and the per-rule commands; a 422 hints that nothing was written and how `rules.N` is numbered
 - `GET /api/v3/reports/breakdown`
   - Also used by `analytics` shorthand command
   - `report breakdown --min-clicks/--min-cost/--zero-leads/--having` filter the rows client-side; on a masked answer (`"masked": true`) a filter that reads a masked figure (`CampaignFigures::REPORT`) is refused with exit 2, and a `--having` on a ratio keeps `masked` beside the rows it keeps; a `--having` that is not FIELD OP NUMBER, or names a field no breakdown row has, is refused (exit 1) before any request

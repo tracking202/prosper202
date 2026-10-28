@@ -4468,6 +4468,10 @@ class UPGRADE
             //
             // A schema change for 1.9.79 belongs in this block, reconciled
             // before the version is written.
+            //
+            // 202_rotator_rules gains position, the order a redirector's
+            // rules are tried in (Prosper202\Rotator\RuleOrder); every rule
+            // holds 0 until its rule set is saved, which keeps the id order.
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
@@ -4475,6 +4479,7 @@ class UPGRADE
                 // (Prosper202\Click\ClickRecord).
                 \Prosper202\Database\Tables\TrackingTables::google(),
                 \Prosper202\Database\Tables\UserTables::usersPref(),
+                \Prosper202\Database\Tables\RotatorTables::rotatorRules(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             if ($step_ok) {

@@ -18,7 +18,10 @@
       "Fixed: The CLI's TOTAL row across profiles (report summary, dashboard) computes EPC, CPC, conversion rate, ROI and CPA from the summed figures instead of adding each profile's, and never adds money in different currencies; GET /reports/summary now says which currency its money is in",
       "Changed: New installs, and every account made from 1.9.79 on, start with privacy set to Enabled for European Traffic: visitors from Europe get no tracking cookies and a masked address. Accounts that existed before keep their setting; change it under My Account, Personal Settings",
       "Fixed: Get Links hands out https:// links when you use Prosper202 over HTTPS or save your tracking domain with https://, the same links the API and p202 tracker get-url give; it wrote http:// always. The Postback / Pixel and API integrations pages follow a tracking domain saved with https:// or http:// too",
-      "New: Your AI assistant can create, change and delete text ads, and put one on a tracking link. A connection approved before this version that may make changes needs connecting again to change text ads"
+      "New: Your AI assistant can create, change and delete text ads, and put one on a tracking link. A connection approved before this version that may make changes needs connecting again to change text ads",
+      "New: A redirector's whole rule set can be saved in one step through the API (PUT /rotators/{id}/rules), p202 rotator set-rules and the MCP tool rotator_set_rules, as the Redirector page saves it: all of it or nothing, and a dry run shows what would change. The MCP tools also create, update and delete redirectors",
+      "Changed: A redirector's rules are tried in the order you set, so a new rule can go ahead of the others; the upgrade keeps each redirector's order as it was",
+      "Fixed: Rule values written through the API are stored as the Redirector page stores them (\"United States(US), Canada(CA)\" no longer misses Canada), and a device written with a capital, which never matches, is refused"
     ]
   },
   "1.9.78": {
