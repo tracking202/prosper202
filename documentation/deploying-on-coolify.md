@@ -64,6 +64,12 @@ Everything else is hands-off:
   `geo_isp` volume), not the docroot — the admin page shows this path when
   `P202_GEO_DIR` is set. Files there survive redeploys; anything placed in
   the container's docroot does not.
+- **GeoLite2 City refresh** — the free city database lives in the image, at
+  `202-config/geo/GeoLite2-City.mmdb`, and the refresh in Account › Settings ›
+  GeoIP database replaces it there with your MaxMind account's download. A
+  redeploy puts the image's copy back; the web container's cron job sees the
+  file is not the one it installed and downloads it again within the hour. The
+  web container's user needs write access to that directory.
 
 ## 4. Deploy and finish the wizard
 

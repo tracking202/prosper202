@@ -221,6 +221,13 @@ final class OutboundUrlGuardTest extends TestCase
         self::assertStringContainsString('if(!curl_setopt_array($ch,$options)){', $ltvCode);
         $job = $files['202-cronjobs/ltv_webhooks.php'];
         self::assertStringNotContainsString('curl_', $job, 'the job sends through WebhookDispatcher::post()');
+        // The GeoIP database download: the same set, its time limit lengthened
+        // (tests/GeoIp/GuardedCurlTransportTest holds the values).
+        self::assertStringContainsString(
+            'OutboundUrlGuard::curlOptions(',
+            $files['202-config/GeoIp/GuardedCurlTransport.php'],
+            '202-config/GeoIp/GuardedCurlTransport.php must apply OutboundUrlGuard::curlOptions()'
+        );
         $cron = '202-cronjobs/process_dataengine_job.php';
         self::assertArrayHasKey($cron, $files, "$cron is gone; update this test");
         self::assertStringContainsString('SelfCall::curlOptions(', $files[$cron], "$cron must call with SelfCall::curlOptions()");

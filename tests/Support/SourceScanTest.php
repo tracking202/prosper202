@@ -221,6 +221,7 @@ final class SourceScanTest extends TestCase
             'tests/Apps/AppTokenHygieneTest.php' => 1,
             'tests/Conversion/ConversionCreateDuplicateTest.php' => 1,
             'tests/Conversion/ConversionIdempotencyIntegrationTest.php' => 1,
+            'tests/GeoIp/GeoIpFixture.php' => 1,
             'tests/Release/ReleaseTreeTest.php' => 1,
             'tests/Support/SourceScan.php' => 1,
             // Not a scratch walk: the standalone script CI runs to list the

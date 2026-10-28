@@ -27,6 +27,7 @@ parameters:
         - 202-config/Click/RotatorRoute.php
         - 202-config/Click/StoredAddressIds.php
         - 202-config/Database/Connection.php
+        - 202-config/GeoIp
         - 202-config/User/InstallAccount.php
         - 202-config/User/SignInRecord.php
         - tracking202/Report/ReportFiltersDidNotFit.php

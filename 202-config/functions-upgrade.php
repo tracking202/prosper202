@@ -4499,6 +4499,8 @@ class UPGRADE
                 \Prosper202\Database\Tables\RotatorTables::rotatorRules(),
                 \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
                 \Prosper202\Database\Tables\GoalTables::goalEvents(),
+                // The GeoIP database refresh's credentials and last run (Prosper202\GeoIp).
+                \Prosper202\Database\Tables\SecretTables::geoipRefresh(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             if ($step_ok) {

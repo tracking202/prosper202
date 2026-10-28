@@ -618,6 +618,21 @@ case "$ask" in
                 "$(printf '%s' "$out" | jq -r '.error.message')" "$(printf '%s' "$out" | jq -r '.error.hint')"
         fi
         ;;
+    *"GeoIP database this install uses"*)
+        # The age is the build date the server reads from the file; the
+        # refresh is set up in the web UI, so the answer names the page.
+        info=$(p202 system info --json)
+        printf 'The GeoIP database was built on %s, %s days ago, and is %s, per `p202 system info`. ' \
+            "$(printf '%s' "$info" | jq -r '.data.geoip_database.built_on // "an unknown day"')" \
+            "$(printf '%s' "$info" | jq -r '.data.geoip_database.age_days // "an unknown number of"')" \
+            "$(printf '%s' "$info" | jq -r '.data.geoip_database.state')"
+        if [ "$(printf '%s' "$info" | jq -r '.data.geoip_refresh.configured')" = true ]; then
+            printf 'It is refreshed weekly with the stored MaxMind account; the last run ended %s.\n' \
+                "$(printf '%s' "$info" | jq -r '.data.geoip_refresh.last_outcome // "not yet"')"
+        else
+            printf 'Nothing keeps it up to date: no MaxMind account is stored. Enter a free GeoLite account ID and licence key under Account › Settings › GeoIP database, and the cron job refreshes it weekly.\n'
+        fi
+        ;;
     *"sign-in attempts on this install failed"*)
         # The server filters by status: login_success false also covers a
         # sign-in that was not completed.

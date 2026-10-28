@@ -183,10 +183,21 @@ try {
         exit;
     }
 
-    // Unauthenticated health probe
+    // Unauthenticated health probe. A stale, missing or unreadable GeoIP
+    // database is a warning, never a status other than healthy: liveness
+    // checks restart a container on that, and a new container has the same
+    // file. Only its state and date are said here, not its path.
     if ($path === '/system/health' && $method === 'GET') {
+        $geoip = \Prosper202\GeoIp\CityDatabase::status();
+        $geoipWarning = $geoip->warning();
         Bootstrap::jsonResponse([
-            'data' => ['status' => 'healthy', 'timestamp' => time(), 'api_version' => 'v3'],
+            'data' => [
+                'status' => 'healthy',
+                'timestamp' => time(),
+                'api_version' => 'v3',
+                'geoip_database' => $geoip->healthFields(),
+                'warnings' => $geoipWarning === null ? [] : [$geoipWarning],
+            ],
         ]);
         exit;
     }

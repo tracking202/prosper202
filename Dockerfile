@@ -46,6 +46,12 @@ RUN a2enmod rewrite \
         echo '    AllowOverride None'; \
         echo '    Require all denied'; \
         echo '</Directory>'; \
+        echo '# The GeoIP databases are read, never served: a refreshed GeoLite2'; \
+        echo '# file is licensed for this install alone.'; \
+        echo '<Directory /var/www/html/202-config/geo>'; \
+        echo '    AllowOverride None'; \
+        echo '    Require all denied'; \
+        echo '</Directory>'; \
         echo '# Deny dotfiles (.env, .git, ...) but keep /.well-known/ for ACME'; \
         echo '<LocationMatch "/\.(?!well-known/)">'; \
         echo '    Require all denied'; \

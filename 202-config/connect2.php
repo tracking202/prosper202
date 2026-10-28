@@ -1218,8 +1218,18 @@ function getGeoData($ip)
         ];
     }
 
-    $reader = new Reader(CONFIG_PATH . '/geo/GeoLite2-City.mmdb');
+    // Opened per lookup, so the lookup after a refresh's rename reads the new
+    // file. One that will not open places nobody and the click goes on; the
+    // log, Settings and the health probes say why.
+    $reader = null;
     try {
+        try {
+            $reader = new Reader(\Prosper202\GeoIp\CityDatabase::PATH);
+        } catch (\Exception $e) {
+            error_log('getGeoData: the GeoIP database could not be opened (' . $e->getMessage()
+                . '); this visitor is not placed');
+            throw $e;
+        }
         $record = $reader->city($ip_address);
         $country = $record->country->name;
         $country_code = $record->country->isoCode;
@@ -1287,7 +1297,7 @@ function getGeoData($ip)
         'postal_code' => $postal
     ];
 
-    $reader->close();
+    $reader?->close();
 
     return $geoData;
 }

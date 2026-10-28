@@ -96,6 +96,11 @@ try {
     $isLocked = file_exists($lockFile);
     $lockAge = $isLocked ? (time() - filemtime($lockFile)) : null;
     
+    // The GeoIP database's build date and age, from the file's own metadata:
+    // its state and date only, since any signed-in user may read this page
+    // (Account › Settings shows the path and the reader's error to admins).
+    $geoip = \Prosper202\GeoIp\CityDatabase::status();
+
     // Build response
     $response = [
         'status' => $status,
@@ -107,6 +112,7 @@ try {
         'lockAge' => $lockAge,
         'lockAgeFormatted' => $lockAge ? formatTimeDiff($lockAge) : null,
         'dataEngine' => $dataEngineStatus,
+        'geoipDatabase' => $geoip->healthFields(),
         'serverTime' => date('Y-m-d H:i:s'),
         'serverTimestamp' => time()
     ];
@@ -124,6 +130,11 @@ try {
     
     if ($dataEngineStatus['pending'] > 1000) {
         $response['recommendations'][] = 'Large DataEngine backlog. Consider running manual processing.';
+    }
+
+    $geoipWarning = $geoip->warning();
+    if ($geoipWarning !== null) {
+        $response['recommendations'][] = $geoipWarning;
     }
     
     echo json_encode($response, JSON_PRETTY_PRINT);
