@@ -26,6 +26,11 @@ final class SchemaVersion
         if ($stored['version'] === $codeVersion) {
             return null;
         }
+        if (self::isVersion($stored['version']) && version_compare($stored['version'], $codeVersion, '>')) {
+            return 'the database\'s schema is version ' . $stored['version'] . ', newer than this code (version '
+                . $codeVersion . '): these files are older than the database. Nothing was run. Deploy the files of'
+                . ' version ' . $stored['version'] . ' or later; an upgrade cannot help.';
+        }
 
         return 'the database needs an upgrade: its schema is version ' . ($stored['version'] !== '' ? $stored['version'] : '(none recorded)')
             . ' and this code is version ' . $codeVersion
@@ -35,9 +40,11 @@ final class SchemaVersion
     /**
      * What an answer that has already failed says while the files are
      * deployed and the upgrade has not run, when a statement can fail on the
-     * older schema. Null when the schema is current, or its version cannot be
-     * read or names none: the answer then claims no cause, as it did. It
-     * never throws, being asked only on an error path.
+     * older schema. Null unless the schema is older than this code, by
+     * version_compare(): when it is current, newer (files rolled back, which
+     * no upgrade mends), or its version cannot be read or is not a version,
+     * the answer claims no cause, as it did. It never throws, being asked
+     * only on an error path.
      */
     public static function pendingUpgrade(\mysqli $db, string $codeVersion): ?string
     {
@@ -46,13 +53,22 @@ final class SchemaVersion
         } catch (\Throwable) {
             return null;
         }
-        if (isset($stored['error']) || $stored['version'] === '' || $stored['version'] === $codeVersion) {
+        if (
+            isset($stored['error']) || !self::isVersion($stored['version'])
+            || !version_compare($stored['version'], $codeVersion, '<')
+        ) {
             return null;
         }
 
         return 'the database needs an upgrade: its schema is version ' . $stored['version']
             . ' and this code is version ' . $codeVersion
             . '. Open 202-config/upgrade.php on the site (signed in) to upgrade it.';
+    }
+
+    /** Dotted numbers, as 202_version holds them: version_compare() orders anything else by its own rules. */
+    private static function isVersion(string $version): bool
+    {
+        return preg_match('/\A\d+(\.\d+)*\z/', $version) === 1;
     }
 
     /** @return array{version: string}|array{error: string} */

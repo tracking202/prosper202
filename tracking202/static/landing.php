@@ -252,15 +252,40 @@ function p202Lpid() {
 	return p202Store('get', P202_LPID_KEY) === id ? id : '';
 }
 
+// A query name as PHP's $_GET files it: leading spaces dropped, a space or a
+// dot before the first [ made _, an unmatched [ made _, and a [...] making the
+// value a list ({name, list}; null for a name PHP drops).
+function p202PhpName(name) {
+    var n = name.replace(/^ +/, '');
+    var open = n.indexOf('[');
+    if (open === 0) { return null; }
+    var list = open > 0 && n.indexOf(']', open) > open;
+    var head = open < 0 ? n : n.slice(0, open);
+    var tail = open < 0 || list ? '' : '_' + n.slice(open + 1);
+    return {name: head.replace(/[ .]/g, '_') + tail, list: list};
+}
+// The page URL's value for key as the tracker reads it
+// (RequestSignals::consentGiven()): undefined when PHP sees none, null when
+// it is a list, else the last spelling PHP folds onto the name
+// (p202.consent, p202_consent[] ...).
+function p202PhpParam(params, key) {
+    var found;
+    params.forEach(function(value, name) {
+        var as = p202PhpName(name);
+        if (as && as.name === key) { found = as.list ? null : value; }
+    });
+    return found;
+}
 // A refusal given before this script runs: ?p202_consent on the page URL as
-// anything but 1 (the tracker reads it so too, RequestSignals::consentGiven(),
-// and as PHP does, the last of several), or `window.p202 = {consent: false}`
-// set by the page's consent tool ahead of the snippet.
-var p202ConsentParam = _params.getAll(P202_CONSENT_KEY).pop();
-var p202Refused = p202ConsentParam !== undefined && p202ConsentParam.trim() !== '1';
+// anything but 1, read as the tracker reads it (PHP's trim(), whose
+// characters these are), or `window.p202 = {consent: false}` set by the
+// page's consent tool ahead of the snippet.
+var p202ConsentParam = p202PhpParam(_params, P202_CONSENT_KEY);
+var p202Refused = p202ConsentParam !== undefined
+    && (p202ConsentParam === null || p202ConsentParam.replace(/^[ \t\n\r\0\x0B]+|[ \t\n\r\0\x0B]+$/g, '') !== '1');
 if (p202Refused || (window.p202 && window.p202.consent === false)) {
-	p202Store('set', P202_CONSENT_KEY, '0');
-	p202Store('del', P202_LPID_KEY);
+    p202Store('set', P202_CONSENT_KEY, '0');
+    p202Store('del', P202_LPID_KEY);
 }
 
 window.p202 = (window.p202 && typeof window.p202 === 'object') ? window.p202 : {};
@@ -278,19 +303,24 @@ window.p202.lpid = p202Lpid;
 // Links into the tracker carry the id (or the refusal) when they are
 // followed, so a later click through this page joins the same visitor.
 function p202DecorateLink(a) {
-	try {
-		if (!a || !a.href || a.hostname !== p202TrackerHost) { return; }
-		var url = new URL(a.href);
-		url.searchParams.delete('p202lpid');
-		url.searchParams.delete(P202_CONSENT_KEY);
-		if (!p202ConsentGiven()) {
-			url.searchParams.set(P202_CONSENT_KEY, '0');
-		} else if (p202CampaignCapture) {
-			var id = p202Lpid();
-			if (id) { url.searchParams.set('p202lpid', id); }
-		}
-		a.href = url.toString();
-	} catch (e) { /* a link we cannot parse is followed as it is */ }
+    try {
+        if (!a || !a.href || a.hostname !== p202TrackerHost) { return; }
+        var url = new URL(a.href);
+        url.searchParams.delete('p202lpid');
+        var spellings = [];
+        url.searchParams.forEach(function(value, name) {
+            var as = p202PhpName(name);
+            if (as && as.name === P202_CONSENT_KEY) { spellings.push(name); }
+        });
+        spellings.forEach(function(name) { url.searchParams.delete(name); });
+        if (!p202ConsentGiven()) {
+            url.searchParams.set(P202_CONSENT_KEY, '0');
+        } else if (p202CampaignCapture) {
+            var id = p202Lpid();
+            if (id) { url.searchParams.set('p202lpid', id); }
+        }
+        a.href = url.toString();
+    } catch (e) { /* a link we cannot parse is followed as it is */ }
 }
 function p202OnFollow(ev) {
 	var el = ev.target;
