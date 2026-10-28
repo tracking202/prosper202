@@ -390,9 +390,11 @@ not stop a repair.
 { "data": { "repaired": [ { "ppc_network_id": 7, "ppc_network_name": "Google Ads", "removed": false, "from_user_id": 3, "to_user_id": 2, "ppc_accounts": 3, "queued_ppc_accounts": 3 } ], "skipped": [] } }
 ```
 
-Each source moves in a transaction of its own: the source and the accounts
-naming it are locked and read again, and nothing is written unless they still
-lead to the same two users. Only the source's `user_id` changes: its name stays
+Each source moves in a transaction of its own: the two users, then the source
+and the accounts naming it, are locked and read again, and nothing is written
+unless they still lead to the same two users. The users are locked first, as a
+user's deletion locks the user first, so a repair waits for a user being
+deleted and then reads them as deleted. Only the source's `user_id` changes: its name stays
 as the rename left it, its custom variables go with it, and a removed source
 stays removed. Every account naming it is queued for the cron job's report
 rollup, so the report rows take the source from it again on the cron job's

@@ -15,6 +15,7 @@ use Prosper202\Database\Connection;
 use Prosper202\Database\DataSeeder;
 use Prosper202\Setup\TrafficSourceOwners;
 use Prosper202\Setup\TrafficSourceRepairRefused;
+use Prosper202\User\UserDataPurge;
 
 /**
  * Traffic sources taken through Setup › Traffic Sources' rename before
@@ -569,6 +570,87 @@ final class TrafficSourceOwnersIntegrationTest extends TestCase
         foreach ($bodies as [$payload, $field]) {
             self::refusal($payload, $field);
         }
+    }
+
+    /**
+     * A repair waits for a user that UserDataPurge::deleteUser() is deleting,
+     * and reads them as deleted once the delete commits. The delete is held
+     * here at its first statement (it locks the user's row before anything
+     * else) and the repair runs in a child process; once the server shows the
+     * child waiting, the delete marks the user deleted and commits.
+     */
+    public function testARepairWaitsForTheUserBeingDeletedAndMovesNothingIntoIt(): void
+    {
+        self::takeTheOldWay(self::TAKER, self::TAKEN, 'Taken');
+        $holder = self::connect();
+        $conn = new Connection($holder);
+        $child = null;
+        try {
+            $conn->transaction(function () use ($conn, &$child): void {
+                $lock = $conn->prepareWrite(UserDataPurge::LOCK_USER);
+                $conn->bind($lock, 'i', [self::OWNER]);
+                $conn->fetchAll($lock);
+                $child = self::waitingRepair(self::TAKEN);
+                $delete = $conn->prepareWrite('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?');
+                $conn->bind($delete, 'i', [self::OWNER]);
+                $conn->executeUpdate($delete);
+            });
+        } finally {
+            $holder->close();
+        }
+        [$proc, $pipes] = $child;
+        $out = trim((string) stream_get_contents($pipes[1]));
+        $err = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        self::assertSame(0, proc_close($proc), $out . $err);
+
+        self::assertStringStartsWith('refused: ', $out, $err);
+        self::assertStringContainsString('deleted_user', $out);
+        self::assertSame(self::TAKER, self::ownerOf(self::TAKEN), 'nothing was moved into the deleted account');
+    }
+
+    private static function connect(): \mysqli
+    {
+        $db = new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        $db->query("SET SESSION sql_mode=''");
+
+        return $db;
+    }
+
+    /** @return array{resource, array<int, resource>} the child, once it waits on a lock */
+    private static function waitingRepair(int $sourceId): array
+    {
+        $proc = proc_open(
+            [
+                PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/fixtures/traffic-source-repair-runner.php',
+                (string) $sourceId, (string) self::ADMIN,
+            ],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+        self::assertIsResource($proc);
+        $thread = trim((string) fgets($pipes[1]));
+        self::assertMatchesRegularExpression('/\A[1-9][0-9]*\z/', $thread, 'the runner names its connection');
+        $deadline = microtime(true) + 15;
+        do {
+            $waiting = self::$db->query('SELECT COUNT(*) FROM information_schema.INNODB_TRX'
+                . " WHERE trx_mysql_thread_id = $thread AND trx_state = 'LOCK WAIT'");
+            self::assertInstanceOf(\mysqli_result::class, $waiting, self::$db->error);
+            if ((int) $waiting->fetch_row()[0] === 1) {
+                return [$proc, $pipes];
+            }
+            // The server refreshes INNODB_TRX only once it has gone 0.1s unread.
+            usleep(250000);
+        } while (microtime(true) < $deadline);
+        self::fail("The repair on connection $thread never waited for the user being deleted: "
+            . stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]));
     }
 
     public function testARepairOfRowsThatChangedAfterTheyWereReadMovesNothing(): void

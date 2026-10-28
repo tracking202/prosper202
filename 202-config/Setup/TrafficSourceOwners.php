@@ -120,11 +120,11 @@ final class TrafficSourceOwners
 
     /**
      * Move the source from $fromUserId to $toUserId, as plan() answered them,
-     * in a transaction of its own: the source and the accounts naming it are
-     * locked and read again first, and nothing is written unless they still
-     * resolve to the same two users. Every account naming it is queued for
-     * the report rollup, whose rows take the source from it (RollupRefresh).
-     * The move is logged.
+     * in a transaction of its own: the two users, then the source and the
+     * accounts naming it, are locked and read again first, and nothing is
+     * written unless they still resolve to the same two users. Every account
+     * naming it is queued for the report rollup, whose rows take the source
+     * from it (RollupRefresh). The move is logged.
      *
      * @return array<string, mixed>
      * @throws TrafficSourceRepairRefused when it no longer resolves so
@@ -132,7 +132,13 @@ final class TrafficSourceOwners
     public function repair(int $sourceId, int $fromUserId, int $toUserId, ?int $named, int $actorUserId): array
     {
         $moved = $this->conn->transaction(function () use ($sourceId, $fromUserId, $toUserId, $named): array {
-            // Locked first: every read after the lock is current (CLAUDE.md #36).
+            // Locked before any plain read, so every read after them is
+            // current (CLAUDE.md #36). The users come first, as
+            // UserDataPurge::deleteUser() locks the user it deletes before
+            // anything else: a delete in flight is waited for, and the user is
+            // then read as deleted; the delete touches no source or account,
+            // so neither waits on the other's second lock.
+            $this->lockUsers([$fromUserId, $toUserId]);
             $sources = $this->sources([$sourceId], true);
             $accounts = $this->accounts([$sourceId], true);
             $now = $this->resolve($sourceId, $sources[$sourceId] ?? null, $accounts[$sourceId] ?? [], $named);
@@ -340,6 +346,23 @@ final class TrafficSourceOwners
             }
         }
         throw new \LogicException('user ' . $user . ' is not one the entry names');
+    }
+
+    /**
+     * Lock users' rows, by id in ascending order, as UserDataPurge::LOCK_USER
+     * locks the one it deletes. An id with no row locks nothing.
+     *
+     * @param list<int> $ids
+     */
+    private function lockUsers(array $ids): void
+    {
+        $ids = array_values(array_unique($ids));
+        sort($ids);
+        $stmt = $this->conn->prepareWrite(
+            'SELECT user_id FROM 202_users WHERE user_id IN (' . self::marks($ids) . ') ORDER BY user_id FOR UPDATE'
+        );
+        $this->conn->bind($stmt, str_repeat('i', count($ids)), $ids);
+        $this->conn->fetchAll($stmt);
     }
 
     /**

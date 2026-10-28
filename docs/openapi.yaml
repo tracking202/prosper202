@@ -906,9 +906,10 @@ paths:
         names a `repair_to_user_id` for and answers the rest under `skipped`
         (`reason`: `ambiguous`, `not_permitted`, or `changed`).
 
-        Each source is moved in a transaction of its own: the source and the
-        accounts naming it are locked and read again, and nothing is written
-        unless they still lead to the same two users. Only `user_id` changes;
+        Each source is moved in a transaction of its own: the two users (a
+        user being deleted is waited for, then read as deleted), then the
+        source and the accounts naming it, are locked and read again, and
+        nothing is written unless they still lead to the same two users. Only `user_id` changes;
         the name stays as the rename left it. A removed source stays removed.
         Every account naming it is queued for the cron job's report rollup,
         so report rows take the source from it again. Each move is written to
