@@ -214,48 +214,74 @@ class AUTH
             $writer();
         }
 
-        if (isset($_COOKIE['remember_me'])) {
-            unset($_COOKIE['remember_me']);
-            if (!headers_sent()) {
-                setcookie('remember_me', '', [
-                    'expires' => 1,
-                    'path' => '/',
-                    'domain' => self::cookie_domain(),
-                    'secure' => function_exists('getSecureStatus')
-                        ? getSecureStatus()
-                        : (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off'),
-                    'httponly' => true,
-                    'samesite' => 'Lax',
-                ]);
-            }
-        }
+        self::forgetRememberMeCookie();
 
         if ($revokeFor !== null) {
-            self::revokeRememberMeKeys($revokeFor);
+            \Prosper202\User\RememberMeKeys::revokeAll(
+                new \Prosper202\Database\Connection(DB::getInstance()->getConnection()),
+                $revokeFor
+            );
         }
     }
 
-    /** Delete every remember-me key of the user. A delete that fails throws. */
-    private static function revokeRememberMeKeys(int $userId): void
+    /**
+     * Sign this browser out (202-account/signout.php, and Personal settings
+     * after too many wrong current passwords): the session destroyed, the
+     * remember-me cookie cleared, and the stored key that cookie names
+     * deleted, so a copy of the cookie signs nobody in. The sign-out kept the
+     * key, and a copied cookie went on signing in for up to 14 days.
+     *
+     * Only this browser's key: the user's other remembered browsers are other
+     * sign-ins, which this one did not end. Switching the user off ends them
+     * all.
+     *
+     * The session and the cookie end first, whatever the delete does: a
+     * delete that fails then throws, and the page answers with the database
+     * error page rather than a sign-out that reads as complete.
+     */
+    public static function signOut(): void
     {
-        $failed = 'Revoking the remember-me keys of user ' . $userId . ' failed';
-        try {
-            $conn = new \Prosper202\Database\Connection(DB::getInstance()->getConnection());
-            $stmt = $conn->prepareWrite('DELETE FROM 202_auth_keys WHERE user_id = ?');
-            $conn->bind($stmt, 'i', [$userId]);
-            $conn->executeUpdate($stmt);
-        } catch (\Prosper202\Database\Exceptions\QueryException $e) {
-            throw new \Prosper202\Database\Exceptions\QueryException(
-                $failed . ': ' . $e->getMessage(),
-                (int) $e->getCode(),
-                $e
+        $named = \Prosper202\User\RememberMeKeys::namedBy($_COOKIE['remember_me'] ?? null);
+        $writer = static function (): void {
+            $_SESSION = [];
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_destroy();
+            }
+        };
+        if (function_exists('withWritableSession')) {
+            withWritableSession($writer);
+        } else {
+            $writer();
+        }
+        self::forgetRememberMeCookie();
+
+        if ($named !== null) {
+            \Prosper202\User\RememberMeKeys::revokeOne(
+                new \Prosper202\Database\Connection(DB::getInstance()->getConnection()),
+                $named[0],
+                $named[1]
             );
-        } catch (\mysqli_sql_exception $e) {
-            throw new \Prosper202\Database\Exceptions\QueryException(
-                $failed . ': ' . $e->getMessage() . ' [errno ' . (int) $e->getCode() . ']',
-                (int) $e->getCode(),
-                $e
-            );
+        }
+    }
+
+    /** Clear this browser's remember_me cookie, for the rest of the request too. */
+    private static function forgetRememberMeCookie(): void
+    {
+        if (!isset($_COOKIE['remember_me'])) {
+            return;
+        }
+        unset($_COOKIE['remember_me']);
+        if (!headers_sent()) {
+            setcookie('remember_me', '', [
+                'expires' => 1,
+                'path' => '/',
+                'domain' => self::cookie_domain(),
+                'secure' => function_exists('getSecureStatus')
+                    ? getSecureStatus()
+                    : (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off'),
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
         }
     }
 

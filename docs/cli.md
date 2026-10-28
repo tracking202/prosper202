@@ -1497,7 +1497,7 @@ When creating a user without `--user-pass`, the CLI asks for the password withou
 | `--user-fname`    | No                | First name          |
 | `--user-lname`    | No                | Last name           |
 | `--user-timezone` | No                | Timezone (default: UTC) |
-| `--user-active`   | No                | 1 = active, 0 = inactive (cannot sign in; signed out of every browser at its next request; API keys answer 401) |
+| `--user-active`   | No                | 1 = active, 0 = inactive (cannot sign in; signed out of every browser at its next request; its remember-me keys deleted; API keys answer 401) |
 
 ### Roles
 

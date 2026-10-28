@@ -314,6 +314,17 @@ opens a session and who writes its identity, and
 `SessionEndsWithUserIntegrationTest` executes the refusal and the agreement.
 When a check runs at sign-in, ask what carries its answer afterwards.
 
+The remember-me key carries it past both. The sign-out cleared the cookie
+and kept the stored key, so a copy of the cookie signed in for 14 days; the
+switch-off revoked a user's keys only when one of their sessions was next
+refused, so a remembered browser that stayed idle signed back in once the
+user was switched on again (both measured live). A credential that can
+start a sign-in again is deleted by the act that ends the sign-in, not at
+its next use: `AUTH::signOut()` deletes the key its cookie names, and every
+write that switches a user off deletes all of theirs in its transaction
+(`RememberMeKeys`); `RememberMeKeysRevokedTest` holds every writer of
+`user_active`/`user_deleted` and every sign-out to that.
+
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
 

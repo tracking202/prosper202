@@ -78,7 +78,7 @@ API keys are masked after the first 8 characters in list responses. The full key
 | `user_fname` | string | No | First name, at most 50 characters |
 | `user_lname` | string | No | Last name, at most 50 characters |
 | `user_timezone` | string | No | A PHP time zone name such as `America/New_York`, as Personal settings offers them (default: UTC); anything else is `422` |
-| `user_active` | integer | No | `1` can sign in and use its API keys (default), `0` cannot: its keys answer `401`, and a browser it is signed in on is signed out at its next request, its remember-me keys revoked. Any other value is `422` rather than read as `0` |
+| `user_active` | integer | No | `1` can sign in and use its API keys (default), `0` cannot: its keys answer `401`, and a browser it is signed in on is signed out at its next request. Every remember-me key the user holds is deleted in the same write, so no browser kept signed in signs back in when the user is `1` again; a key that cannot be deleted leaves the user as they were and answers `500`. Any other value is `422` rather than read as `0` |
 
 ## Preference Fields
 

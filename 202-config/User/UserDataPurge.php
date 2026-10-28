@@ -157,7 +157,7 @@ final class UserDataPurge
     /** What lets the user act at all through the API; revoked with the rest. */
     private const ACCESS_STATEMENTS = [
         'DELETE FROM 202_api_keys WHERE user_id = ?',
-        'DELETE FROM 202_auth_keys WHERE user_id = ?',
+        RememberMeKeys::REVOKE_ALL,
         'DELETE FROM 202_last_ips WHERE user_id = ?',
     ];
 

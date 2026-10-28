@@ -706,12 +706,8 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 			// toward an account takeover.
 			$_SESSION['pw_change_fails'] = (int) ($_SESSION['pw_change_fails'] ?? 0) + 1;
 			if ($_SESSION['pw_change_fails'] >= AUTH::MAX_PASSWORD_REAUTH_FAILS) {
-				session_destroy();
-				$secure = function_exists('getSecureStatus')
-					? getSecureStatus()
-					: (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
-				setcookie('remember_me', '', ['expires' => 1, 'path' => '/', 'domain' => AUTH::cookie_domain(), 'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax']);
-				unset($_COOKIE['remember_me']);
+				// As the sign-out: this browser's remember-me key goes too.
+				AUTH::signOut();
 				header('location: ' . get_absolute_url() . '202-login.php');
 				exit;
 			}

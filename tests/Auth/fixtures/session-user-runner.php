@@ -14,6 +14,7 @@
  *       | call:logged_in            AUTH::logged_in(), with connect.php's User
  *       | call:logged_in_unread     the same with no User read this request
  *       | call:remember             AUTH::logged_in_with_remember()
+ *       | call:sign_out             AUTH::signOut()
  *       | call:authenticate         AUTH::authenticate(P202_SU_NAME, P202_SU_PASS)
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_SU_USER, P202_SU_SESSION_DIR,
  *       P202_SU_SESSION (none: no session), P202_SU_OWN (user_own_id, when not
@@ -178,6 +179,10 @@ if ($call !== null) {
             return AUTH::logged_in();
         })(),
         'remember' => AUTH::logged_in_with_remember(),
+        'sign_out' => (static function (): bool {
+            AUTH::signOut();
+            return true;
+        })(),
         'authenticate' => AUTH::authenticate(
             (string) getenv('P202_SU_NAME'),
             (string) getenv('P202_SU_PASS'),

@@ -26,6 +26,33 @@ final class UserStandingTest extends TestCase
         self::assertSame($standing === UserStanding::Active, UserStanding::ofRow($row)->canAct());
     }
 
+    /**
+     * What a writer of user_active leaves: an active user only for 1, as the
+     * column reads it back; anything else switches the user off, and the
+     * writer revokes their remember-me keys.
+     *
+     * @dataProvider activeValues
+     */
+    public function testAWrittenValueLeavesTheUserActiveOnlyWhenItIsOne(mixed $value, bool $active): void
+    {
+        self::assertSame($active, UserStanding::isActive($value));
+    }
+
+    /** @return array<string, array{mixed, bool}> */
+    public static function activeValues(): array
+    {
+        return [
+            '1' => [1, true],
+            "'1'" => ['1', true],
+            '0' => [0, false],
+            "'0'" => ['0', false],
+            '2' => [2, false],
+            "'01'" => ['01', false],
+            'true' => [true, false],
+            'null' => [null, false],
+        ];
+    }
+
     /** @return array<string, array{array<string, mixed>|null, UserStanding}> */
     public static function rows(): array
     {
