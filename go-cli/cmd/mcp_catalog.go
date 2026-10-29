@@ -329,7 +329,7 @@ func rotatorRulesSchema() mcpProperty {
 			"redirect_url":      {Type: "string"},
 			"redirect_campaign": {},
 			"redirect_lp":       {},
-			"weight":            {Description: "0 to 100, on each destination of a split test."},
+			"weight":            {Description: "0 to 100, on each destination of a rule with more than one: the visitors are split by weight."},
 			"name":              {Type: "string"},
 		},
 	}
@@ -342,7 +342,7 @@ func rotatorRulesSchema() mcpProperty {
 			Properties: map[string]mcpProperty{
 				"id":        {Description: "Keeps this rule (its clicks stay its own)."},
 				"rule_name": {Type: "string"},
-				"splittest": {Description: "1 splits visitors between the destinations by weight; 0 (new rules) has one destination."},
+				"splittest": {Description: "1 shows the rule as a split test on Setup › Redirectors; 0 for new rules. The redirects do not read it: more than one destination is split by weight either way."},
 				"status":    {Description: "1 active (new rules), 0 paused."},
 				"criteria":  {Type: "array", Description: "At least one; all must match.", Items: &criterion},
 				"redirects": {Type: "array", Items: &destination},

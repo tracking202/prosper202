@@ -292,6 +292,41 @@ final class SyncRotatorRulesIntegrationTest extends TestCase
         self::assertContains("PUT rotators/$target/rules", $client->requests);
     }
 
+    /** @return array<string, array{bool}> */
+    public static function routes(): array
+    {
+        return ['as a set' => [true], 'one rule at a time' => [false]];
+    }
+
+    /**
+     * A source rule with two destinations and splittest 0, which the API
+     * stores and the redirects split by weight, reaches the target with its
+     * weights. The rule check refused it as sending every visitor to one
+     * destination, so the sync of its redirector failed.
+     *
+     * @dataProvider routes
+     */
+    public function testARuleSplitWithTheSwitchOffSyncsWithItsWeights(bool $ruleSetRoute): void
+    {
+        $source = self::rotator(self::SOURCE, 7300010);
+        self::setRules(self::SOURCE, $source, [[
+            'rule_name' => 'even', 'splittest' => 1,
+            'criteria' => [['type' => 'country', 'statement' => 'is', 'value' => 'ALL']],
+            'redirects' => [['redirect_url' => 'https://a.example/', 'weight' => 60], ['redirect_url' => 'https://b.example/', 'weight' => 40]],
+        ]]);
+        // As the API stores a rule sent with no splittest.
+        self::assertTrue(self::$db->query("UPDATE 202_rotator_rules SET splittest = 0 WHERE rotator_id = $source"), (string) self::$db->error);
+        $target = self::rotator(self::TARGET, 7300010);
+
+        [$result] = $this->sync($ruleSetRoute);
+
+        self::assertSame(0, $result['failed'], json_encode($result) ?: '');
+        self::assertSame(self::rules(self::SOURCE, $source), self::rules(self::TARGET, $target));
+        $synced = self::rotators(self::TARGET)->listRules($target)['data'][0];
+        self::assertSame(0, (int) $synced['splittest']);
+        self::assertSame(['60', '40'], array_map('strval', array_column($synced['redirects'], 'weight')));
+    }
+
     /**
      * An install from before 1.9.79 has no PUT /rotators/{id}/rules: its
      * rules are written one at a time, as before, and it stores them.

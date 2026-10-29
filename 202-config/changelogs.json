@@ -76,7 +76,11 @@
       "Fixed: Security. Changing a password left every browser kept signed in able to sign in again by its cookie, a stolen copy included. A new password (Personal settings, the reset link, My Account, Users, or the API) now ends them all; the browser making the change on Personal settings stays signed in. A browser already signed in stays signed in until it signs out or its session ends",
       "Fixed: The first page opened with only a remember-me cookie (Keep me signed in) ran without the user's roles, so a page such as My Account, Users sent the user away. It has them now",
       "Fixed: Setup › Traffic Sources refuses an account edit whose link names the account with more than its id (12abc), where it saved the change to account 12",
+<<<<<<< HEAD
+      "Fixed: The Redirector page no longer drops every destination but the first of a rule made through the API with several destinations and Split test off when you save; it shows the rule as the split test the redirect links make of it, with each destination's weight"
+=======
       "Fixed: p202 report losers and winners with --aff-campaign-id priced every click at a payout of 0 when they could not read the campaign's payout (a server error, a refused key, an unreachable server); they now fail with the error and what to do next. An answer with no payout in it is an error in every command that reads one, and a campaign whose payout is 0 is still priced at 0"
+>>>>>>> origin/1.9.79
     ]
   },
   "1.9.78": {

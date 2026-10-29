@@ -3555,8 +3555,8 @@ paths:
         transaction. It is checked as the set (`PUT /rotators/{id}/rules`)
         checks a rule and refused in the same words: a `rule_name`, at least
         one criterion (the value `ALL` matches every visitor) and at least
-        one redirect; one redirect unless it is a split test; a `weight` on
-        each redirect of a split test, at least one above 0. The redirects
+        one redirect; a `weight` on each redirect of a rule with more than
+        one, at least one above 0, whatever its `splittest`. The redirects
         read a rule with no criterion as every visitor, and this call wrote
         one when `criteria` was left out (before 1.9.79), sending all of the
         redirector's traffic to that rule.
@@ -3606,9 +3606,10 @@ paths:
         weight, so it decides nothing).
 
         Each rule needs a `rule_name`, at least one criterion (the value
-        `ALL` matches every visitor) and at least one redirect. A rule that
-        is not a split test has one redirect; each redirect of a split test
-        needs a `weight`, and at least one weight above 0. Every campaign and
+        `ALL` matches every visitor) and at least one redirect. Each redirect
+        of a rule with more than one needs a `weight`, and at least one
+        weight above 0: the redirects split such a rule's visitors by weight,
+        whatever its `splittest` says. Every campaign and
         landing page a redirect names must be one of your live ones. Each
         criterion's value is stored as the page stores it: split on commas
         and trimmed (`all`, in any case, as `ALL`); a device is lower case. Every key is
@@ -3741,8 +3742,8 @@ paths:
         What the body leaves out is kept as stored, and not checked again.
         The rule the write would leave is checked as the set checks one, kept
         parts included, and refused in the same words: it needs at least one
-        criterion and one redirect, one redirect unless it is a split test,
-        and a weight on each redirect of a split test. A rule stored with no
+        criterion and one redirect, and a weight on each redirect of a rule
+        with more than one, at least one above 0. A rule stored with no
         criterion (POST wrote one when `criteria` was left out, before
         1.9.79) is read by the redirects as every visitor, as it always was;
         a write that would leave it with none is a 422 saying so (send its
@@ -13908,6 +13909,11 @@ components:
           type: string
         splittest:
           type: integer
+          description: >-
+            1 shows the rule on Setup › Redirectors as a split test, each
+            redirect with its weight. The redirects do not read it: a rule
+            with more than one redirect splits its visitors by weight
+            either way, and the page shows such a rule as a split test.
         status:
           type: integer
         criteria:
@@ -13961,6 +13967,11 @@ components:
         splittest:
           type: integer
           default: 0
+          description: >-
+            1 shows the rule on Setup › Redirectors as a split test. The
+            redirects do not read it: a rule with more than one redirect
+            splits its visitors by weight either way, so each of its
+            redirects needs a weight, at least one above 0.
         status:
           type: integer
           default: 1
