@@ -14696,8 +14696,9 @@ components:
           maxLength: 72
           description: >-
             A new password. Every remember-me key the user holds is deleted
-            in the same write, so a browser kept signed in has to sign in
-            with it; a key that cannot be deleted leaves the old password
+            in the same write, and every browser signed in as the user is
+            signed out at its next request, so each has to sign in with it;
+            a key or session that cannot be ended leaves the old password
             and answers 500.
         current_password:
           type: string

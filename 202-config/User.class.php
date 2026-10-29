@@ -11,6 +11,9 @@ class User
     /** Whether that user may act, read with the row; null when no row was read. */
     private ?\Prosper202\User\UserStanding $standing = null;
 
+    /** The user's session generation, read with the row; null when there is none to compare. */
+    private ?int $generation = null;
+
     public function __construct($user_id)
     {
         try {
@@ -47,7 +50,7 @@ class User
         // installed, so no account (index.php and the setup pages load
         // connect.php before the tables exist).
         try {
-            $standing = \Prosper202\User\UserStanding::read(self::$db, $id);
+            [$standing, $generation] = \Prosper202\User\UserStanding::readWithGeneration(self::$db, $id);
         } catch (\Prosper202\Database\Exceptions\QueryException $e) {
             if ($e->getCode() !== 1146) {
                 throw $e;
@@ -56,6 +59,7 @@ class User
         }
         $this->userId = $id;
         $this->standing = $standing;
+        $this->generation = $generation;
         // A user who may not act holds no permission, whatever their roles.
         if ($standing->canAct()) {
             $this->loadRoles($id);
@@ -71,6 +75,16 @@ class User
     public function standingOf(int $userId): ?\Prosper202\User\UserStanding
     {
         return $this->userId === $userId ? $this->standing : null;
+    }
+
+    /**
+     * The user's session generation, as read when this object was built, for
+     * that user only; null when none was read (see standingOf()), or the
+     * database has no such column yet (before the 1.9.79 upgrade).
+     */
+    public function generationOf(int $userId): ?int
+    {
+        return $this->userId === $userId ? $this->generation : null;
     }
 
     protected function loadRoles($user_id)
