@@ -72,7 +72,7 @@ class AUTH
     // cookie) guessing the password toward a full account takeover.
     public const MAX_PASSWORD_REAUTH_FAILS = 5;
 
-    private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, up.user_id AS pref_user_id, up.user_slack_incoming_webhook FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted = 0 AND u.user_active = 1 LIMIT 1';
+    private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, u.user_session_generation, up.user_id AS pref_user_id, up.user_slack_incoming_webhook FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted = 0 AND u.user_active = 1 LIMIT 1';
     private static bool $passwordColumnChecked = false;
     private static bool $sessionHeartbeatRefreshed = false;
 
@@ -146,7 +146,8 @@ class AUTH
 
     /**
      * connect.php, once it has read the session's user (new User()): a
-     * session whose user may no longer act is ended there, before the page
+     * session whose user may no longer act, or which began before the user's
+     * password changed (sessionUserStands()), is ended there, before the page
      * reads anything from it, so no page shows or acts on it whether or not
      * it asks for a sign-in. Nothing is read here: where connect.php read no
      * row (the install, key and upgrade pages, which sign nobody in, or a
@@ -165,12 +166,14 @@ class AUTH
     }
 
     /**
-     * Whether the session's user may act (UserStanding), from the row $read
+     * Whether the session's user may act (UserStanding), and the session began
+     * at the user's current generation (SessionGeneration), from the row $read
      * (connect.php's User) holds for this request or, when it holds none for
      * this user, from the database now; never from an answer kept from an
      * earlier request, which would outlive the switch-off it is there to see.
-     * A session whose user may not act is ended. A read that fails throws: it
-     * is neither "may act" nor "signed out".
+     * A session whose user may not act is ended, and so is one from before a
+     * new password, a switch-off or a removal. A read that fails throws: it is
+     * neither "may act" nor "signed out".
      */
     private static function sessionUserStands(?\User $read): bool
     {
@@ -179,14 +182,56 @@ class AUTH
             self::endSession(null);
             return false;
         }
-        $standing = $read?->standingOf($userId)
-            ?? \Prosper202\User\UserStanding::read(DB::getInstance()->getConnection(), $userId);
+        $standing = $read?->standingOf($userId);
+        $generation = $read?->generationOf($userId);
+        if ($standing === null) {
+            [$standing, $generation] = \Prosper202\User\UserStanding::readWithGeneration(
+                DB::getInstance()->getConnection(),
+                $userId
+            );
+        }
         if (!$standing->canAct()) {
             self::endSession($userId);
             return false;
         }
+        // The change that counted the generation up revoked the user's keys
+        // in its own transaction; keys made since are a later sign-in's.
+        if ($generation !== null && self::sessionGeneration() !== $generation) {
+            self::endSession(null);
+            return false;
+        }
 
         return true;
+    }
+
+    /**
+     * The generation this session began at; 0 for a session from before
+     * 1.9.79, which holds none (every user is at 0 until a change), and -1,
+     * which no row holds, for a value no sign-in wrote.
+     */
+    private static function sessionGeneration(): int
+    {
+        $held = $_SESSION['user_session_generation'] ?? 0;
+
+        return is_int($held) && $held >= 0 ? $held : -1;
+    }
+
+    /**
+     * This browser changed its own password (Personal settings): it keeps its
+     * session by taking the generation the change counted up to, which every
+     * other session of the user does not hold. After the commit, in the same
+     * request.
+     */
+    public static function keepSessionAfterPasswordChange(int $generation): void
+    {
+        $writer = static function () use ($generation): void {
+            $_SESSION['user_session_generation'] = $generation;
+        };
+        if (function_exists('withWritableSession')) {
+            withWritableSession($writer);
+        } else {
+            $writer();
+        }
     }
 
     /**
@@ -503,6 +548,9 @@ class AUTH
             $_SESSION['user_timezone'] = $user_row['user_timezone'] ?? 'UTC';
             $_SESSION['user_mods_lb'] = $user_row['user_mods_lb'] ?? 0;
             $_SESSION['account_owner_id'] = $accountOwnerId;
+            // The generation the user is at; a later change counts it up, and
+            // connect.php ends a session still holding this one.
+            $_SESSION['user_session_generation'] = (int) ($user_row['user_session_generation'] ?? 0);
         };
 
         if (function_exists('withWritableSession')) {

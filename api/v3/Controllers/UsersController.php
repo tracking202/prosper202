@@ -281,9 +281,10 @@ class UsersController
         $types .= 'i';
 
         // Switched off, or given a new password, the user's remember-me keys
-        // go in the same transaction: a browser kept signed in must not sign
-        // back in when the user is switched on again, nor a stolen cookie
-        // outlive the password (RememberMeKeys).
+        // and open sessions end in the same transaction: a browser kept
+        // signed in must not sign back in when the user is switched on again,
+        // nor a stolen cookie or session outlive the password (RememberMeKeys,
+        // SessionGeneration).
         $revokes = $switchesOff || $changesPassword;
         $this->transaction(function () use ($sets, $types, $binds, $id, $revokes): void {
             $stmt = $this->prepare('UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?');
@@ -292,6 +293,7 @@ class UsersController
             $stmt->close();
             if ($revokes) {
                 \Prosper202\User\RememberMeKeys::revokeAll(new Connection($this->db), $id);
+                \Prosper202\User\SessionGeneration::bump(new Connection($this->db), $id);
             }
         });
 

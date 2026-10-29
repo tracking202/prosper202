@@ -87,6 +87,15 @@ final class RememberMeKeysRevokedTest extends TestCase
         'api/v3/Controllers/UsersController.php::update' => self::CHANGE,
     ];
 
+    /** Every statement that can write user_session_generation, path::function => why it only counts it up. */
+    private const GENERATION_WRITERS = [
+        '202-config/User/MysqlUserRepository.php::update' => 'a SET list of its allowed fields and the password',
+        '202-config/User/SessionGeneration.php::(file)' => 'SessionGeneration::BUMP, the constant bump() runs: + 1',
+        '202-config/User/UserDataPurge.php::deleteUser' => 'the soft delete, + 1',
+        '202-config/functions-account-ui.php::p202_account_save_user' => 'the page\'s own column literals',
+        'api/v3/Controllers/UsersController.php::update' => 'PROFILE_FIELDS and the password',
+    ];
+
     /** The pages that sign a browser out. */
     private const SIGN_OUTS = ['202-account/signout.php', '202-account/account.php'];
 
@@ -97,7 +106,7 @@ final class RememberMeKeysRevokedTest extends TestCase
         $found = [];
         $wrong = [];
         foreach ($files as $path => $source) {
-            foreach (self::writers($source, ['user_pass']) as [$function, $revokes, $line]) {
+            foreach (self::writers($source, ['user_pass']) as [$function, $revokes, $line, $bumps]) {
                 $key = "$path::$function";
                 $found[$key] = true;
                 $kind = self::PASSWORD_WRITERS[$key] ?? null;
@@ -109,6 +118,10 @@ final class RememberMeKeysRevokedTest extends TestCase
                     $wrong[] = "$key (line $line): listed as " . ($isChange ? 'a change' : 'a rehash')
                         . ($revokes ? ', and calls revokeAll()' : ', and does not call revokeAll()');
                 }
+                if ($bumps !== $isChange) {
+                    $wrong[] = "$key (line $line): listed as " . ($isChange ? 'a change' : 'a rehash')
+                        . ($bumps ? ', and ends the sessions' : ', and does not end the sessions (SessionGeneration)');
+                }
             }
         }
         $found = array_keys($found);
@@ -116,8 +129,9 @@ final class RememberMeKeysRevokedTest extends TestCase
         $listed = array_keys(self::PASSWORD_WRITERS);
         sort($listed);
         self::assertSame([], $wrong, "A password writer does not do what it is listed as:\n  " . implode("\n  ", $wrong)
-            . "\nA new password calls Prosper202\\User\\RememberMeKeys::revokeAll() in the same transaction"
-            . ' (PasswordChange::store() does both); a rehash of the password just verified at sign-in must not.');
+            . "\nA new password calls Prosper202\\User\\RememberMeKeys::revokeAll() and"
+            . ' Prosper202\\User\\SessionGeneration::bump() in the same transaction (PasswordChange::store() does'
+            . ' all three); a rehash of the password just verified at sign-in must do neither.');
         self::assertSame($listed, $found, 'The writers of user_pass changed. A new one is a change, which revokes'
             . " the user's remember-me keys in its transaction, or a rehash of the password the user has just"
             . ' signed in with, which must not; list it in PASSWORD_WRITERS as which, and remove one that no longer'
@@ -130,12 +144,16 @@ final class RememberMeKeysRevokedTest extends TestCase
         self::assertGreaterThan(500, count($files), 'the walk read the served tree');
         $found = [];
         $unrevoked = [];
+        $unended = [];
         foreach ($files as $path => $source) {
-            foreach (self::writers($source, self::STANDING) as [$function, $revokes, $line]) {
+            foreach (self::writers($source, self::STANDING) as [$function, $revokes, $line, $bumps]) {
                 $key = "$path::$function";
                 $found[$key] = true;
                 if (!$revokes && !array_key_exists($key, self::REVOKED_OTHERWISE)) {
                     $unrevoked[] = "$key (line $line)";
+                }
+                if (!$bumps) {
+                    $unended[] = "$key (line $line)";
                 }
             }
         }
@@ -145,8 +163,106 @@ final class RememberMeKeysRevokedTest extends TestCase
             . " and do not delete the user's remember-me keys:\n  " . implode("\n  ", $unrevoked)
             . "\nCall Prosper202\\User\\RememberMeKeys::revokeAll() in the same transaction when the write leaves the"
             . ' user unable to act (UserStanding::isActive()).');
+        self::assertSame([], $unended, "These write user_active or user_deleted, or a SET list built at run time,"
+            . " and do not end the user's open sessions:\n  " . implode("\n  ", $unended)
+            . "\nCall Prosper202\\User\\SessionGeneration::bump() beside revokeAll(), or count"
+            . ' user_session_generation up in the statement: a session idle through a switch-off would otherwise'
+            . ' go on once the user is switched on again.');
         self::assertSame(self::WRITERS, $found, 'The writers of user_active and user_deleted changed: a new one revokes'
             . ' the keys and goes in WRITERS, and one that no longer writes them leaves it.');
+    }
+
+    /**
+     * Every statement that writes user_session_generation counts it up by
+     * one: set to any other value (back to 0, or to what an old session
+     * holds) it would bring the sessions a change ended back. Run-time SET
+     * lists that could name it are pinned with the fields they write.
+     */
+    public function testTheSessionGenerationOnlyCountsUp(): void
+    {
+        $found = [];
+        $wrong = [];
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            foreach (self::writers($source, ['user_session_generation']) as [$function, , $line, , $sql]) {
+                $found["$path::$function"] = true;
+                if (!self::onlyCountsTheGenerationUp($sql)) {
+                    $wrong[] = "$path::$function (line $line)";
+                }
+            }
+        }
+        $found = array_keys($found);
+        sort($found);
+        $listed = array_keys(self::GENERATION_WRITERS);
+        sort($listed);
+        self::assertSame([], $wrong, "These set user_session_generation to something other than itself + 1:\n  "
+            . implode("\n  ", $wrong) . "\nCount it up with Prosper202\\User\\SessionGeneration::bump().");
+        self::assertSame($listed, $found, 'The writers of user_session_generation changed: list a new one in'
+            . ' GENERATION_WRITERS with why it only counts it up.');
+    }
+
+    /** Whether every assignment of user_session_generation in assembled SQL is itself + 1. */
+    private static function onlyCountsTheGenerationUp(string $sql): bool
+    {
+        $assigned = preg_match_all('/`?user_session_generation`?\s*=/i', $sql);
+        $countedUp = preg_match_all(
+            '/`?user_session_generation`?\s*=\s*`?user_session_generation`?\s*\+\s*1\b/i',
+            $sql
+        );
+
+        return $assigned === $countedUp;
+    }
+
+    /**
+     * Whether a writer ends the sessions, and whether it only counts the
+     * generation up, executed on planted sources.
+     *
+     * @dataProvider generationShapes
+     */
+    public function testTheScanReadsHowAWriterEndsTheSessions(string $code, bool $ends, bool $countsUp): void
+    {
+        $writers = self::writers("<?php\n" . $code . "\n", ['user_active', 'user_session_generation']);
+        self::assertCount(1, $writers, $code);
+        self::assertSame([$ends, $countsUp], [$writers[0][3], self::onlyCountsTheGenerationUp($writers[0][4])], $code);
+    }
+
+    /** @return array<string, array{string, bool, bool}> */
+    public static function generationShapes(): array
+    {
+        $wrap = static fn (string $body): string => 'function f($conn, $id) { ' . $body . ' }';
+        $off = "\$sql = 'UPDATE 202_users SET user_active = 0 WHERE user_id = ?';";
+
+        return [
+            'neither' => [$wrap($off), false, true],
+            'bump()' => [$wrap($off . ' \\Prosper202\\User\\SessionGeneration::bump($conn, $id);'), true, true],
+            'bump(), imported' => [
+                "use Prosper202\\User\\SessionGeneration;\n" . $wrap($off . ' SessionGeneration::bump($conn, $id);'),
+                true,
+                true,
+            ],
+            'another class' => [$wrap($off . ' MySessionGeneration::bump($conn, $id);'), false, true],
+            'a method of the name' => [$wrap($off . ' $generation->bump($conn, $id);'), false, true],
+            'counted up in the statement' => [
+                $wrap("\$sql = 'UPDATE 202_users SET user_active = 0,"
+                    . " user_session_generation = user_session_generation + 1 WHERE user_id = ?';"),
+                true,
+                true,
+            ],
+            'set to 0' => [
+                $wrap("\$sql = 'UPDATE 202_users SET user_active = 1, user_session_generation = 0';"),
+                false,
+                false,
+            ],
+            'counted down' => [
+                $wrap("\$sql = 'UPDATE 202_users SET user_session_generation = user_session_generation - 1';"),
+                false,
+                false,
+            ],
+            'counted up by two' => [
+                $wrap("\$sql = 'UPDATE 202_users SET user_session_generation = user_session_generation + 2';"),
+                false,
+                false,
+            ],
+        ];
     }
 
     public function testTheDeleteCascadeRevokesTheKeys(): void
@@ -385,10 +501,12 @@ final class RememberMeKeysRevokedTest extends TestCase
 
     /**
      * The writers of any of $columns a source holds: [function, whether that
-     * function revokes, line].
+     * function revokes the keys, line, whether it ends the sessions (calls
+     * SessionGeneration::bump() or counts the generation up in the statement),
+     * the statement's SQL as assembled].
      *
      * @param list<string> $columns
-     * @return list<array{string, bool, int}>
+     * @return list<array{string, bool, int, bool, string}>
      */
     private static function writers(string $source, array $columns): array
     {
@@ -418,10 +536,21 @@ final class RememberMeKeysRevokedTest extends TestCase
                 }
             }
             [$name, $open, $close] = $scope ?? ['(file)', 0, count($t)];
-            $writers[] = [$name, self::revokesBetween($t, $open, $close, $source), $x[2]];
+            $sql = self::assemble($t, $start);
+            $bumps = self::callsBetween($t, $open, $close, $source, 'Prosper202\\User\\SessionGeneration', 'bump')
+                || self::countsTheGenerationUp($sql);
+            $writers[] = [$name, self::revokesBetween($t, $open, $close, $source), $x[2], $bumps, $sql];
         }
 
         return $writers;
+    }
+
+    /** Whether assembled SQL counts the session generation up, in its own SET list. */
+    private static function countsTheGenerationUp(string $sql): bool
+    {
+        $countUp = '/(?:SET|,)\s*`?user_session_generation`?\s*=\s*`?user_session_generation`?\s*\+\s*1\b/i';
+
+        return preg_match($countUp, $sql) === 1;
     }
 
     /**
@@ -552,21 +681,38 @@ final class RememberMeKeysRevokedTest extends TestCase
      */
     private static function revokesBetween(array $t, int $open, int $close, string $source): bool
     {
+        return self::callsBetween($t, $open, $close, $source, 'Prosper202\\User\\RememberMeKeys', 'revokeAll');
+    }
+
+    /**
+     * Whether a call to $class::$method() sits between two tokens, the class
+     * name read as PHP resolves it.
+     *
+     * @param list<string|array{int, string, int}> $t
+     */
+    private static function callsBetween(
+        array $t,
+        int $open,
+        int $close,
+        string $source,
+        string $class,
+        string $method
+    ): bool {
         [$namespace, $imports] = self::names($source);
         for ($i = $open; $i < $close; $i++) {
             $x = $t[$i];
             if (
                 !is_array($x) || self::text($t[$i + 1] ?? '') !== '::'
-                || strcasecmp(self::text($t[$i + 2] ?? ''), 'revokeAll') !== 0 || self::text($t[$i + 3] ?? '') !== '('
+                || strcasecmp(self::text($t[$i + 2] ?? ''), $method) !== 0 || self::text($t[$i + 3] ?? '') !== '('
             ) {
                 continue;
             }
-            $class = match ($x[0]) {
+            $named = match ($x[0]) {
                 T_NAME_FULLY_QUALIFIED => ltrim($x[1], '\\'),
                 T_STRING => $imports[strtolower($x[1])] ?? ($namespace === '' ? $x[1] : $namespace . '\\' . $x[1]),
                 default => null,
             };
-            if ($class !== null && strcasecmp($class, 'Prosper202\\User\\RememberMeKeys') === 0) {
+            if ($named !== null && strcasecmp($named, $class) === 0) {
                 return true;
             }
         }

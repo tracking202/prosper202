@@ -261,7 +261,13 @@ final class UserDataPurge
                     $this->run($sql, $userId);
                 }
                 $unlinked = (new AppDataPurge($this->db))->purgeUser($userId);
-                $this->run('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?', $userId);
+                // Every open session of the user ends with the delete
+                // (SessionGeneration), so a row restored by hand stays signed out.
+                $this->run(
+                    'UPDATE 202_users SET user_deleted = 1,'
+                        . ' user_session_generation = user_session_generation + 1 WHERE user_id = ?',
+                    $userId
+                );
 
                 return [$exportFileNames, $unlinked];
             });

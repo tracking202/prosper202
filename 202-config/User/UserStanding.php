@@ -26,8 +26,20 @@ enum UserStanding
     case Deleted;
     case Missing;
 
-    /** The row of the user, read from the primary: a replica's copy can predate the switch-off. */
-    public const string READ = 'SELECT user_active, user_deleted FROM 202_users WHERE user_id = ? LIMIT 1';
+    /**
+     * The row of the user, read from the primary: a replica's copy can predate
+     * the switch-off. With the session generation (SessionGeneration), in the
+     * same read.
+     */
+    public const string READ = 'SELECT user_active, user_deleted, user_session_generation'
+        . ' FROM 202_users WHERE user_id = ? LIMIT 1';
+
+    /**
+     * The same, on a database whose upgrade has not run yet: the files are
+     * deployed first, and 202_users has no user_session_generation until the
+     * 1.9.79 rung adds it.
+     */
+    public const string READ_BEFORE_UPGRADE = 'SELECT user_active, user_deleted FROM 202_users WHERE user_id = ? LIMIT 1';
 
     /** @param array<string, mixed>|null $row the user's row (user_active, user_deleted), null for none */
     public static function ofRow(?array $row): self
@@ -60,15 +72,50 @@ enum UserStanding
      */
     public static function read(\mysqli $db, int $userId): self
     {
+        return self::readWithGeneration($db, $userId)[0];
+    }
+
+    /**
+     * The user's standing and session generation, in one read. The generation
+     * is null when there is none to compare: no row, or a database the 1.9.79
+     * upgrade has not reached yet (then one more read, without the column,
+     * on that request only). A read that fails otherwise throws.
+     *
+     * @return array{self, ?int}
+     * @throws QueryException with the server's errno as its code where it has one
+     */
+    public static function readWithGeneration(\mysqli $db, int $userId): array
+    {
         if ($userId <= 0) {
-            return self::Missing;
+            return [self::Missing, null];
         }
+        try {
+            $row = self::fetch($db, self::READ, $userId);
+        } catch (QueryException $e) {
+            // 1054: unknown column. Only this one is read without it.
+            if ($e->getCode() !== 1054 || !str_contains($e->getMessage(), 'user_session_generation')) {
+                throw $e;
+            }
+            return [self::ofRow(self::fetch($db, self::READ_BEFORE_UPGRADE, $userId)), null];
+        }
+        $generation = $row['user_session_generation'] ?? null;
+
+        return [self::ofRow($row), is_numeric($generation) ? (int) $generation : null];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     * @throws QueryException
+     */
+    private static function fetch(\mysqli $db, string $sql, int $userId): ?array
+    {
         $failed = 'Reading whether user ' . $userId . ' may act failed';
         try {
             $conn = new Connection($db);
-            $stmt = $conn->prepareWrite(self::READ);
+            $stmt = $conn->prepareWrite($sql);
             $conn->bind($stmt, 'i', [$userId]);
-            $row = $conn->fetchOne($stmt);
+
+            return $conn->fetchOne($stmt);
         } catch (QueryException $e) {
             throw new QueryException($failed . ': ' . $e->getMessage(), self::errno($e), $e);
         } catch (\mysqli_sql_exception $e) {
@@ -79,8 +126,6 @@ enum UserStanding
                 $e
             );
         }
-
-        return self::ofRow($row);
     }
 
     /** Whether a value written to user_active leaves the user active. */

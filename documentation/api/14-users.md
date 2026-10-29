@@ -73,12 +73,12 @@ API keys are masked after the first 8 characters in list responses. The full key
 | ----- | ---- | -------- | ----------- |
 | `user_name` | string | Yes | Username, 1-50 characters; another account's (in any case) is `409`. Changing it on `PUT` renames the account, as the Users page does: it needs a user you may manage, even when that is you |
 | `user_email` | string | Yes | Email address, at most 100 characters; another account's is `422` |
-| `user_pass` | string | Yes (create) | Password, 8-72 characters (bcrypt reads only the first 72 bytes), hashed server-side. On an update, every remember-me key the user holds is deleted in the same write, so no browser kept signed in ("Keep me signed in") signs in with a cookie from before the new password; a key that cannot be deleted leaves the old password and answers `500` |
+| `user_pass` | string | Yes (create) | Password, 8-72 characters (bcrypt reads only the first 72 bytes), hashed server-side. On an update, every remember-me key the user holds is deleted in the same write, so no browser kept signed in ("Keep me signed in") signs in with a cookie from before the new password, and every browser signed in as the user is signed out at its next request; a key or session that cannot be ended leaves the old password and answers `500` |
 | `current_password` | string | When you change your **own** `user_pass` | Your present password, as Personal settings asks for it: a key that is not the password must not be enough to take over the sign-in. Missing or wrong is `422` naming `current_password`. A Super user or Admin resetting another user's password does not send it |
 | `user_fname` | string | No | First name, at most 50 characters |
 | `user_lname` | string | No | Last name, at most 50 characters |
 | `user_timezone` | string | No | A PHP time zone name such as `America/New_York`, as Personal settings offers them (default: UTC); anything else is `422` |
-| `user_active` | integer | No | `1` can sign in and use its API keys (default), `0` cannot: its keys answer `401`, and a browser it is signed in on is signed out at its next request. Every remember-me key the user holds is deleted in the same write, so no browser kept signed in signs back in when the user is `1` again; a key that cannot be deleted leaves the user as they were and answers `500`. Any other value is `422` rather than read as `0` |
+| `user_active` | integer | No | `1` can sign in and use its API keys (default), `0` cannot: its keys answer `401`, and a browser it is signed in on is signed out at its next request, also one that makes no request until the user is `1` again. Every remember-me key the user holds is deleted in the same write, so no browser kept signed in signs back in when the user is `1` again; a key that cannot be deleted leaves the user as they were and answers `500`. Any other value is `422` rather than read as `0` |
 
 ## Preference Fields
 
@@ -312,7 +312,9 @@ curl -X PUT https://your-domain.com/api/v3/users/1 \
 echo, at a terminal or as two lines of piped stdin (current first).
 
 A new password, set here, on Personal settings, on Account › Users or through
-the reset link, deletes every remember-me key of the user: a browser kept
-signed in, or a copy of its cookie, has to sign in with the new password.
-Personal settings keeps the browser making the change signed in. A rehash
-of the same password as the user signs in is not a change and keeps them.
+the reset link, deletes every remember-me key of the user and signs out every
+browser signed in as them at its next request: a browser kept signed in, a
+copy of its cookie, or a session someone already has, has to sign in with the
+new password. Personal settings keeps the browser making the change signed
+in; an admin's change keeps the admin's. A rehash of the same password as the
+user signs in is not a change and ends nothing.

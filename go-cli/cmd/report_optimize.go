@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,22 +59,41 @@ func campaignIDError(id string) error {
 		WithHint("`p202 campaign list` shows the internal ids.")
 }
 
-// fetchCampaignPayout returns the default payout for a campaign (internal id).
+// fetchCampaignPayout returns the default payout for a campaign (internal id): a JSON number, or a numeric string from
+// a server before 1.9.77. A payout it cannot read is an error, never 0, which would price every click as worthless.
 func fetchCampaignPayout(c *api.Client, campaignID string) (float64, error) {
 	if !isAllDigits(campaignID) {
 		return 0, campaignIDError(campaignID)
 	}
 	data, err := c.Get("campaigns/"+campaignID, nil)
 	if err != nil {
+		err = fmt.Errorf("reading campaign %s's payout: %w", campaignID, err)
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			return 0, withHint(err, "This account has no campaign %s (or it is deleted): `p202 campaign list` shows the internal ids.", campaignID)
+		}
 		return 0, err
 	}
 	var resp struct {
 		Data map[string]interface{} `json:"data"`
 	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return 0, err
+	var payout float64
+	var why string
+	if err = json.Unmarshal(data, &resp); err != nil {
+		why = err.Error()
+	} else if resp.Data == nil {
+		why = "it has no data object"
+	} else if v := resp.Data["aff_campaign_payout"]; v == nil {
+		why = "it has no aff_campaign_payout" // the column is NOT NULL: absent or null is not a campaign record
+	} else if payout, err = parseFiniteFloat(v); err != nil {
+		why = "aff_campaign_payout is " + err.Error()
 	}
-	return toFloat(resp.Data["aff_campaign_payout"]), nil
+	if why != "" {
+		return 0, &CLIError{Category: "server", ExitCode: ExitServer, Cause: err,
+			Message: fmt.Sprintf("the server's answer to GET campaigns/%s has no payout to read (%s)", campaignID, why),
+			Hint:    fmt.Sprintf("`p202 campaign get %s --json` shows what it sent; check the server with `p202 system health`.", campaignID)}
+	}
+	return payout, nil
 }
 
 // breakdownReadRows bounds what a command that ranks, sums or picks breakdown rows reads: ten pages, each a full
@@ -171,19 +190,20 @@ func coversFirstRowsNote(dimension, order string) string {
 }
 
 // pageJSON is rows as a command's answer, with what the breakdown said about the rows after them.
-func pageJSON(rows []map[string]interface{}, page map[string]interface{}) []byte {
+// A row JSON cannot carry (a figure that is not a finite number) is the command's error; printed instead, the command
+// printed nothing and exited 0.
+func pageJSON(rows []map[string]interface{}, page map[string]interface{}) ([]byte, error) {
 	out := map[string]interface{}{"data": rows}
 	for k, v := range page {
 		out[k] = v
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
-		// Returning nil here would render as no output at all; render() reports
-		// the empty payload, so add the cause.
-		fmt.Fprintf(os.Stderr, "Error encoding rows for output: %v\n", err)
-		return nil
+		return nil, &CLIError{Category: "server", ExitCode: ExitServer, Cause: err,
+			Message: fmt.Sprintf("the rows could not be encoded as JSON (%v)", err),
+			Hint:    "JSON carries only finite numbers, and a figure the server sent is out of range, or too large to compute with. Check the server with `p202 system health`."}
 	}
-	return b
+	return b, nil
 }
 
 // enrichBreakeven adds click_conv_rate, breakeven_cpc, margin and a verdict to each row, and changes none of the
@@ -240,9 +260,23 @@ func round(f float64, places int) float64 {
 	return math.Round(f*p) / p
 }
 
-func rowsToJSON(rows []map[string]interface{}) []byte {
+// rowsToJSON encodes rows as pageJSON does, with nothing beside them.
+func rowsToJSON(rows []map[string]interface{}) ([]byte, error) {
 	return pageJSON(rows, nil)
 }
+
+// renderRows prints rows as rowsToJSON encodes them, or returns its error having printed nothing.
+func renderRows(rows []map[string]interface{}) error {
+	out, err := rowsToJSON(rows)
+	if err != nil {
+		return err
+	}
+	render(out)
+	return nil
+}
+
+// breakdownFiguresHint is the next step when a ranking's figures cannot be encoded.
+const breakdownFiguresHint = "A figure in the server's breakdown is out of range; `p202 report breakdown --json` with the same flags shows what it sent."
 
 var reportBreakevenCmd = &cobra.Command{
 	Use:   "breakeven",
@@ -251,7 +285,8 @@ var reportBreakevenCmd = &cobra.Command{
 		"breakeven_cpc = campaign payout × (conversions / clicks); margin = breakeven_cpc − avg_cpc.\n" +
 		"click_conv_rate is conversions / clicks × 100, the rate breakeven_cpc uses; every other figure is the\n" +
 		"breakdown's, unchanged (conv_rate is conversions / click-throughs, which differs on landing-page traffic).\n" +
-		"Requires --aff-campaign-id (the INTERNAL id from `campaign list`) to read the payout.\n\n" +
+		"Requires --aff-campaign-id (the INTERNAL id from `campaign list`) to read the payout; a payout that\n" +
+		"cannot be read fails the command, never reads as 0.\n\n" +
 		"One page, as in `report breakdown` (--limit, --offset), ranked by margin; truncated: true says rows remain.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
@@ -312,7 +347,11 @@ var reportBreakevenCmd = &cobra.Command{
 		if resp.Offset != nil {
 			page["offset"] = *resp.Offset
 		}
-		render(pageJSON(rows, page))
+		out, err := pageJSON(rows, page)
+		if err != nil {
+			return withHint(err, "%s", breakdownFiguresHint)
+		}
+		render(out)
 		noteForPeople(cmd, breakdownMoreRowsNote(data, params, ", most clicks first (each page ranked by margin)"))
 		return nil
 	},
@@ -843,7 +882,9 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			case payoutFlag > 0:
 				payout = payoutFlag
 			case campaignID != "":
-				payout, _ = fetchCampaignPayout(client, campaignID)
+				if payout, err = fetchCampaignPayout(client, campaignID); err != nil {
+					return err
+				}
 			}
 
 			rows, truncated, err := fetchBreakdownRows(client, params, breakdownReadRows)
@@ -925,29 +966,33 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			} else if payoutFlag > 0 && len(picked) > 0 {
 				notes = append(notes, salesNote)
 			}
+			listed := make([]map[string]interface{}, 0, len(picked))
+			for _, t := range picked {
+				listed = append(listed, t.row)
+			}
+			netField := "total_net"
+			if payoutFlag > 0 {
+				netField = "payout_net"
+			}
+			sortRowsBy(listed, netField, !wantWinners) // losers: worst first; winners: best first
+			// The classic bucket first (CUT / SCALE), then the rows the attribution check held back (TEST / CLOSER).
+			first := "CUT"
+			if wantWinners {
+				first = "SCALE"
+			}
+			sort.SliceStable(listed, func(i, j int) bool { return listed[i]["bucket"] == first && listed[j]["bucket"] != first })
+			// Encoded before the notes, so a failure leaves stderr the error alone.
+			out, err := pageJSON(listed, map[string]interface{}{"truncated": truncated})
+			if err != nil {
+				return withHint(err, "%s", breakdownFiguresHint)
+			}
 			for _, n := range notes {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
 			}
 			if truncated {
 				noteForPeople(cmd, coversFirstRowsNote(params["breakdown"], "most clicks first"))
 			}
-			listed := make([]map[string]interface{}, 0, len(picked))
-			for _, t := range picked {
-				listed = append(listed, t.row)
-			}
-			out := listed
-			netField := "total_net"
-			if payoutFlag > 0 {
-				netField = "payout_net"
-			}
-			sortRowsBy(out, netField, !wantWinners) // losers: worst first; winners: best first
-			// The classic bucket first (CUT / SCALE), then the rows the attribution check held back (TEST / CLOSER).
-			first := "CUT"
-			if wantWinners {
-				first = "SCALE"
-			}
-			sort.SliceStable(out, func(i, j int) bool { return out[i]["bucket"] == first && out[j]["bucket"] != first })
-			render(pageJSON(out, map[string]interface{}{"truncated": truncated}))
+			render(out)
 			return nil
 		},
 	}
@@ -1076,8 +1121,8 @@ func init() {
 	losers := triageCmd("losers", "Rows to CUT: over-bid keywords/geos and zero-conversion spend; rows that start sales come back as TEST", false)
 	losers.Long = "Rows to CUT from the classic (last-click) report: zero conversions with spend, or CPC above break-even.\n" +
 		"Break-even is --max-cpc, or a payout × the row's own conversions per click: --payout (your revenue per conversion) or\n" +
-		"the payout of --aff-campaign-id. Without one, only zero-conversion spend is CUT: a row that sells at a loss is\n" +
-		"WATCH and isn't listed. --payout doesn't filter the report, so the attribution check below still runs, and it\n" +
+		"the payout of --aff-campaign-id (a payout that cannot be read fails the command). Without one, only\n" +
+		"zero-conversion spend is CUT: a row that sells at a loss is WATCH and isn't listed. --payout doesn't filter the report, so the attribution check below still runs, and it\n" +
 		"values every sale the command reports at that payout: payout_net, and the first-touch ROI below. The classic report\n" +
 		"counts a converted click once however many sales it had, so the check also reads the Last touch model, whose\n" +
 		"credits count each row's sales, and values the rows it reads per sale (a stderr note says when it can't).\n\n" +

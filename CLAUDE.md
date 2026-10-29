@@ -378,6 +378,17 @@ setting it; the other tables that keep `updated_at` are not held, and some
 of their writers do not (a model's default cleared, an app's icon stored).
 Writing a stamped row means writing its stamp.
 
+And a session is a credential the password does not reach: revoking the
+keys left every browser already signed in signed in, so whoever had used a
+stolen cookie kept that session through the owner's new password (measured
+live). Ending something that holds no state on the server needs state to
+compare: each session holds the user's session generation from its
+sign-in, every change that ends sign-ins counts the row's up in its
+transaction, and connect.php compares the two in the read it already makes.
+A counter, not a time, so no same-second race and no clock to skew.
+`RememberMeKeysRevokedTest` holds every key-revoking writer to counting it
+up, the rehash to not, and every write of the column to `+ 1`.
+
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
 

@@ -1298,6 +1298,22 @@ p202 report weekpart --sort roi --sort-dir DESC --country-id 223
 | `-s, --sort`    | day_of_week  | Sort by: day_of_week, total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa |
 | `--sort-dir`    | ASC          | Sort direction: ASC or DESC |
 
+### Break-even, losers and winners
+
+```bash
+p202 report breakeven --aff-campaign-id 12 --breakdown keyword --period last30
+p202 report losers --payout 160 --breakdown ppc_account --period last30
+p202 report winners --aff-campaign-id 12 --breakdown country
+```
+
+Each prices the breakdown's rows against a break-even CPC: `--max-cpc`, or a payout × the row's conversions per
+click. The payout is `--payout` (losers and winners) or the payout of the campaign `--aff-campaign-id` names, read
+with `GET /campaigns/{id}` unless `--max-cpc` or `--payout` is given. A payout that cannot be read (a 5xx, a key or
+role the server refuses, no such campaign, an unreachable server, an answer with no `aff_campaign_payout`) fails the
+command with that error's category, exit code and hint before any row is read; it is never read as 0, which would
+price every click at nothing. A campaign whose payout is 0 is priced at 0. Rows that JSON cannot carry (a figure the
+server sent too large to compute with) fail the command with exit 4 and a hint, and nothing is printed.
+
 ## Forecasting
 
 `p202 forecast` projects any tracked metric forward from its history, entirely on the client, with calibrated prediction bands. Full guide with worked examples: [documentation/cli/11-forecasting.md](../documentation/cli/11-forecasting.md).
@@ -1381,10 +1397,11 @@ sends the visitor), and it is written in one transaction or not at all. A rule
 sent with its `id` keeps it (its clicks stay its own), and so do criteria and
 destinations sent with theirs; a rule without an `id` is added; a rule left out
 is removed (the role needs `remove_rotator_rule`). A rule needs a `rule_name`,
-at least one criterion (`ALL` matches everyone) and at least one destination; a
-split test (`splittest` 1) needs a `weight` on each destination, and a rule
-that is not one has one destination. A kept rule sent without `splittest` or
-`status` keeps its own.
+at least one criterion (`ALL` matches everyone) and at least one destination,
+and a rule with more than one destination a `weight` on each, at least one
+above 0: the redirects split its visitors by weight whatever its `splittest`
+says (`splittest` 1 shows the rule as a split test on Setup › Redirectors). A
+kept rule sent without `splittest` or `status` keeps its own.
 
 | Flag        | Description |
 |-------------|-------------|
@@ -1459,9 +1476,9 @@ p202 rotator rule-update 5 12 \
 | `--redirects-json` | Redirects as JSON array    |
 
 What the command does not send, the rule keeps. The rule it would leave is
-checked as `set-rules` checks one: `--splittest 0` on a rule with two redirects
-is refused, and an empty `--criteria-json` or `--redirects-json` list is
-refused before any request. A rule stored with no criterion by an older
+checked as `set-rules` checks one: a rule left with two redirects needs a
+weight on each, whatever `--splittest` says, and an empty `--criteria-json` or
+`--redirects-json` list is refused before any request. A rule stored with no criterion by an older
 `rule-create` matches every visitor; any update that would leave it with none,
 a rename included, is refused until it has one (the value `ALL` keeps it on
 every visitor), or it is deleted.
@@ -1653,7 +1670,7 @@ p202 user update 1 --user-fname "Jane" --user-lname "Doe"
 p202 user delete 2
 ```
 
-When creating a user without `--user-pass`, the CLI asks for the password without echo (twice, so a typo is caught), or reads it as one line of stdin when piped. To change a password on update, use `--set-password` (the same prompt or pipe); changing your **own** password also needs `--current-password`, read first. A new password ends every browser the user is kept signed in on ("Keep me signed in"): their remember-me keys are deleted with it. A `--user-pass` value works on both but stays in shell history.
+When creating a user without `--user-pass`, the CLI asks for the password without echo (twice, so a typo is caught), or reads it as one line of stdin when piped. To change a password on update, use `--set-password` (the same prompt or pipe); changing your **own** password also needs `--current-password`, read first. A new password ends every browser the user is signed in on, those kept signed in ("Keep me signed in") included: their sessions end at their next request and their remember-me keys are deleted with it. A `--user-pass` value works on both but stays in shell history.
 
 | Flag              | Required (create) | Description         |
 |-------------------|-------------------|---------------------|

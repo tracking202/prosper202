@@ -244,6 +244,14 @@ $destination = static function (array $row, string $prefix) use ($campaignNames,
 	return 'nowhere yet';
 };
 
+/**
+ * Whether a rule is shown as a split test. The redirects split a rule with
+ * more than one destination by weight whatever its splittest says (the API
+ * stores such rules with 0), and the editor keeps only the first destination
+ * of a rule it shows as not one: its Save would remove the rest.
+ */
+$isSplit = static fn (array $rule, array $redirects): bool => !empty($rule['splittest']) || count($redirects) > 1;
+
 $selectedId = (int) ($_GET['rotator_id'] ?? 0);
 $selected = null;
 foreach ($rotators as $rotator) {
@@ -287,9 +295,9 @@ $redirectRow = static function (array $redirect) use ($campaignOptions, $pageOpt
 		. '</div>';
 };
 
-$ruleCard = static function (array $rule, array $criteria, array $redirects, bool $removable) use ($criterionRow, $redirectRow): string {
+$ruleCard = static function (array $rule, array $criteria, array $redirects, bool $removable) use ($criterionRow, $redirectRow, $isSplit): string {
 	$ruleKey = isset($rule['id']) ? (string) $rule['id'] : 'new';
-	$split = !empty($rule['splittest']);
+	$split = $isSplit($rule, $redirects);
 	$inactive = isset($rule['status']) && (string) $rule['status'] === '0';
 	if ($criteria === []) {
 		$criteria = [[]];
@@ -411,14 +419,15 @@ if ($error) {
 												static fn (array $c): string => \Prosper202\Rotator\Criterion::describe((string) $c['type'], (string) $c['statement'], $c['value'], $criterionTypes),
 												$criteriaByRule[$ruleId] ?? []
 											);
+											$split = $isSplit($rule, $redirectsByRule[$ruleId] ?? []);
 											$targets = array_map(
-												static fn (array $r): string => $destination($r, 'redirect_') . ((int) $rule['splittest'] === 1 && $r['weight'] !== null ? ' (weight ' . $r['weight'] . ')' : ''),
+												static fn (array $r): string => $destination($r, 'redirect_') . ($split && $r['weight'] !== null ? ' (weight ' . $r['weight'] . ')' : ''),
 												$redirectsByRule[$ruleId] ?? []
 											); ?>
 											<li class="p202-list__item">
 												<span class="p202-list__name"><?php echo p202_setup_e($rule['rule_name']); ?></span>
 												<?php if ((string) $rule['status'] === '0') { ?><span class="p202-pill p202-pill--warn">inactive</span><?php } ?>
-												<?php if ((int) $rule['splittest'] === 1) { ?><span class="p202-pill">split test</span><?php } ?>
+												<?php if ($split) { ?><span class="p202-pill">split test</span><?php } ?>
 												<span class="p202-list__meta">If <?php echo p202_setup_e($conditions === [] ? 'any visitor (no criteria)' : implode(' and ', $conditions)); ?> · to <?php echo p202_setup_e($targets === [] ? 'nowhere yet' : implode(', ', $targets)); ?></span>
 											</li>
 										<?php } ?>

@@ -55,6 +55,14 @@ final class SessionSignInPathsTest extends TestCase
     private const IDENTITY = ['user_id', 'user_own_id', 'user_name', 'session_fingerprint'];
 
     /**
+     * The generation a session began at (SessionGeneration): written by the
+     * sign-in, and by AUTH::keepSessionAfterPasswordChange() for the browser
+     * that changed its own password. Written anywhere else, a stale session
+     * could be given the current one and outlive the change.
+     */
+    private const GENERATION = 'user_session_generation';
+
+    /**
      * Files that open a session other than connect.php or after it, each with why
      * no session's identity is read there unchecked.
      */
@@ -334,6 +342,27 @@ final class SessionSignInPathsTest extends TestCase
                 "class X { function begin_user_session() { \$_SESSION['user_id'] = 1; } }",
                 true,
             ],
+            'the generation, by a page' => ["\$_SESSION['user_session_generation'] = 7;", true],
+            'the generation, counted up by a page' => ["\$_SESSION['user_session_generation']++;", true],
+            'the generation, by begin_user_session' => [
+                "class AUTH { public static function begin_user_session(array \$r): void {"
+                . " \$_SESSION['user_session_generation'] = 1; } }",
+                false,
+            ],
+            'the generation, by keepSessionAfterPasswordChange' => [
+                "class AUTH { public static function keepSessionAfterPasswordChange(int \$g): void {"
+                . " \$w = static function () use (\$g): void { \$_SESSION['user_session_generation'] = \$g; }; } }",
+                false,
+            ],
+            'the generation, by another method of AUTH' => [
+                "class AUTH { public static function other(int \$g): void {"
+                . " \$_SESSION['user_session_generation'] = \$g; } }",
+                true,
+            ],
+            'the generation, handed to AUTH\'s writer' => [
+                self::writer("self::writeSessionValue('user_session_generation', 5);"),
+                true,
+            ],
         ];
     }
 
@@ -559,6 +588,7 @@ final class SessionSignInPathsTest extends TestCase
         // is handed: held below to a literal that is not an identity key.
         $writer = self::functionBody($t, 'AUTH', 'updateSession');
         $writeValue = self::functionBody($t, 'AUTH', 'writeSessionValue');
+        $keep = self::functionBody($t, 'AUTH', 'keepSessionAfterPasswordChange');
         $inside = static fn (int $i, ?array $range): bool => $range !== null && $i > $range[0] && $i < $range[1];
         $foreachTargets = [];
         foreach ($t as $i => $x) {
@@ -586,7 +616,7 @@ final class SessionSignInPathsTest extends TestCase
                     if (
                         !is_array($key) || $key[0] !== T_CONSTANT_ENCAPSED_STRING
                         || self::text($t[$i + 3] ?? '') !== ','
-                        || in_array(substr($key[1], 1, -1), self::IDENTITY, true)
+                        || in_array(substr($key[1], 1, -1), [...self::IDENTITY, self::GENERATION], true)
                     ) {
                         $writes[] = $x[2];
                     }
@@ -633,6 +663,8 @@ final class SessionSignInPathsTest extends TestCase
                 continue;
             }
             if ($key === null || in_array($key, self::IDENTITY, true)) {
+                $writes[] = $x[2];
+            } elseif ($key === self::GENERATION && !$inside($i, $keep)) {
                 $writes[] = $x[2];
             }
         }

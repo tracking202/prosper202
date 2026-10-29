@@ -343,9 +343,10 @@ function p202_account_save_currency(\Prosper202\Database\Connection $conn, int $
  * without them; it must not open a transaction of its own.
  *
  * An edit that switches the user off, or sets their password, deletes their
- * remember-me keys in the same transaction (RememberMeKeys): a browser kept
- * signed in must not sign back in when they are switched on again, nor a
- * stolen cookie outlive the password an admin reset.
+ * remember-me keys and ends their open sessions in the same transaction
+ * (RememberMeKeys, SessionGeneration): a browser kept signed in must not sign
+ * back in when they are switched on again, nor a stolen cookie or session
+ * outlive the password an admin reset.
  *
  * @param array<string, string|int|null> $userSet  202_users column => value; the
  *   column names are the caller's own literals, never the request's
@@ -385,6 +386,7 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
             $userId = $editUserId;
             if ($revokes) {
                 \Prosper202\User\RememberMeKeys::revokeAll($conn, $userId);
+                \Prosper202\User\SessionGeneration::bump($conn, $userId);
             }
             $stmt = $conn->prepareWrite('DELETE FROM `202_user_role` WHERE `user_id` = ?');
             $conn->bind($stmt, 'i', [$userId]);

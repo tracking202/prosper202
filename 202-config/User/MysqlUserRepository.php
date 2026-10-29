@@ -110,7 +110,8 @@ final class MysqlUserRepository implements UserRepositoryInterface
             || (array_key_exists('user_active', $data) && !UserStanding::isActive($data['user_active']));
 
         // Switched off, or given a new password, the user's remember-me keys
-        // go in the same transaction (RememberMeKeys).
+        // and open sessions end in the same transaction (RememberMeKeys,
+        // SessionGeneration).
         $this->conn->transaction(function () use ($sets, $types, $values, $id, $revokes): void {
             $stmt = $this->conn->prepareWrite(
                 'UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?'
@@ -120,6 +121,7 @@ final class MysqlUserRepository implements UserRepositoryInterface
             $stmt->close();
             if ($revokes) {
                 RememberMeKeys::revokeAll($this->conn, $id);
+                SessionGeneration::bump($this->conn, $id);
             }
         });
     }
