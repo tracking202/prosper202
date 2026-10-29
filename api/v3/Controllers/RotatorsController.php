@@ -898,10 +898,10 @@ class RotatorsController
      * ($mayRemoveRules). A kept rule's splittest and status, when not sent,
      * stay what they are; a new rule's are 0 and 1.
      *
-     * Each rule needs a name, a criterion and a destination, as on the page;
-     * a rule that is not a split test has one destination, and each
-     * destination of a split test a weight. Every problem in the set is
-     * refused in one 422, before anything is written.
+     * Each rule needs a name, a criterion and a destination, as on the page,
+     * and each destination of a rule with more than one a weight, at least
+     * one above 0. Every problem in the set is refused in one 422, before
+     * anything is written.
      *
      * With $dryRun nothing is written: the answer is the set as it would be
      * stored, with what would change.
@@ -1044,10 +1044,9 @@ class RotatorsController
      * With $whole false (PUT of one rule), a key the body leaves out keeps
      * what $held holds: its name, switches, criteria and destinations, as
      * stored and unchecked, as destination() keeps a held destination. What
-     * is asked of the rule as a whole (a criterion, a destination, one
-     * destination unless it is a split test, a weight for each of a split
-     * test's) is asked of the rule the write would leave, kept parts
-     * included.
+     * is asked of the rule as a whole (a criterion, a destination, a weight
+     * on each destination of a rule with more than one) is asked of the rule
+     * the write would leave, kept parts included.
      *
      * @param array<string, mixed> $rule
      * @param array<string, mixed>|null $held
@@ -1120,26 +1119,27 @@ class RotatorsController
             $parts[$list] = self::heldEntries($list, $entries);
         }
 
+        // The redirects (rtr.php, offrtr.php) never read splittest: a rule
+        // with one destination sends every visitor it matches there, and one
+        // with more splits them by weight (getSplitTestValue()), the first
+        // taking them all when every weight is 0. So whatever splittest says
+        // (Setup › Redirectors' switch), more than one destination needs
+        // their weights.
         $sent = array_key_exists('redirects', $kept) ? $kept['redirects'] : ($rule['redirects'] ?? null);
-        if ($splittest !== null && is_array($sent) && array_is_list($sent) && $sent !== []) {
-            if ($splittest === 0 && count($sent) > 1) {
-                $errors['redirects'] ??= 'splittest is 0, so the rule sends every visitor it matches to one destination: '
-                    . 'send one, or set splittest to 1 to split them by the destinations\' weights';
+        if (is_array($sent) && array_is_list($sent) && count($sent) > 1) {
+            $zero = true;
+            foreach ($sent as $j => $entry) {
+                $weight = is_array($entry) ? ($entry['weight'] ?? null) : null;
+                if ($weight === null) {
+                    $errors["redirects.$j.weight"] ??= 'A rule with more than one destination needs a weight on each: a '
+                        . 'whole number from 0 to 100. The redirects split the visitors it matches by weight, each '
+                        . 'destination taking its weight over the total, whether or not splittest is 1';
+                }
+                $zero = $zero && in_array($weight, [0, '0'], true);
             }
-            if ($splittest === 1) {
-                $zero = true;
-                foreach ($sent as $j => $entry) {
-                    $weight = is_array($entry) ? ($entry['weight'] ?? null) : null;
-                    if ($weight === null) {
-                        $errors["redirects.$j.weight"] ??= 'A split test needs each destination\'s weight: a whole number '
-                            . 'from 0 to 100, its share of the visitors being its weight over the total';
-                    }
-                    $zero = $zero && in_array($weight, [0, '0'], true);
-                }
-                if ($zero) {
-                    $errors['redirects'] ??= 'Every weight is 0, which sends every visitor to the first destination: give '
-                        . 'the destinations to split between a weight above 0';
-                }
+            if ($zero) {
+                $errors['redirects'] ??= 'Every weight is 0, which sends every visitor to the first destination: give '
+                    . 'the destinations to split between a weight above 0';
             }
         }
         PayloadKeys::refuse($errors);

@@ -253,8 +253,9 @@ var rotatorSetRulesCmd = &cobra.Command{
 		"Read the set with `p202 rotator get <id> --json` (data.rules), change it, and send it back. A rule sent\n" +
 		"with its id keeps the id (its clicks stay its own), one without an id is added, and a rule left out is\n" +
 		"removed (the role needs remove_rotator_rule). Each rule needs a rule_name, at least one criterion\n" +
-		"(value ALL matches everyone) and at least one destination; a split test (splittest 1) needs a weight on\n" +
-		"each destination. --dry-run answers the set as it would be stored and what would change, writing nothing.",
+		"(value ALL matches everyone) and at least one destination; a rule with more than one destination needs a\n" +
+		"weight on each, since the redirects split its visitors by weight whatever splittest says. --dry-run answers\n" +
+		"the set as it would be stored and what would change, writing nothing.",
 	Example: "  p202 rotator get 3 --json | jq '.data.rules' > rules.json   # edit rules.json, then:\n" +
 		"  p202 rotator set-rules 3 --file rules.json --dry-run\n" +
 		"  p202 rotator set-rules 3 --file rules.json\n" +
