@@ -31,7 +31,8 @@ func maskedReports(t *testing.T) *httptest.Server {
 		case strings.HasSuffix(r.URL.Path, "/reports/timeseries"):
 			_, _ = w.Write([]byte(`{"data":[{"period":"2026-10-01","total_clicks":null,"total_income":null,"epc":1}],"interval":"day","truncated":false,"limit":2000,"masked":true}`))
 		case strings.Contains(r.URL.Path, "/campaigns/"):
-			_, _ = w.Write([]byte(`{"data":{"aff_campaign_id":3,"aff_campaign_name":"A"}}`))
+			// A campaign record is Setup's, never masked: its payout is there for a role that may read it.
+			_, _ = w.Write([]byte(`{"data":{"aff_campaign_id":3,"aff_campaign_name":"A","aff_campaign_payout":10}}`))
 		default:
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		}

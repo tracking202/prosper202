@@ -144,7 +144,9 @@ var conversionSimulateCmd = &cobra.Command{
 			"result":          map[bool]string{true: "PASS", false: "FAIL"}[pass],
 			"detail":          strings.TrimSpace(string(body)),
 		}}
-		render(rowsToJSON(rows))
+		if err := renderRows(rows); err != nil {
+			return err
+		}
 		if !pass {
 			return partialFailureError("postback returned HTTP %d — conversions from this network would not record", pbRes.StatusCode)
 		}
