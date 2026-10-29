@@ -24,14 +24,14 @@
             "includes": ["https://eval-catchall.example/"]
           },
           {
-            "run": "p202 rotator get \"$(cat /tmp/p202-eval-ruleset.id)\" --json | jq --arg kept \"$(cat /tmp/p202-eval-ruleset.catchall)\" '.data.rules | length == 2 and .[0].splittest == 1 and ([.[0].redirects[].weight | tonumber] | length == 2 and .[0] == .[1] and .[0] > 0) and (.[1].id | tostring) == $kept'",
+            "run": "p202 rotator get \"$(cat /tmp/p202-eval-ruleset.id)\" --json | jq --arg kept \"$(cat /tmp/p202-eval-ruleset.catchall)\" '.data.rules | length == 2 and ([.[0].redirects[].weight | tonumber] | length == 2 and .[0] == .[1] and .[0] > 0) and (.[1].id | tostring) == $kept'",
             "includes": ["true"]
           }
         ],
         "rubric": "PASS if clicks from 203.0.113.60 now split between the two URLs at equal weights, the catch-all rule is the same rule as before (its id unchanged) and still second, so everyone else still reaches https://eval-catchall.example/, and the reply says so. FAIL if the new rule sits after the catch-all (where it never matches), the catch-all is removed, re-made or changed, or the agent reports success with the rule not in place."
       },
       "cleanup": ["rm -f /tmp/p202-eval-ruleset.url /tmp/p202-eval-ruleset.id /tmp/p202-eval-ruleset.catchall"],
-      "notes": "The redirects try the rules in their set's order and the first that matches sends the visitor. A rule added on its own (rule-create) goes after the catch-all, which then takes every visitor, so the new rule only works ahead of it: PUT /rotators/{id}/rules (`p202 rotator set-rules`, rotator_set_rules) puts it there and keeps the catch-all's id, so its clicks stay its own. The first check fires 20 real clicks through rtr.php (both URLs appear unless one weight is 0, with odds 2 in a million); the third holds the order, the equal weights and the kept id."
+      "notes": "The redirects try the rules in their set's order and the first that matches sends the visitor. A rule added on its own (rule-create) goes after the catch-all, which then takes every visitor, so the new rule only works ahead of it: PUT /rotators/{id}/rules (`p202 rotator set-rules`, rotator_set_rules) puts it there and keeps the catch-all's id, so its clicks stay its own. The first check fires 20 real clicks through rtr.php (both URLs appear unless one weight is 0, with odds 2 in a million); the third holds the order, the equal weights and the kept id (not splittest, which the redirects do not read: two destinations are split by weight whether it is 0 or 1)."
     },
     {
       "id": "rotator-rules-002-a-preview-changes-nothing",

@@ -1397,10 +1397,11 @@ sends the visitor), and it is written in one transaction or not at all. A rule
 sent with its `id` keeps it (its clicks stay its own), and so do criteria and
 destinations sent with theirs; a rule without an `id` is added; a rule left out
 is removed (the role needs `remove_rotator_rule`). A rule needs a `rule_name`,
-at least one criterion (`ALL` matches everyone) and at least one destination; a
-split test (`splittest` 1) needs a `weight` on each destination, and a rule
-that is not one has one destination. A kept rule sent without `splittest` or
-`status` keeps its own.
+at least one criterion (`ALL` matches everyone) and at least one destination,
+and a rule with more than one destination a `weight` on each, at least one
+above 0: the redirects split its visitors by weight whatever its `splittest`
+says (`splittest` 1 shows the rule as a split test on Setup › Redirectors). A
+kept rule sent without `splittest` or `status` keeps its own.
 
 | Flag        | Description |
 |-------------|-------------|
@@ -1475,9 +1476,9 @@ p202 rotator rule-update 5 12 \
 | `--redirects-json` | Redirects as JSON array    |
 
 What the command does not send, the rule keeps. The rule it would leave is
-checked as `set-rules` checks one: `--splittest 0` on a rule with two redirects
-is refused, and an empty `--criteria-json` or `--redirects-json` list is
-refused before any request. A rule stored with no criterion by an older
+checked as `set-rules` checks one: a rule left with two redirects needs a
+weight on each, whatever `--splittest` says, and an empty `--criteria-json` or
+`--redirects-json` list is refused before any request. A rule stored with no criterion by an older
 `rule-create` matches every visitor; any update that would leave it with none,
 a rename included, is refused until it has one (the value `ALL` keeps it on
 every visitor), or it is deleted.

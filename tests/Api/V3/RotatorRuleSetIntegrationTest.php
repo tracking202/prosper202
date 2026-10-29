@@ -318,16 +318,19 @@ final class RotatorRuleSetIntegrationTest extends TestCase
             unset($r['redirects']);
             return $r;
         }), 'rules.0.redirects'];
-        yield 'two destinations on a rule that is not a split test' => [$first(static fn (array $r): array => ['splittest' => 0] + $r), 'rules.0.redirects'];
-        yield 'a split test destination with no weight' => [$first(static function (array $r): array {
-            unset($r['redirects'][1]['weight']);
-            return $r;
-        }), 'rules.0.redirects.1.weight'];
-        yield 'a split test whose every weight is 0' => [$first(static function (array $r): array {
-            $r['redirects'][0]['weight'] = 0;
-            $r['redirects'][1]['weight'] = '0';
-            return $r;
-        }), 'rules.0.redirects'];
+        // The redirects split two destinations by weight whatever splittest
+        // says (RotatorRuleSplitIntegrationTest), so each is asked either way.
+        foreach (['a split test' => 1, 'a rule that is not a split test' => 0] as $kind => $splittest) {
+            yield "a destination with no weight on $kind" => [$first(static function (array $r) use ($splittest): array {
+                unset($r['redirects'][1]['weight']);
+                return ['splittest' => $splittest] + $r;
+            }), 'rules.0.redirects.1.weight'];
+            yield "every weight 0 on $kind" => [$first(static function (array $r) use ($splittest): array {
+                $r['redirects'][0]['weight'] = 0;
+                $r['redirects'][1]['weight'] = '0';
+                return ['splittest' => $splittest] + $r;
+            }), 'rules.0.redirects'];
+        }
         yield 'a typo inside a criterion' => [$first(static function (array $r): array {
             $r['criteria'][0]['valeu'] = 'x';
             return $r;
@@ -457,10 +460,11 @@ final class RotatorRuleSetIntegrationTest extends TestCase
             ['update', ['criteria' => []], ['criteria']],
             ['update', ['criteria' => null], ['criteria']],
             ['update', ['redirects' => []], ['redirects']],
-            // Two destinations kept, and the split test turned off.
-            ['update', ['splittest' => 0], ['redirects']],
-            // A split test's destination sent with no weight.
+            // Two destinations, every weight 0: the first would take every visitor.
+            ['update', ['redirects' => [['weight' => 0] + $url[0], ['redirect_url' => 'https://y.example/', 'weight' => '0']]], ['redirects']],
+            // A destination sent with no weight beside another, the split test turned off or not.
             ['update', ['redirects' => [['weight' => 50] + $url[0], $url[0]]], ['redirects.1.weight']],
+            ['update', ['splittest' => 0, 'redirects' => [['weight' => 50] + $url[0], $url[0]]], ['redirects.1.weight']],
         ];
         foreach ($refused as [$write, $body, $fields]) {
             try {
@@ -480,6 +484,12 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         $after = $this->rotators()->updateRule($id, (int) $everyone['id'], $body)['data']['rules'][1];
         self::assertSame(['everyone, split', 1], [$after['rule_name'], $after['splittest']]);
         self::assertSame([$everyone['criteria'], $everyone['redirects']], [$after['criteria'], $after['redirects']]);
+
+        // The split test turned off keeps both destinations: the redirects
+        // split them by weight either way.
+        $after = $this->rotators()->updateRule($id, (int) $office['id'], ['splittest' => 0])['data']['rules'][0];
+        self::assertSame(0, $after['splittest']);
+        self::assertSame($office['redirects'], $after['redirects']);
     }
 
     /**
