@@ -1298,6 +1298,22 @@ p202 report weekpart --sort roi --sort-dir DESC --country-id 223
 | `-s, --sort`    | day_of_week  | Sort by: day_of_week, total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa |
 | `--sort-dir`    | ASC          | Sort direction: ASC or DESC |
 
+### Break-even, losers and winners
+
+```bash
+p202 report breakeven --aff-campaign-id 12 --breakdown keyword --period last30
+p202 report losers --payout 160 --breakdown ppc_account --period last30
+p202 report winners --aff-campaign-id 12 --breakdown country
+```
+
+Each prices the breakdown's rows against a break-even CPC: `--max-cpc`, or a payout × the row's conversions per
+click. The payout is `--payout` (losers and winners) or the payout of the campaign `--aff-campaign-id` names, read
+with `GET /campaigns/{id}` unless `--max-cpc` or `--payout` is given. A payout that cannot be read (a 5xx, a key or
+role the server refuses, no such campaign, an unreachable server, an answer with no `aff_campaign_payout`) fails the
+command with that error's category, exit code and hint before any row is read; it is never read as 0, which would
+price every click at nothing. A campaign whose payout is 0 is priced at 0. Rows that JSON cannot carry (a figure the
+server sent too large to compute with) fail the command with exit 4 and a hint, and nothing is printed.
+
 ## Forecasting
 
 `p202 forecast` projects any tracked metric forward from its history, entirely on the client, with calibrated prediction bands. Full guide with worked examples: [documentation/cli/11-forecasting.md](../documentation/cli/11-forecasting.md).

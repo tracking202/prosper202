@@ -63,8 +63,7 @@ var rotatorCriteriaValuesCmd = &cobra.Command{
 			rows = append(rows, map[string]interface{}{"code": code, "name": name, "value": value})
 		}
 		sort.Slice(rows, func(i, j int) bool { return rows[i]["name"].(string) < rows[j]["name"].(string) })
-		render(rowsToJSON(rows))
-		return nil
+		return renderRows(rows)
 	},
 }
 
