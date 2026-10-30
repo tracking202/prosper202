@@ -33,8 +33,8 @@ on:
       - '202-appstore/**'
       # The cron endpoints authenticate requests against a user's
       # install_hash and release keys or data to external services (dni.php
-      # returns the database API key; daily-email.php sent the user's email
-      # and metrics until 1.9.79). Three rounds of review each found one more of these,
+      # returns the database API key, daily-email.php sends the user's email
+      # and metrics). Three rounds of review each found one more of these,
       # so the whole directory is in rather than a list that will be short
       # again next month.
       - '202-cronjobs/**'
