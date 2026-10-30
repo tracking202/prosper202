@@ -172,6 +172,23 @@ run "$R" assemble "$VERSION"
 commit_at "$R" 2000000800 release
 if run "$R" guard base; then ok "a release folding its fragments in passes"; else bad "the release was refused: $(cat "$TMP/out")"; fi
 
+# Deleting a fragment is not a licence to write entries straight in.
+R=$(new_repo delete-one)
+mkdir -p "$R/changelogs.d/$VERSION"
+printf -- '-- Fixed: Landed earlier.\napp: Fixed: Short.\n' > "$R/changelogs.d/$VERSION/f.txt"
+commit_at "$R" 2000000900 "fragment on the version branch"
+git -C "$R" checkout -q -b pr
+rm "$R/changelogs.d/$VERSION/f.txt"
+awk -v v="Version $VERSION" '{print} $0==v{print "-- Fixed: Written straight in."}' "$R/changelogs.txt" > "$TMP/t" && cp "$TMP/t" "$R/changelogs.txt"
+commit_at "$R" 2000001000 "delete a fragment, add an entry directly"
+if run "$R" guard base; then bad "deleting a fragment let a direct entry pass"; else ok "a deleted fragment whose entries are not folded in is refused"; fi
+
+git -C "$R" reset -q --hard HEAD~1
+run "$R" assemble "$VERSION"
+awk -v v="Version $VERSION" '{print} $0==v{print "-- Fixed: Written straight in."}' "$R/changelogs.txt" > "$TMP/t" && cp "$TMP/t" "$R/changelogs.txt"
+commit_at "$R" 2000001100 "fold in, plus an entry directly"
+if run "$R" guard base; then bad "a direct entry beside a fold passed"; else ok "a direct entry beside a fold is refused"; fi
+
 echo
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

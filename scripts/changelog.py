@@ -193,25 +193,44 @@ def git_show(ref, path):
 
 
 def guard(base):
-    """Refuse new entries written straight into the two files, unless the pull request folds fragments in."""
+    """Refuse new entries written straight into the two files; a deleted fragment's entries must have been folded in."""
     mb = subprocess.run(['git', 'merge-base', base, 'HEAD'], capture_output=True, text=True)
     if mb.returncode != 0:
         raise Problem('no merge base with %s (fetch it with full history)' % base)
     mb = mb.stdout.strip()
     removed = subprocess.run(['git', 'diff', '--name-only', '--diff-filter=D', mb, 'HEAD', '--', FRAGMENTS],
                              capture_output=True, text=True, check=True).stdout.split()
-    if removed:
-        return 0  # a release folding its fragments in
+    now_txt, now_json = txt_blocks(read(TXT)), json_logs(read(JSON))
+    # A deleted fragment must have been folded in (assemble); its entries may grow the files.
+    folded_txt, folded_app, problems = {}, {}, []
+    for path in removed:
+        version, text = os.path.basename(os.path.dirname(path)), git_show(mb, path)
+        if not path.endswith('.txt') or text is None:
+            continue
+        for line, app in parse_fragment(path, text):
+            if line not in now_txt.get(version, []):
+                problems.append('%s was deleted but its entry is not in %s under Version %s: %s'
+                                % (path, TXT, version, line[:80]))
+            folded_txt[version] = folded_txt.get(version, 0) + 1
+            if app is not None:
+                if app not in now_json.get(version, []):
+                    problems.append('%s was deleted but its app line is not in %s under %s: %s'
+                                    % (path, JSON, version, app[:80]))
+                folded_app[version] = folded_app.get(version, 0) + 1
     grew = []
     before_txt, before_json = git_show(mb, TXT), git_show(mb, JSON)
     if before_txt is not None:
-        old, now = txt_blocks(before_txt), txt_blocks(read(TXT))
+        old = txt_blocks(before_txt)
         grew += ['%s Version %s: %d -> %d' % (TXT, v, len(old.get(v, [])), len(n))
-                 for v, n in now.items() if len(n) > len(old.get(v, []))]
+                 for v, n in now_txt.items() if len(n) > len(old.get(v, [])) + folded_txt.get(v, 0)]
     if before_json is not None:
-        old, now = json_logs(before_json), json_logs(read(JSON))
+        old = json_logs(before_json)
         grew += ['%s %s: %d -> %d' % (JSON, v, len(old.get(v, [])), len(n))
-                 for v, n in now.items() if len(n) > len(old.get(v, []))]
+                 for v, n in now_json.items() if len(n) > len(old.get(v, [])) + folded_app.get(v, 0)]
+    for p in problems:
+        print('::error::' + p if os.environ.get('GITHUB_ACTIONS') else p, file=sys.stderr)
+    if problems:
+        return 1
     if grew:
         msg = ('this pull request adds changelog entries to the files directly (%s). Put them in a fragment, '
                'changelogs.d/<version>/<name>.txt, instead: see scripts/changelog.py' % '; '.join(grew))
