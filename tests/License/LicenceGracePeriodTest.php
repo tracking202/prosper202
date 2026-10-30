@@ -23,6 +23,8 @@ final class LicenceGracePeriodTest extends TestCase
 {
     private const int DAY = 86400;
 
+    private const GATES = ['web sign-in' => 'web', 'shell' => 'shell', 'Go CLI' => 'cli'];
+
     private string $key;
 
     private MemoryLicenceAnswerStore $answers;
@@ -123,14 +125,104 @@ final class LicenceGracePeriodTest extends TestCase
         self::assertTrue($this->controller(null)->cliAccess(), 'CLI: a paid answer 29 days ago');
     }
 
-    public function testATempCacheYesWithoutTheDurableRecordIsNotEnough(): void
+    /**
+     * An install upgraded from before the record, in an outage, with nothing
+     * recorded for its key: the answer it cached on disk decides, within the
+     * same window, at every gate.
+     *
+     * @dataProvider cachedAnswersWithNoRecord
+     */
+    public function testWithNoRecordTheCachedAnswerDecides(?bool $cached, int $age, bool $licensed): void
     {
-        ShellAccessCache::write($this->key, true);
-        CliAccessCache::write($this->key, true);
-        $this->forget(false);
-        self::assertFalse($this->auth(null)::is_valid_api_key($this->key));
-        self::assertFalse($this->shellAccess($this->controller(null)));
-        self::assertFalse($this->controller(null)->cliAccess());
+        foreach ([ShellAccessCache::class, CliAccessCache::class] as $cache) {
+            if ($cached !== null) {
+                $cache::write($this->key, $cached);
+                $this->ageCache($cache, $age);
+            }
+        }
+        self::assertSame([], $this->answers->answers, 'nothing recorded');
+        foreach (self::GATES as $name => $gate) {
+            $this->forgetHoldOffs();
+            self::assertSame($licensed, $this->askGate($gate, null), $name);
+        }
+    }
+
+    /** @return iterable<string, array{?bool, int, bool}> */
+    public static function cachedAnswersWithNoRecord(): iterable
+    {
+        yield 'a yes cached yesterday' => [true, self::DAY, true];
+        yield 'a yes cached 29 days ago' => [true, 29 * self::DAY, true];
+        yield 'nothing cached' => [null, 0, false];
+        yield 'a no cached yesterday' => [false, self::DAY, false];
+        yield 'a yes cached 31 days ago' => [true, 31 * self::DAY, false];
+    }
+
+    /** @dataProvider recordsThatDecide */
+    public function testARecordStillDecidesOverTheCache(bool $recorded, int $recordedAge): void
+    {
+        $hash = hash('sha256', $this->key);
+        foreach ([ShellAccessCache::class, CliAccessCache::class] as $cache) {
+            $cache::write($this->key, true);
+            $this->ageCache($cache, self::DAY);
+        }
+        $this->answers->saveAnswer($hash, ShellAccessCache::QUESTION_VALID, $recorded, time() - $recordedAge);
+        $this->answers->saveAnswer($hash, ShellAccessCache::QUESTION_PAID, $recorded, time() - $recordedAge);
+        foreach (self::GATES as $name => $gate) {
+            $this->forgetHoldOffs();
+            self::assertFalse($this->askGate($gate, null), $name . ': the record, not the cached yes');
+        }
+    }
+
+    /** @return iterable<string, array{bool, int}> */
+    public static function recordsThatDecide(): iterable
+    {
+        yield 'a recorded no' => [false, self::DAY];
+        yield 'a recorded yes 31 days old' => [true, 31 * self::DAY];
+    }
+
+    public function testTheUpgradeSeedCopiesTheCachedAnswersInTheWindow(): void
+    {
+        $old = 'grace-old-' . bin2hex(random_bytes(6));
+        $future = 'grace-future-' . bin2hex(random_bytes(6));
+        $broken = 'grace-broken-' . bin2hex(random_bytes(6));
+        try {
+            ShellAccessCache::write($this->key, true);
+            $yesterday = $this->ageCache(ShellAccessCache::class, self::DAY);
+            CliAccessCache::write($this->key, false);
+            $twoDays = $this->ageCache(CliAccessCache::class, 2 * self::DAY);
+            ShellAccessCache::write($old, true);
+            $this->ageCache(ShellAccessCache::class, 31 * self::DAY, $old);
+            ShellAccessCache::write($future, true);
+            $this->ageCache(ShellAccessCache::class, -600, $future);
+            ShellAccessCache::write($broken, true);
+            $path = (new \ReflectionMethod(ShellAccessCache::class, 'path'))->invoke(null, $broken);
+            file_put_contents($path, "1\n");
+
+            ShellAccessCache::seedAnswers($this->answers);
+            CliAccessCache::seedAnswers($this->answers);
+
+            $hash = hash('sha256', $this->key);
+            self::assertSame([
+                ShellAccessCache::QUESTION_VALID => [true, $yesterday],
+                ShellAccessCache::QUESTION_PAID => [false, $twoDays],
+            ], $this->answers->answers[$hash] ?? null, 'each cached answer, at the time it was cached');
+            $skipped = ['older than the window' => $old, 'dated in the future' => $future, 'malformed' => $broken];
+            foreach ($skipped as $why => $k) {
+                self::assertArrayNotHasKey(hash('sha256', $k), $this->answers->answers, "not copied: $why");
+            }
+
+            $this->answers->saveAnswer($hash, ShellAccessCache::QUESTION_VALID, false, $yesterday + 60);
+            ShellAccessCache::seedAnswers($this->answers);
+            self::assertSame(
+                [false, $yesterday + 60],
+                $this->answers->answers[$hash][ShellAccessCache::QUESTION_VALID],
+                'a newer recorded answer is kept'
+            );
+        } finally {
+            foreach ([$old, $future, $broken] as $k) {
+                ShellAccessCache::invalidate($k);
+            }
+        }
     }
 
     public function testAWholeAnswerIsRecordedForBothQuestions(): void
@@ -236,7 +328,7 @@ final class LicenceGracePeriodTest extends TestCase
             '503' => [503, '{"code":503,"msg":"Key not checked"}'],
             '200 not Key valid' => [200, '{"code":200,"msg":"Key not checked","checked":false}'],
         ];
-        foreach (['web sign-in' => 'web', 'shell' => 'shell', 'Go CLI' => 'cli'] as $name => $gate) {
+        foreach (self::GATES as $name => $gate) {
             foreach ($shapes as $shape => [$status, $body]) {
                 yield "$name, $shape" => [$gate, $status, $body];
             }
@@ -356,6 +448,32 @@ final class LicenceGracePeriodTest extends TestCase
         $path = (new \ReflectionMethod($cache, 'path'))->invoke(null, $this->key);
         self::assertIsString($path);
         self::assertTrue(touch($path, time() - $age), 'the cached answer was aged');
+        clearstatcache();
+    }
+
+    /**
+     * Dates $cache's entry for $key (the test's key by default) $age seconds
+     * back, and returns that time.
+     *
+     * @param class-string<ShellAccessCache> $cache
+     */
+    private function ageCache(string $cache, int $age, ?string $key = null): int
+    {
+        $path = (new \ReflectionMethod($cache, 'path'))->invoke(null, $key ?? $this->key);
+        self::assertIsString($path);
+        $at = time() - $age;
+        self::assertTrue(touch($path, $at), 'the cached answer was dated');
+        clearstatcache();
+        return $at;
+    }
+
+    /** Drops the hold-off markers, so the next request asks (and gets no answer). */
+    private function forgetHoldOffs(): void
+    {
+        foreach ([ShellAccessCache::class, CliAccessCache::class] as $cache) {
+            $path = (new \ReflectionMethod($cache, 'path'))->invoke(null, $this->key);
+            @unlink($path . '.unknown');
+        }
         clearstatcache();
     }
 

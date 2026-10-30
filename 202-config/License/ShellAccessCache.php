@@ -115,9 +115,11 @@ class ShellAccessCache
      * Whether $key is licensed while ClickServer gives no answer: the durable
      * record's last answer to this cache's question (a valid key here, a paid
      * licence in CliAccessCache) was a yes, given at most GRACE_SECONDS ago.
-     * Never checked, last answered no, answered longer ago, or a record that
-     * cannot be read is not licensed. Every licence gate asks this, so the
-     * rule can be replaced here alone.
+     * With nothing recorded for the key yet (an install upgraded from before
+     * the record), this cache's own last answer within the same window
+     * decides instead. Never checked, last answered no, answered longer ago,
+     * or a record that cannot be read is not licensed. Every licence gate
+     * asks this, so the rule can be replaced here alone.
      */
     public static function validWithinGrace(?LicenceAnswerStore $answers, string $key, ?int $now = null): bool
     {
@@ -135,7 +137,7 @@ class ShellAccessCache
             return false;
         }
         if ($last === null) {
-            return false;
+            return static::readStale($key) === true;
         }
         [$yes, $at] = $last;
         $now ??= time();
@@ -181,6 +183,50 @@ class ShellAccessCache
         if ($licence['paid'] !== null) {
             CliAccessCache::recordAnswer($answers, $key, $licence['paid']);
         }
+    }
+
+    /**
+     * Copy this cache's answers younger than GRACE_SECONDS into the durable
+     * record: each entry's name is its key's SHA-256 and its mtime is when
+     * the answer came, so nothing is invented. An answer the record already
+     * holds from that time or later is kept. For the upgrade to 1.9.79, whose
+     * record starts empty. Returns how many were copied; a failed write throws.
+     */
+    public static function seedAnswers(LicenceAnswerStore $answers, ?int $now = null): int
+    {
+        $dir = static::dir();
+        if ($dir === null) {
+            return 0;
+        }
+        $entries = glob($dir . '/*.cache');
+        if ($entries === false) {
+            error_log(static::class . ': could not list ' . $dir . '; no cached answer was copied');
+            return 0;
+        }
+        $now ??= time();
+        $copied = 0;
+        foreach ($entries as $entry) {
+            if (
+                preg_match('/^([0-9a-f]{64})\.cache$/D', basename($entry), $name) !== 1
+                || is_link($entry)
+                || fileowner($entry) !== static::processUserId()
+            ) {
+                continue;
+            }
+            $at = filemtime($entry);
+            $content = @file_get_contents($entry);
+            $fresh = $at !== false && $at <= $now && $now - $at <= self::GRACE_SECONDS;
+            if (!$fresh || !in_array($content, ['0', '1'], true)) {
+                continue;
+            }
+            $held = $answers->lastAnswer($name[1], static::licenceQuestion());
+            if ($held !== null && $held[1] >= $at) {
+                continue;
+            }
+            $answers->saveAnswer($name[1], static::licenceQuestion(), $content === '1', $at);
+            $copied++;
+        }
+        return $copied;
     }
 
     /** The question this cache's answers are to. */
