@@ -334,6 +334,25 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         self::assertCount(2, self::conversions());
     }
 
+    /** A refund stating more than its sale takes back the sale, never the click below 0, and says both amounts. */
+    public function testARefundOfMoreThanTheSaleTakesBackTheWholeSale(): void
+    {
+        $this->post(self::fields(), self::KEY_1);
+
+        $refund = $this->post(self::fields(['event' => 'refund', 'amount' => '60.00']), self::KEY_1);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+        self::assertSame('Reversed transaction PK-TX-0001 on click ' . self::CLICK . ' by 47, the whole sale: this'
+            . ' refund states 60.00, more than the sale recorded.', $refund->message);
+        self::assertSame(['47.00000', '-47.00000'], array_column(self::conversions(), 'click_payout'));
+
+        // The same refund again is that refund; one of the sale's amount is too, as it takes the same.
+        foreach (['60.00', '47'] as $amount) {
+            $again = $this->post(self::fields(['event' => 'refund', 'amount' => $amount]), self::KEY_1);
+            self::assertOutcome(OutcomeKind::DUPLICATE, 200, $again);
+        }
+        self::assertCount(2, self::conversions());
+    }
+
     public function testAFullRefundAfterAPartialOneIsRefusedNamingWhatIsStillCredited(): void
     {
         $this->post(self::fields(), self::KEY_1);

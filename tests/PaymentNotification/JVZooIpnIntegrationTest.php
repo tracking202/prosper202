@@ -293,6 +293,16 @@ final class JVZooIpnIntegrationTest extends TestCase
         self::assertCount(2, self::conversions());
     }
 
+    /** A refund stating more than its sale still takes back only the sale: JVZoo's amount is never read. */
+    public function testARefundOfMoreThanTheSaleTakesBackTheWholeSale(): void
+    {
+        $this->post(self::fields(), self::KEY);
+
+        $refund = $this->post(self::fields(['ctransaction' => 'RFND', 'ctransamount' => '-60.00']), self::KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+        self::assertSame(['47.00000', '-47.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
     public function testAChargebackAndAnEcheckChargebackReverseTheirSales(): void
     {
         $this->post(self::fields(), self::KEY);
