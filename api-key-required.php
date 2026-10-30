@@ -39,7 +39,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['api_key'])) {
 	}
 	if ($csrf_ok && $api_key !== '') {
 		// Validate the API key
-		$validation_result = api_key_validate($api_key);
+		$validation_result = api_key_validate($api_key, $licence);
+		p202_record_key_answer($api_key, $licence);
 		$validation_data = json_decode((string) $validation_result, true);
 
 		if (isset($validation_data['msg']) && $validation_data['msg'] === 'Key valid') {
@@ -82,9 +83,21 @@ info_top(['title' => 'License key needed - Prosper202 ClickServer']);
 if ($success) {
 	echo p202_standalone_card('License key saved', 'Your Prosper202 ClickServer license key is valid and saved.'); ?>
 	<a href="<?php echo htmlspecialchars($base, ENT_QUOTES, 'UTF-8'); ?>202-login.php" class="btn btn-primary w-100">Sign in</a>
-	<p class="small text-secondary mt-3 mb-0">If you are sent back here, the license service could not be reached; the warning message has a link to continue anyway.</p>
+	<p class="small text-secondary mt-3 mb-0">If Tracking202 cannot be reached later, a license confirmed in the last 30 days still counts.</p>
 <?php
 	echo p202_standalone_card_end();
+} elseif (($_GET['licence'] ?? '') === 'unconfirmed' && $error === '') {
+    // The sign-in gate's refusal: no answer from Tracking202 and no recent valid one.
+    echo p202_standalone_card(
+        'Your license could not be checked',
+        'This install\'s license could not be checked with Tracking202, so Prosper202 stays locked until it '
+        . 'can be. Make sure this server can reach my.tracking202.com over HTTPS.'
+    );
+    echo '<p class="small mb-3">For help, contact <a href="mailto:support@tracking202.com">support@tracking202.com</a>'
+        . ' or the support chat.</p>';
+    echo '<a href="' . htmlspecialchars($base, ENT_QUOTES, 'UTF-8') . '202-login.php" class="btn btn-primary w-100">'
+        . 'Try again</a>';
+    echo p202_standalone_card_end();
 } else {
 	echo p202_standalone_card('Your license key is missing or expired', 'Prosper202 ClickServer needs a valid license key (your API key from my.tracking202.com) to run.');
 	if ($has_existing_key) { ?>

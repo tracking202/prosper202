@@ -568,23 +568,41 @@ final class ReClickBackfillIntegrationTest extends TestCase
         self::assertStringContainsString('after failing with its own error in ' . ($runs + 1) . ' runs', $skips[0]);
     }
 
-    /** @return iterable<string, array{int}> */
+    /**
+     * Each errno as the cron job reads it (MYSQLI_REPORT_STRICT alone, as
+     * connect.php sets it: Connection's ` [errno N]` tag) and with errors
+     * raised (a mysqli_sql_exception's code).
+     *
+     * @return iterable<string, array{int, int}>
+     */
     public static function errorsOfTheMoment(): iterable
     {
-        yield 'a lock wait' => [1205];
-        yield 'a lost connection' => [2013];
-        yield 'a statement timed out' => [1969];
+        $modes = ['tagged' => MYSQLI_REPORT_STRICT, 'raised' => MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT];
+        $errors = [
+            'a lock wait' => 1205,
+            'a lost connection' => 2013,
+            'a statement timed out' => 1969,
+            'a storage engine\'s temporary error' => 1297,
+            'an error during commit' => 1180,
+        ];
+        foreach ($errors as $what => $errno) {
+            foreach ($modes as $how => $mode) {
+                yield "$what, $how" => [$errno, $mode];
+            }
+        }
     }
 
     /**
      * An error of the moment stops the run at the click, as any failure
      * does, and counts towards no step-over however long it lasts: two hours
-     * of a lock held on the click's rows step nothing over. The count starts
-     * with the click's own errors, and the step-over comes at the tenth.
+     * of a lock held on the click's rows step nothing over. The count and its
+     * hour start with the click's own errors: ten of them in ten minutes
+     * after the two hours step nothing over, and the step-over comes an hour
+     * after the first.
      *
      * @dataProvider errorsOfTheMoment
      */
-    public function testAnErrorOfTheMomentCountsTowardsNoStepOver(int $errno): void
+    public function testAnErrorOfTheMomentCountsTowardsNoStepOver(int $errno, int $mode): void
     {
         $at = self::NOW - 86400;
         foreach ([41, 42, 43] as $click) {
@@ -598,6 +616,8 @@ final class ReClickBackfillIntegrationTest extends TestCase
         };
         $runs = ReClickBackfill::STEP_OVER_RUNS;
         $hours = 2 * ReClickBackfill::STEP_OVER_SECONDS;
+        $own = self::NOW + $hours + 1;
+        mysqli_report($mode);
         try {
             $refuse("SIGNAL SQLSTATE 'HY000' SET MYSQL_ERRNO = $errno, MESSAGE_TEXT = 'the moment'");
             for ($run = 0; $run <= 2 * $runs; $run++) {
@@ -608,27 +628,40 @@ final class ReClickBackfillIntegrationTest extends TestCase
             $held = $this->backfill(self::NOW + $hours)->progress();
 
             $refuse("SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'");
-            for ($run = 1; $run < $runs; $run++) {
-                $did = $this->walk(PHP_INT_MAX, self::NOW + $hours + $run);
+            for ($run = 0; $run < $runs; $run++) {
+                $did = $this->walk(PHP_INT_MAX, $own + $run);
                 $at = [$did['failed_click_id'] ?? null, $did['skipped_clicks'] ?? null];
                 self::assertSame([42, 0], $at, "own error $run");
             }
-            $tenth = $this->walk(PHP_INT_MAX, self::NOW + $hours + $runs);
+            $tenMinutes = $this->backfill($own + $runs)->progress();
+            $anHourOn = $this->walk(PHP_INT_MAX, $own + ReClickBackfill::STEP_OVER_SECONDS);
         } finally {
             self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+            mysqli_report(MYSQLI_REPORT_STRICT);
         }
         self::assertSame(
-            [42, 0, self::NOW, 0],
+            [42, 0, null, 0],
             [
                 $held['stalled_at_click_id'] ?? null, $held['failed_runs'] ?? null,
                 $held['failing_since'] ?? null, $held['skipped_clicks'] ?? null,
             ],
-            'stopped at the click since the first run, with no run of its own counted'
+            'stopped at the click since the first run, with no run of its own counted and no hour started'
+        );
+        self::assertSame(
+            [42, $runs, $own, 0],
+            [
+                $tenMinutes['stalled_at_click_id'] ?? null, $tenMinutes['failed_runs'] ?? null,
+                $tenMinutes['failing_since'] ?? null, $tenMinutes['skipped_clicks'] ?? null,
+            ],
+            'ten errors of its own after two hours of the moment\'s: the hour starts at the first of them'
         );
         self::assertSame(
             [1, 1, true],
-            [$tenth['skipped_clicks'] ?? null, $tenth['reclicked_clicks'] ?? null, $tenth['finished'] ?? null],
-            'the tenth error of its own steps it over'
+            [
+                $anHourOn['skipped_clicks'] ?? null, $anHourOn['reclicked_clicks'] ?? null,
+                $anHourOn['finished'] ?? null,
+            ],
+            'an hour after its first error of its own, it is stepped over'
         );
         self::assertNull(self::recorded(42));
         $skips = array_values(array_filter(
@@ -636,7 +669,7 @@ final class ReClickBackfillIntegrationTest extends TestCase
             static fn (string $l): bool => str_contains($l, 'stepped over')
         ));
         self::assertCount(1, $skips, $this->logged());
-        self::assertStringContainsString('after failing with its own error in ' . $runs . ' runs', $skips[0]);
+        self::assertStringContainsString('after failing with its own error in ' . ($runs + 1) . ' runs', $skips[0]);
     }
 
     /**

@@ -32,6 +32,7 @@ final class SecretTables
         return [
             self::deploymentSecrets(),
             self::geoipRefresh(),
+            self::licenceAnswers(),
         ];
     }
 
@@ -60,6 +61,29 @@ final class SecretTables
                 PRIMARY KEY (`refresh_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
               COMMENT='The GeoIP database refresh: MaxMind credentials and the last run'"
+        );
+    }
+
+    /**
+     * ClickServer's last licence answer per key, named by the key's SHA-256:
+     * whether the key was valid and whether its licence was paid, each with
+     * when it was answered. The grace period reads it while ClickServer gives
+     * no answer (Prosper202\License\ShellAccessCache::validWithinGrace()).
+     * From 1.9.79, added by its rung.
+     */
+    public static function licenceAnswers(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::LICENCE_ANSWERS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::LICENCE_ANSWERS . "` (
+                `key_sha256` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `valid_yes` tinyint(1) unsigned DEFAULT NULL,
+                `valid_at` int(10) unsigned DEFAULT NULL,
+                `paid_yes` tinyint(1) unsigned DEFAULT NULL,
+                `paid_at` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`key_sha256`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+              COMMENT='The last licence answer per ClickServer key, for the grace period'"
         );
     }
 

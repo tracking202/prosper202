@@ -317,7 +317,7 @@ final class InstallHelpersTest extends TestCase
         self::assertSame('', install_typed_license_key(['user_api' => ['ABC123']]));
         $page = (string) file_get_contents(__DIR__ . '/../../202-config/install.php');
         self::assertSame(1, substr_count($page, '$typed_license_key = install_typed_license_key($_POST);'));
-        self::assertSame(1, substr_count($page, 'api_key_validate($typed_license_key)'));
+        self::assertSame(1, substr_count($page, 'api_key_validate($typed_license_key, $typed_licence)'));
         self::assertSame(1, substr_count($page, '$user_api           = $typed_license_key;'));
         // Besides the helper, the posted key is only shown back in the form.
         self::assertSame(4, substr_count($page, "\$_POST['user_api']"));

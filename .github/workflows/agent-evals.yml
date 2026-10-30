@@ -20,6 +20,10 @@ on:
       - '202-account/**'
       - 'tests/fixtures/agent-eval/**'
       - 'tests/live/**'
+      # The instance suites it runs (tests/integration-suites.php --instance)
+      - 'tests/**/*InstanceTest.php'
+      - 'tests/Redirect/DlIntegrationTest.php'
+      - 'tests/integration-suites.php'
       - '.github/workflows/agent-evals.yml'
   push:
     branches: [master]
@@ -31,6 +35,10 @@ on:
       - '202-account/**'
       - 'tests/fixtures/agent-eval/**'
       - 'tests/live/**'
+      # The instance suites it runs (tests/integration-suites.php --instance)
+      - 'tests/**/*InstanceTest.php'
+      - 'tests/Redirect/DlIntegrationTest.php'
+      - 'tests/integration-suites.php'
       - '.github/workflows/agent-evals.yml'
   workflow_dispatch:
     inputs:
@@ -258,11 +266,16 @@ jobs:
             echo "tests/integration-suites.php --instance selected nothing" >&2
             exit 1
           fi
-          # This job installs with --no-dev, so PHPUnit comes as the phar
-          # (PHPUnit 9, as composer.json pins); the suites load by path.
-          curl -sSfL https://phar.phpunit.de/phpunit-9.phar -o "$RUNNER_TEMP/phpunit-9.phar"
+          # This job installs with --no-dev, so PHPUnit 9 (as composer.json
+          # pins) is installed on its own; the suites load by path. Not the
+          # phar: on 2026-10-30 phar.phpunit.de served 19-byte files that php
+          # ran silently, so every suite "printed nothing" and the step failed.
+          mkdir -p "$RUNNER_TEMP/phpunit"
+          composer require --no-interaction --no-progress --working-dir="$RUNNER_TEMP/phpunit" "phpunit/phpunit:^9.6"
+          PHPUNIT="$RUNNER_TEMP/phpunit/vendor/bin/phpunit"
+          "$PHPUNIT" --version
           for suite in "${SUITES[@]}"; do
-            php "$RUNNER_TEMP/phpunit-9.phar" --configuration phpunit.ci.xml --group integration --no-coverage "$suite" | tee phpunit-instance.out
+            "$PHPUNIT" --configuration phpunit.ci.xml --group integration --no-coverage "$suite" | tee phpunit-instance.out
             grep -qE '^OK \([1-9][0-9]* tests?' phpunit-instance.out
           done
 

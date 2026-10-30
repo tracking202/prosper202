@@ -113,6 +113,7 @@ final class TableRegistry
     // by any user
     public const string DEPLOYMENT_SECRETS = '202_deployment_secrets';
     public const string GEOIP_REFRESH = '202_geoip_refresh';
+    public const string LICENCE_ANSWERS = '202_licence_answers';
 
     // Identity graph (IdentityTables)
     public const string IDENTITY_KEYS = '202_identity_keys';

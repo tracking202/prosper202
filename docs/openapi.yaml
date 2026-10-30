@@ -1357,18 +1357,24 @@ paths:
                               the last run; null while nothing fails. Each run
                               tries it again, and the server's error log says why,
                               until it has failed with an error of its own (not a
-                              lock, a timeout or a lost connection) in 10 runs over
-                              an hour and is stepped over.
+                              lock, a timeout, a lost connection or an error that
+                              names no cause) in 10 runs over an hour from the
+                              first of them and is stepped over.
                           failed_runs:
                             type: integer
                             description: >-
                               How many runs stalled_at_click_id has failed with an
-                              error of its own; a lock, a timeout or a lost
-                              connection counts in none. 0 while nothing fails
+                              error of its own; a lock, a timeout, a lost
+                              connection or an error that names no cause counts in
+                              none. 0 while nothing fails
                           failing_since:
                             type: integer
                             nullable: true
-                            description: Unix time of its first failed run; null while nothing fails
+                            description: >-
+                              Unix time of its first run that failed with an error
+                              of its own, where the hour before it is stepped over
+                              starts; null while nothing fails, or only errors that
+                              count in none
                           skipped_clicks:
                             type: integer
                             description: Clicks stepped over after failing with an error of their own in 10 runs over an hour; each counts at every one of its visits

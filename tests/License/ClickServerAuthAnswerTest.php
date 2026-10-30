@@ -166,7 +166,7 @@ final class ClickServerAuthAnswerTest extends TestCase
                 . "'Invalid API key; check it and retry.';",
             $page
         );
-        self::assertStringContainsString('$validation_result = api_key_validate($api_key);', $page);
+        self::assertStringContainsString('$validation_result = api_key_validate($api_key, $licence);', $page);
         self::assertStringContainsString("require_once __DIR__ . '/202-config/functions-account-ui.php';", $page);
     }
 
@@ -188,7 +188,12 @@ final class ClickServerAuthAnswerTest extends TestCase
         self::assertStringContainsString("echo api_key_validate(trim((string) \$_POST['apikey']))", $page);
         self::assertStringContainsString("require_once __DIR__ . '/../../202-config/functions-account-ui.php';", $page);
         $src = (string)file_get_contents(self::root() . '/202-config/functions-tracking202.php');
-        self::assertSame(1, preg_match('/function api_key_validate\(\$key\)\s*\{(.*?)\n\}/s', $src, $m));
-        self::assertStringContainsString('ClickServerKeyValidator::interpret($answer[0], $answer[1]) === null', $m[1]);
+        $signature = '/function api_key_validate\(\$key, \?array &\$licence = null\)\s*\{(.*?)\n\}/s';
+        self::assertSame(1, preg_match($signature, $src, $m));
+        self::assertStringContainsString(
+            '$licence = \\Prosper202\\License\\ClickServerKeyValidator::interpret($answer[0], $answer[1]);',
+            $m[1]
+        );
+        self::assertStringContainsString('return $licence === null ? false : $answer[1];', $m[1]);
     }
 }

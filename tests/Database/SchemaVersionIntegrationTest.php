@@ -18,7 +18,9 @@ use Prosper202\Database\SchemaVersion;
  *
  * Skips unless a scratch database is configured (P202_TEST_DB_HOST,
  * P202_TEST_DB_PORT, P202_TEST_DB_USER, P202_TEST_DB_PASS,
- * P202_TEST_DB_NAME); it puts back the 202_version it found.
+ * P202_TEST_DB_NAME); it puts back the 202_version it found and the mysqli
+ * report mode it ran under. It sets errors to raise, so a statement it makes
+ * that fails throws.
  *
  * @group integration
  */
@@ -31,12 +33,15 @@ final class SchemaVersionIntegrationTest extends TestCase
     /** @var list<string>|null the versions 202_version held, or null when this test made the table */
     private static ?array $found = null;
 
+    private static ?int $reportMode = null;
+
     public static function setUpBeforeClass(): void
     {
         $host = getenv('P202_TEST_DB_HOST');
         if ($host === false || $host === '') {
             return;
         }
+        self::$reportMode = (new \mysqli_driver())->report_mode;
         mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
         $port = getenv('P202_TEST_DB_PORT');
         self::$db = new mysqli(
@@ -47,11 +52,14 @@ final class SchemaVersionIntegrationTest extends TestCase
             $port !== false && $port !== '' ? (int) $port : 3306
         );
         $exists = self::$db->query("SHOW TABLES LIKE '202_version'");
-        if ($exists instanceof \mysqli_result && $exists->num_rows === 1) {
+        self::assertInstanceOf(\mysqli_result::class, $exists);
+        if ($exists->num_rows === 1) {
             $rows = self::$db->query('SELECT version FROM 202_version');
-            self::$found = $rows instanceof \mysqli_result
-                ? array_map(static fn (array $r): string => (string) $r['version'], $rows->fetch_all(MYSQLI_ASSOC))
-                : [];
+            self::assertInstanceOf(\mysqli_result::class, $rows);
+            self::$found = array_map(
+                static fn (array $r): string => (string) $r['version'],
+                $rows->fetch_all(MYSQLI_ASSOC)
+            );
         } else {
             self::$db->query('CREATE TABLE 202_version (version varchar(50) NOT NULL) ENGINE=InnoDB');
         }
@@ -75,6 +83,9 @@ final class SchemaVersionIntegrationTest extends TestCase
         }
         self::$db->close();
         self::$db = null;
+        if (self::$reportMode !== null) {
+            mysqli_report(self::$reportMode);
+        }
     }
 
     protected function setUp(): void
@@ -95,7 +106,7 @@ final class SchemaVersionIntegrationTest extends TestCase
         yield 'newer' => ['1.9.80', false, 'the database\'s schema is version 1.9.80, newer than this code'];
         yield 'newer, though smaller as text' => ['1.9.100', false, 'the database\'s schema is version 1.9.100, newer'];
         yield 'not a version' => ['latest', false, 'the database needs an upgrade'];
-        yield 'none recorded' => ['', false, 'the database needs an upgrade'];
+        yield 'an empty version recorded' => ['', false, 'the database needs an upgrade'];
     }
 
     /** @dataProvider stored */
@@ -131,5 +142,36 @@ final class SchemaVersionIntegrationTest extends TestCase
             self::assertStringStartsWith($mismatch, $refused);
             self::assertStringContainsString('Nothing was run.', $refused);
         }
+    }
+
+    /** No row at all: no cause claimed, and the sync worker still refuses, naming none recorded. */
+    public function testNoVersionRecordedClaimsNoUpgrade(): void
+    {
+        $db = self::$db;
+        self::assertNotNull($db);
+        $db->query('DELETE FROM 202_version');
+
+        self::assertNull(SchemaVersion::pendingUpgrade($db, self::CODE));
+        $refused = SchemaVersion::mismatch($db, self::CODE);
+        self::assertIsString($refused);
+        self::assertStringStartsWith('the database needs an upgrade: its schema is version (none recorded)', $refused);
+    }
+
+    /** No table: a read that fails claims no cause, and the sync worker refuses, saying it could not read it. */
+    public function testAVersionThatCannotBeReadClaimsNoUpgrade(): void
+    {
+        $db = self::$db;
+        self::assertNotNull($db);
+        $db->query('RENAME TABLE 202_version TO 202_version_away');
+        try {
+            $pending = SchemaVersion::pendingUpgrade($db, self::CODE);
+            $refused = SchemaVersion::mismatch($db, self::CODE);
+        } finally {
+            $db->query('RENAME TABLE 202_version_away TO 202_version');
+        }
+
+        self::assertNull($pending);
+        self::assertIsString($refused);
+        self::assertStringStartsWith('cannot read the schema version from 202_version', $refused);
     }
 }

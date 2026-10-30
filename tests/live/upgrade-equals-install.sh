@@ -301,7 +301,10 @@ say "5. compare the rows both installs seed"
 #                            recorded before it into attribution; a fresh
 #                            install has nothing from before (checked below)
 #   202_reclick_backfill     the same for the clicks re-clicked before it
-ROW_EXEMPT=' 202_users 202_api_keys 202_deployment_secrets 202_users_pref 202_attribution_models 202_attribution_backfill 202_reclick_backfill '
+#   202_licence_answers      the licence service's answer for the key the
+#                            installer confirmed (checked below); the
+#                            $ORIGIN_VERSION installer kept none
+ROW_EXEMPT=' 202_users 202_api_keys 202_deployment_secrets 202_users_pref 202_attribution_models 202_attribution_backfill 202_reclick_backfill 202_licence_answers '
 ROWS_COMPARED=0
 ROW_DIFFS=()
 while IFS= read -r table; do
@@ -335,6 +338,9 @@ eq "$(mysql_q -N "$DB_UP" -e "$SECRETS")" "$(mysql_q -N "$DB_FRESH" -e "$SECRETS
     "the upgrade mints the install secrets a fresh install has (the install id among them), each 64 hex characters"
 eq "$(mysql_q -N "$DB_FRESH" -e "SELECT COUNT(*) FROM 202_deployment_secrets WHERE secret_name = 'install_id'")" "1" \
     "a fresh install has an install id"
+ANSWER="SELECT CONCAT_WS('/', COUNT(*), SUM(valid_yes = 1 AND valid_at > UNIX_TIMESTAMP() - 3600)) FROM 202_licence_answers"
+eq "$(mysql_q -N "$DB_FRESH" -e "$ANSWER")" "1/1" \
+    "a fresh install records the valid answer that let it install, for the grace period"
 MODELS="SELECT user_id, model_name, model_slug, model_type, weighting_config, lookback_days, status, is_default FROM 202_attribution_models ORDER BY model_id"
 eq "$(mysql_q -N "$DB_UP" -e "$MODELS")" "$(mysql_q -N "$DB_FRESH" -e "$MODELS")" \
     "the account's default attribution model is the one a fresh install gives it"

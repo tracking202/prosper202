@@ -252,6 +252,9 @@ func HintFor(err error) string {
 			return "The key is valid, but its user is switched off. An admin can switch the user back on: `p202 user update <user_id> --user-active 1`; or use the key of an active user."
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
+		case apiErr.Status == 402 && apiErr.Category == "licence" && strings.Contains(apiErr.Message, "could not be checked"):
+			// The install could not reach the licence service, and no recent answer covers it.
+			return "The install could not reach Tracking202 to check its licence. Make sure the server running Prosper202 can reach my.tracking202.com over HTTPS, then run the command again; for help, contact support@tracking202.com or the support chat."
 		case apiErr.Status == 402 && apiErr.Category == "licence":
 			return "This install's ClickServer API key has no active Prosper202 ClickServer Pro subscription. Start a Pro trial or subscription at https://my.tracking202.com/api/customers/subscriptions/support, then run the command again (the install re-checks a refusal within five minutes)."
 		case apiErr.Status == 402:
