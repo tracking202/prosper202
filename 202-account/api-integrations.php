@@ -98,6 +98,17 @@ function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack,
 	if (!$error) {
 		$new_value = (string)$_POST[$post_key];
 		$old_value = $user_row[$field_name] ?? '';
+		try {
+			// PUT /users/{id}/preferences asks the same rule; a blank URL is still "can't be empty" here.
+			$new_value = $field_name === 'user_slack_incoming_webhook'
+				? Prosper202\Notifications\SlackWebhook::accepted($new_value) : $new_value;
+			if ($new_value === '') {
+				throw new InvalidArgumentException($error_message);
+			}
+		} catch (InvalidArgumentException $refused) {
+			$error[$error_key] = $refused->getMessage();
+			return false;
+		}
 
 		if ($new_value !== $old_value) {
 			try {
