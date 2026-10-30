@@ -240,12 +240,30 @@ final class LicenceGracePeriodTest extends TestCase
         self::assertFalse(CliAccessCache::validWithinGrace($this->answers, $this->key));
     }
 
-    public function testARecordThatCannotBeReadIsNotLicensed(): void
+    /**
+     * A record that cannot be read (its table not made yet: files deployed
+     * before the upgrade ran) is no record: the cached answer within the
+     * window decides, as for a key with nothing recorded.
+     *
+     * @dataProvider cachedAnswersWithNoRecord
+     */
+    public function testWithAnUnreadableRecordTheCachedAnswerDecides(?bool $cached, int $age, bool $licensed): void
     {
-        ShellAccessCache::recordAnswer($this->answers, $this->key, true);
+        $this->answers->saveAnswer(hash('sha256', $this->key), ShellAccessCache::QUESTION_VALID, true, time());
+        $this->answers->saveAnswer(hash('sha256', $this->key), ShellAccessCache::QUESTION_PAID, true, time());
         $this->answers->unreadable = true;
-        self::assertFalse(ShellAccessCache::validWithinGrace($this->answers, $this->key));
-        self::assertFalse(ShellAccessCache::validWithinGrace(null, $this->key), 'and no record at all');
+        foreach ([ShellAccessCache::class, CliAccessCache::class] as $cache) {
+            if ($cached !== null) {
+                $cache::write($this->key, $cached);
+                $this->ageCache($cache, $age);
+            }
+            self::assertSame($licensed, $cache::validWithinGrace($this->answers, $this->key), $cache);
+            self::assertSame($licensed, $cache::validWithinGrace(null, $this->key), $cache . ', no record at all');
+        }
+        foreach (self::GATES as $name => $gate) {
+            $this->forgetHoldOffs();
+            self::assertSame($licensed, $this->askGate($gate, null), $name);
+        }
     }
 
     public function testTheRecordNamesTheKeyByItsHashOnly(): void

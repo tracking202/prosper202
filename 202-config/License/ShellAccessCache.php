@@ -116,10 +116,11 @@ class ShellAccessCache
      * record's last answer to this cache's question (a valid key here, a paid
      * licence in CliAccessCache) was a yes, given at most GRACE_SECONDS ago.
      * With nothing recorded for the key yet (an install upgraded from before
-     * the record), this cache's own last answer within the same window
-     * decides instead. Never checked, last answered no, answered longer ago,
-     * or a record that cannot be read is not licensed. Every licence gate
-     * asks this, so the rule can be replaced here alone.
+     * the record), or a record that cannot be read (its table not made yet),
+     * this cache's own last answer within the same window decides instead.
+     * Never checked, last answered no, or answered longer ago is not
+     * licensed. Every licence gate asks this, so the rule can be replaced
+     * here alone.
      */
     public static function validWithinGrace(?LicenceAnswerStore $answers, string $key, ?int $now = null): bool
     {
@@ -127,14 +128,14 @@ class ShellAccessCache
             return false;
         }
         if ($answers === null) {
-            error_log(static::class . ': no licence answer record to read; the grace period cannot apply');
-            return false;
+            error_log(static::class . ': no licence answer record to read; the cached answer decides');
+            return static::readStale($key) === true;
         }
         try {
             $last = $answers->lastAnswer(hash('sha256', $key), static::licenceQuestion());
         } catch (\Throwable $e) {
-            error_log(static::class . ': ' . $e->getMessage() . '; the grace period cannot apply');
-            return false;
+            error_log(static::class . ': ' . $e->getMessage() . '; the cached answer decides');
+            return static::readStale($key) === true;
         }
         if ($last === null) {
             return static::readStale($key) === true;

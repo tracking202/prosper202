@@ -128,12 +128,23 @@ final class MysqlLicenceAnswerStoreIntegrationTest extends TestCase
         self::assertStringNotContainsString($this->key, json_encode($all, JSON_THROW_ON_ERROR));
     }
 
-    public function testAMissingTableIsNotLicensedAndSaysWhy(): void
+    /**
+     * The files deployed before the upgrade made the table: the record cannot
+     * be read, and the cached answer within the window decides.
+     */
+    public function testWithTheTableMissingTheCachedAnswerDecides(): void
     {
         $store = new MysqlLicenceAnswerStore(self::$db);
         self::assertTrue(self::$db->query('RENAME TABLE 202_licence_answers TO 202_licence_answers_gone'));
         try {
-            self::assertFalse(ShellAccessCache::validWithinGrace($store, $this->key));
+            self::assertFalse(ShellAccessCache::validWithinGrace($store, $this->key), 'nothing cached');
+            ShellAccessCache::write($this->key, false);
+            self::assertFalse(ShellAccessCache::validWithinGrace($store, $this->key), 'a cached no');
+            ShellAccessCache::write($this->key, true);
+            $path = (new \ReflectionMethod(ShellAccessCache::class, 'path'))->invoke(null, $this->key);
+            self::assertTrue(touch($path, time() - self::DAY));
+            clearstatcache();
+            self::assertTrue(ShellAccessCache::validWithinGrace($store, $this->key), 'a yes cached yesterday');
             $this->expectException(\RuntimeException::class);
             $store->lastAnswer(hash('sha256', $this->key), ShellAccessCache::QUESTION_VALID);
         } finally {
