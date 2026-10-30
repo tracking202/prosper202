@@ -75,9 +75,7 @@ AUTH::set_timezone($rotator_row['user_timezone']);
 $ip_address = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
 
 if ($rotator_row['maxmind_isp'] == '1') {
-	$IspData = getIspData($ip_address);
-	$IspData = explode(',', (string) $IspData);
-	$IspData = $IspData[0];
+	$IspData = \Prosper202\Rotator\Criterion::visitorIsp((string) getIspData($ip_address));
 } else {
 	$IspData = null;
 }
