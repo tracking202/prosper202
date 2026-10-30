@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace Prosper202\PaymentNotification\PayKickstart;
 
 use InvalidArgumentException;
+use Prosper202\Setup\SavedSecret;
 
 /**
  * An account's PayKickstart IPN secret keys: one for each PayKickstart
  * campaign it sells through (PayKickstart gives every campaign its own), in
  * 202_users_pref.paykickstart_ipn_secret_keys, one per line. The page and
  * PUT /users/{id}/preferences both write through parse(), and nothing ever
- * answers with a key: the page shows the last characters of each, GET
+ * answers with a key: the page shows the last characters of a long one, GET
  * /users/{id}/preferences whether any is stored, and GET /system/integrations
  * how many.
  */
@@ -158,10 +159,10 @@ final class PayKickstartKeys
         return hash_hmac('sha256', 'paykickstart-ipn-key-removal|' . $key, $secret);
     }
 
-    /** How the page shows stored keys: their last four characters. */
+    /** How the page shows a stored key: its last four characters, or "" for one too short to show them. */
     public static function hint(string $key): string
     {
-        return "\u{2026}" . substr($key, -4);
+        return strlen($key) >= SavedSecret::SHOWN_ENDING_MIN_LENGTH ? "\u{2026}" . substr($key, -4) : '';
     }
 
     private static function problem(string $key): ?string

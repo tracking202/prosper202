@@ -9,7 +9,9 @@ use Prosper202\Setup\DniNetworks;
 
 /**
  * Account › API integrations shows the signed-in account's own Direct Network
- * Integrations, and no network's key (CLAUDE.md #27, #5).
+ * Integrations, and no network's key (CLAUDE.md #27, #5); nor any of the
+ * account's other integration secrets, and a card left empty keeps its secret
+ * (#25).
  *
  * The page read `WHERE user_id = '1'`: every admin of an install saw account
  * 1's networks, never their own, with each key in a Reveal attribute and the
@@ -42,6 +44,15 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
     private const PAGE = '202-account/api-integrations.php';
     private const NOT_FOUND = 'That network was not found; nothing was changed.';
     private const NOT_YOURS = 'That DNI network is not one of yours, or it was removed.';
+
+    /** @var array<string, string> the account's integration secrets as seeded; ipqs_api_key is left unsaved */
+    private const SECRETS = [
+        'cb_key' => 'it-clickbank-secret-CB01',
+        'zaxaa_api_signature' => 'zx-short',
+        'user_slack_incoming_webhook' => 'https://hooks.slack.com/services/T0/B0/it-slack-SL01',
+        'jvzoo_ipn_secret_key' => 'it-jvzoo-secret-JV01',
+        'paykickstart_ipn_secret_keys' => "it-paykickstart-PK01\npk-8char",
+    ];
 
     private static string $sessions = '';
 
@@ -115,6 +126,7 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
             self::user($user);
             self::row('202_users_pref', ['user_id' => $user]);
         }
+        self::seedSecrets();
         self::q("UPDATE 202_users SET p202_customer_api_key = 'page-runner'"
             . ' WHERE user_id IN (' . self::USER . ', ' . self::OTHER . ')');
         self::row('202_roles', ['role_id' => self::ROLE, 'role_name' => 'integrations test']);
@@ -286,6 +298,121 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
         self::assertSame(['host' => 'host', 'install_hash' => 'my-hash', 'networks' => [
             ['id' => self::USER, 'networkId' => 'mine', 'api_key' => self::MY_KEY, 'type' => 'HasOffers'],
         ]], $request);
+    }
+
+    private static function seedSecrets(): void
+    {
+        $set = ["cb_verified = 1", "ipqs_api_key = ''"];
+        foreach (self::SECRETS as $column => $value) {
+            $set[] = "$column = '" . self::$db->real_escape_string($value) . "'";
+        }
+        self::q('UPDATE 202_users_pref SET ' . implode(', ', $set) . ' WHERE user_id = ' . self::USER);
+    }
+
+    /** @return array<string, string> the account's integration columns as stored */
+    private static function secrets(): array
+    {
+        $found = self::$db->query('SELECT cb_key, cb_verified, zaxaa_api_signature, user_slack_incoming_webhook,'
+            . ' jvzoo_ipn_secret_key, ipqs_api_key, paykickstart_ipn_secret_keys'
+            . ' FROM 202_users_pref WHERE user_id = ' . self::USER);
+        self::assertInstanceOf(\mysqli_result::class, $found, (string) self::$db->error);
+        $row = $found->fetch_assoc();
+        self::assertIsArray($row);
+
+        return array_map('strval', $row);
+    }
+
+    private static function assertNoSecret(string $out, string $what, string ...$more): void
+    {
+        $paykickstart = explode("\n", self::SECRETS['paykickstart_ipn_secret_keys']);
+        foreach ([...array_values(self::SECRETS), ...$paykickstart, ...$more] as $secret) {
+            self::assertStringNotContainsString($secret, $out, "$what put a secret into the page");
+        }
+    }
+
+    /** A save that took redirects: the page is not rendered again (user 1's absence may print a notice). */
+    private static function assertRedirected(string $out, string $what): void
+    {
+        self::assertStringNotContainsString('p202-panel', $out, $what);
+    }
+
+    /** @return array<string, string> a card's Save, with $value in its field */
+    private static function save(string $flag, string $field, string $value): array
+    {
+        return ['token' => 'SESSION', $flag => '1', $field => $value];
+    }
+
+    public function testNoIntegrationSecretReachesThePage(): void
+    {
+        $out = self::page(self::PAGE);
+        self::assertNoSecret($out, 'API integrations');
+        self::assertStringContainsString('Saved, ends in CB01', $out, 'ClickBank\'s key, by its last four');
+        self::assertStringContainsString('Saved, ends in SL01', $out, 'the Slack webhook');
+        self::assertStringContainsString('Saved, ends in JV01', $out, 'the JVZIPN key');
+        self::assertStringNotContainsString('-short', $out, 'a short key shows no ending');
+        self::assertMatchesRegularExpression('~Zaxaa API signature:</span>\s*<span data-saved-secret>Saved<~', $out);
+        self::assertMatchesRegularExpression('~IPQS API key:</span>\s*<span data-saved-secret>Not saved<~', $out);
+        self::assertStringContainsString("Key ending \u{2026}PK01", $out, 'a long PayKickstart key by its last four');
+        self::assertStringContainsString('>Key 2<', $out, 'a short one by its place');
+        self::assertStringNotContainsString('8char', $out);
+        $fields = 'cb_key|zaxaa_api_signature|user_slack_incoming_webhook|jvzoo_ipn_secret_key|ipqs_api_key';
+        self::assertSame(0, preg_match('~name="(?:' . $fields . ')"[^>]*value="[^"]~', $out), 'no field is filled in');
+        self::assertStringContainsString('New ClickBank secret key', $out, 'a saved one is replaced, not shown');
+        self::assertMatchesRegularExpression('~name="ipqs_api_key" required~', $out, 'one not saved is asked for');
+    }
+
+    public function testAnEmptyFieldKeepsEachSavedSecret(): void
+    {
+        $before = self::secrets();
+        $cards = [
+            ['change_cb_key', 'cb_key'],
+            ['change_zaxaa_api_signature', 'zaxaa_api_signature'],
+            ['change_user_slack_incoming_webhook', 'user_slack_incoming_webhook'],
+            ['change_jvzoo_secret_key', 'jvzoo_ipn_secret_key'],
+        ];
+        foreach ($cards as [$flag, $field]) {
+            foreach (['', '   '] as $empty) {
+                $out = self::page(self::PAGE, [], self::save($flag, $field, $empty));
+                self::assertRedirected($out, "$field left empty is kept, with no error");
+                self::assertSame($before, self::secrets(), "$field left empty changes nothing (cb_verified neither)");
+            }
+        }
+
+        $out = self::page(self::PAGE, [], self::save('change_ipqs_api_key', 'ipqs_api_key', ''));
+        $empty = 'The IPQualityScore API Key can&#039;t be empty!';
+        self::assertStringContainsString($empty, $out, 'nothing saved, nothing kept');
+        self::assertNoSecret($out, 'the refused save');
+    }
+
+    public function testANewValueReplacesTheSavedOneAndARefusedOneIsNotWrittenBack(): void
+    {
+        try {
+            $out = self::page(self::PAGE, [], self::save('change_cb_key', 'cb_key', 'it-clickbank-rotated-CB02'));
+            self::assertRedirected($out, 'a new ClickBank key is saved');
+            $after = self::secrets();
+            self::assertSame('it-clickbank-rotated-CB02', $after['cb_key']);
+            self::assertSame('0', $after['cb_verified'], 'a new ClickBank key is unverified');
+
+            $refused = "it-jvzoo-typed\x01-JV03";
+            $out = self::page(self::PAGE, [], self::save('change_jvzoo_secret_key', 'jvzoo_ipn_secret_key', $refused));
+            self::assertStringContainsString('has a character that is not text', $out, 'JVZooKey::parse() decides');
+            self::assertStringNotContainsString('it-jvzoo-typed', $out, 'what was posted is not written back');
+            self::assertNoSecret($out, 'the refused JVZoo save');
+            self::assertSame(self::SECRETS['jvzoo_ipn_secret_key'], self::secrets()['jvzoo_ipn_secret_key']);
+
+            $new = self::save('change_jvzoo_secret_key', 'jvzoo_ipn_secret_key', '  it-jvzoo-new-JV04  ');
+            $out = self::page(self::PAGE, [], $new);
+            self::assertRedirected($out, 'a new JVZoo key is saved');
+            self::assertSame('it-jvzoo-new-JV04', self::secrets()['jvzoo_ipn_secret_key'], 'trimmed, as it signs');
+
+            self::q("UPDATE 202_users_pref SET jvzoo_ipn_secret_key = 'two\\nlines-of-key'"
+                . ' WHERE user_id = ' . self::USER);
+            $out = self::page(self::PAGE, [], self::save('change_jvzoo_secret_key', 'jvzoo_ipn_secret_key', ''));
+            self::assertStringContainsString('The saved key cannot be used.', $out, 'an unusable key is not kept');
+            self::assertStringNotContainsString('lines-of-key', $out);
+        } finally {
+            self::seedSecrets();
+        }
     }
 
     public function testTheProgressEndpointAsksAboutTheAccountsOwnNetworks(): void
