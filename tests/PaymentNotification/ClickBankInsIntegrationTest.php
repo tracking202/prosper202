@@ -567,6 +567,24 @@ final class ClickBankInsIntegrationTest extends TestCase
         self::assertSame($sale['transaction_id'], self::conversions()[1]['transaction_id']);
     }
 
+    /** A refund stating more than its sale takes back the sale, never the click below 0, and says both amounts. */
+    public function testARefundOfMoreThanTheSaleTakesBackTheWholeSale(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $refund = ['transactionType' => 'RFND', 'totalAccountAmount' => '-50.00'];
+
+        $outcome = $this->post($refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);
+        self::assertSame('Reversed transaction CWOGBZLN on click ' . self::CLICK . ' by 37.62, the whole sale: this'
+            . ' RFND states 50.00, more than the sale recorded.', $outcome->message);
+        self::assertSame(['37.62000', '-37.62000'], array_column(self::conversions(), 'click_payout'));
+        self::assertSame('0.00000', self::clickPayout());
+        // ClickBank's retry of it is that refund.
+        $again = $this->post(['attemptCount' => 2] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $again);
+        self::assertCount(2, self::conversions());
+    }
+
     public function testARefundIsDatedWhenClickBankSaysItHappened(): void
     {
         $clickTime = (int) self::scalar(

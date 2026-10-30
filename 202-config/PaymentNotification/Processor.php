@@ -24,7 +24,8 @@ use Prosper202\Database\Connection;
  * one that states another is refused, never answered as the first
  * (CLAUDE.md #15). Where the provider says what one notification is
  * (FingerprintsNotifications), a refund is a duplicate only when it is that
- * notification.
+ * notification. A refund takes back at most what its sale recorded: one
+ * stating more is capped at the sale and its answer names both amounts.
  */
 final class Processor
 {
@@ -226,14 +227,26 @@ final class Processor
         $on = 'Transaction ' . $original . ' on click ' . $n->clickId;
         // A refund is dated when it happened, the sale keeping its own day;
         // never before the sale it takes back.
-        [$time, $dated] = self::dated($n->occurredAt, $this->saleTime($n->clickId, $original, $owner), 'the sale');
+        $sale = $this->saleOnFile($n->clickId, $original, $owner);
+        [$time, $dated] = self::dated($n->occurredAt, $sale['time'] ?? 0, 'the sale');
+        // A refund takes back at most what its sale recorded (a sale is
+        // reversed once): one stating more (a fee, a mismatched payment) is
+        // capped there and answered 200 naming both amounts, which the log
+        // keeps, since a provider retries a refusal for days.
+        $amount = $n->amount;
+        $by = $amount ?? 'its full amount';
+        if ($amount !== null && $sale !== null && abs(Amount::toUnits($amount)) > $sale['units']) {
+            $by = self::units($sale['units']) . ', the whole sale: this ' . $n->event . ' states ' . $amount
+                . ', more than the sale recorded';
+            $amount = Amount::fromUnits($sale['units']);
+        }
         try {
             $result = $this->record($n->clickId, $owner, $provider, $request, [
                 'transaction_id' => $original,
                 'reversal' => true,
                 'reversal_ref' => $reference,
-                'use_pixel_payout' => $n->amount !== null,
-                'payout' => $n->amount ?? '',
+                'use_pixel_payout' => $amount !== null,
+                'payout' => $amount ?? '',
                 'conv_time' => $time,
             ]);
         } catch (ReversalException $e) {
@@ -255,7 +268,7 @@ final class Processor
             return new Outcome(
                 OutcomeKind::REVERSED,
                 'Reversed transaction ' . $original . ' on click ' . $n->clickId . ' by '
-                . ($n->amount ?? 'its full amount') . '.' . $dated,
+                . $by . '.' . $dated,
                 $result['conv_id'],
                 $owner
             );
@@ -359,19 +372,27 @@ final class Processor
         return $row === null ? 0 : (int) $row['click_time'];
     }
 
-    /** When the sale a transaction id names on a click is dated (the writer's target), or 0 with none. */
-    private function saleTime(int $clickId, string $transactionId, int $owner): int
+    /**
+     * When the sale a transaction id names on a click is dated and what it
+     * recorded, as positive units (the writer's target), or null with none.
+     *
+     * @return array{time: int, units: int}|null
+     */
+    private function saleOnFile(int $clickId, string $transactionId, int $owner): ?array
     {
         $conn = new Connection($this->db);
         $stmt = $conn->prepareRead(
-            'SELECT conv_time FROM 202_conversion_logs'
+            'SELECT conv_time, click_payout FROM 202_conversion_logs'
             . ' WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL AND user_id = ?'
             . ' ORDER BY conv_id LIMIT 1'
         );
         $conn->bind($stmt, 'isi', [$clickId, $transactionId, $owner]);
         $row = $conn->fetchOne($stmt);
 
-        return $row === null ? 0 : (int) $row['conv_time'];
+        return $row === null ? null : [
+            'time' => (int) $row['conv_time'],
+            'units' => abs(Amount::toUnits((string) $row['click_payout'])),
+        ];
     }
 
     /** An amount in another currency is refused: nothing here converts it. */
@@ -431,7 +452,8 @@ final class Processor
         bool $another = false
     ): Outcome {
         $stored = $this->storedReversal($reversalId, $owner);
-        $stated = $n->amount !== null ? Amount::toUnits($n->amount) : $stored['sale'];
+        // Capped as the reversal was: a refund stating more than its sale took back the whole sale.
+        $stated = $n->amount !== null ? min(abs(Amount::toUnits($n->amount)), $stored['sale']) : $stored['sale'];
         $by = self::units($stored['reversed']);
         if ($another || $stated !== $stored['reversed']) {
             $states = '; this ' . $n->event . ($another ? ' is another notification than that reversal\'s and' : '')
