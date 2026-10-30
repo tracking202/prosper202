@@ -8,6 +8,8 @@ Direct Network Integration allows you to quickly find and setup offers directly 
 
 Each user's networks are their own: My Account › 3rd Party API Integrations lists the networks the signed-in user added, and no one else's. A network's API key is never shown once it is saved; the list says that a key is saved and, for a key of 12 characters or more, its last four characters. To change a network, choose Edit: leave New API key empty to keep the saved key, or paste a new one to replace it. Moving the integration to a different network needs that network's key.
 
+The other keys on the page (the IPQualityScore API key, the ClickBank secret key, the Zaxaa API signature, the Slack incoming webhook URL and the JVZoo JVZIPN secret key) are never shown back either: each card says **Saved, ends in** and the last four characters for one of 12 characters or more, **Saved** for a shorter one, and **Not saved** when there is none. To change one, open **Update**, paste the new value into its empty field and save; saving the field empty keeps the stored value as it is.
+
 ## Clickbank Sales Notification
 
 Clickbank doesn't support Postback or custom conversion pixels, so to get real-time reporting of sales you can setup our Clickbank Sales Notification integration.
@@ -98,7 +100,8 @@ PayKickstart**:
    `hash` with the stored keys, and the account whose key verifies it is the
    one it records for (a deleted account's keys verify nothing); an IPN no
    stored key verifies is refused. The keys are
-   never shown back: the page lists their last four characters, and the API
+   never shown back: the page lists each by its last four characters (a key
+   shorter than 12 characters by its place, Key 1, Key 2), and the API
    (`PUT /users/{id}/preferences`, `p202 user prefs update
    --paykickstart-ipn-secret-keys`) how many are stored.
 
@@ -239,7 +242,7 @@ Step 2: Copy the generated Webhook URL
 ![incomingwebhook2.png](../images/3rd-party-integrations-2.png)
 Step 3: Go to the My Account menu in Prosper202 Pro and select 3rd Party API Integrations
 ![incomingwebhook3.png](../images/3rd-party-integrations-3.png)
-Step 4: Paste the webhook URL here and save
+Step 4: Paste the webhook URL here and save (once saved, the page shows only its last four characters; to change it, paste a new one)
 ![incomingwebhook4.png](../images/3rd-party-integrations-4.png)
 Step 5: There is no step 5. Start receiving real time Prosper202 Pro notifications sent to your Slack
 ![slacknotifications.jpg](../images/3rd-party-integrations-5.jpg)

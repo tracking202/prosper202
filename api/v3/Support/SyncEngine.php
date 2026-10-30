@@ -700,7 +700,9 @@ class SyncEngine
         $rulePayload = [
             'rule_name' => $rule['rule_name'] ?? '',
             'splittest' => $rule['splittest'] ?? 0,
-            'status' => $rule['status'] ?? 1,
+            // Active only as the redirects read it (status '1'); a NULL status
+            // is inactive, and a create sent NULL would store it active
+            'status' => $this->scalarString($rule['status'] ?? null) === '1' ? 1 : 0,
         ];
 
         if (!empty($rule['criteria']) && is_array($rule['criteria'])) {

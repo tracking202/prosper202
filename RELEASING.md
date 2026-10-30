@@ -169,8 +169,12 @@ This is the normal path. CI builds and publishes; you only tag.
 > `GITHUB_TOKEN` (with `contents: write`) to create the release and upload the
 > asset.
 
-6. **Do a full docs pass, the same day.** The docs readers find first still
-   describe the previous version until someone changes them. Read the new
+6. **Do a full docs pass when the release goes live.** Going live is the
+   GitHub Release being published (for a security release, once the owner has
+   said it may be), not the tag or the version branch merging. Prepare the
+   changes on branches before, and merge them when it goes live, not earlier:
+   a merge to the site's `main` deploys at once. The docs readers find first
+   still describe the previous version until someone changes them. Read the new
    version's changelog, then check **every** guide on the site and **every**
    page on ReadMe against it, not only the pages below, and fix whatever the
    release made wrong or out of date. At a minimum, that covers:
@@ -198,6 +202,34 @@ This is the normal path. CI builds and publishes; you only tag.
      prompted to upgrade. Decide on each release whether they should be.
    - **For a security release,** the docs describe how the new version
      behaves. They never say what earlier versions allowed.
+
+7. **Publish a launch post on the blog when the release goes live**, at
+   `prosper.tracking202.com/blog/` (repo `prosper202-marketing`, `blog/`; see
+   the Blog section of `documentation/build.py`). Draft it on a branch, check
+   it in the branch's Cloudflare preview, and merge it with the docs.
+   - **No fixed formula.** Each post gets its own title and shape, written for
+     that release. Say which version it covers, and what a reader can now do.
+   - **Lead with the benefit, not the feature.** Open with the one thing the
+     reader can do now that they could not before, in their words. Pick the
+     new and interesting features; leave fixes and internals to the changelog.
+   - **Two readers.** Write for marketers and end users first: the outcome,
+     the time or money it saves, how it looks in the app. Then give
+     developers and self-hosters their own section: the CLI, API and MCP
+     details, requirements, and the upgrade (backup first, no downgrade),
+     with links to the docs.
+   - **Show it.** Real screenshots from an install of the release with demo
+     data (no real keys or customer data), one per feature that has a screen,
+     with alt text and a caption that says what to notice. Where it fits, an
+     interactive demo that lets a reader try the feature before installing or
+     upgrading is better still.
+   - **What good SaaS release posts do:** a specific, varied headline; short
+     sections that scan; one idea per section; plain words; a clear next step
+     (upgrade, try it, read the guide).
+   - **Dedicated posts.** A feature that needs a walkthrough to be understood
+     also gets a post of its own. The launch post keeps a short version and
+     links to it.
+   - **For a security release,** the post says to update and describes the
+     new behaviour only, as the docs do.
 
 ### Re-running a release
 
