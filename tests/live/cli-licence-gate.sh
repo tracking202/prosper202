@@ -16,7 +16,8 @@
 #      stays open to the Go CLI, as does /system/health
 #   2. with the cache holding "the last check went unanswered": the Go CLI
 #      is allowed only on a 'paid' answer within the 30-day grace period in
-#      the durable record (202_licence_answers; a cached verdict is not enough),
+#      the durable record (202_licence_answers), or, with nothing recorded for
+#      the key, in its cached verdict,
 #      and refused as "could not be checked" otherwise, and nothing is
 #      asked; a refusal expires after five minutes, an allow after an hour
 #   3. the built Go CLI itself (P202_BIN), when given: exit 6, the licence
@@ -298,7 +299,14 @@ request "$GO_UA" /campaigns; expect_unconfirmed "hold-off beside an expired 'not
 cache write "$K1" 1
 cache age "$K1" 7200
 cache mark-unknown "$K1"
-request "$GO_UA" /campaigns; expect_unconfirmed "hold-off beside an expired cached 'paid' with no durable record"
+request "$GO_UA" /campaigns; expect_allowed "hold-off, nothing recorded, a cached 'paid' two hours old (as after an upgrade): allowed"
+cache age "$K1" $((31 * 86400))
+request "$GO_UA" /campaigns; expect_unconfirmed "hold-off, nothing recorded, a cached 'paid' 31 days old"
+cache write "$K1" 1
+cache age "$K1" 7200
+cache mark-unknown "$K1"
+answered "$K1" paid 0 60
+request "$GO_UA" /campaigns; expect_unconfirmed "hold-off, a recorded 'not paid' over a cached 'paid': the record decides"
 answered "$K1" paid 1 7200
 request "$GO_UA" /campaigns; expect_allowed "hold-off, a durable 'paid' two hours old: within the grace period, allowed"
 answered "$K1" paid 1 $((31 * 86400))
