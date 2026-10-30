@@ -84,12 +84,15 @@ final class ReClickBackfill
      * server shutting down (1053), out of memory (1037, 1038, 1041), full
      * (1021, 1114) or read-only (1290, 1792, 1836), the storage engine's
      * own errors (1030, a temporary one 1297, one during commit 1180), a
-     * limit reached (lock table 1206, prepared statements 1461, threads 1135,
-     * the user's resources 1226), and a statement to prepare again (1615).
+     * server limit reached (prepared statements 1461, threads 1135, the
+     * user's resources 1226), and a statement to prepare again (1615). The
+     * lock table full (1206) is not among them: the repair locks every row of
+     * the click, so a click with enough visits reaches it on every run, and
+     * that is the click's.
      */
     public const MOMENT_ERRNOS = [
         1205, 1213, 1317, 1969, 3024, 1927, 1040, 1203, 4031, 1158, 1159, 1160, 1161, 1053, 1037, 1038, 1041,
-        1021, 1114, 1290, 1792, 1836, 1030, 1297, 1180, 1206, 1461, 1135, 1226, 1615,
+        1021, 1114, 1290, 1792, 1836, 1030, 1297, 1180, 1461, 1135, 1226, 1615,
     ];
 
     /**
