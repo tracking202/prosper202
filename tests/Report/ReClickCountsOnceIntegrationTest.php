@@ -7,13 +7,12 @@ namespace Tests\Report;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
-use Prosper202\Report\DailyEmailCampaigns;
 use Tracking202\Report\RotatorBreakdown;
 
 /**
  * The report pages that count 202_clicks rows themselves count a re-clicked
- * click once, under its latest visit: Overview › Rotator Breakdown, the
- * daily email, and the legacy API's reports.
+ * click once, under its latest visit: Overview › Rotator Breakdown and the
+ * legacy API's reports.
  *
  * A redirector re-click gives the click another 202_clicks and
  * 202_clicks_spy row at the re-click's time, with the route and campaign it
@@ -163,22 +162,6 @@ final class ReClickCountsOnceIntegrationTest extends TestCase
         $rotators = (new RotatorBreakdown(self::$db))->rotators(self::USER, self::$now - 60, self::$now + 30, 'all');
 
         self::assertSame(self::figures(0, 0, 0.0, 0.0), $rotators[0]['totals'], 'X is its latest visit\'s');
-    }
-
-    public function testTheDailyEmailCountsTheClickOnceUnderItsLatestCampaign(): void
-    {
-        $conn = new Connection(self::$db);
-        $window = [self::$now - 60, self::$now + 3000];
-        $top = DailyEmailCampaigns::top($conn, self::USER, ...[...$window, 10]);
-        $clicks = array_column($top, 'clicks', 'aff_campaign_name');
-        ksort($clicks);
-
-        self::assertSame(['reclick campaign A' => '1', 'reclick campaign B' => '1'], array_map('strval', $clicks));
-        $campaigns = [self::$ids['campA'], self::$ids['campB']];
-        $again = DailyEmailCampaigns::forCampaigns($conn, self::USER, $campaigns, ...$window);
-        self::assertSame(['1', '1'], array_map('strval', array_column($again, 'clicks')));
-        $leads = array_column($again, 'leads', 'aff_campaign_name');
-        self::assertSame('1', (string) $leads['reclick campaign B']);
     }
 
     public function testTheLegacyReportsCountTheClickOnce(): void

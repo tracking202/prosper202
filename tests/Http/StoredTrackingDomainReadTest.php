@@ -14,8 +14,7 @@ use Tests\Support\SourceScan;
  * p202StoredTrackingDomain() answered '' for a query that failed, and ''
  * means no domain: getTrackingDomain() then built every link a page showed
  * on the request's host, and p202TrackingBaseUrl() registered the server's
- * own name with the hosted service (auto cron, the daily email, the DNI
- * host) — on one transient database error, with nothing to say so
+ * own name with the hosted service (auto cron, the DNI host) — on one transient database error, with nothing to say so
  * (CLAUDE.md #11). Measured against a live instance: with the connection
  * killed, the healthy `track.example.com` became the Host header the
  * request sent and `http://internal-name:8134/`.
