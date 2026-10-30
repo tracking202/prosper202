@@ -48,6 +48,7 @@ final class ClickRetentionIntegrationTest extends TestCase
         '202_dataengine' => 'user_id = {u}, click_time = {t}',
         '202_identity_observations' => "signal_type = 'cookie', signal_hash = SHA2('{id}', 256), observed_at = {t}",
         '202_clicks_visitor' => 'user_id = {u}, visitor_key = {id}, click_time = {t}',
+        '202_clicks_filter_reason' => "filter_reason = 'repeat_visit'",
         '202_click_latest_visits' => 'click_time = {t}',
     ];
 

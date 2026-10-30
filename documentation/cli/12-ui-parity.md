@@ -87,6 +87,7 @@ Every Update write previews with `?dry_run=1` (`--dry-run`).
 | Page | API | CLI | |
 | ---- | --- | --- | - |
 | Personal Settings: profile, password, time zone, currency, report and privacy preferences | `/users/{id}`, `/users/{id}/preferences` | `p202 user update`, `p202 user prefs get/update` | ✅ |
+| Personal Settings: Click filtering (the checks, the repeat window, the address list, testing an address) | `/users/{id}/click-filter` | `p202 click-filter get/set/list/test` | ✅ |
 | Personal Settings: REST API keys | `/users/{id}/api-keys` | `p202 user apikey create/list/rotate/delete`, `p202 whoami` | ✅ |
 | Personal Settings: the my.tracking202.com customer key, LPO pairing | — | — | — hosted service |
 | Settings: versions, cron, DataEngine, memcache, database size | `/system/info`, `/system/cron`, `/system/dataengine`, `/system/db-stats`, `/system/metrics` | `p202 system info`, `system cron`, `system dataengine`, `system db-stats`, `system metrics` | ✅ |

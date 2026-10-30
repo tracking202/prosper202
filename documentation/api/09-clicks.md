@@ -31,6 +31,7 @@ setting what a set of past clicks cost: `POST /clicks/cpc`, in the
 | `ip` | string | — | One address, IPv4 or IPv6, however it is written |
 | `click_lead` | `0` or `1` | — | 0 = clicks only, 1 = conversions only |
 | `click_bot` | `0` or `1` | — | 0 = human traffic, 1 = bot traffic |
+| `filter_reason` | string | — | Only filtered clicks, by why ([below](#why-a-click-is-filtered)): `sign_in_address`, `crawler_range`, `repeat_visit`, `filter_list`, `bot`, or `not_recorded` for a filtered click with no reason (one filtered before 1.9.79) |
 
 These are the Visitors page's filters, the same ones every report takes
 ([Reports](11-reports.md)). A parameter not listed here, a malformed value, a
@@ -49,6 +50,7 @@ The ids — `click_id`, `aff_campaign_id`, `ppc_account_id`, `landing_page_id`, 
 | `referer`, `landing`, `outbound` | The referring page, the landing page URL and the outbound (offer) URL |
 | `country_name`, `country_code`, `region_name`, `city_name`, `isp_name` | Location |
 | `platform_name`, `browser_name`, `device_name`, `device_type` | The visitor's software and device |
+| `filter_reason`, `filter_entry_id` | Why a filtered click is filtered, and the address list entry of a `filter_list` one ([below](#why-a-click-is-filtered)); `null` for a counted click |
 | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid` | The ad platforms' click ids the click arrived with, as stored: Google Ads' gclid, its iOS click ids (`gbraid` for app, `wbraid` for web), TikTok's `ttclid`, Microsoft Advertising's `msclkid` and Meta's `fbclid`. `null` when it came with none |
 
 `GET /clicks/{id}` adds `user_id`, `click_reviewed`, the `c1`-`c4` values and their ids.
@@ -152,6 +154,27 @@ a preview fetcher that names itself first), and a real user agent carrying
 it to the `bots` list in
 `tests/fixtures/click-bot/user-agents.json`; `ClickBotDetectorTest` fails
 for a signature no agent there exercises.
+
+## Why a click is filtered
+
+A filtered click (`click_filtered = 1`) is recorded and redirected like any
+other and left out of "Real clicks". `filter_reason` says which rule did it:
+
+| `filter_reason` | The click |
+| --------------- | --------- |
+| `sign_in_address` | came from an address a user of this install last signed in from |
+| `crawler_range` | came from one of the built-in search engine crawler ranges |
+| `repeat_visit` | came from an address that clicked already within the account's repeat window |
+| `filter_list` | came from an "always filter" entry of the account's address list (`filter_entry_id`) |
+| `bot` | was filtered by the bot detector ([Bot clicks](#bot-clicks)) |
+| `null` | is counted, or was filtered before 1.9.79, which recorded no reason (a bot click says `bot` all the same) |
+
+The rules are the account's: Personal settings › Click filtering, or
+[`/users/{id}/click-filter`](14-users.md#click-filter-endpoints), which also
+tests an address. A redirector re-click keeps its first visit's flag, and so
+its reason. A reason is written once the click is: if that write fails (the
+upgrade not yet run), the click is kept and its reason is `null`, and the
+server's error log says so.
 
 ## Detail Response (Additional Fields)
 

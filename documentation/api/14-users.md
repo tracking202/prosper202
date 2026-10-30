@@ -67,6 +67,77 @@ API keys are masked after the first 8 characters in list responses. The full key
 | `GET` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Get user preferences (an integration secret only as whether one is stored, never the secret) |
 | `PUT` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Update preferences |
 
+## Click Filter Endpoints
+
+Personal settings › **Click filtering**: which clicks are marked filtered
+(recorded and redirected, shown under Filtered clicks, left out of Real
+clicks). The page and these routes check every value with the same rule.
+Every route asks what the preferences ask: your own with
+`access_to_personal_settings`, or a user you may manage. The writes can be
+staged (`?staged=1`).
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `GET` | `/users/{id}/click-filter` | The checks, the repeat window, the address list (`entries`) and `limits` |
+| `PUT` | `/users/{id}/click-filter` | Change any of `sign_in_addresses`, `crawler_ranges`, `repeat_visits`, `repeat_window` |
+| `POST` | `/users/{id}/click-filter/entries` | Add an entry: `address`, `action` (`count` or `filter`), `note` (201) |
+| `PUT` | `/users/{id}/click-filter/entries/{entryId}` | Change an entry's `address`, `action` or `note` |
+| `DELETE` | `/users/{id}/click-filter/entries/{entryId}` | Remove an entry (`?dry_run=1` previews it) |
+| `GET` | `/users/{id}/click-filter/test?ip=203.0.113.7` | Would a click from this address be filtered, and by which rule? Records nothing |
+
+**The checks**, in the order they are asked, each only when the one before
+did not filter, and all on by default:
+
+| Field | Filters a click |
+| ----- | --------------- |
+| `sign_in_addresses` | from an address a user of this install last signed in from (your own clicks) |
+| `crawler_ranges` | from the built-in Google, Yahoo, Microsoft, Level 3 and PSI ranges (IPv4) |
+| `repeat_visits` | from an address that clicked already within `repeat_window` |
+
+`repeat_window` is `1h`, `6h`, `24h` (the default) or `7d`. `24h` is the
+check as it always was: an address is remembered until the daily cleanup
+removes it once it is a day old, so a repeat is filtered for a day to two
+after the first click (longer without a cron job). The other windows are
+exact; `7d` keeps the account's addresses for a week. The first click is
+always counted. Under privacy the remembered address is the masked one
+(/24, /48), so neighbours in one block are one visitor
+([Privacy](#privacy-user_pref_privacy)).
+
+**The address list** holds up to 500 entries, each an IPv4 or IPv6 address
+or a CIDR block (`203.0.113.7`, `203.0.113.0/24`, `2001:db8::/32`), at most
+/8 (IPv4) or /16 (IPv6) wide. `count` means always counted and beats every
+check; `filter` means always filtered and beats the checks above. When a
+click falls in several entries, a `count` entry wins, then the narrowest
+block. A block is written where it starts (`203.0.113.7/24` is refused,
+naming `203.0.113.0/24`), an IPv4 address as IPv4 (`::ffff:203.0.113.7` is
+refused, naming `203.0.113.7`; a click that arrives that way is matched as
+IPv4), and the same block twice is a 409 naming the entry. An entry is
+compared with the address the click arrives from, before privacy masks it.
+That address is the one the click path records, which a forwarding header
+can claim (behind no proxy, a visitor chooses it), so keep `count` for
+addresses you trust.
+
+**Bot detection** (the visitor's browser, `click_bot`) is separate and always
+filters; the test does not cover it. The test asks the sign-in check of the
+account's own last sign-in address only, so it never says where another user
+of the install signed in from; a click from another user's address is still
+filtered.
+
+A change applies to clicks from then on. An account that never changes
+anything is filtered exactly as before 1.9.79. GET's body can be sent back
+to PUT whole: `entries` and `limits` are accepted unchanged and refused
+changed. Each filtered click records which rule filtered it, served as
+`filter_reason` on [GET /clicks](09-clicks.md#why-a-click-is-filtered).
+
+```bash
+curl -s "$P202/api/v3/users/1/click-filter/test?ip=198.51.100.7" -H "Authorization: Bearer $KEY"
+# {"data":{"ip":"198.51.100.7","filtered":false,"reason":null,"entry":null,
+#   "explanation":"Counted: no rule filters it. Its next click before the daily cleanup would be filtered as a repeat visit.",
+#   "checks":{"filter_list":null,"sign_in_address":{"enabled":true,"matches":false},
+#             "crawler_range":{"enabled":true,"matches":false},
+#             "repeat_visit":{"enabled":true,"window":"24h","matches":false}}, ...}}
+```
+
 ## User Fields
 
 | Field | Type | Required | Description |

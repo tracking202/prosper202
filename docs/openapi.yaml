@@ -2204,6 +2204,15 @@ paths:
           schema:
             type: integer
             enum: [0, 1]
+        - name: filter_reason
+          in: query
+          description: >-
+            Only filtered clicks, by why: a recorded reason, `bot` for the bot
+            detector's, or `not_recorded` for a filtered click recorded before
+            1.9.79, which has no reason.
+          schema:
+            type: string
+            enum: [sign_in_address, crawler_range, repeat_visit, filter_list, bot, not_recorded]
       responses:
         "200":
           description: Paginated click list
@@ -5167,6 +5176,191 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/UserPreferences"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /users/{id}/click-filter:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Users]
+      summary: Get the click filter
+      description: >-
+        Personal settings' Click filtering: your own with the
+        `access_to_personal_settings` permission, or a user you may manage.
+        The built-in checks that mark a click filtered, each on or off, the
+        repeat window, and the address list. An account that never changed
+        them answers the defaults, which filter as before 1.9.79.
+      operationId: getClickFilter
+      responses:
+        "200":
+          description: The click filter
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ClickFilter"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Users]
+      summary: Change the click filter's checks
+      description: >-
+        Any of the four settings; the rest keep their values. A body GET
+        answered can be sent back whole: `entries` and `limits` are accepted
+        unchanged and refused changed (the list is changed one entry at a
+        time). Applies to clicks from then on. Stageable.
+      operationId: updateClickFilter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClickFilterSettings"
+      responses:
+        "200":
+          description: The click filter as saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ClickFilter"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /users/{id}/click-filter/entries:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Users]
+      summary: Add an address list entry
+      description: >-
+        An IPv4 or IPv6 address, or a CIDR block no wider than /8 (IPv4) or
+        /16 (IPv6), whose clicks are always counted (`count`, which beats
+        every check) or always filtered (`filter`, which beats the built-in
+        checks). A block is written where it starts (203.0.113.0/24, not
+        203.0.113.7/24), and an IPv4 address as IPv4. The address compared is
+        the one the click arrived from, before privacy masking; a visitor can
+        claim another through a proxy header, so keep `count` for addresses
+        you trust. At most 500 entries; the same block twice is a 409 naming
+        the entry. Stageable.
+      operationId: addClickFilterEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClickFilterEntryInput"
+      responses:
+        "201":
+          description: The entry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ClickFilterEntry"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The same addresses are on the list already, as `entry_id`.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /users/{id}/click-filter/entries/{entryId}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+      - name: entryId
+        in: path
+        required: true
+        schema:
+          type: integer
+    put:
+      tags: [Users]
+      summary: Change an address list entry
+      description: >-
+        Any of `address`, `action` and `note`; `entry_id` and `created_at`
+        are accepted unchanged, so the entry as GET answers it can be sent
+        back. Stageable.
+      operationId: updateClickFilterEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClickFilterEntryInput"
+      responses:
+        "200":
+          description: The entry as saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ClickFilterEntry"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another entry holds the same addresses.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Users]
+      summary: Remove an address list entry
+      description: Its addresses are filtered by the other rules from then on. Stageable.
+      operationId: deleteClickFilterEntry
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the entry was not removed.
+        "204":
+          description: Entry removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{id}/click-filter/test:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Users]
+      summary: Test an address against the click filter
+      description: >-
+        Whether a click from this address would be filtered, and by which
+        rule, asked of every rule with nothing recorded. `repeat_visit`
+        matches when the address has a click in the window already, so its
+        next one would be filtered. The sign-in check is asked of the
+        account's own last sign-in address only (a click is filtered from
+        any user's), so the test never says where another user signed in.
+        Bot detection reads the browser and is not part of it.
+      operationId: testClickFilter
+      parameters:
+        - name: ip
+          in: query
+          required: true
+          description: One IPv4 or IPv6 address (not a block).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The decision and each check's answer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ClickFilterTest"
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -12449,6 +12643,93 @@ components:
         pagination:
           $ref: "#/components/schemas/Pagination"
 
+    # ── Click filter ───────────────────────────────────────────────────
+
+    ClickFilterSettings:
+      type: object
+      properties:
+        sign_in_addresses:
+          type: boolean
+          description: Filter a click from an address a user of this install last signed in from (default on).
+        crawler_ranges:
+          type: boolean
+          description: Filter clicks from the built-in search engine crawler ranges, IPv4 (default on).
+        repeat_visits:
+          type: boolean
+          description: Filter a second click from one address within the repeat window (default on).
+        repeat_window:
+          type: string
+          enum: ["1h", "6h", "24h", "7d"]
+          description: >-
+            The repeat window (default 24h, which keeps an address until the
+            daily cleanup clears it, a day to two after its first click).
+
+    ClickFilter:
+      allOf:
+        - $ref: "#/components/schemas/ClickFilterSettings"
+        - type: object
+          properties:
+            entries:
+              type: array
+              items:
+                $ref: "#/components/schemas/ClickFilterEntry"
+            limits:
+              type: object
+              description: max_entries, note_chars, the repeat windows and the defaults.
+
+    ClickFilterEntryInput:
+      type: object
+      properties:
+        address:
+          type: string
+          description: 203.0.113.7, 203.0.113.0/24, 2001:db8::/32.
+        action:
+          type: string
+          enum: [count, filter]
+        note:
+          type: string
+          maxLength: 255
+
+    ClickFilterEntry:
+      type: object
+      properties:
+        entry_id:
+          type: integer
+        address:
+          type: string
+        action:
+          type: string
+          enum: [count, filter]
+        note:
+          type: string
+        created_at:
+          type: integer
+
+    ClickFilterTest:
+      type: object
+      properties:
+        ip:
+          type: string
+        filtered:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+          enum: [sign_in_address, crawler_range, repeat_visit, filter_list, null]
+        entry:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ClickFilterEntry"
+        explanation:
+          type: string
+        checks:
+          type: object
+          description: >-
+            filter_list (the entry, or null), and sign_in_address,
+            crawler_range and repeat_visit, each with enabled and matches.
+        not_tested:
+          type: string
+
     # ── Clicks ─────────────────────────────────────────────────────────
 
     Click:
@@ -12472,6 +12753,22 @@ components:
           type: integer
         click_bot:
           type: integer
+        filter_reason:
+          type: string
+          nullable: true
+          enum: [sign_in_address, crawler_range, repeat_visit, filter_list, bot, null]
+          description: >-
+            Why a filtered click is filtered: `sign_in_address` (a user of the
+            install last signed in from its address), `crawler_range` (a
+            built-in crawler range), `repeat_visit` (its address clicked within
+            the repeat window), `filter_list` (an always-filter entry of the
+            account's list, `filter_entry_id`) or `bot` (the bot detector).
+            Null for a counted click, and for one filtered before 1.9.79, which
+            recorded no reason. GET /users/{id}/click-filter shows the rules.
+        filter_entry_id:
+          type: integer
+          nullable: true
+          description: The list entry of a `filter_list` click; null otherwise.
         click_alp:
           type: integer
         click_time:

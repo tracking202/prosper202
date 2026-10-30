@@ -43,7 +43,8 @@ class ClicksController
                 lc.country_name, lc.country_code, lr.region_name, lci.city_name, li.isp_name,
                 p.platform_name, b.browser_name, dm.device_name, dt.type_name AS device_type,
                 su_ref.site_url_address AS referer, su_lp.site_url_address AS landing,
-                su_out.site_url_address AS outbound';
+                su_out.site_url_address AS outbound,
+                cfr.filter_reason, cfr.entry_id AS filter_entry_id';
 
     private const DETAIL_JOINS = '
             LEFT JOIN 202_clicks_record cr ON c.click_id = cr.click_id
@@ -68,7 +69,8 @@ class ClicksController
             LEFT JOIN 202_device_types dt ON dm.device_type = dt.type_id
             LEFT JOIN 202_site_urls su_ref ON cs.click_referer_site_url_id = su_ref.site_url_id
             LEFT JOIN 202_site_urls su_lp ON cs.click_landing_site_url_id = su_lp.site_url_id
-            LEFT JOIN 202_site_urls su_out ON cs.click_outbound_site_url_id = su_out.site_url_id';
+            LEFT JOIN 202_site_urls su_out ON cs.click_outbound_site_url_id = su_out.site_url_id
+            LEFT JOIN 202_clicks_filter_reason cfr ON c.click_id = cfr.click_id';
 
     /**
      * Values the visitor (or the visitor's browser) wrote: stripped of
@@ -114,8 +116,28 @@ class ClicksController
             LEFT JOIN 202_aff_campaigns ac ON c.aff_campaign_id = ac.aff_campaign_id AND ac.user_id = c.user_id
             LEFT JOIN 202_ppc_accounts pa ON c.ppc_account_id = pa.ppc_account_id AND pa.user_id = c.user_id';
 
+    /** The count's join for a filter_reason filter, made only when one is asked. */
+    private const REASON_JOIN = '
+            LEFT JOIN 202_clicks_filter_reason cfr ON c.click_id = cfr.click_id';
+
     /** Parameters of the list beyond ReportFilter's window and filters. */
-    private const LIST_PARAMS = ['limit', 'offset', 'click_lead', 'click_bot'];
+    private const LIST_PARAMS = ['limit', 'offset', 'click_lead', 'click_bot', 'filter_reason'];
+
+    /**
+     * What `filter_reason` answers and the list filters by: the recorded
+     * reasons (ClickFilterVerdict::REASONS), `bot` for a click the bot
+     * detector filtered (202_clicks.click_bot, on every click), and, as a
+     * filter only, `not_recorded` for a filtered click with neither (one
+     * recorded before 1.9.79).
+     */
+    public const FILTER_REASONS = [
+        \Prosper202\Click\Filter\ClickFilterVerdict::SIGN_IN_ADDRESS,
+        \Prosper202\Click\Filter\ClickFilterVerdict::CRAWLER_RANGE,
+        \Prosper202\Click\Filter\ClickFilterVerdict::REPEAT_VISIT,
+        \Prosper202\Click\Filter\ClickFilterVerdict::FILTER_LIST,
+        'bot',
+        'not_recorded',
+    ];
 
     public const MAX_LIMIT = 500;
 
@@ -162,9 +184,29 @@ class ClicksController
             }
         }
 
+        if (array_key_exists('filter_reason', $params)) {
+            $reason = $params['filter_reason'];
+            if (!is_string($reason) || !in_array($reason, self::FILTER_REASONS, true)) {
+                throw new ValidationException('Invalid filter_reason', [
+                    'filter_reason' => 'Must be one of ' . implode(', ', self::FILTER_REASONS),
+                ]);
+            }
+            $where[] = 'c.click_filtered = 1';
+            if ($reason === 'bot') {
+                $where[] = 'c.click_bot = 1';
+            } elseif ($reason === 'not_recorded') {
+                $where[] = 'c.click_bot = 0 AND cfr.click_id IS NULL';
+            } else {
+                $where[] = 'c.click_bot = 0 AND cfr.filter_reason = ?';
+                $binds[] = $reason;
+                $types .= 's';
+            }
+        }
+
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
-        $countSql = 'SELECT COUNT(*) as total FROM 202_clicks c ' . self::FILTER_JOINS . " $whereClause";
+        $countJoins = self::FILTER_JOINS . (array_key_exists('filter_reason', $params) ? self::REASON_JOIN : '');
+        $countSql = 'SELECT COUNT(*) as total FROM 202_clicks c ' . $countJoins . " $whereClause";
         $stmt = $this->prepare($countSql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Count query failed');
@@ -237,6 +279,7 @@ class ClicksController
                 $row[$money] = (float) $row[$money];
             }
         }
+        $row = self::filterReason($row);
         // One "none": a click no rotator routed has no 202_clicks_rotator row
         // (null), and a rotator's default is stored as rule 0 and redirect 0.
         foreach (['rotator_id', 'rule_id', 'rule_redirect_id'] as $id) {
@@ -245,6 +288,44 @@ class ClicksController
             } elseif (array_key_exists($id, $row)) {
                 $row[$id] = (int) $row[$id];
             }
+        }
+
+        return $row;
+    }
+
+    /**
+     * Why a filtered click is filtered: `bot` for the bot detector's (the
+     * click's own flag), the recorded reason, or null for a click filtered
+     * before reasons were recorded; null for a counted click.
+     * filter_entry_id is the list entry of a `filter_list` click, else null.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function filterReason(array $row): array
+    {
+        $stored = $row['filter_reason'] ?? null;
+        $entry = $row['filter_entry_id'] ?? null;
+        $row['filter_reason'] = null;
+        $row['filter_entry_id'] = null;
+        if ((string) ($row['click_filtered'] ?? '0') !== '1') {
+            return $row;
+        }
+        if ((string) ($row['click_bot'] ?? '0') === '1') {
+            $row['filter_reason'] = 'bot';
+
+            return $row;
+        }
+        if ($stored === null) {
+            return $row;
+        }
+        if (!in_array($stored, \Prosper202\Click\Filter\ClickFilterVerdict::REASONS, true)) {
+            throw new \UnexpectedValueException('Click ' . (string) ($row['click_id'] ?? '?')
+                . "'s filter reason is stored as an unknown value");
+        }
+        $row['filter_reason'] = $stored;
+        if ($stored === \Prosper202\Click\Filter\ClickFilterVerdict::FILTER_LIST && (int) $entry > 0) {
+            $row['filter_entry_id'] = (int) $entry;
         }
 
         return $row;
