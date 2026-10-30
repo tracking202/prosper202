@@ -30,12 +30,15 @@ final class GroupedReportDefinition
      *                                   not include it: it already joins
      *                                   202_keywords under the same `2k` alias
      *                                   the filter join would introduce.
+     * @param list<string> $aggregateBy Raw IDs to sum before resolving labels.
+     *                                 Empty retains the raw-row source.
      */
     public function __construct(
         public readonly string $labelSelect,
         public readonly string $joins,
         public readonly string $groupBy,
         public readonly bool $includeFilterJoin = true,
+        public readonly array $aggregateBy = [],
     ) {
     }
 }

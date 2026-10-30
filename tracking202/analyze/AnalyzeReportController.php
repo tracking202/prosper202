@@ -200,10 +200,7 @@ final class AnalyzeReportController
             'submitted' => $submitted,
             'names' => $this->shownNames($offered, $submitted === null ? $values : $submitted['values'], $submitted['names'] ?? []),
             'lists' => $this->store->lists($this->userId),
-            'suggestions' => [
-                'region' => in_array('region_id', $offered, true) ? $this->store->suggestions('region', $this->dataUserId(), (int) $time['from'], (int) $time['to']) : [],
-                'isp' => in_array('isp_id', $offered, true) ? $this->store->suggestions('isp', $this->dataUserId(), (int) $time['from'], (int) $time['to']) : [],
-            ],
+            'suggestions' => [],
         ];
         $analyze += $this->runReport($time, $page, $order);
         $analyze['flashes'] = $this->flashes;

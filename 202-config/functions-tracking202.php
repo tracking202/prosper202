@@ -526,7 +526,7 @@ function query(
     }
 
     $rows = null;
-    if ($count == true || $limitValue !== null || $pref_limit !== false) {
+    if ($count == true || (!$isspy && ($limitValue !== null || $pref_limit !== false))) {
         // For spy mode, apply the 24-hour time bound to the count query too
         if ($isspy) {
             $spy_count_from = time() - 86400;
