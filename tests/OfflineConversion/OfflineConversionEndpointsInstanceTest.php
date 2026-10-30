@@ -22,6 +22,13 @@ use PHPUnit\Framework\TestCase;
  * The fetch URL's key is made on the Setup page only, so here the public
  * route is asked what it answers to everything that is not a key.
  *
+ * The suite's clicks come from its own address (127.0.0.1 on a local
+ * instance), which a new account's privacy (eu since 1.9.79) stores masked
+ * and without a p202vid cookie, so gpx.php's guess from the address finds
+ * several masked clicks and records nothing. The suite turns the campaign
+ * owner's privacy off for its run and puts it back afterwards, rather than
+ * depend on an instance seeded that way (tests/fixtures/agent-eval/seed.sh).
+ *
  * @group integration
  * @group instance
  */
@@ -37,6 +44,8 @@ final class OfflineConversionEndpointsInstanceTest extends TestCase
     private static int $campaign = 0;
     private static string $tracker = '';
     private static bool $converted = false;
+    private static int $owner = 0;
+    private static ?string $privacyWas = null;
 
     public static function setUpBeforeClass(): void
     {
@@ -54,11 +63,17 @@ final class OfflineConversionEndpointsInstanceTest extends TestCase
         $run = self::$run = 'oc' . bin2hex(random_bytes(4));
         try {
             $network = (int) self::createRow('aff-networks', ['aff_network_name' => "$run network"])['aff_network_id'];
-            self::$campaign = (int) self::createRow('campaigns', [
+            $campaign = self::createRow('campaigns', [
                 'aff_campaign_name' => "$run campaign",
                 'aff_campaign_url' => "https://offer.example/$run?s=[[subid]]",
                 'aff_campaign_payout' => '3', 'aff_network_id' => $network, 'payout_mode' => 'accumulate',
-            ])['aff_campaign_id'];
+            ]);
+            self::$campaign = (int) $campaign['aff_campaign_id'];
+            self::$owner = (int) ($campaign['user_id'] ?? 0);
+            if (self::$owner < 1) {
+                throw new \RuntimeException('The campaign was answered without its user_id.');
+            }
+            self::$privacyWas = self::setPrivacy(self::$owner, 'disabled');
             $source = (int) self::createRow('ppc-networks', ['ppc_network_name' => "$run source"])['ppc_network_id'];
             $account = (int) self::createRow('ppc-accounts', [
                 'ppc_account_name' => "$run account", 'ppc_network_id' => $source,
@@ -71,6 +86,13 @@ final class OfflineConversionEndpointsInstanceTest extends TestCase
             }
         } catch (\RuntimeException $e) {
             self::$setupError = $e->getMessage();
+        }
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        if (self::$privacyWas !== null && self::$privacyWas !== 'disabled') {
+            self::setPrivacy(self::$owner, self::$privacyWas);
         }
     }
 
@@ -273,6 +295,29 @@ final class OfflineConversionEndpointsInstanceTest extends TestCase
         }
 
         return [$status, substr($response, 0, $headerSize), substr($response, $headerSize)];
+    }
+
+    /**
+     * Sets an account's privacy (PUT /users/{id}/preferences) and answers what it was.
+     */
+    private static function setPrivacy(int $user, string $privacy): string
+    {
+        $path = self::$base . '/api/v3/users/' . $user . '/preferences';
+        [$status, , $body] = self::request($path, self::auth());
+        $was = json_decode($body, true)['data']['user_pref_privacy'] ?? null;
+        if ($status !== 200 || !is_string($was)) {
+            throw new \RuntimeException("GET /users/$user/preferences answered $status: " . substr($body, 0, 300));
+        }
+        [$status, , $body] = self::request($path, [
+            CURLOPT_CUSTOMREQUEST => 'PUT',
+            CURLOPT_POSTFIELDS => json_encode(['user_pref_privacy' => $privacy], JSON_THROW_ON_ERROR),
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . self::$key, 'Content-Type: application/json'],
+        ]);
+        if ($status !== 200) {
+            throw new \RuntimeException("PUT /users/$user/preferences answered $status: " . substr($body, 0, 300));
+        }
+
+        return $was;
     }
 
     /**
