@@ -15,7 +15,8 @@
 #      answered 200 either way; /capabilities reports the verdict as cli and
 #      stays open to the Go CLI, as does /system/health
 #   2. with the cache holding "the last check went unanswered": the Go CLI
-#      is allowed whatever older verdict sits beside it, and nothing is
+#      is allowed only beside a 'paid' answer within the 30-day grace period,
+#      and refused as "could not be checked" otherwise, and nothing is
 #      asked; a refusal expires after five minutes, an allow after an hour
 #   3. the built Go CLI itself (P202_BIN), when given: exit 6, the licence
 #      category on stderr, nothing on stdout, then exit 0 once allowed
@@ -27,11 +28,12 @@
 #      suffix: every answer the service can give, and three it never does,
 #      each reaching the gate through a real validation call: refused on
 #      "valid, not paid", "no such key" and "key refused"; allowed on
-#      "paid", on "valid, licence unknown", and on an outage, a gateway's
-#      own 404 body, a message the service never sends and a 'paid' that is
-#      not a boolean — the answers that must never read as a denial; a
+#      "paid"; on "valid, licence unknown", an outage, a gateway's own 404
+#      body, a message the service never sends and a 'paid' that is not a
+#      boolean (no answer) refused as "could not be checked" for a key with
+#      no paid answer in the grace period, and allowed for one with; a
 #      redirect to the service itself is followed with the key (both
-#      verdicts), one to another host or a redirect loop is unknown
+#      verdicts), one to another host or a redirect loop is no answer
 #
 # Steps 1-3 never make the server call my.tracking202.com: every key they set
 # is a fresh random string with its verdicts (or its hold-off) written to both
@@ -191,6 +193,16 @@ expect_refused() { # $1 = case name; STATUS/BODY from the last request
         ko "$1: expected 402 + category licence + the trial" "got $STATUS: $BODY"
     fi
 }
+expect_unconfirmed() { # $1 = case name; no answer and nothing in the grace period
+    local category message
+    category=$(printf '%s' "$BODY" | jget category)
+    message=$(printf '%s' "$BODY" | jget message)
+    if [ "$STATUS" = 402 ] && [ "$category" = licence ] && [[ "$message" == *"could not be checked"* ]] && [[ "$message" == *"support@tracking202.com"* ]]; then
+        ok "$1: 402, category licence, could not be checked, support named"
+    else
+        ko "$1: expected 402 + category licence + could not be checked + support" "got $STATUS: $BODY"
+    fi
+}
 expect_allowed() { # $1 = case name
     if [ "$STATUS" = 200 ]; then
         ok "$1: 200"
@@ -254,10 +266,10 @@ else
     ko "/capabilities should report shell: true once a verdict is written" "got $STATUS: $(printf '%s' "$BODY" | head -c 300)"
 fi
 
-echo "# 2. an unanswered check allows, whatever was known before, and asks nothing new"
+echo "# 2. an unanswered check allows only on a paid answer in the grace period, and asks nothing new"
 cache invalidate "$K1"
 cache mark-unknown "$K1"
-request "$GO_UA" /campaigns; expect_allowed "hold-off with no older verdict: allowed"
+request "$GO_UA" /campaigns; expect_unconfirmed "hold-off with no older verdict"
 if [ "$(cache recently-unknown "$K1")" = yes ]; then
     ok "the hold-off is still in place (nothing was asked, nothing was written)"
 else
@@ -266,11 +278,15 @@ fi
 cache write "$K1" 0
 cache age "$K1" 7200
 cache mark-unknown "$K1"
-request "$GO_UA" /campaigns; expect_allowed "hold-off beside an expired 'not paid': an outage never refuses"
+request "$GO_UA" /campaigns; expect_unconfirmed "hold-off beside an expired 'not paid'"
 cache write "$K1" 1
 cache age "$K1" 7200
 cache mark-unknown "$K1"
-request "$GO_UA" /campaigns; expect_allowed "hold-off beside an expired 'paid': allowed"
+request "$GO_UA" /campaigns; expect_allowed "hold-off beside a 'paid' two hours old: within the grace period, allowed"
+cache write "$K1" 1
+cache age "$K1" $((31 * 86400))
+cache mark-unknown "$K1"
+request "$GO_UA" /campaigns; expect_unconfirmed "hold-off beside a 'paid' 31 days old: past the grace period"
 
 echo "# 2b. a refusal expires sooner than an allow"
 cache write "$K1" 0
@@ -279,7 +295,7 @@ request "$GO_UA" /campaigns; expect_refused "a 'not paid' 100 s old still refuse
 cache write "$K1" 0
 cache age "$K1" 400
 cache mark-unknown "$K1" # the re-check this would trigger is held off, so nothing is asked
-request "$GO_UA" /campaigns; expect_allowed "a 'not paid' 400 s old has expired and is re-asked (held off here: allowed)"
+request "$GO_UA" /campaigns; expect_unconfirmed "a 'not paid' 400 s old has expired and is re-asked (held off here: no answer)"
 cache write "$K1" 1
 cache age "$K1" 400
 request "$GO_UA" /campaigns; expect_allowed "an allow 400 s old is still an allow"
@@ -344,15 +360,15 @@ fi
 
 echo "# 4. real answers from my.tracking202.com (the CI stub)"
 if [ "$STUB" = 1 ]; then
-    stub_case() { # $1 = key suffix, $2 = refused|allowed, $3 = what the stub answers
+    stub_case() { # $1 = key suffix, $2 = refused|unconfirmed|allowed, $3 = what the stub answers
         local key="live-pass-stub-$1"
         set_key "$key"
         request "$GO_UA" /campaigns
-        if [ "$2" = refused ]; then
-            expect_refused "$3"
-        else
-            expect_allowed "$3"
-        fi
+        case "$2" in
+            refused) expect_refused "$3" ;;
+            unconfirmed) expect_unconfirmed "$3" ;;
+            *) expect_allowed "$3" ;;
+        esac
     }
     stub_case paid     allowed "valid + paid: allowed"
     stub_case unpaid   refused "valid + not paid: refused"
@@ -360,19 +376,29 @@ if [ "$STUB" = 1 ]; then
     request "$PHP_UA" /campaigns; expect_allowed "valid + not paid: the PHP CLI is still answered"
     stub_case invalid  refused "no such key: refused"
     stub_case refused  refused "key refused (CPM* required): refused"
-    stub_case no-paid  allowed "valid, no paid field (service DB down / edge fallback): allowed"
-    stub_case odd-paid allowed "valid, paid is a string: unknown, allowed"
-    stub_case stranger allowed "200 with a message the service never sends: unknown, allowed"
-    stub_case gateway  allowed "404 without the service's envelope: unknown, allowed"
-    stub_case outage   allowed "503 error page: unknown, allowed"
+    stub_case no-paid  unconfirmed "valid, no paid field (service DB down / edge fallback), no paid answer before"
+    stub_case odd-paid unconfirmed "valid, paid is a string: no answer, none before"
+    stub_case stranger unconfirmed "200 with a message the service never sends: no answer, none before"
+    stub_case gateway  unconfirmed "404 without the service's envelope: no answer, none before"
+    stub_case outage   unconfirmed "503 error page: no answer, none before"
     stub_case paid-redirect   allowed "302 to the service itself over HTTPS: followed with the key, 'paid': allowed"
     stub_case unpaid-redirect refused "302 to the service itself over HTTPS: followed, 'not paid': refused"
-    stub_case redirect-away   allowed "302 to another host: not followed, unknown, allowed"
-    stub_case redirect-loop   allowed "302 back to itself: three hops followed, then given up, unknown, allowed"
+    stub_case redirect-away   unconfirmed "302 to another host: not followed, no answer, none before"
+    stub_case redirect-loop   unconfirmed "302 back to itself: three hops followed, then given up, no answer, none before"
     if [ "$(cache recently-unknown live-pass-stub-outage)" = yes ]; then
         ok "the outage left a hold-off, not a verdict"
     else
         ko "an outage should leave a hold-off marker for the key"
+    fi
+    # A paid answer two hours old (past its hour, so the service is asked
+    # again; writing it ends the hold-off) carries the key through the outage.
+    cache write live-pass-stub-outage 1
+    cache age live-pass-stub-outage 7200
+    request "$GO_UA" /campaigns; expect_allowed "503 error page, a 'paid' two hours old: within the grace period, allowed"
+    if [ "$(cache recently-unknown live-pass-stub-outage)" = yes ]; then
+        ok "the service was asked again, and its silence left a hold-off"
+    else
+        ko "the expired verdict should have been re-asked, leaving a hold-off"
     fi
 else
     echo "skip - P202_LICENCE_STUB not set: the validation call was not driven (CI does; the real service would answer a made-up key 'valid, not paid')"

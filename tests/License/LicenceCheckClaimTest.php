@@ -139,7 +139,15 @@ final class LicenceCheckClaimTest extends TestCase
         }
         self::assertTrue(ShellAccessCache::recentlyUnknown($this->key), 'the waiter leaves the hold-off');
         self::assertTrue(CliAccessCache::recentlyUnknown($this->key), 'the waiter leaves the hold-off');
-        self::assertTrue($this->controller()->cliAccess(), 'unknown lets the CLI through, at once');
+        $started = microtime(true);
+        self::assertFalse($this->controller()->cliAccess(), 'unknown with no paid answer in the grace period: closed');
+        self::assertLessThan(1.0, microtime(true) - $started, 'at once, from the hold-off');
+        CliAccessCache::write($this->key, true);
+        CliAccessCache::markUnknown($this->key);
+        $path = (new \ReflectionMethod(CliAccessCache::class, 'path'))->invoke(null, $this->key);
+        self::assertTrue(touch($path, time() - CliAccessCache::TTL_SECONDS - 60), 'the paid answer is no longer fresh');
+        clearstatcache();
+        self::assertTrue($this->controller()->cliAccess(), 'a paid answer in the grace period lets it through');
     }
 
     /**
@@ -219,16 +227,19 @@ final class LicenceCheckClaimTest extends TestCase
     {
         $router = (string)file_get_contents(dirname(__DIR__, 2) . '/api/v3/index.php');
         $gate = [
+            '$licenceGate = new \\Api\\V3\\Controllers\\CapabilitiesController($db, $userId);',
             'if (\\Api\\V3\\Controllers\\CapabilitiesController::isGoCliUserAgent(',
             '&& !\\Api\\V3\\Controllers\\CapabilitiesController::isCliGateExempt($method, $path)',
-            '&& !(new \\Api\\V3\\Controllers\\CapabilitiesController($db, $userId))->cliAccess()) {',
+            '&& !$licenceGate->cliAccess()) {',
+            '$licenceGate->cliRefusal(',
         ];
-        $pattern = '/' . preg_quote($gate[0], '/') . '[^\n]*\n\s*' . preg_quote($gate[1], '/')
-            . '\n\s*' . preg_quote($gate[2], '/') . '/';
+        $pattern = '/' . preg_quote($gate[0], '/') . '\n\s*' . preg_quote($gate[1], '/') . '[^\n]*\n\s*'
+            . preg_quote($gate[2], '/') . '\n\s*' . preg_quote($gate[3], '/')
+            . '\n\s*Bootstrap::errorResponse\(\n\s*' . preg_quote($gate[4], '/') . '/';
         self::assertSame(1, preg_match(
             $pattern,
             $router
-        ), 'the Go CLI gate is three conditions: the user agent, not exempt, not licensed');
+        ), 'the Go CLI gate is three conditions: the user agent, not exempt, not licensed; its refusal says why');
     }
 
     /** @return iterable<string, array{string, string, bool}> */

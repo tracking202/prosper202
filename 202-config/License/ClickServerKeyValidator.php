@@ -23,8 +23,9 @@ class ClickServerKeyValidator
     public const int MAX_REDIRECTS = 3;
 
     /**
-     * @return bool|null true = valid, false = invalid, null = network failure
-     *                   (callers decide whether to fail open or closed)
+     * @return bool|null true = valid, false = invalid, null = no answer (a
+     *                   licence gate then falls back on
+     *                   ShellAccessCache::validWithinGrace())
      */
     public static function validate(string $key, int $connectTimeoutSeconds = 5, int $timeoutSeconds = 10): ?bool
     {
@@ -52,8 +53,8 @@ class ClickServerKeyValidator
         [$status, $body] = $answer;
         $verdict = self::interpret($status, $body);
         if ($verdict === null) {
-            // The gate and the web check fail open on this, so without
-            // a line here nobody would know they had stopped deciding.
+            // The gates fall back on the grace period on this, so without
+            // a line here nobody would know ClickServer had stopped deciding.
             error_log(sprintf(
                 'ClickServerKeyValidator: unusable answer: HTTP %d, body %s',
                 $status,
@@ -204,8 +205,9 @@ class ClickServerKeyValidator
      * sends. A 'paid' that is not a
      * boolean is unknown too ('paid' => null) rather than "not paid": a
      * malformed value must never resolve to the answer that happens to be a
-     * denial (CLAUDE.md #11). Callers then fall back or fail open, and
-     * nothing is cached from it.
+     * denial (CLAUDE.md #11). A licence gate then counts the key as licensed
+     * only on a yes within the grace period
+     * (ShellAccessCache::validWithinGrace()), and nothing is cached from it.
      *
      * @return array{valid: bool, paid: ?bool}|null
      */

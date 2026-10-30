@@ -21,6 +21,14 @@ class CapabilitiesController
      */
     private array $licenceChecks = [];
 
+    /** Set when a licence check here refused only because ClickServer gave no answer. */
+    private bool $licenceUnconfirmed = false;
+
+    /** The refusal a gate gives when ClickServer gave no answer and the grace period does not cover the key. */
+    public const LICENCE_UNCONFIRMED_MESSAGE = 'This install\'s licence could not be checked with Tracking202. '
+        . 'Make sure this server can reach my.tracking202.com over HTTPS; Pro features come back once it can. '
+        . 'For help, contact support@tracking202.com or the support chat.';
+
     /**
      * How long a request that finds another one checking the same key waits
      * for that verdict to land in the cache: a little over the claimant's
@@ -346,9 +354,8 @@ class CapabilitiesController
      * Results are cached per-key (ShellAccessCache: an allow for TTL_SECONDS,
      * a refusal for DENIAL_TTL_SECONDS) to avoid hitting my.tracking202.com
      * on every capabilities request. If ClickServer
-     * is unreachable the last known result is used, up to
-     * STALE_TTL_SECONDS old, and access is denied when no prior result
-     * exists (fail-closed); the
+     * is unreachable the key is licensed only on a valid answer within the
+     * grace period (ShellAccessCache::validWithinGrace); the
      * unanswered check is not repeated for UNKNOWN_TTL_SECONDS.
      */
     private function shellAccess(): bool
@@ -374,13 +381,13 @@ class CapabilitiesController
         // for the CLI: /capabilities is what the Go CLI opens with, and
         // during an outage every call would otherwise pay the timeouts.
         if (ShellAccessCache::recentlyUnknown($customerKey)) {
-            return ShellAccessCache::readStale($customerKey) === true;
+            return $this->withinGrace(ShellAccessCache::validWithinGrace($customerKey));
         }
 
         $result = $this->checkKey($customerKey);
         if ($result === null) {
             // checkKey() recorded the hold-off, if this was an outage.
-            return ShellAccessCache::readStale($customerKey) === true;
+            return $this->withinGrace(ShellAccessCache::validWithinGrace($customerKey));
         }
         return $result['valid'];
     }
@@ -394,9 +401,10 @@ class CapabilitiesController
      * service's own words. An allow holds for TTL_SECONDS (an hour, which a
      * lapsed subscription outlives), a refusal for DENIAL_TTL_SECONDS (five
      * minutes, which is how long a customer who starts the trial waits).
-     * Fails OPEN whenever the answer is unknown (my.tracking202.com
-     * unreachable, an error page, an answer without a boolean 'paid'),
-     * whatever an earlier answer was: an outage never refuses anyone, and the
+     * When ClickServer gives no answer (my.tracking202.com unreachable, an
+     * error page, an answer without a boolean 'paid'), the CLI is licensed
+     * only on a paid answer within the grace period
+     * (CliAccessCache::validWithinGrace), and the
      * unanswered check holds off the next for UNKNOWN_TTL_SECONDS so a burst
      * of CLI requests during one pays the connect timeout once. Falls back
      * to the install owner's key when the API user has none, so sub-users of
@@ -406,8 +414,9 @@ class CapabilitiesController
      */
     public function cliAccess(): bool
     {
-        // A broken lookup must never become a denial: any error here is
-        // "unknown", and unknown lets the CLI through.
+        // A broken lookup must never become a denial: an error here (the
+        // install's own, not ClickServer's silence) lets the CLI through.
+        $this->licenceUnconfirmed = false;
         try {
             return $this->cliAccessVerdict();
         } catch (\Throwable $e) {
@@ -427,7 +436,7 @@ class CapabilitiesController
 
         $customerKey = self::licenceKeyFor($this->db, $this->userId);
         if ($customerKey === null) {
-            return true; // unknown, open
+            return true; // the install's key lookup failed: unknown, open
         }
         if ($customerKey === '') {
             return false; // no key on the install is a real "not licensed"
@@ -438,14 +447,30 @@ class CapabilitiesController
             return $cached;
         }
         if (CliAccessCache::recentlyUnknown($customerKey)) {
-            return true;
+            return $this->withinGrace(CliAccessCache::validWithinGrace($customerKey));
         }
 
         $result = $this->checkKey($customerKey);
         if ($result === null || $result['paid'] === null) {
-            return true; // checkKey() recorded the hold-off, if this was an outage
+            // checkKey() recorded the hold-off, if this was an outage.
+            return $this->withinGrace(CliAccessCache::validWithinGrace($customerKey));
         }
         return $result['paid'];
+    }
+
+    /** The CLI gate's refusal: the licence could not be checked, or it is not a Pro licence. */
+    public function cliRefusal(string $notLicensed): string
+    {
+        return $this->licenceUnconfirmed ? self::LICENCE_UNCONFIRMED_MESSAGE : $notLicensed;
+    }
+
+    /** A no-answer verdict, remembering when it refused for want of an answer. */
+    private function withinGrace(bool $licensed): bool
+    {
+        if (!$licensed) {
+            $this->licenceUnconfirmed = true;
+        }
+        return $licensed;
     }
 
     /**

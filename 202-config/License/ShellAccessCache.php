@@ -28,10 +28,16 @@ class ShellAccessCache
     public const int DENIAL_TTL_SECONDS = 300;
 
     /**
-     * How long a result is kept for readStale(), the shell's fallback while
-     * ClickServer is unreachable; prune() drops anything older.
+     * The grace period: while ClickServer gives no answer, a key is licensed
+     * only if its last answer was a yes given within this (validWithinGrace).
      */
-    public const int STALE_TTL_SECONDS = 30 * 86400;
+    public const int GRACE_SECONDS = 30 * 86400;
+
+    /**
+     * How long a result is kept for readStale(); prune() drops anything
+     * older. Nothing older than the grace period is read.
+     */
+    public const int STALE_TTL_SECONDS = self::GRACE_SECONDS;
 
     /**
      * How long a claim on asking ClickServer about a key is honoured by the
@@ -93,12 +99,24 @@ class ShellAccessCache
     }
 
     /**
-     * Last known result within STALE_TTL_SECONDS, for fallback when
-     * revalidation is impossible (ClickServer unreachable).
+     * Last known result within STALE_TTL_SECONDS, a yes or a no. A gate
+     * with no answer asks validWithinGrace() instead.
      */
     public static function readStale(string $key): ?bool
     {
         return self::read($key, self::STALE_TTL_SECONDS);
+    }
+
+    /**
+     * Whether $key is licensed while ClickServer gives no answer: its last
+     * answer was a yes (this cache's own: a valid key here, a paid licence in
+     * CliAccessCache) given within GRACE_SECONDS. Never checked, last answered
+     * no, or answered longer ago is not licensed. Every licence gate asks this,
+     * so the rule can be replaced here alone.
+     */
+    public static function validWithinGrace(string $key): bool
+    {
+        return static::read($key, self::GRACE_SECONDS) === true;
     }
 
     public static function write(string $key, bool $valid): void
@@ -119,7 +137,7 @@ class ShellAccessCache
 
     /**
      * Record that the last check of this key got no usable answer, so the
-     * next UNKNOWN_TTL_SECONDS of requests use the last verdict (readStale)
+     * next UNKNOWN_TTL_SECONDS of requests fall back on validWithinGrace()
      * instead of each asking ClickServer again. No verdict is written.
      */
     public static function markUnknown(string $key): void
@@ -152,10 +170,10 @@ class ShellAccessCache
      * Drop entries and hold-off markers older than $olderThanSeconds. The web
      * sign-in writes an entry for every key a user submits and nothing else
      * removes one, so write() calls this now and then. The default is the
-     * stale window, not the fresh one: readStale() serves an entry up to
-     * STALE_TTL_SECONDS old while ClickServer is unreachable, and a sweep
-     * that took those would refuse a licensed shell during the outage it
-     * exists for. Returns how many files went.
+     * stale window, not the fresh one: an entry up to STALE_TTL_SECONDS old
+     * is what licenses a key while ClickServer is unreachable
+     * (validWithinGrace), and a sweep that took those would refuse a licensed
+     * install during the outage it exists for. Returns how many files went.
      */
     public static function prune(int $olderThanSeconds = self::STALE_TTL_SECONDS): int
     {
