@@ -685,7 +685,7 @@ var userPrefsUpdateCmd = &cobra.Command{
 		"before any request; a free-text value given as \"\" clears it. Changing --user-account-currency re-prices every\n" +
 		"campaign's payout into the new currency, as Personal settings does, through the exchange-rate service. A secret\n" +
 		"is shown back only as (stored) or (not stored).",
-	Example: "  p202 user prefs update 1 --user-daily-email 07 --user-pref-time-predefined last7\n" +
+	Example: "  p202 user prefs update 1 --user-pref-time-predefined last7 --user-pref-limit 50\n" +
 		"  p202 user prefs update 1 --user-tracking-domain \"\"     # back to this install's own domain\n" +
 		"  p202 user prefs update 1 --user-account-currency EUR",
 	Args: cobra.ExactArgs(1),

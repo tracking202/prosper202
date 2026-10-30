@@ -28,7 +28,9 @@ var accountCurrencies = []string{
 	"RUB", "SEK", "SGD", "THB", "TRY", "TWD", "USD",
 }
 
-// dailyEmailHours are the hours Personal settings offers; "never" is sent as "".
+// dailyEmailHours are the hours the server accepts; "never" is sent as "".
+// Personal settings no longer offers them: the hosted daily email report was
+// switched off on 2026-10-29, and the flag is kept so existing scripts run.
 var dailyEmailHours = func() []string {
 	out := []string{"never"}
 	for h := 0; h < 24; h++ {
@@ -40,7 +42,7 @@ var dailyEmailHours = func() []string {
 var prefFlags = []prefFlag{
 	// Personal settings
 	{name: "user_tracking_domain", desc: "Domain tracking links are built on, e.g. track.example.com (\"\" uses this install's own)", clear: true},
-	{name: "user_daily_email", desc: "Hour the daily stats email is sent, in your time zone", values: dailyEmailHours},
+	{name: "user_daily_email", desc: "No effect since 1.9.79: Tracking202 switched the hosted daily email report off (still accepted, and stored)", values: dailyEmailHours},
 	{name: "user_keyword_searched_or_bidded", desc: "Keyword to record: the one searched or the one bid on", values: []string{"searched", "bidded"}},
 	{name: "user_pref_referer_data", desc: "Referer to record: the browser's, or the t202ref link parameter", values: []string{"browser", "t202ref"}},
 	{name: "user_pref_dynamic_bid", desc: "Click cost: 0 from the tracker's setup, 1 from the t202b link parameter (0 to 99.99; any other bid costs the tracker's)", values: binaryValues},

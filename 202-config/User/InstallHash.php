@@ -7,7 +7,7 @@ namespace Prosper202\User;
 /**
  * Whether a request's `hash` is an account's install hash: the shared secret
  * the hosted service sends back when it calls this install (the DNI cache
- * callback, the daily email).
+ * callback).
  *
  * The callbacks compared hash_equals($stored, $given), and hash_equals('', '')
  * is true. The upgrade that added 202_users.install_hash filled it for user 1

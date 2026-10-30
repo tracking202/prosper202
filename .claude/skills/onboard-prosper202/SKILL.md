@@ -46,15 +46,13 @@ until it passes.
 
 ## 2. Basic settings
 
-Ask for their tracking domain, currency, and whether they want the daily email,
-then apply them (you need their numeric **user id**, shown on the success screen;
+Ask for their tracking domain and currency, then apply them (you need their numeric **user id**, shown on the success screen;
 otherwise ask):
 
 ```bash
 $P202 user prefs update <user_id> \
   --user-tracking-domain="<domain>" \
-  --user-account-currency="<USD|EUR|...>" \
-  --user-daily-email="<00-23, the hour to send it, or never>"
+  --user-account-currency="<USD|EUR|...>"
 ```
 
 ## 3. First working tracker

@@ -219,10 +219,6 @@ $user_row = p202FetchRow($user_result, $user_sql) ?? [];
 $currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
 
 /** The choices each preference offers, value => label; the form renders these and the handler admits only these. */
-$dailyEmailChoices = ['' => 'Never'];
-for ($hour = 0; $hour < 24; $hour++) {
-	$dailyEmailChoices[sprintf('%02d', $hour)] = date('g A', mktime($hour, 0, 0, 1, 1, 2000));
-}
 $keywordChoices = ['searched' => 'Pickup Searched Keyword', 'bidded' => 'Pickup Bidded Keyword'];
 $bidChoices = ['0' => 'Pickup Bid from setup data', '1' => 'Pickup Bid dynamically from t202b variable'];
 $refererChoices = ['browser' => 'Pickup Referer from browser', 't202ref' => 'Pickup Referer from t202ref variable'];
@@ -277,9 +273,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			if (!\Prosper202\Report\AccountZone::isZone($postedTimezone)) {
 				$error['user_timezone'] = 'Choose a time zone from the list.';
 			}
-			if (!array_key_exists((string)($_POST['user_daily_email'] ?? ''), $dailyEmailChoices)) {
-				$error['user_daily_email'] = 'Choose when the daily email is sent, or Never.';
-			}
 			if (!array_key_exists((string)($_POST['user_keyword_searched_or_bidded'] ?? ''), $keywordChoices)) {
 				$error['user_keyword_searched_or_bidded'] = 'You must select your keyword preference.';
 			}
@@ -306,7 +299,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$mysql['user_timezone'] = $db->real_escape_string($postedTimezone);
-				$mysql['user_daily_email'] = $db->real_escape_string((string)$_POST['user_daily_email']);
 				$mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string((string)$_POST['user_keyword_searched_or_bidded']);
 				$mysql['user_referer'] = $db->real_escape_string((string)$_POST['user_referer']);
 				$mysql['cloak_referer'] = $db->real_escape_string((string)$_POST['cloak_referer']);
@@ -333,7 +325,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					'user_pref_ad_settings' => (string)$_POST['user_pref_ad_settings'],
 					'user_pref_privacy' => (string)$_POST['user_pref_privacy'],
 					'user_pref_same_ip_fallback' => (string)$_POST['user_pref_same_ip_fallback'] === '1' ? 1 : 0,
-					'user_daily_email' => (string)$_POST['user_daily_email'],
 				];
 
 				// The account row and the preferences row are one save: both
@@ -352,14 +343,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 					//set the  session's user_timezone
 					$_SESSION['user_timezone'] = $postedTimezone;
-					// The daily email is the install owner's: daily-email.php
-					// sends user 1's campaigns to user 1's address, and the
-					// hosted service keeps one schedule per install. Another
-					// user's save re-registered it at their own hour and zone.
-					if ((int) $_SESSION['user_id'] === 1) {
-						p202_account_register_daily_email($mysql['user_daily_email'], $postedTimezone, $user_row['install_hash'] ?? '');
-					}
-
 					//try to set non expiring cache for values that are used in redirects
 					if (!empty($memcacheWorking)) {
 						$tid = $mysql['user_id'];
@@ -473,7 +456,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		// Refused: say it under the field, and keep what was typed.
 		$profileErrors = $error;
-		foreach (['user_email', 'user_timezone', 'user_daily_email', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
+		foreach (['user_email', 'user_timezone', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
 			if (isset($_POST[$profileField])) {
 				$profileForm[$profileField] = (string)$_POST[$profileField];
 			}
@@ -886,7 +869,7 @@ echo p202_account_render_flashes($extraFlashes);
 					<div class="mb-3">
 						<label class="form-label" for="user_email">Email <span class="text-danger">*</span></label>
 						<input type="email" class="form-control<?php echo p202_account_invalid($profileErrors, 'user_email'); ?>" id="user_email" name="user_email" required autocomplete="email" value="<?php echo $e($profileValue('user_email', 'user_email')); ?>">
-						<div class="form-text">Password resets and the daily report go here.</div>
+						<div class="form-text">Password resets go here.</div>
 						<?php echo p202_account_field_error($profileErrors, 'user_email'); ?>
 					</div>
 
@@ -907,14 +890,6 @@ echo p202_account_render_flashes($extraFlashes);
 								</select>
 								<div class="form-text">Every report's days start and end in this zone.</div>
 								<?php echo p202_account_field_error($profileErrors, 'user_timezone'); ?>
-							</div>
-							<div class="col-md-5">
-								<label class="form-label" for="user_daily_email">Daily email report</label>
-								<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_daily_email'); ?>" id="user_daily_email" name="user_daily_email">
-									<?php echo $renderOptions($dailyEmailChoices, $profileValue('user_daily_email', 'user_daily_email')); ?>
-								</select>
-								<div class="form-text">Yesterday's numbers, sent at this hour in your time zone.</div>
-								<?php echo p202_account_field_error($profileErrors, 'user_daily_email'); ?>
 							</div>
 						</div>
 

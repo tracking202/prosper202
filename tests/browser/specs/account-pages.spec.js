@@ -141,11 +141,13 @@ module.exports = {
       async run(ctx) {
         const { app, ui, db, expect, state } = ctx;
         const before = db.value('SELECT user_daily_email FROM 202_users_pref WHERE user_id=' + state.owner);
+        db.write("UPDATE 202_users_pref SET user_daily_email='05' WHERE user_id=" + state.owner);
         await app.goto('/202-account/account.php');
-        await ui.select('#user_daily_email', '06');
+        // The hosted daily email was switched off on 2026-10-29.
+        expect.notOk(await ui.exists('#user_daily_email'), 'there is no daily email report setting');
         await app.submit('#profile button[type="submit"]');
         expect.match(await app.messages(), /Your settings are saved\./, 'it says it saved');
-        expect.eq(db.value('SELECT user_daily_email FROM 202_users_pref WHERE user_id=' + state.owner), '06', 'the daily email hour is stored');
+        expect.eq(db.value('SELECT user_daily_email FROM 202_users_pref WHERE user_id=' + state.owner), '05', 'and leaves the stored daily email hour as it was');
         db.write("UPDATE 202_users_pref SET user_daily_email='" + before + "' WHERE user_id=" + state.owner);
       },
     },

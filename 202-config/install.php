@@ -254,14 +254,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$html['rest_api_key'] = htmlentities($rest_api_key, ENT_QUOTES, 'UTF-8');
 			$html['user_id'] = $user_id;
 
-			// Daily email reports register with an external service; optional.
-			try {
-				registerDailyEmail('07', $user_timezone, $hash);
-			} catch (\Throwable $e) {
-				error_log('Prosper202 install: registerDailyEmail failed: ' . $e->getMessage());
-				$install_warnings[] = 'We couldn\'t register daily email reports just now. This is optional and can be set up later from your dashboard.';
-			}
-
 			// Partitioning depends on MySQL features and is purely a performance step.
 			try {
 				$installer->install_database_partitions();
