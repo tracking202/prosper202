@@ -326,18 +326,40 @@ final class ReportPrefsStore
      *   what DataEngine reports for an account that sees all campaigns)
      * @return list<string>
      */
-    public function suggestions(string $kind, ?int $dataUserId, int $from, int $to, int $limit = 300): array
-    {
+    public function suggestions(
+        string $kind,
+        ?int $dataUserId,
+        int $from,
+        int $to,
+        int $limit = 300,
+        ?\Prosper202\Report\FilterChoicesCache $cache = null,
+    ): array {
         [$select, $join, $group] = $this->namedShape($kind);
         $scope = $dataUserId === null ? '2st.user_id != 0' : '2st.user_id = ' . $dataUserId;
-        $sql = "SELECT $select FROM 202_dataengine 2st $join"
-            . " WHERE $scope AND 2st.click_time >= ? AND 2st.click_time <= ?"
-            . " GROUP BY $group ORDER BY SUM(2st.clicks) DESC LIMIT " . max(1, $limit);
-        $out = [];
-        foreach ($this->query($sql, $from, $to) as $row) {
-            $out[] = self::label($kind, $row);
-        }
-        return array_values(array_unique($out));
+        $source = \Prosper202\DataEngine\ReportAggregation::byDimensions(
+            '2st',
+            [$kind === 'region' ? 'region_id' : 'isp_id'],
+            " WHERE $scope AND 2st.click_time >= ? AND 2st.click_time <= ?",
+            ['clicks']
+        );
+        $sql = "SELECT $select $source $join"
+            . " GROUP BY $group ORDER BY SUM(2st.clicks) DESC, $group LIMIT " . max(1, $limit);
+        $load = function () use ($sql, $from, $to, $kind): array {
+            $out = [];
+            foreach ($this->query($sql, $from, $to) as $row) {
+                $out[] = self::label($kind, $row);
+            }
+            return array_values(array_unique($out));
+        };
+
+        return $cache === null ? $load() : array_values($cache->remember(
+            'analyze-names-v2-' . $kind,
+            $dataUserId,
+            $from,
+            $to,
+            $limit,
+            $load
+        ));
     }
 
     /**
@@ -384,22 +406,17 @@ final class ReportPrefsStore
 
         if ($kind === 'region') {
             $sql = 'SELECT r.region_id AS id, r.region_name, c.country_code,'
-                . ' (SELECT COALESCE(SUM(2st.clicks), 0) FROM 202_dataengine 2st WHERE 2st.region_id = r.region_id AND '
-                . ($dataUserId === null ? '2st.user_id != 0' : '2st.user_id = ' . $dataUserId)
-                . ' AND 2st.click_time >= ? AND 2st.click_time <= ?) AS used'
+                . ' 0 AS used'
                 . ' FROM 202_locations_region r LEFT JOIN 202_locations_country c ON c.country_id = r.main_country_id'
                 . ' WHERE r.region_name = ?' . ($country !== null ? ' AND c.country_code = ?' : '')
-                . ' ORDER BY used DESC, r.region_id';
+                . ' ORDER BY r.region_id';
             $rows = $country !== null
-                ? $this->query($sql, $from, $to, $name, $country)
-                : $this->query($sql, $from, $to, $name);
+                ? $this->query($sql, $name, $country)
+                : $this->query($sql, $name);
         } else {
-            $sql = 'SELECT i.isp_id AS id,'
-                . ' (SELECT COALESCE(SUM(2st.clicks), 0) FROM 202_dataengine 2st WHERE 2st.isp_id = i.isp_id AND '
-                . ($dataUserId === null ? '2st.user_id != 0' : '2st.user_id = ' . $dataUserId)
-                . ' AND 2st.click_time >= ? AND 2st.click_time <= ?) AS used'
-                . ' FROM 202_locations_isp i WHERE i.isp_name = ? ORDER BY used DESC, i.isp_id';
-            $rows = $this->query($sql, $from, $to, $name);
+            $sql = 'SELECT i.isp_id AS id, 0 AS used'
+                . ' FROM 202_locations_isp i WHERE i.isp_name = ? ORDER BY i.isp_id';
+            $rows = $this->query($sql, $name);
         }
 
         $what = $kind === 'region' ? 'region' : 'ISP';
@@ -412,6 +429,31 @@ final class ReportPrefsStore
                 $choices = implode(', ', array_map(static fn (string $cc): string => "$name ($cc)", $countries));
                 return ['id' => null, 'error' => "More than one country has a region called “{$name}”: choose $choices."];
             }
+        }
+        if (count($rows) > 1) {
+            $column = $kind === 'region' ? 'region_id' : 'isp_id';
+            $ids = array_map(static fn (array $row): string => (string) $row['id'], $rows);
+            $marks = implode(',', array_fill(0, count($ids), '?'));
+            $table = $kind === 'region' ? '202_locations_region' : '202_locations_isp';
+            $scope = $dataUserId === null ? '2st.user_id != 0' : '2st.user_id = ' . $dataUserId;
+            // Read click usage only for ambiguous IDs, in one grouped pass.
+            $ranked = $this->query(
+                "SELECT chosen.$column AS id FROM $table AS chosen LEFT JOIN ("
+                    . "SELECT 2st.$column AS id, SUM(2st.clicks) AS used FROM 202_dataengine AS 2st"
+                    . " WHERE $scope AND 2st.click_time >= ? AND 2st.click_time <= ?"
+                    . " AND 2st.$column IN ($marks) GROUP BY 2st.$column"
+                    . ") AS usage_counts ON usage_counts.id = chosen.$column"
+                    . " WHERE chosen.$column IN ($marks)"
+                    . " ORDER BY COALESCE(usage_counts.used, 0) DESC, chosen.$column LIMIT 1",
+                $from,
+                $to,
+                ...$ids,
+                ...$ids
+            );
+            if ($ranked === []) {
+                throw new \RuntimeException('The matching filter names changed; try again.');
+            }
+            return ['id' => (string) $ranked[0]['id'], 'error' => null];
         }
         return ['id' => (string) $rows[0]['id'], 'error' => null];
     }

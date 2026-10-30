@@ -107,5 +107,6 @@ A legacy PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 lis
 ### Tools & Resources
 
 - [Resources](tools--resources/00-resources.md)
+- [Adaptive manual click deletion](tools--resources/adaptive-click-deletion.md)
 - [Common Network SubID Parameters](tools--resources/999-common-network-subid-parameters.md)
 

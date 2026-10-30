@@ -123,6 +123,14 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             1,
             'The 202_ips_v6 collation for the install: a failure is logged and the install goes on.',
         ],
+        '202-config/class-dataengine.php::prepareAccountOverview' => [
+            1,
+            'A failed cleanup of an optional temporary table is logged; closing its connection also removes it.',
+        ],
+        '202-config/class-dataengine.php::__destruct' => [
+            1,
+            'A failed cleanup is logged; closing its connection also removes the temporary table.',
+        ],
         '202-config/class-dataengine.php::doSummary' => [
             2,
             'Not reached: doQuery()\'s one caller hands it an INSERT … SELECT (ClickRollupSql), which answers true'

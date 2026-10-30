@@ -141,6 +141,29 @@ final class ReportReadFailureIntegrationTest extends TestCase
         ];
     }
 
+    public function testOptionalFilterListsDoNotBlockThePageWhenClicksAreLocked(): void
+    {
+        $run = self::runReader('overview-page', '202_dataengine');
+
+        self::assertSame(0, $run['code'], $run['err']);
+        self::assertStringContainsString('data-p202-report=', $run['out'], $run['out'] . $run['err']);
+        self::assertSame(4, substr_count($run['out'], 'data-p202-filter-choices='));
+        self::assertStringContainsString('RETURNED true', $run['out']);
+        self::assertStringNotContainsString('The report filters could not be read', $run['out']);
+    }
+
+    public function testSpysFirstLimitedReadDoesNotCalculateAnUnusedCount(): void
+    {
+        $run = self::runReader('spy-plan', '202_dataengine');
+        self::assertSame(0, $run['code'], $run['err']);
+        self::assertStringStartsWith('RETURNED ', $run['out'], $run['out'] . $run['err']);
+        $query = json_decode(substr(trim($run['out']), 9), true, 512, JSON_THROW_ON_ERROR);
+        self::assertStringContainsString('LIMIT 50', $query['click_sql']);
+        self::assertStringContainsString('click_time > ', $query['click_sql']);
+        self::assertStringContainsString((string) self::USER, $query['click_sql']);
+        self::assertArrayNotHasKey('rows', $query);
+    }
+
     /** @dataProvider pageReaders */
     public function testAPageReaderWhoseQueryFailsShowsTheErrorPage(string $reader, string $lock, string $statement): void
     {

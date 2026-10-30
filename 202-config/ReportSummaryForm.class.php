@@ -1103,6 +1103,56 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 
 		$info_sql .= $this->getGroupBy();
+        // Keep click-specific ledger parts and potentially unique dimensions
+        // on their raw path; grouping those IDs first can add a second huge sort.
+        $rawLevels = [
+            ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE,
+            ReportBasicForm::DETAIL_LEVEL_IP, ReportBasicForm::DETAIL_LEVEL_KEYWORD,
+            ReportBasicForm::DETAIL_LEVEL_REFERER, ReportBasicForm::DETAIL_LEVEL_REDIRECT,
+            ReportBasicForm::DETAIL_LEVEL_C1, ReportBasicForm::DETAIL_LEVEL_C2,
+            ReportBasicForm::DETAIL_LEVEL_C3, ReportBasicForm::DETAIL_LEVEL_C4,
+            ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT,
+            ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM, ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE,
+            ReportBasicForm::DETAIL_LEVEL_UTM_TERM,
+        ];
+        if (array_intersect($this->getDetails(), $rawLevels) === []) {
+            $rawPrefs = $user_row;
+            // Group Overview resolves a source through its joined account;
+            // campaign and account selections override their parent filters.
+            if (
+                !empty($rawPrefs['user_pref_ppc_account_id'])
+                || ($rawPrefs['user_pref_ppc_network_id'] ?? '') != '16777215'
+            ) {
+                unset($rawPrefs['user_pref_ppc_network_id']);
+            }
+            if (!empty($rawPrefs['user_pref_aff_campaign_id'])) {
+                unset($rawPrefs['user_pref_aff_network_id']);
+            }
+            unset($rawPrefs['user_pref_method_of_promotion'], $rawPrefs['user_pref_subid']);
+            $early = \Prosper202\DataEngine\UserPrefFilters::build(
+                $rawPrefs,
+                0,
+                true,
+                static fn (string $text): string => $db->real_escape_string($text)
+            );
+            $where = ' WHERE 2st.user_id' . $user_id_query
+                . ' AND 2st.click_time >= ' . (int) $this->getStartTime()
+                . ' AND 2st.click_time <= ' . (int) $this->getEndTime() . $early['filter'];
+            if (!empty($user_row['user_pref_subid'])) {
+                $where .= " AND 2st.click_id='" . $db->real_escape_string($user_row['user_pref_subid']) . "'";
+            }
+            $metrics = ['clicks', 'click_out', 'leads', 'income', 'cost'];
+            preg_match_all('/\b2c\.([a-z_][a-z0-9_]*)\b/', $info_sql, $references);
+            $dimensions = array_values(array_diff(array_unique($references[1]), [...$metrics, 'click_time']));
+            $source = \Prosper202\DataEngine\ReportAggregation::byDimensions(
+                '2st',
+                $dimensions,
+                $where,
+                $metrics,
+                '2c'
+            );
+            $info_sql = str_replace("FROM\n\t\t\t\t202_dataengine AS 2c", ltrim($source), $info_sql);
+        }
 		return $info_sql;
 	}
 

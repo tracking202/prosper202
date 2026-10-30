@@ -302,6 +302,7 @@ function p202_report_filters(array $values, array $lists = [], ?array $include =
  *            options (select: value => label, or group => [value => label]),
  *            any (select: the empty option's label; null for none),
  *            suggestions (suggest: list of strings for its <datalist>),
+ *            choices_url (select/suggest: load choices when Advanced opens),
  *            placeholder, hint, error (the server's sentence), advanced,
  *            default (the value that means "not filtering", for a select
  *            with no empty option; an Advanced filter at its default does
@@ -440,6 +441,14 @@ function p202_filter_control(array $filter, string $prefix, bool $inline): strin
                 $control .= '<option value="' . $e($value) . '" selected>' . $e($value) . ' (not in your list)</option>';
             }
             $control .= $optionsHtml . '</select>';
+            if (!empty($filter['choices_url'])) {
+                $control .= '<button type="button" class="btn btn-link btn-sm px-0" hidden'
+                    . ' data-p202-filter-choices="' . $e((string) $filter['choices_url']) . '"'
+                    . ' aria-label="' . $e('Load choices for ' . (string) ($filter['label'] ?? $name)) . '"'
+                    . ' aria-controls="' . $e($fieldId) . '">Load choices</button>'
+                    . '<div class="form-text" role="status" id="' . $e($fieldId) . '-choices-status">'
+                    . 'Choices load when Advanced is opened.</div>';
+            }
             break;
 
         case 'suggest':
@@ -450,6 +459,14 @@ function p202_filter_control(array $filter, string $prefix, bool $inline): strin
                 $control .= '<option value="' . $e((string) $suggestion) . '"></option>';
             }
             $control .= '</datalist>';
+            if (!empty($filter['choices_url'])) {
+                $control .= '<button type="button" class="btn btn-link btn-sm px-0" hidden'
+                    . ' data-p202-filter-choices="' . $e((string) $filter['choices_url']) . '"'
+                    . ' aria-label="' . $e('Load suggestions for ' . (string) ($filter['label'] ?? $name)) . '"'
+                    . ' aria-controls="' . $e($listId) . '">Load suggestions</button>'
+                    . '<div class="form-text" role="status" id="' . $e($listId) . '-choices-status">'
+                    . 'Suggestions load when Advanced is opened.</div>';
+            }
             break;
 
         case 'search':
