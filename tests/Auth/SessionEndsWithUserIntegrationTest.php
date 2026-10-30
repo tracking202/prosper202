@@ -108,6 +108,10 @@ final class SessionEndsWithUserIntegrationTest extends TestCase
             // A remember-me key on each, so a refusal can be seen to revoke the right one.
             self::row('202_auth_keys', ['user_id' => $user, 'auth_key' => 'key' . $user, 'expires' => time() + 86400]);
         }
+        // The key's licence was confirmed an hour ago, so the licence check,
+        // which gets no answer here (cookieOnly()), is within its grace period.
+        self::q("INSERT INTO 202_licence_answers (key_sha256, valid_yes, valid_at)"
+            . " VALUES (SHA2('session-user-runner', 256), 1, UNIX_TIMESTAMP() - 3600)");
     }
 
     private static function cleanUp(): void
@@ -117,6 +121,7 @@ final class SessionEndsWithUserIntegrationTest extends TestCase
                 self::q("DELETE FROM $table WHERE user_id = $user");
             }
         }
+        self::q("DELETE FROM 202_licence_answers WHERE key_sha256 = SHA2('session-user-runner', 256)");
     }
 
     private static function standing(int $active, int $deleted): void
@@ -438,8 +443,8 @@ final class SessionEndsWithUserIntegrationTest extends TestCase
     /**
      * A browser holding only USER's remember-me cookie, on its first request.
      * The licence service is not asked: a proxy that refuses answers as a
-     * network failure, which the licence check lets through, as it does when
-     * the service is down.
+     * network failure, and the licence check falls back on its grace period,
+     * the valid answer setUp() records an hour back.
      *
      * @return array<string, string>
      */

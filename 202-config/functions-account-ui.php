@@ -52,7 +52,25 @@ function p202_typed_key_error(?array $licence): ?string
  */
 function p202_check_typed_key(string $key): ?string
 {
-    return p202_typed_key_error(\Prosper202\License\ClickServerKeyValidator::check(trim($key)));
+    $licence = \Prosper202\License\ClickServerKeyValidator::check(trim($key));
+    p202_record_key_answer($key, $licence);
+    return p202_typed_key_error($licence);
+}
+
+/**
+ * Record the licence service's answer for a key a form confirmed, so the
+ * grace period knows it (ShellAccessCache::recordLicence()); none records
+ * nothing.
+ *
+ * @param array{valid: bool, paid: ?bool}|null $licence
+ */
+function p202_record_key_answer(string $key, ?array $licence): void
+{
+    \Prosper202\License\ShellAccessCache::recordLicence(
+        \Prosper202\License\MysqlLicenceAnswerStore::ofThisInstall(),
+        trim($key),
+        $licence
+    );
 }
 
 /**
@@ -105,7 +123,9 @@ function p202_check_clickserver_key(string $key): ?string
 /** The account page's customer key form: p202_customer_key_error() for the key itself. */
 function p202_check_customer_key(string $key): ?string
 {
-    return p202_customer_key_error(\Prosper202\License\ClickServerKeyValidator::check($key));
+    $licence = \Prosper202\License\ClickServerKeyValidator::check($key);
+    p202_record_key_answer($key, $licence);
+    return p202_customer_key_error($licence);
 }
 
 /**

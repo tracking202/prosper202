@@ -23,6 +23,13 @@ class ClickServerKeyValidator
     public const int MAX_REDIRECTS = 3;
 
     /**
+     * Sent with every request: it tells the service and its edge that this
+     * install reads 503 as "no answer" (the grace period), so they may answer
+     * that when they cannot decide, where a client without it gets "Key valid".
+     */
+    public const array REQUEST_HEADERS = ['X-P202-Licence-Grace: 1'];
+
+    /**
      * @return bool|null true = valid, false = invalid, null = no answer (a
      *                   licence gate then falls back on
      *                   ShellAccessCache::validWithinGrace())
@@ -167,6 +174,7 @@ class ClickServerKeyValidator
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, self::REQUEST_HEADERS);
 
         $response = curl_exec($ch);
         $failed = curl_errno($ch) || $response === false;
@@ -196,6 +204,9 @@ class ClickServerKeyValidator
      *   404 {"code":404,"msg":"Key not found"}                no such key
      *   404 {"code":403,"msg":"API key requires an active CPM* Newsletter subscription."}
      *
+     * Anything else is no answer, including the 200 {"code":200,"msg":"Key
+     * not checked","checked":false} that the service and its edge send a
+     * request carrying REQUEST_HEADERS when they cannot decide (and a 503).
      * Only those decide, message included: a 404 is a refusal only with the
      * service's own words, since {"code":404,"msg":"Not Found"} is what a
      * gateway or WAF in front of it answers for a route it does not know.

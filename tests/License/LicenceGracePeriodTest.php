@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\License;
 
 use Api\V3\Controllers\CapabilitiesController;
+use Prosper202\License\ClickServerKeyValidator;
 use Prosper202\License\CliAccessCache;
 use Prosper202\License\LicenceAnswerStore;
 use Prosper202\License\ShellAccessCache;
@@ -132,6 +133,21 @@ final class LicenceGracePeriodTest extends TestCase
         self::assertFalse($this->controller(null)->cliAccess());
     }
 
+    public function testAWholeAnswerIsRecordedForBothQuestions(): void
+    {
+        $hash = hash('sha256', $this->key);
+        ShellAccessCache::recordLicence($this->answers, $this->key, null);
+        self::assertSame([], $this->answers->answers, 'no answer records nothing');
+        ShellAccessCache::recordLicence($this->answers, $this->key, ['valid' => true, 'paid' => null]);
+        self::assertSame([ShellAccessCache::QUESTION_VALID], array_keys($this->answers->answers[$hash]));
+        ShellAccessCache::recordLicence($this->answers, $this->key, ['valid' => true, 'paid' => true]);
+        self::assertTrue(ShellAccessCache::validWithinGrace($this->answers, $this->key));
+        self::assertTrue(CliAccessCache::validWithinGrace($this->answers, $this->key), 'the paid answer too');
+        ShellAccessCache::recordLicence($this->answers, $this->key, ['valid' => false, 'paid' => false]);
+        self::assertFalse(ShellAccessCache::validWithinGrace($this->answers, $this->key), 'a refusal ends it');
+        self::assertFalse(CliAccessCache::validWithinGrace($this->answers, $this->key));
+    }
+
     public function testARecordThatCannotBeReadIsNotLicensed(): void
     {
         ShellAccessCache::recordAnswer($this->answers, $this->key, true);
@@ -182,6 +198,60 @@ final class LicenceGracePeriodTest extends TestCase
         self::assertTrue(CliAccessCache::validWithinGrace($this->answers, $this->key), 'and the paid answer too');
         self::assertStringContainsString('UPDATE', $queries[0] ?? '');
         self::assertFalse($this->unconfirmed());
+    }
+
+    /**
+     * The service's or its edge's "no answer" -- a 503, or a 200 whose msg
+     * is not "Key valid" -- renews no record at any gate: a key confirmed
+     * earlier keeps that answer's time, and a key never confirmed gets
+     * nothing.
+     *
+     * @dataProvider noAnswerShapesAtEachGate
+     */
+    public function testANoAnswerReplyRenewsNothing(string $gate, int $status, string $body): void
+    {
+        $answer = ClickServerKeyValidator::interpret($status, $body);
+        self::assertNull($answer, "$status $body is no answer");
+        $hash = hash('sha256', $this->key);
+
+        self::assertFalse($this->askGate($gate, $answer), 'never confirmed: not licensed');
+        self::assertSame([], $this->answers->answers, 'and nothing recorded');
+
+        $earlier = time() - 10 * self::DAY;
+        $this->answers->saveAnswer($hash, ShellAccessCache::QUESTION_VALID, true, $earlier);
+        $this->answers->saveAnswer($hash, ShellAccessCache::QUESTION_PAID, true, $earlier);
+        $this->forget();
+        self::assertTrue($this->askGate($gate, $answer), 'confirmed ten days ago: within the grace period');
+        self::assertSame(
+            [ShellAccessCache::QUESTION_VALID => [true, $earlier], ShellAccessCache::QUESTION_PAID => [true, $earlier]],
+            $this->answers->answers[$hash],
+            'the earlier answers keep their time'
+        );
+    }
+
+    /** @return iterable<string, array{string, int, string}> */
+    public static function noAnswerShapesAtEachGate(): iterable
+    {
+        $shapes = [
+            '503' => [503, '{"code":503,"msg":"Key not checked"}'],
+            '200 not Key valid' => [200, '{"code":200,"msg":"Key not checked","checked":false}'],
+        ];
+        foreach (['web sign-in' => 'web', 'shell' => 'shell', 'Go CLI' => 'cli'] as $name => $gate) {
+            foreach ($shapes as $shape => [$status, $body]) {
+                yield "$name, $shape" => [$gate, $status, $body];
+            }
+        }
+    }
+
+    /** @param array{valid: bool, paid: ?bool}|null $answer what the licence service answered */
+    private function askGate(string $gate, ?array $answer): bool
+    {
+        $_SESSION = [];
+        return match ($gate) {
+            'web' => $this->auth($answer)::is_valid_api_key($this->key),
+            'shell' => $this->shellAccess($this->controller($answer)),
+            'cli' => $this->controller($answer)->cliAccess(),
+        };
     }
 
     public function testTheSignInGateStillRefusesAnInvalidAnswer(): void

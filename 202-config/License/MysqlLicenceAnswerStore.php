@@ -18,6 +18,18 @@ final class MysqlLicenceAnswerStore implements LicenceAnswerStore
     {
     }
 
+    /** The store on this request's database connection; null (logged) when there is none. */
+    public static function ofThisInstall(): ?self
+    {
+        try {
+            $db = function_exists('p202Mysqli') ? p202Mysqli() : ($GLOBALS['db'] ?? null);
+        } catch (\Throwable $e) {
+            error_log('MysqlLicenceAnswerStore: no database connection: ' . $e->getMessage());
+            return null;
+        }
+        return $db instanceof \mysqli ? new self($db) : null;
+    }
+
     public function lastAnswer(string $keyHash, string $question): ?array
     {
         $conn = new Connection($this->db);

@@ -1070,15 +1070,21 @@ function clickserver_auth_answer(?string $body, int $status): ?bool
  * fetch-a-key page read it: the body, or false when no answer came, which
  * includes a body that is none of the service's own answers (a gateway's
  * error page). Asked through ClickServerKeyValidator::answer(), which
- * follows a redirect only to the service itself.
+ * follows a redirect only to the service itself. $licence is the answer as
+ * ClickServerKeyValidator::interpret() reads it (null: none), for the
+ * caller to record (ShellAccessCache::recordLicence()).
+ *
+ * @param array{valid: bool, paid: ?bool}|null $licence
  */
-function api_key_validate($key)
+function api_key_validate($key, ?array &$licence = null)
 {
+    $licence = null;
     $answer = \Prosper202\License\ClickServerKeyValidator::answer((string) $key);
-    if ($answer === null || \Prosper202\License\ClickServerKeyValidator::interpret($answer[0], $answer[1]) === null) {
+    if ($answer === null) {
         return false;
     }
-    return $answer[1];
+    $licence = \Prosper202\License\ClickServerKeyValidator::interpret($answer[0], $answer[1]);
+    return $licence === null ? false : $answer[1];
 }
 
 function getBrowserIcon($name)

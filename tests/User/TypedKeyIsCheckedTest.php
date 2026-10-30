@@ -56,8 +56,9 @@ final class TypedKeyIsCheckedTest extends TestCase
         $lines = file((string)$fn->getFileName());
         self::assertIsArray($lines);
         $body = implode('', array_slice($lines, $fn->getStartLine() - 1, $fn->getEndLine() - $fn->getStartLine() + 1));
-        $call = 'return p202_typed_key_error(\\Prosper202\\License\\ClickServerKeyValidator::check(trim($key)));';
+        $call = '$licence = \\Prosper202\\License\\ClickServerKeyValidator::check(trim($key));';
         self::assertStringContainsString($call, $body);
+        self::assertStringContainsString('return p202_typed_key_error($licence);', $body);
         self::assertStringNotContainsString('is_valid_api_key', $body);
     }
 
@@ -107,9 +108,8 @@ final class TypedKeyIsCheckedTest extends TestCase
         $fn = new \ReflectionFunction('p202_check_customer_key');
         $lines = (array)file((string)$fn->getFileName());
         $body = implode('', array_slice($lines, $fn->getStartLine() - 1, $fn->getEndLine() - $fn->getStartLine() + 1));
-        self::assertStringContainsString(
-            'return p202_customer_key_error(\\Prosper202\\License\\ClickServerKeyValidator::check($key));',
-            $body
-        );
+        $call = '$licence = \\Prosper202\\License\\ClickServerKeyValidator::check($key);';
+        self::assertStringContainsString($call, $body);
+        self::assertStringContainsString('return p202_customer_key_error($licence);', $body);
     }
 }

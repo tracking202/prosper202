@@ -68,6 +68,10 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
             '404 with a string code' => [404, '{"code":"404","msg":"Key not found"}', null],
             '404 whose envelope code is not a refusal' => [404, '{"code":200,"msg":"Key valid","paid":false}', null],
             '500 with JSON is an outage' => [500, '{"code":500,"msg":"Server error"}', null],
+            'the edge when the origin errors or times out: no answer' => [
+                200, '{"code":200,"msg":"Key not checked","checked":false}', null,
+            ],
+            '503 from the service or its edge: no answer' => [503, '{"code":503,"msg":"Key not checked"}', null],
             '502 HTML error page' => [502, '<html><body>Bad gateway</body></html>', null],
             '200 HTML page' => [200, '<!doctype html><title>Maintenance</title>', null],
             '302 redirect' => [302, '', null],
@@ -150,7 +154,7 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
         $root = dirname(__DIR__, 2);
         $legacy = (string)file_get_contents($root . '/202-config/functions-tracking202.php');
         foreach (['api_key_validate'] as $function) {
-            $pattern = '/function ' . $function . '\(\$key\)\s*\{(.*?)\n\}/s';
+            $pattern = '/function ' . $function . '\(\$key, \?array &\$licence = null\)\s*\{(.*?)\n\}/s';
             self::assertSame(1, preg_match($pattern, $legacy, $m), $function);
             self::assertStringContainsString('ClickServerKeyValidator::answer((string) $key)', $m[1], $function);
             self::assertStringNotContainsString('curl_', $m[1], $function);

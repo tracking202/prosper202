@@ -719,13 +719,7 @@ class AUTH
     /** The durable record of licence answers, in this install's database; null with no connection. */
     protected static function licenceAnswers(): ?\Prosper202\License\LicenceAnswerStore
     {
-        try {
-            $db = function_exists('p202Mysqli') ? p202Mysqli() : ($GLOBALS['db'] ?? null);
-        } catch (\Throwable $e) {
-            error_log('AUTH: no database for the licence answer record: ' . $e->getMessage());
-            return null;
-        }
-        return $db instanceof \mysqli ? new \Prosper202\License\MysqlLicenceAnswerStore($db) : null;
+        return \Prosper202\License\MysqlLicenceAnswerStore::ofThisInstall();
     }
 
 

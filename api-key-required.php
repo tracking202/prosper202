@@ -39,7 +39,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['api_key'])) {
 	}
 	if ($csrf_ok && $api_key !== '') {
 		// Validate the API key
-		$validation_result = api_key_validate($api_key);
+		$validation_result = api_key_validate($api_key, $licence);
+		p202_record_key_answer($api_key, $licence);
 		$validation_data = json_decode((string) $validation_result, true);
 
 		if (isset($validation_data['msg']) && $validation_data['msg'] === 'Key valid') {

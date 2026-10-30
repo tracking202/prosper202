@@ -17,8 +17,9 @@
 #
 # The first request has no session to carry the licence's verdict, so it asks
 # the licence service: serve the instance with a licence the service accepts,
-# or with the service unreachable (the check lets a request through when it
-# cannot be asked). It changes nothing in the database but the remember-me
+# or with the service unreachable and a valid answer for the install's key
+# recorded in the last 30 days (202_licence_answers, the grace period). It
+# changes nothing in the database but the remember-me
 # key it adds, which it removes.
 BASE=${P202_BASE:-http://127.0.0.1:8097}
 DB=${P202_DB:-p202_test}

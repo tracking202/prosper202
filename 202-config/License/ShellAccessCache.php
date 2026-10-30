@@ -164,6 +164,25 @@ class ShellAccessCache
         }
     }
 
+    /**
+     * Record a whole licence answer from ClickServerKeyValidator: the key's
+     * validity here, its paid licence in CliAccessCache when the answer says.
+     * No answer (null) records nothing. Every path that confirms a key calls
+     * this or recordAnswer() (KeyEntryRecordsTheAnswerTest).
+     *
+     * @param array{valid: bool, paid: ?bool}|null $licence
+     */
+    public static function recordLicence(?LicenceAnswerStore $answers, string $key, ?array $licence): void
+    {
+        if ($licence === null) {
+            return;
+        }
+        ShellAccessCache::recordAnswer($answers, $key, $licence['valid']);
+        if ($licence['paid'] !== null) {
+            CliAccessCache::recordAnswer($answers, $key, $licence['paid']);
+        }
+    }
+
     /** The question this cache's answers are to. */
     protected static function licenceQuestion(): string
     {
