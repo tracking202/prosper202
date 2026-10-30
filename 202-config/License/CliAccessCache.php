@@ -16,4 +16,9 @@ class CliAccessCache extends ShellAccessCache
     {
         return 'p202-cli-access';
     }
+
+    protected static function licenceQuestion(): string
+    {
+        return self::QUESTION_PAID;
+    }
 }

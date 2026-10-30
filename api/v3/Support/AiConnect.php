@@ -438,12 +438,15 @@ final class AiConnect
         if ($userName === null) {
             return $refuse(400, 'invalid_grant', 'The user who approved can no longer sign in to this install.');
         }
-        // The CLI gate's own verdict for this user: unknown lets them through,
-        // as it does for the CLI, and no key exists until it has answered.
-        if (!(new CapabilitiesController($db, $userId))->cliAccess()) {
-            return $refuse(402, 'licence', 'Connecting an AI assistant needs a Prosper202 ClickServer Pro licence on '
+        // The CLI gate's own verdict for this user, the grace period
+        // included, and no key exists until it has answered.
+        $licenceGate = new CapabilitiesController($db, $userId);
+        if (!$licenceGate->cliAccess()) {
+            return $refuse(402, 'licence', $licenceGate->cliRefusal(
+                'Connecting an AI assistant needs a Prosper202 ClickServer Pro licence on '
                 . 'this install\'s ClickServer API key. Start a Pro trial or subscription at '
-                . 'https://my.tracking202.com/api/customers/subscriptions/support');
+                . 'https://my.tracking202.com/api/customers/subscriptions/support'
+            ));
         }
 
         $licenceKey = CapabilitiesController::licenceKeyFor($db, $userId);

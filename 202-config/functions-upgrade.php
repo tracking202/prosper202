@@ -116,6 +116,27 @@ if (!function_exists('_upgrade_query')) {
     }
 }
 
+if (!function_exists('_upgrade_seed_licence_answers')) {
+    /**
+     * Copy the licence answers cached on disk within the grace period into
+     * 202_licence_answers (ShellAccessCache::seedAnswers()), for the 1.9.79
+     * rung. Best effort: a failure is logged and never stops the upgrade.
+     */
+    function _upgrade_seed_licence_answers(): void
+    {
+        global $db;
+
+        try {
+            $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
+            $answers = new \Prosper202\License\MysqlLicenceAnswerStore($conn);
+            \Prosper202\License\ShellAccessCache::seedAnswers($answers);
+            \Prosper202\License\CliAccessCache::seedAnswers($answers);
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade: the cached licence answers could not be copied: ' . $e->getMessage());
+        }
+    }
+}
+
 if (!function_exists('_upgrade_conversion_ledger_columns')) {
     /**
      * The ledger columns _upgrade_conversion_ledger() adds to
@@ -4591,7 +4612,16 @@ class UPGRADE
                 // (Prosper202\User\SessionGeneration). 0 for everyone, which
                 // a session from before the upgrade, holding none, reads as.
                 \Prosper202\Database\Tables\UserTables::users(),
+                // The last licence answer per key, which the grace period reads
+                // while Tracking202 cannot be reached (ShellAccessCache::validWithinGrace()).
+                \Prosper202\Database\Tables\SecretTables::licenceAnswers(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
+
+            // The licence answers this install cached on disk before 1.9.79,
+            // copied into 202_licence_answers so the grace period has them.
+            if ($step_ok) {
+                _upgrade_seed_licence_answers();
+            }
 
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.79'") !== false) {

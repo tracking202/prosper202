@@ -7,6 +7,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/License/ClickServerKeyValidator.php';
 require_once __DIR__ . '/License/ShellAccessCache.php';
 require_once __DIR__ . '/License/CliAccessCache.php';
+require_once __DIR__ . '/License/LicenceAnswerStore.php';
+require_once __DIR__ . '/License/MysqlLicenceAnswerStore.php';
 
 /**
  * Password helper functions live here to avoid bootstrap order issues.
@@ -641,36 +643,47 @@ class AUTH
         }
 
         if (self::is_valid_api_key($user_api_key) == false || $user_api_key == '') {
-            header('location: ' . get_absolute_url() . 'api-key-required.php');
+            // The page says which: a key refused, or one that could not be checked.
+            $unconfirmed = self::$licenceUnconfirmed && $user_api_key !== '';
+            $page = 'api-key-required.php' . ($unconfirmed ? '?licence=unconfirmed' : '');
+            header('location: ' . get_absolute_url() . $page);
             die();
         }
     }
 
+    /** Whether the last is_valid_api_key() refused only because ClickServer gave no answer. */
+    private static bool $licenceUnconfirmed = false;
 
     //this checks if this api key is valid
     public static function is_valid_api_key($user_api_key)
     {
+        self::$licenceUnconfirmed = false;
 
         //only check once per session speed up ui
         if (isset($_SESSION['valid_key']) && $_SESSION['valid_key'] == true) {
             return true;
         }
 
-        $licence = \Prosper202\License\ClickServerKeyValidator::check($user_api_key);
-
-        // On network failure, don't punish the user — assume valid until next check
-        if ($licence === null) {
-            return true;
-        }
-        $keyIsValid = $licence['valid'];
+        $licence = static::askLicenceService((string) $user_api_key);
         // The caches are keyed by the key as the API reads it from 202_users,
         // trimmed; a caller handing in a padded key must land on the same entry.
         $cacheKey = trim((string) $user_api_key);
+        $answers = static::licenceAnswers();
+
+        // No answer: licensed only on a valid answer within the grace period.
+        if ($licence === null) {
+            if (\Prosper202\License\ShellAccessCache::validWithinGrace($answers, $cacheKey)) {
+                return true;
+            }
+            self::$licenceUnconfirmed = true;
+            return false;
+        }
+        $keyIsValid = $licence['valid'];
         // The same answer carries the CLI licence; record it so a verdict the
         // web app has already heard is not asked for again by the Go CLI gate,
         // and a key found invalid here stops a cached CLI allow at once.
         if ($licence['paid'] !== null) {
-            \Prosper202\License\CliAccessCache::write($cacheKey, $licence['paid']);
+            \Prosper202\License\CliAccessCache::recordAnswer($answers, $cacheKey, $licence['paid']);
         }
 
         if ($keyIsValid) {
@@ -683,13 +696,30 @@ class AUTH
             _mysqli_query($user_sql);
             self::writeSessionValue('valid_key', true);
             // Warm the CLI shell license cache so p202 shell works without its own round-trip.
-            \Prosper202\License\ShellAccessCache::write($cacheKey, true);
+            \Prosper202\License\ShellAccessCache::recordAnswer($answers, $cacheKey, true);
             return true;
         } else {
             // Deny the CLI shell immediately when the key is no longer valid.
-            \Prosper202\License\ShellAccessCache::write($cacheKey, false);
+            \Prosper202\License\ShellAccessCache::recordAnswer($answers, $cacheKey, false);
             return false;
         }
+    }
+
+    /**
+     * ClickServer's answer for a key: null when none came. A seam the
+     * licence gate's tests answer through.
+     *
+     * @return array{valid: bool, paid: ?bool}|null
+     */
+    protected static function askLicenceService(string $key): ?array
+    {
+        return \Prosper202\License\ClickServerKeyValidator::check($key);
+    }
+
+    /** The durable record of licence answers, in this install's database; null with no connection. */
+    protected static function licenceAnswers(): ?\Prosper202\License\LicenceAnswerStore
+    {
+        return \Prosper202\License\MysqlLicenceAnswerStore::ofThisInstall();
     }
 
 
