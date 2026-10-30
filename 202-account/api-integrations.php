@@ -15,6 +15,7 @@ declare(strict_types=1);
 use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\JVZoo\JVZooRole;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
+use Prosper202\Setup\SavedSecret;
 
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 include_once(str_repeat("../", 1) . '202-config/clickserver_api_management.php');
@@ -31,12 +32,6 @@ if (!$userObj->hasPermission("access_to_api_integrations")) {
 $error = [];
 $html = [];
 $mysql = [];
-
-// Initialize change status variables
-$change_cb_key = false;
-$change_zaxaa_api_signature = false;
-$change_user_slack_incoming_webhook = false;
-$change_ipqs_api_key = false;
 
 /**
  * Helper Functions for API Integration Management
@@ -80,9 +75,10 @@ function sendSlackNotification($slack, $event_name, $username, $old_value, $new_
 }
 
 /**
- * Process API key update with validation and notification
+ * Process API key update with validation and notification: 'saved', 'kept'
+ * (the field was left empty and a value is saved), or null when refused.
  */
-function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack, $username, $db)
+function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack, $username, $db): ?string
 {
 	$post_key = $config['post_key'];
 	$field_name = $config['field_name'];
@@ -90,24 +86,28 @@ function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack,
 	$error_message = $config['error_message'];
 	$slack_event = $config['slack_event'];
 	$user_id = $_SESSION['user_id'];
+	$posted = $_POST[$post_key] ?? null;
+	$old_value = (string)($user_row[$field_name] ?? '');
 
-	if (!validateRequired($_POST[$post_key] ?? '', $error_key, $error_message, $error)) {
-		return false;
+	// The saved value is never shown, so an empty field keeps it.
+	if (SavedSecret::keeps($posted) && SavedSecret::isSaved($old_value)) {
+		return 'kept';
+	}
+	if (!validateRequired(SavedSecret::keeps($posted) ? '' : $posted, $error_key, $error_message, $error)) {
+		return null;
 	}
 
 	if (!$error) {
-		$new_value = (string)$_POST[$post_key];
-		$old_value = $user_row[$field_name] ?? '';
-		try {
-			// PUT /users/{id}/preferences asks the same rule; a blank URL is still "can't be empty" here.
-			$new_value = $field_name === 'user_slack_incoming_webhook'
-				? Prosper202\Notifications\SlackWebhook::accepted($new_value) : $new_value;
-			if ($new_value === '') {
-				throw new InvalidArgumentException($error_message);
+		$new_value = (string)$posted;
+
+		// PUT /users/{id}/preferences asks the same rule of a Slack webhook.
+		if ($field_name === 'user_slack_incoming_webhook') {
+			try {
+				$new_value = Prosper202\Notifications\SlackWebhook::accepted($new_value);
+			} catch (InvalidArgumentException $refused) {
+				$error[$error_key] = $refused->getMessage();
+				return null;
 			}
-		} catch (InvalidArgumentException $refused) {
-			$error[$error_key] = $refused->getMessage();
-			return false;
 		}
 
 		if ($new_value !== $old_value) {
@@ -116,7 +116,7 @@ function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack,
 			} catch (RuntimeException $e) {
 				error_log('api-integrations.php: ' . $e->getMessage());
 				$error[$error_key] = 'This could not be saved just now; the old value is still in place. Try again.';
-				return false;
+				return null;
 			}
 
 			// Special handling for cb_key verification reset
@@ -126,17 +126,17 @@ function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack,
 				} catch (RuntimeException $e) {
 					error_log('api-integrations.php: ' . $e->getMessage());
 					$error[$error_key] = 'The key is saved, but it still shows as verified; save it again.';
-					return false;
+					return null;
 				}
 			}
 		}
 
 		$change_flag = true;
 		sendSlackNotification($slack, $slack_event, $username, $old_value, $new_value);
-		return true;
+		return 'saved';
 	}
 
-	return false;
+	return null;
 }
 
 /**
@@ -256,48 +256,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		p202_account_redirect('202-account/api-integrations.php');
 	}
 
-	// ClickBank Key Update
-	if (isset($_POST['change_cb_key']) && $_POST['change_cb_key'] == '1') {
-		$config = [
-			'post_key' => 'cb_key',
-			'field_name' => 'cb_key',
-			'error_key' => 'cb_key',
-			'error_message' => 'Clickbank Secret Key can\'t be empty!',
-			'slack_event' => 'cb_key_updated'
-		];
-		if (processApiKeyUpdate($config, $error, $change_cb_key, $user_row, $slack, $username, $db)) {
-			p202_account_flash('ok', 'Your ClickBank secret key was saved.');
-			p202_account_redirect('202-account/api-integrations.php#clickbank');
+	// The four key cards: one secret each; a field left empty keeps the saved one.
+	$keyCards = [
+		'change_cb_key' => ['cb_key', 'cb_key',
+			'Clickbank Secret Key can\'t be empty!', 'ClickBank secret key', 'clickbank'],
+		'change_user_slack_incoming_webhook' => ['user_slack_incoming_webhook', 'user_slack_incoming_webhook',
+			'Slack Incoming Webhook URL can\'t be empty!', 'Slack incoming webhook URL', 'slack'],
+		'change_zaxaa_api_signature' => ['zaxaa_api_signature', 'zaxaa_api_signature_error',
+			'Zaxaa API signature can\'t be empty!', 'Zaxaa API signature', 'zaxaa'],
+		'change_ipqs_api_key' => ['ipqs_api_key', 'ipqs_api_key_error',
+			'The IPQualityScore API Key can\'t be empty!', 'IPQualityScore API key', 'ipqs'],
+	];
+	foreach ($keyCards as $flag => [$keyField, $keyError, $keyEmpty, $keyLabel, $keyAnchor]) {
+		if (($_POST[$flag] ?? null) != '1') {
+			continue;
 		}
-	}
-
-	// Slack Webhook Update
-	if (isset($_POST['change_user_slack_incoming_webhook']) && $_POST['change_user_slack_incoming_webhook'] == '1') {
-		$config = [
-			'post_key' => 'user_slack_incoming_webhook',
-			'field_name' => 'user_slack_incoming_webhook',
-			'error_key' => 'user_slack_incoming_webhook',
-			'error_message' => 'Slack Incoming Webhook URL can\'t be empty!',
-			'slack_event' => 'user_slack_incoming_webhook_updated'
-		];
-		if (processApiKeyUpdate($config, $error, $change_user_slack_incoming_webhook, $user_row, $slack, $username, $db)) {
-			p202_account_flash('ok', 'Your Slack incoming webhook URL was saved.');
-			p202_account_redirect('202-account/api-integrations.php#slack');
-		}
-	}
-
-	// Zaxaa API Signature Update
-	if (isset($_POST['change_zaxaa_api_signature']) && $_POST['change_zaxaa_api_signature'] == '1') {
-		$config = [
-			'post_key' => 'zaxaa_api_signature',
-			'field_name' => 'zaxaa_api_signature',
-			'error_key' => 'zaxaa_api_signature_error',
-			'error_message' => 'Zaxaa API signature can\'t be empty!',
-			'slack_event' => 'zaxaa_api_signature_updated'
-		];
-		if (processApiKeyUpdate($config, $error, $change_zaxaa_api_signature, $user_row, $slack, $username, $db)) {
-			p202_account_flash('ok', 'Your Zaxaa API signature was saved.');
-			p202_account_redirect('202-account/api-integrations.php#zaxaa');
+		$config = ['post_key' => $keyField, 'field_name' => $keyField, 'error_key' => $keyError,
+			'error_message' => $keyEmpty, 'slack_event' => $keyField . '_updated'];
+		$keyOutcome = processApiKeyUpdate($config, $error, $keyChanged, $user_row, $slack, $username, $db);
+		if ($keyOutcome !== null) {
+			p202_account_flash('ok', $keyOutcome === 'kept' ? 'Nothing changed: your saved ' . $keyLabel . ' is kept.'
+				: 'Your ' . $keyLabel . ' was saved.');
+			p202_account_redirect('202-account/api-integrations.php#' . $keyAnchor);
 		}
 	}
 
@@ -307,13 +287,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$jvzooPosted = is_string($_POST['jvzoo_ipn_secret_key'] ?? null) ? $_POST['jvzoo_ipn_secret_key'] : '';
 		$jvzooOld = (string) ($user_row[JVZooKey::COLUMN] ?? '');
 		$jvzooKey = null;
+		$jvzooKept = false;
 		try {
 			$jvzooKey = JVZooKey::parse($jvzooPosted);
-			if ($jvzooKey === '') {
-				throw new InvalidArgumentException('Paste your JVZIPN secret key: JVZoo shows it under My Account ›'
-					. ' Account Details › Seller Settings.');
-			}
-			if ($jvzooKey !== $jvzooOld) {
+			if ($jvzooKey === '' && JVZooKey::stored($jvzooOld) !== null) {
+				// The saved key is never shown, so an empty field keeps it.
+				$jvzooKept = true;
+			} elseif ($jvzooKey === '') {
+				$jvzooUnusable = JVZooKey::unreadable($jvzooOld) ? 'The saved key cannot be used. ' : '';
+				throw new InvalidArgumentException($jvzooUnusable . 'Paste your JVZIPN secret key: JVZoo shows it under'
+					. ' My Account › Account Details › Seller Settings.');
+			} elseif ($jvzooKey !== $jvzooOld) {
 				updateUserPreference(JVZooKey::COLUMN, $jvzooKey, $_SESSION['user_id'], $db);
 			}
 		} catch (InvalidArgumentException $jvzooRefused) {
@@ -325,25 +309,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				. ' Try again.';
 			$jvzooKey = null;
 		}
+		if ($jvzooKept) {
+			p202_account_flash('ok', 'Nothing changed: your saved JVZoo secret key is kept.');
+			p202_account_redirect('202-account/api-integrations.php#jvzoo');
+		}
 		if ($jvzooKey !== null) {
 			sendSlackNotification($slack, 'jvzoo_secret_key_updated', $username, $jvzooOld, $jvzooKey);
 			p202_account_flash('ok', 'Your JVZoo secret key was saved.');
 			p202_account_redirect('202-account/api-integrations.php#jvzoo');
-		}
-	}
-
-	// IPQualityScore API Key Update
-	if (isset($_POST['change_ipqs_api_key']) && $_POST['change_ipqs_api_key'] == '1') {
-		$config = [
-			'post_key' => 'ipqs_api_key',
-			'field_name' => 'ipqs_api_key',
-			'error_key' => 'ipqs_api_key_error',
-			'error_message' => 'The IPQualityScore API Key can\'t be empty!',
-			'slack_event' => 'ipqs_api_key_updated'
-		];
-		if (processApiKeyUpdate($config, $error, $change_ipqs_api_key, $user_row, $slack, $username, $db)) {
-			p202_account_flash('ok', 'Your IPQualityScore API key was saved.');
-			p202_account_redirect('202-account/api-integrations.php#ipqs');
 		}
 	}
 
@@ -684,13 +657,6 @@ try {
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 $self = get_absolute_url() . '202-account/api-integrations.php';
 $base = get_absolute_url();
-/** What was typed on a refused submit, or what is stored. Secret fields here were shown in full on the classic page too. */
-$fieldValue = static function (string $field) use ($user_row): string {
-	if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST[$field])) {
-		return (string)$_POST[$field];
-	}
-	return (string)($user_row[$field] ?? '');
-};
 /** A help article link, when this integration has one. */
 $helpLink = static function (string $page) use ($e): string {
 	$url = showHelpUrl($page);
@@ -995,7 +961,9 @@ template_top('API Integrations');
 	</div>
 
 	<?php foreach ($keyIntegrations as $anchor => $integration) {
-		$stored = trim((string)($user_row[$integration['field']] ?? ''));
+		// Only whether a secret is saved, and how a long one ends, reaches the page.
+		$saved = SavedSecret::isSaved($user_row[$integration['field']] ?? null);
+		$savedHint = SavedSecret::hint($user_row[$integration['field']] ?? null);
 		$hasError = isset($error[$integration['error']]);
 		$fieldErrors = $hasError ? [$integration['field'] => (string)$error[$integration['error']]] : [];
 		$isClickbank = $anchor === 'clickbank';
@@ -1008,7 +976,7 @@ template_top('API Integrations');
 					<?php echo $integration['help'] !== '' ? $helpLink($integration['help']) : ''; ?>
 					<?php if ($isClickbank && !$cb_crypto_ok) { ?>
 						<span class="p202-pill p202-pill--warn">Unavailable</span>
-					<?php } elseif ($stored === '') { ?>
+					<?php } elseif (!$saved) { ?>
 						<span class="p202-pill">Not connected</span>
 					<?php } elseif ($isClickbank) { ?>
 						<span data-cb-status><?php echo apiint_cb_pill((bool)$cb_verified); ?></span>
@@ -1024,20 +992,23 @@ template_top('API Integrations');
 						<?php if ($integration['endpoint'] !== null) {
 							echo $endpoint($integration['endpoint'][0], $integration['endpoint'][1]);
 						} ?>
+						<p class="mb-3"><span class="text-secondary"><?php echo $e($integration['label']); ?>:</span>
+							<span data-saved-secret><?php echo $e($savedHint); ?></span></p>
 						<details class="p202-disclosure"<?php echo $hasError ? ' open' : ''; ?>>
-							<summary><?php echo $stored === '' ? 'Connect' : 'Update'; ?> <span class="p202-disclosure__hint"><?php echo $e($stored === '' ? 'paste your ' . $integration['label'] : $integration['label']); ?></span></summary>
+							<summary><?php echo $saved ? 'Update' : 'Connect'; ?> <span class="p202-disclosure__hint"><?php echo $e($saved ? $integration['label'] : 'paste your ' . $integration['label']); ?></span></summary>
 							<div class="p202-disclosure__body">
 								<form method="post" action="<?php echo $e($self . '#' . $anchor); ?>">
 									<input type="hidden" name="<?php echo $e($integration['flag']); ?>" value="1">
 									<?php echo p202_account_token_field(); ?>
-									<label class="form-label" for="<?php echo $e($integration['field']); ?>"><?php echo $e($integration['label']); ?></label>
+									<label class="form-label" for="<?php echo $e($integration['field']); ?>"><?php echo $e(($saved ? 'New ' : '') . $integration['label']); ?></label>
 									<div class="input-group">
-										<input type="text" class="form-control<?php echo p202_account_invalid($fieldErrors, $integration['field']); ?>" id="<?php echo $e($integration['field']); ?>" name="<?php echo $e($integration['field']); ?>" required autocomplete="off" spellcheck="false" value="<?php echo $e($fieldValue($integration['field'])); ?>">
+										<?php // Never filled in, so no secret reaches the page. ?>
+										<input type="text" class="form-control<?php echo p202_account_invalid($fieldErrors, $integration['field']); ?>" id="<?php echo $e($integration['field']); ?>" name="<?php echo $e($integration['field']); ?>"<?php echo $saved ? ' placeholder="Leave empty to keep the saved one"' : ' required'; ?> autocomplete="off" spellcheck="false" value="">
 										<button class="btn btn-secondary" type="submit">Save</button>
 									</div>
 									<?php echo p202_account_field_error($fieldErrors, $integration['field']); ?>
 								</form>
-								<?php if ($isClickbank && $stored !== '') { ?>
+								<?php if ($isClickbank && $saved) { ?>
 									<div class="p202-toolbar mt-2">
 										<button type="button" class="btn btn-link btn-sm p-0" data-cb-check="<?php echo $e($self . '?cb_status=1'); ?>">Check verification again</button>
 									</div>
@@ -1053,6 +1024,7 @@ template_top('API Integrations');
 	<?php
 	$jvzooColumn = $user_row[JVZooKey::COLUMN] ?? null;
 	$jvzooColumn = is_string($jvzooColumn) ? $jvzooColumn : null;
+	$jvzooConnected = SavedSecret::isSaved($jvzooColumn) && !JVZooKey::unreadable($jvzooColumn);
 	$jvzooErrors = isset($error['jvzoo_secret_key_error'])
 		? [JVZooKey::COLUMN => (string) $error['jvzoo_secret_key_error']] : [];
 	?>
@@ -1063,7 +1035,7 @@ template_top('API Integrations');
 					alt="" class="rounded-1">
 				<h2 class="p202-panel__title">JVZoo</h2>
 				<?php echo $helpLink('jvzoo'); ?>
-				<?php if (JVZooKey::stored($jvzooColumn) !== null) { ?>
+				<?php if ($jvzooConnected) { ?>
 					<span class="p202-pill p202-pill--good">Connected</span>
 				<?php } elseif (JVZooKey::unreadable($jvzooColumn)) { ?>
 					<span class="p202-pill p202-pill--warn">Key unreadable</span>
@@ -1098,20 +1070,25 @@ template_top('API Integrations');
 					Account Details › Seller Settings; store it below. A notification it does not verify is
 					refused. For a subscription, set the campaign’s “When a click converts more than once”
 					(under Advanced) to “Add them up”, so each rebill adds to the sale.</p>
+				<p class="mb-3"><span class="text-secondary">JVZIPN secret key:</span>
+					<span data-saved-secret><?php echo $e(SavedSecret::hint($jvzooColumn)); ?></span></p>
 				<details class="p202-disclosure"<?php echo $jvzooErrors ? ' open' : ''; ?>>
-					<summary><?php echo JVZooKey::stored($jvzooColumn) === null ? 'Connect' : 'Update'; ?>
+					<summary><?php echo $jvzooConnected ? 'Update' : 'Connect'; ?>
 						<span class="p202-disclosure__hint">your JVZIPN secret key</span></summary>
 					<div class="p202-disclosure__body">
 						<form method="post" action="<?php echo $e($self . '#jvzoo'); ?>">
 							<input type="hidden" name="change_jvzoo_secret_key" value="1">
 							<?php echo p202_account_token_field(); ?>
-							<label class="form-label" for="jvzoo_ipn_secret_key">JVZIPN secret key</label>
+							<label class="form-label" for="jvzoo_ipn_secret_key"><?php
+								echo $jvzooConnected ? 'New JVZIPN secret key' : 'JVZIPN secret key'; ?></label>
 							<div class="input-group">
+								<?php // Never filled in, so no secret reaches the page. ?>
 								<input type="text"
 									class="form-control<?php
 										echo p202_account_invalid($jvzooErrors, JVZooKey::COLUMN); ?>"
-									id="jvzoo_ipn_secret_key" name="jvzoo_ipn_secret_key" required autocomplete="off"
-									spellcheck="false" value="<?php echo $e($fieldValue(JVZooKey::COLUMN)); ?>">
+									id="jvzoo_ipn_secret_key" name="jvzoo_ipn_secret_key"<?php echo $jvzooConnected
+										? ' placeholder="Leave empty to keep the saved one"' : ' required'; ?>
+									autocomplete="off" spellcheck="false" value="">
 								<button class="btn btn-secondary" type="submit">Save</button>
 							</div>
 							<?php echo p202_account_field_error($jvzooErrors, JVZooKey::COLUMN); ?>
@@ -1162,7 +1139,9 @@ template_top('API Integrations');
 					<ul class="p202-list mb-3">
 						<?php foreach ($pkStored as $pkPlace => $pkKey) { ?>
 							<li class="p202-list__item">
-								<span class="p202-list__name">Key ending <?php echo $e(PayKickstartKeys::hint($pkKey)); ?></span>
+								<span class="p202-list__name"><?php
+									echo $e(PayKickstartKeys::hint($pkKey) === '' ? 'Key ' . ((int) $pkPlace + 1)
+										: 'Key ending ' . PayKickstartKeys::hint($pkKey)); ?></span>
 								<span class="p202-list__actions"><form method="post"
 									action="<?php echo $e($self . '#paykickstart'); ?>" class="d-inline"
 									data-p202-confirm="Remove this key? PayKickstart IPNs signed with it are refused until it is stored again.">
@@ -1178,7 +1157,7 @@ template_top('API Integrations');
 					</ul>
 				<?php } ?>
 				<details class="p202-disclosure"<?php echo $pkErrors ? ' open' : ''; ?>>
-					<summary><?php echo $pkStored ? 'Add a key' : 'Connect'; ?>
+					<summary><?php echo count($pkStored) > 0 ? 'Add a key' : 'Connect'; ?>
 						<span class="p202-disclosure__hint">one for each campaign</span></summary>
 					<div class="p202-disclosure__body">
 						<form method="post" action="<?php echo $e($self . '#paykickstart'); ?>">

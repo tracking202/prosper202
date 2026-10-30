@@ -87,6 +87,14 @@ final class SlackWebhookRuleTest extends TestCase
         self::assertSame([null, "Slack Incoming Webhook URL can't be empty!"], self::page('   '));
     }
 
+    /** An empty field keeps the saved webhook unasked, one saved before the rule included. */
+    public function testAnEmptyFieldKeepsTheSavedWebhook(): void
+    {
+        $saved = [self::COLUMN => 'http://10.0.0.5/hooks/abc'];
+        self::assertSame([null, ''], self::page('', self::COLUMN, $saved));
+        self::assertSame([null, ''], self::page('   ', self::COLUMN, $saved));
+    }
+
     /** The operator's allowlist admits their own network, at the save as at the send. */
     public function testTheOperatorsAllowlistAdmitsTheirNetwork(): void
     {
@@ -114,12 +122,13 @@ final class SlackWebhookRuleTest extends TestCase
     }
 
     /**
-     * The page's save of one key card, as a POST of $value runs it: the
-     * value it wrote (null when nothing was), and the error it shows.
+     * The page's save of one key card, as a POST of $value runs it over
+     * $saved: the value it wrote (null when nothing was), and the error it shows.
      *
+     * @param array<string, string> $saved
      * @return array{string|null, string}
      */
-    private static function page(string $value, string $field = self::COLUMN): array
+    private static function page(string $value, string $field = self::COLUMN, array $saved = []): array
     {
         $savedPost = $_POST;
         $savedSession = $_SESSION ?? null;
@@ -134,7 +143,7 @@ final class SlackWebhookRuleTest extends TestCase
                 'error_message' => $field === self::COLUMN ? "Slack Incoming Webhook URL can't be empty!" : 'empty',
                 'slack_event' => $field . '_updated',
             ];
-            (self::$save)($config, $error, $changed, [], false, 'admin', null);
+            (self::$save)($config, $error, $changed, $saved, false, 'admin', null);
         } finally {
             $_POST = $savedPost;
             if ($savedSession === null) {
@@ -150,7 +159,8 @@ final class SlackWebhookRuleTest extends TestCase
 
     /**
      * processApiKeyUpdate() and validateRequired() out of the page, renamed,
-     * with updateUserPreference() and sendSlackNotification() calls sent here.
+     * with updateUserPreference() and sendSlackNotification() calls sent here
+     * and the classes the page imports by their full names.
      */
     private static function loadPageSave(): string
     {
@@ -163,6 +173,10 @@ final class SlackWebhookRuleTest extends TestCase
             'updateUserPreference' => '\\' . self::class . '::write',
             'sendSlackNotification' => '\\' . self::class . '::notice',
         ];
+        preg_match_all('/^use\s+([\w\\\\]+);/m', $source, $imports);
+        foreach ($imports[1] as $class) {
+            $rename[substr((string) strrchr('\\' . $class, '\\'), 1)] = '\\' . $class;
+        }
         $code = '';
         foreach (['processApiKeyUpdate', 'validateRequired'] as $name) {
             $body = self::functionTokens($tokens, $name);

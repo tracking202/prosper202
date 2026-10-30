@@ -25,9 +25,6 @@ use Prosper202\Database\Exceptions\QueryException;
  */
 final class DniNetworks
 {
-    /** A key shorter than this shows no ending: four characters would be too much of it. */
-    private const SHOWN_ENDING_MIN_LENGTH = 12;
-
     /** What the page shows of a network: the key only as its length and last four characters. */
     private const SHOWN = 'id, networkId, name, type, affiliateId, processed, shortDescription, favIcon,'
         . ' CHAR_LENGTH(apiKey) AS key_length, RIGHT(apiKey, 4) AS key_end';
@@ -126,16 +123,6 @@ final class DniNetworks
         return ['host' => $host, 'install_hash' => (string) $account['install_hash'], 'networks' => $networks];
     }
 
-    /** "Saved", and how the key ends when it is long enough to show that much of it. */
-    public static function keyHint(int $length, string $end): string
-    {
-        if ($length <= 0) {
-            return 'Not saved';
-        }
-
-        return $length >= self::SHOWN_ENDING_MIN_LENGTH ? 'Saved, ends in ' . $end : 'Saved';
-    }
-
     /**
      * @return array<string, mixed>|null the network's id and key, as stored
      * @throws QueryException
@@ -164,7 +151,7 @@ final class DniNetworks
             'processed' => (int) $row['processed'] !== 0,
             'shortDescription' => (string) $row['shortDescription'],
             'favIcon' => (string) $row['favIcon'],
-            'keyHint' => self::keyHint((int) $row['key_length'], (string) $row['key_end']),
+            'keyHint' => SavedSecret::hintFrom((int) $row['key_length'], (string) $row['key_end']),
         ];
     }
 }
