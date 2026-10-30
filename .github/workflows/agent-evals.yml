@@ -20,6 +20,9 @@ on:
       - '202-account/**'
       - 'tests/fixtures/agent-eval/**'
       - 'tests/live/**'
+      # The instance suites it runs (tests/integration-suites.php --instance)
+      - 'tests/**/*InstanceTest.php'
+      - 'tests/integration-suites.php'
       - '.github/workflows/agent-evals.yml'
   push:
     branches: [master]
@@ -31,6 +34,9 @@ on:
       - '202-account/**'
       - 'tests/fixtures/agent-eval/**'
       - 'tests/live/**'
+      # The instance suites it runs (tests/integration-suites.php --instance)
+      - 'tests/**/*InstanceTest.php'
+      - 'tests/integration-suites.php'
       - '.github/workflows/agent-evals.yml'
   workflow_dispatch:
     inputs:
