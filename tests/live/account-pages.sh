@@ -449,14 +449,20 @@ get "202-account/api-integrations.php" "$OUT/ai.html"
 submit "$OUT/ai.html" change_ipqs_api_key "202-account/api-integrations.php" "$OUT/ai-bad.html" token=forged ipqs_api_key=u6-forged
 has "$OUT/ai-bad.html" "$REFUSED" "a bad token is refused"
 eq "$(Q "SELECT IFNULL(ipqs_api_key,'') FROM 202_users_pref WHERE user_id=$OWNER")" "$(echo "$ORIG_PREFS" | cut -d'|' -f11)" "IPQS key unchanged"
+mysql_q "$DB" -e "UPDATE 202_users_pref SET ipqs_api_key='' WHERE user_id=$OWNER"
 get "202-account/api-integrations.php" "$OUT/ai.html"
 submit "$OUT/ai.html" change_ipqs_api_key "202-account/api-integrations.php" "$OUT/ai-empty.html" ipqs_api_key=
 msgs "$OUT/ai-empty.html"
-has "$OUT/ai-empty.html" "The IPQualityScore API Key can&#039;t be empty!" "an empty key is refused under the field"
+has "$OUT/ai-empty.html" "The IPQualityScore API Key can&#039;t be empty!" "an empty key is refused under the field when none is saved"
 get "202-account/api-integrations.php" "$OUT/ai.html"
-submit "$OUT/ai.html" change_ipqs_api_key "202-account/api-integrations.php" "$OUT/ai-ok.html" ipqs_api_key=u6-ipqs-key
+submit "$OUT/ai.html" change_ipqs_api_key "202-account/api-integrations.php" "$OUT/ai-ok.html" ipqs_api_key=u6-ipqs-key-0001
 has "$OUT/ai-ok.html" 'Your IPQualityScore API key was saved.' "a key saves"
-eq "$(Q "SELECT ipqs_api_key FROM 202_users_pref WHERE user_id=$OWNER")" "u6-ipqs-key" "stored"
+eq "$(Q "SELECT ipqs_api_key FROM 202_users_pref WHERE user_id=$OWNER")" "u6-ipqs-key-0001" "stored"
+hasnt "$OUT/ai-ok.html" 'u6-ipqs-key-0001' "the saved key is not on the page"
+has "$OUT/ai-ok.html" 'Saved, ends in 0001' "it shows as saved, by its last four"
+submit "$OUT/ai-ok.html" change_ipqs_api_key "202-account/api-integrations.php" "$OUT/ai-keep.html" ipqs_api_key=
+has "$OUT/ai-keep.html" 'Nothing changed: your saved IPQualityScore API key is kept.' "an empty field keeps the saved key"
+eq "$(Q "SELECT ipqs_api_key FROM 202_users_pref WHERE user_id=$OWNER")" "u6-ipqs-key-0001" "still stored"
 
 say "API integrations: a DNI network is removed by POST only"
 mysql_q "$DB" -e "INSERT INTO 202_dni_networks (user_id, networkId, name, type, apiKey, affiliateId, time, processed, shortDescription, favIcon) VALUES ($OWNER, 'u6net', 'U6 Live Network', 'HasOffers', 'u6-dni-secret-key-0001', NULL, UNIX_TIMESTAMP(), 1, 'probe', '')"
