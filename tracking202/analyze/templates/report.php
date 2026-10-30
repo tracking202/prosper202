@@ -85,6 +85,12 @@ foreach ($specs as $index => $spec) {
             'advanced' => true,
             'placeholder' => 'Start typing',
             'suggestions' => $analyze['suggestions'][$named] ?? [],
+            'choices_url' => rtrim(get_absolute_url(), '/') . '/tracking202/ajax/analyze_filter_choices.php?'
+                . http_build_query([
+                    'filter' => $field,
+                    'from' => (int) $analyze['time']['from'],
+                    'to' => (int) $analyze['time']['to'],
+                ], '', '&', PHP_QUERY_RFC3986),
             'hint' => $named === 'region' ? 'Suggestions are the regions your clicks in this range came from.' : 'Suggestions are the networks your clicks in this range came through.',
         ];
     }
@@ -368,4 +374,7 @@ template_top((string) $info['title']);
     <?php } ?>
 <?php } ?>
 
-<?php template_bottom();
+<?php
+require_once dirname(__DIR__, 3) . '/202-config/functions-ui-overview.php';
+echo p202_overview_choices_script(get_absolute_url());
+template_bottom();

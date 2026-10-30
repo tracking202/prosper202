@@ -139,6 +139,28 @@ final class VariableReportIntegrationTest extends TestCase
         self::assertSame('1', (string) ($totals['total_clicks'] ?? ''), 'the report\'s own total is one click');
     }
 
+    public function testLargeVariableDictionaryDoesNotLimitTheReportedValues(): void
+    {
+        $before = self::read('engine:variable');
+        // Unrelated mapping rows change the query plan, never the report's scope.
+        $first = 990071000;
+        self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id BETWEEN '
+            . $first . ' AND ' . ($first + 10000));
+        try {
+            for ($offset = 0; $offset <= 10000; $offset += 500) {
+                $values = [];
+                for ($i = $offset; $i < min($offset + 500, 10001); $i++) {
+                    $values[] = '(' . ($first + $i) . ', 0)';
+                }
+                self::q('INSERT INTO 202_variable_sets2(variable_set_id, variables) VALUES ' . implode(',', $values));
+            }
+            self::assertSame($before, self::read('engine:variable'));
+        } finally {
+            self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id BETWEEN '
+                . $first . ' AND ' . ($first + 10000));
+        }
+    }
+
     /** What a reader returned, as the runner printed it. */
     private static function read(string $reader): mixed
     {

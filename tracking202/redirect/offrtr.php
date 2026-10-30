@@ -96,7 +96,7 @@ $rule_row = \Prosper202\Rotator\RuleOrder::activeRules($db, (int) $rotator_row['
 $ip_address = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
 
 if ($rotator_row['maxmind_isp'] == '1') {
-	$IspData = getIspData($ip_address);
+	$IspData = \Prosper202\Rotator\Criterion::visitorIsp((string) getIspData($ip_address));
 } else {
 	$IspData = null;
 }

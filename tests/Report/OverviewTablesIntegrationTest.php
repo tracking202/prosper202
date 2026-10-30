@@ -238,4 +238,32 @@ final class OverviewTablesIntegrationTest extends TestCase
         self::assertSame('My Category', $campaign['total_aff_network_name'] ?? null);
         self::assertSame('1', $campaign['ppc_accounts']['0']['clicks'] ?? null);
     }
+
+    public function testAllOverviewTablesReuseTheRequestSnapshotAndKeepShowFilters(): void
+    {
+        $extra = [self::DIRECT_CLICK + 100, self::DIRECT_CLICK + 101];
+        foreach ($extra as $index => $click) {
+            self::row('202_dataengine', [
+                'user_id' => self::USER, 'click_id' => $click, 'click_time' => self::$now,
+                'aff_campaign_id' => self::USER, 'ppc_account_id' => 0, 'landing_page_id' => 0,
+                'clicks' => 1, 'click_out' => 1, 'click_lead' => 1, 'leads' => 2 + $index,
+                'click_filtered' => $index, 'click_bot' => $index,
+                'payout' => 0, 'income' => '31.12345', 'cost' => '0.12345',
+            ]);
+        }
+        try {
+            foreach (['all', 'real', 'filtered', 'filtered_bot', 'leads'] as $show) {
+                self::q("UPDATE 202_users_pref SET user_pref_show='$show' WHERE user_id=" . self::USER);
+                // The runner locks raw clicks after preparing the request-local sums.
+                $prepared = self::read('overview-prepared');
+                self::assertTrue($prepared['dropped'], 'the temporary table is removed when the reader is released');
+                foreach ($prepared['tables'] as $type => $rows) {
+                    self::assertSame(self::read('engine:' . $type), $rows, "$type, show=$show");
+                }
+            }
+        } finally {
+            self::q('DELETE FROM 202_dataengine WHERE click_id IN (' . implode(',', $extra) . ')');
+            self::q("UPDATE 202_users_pref SET user_pref_show='all' WHERE user_id=" . self::USER);
+        }
+    }
 }

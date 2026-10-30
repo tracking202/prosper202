@@ -333,6 +333,9 @@ module.exports = {
         try {
           await app.goto('/tracking202/visitors/');
           await checks.overviewReportDrawn(ui, '#visitors-report');
+          await ui.page.locator('#visitors-filters details').evaluate((details) => { details.open = true; });
+          await ui.page.waitForFunction(() => document.querySelector('[aria-controls="visitors-filters-isp_id"]')
+            .hasAttribute('data-p202-choices-loaded'));
           const options = await ui.page.$$eval('#visitors-filters-isp_id option', (os) => os.map((o) => o.textContent.trim()));
           const seen = Number(db.value('SELECT COUNT(DISTINCT isp_id) FROM 202_dataengine WHERE user_id=1 AND isp_id IS NOT NULL'
             + ' AND click_time BETWEEN UNIX_TIMESTAMP(CURDATE()) AND UNIX_TIMESTAMP(CURDATE() + INTERVAL 1 DAY)'));

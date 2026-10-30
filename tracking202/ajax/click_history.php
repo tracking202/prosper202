@@ -83,7 +83,8 @@ if ($isSpy) {
 
 	// Incremental: skip count (result discarded) and limit (would silently
 	// drop new clicks under high traffic since the since-filter already bounds rows)
-	$spyCount = $incremental ? false : null;
+    // Spy has no pager or total-row label, including its first capped read.
+    $spyCount = false;
 	$spyLimit = $incremental ? false : null;
 
 	if ($since !== null && $since_id !== null) {

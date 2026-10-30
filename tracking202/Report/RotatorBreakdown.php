@@ -83,16 +83,17 @@ final class RotatorBreakdown
         // matched (0: no rule matched, the rotator's default). A re-clicked
         // click counts once, at its latest visit, under the route it holds.
         $stmt = $this->conn->prepareRead(
-            'SELECT cr.rotator_id, cr.rule_id,'
+            'SELECT counted.rotator_id, counted.rule_id, counted.clicks, counted.leads, counted.income, counted.cost'
+            . ' FROM (SELECT c.user_id, cr.rotator_id, cr.rule_id,'
             . ' COUNT(*) AS clicks, SUM(c.click_lead) AS leads,'
             . ' SUM(c.click_payout * c.click_lead) AS income, SUM(c.click_cpc) AS cost'
             . ' FROM 202_clicks AS c'
             . ' INNER JOIN 202_clicks_rotator AS cr ON cr.click_id = c.click_id'
-            . ' INNER JOIN 202_rotators AS ro ON ro.id = cr.rotator_id AND ro.user_id = c.user_id'
             . ' WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ?'
             . ' AND ' . LatestVisit::isLatest('c')
             . UserPrefFilters::showFilter($show, 'c.')
-            . ' GROUP BY cr.rotator_id, cr.rule_id'
+            . ' GROUP BY c.user_id, cr.rotator_id, cr.rule_id) AS counted'
+            . ' INNER JOIN 202_rotators AS ro ON ro.id = counted.rotator_id AND ro.user_id = counted.user_id'
         );
         $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
         $byRule = [];

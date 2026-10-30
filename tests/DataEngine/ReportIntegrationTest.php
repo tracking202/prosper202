@@ -305,4 +305,37 @@ final class ReportIntegrationTest extends TestCase
         self::assertStringContainsString('15', $totals['total_payout'], 'payout = income/leads');
         self::assertStringContainsString('67', $totals['total_ctr'], 'ctr = click_out/clicks');
     }
+
+    public function testPaginationCountsMergedLabelsWithoutRescanningANormalPage(): void
+    {
+        $uid = self::TEST_USER_ID;
+        self::assertTrue(self::$db->query(
+            "INSERT INTO 202_browsers(browser_id, browser_name) VALUES"
+                . " (970000, 'Shared browser'), (970001, 'Shared browser')"
+        ));
+        try {
+            self::assertTrue(self::$db->query("UPDATE 202_users_pref SET user_pref_limit=1 WHERE user_id=$uid"));
+            $engine = new \DataEngine();
+            $engine->htmlFormat([], false); // Read the currency before measuring report SELECTs.
+            $before = self::$db->query("SHOW SESSION STATUS LIKE 'Com_select'")->fetch_row()[1];
+            $first = $engine->getReportData('browser', self::$from, self::$to, false);
+            $after = self::$db->query("SHOW SESSION STATUS LIKE 'Com_select'")->fetch_row()[1];
+            self::assertSame(2, (int) $after - (int) $before, 'one preferences read and one grouped report read');
+            self::assertSame(2, $engine->foundRows(), 'duplicate names merge, missing IDs form their own group');
+            self::assertSame('Shared browser', $first[0]['browser_name']);
+            self::assertSame('2', $first[0]['clicks']);
+            self::assertArrayNotHasKey('report_group_count', $first[0]);
+            $_POST['offset'] = 1;
+            $second = $engine->getReportData('browser', self::$from, self::$to, false);
+            self::assertSame(2, $engine->foundRows());
+            self::assertSame('1', $second[0]['clicks']);
+            $_POST['offset'] = 2;
+            self::assertCount(1, $engine->getReportData('browser', self::$from, self::$to, false));
+            self::assertSame(2, $engine->foundRows(), 'an out-of-range page keeps the actual group count');
+        } finally {
+            self::$db->query('DELETE FROM 202_browsers WHERE browser_id IN (970000,970001)');
+            self::$db->query("UPDATE 202_users_pref SET user_pref_limit=50 WHERE user_id=$uid");
+            $_POST = [];
+        }
+    }
 }
