@@ -51,6 +51,18 @@ final class Criterion
         return $values;
     }
 
+    /**
+     * The visitor's ISP as an ISP criterion compares it: the part of
+     * getIspData()'s answer before its first comma, trimmed. A stored value
+     * is split on commas (values()), so it can't hold "Comcast Cable
+     * Communications, LLC" whole; offrtr.php compared the whole answer and
+     * so never matched such an ISP, while rtr.php compared the first part.
+     */
+    public static function visitorIsp(string $isp): string
+    {
+        return trim(explode(',', $isp, 2)[0]);
+    }
+
     /** Whether one value is the one that matches every visitor. */
     public static function isEveryone(string $value): bool
     {

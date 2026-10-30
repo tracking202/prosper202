@@ -114,6 +114,41 @@ final class CriterionTest extends TestCase
     }
 
     /**
+     * The visitor's ISP is compared as a stored value can hold it: values()
+     * splits on commas, so only the part before the first comma can match.
+     */
+    public function testTheVisitorsIspIsReadAsAStoredValueCanHoldIt(): void
+    {
+        $stored = Criterion::values('Comcast Cable Communications, LLC');
+        self::assertContains(Criterion::visitorIsp('Comcast Cable Communications, LLC'), $stored);
+        self::assertSame('Verizon Wireless', Criterion::visitorIsp('Verizon Wireless'));
+        self::assertSame('Foo', Criterion::visitorIsp(' Foo , Inc'));
+        self::assertSame('Unknown ISP/Carrier', Criterion::visitorIsp('Unknown ISP/Carrier'));
+    }
+
+    /**
+     * rtr.php compared an ISP criterion with the first part of the visitor's
+     * ISP and offrtr.php with the whole of it, so one redirector sent one
+     * visitor two ways. Both now take it from Criterion::visitorIsp() only.
+     */
+    public function testBothRedirectScriptsReadTheVisitorsIspThroughCriterion(): void
+    {
+        foreach (['tracking202/redirect/rtr.php', 'tracking202/redirect/offrtr.php'] as $file) {
+            $source = (string) file_get_contents(SourceScan::repoRoot() . '/' . $file);
+            preg_match_all('/getIspData\s*\(/', $source, $calls, PREG_OFFSET_CAPTURE);
+            self::assertNotEmpty($calls[0], "$file no longer reads the visitor's ISP");
+            foreach ($calls[0] as [, $at]) {
+                $before = substr($source, max(0, $at - 60), min(60, $at));
+                self::assertStringContainsString(
+                    'Criterion::visitorIsp((string) ',
+                    $before,
+                    "$file reads getIspData() without Criterion::visitorIsp()"
+                );
+            }
+        }
+    }
+
+    /**
      * Every reader of a criterion's value calls Criterion, and none spells
      * the every-visitor value itself: offrtr.php's own `'ALL'` is how the two
      * scripts came to differ. A file that names the criteria table and is not
