@@ -89,8 +89,8 @@ if ($success) {
     // The sign-in gate's refusal: no answer from Tracking202 and no recent valid one.
     echo p202_standalone_card(
         'Your license could not be checked',
-        'This install\'s license could not be checked with Tracking202. Make sure this server can reach '
-        . 'my.tracking202.com over HTTPS; Pro features come back once it can.'
+        'This install\'s license could not be checked with Tracking202, so Prosper202 stays locked until it '
+        . 'can be. Make sure this server can reach my.tracking202.com over HTTPS.'
     );
     echo '<p class="small mb-3">For help, contact <a href="mailto:support@tracking202.com">support@tracking202.com</a>'
         . ' or the support chat.</p>';

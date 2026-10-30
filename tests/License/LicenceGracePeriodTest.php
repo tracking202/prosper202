@@ -6,6 +6,7 @@ namespace Tests\License;
 
 use Api\V3\Controllers\CapabilitiesController;
 use Prosper202\License\CliAccessCache;
+use Prosper202\License\LicenceAnswerStore;
 use Prosper202\License\ShellAccessCache;
 use Tests\TestCase;
 
@@ -14,13 +15,16 @@ use Tests\TestCase;
  * was a yes given within the grace period (30 days): never checked, last
  * answered no, or answered longer ago is not licensed. The web sign-in gate,
  * the shell verdict and the Go CLI gate all ask the one helper,
- * ShellAccessCache::validWithinGrace(), of the cache that holds their answer.
+ * ShellAccessCache::validWithinGrace(), which reads the durable record
+ * (LicenceAnswerStore; the database in production), not the temp-file caches.
  */
 final class LicenceGracePeriodTest extends TestCase
 {
     private const int DAY = 86400;
 
     private string $key;
+
+    private MemoryLicenceAnswerStore $answers;
 
     /** @var array<string, mixed> */
     private array $session = [];
@@ -29,6 +33,7 @@ final class LicenceGracePeriodTest extends TestCase
     {
         parent::setUp();
         $this->key = 'grace-test-' . bin2hex(random_bytes(8));
+        $this->answers = new MemoryLicenceAnswerStore();
         $this->session = $_SESSION ?? [];
         $_SESSION = [];
         require_once dirname(__DIR__, 2) . '/202-config/functions-auth.php';
@@ -56,7 +61,7 @@ final class LicenceGracePeriodTest extends TestCase
     public function testTheHelperLicensesOnlyARecentYes(string $cache, ?bool $last, int $age, bool $licensed): void
     {
         $this->record($cache, $last, $age);
-        self::assertSame($licensed, $cache::validWithinGrace($this->key));
+        self::assertSame($licensed, $cache::validWithinGrace($this->answers, $this->key));
     }
 
     /** @return iterable<string, array{class-string<ShellAccessCache>, ?bool, int, bool}> */
@@ -76,9 +81,71 @@ final class LicenceGracePeriodTest extends TestCase
 
     public function testAYesForTheShellIsNotAYesForTheCli(): void
     {
+        ShellAccessCache::recordAnswer($this->answers, $this->key, true);
+        self::assertTrue(ShellAccessCache::validWithinGrace($this->answers, $this->key));
+        self::assertFalse(
+            CliAccessCache::validWithinGrace($this->answers, $this->key),
+            'a valid key is not a paid licence'
+        );
+    }
+
+    public function testTheBoundaryIsThirtyDaysToTheSecond(): void
+    {
+        $at = 1_800_000_000;
+        $this->answers->saveAnswer(hash('sha256', $this->key), ShellAccessCache::QUESTION_VALID, true, $at);
+        $grace = ShellAccessCache::GRACE_SECONDS;
+        self::assertTrue(
+            ShellAccessCache::validWithinGrace($this->answers, $this->key, $at + $grace),
+            'exactly 30 days'
+        );
+        self::assertFalse(
+            ShellAccessCache::validWithinGrace($this->answers, $this->key, $at + $grace + 1),
+            'a second over'
+        );
+        self::assertFalse(
+            ShellAccessCache::validWithinGrace($this->answers, $this->key, $at - 1),
+            'an answer from the future'
+        );
+    }
+
+    public function testTheDurableRecordDecidesWhenTheTempCacheIsGone(): void
+    {
+        foreach ([ShellAccessCache::class, CliAccessCache::class] as $cache) {
+            $cache::recordAnswer($this->answers, $this->key, true);
+            $cache::invalidate($this->key);
+            self::assertNull($cache::readStale($this->key), 'the temp cache holds nothing');
+        }
+        $this->age(ShellAccessCache::QUESTION_VALID, 29 * self::DAY);
+        $this->age(ShellAccessCache::QUESTION_PAID, 29 * self::DAY);
+        self::assertTrue($this->auth(null)::is_valid_api_key($this->key), 'sign-in: a valid answer 29 days ago');
+        self::assertTrue($this->shellAccess($this->controller(null)), 'shell: a valid answer 29 days ago');
+        self::assertTrue($this->controller(null)->cliAccess(), 'CLI: a paid answer 29 days ago');
+    }
+
+    public function testATempCacheYesWithoutTheDurableRecordIsNotEnough(): void
+    {
         ShellAccessCache::write($this->key, true);
-        self::assertTrue(ShellAccessCache::validWithinGrace($this->key));
-        self::assertFalse(CliAccessCache::validWithinGrace($this->key), 'a valid key is not a paid licence');
+        CliAccessCache::write($this->key, true);
+        $this->forget(false);
+        self::assertFalse($this->auth(null)::is_valid_api_key($this->key));
+        self::assertFalse($this->shellAccess($this->controller(null)));
+        self::assertFalse($this->controller(null)->cliAccess());
+    }
+
+    public function testARecordThatCannotBeReadIsNotLicensed(): void
+    {
+        ShellAccessCache::recordAnswer($this->answers, $this->key, true);
+        $this->answers->unreadable = true;
+        self::assertFalse(ShellAccessCache::validWithinGrace($this->answers, $this->key));
+        self::assertFalse(ShellAccessCache::validWithinGrace(null, $this->key), 'and no record at all');
+    }
+
+    public function testTheRecordNamesTheKeyByItsHashOnly(): void
+    {
+        ShellAccessCache::recordAnswer($this->answers, $this->key, true);
+        CliAccessCache::recordAnswer($this->answers, $this->key, false);
+        self::assertSame([hash('sha256', $this->key)], array_keys($this->answers->answers));
+        self::assertStringNotContainsString($this->key, serialize($this->answers->answers));
     }
 
     // ── The web sign-in gate (AUTH::is_valid_api_key) ────────────────────
@@ -108,17 +175,24 @@ final class LicenceGracePeriodTest extends TestCase
         $_SESSION['user_id'] = 3;
         self::assertTrue($this->auth(['valid' => true, 'paid' => true])::is_valid_api_key($this->key));
         self::assertTrue($_SESSION['valid_key'] ?? null);
-        self::assertTrue(ShellAccessCache::validWithinGrace($this->key), 'the answer starts the grace period');
+        self::assertTrue(
+            ShellAccessCache::validWithinGrace($this->answers, $this->key),
+            'the answer starts the grace period'
+        );
+        self::assertTrue(CliAccessCache::validWithinGrace($this->answers, $this->key), 'and the paid answer too');
         self::assertStringContainsString('UPDATE', $queries[0] ?? '');
         self::assertFalse($this->unconfirmed());
     }
 
     public function testTheSignInGateStillRefusesAnInvalidAnswer(): void
     {
-        ShellAccessCache::write($this->key, true);
+        ShellAccessCache::recordAnswer($this->answers, $this->key, true);
         self::assertFalse($this->auth(['valid' => false, 'paid' => false])::is_valid_api_key($this->key));
         self::assertFalse($this->unconfirmed(), 'a refusal is not "could not be checked"');
-        self::assertFalse(ShellAccessCache::validWithinGrace($this->key), 'and it ends the grace period');
+        self::assertFalse(
+            ShellAccessCache::validWithinGrace($this->answers, $this->key),
+            'and it ends the grace period'
+        );
     }
 
     // ── /capabilities: the shell verdict and the Go CLI gate ─────────────
@@ -160,8 +234,8 @@ final class LicenceGracePeriodTest extends TestCase
         self::assertTrue($this->shellAccess($paid));
         $this->forget();
 
-        CliAccessCache::write($this->key, true);
-        ShellAccessCache::write($this->key, true);
+        CliAccessCache::recordAnswer($this->answers, $this->key, true);
+        ShellAccessCache::recordAnswer($this->answers, $this->key, true);
         $this->forget(false);
         $refused = $this->controller(['valid' => false, 'paid' => false]);
         self::assertFalse($refused->cliAccess(), 'an explicit refusal still refuses, grace or not');
@@ -182,7 +256,8 @@ final class LicenceGracePeriodTest extends TestCase
         $page = (string) file_get_contents(dirname(__DIR__, 2) . '/api-key-required.php');
         self::assertStringContainsString("=== 'unconfirmed'", $page, 'the page reads the gate\'s reason');
         self::assertStringContainsString('could not be checked with Tracking202', $page);
-        self::assertStringContainsString("'my.tracking202.com over HTTPS", $page);
+        self::assertStringContainsString('reach my.tracking202.com over HTTPS', $page);
+        self::assertStringContainsString('so Prosper202 stays locked until it', $page, 'it says the app is locked');
         self::assertStringContainsString('mailto:support@tracking202.com', $page);
         self::assertStringContainsString(' or the support chat', $page);
         $auth = (string) file_get_contents(dirname(__DIR__, 2) . '/202-config/functions-auth.php');
@@ -194,7 +269,7 @@ final class LicenceGracePeriodTest extends TestCase
 
     /**
      * Leaves $cache's last answer for the key as $last, given $age seconds
-     * ago (null: never checked).
+     * ago (null: never checked), in the durable record and the temp cache.
      *
      * @param class-string<ShellAccessCache> $cache
      */
@@ -203,11 +278,23 @@ final class LicenceGracePeriodTest extends TestCase
         if ($last === null) {
             return;
         }
-        $cache::write($this->key, $last);
+        $cache::recordAnswer($this->answers, $this->key, $last);
+        $question = $cache === CliAccessCache::class
+            ? ShellAccessCache::QUESTION_PAID
+            : ShellAccessCache::QUESTION_VALID;
+        $this->age($question, $age);
         $path = (new \ReflectionMethod($cache, 'path'))->invoke(null, $this->key);
         self::assertIsString($path);
-        self::assertTrue(touch($path, time() - $age), 'the answer was aged');
+        self::assertTrue(touch($path, time() - $age), 'the cached answer was aged');
         clearstatcache();
+    }
+
+    /** Moves the durable answer to $question back by $age seconds from now. */
+    private function age(string $question, int $age): void
+    {
+        $hash = hash('sha256', $this->key);
+        self::assertArrayHasKey($question, $this->answers->answers[$hash] ?? [], 'an answer is recorded');
+        $this->answers->answers[$hash][$question][1] = time() - $age;
     }
 
     /** Drops what the caches hold for the key; with $verdicts false, only the hold-offs. */
@@ -232,16 +319,25 @@ final class LicenceGracePeriodTest extends TestCase
         $db = $this->createMysqliMock([
             'SELECT p202_customer_api_key FROM 202_users' => [['p202_customer_api_key' => $this->key]],
         ]);
-        return new class ($db, 7, $answer) extends CapabilitiesController {
+        return new class ($db, 7, $answer, $this->answers) extends CapabilitiesController {
             /** @param array{valid: bool, paid: ?bool}|null $answer */
-            public function __construct(\mysqli $db, int $userId, private readonly ?array $answer)
-            {
+            public function __construct(
+                \mysqli $db,
+                int $userId,
+                private readonly ?array $answer,
+                private readonly LicenceAnswerStore $answers,
+            ) {
                 parent::__construct($db, $userId);
             }
 
             protected function askLicenceService(string $customerKey): ?array
             {
                 return $this->answer;
+            }
+
+            protected function licenceAnswers(): LicenceAnswerStore
+            {
+                return $this->answers;
             }
         };
     }
@@ -262,12 +358,20 @@ final class LicenceGracePeriodTest extends TestCase
             /** @var array{valid: bool, paid: ?bool}|null */
             public static ?array $answer = null;
 
+            public static ?LicenceAnswerStore $answers = null;
+
             protected static function askLicenceService(string $key): ?array
             {
                 return self::$answer;
             }
+
+            protected static function licenceAnswers(): ?LicenceAnswerStore
+            {
+                return self::$answers;
+            }
         };
         $auth::$answer = $answer;
+        $auth::$answers = $this->answers;
         return $auth;
     }
 

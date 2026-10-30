@@ -33,9 +33,13 @@ class ShellAccessCache
      */
     public const int GRACE_SECONDS = 30 * 86400;
 
+    /** The questions a LicenceAnswerStore records an answer to. */
+    public const string QUESTION_VALID = 'valid';
+    public const string QUESTION_PAID = 'paid';
+
     /**
      * How long a result is kept for readStale(); prune() drops anything
-     * older. Nothing older than the grace period is read.
+     * older. The grace period reads the durable record, not these files.
      */
     public const int STALE_TTL_SECONDS = self::GRACE_SECONDS;
 
@@ -108,15 +112,62 @@ class ShellAccessCache
     }
 
     /**
-     * Whether $key is licensed while ClickServer gives no answer: its last
-     * answer was a yes (this cache's own: a valid key here, a paid licence in
-     * CliAccessCache) given within GRACE_SECONDS. Never checked, last answered
-     * no, or answered longer ago is not licensed. Every licence gate asks this,
-     * so the rule can be replaced here alone.
+     * Whether $key is licensed while ClickServer gives no answer: the durable
+     * record's last answer to this cache's question (a valid key here, a paid
+     * licence in CliAccessCache) was a yes, given at most GRACE_SECONDS ago.
+     * Never checked, last answered no, answered longer ago, or a record that
+     * cannot be read is not licensed. Every licence gate asks this, so the
+     * rule can be replaced here alone.
      */
-    public static function validWithinGrace(string $key): bool
+    public static function validWithinGrace(?LicenceAnswerStore $answers, string $key, ?int $now = null): bool
     {
-        return static::read($key, self::GRACE_SECONDS) === true;
+        if ($key === '') {
+            return false;
+        }
+        if ($answers === null) {
+            error_log(static::class . ': no licence answer record to read; the grace period cannot apply');
+            return false;
+        }
+        try {
+            $last = $answers->lastAnswer(hash('sha256', $key), static::licenceQuestion());
+        } catch (\Throwable $e) {
+            error_log(static::class . ': ' . $e->getMessage() . '; the grace period cannot apply');
+            return false;
+        }
+        if ($last === null) {
+            return false;
+        }
+        [$yes, $at] = $last;
+        $now ??= time();
+        return $yes && $at <= $now && $now - $at <= self::GRACE_SECONDS;
+    }
+
+    /**
+     * Record ClickServer's answer for $key: in this cache, and in the
+     * durable record the grace period reads. A record that cannot be written
+     * is logged; the answer still decides this request.
+     */
+    public static function recordAnswer(?LicenceAnswerStore $answers, string $key, bool $yes): void
+    {
+        static::write($key, $yes);
+        if ($key === '') {
+            return;
+        }
+        if ($answers === null) {
+            error_log(static::class . ': no licence answer record to write; the grace period will not see this answer');
+            return;
+        }
+        try {
+            $answers->saveAnswer(hash('sha256', $key), static::licenceQuestion(), $yes, time());
+        } catch (\Throwable $e) {
+            error_log(static::class . ': ' . $e->getMessage());
+        }
+    }
+
+    /** The question this cache's answers are to. */
+    protected static function licenceQuestion(): string
+    {
+        return self::QUESTION_VALID;
     }
 
     public static function write(string $key, bool $valid): void
@@ -170,10 +221,8 @@ class ShellAccessCache
      * Drop entries and hold-off markers older than $olderThanSeconds. The web
      * sign-in writes an entry for every key a user submits and nothing else
      * removes one, so write() calls this now and then. The default is the
-     * stale window, not the fresh one: an entry up to STALE_TTL_SECONDS old
-     * is what licenses a key while ClickServer is unreachable
-     * (validWithinGrace), and a sweep that took those would refuse a licensed
-     * install during the outage it exists for. Returns how many files went.
+     * stale window (readStale()), not the fresh one. Returns how many files
+     * went.
      */
     public static function prune(int $olderThanSeconds = self::STALE_TTL_SECONDS): int
     {

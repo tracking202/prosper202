@@ -7,6 +7,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/License/ClickServerKeyValidator.php';
 require_once __DIR__ . '/License/ShellAccessCache.php';
 require_once __DIR__ . '/License/CliAccessCache.php';
+require_once __DIR__ . '/License/LicenceAnswerStore.php';
+require_once __DIR__ . '/License/MysqlLicenceAnswerStore.php';
 
 /**
  * Password helper functions live here to avoid bootstrap order issues.
@@ -666,10 +668,11 @@ class AUTH
         // The caches are keyed by the key as the API reads it from 202_users,
         // trimmed; a caller handing in a padded key must land on the same entry.
         $cacheKey = trim((string) $user_api_key);
+        $answers = static::licenceAnswers();
 
         // No answer: licensed only on a valid answer within the grace period.
         if ($licence === null) {
-            if (\Prosper202\License\ShellAccessCache::validWithinGrace($cacheKey)) {
+            if (\Prosper202\License\ShellAccessCache::validWithinGrace($answers, $cacheKey)) {
                 return true;
             }
             self::$licenceUnconfirmed = true;
@@ -680,7 +683,7 @@ class AUTH
         // web app has already heard is not asked for again by the Go CLI gate,
         // and a key found invalid here stops a cached CLI allow at once.
         if ($licence['paid'] !== null) {
-            \Prosper202\License\CliAccessCache::write($cacheKey, $licence['paid']);
+            \Prosper202\License\CliAccessCache::recordAnswer($answers, $cacheKey, $licence['paid']);
         }
 
         if ($keyIsValid) {
@@ -693,11 +696,11 @@ class AUTH
             _mysqli_query($user_sql);
             self::writeSessionValue('valid_key', true);
             // Warm the CLI shell license cache so p202 shell works without its own round-trip.
-            \Prosper202\License\ShellAccessCache::write($cacheKey, true);
+            \Prosper202\License\ShellAccessCache::recordAnswer($answers, $cacheKey, true);
             return true;
         } else {
             // Deny the CLI shell immediately when the key is no longer valid.
-            \Prosper202\License\ShellAccessCache::write($cacheKey, false);
+            \Prosper202\License\ShellAccessCache::recordAnswer($answers, $cacheKey, false);
             return false;
         }
     }
@@ -711,6 +714,18 @@ class AUTH
     protected static function askLicenceService(string $key): ?array
     {
         return \Prosper202\License\ClickServerKeyValidator::check($key);
+    }
+
+    /** The durable record of licence answers, in this install's database; null with no connection. */
+    protected static function licenceAnswers(): ?\Prosper202\License\LicenceAnswerStore
+    {
+        try {
+            $db = function_exists('p202Mysqli') ? p202Mysqli() : ($GLOBALS['db'] ?? null);
+        } catch (\Throwable $e) {
+            error_log('AUTH: no database for the licence answer record: ' . $e->getMessage());
+            return null;
+        }
+        return $db instanceof \mysqli ? new \Prosper202\License\MysqlLicenceAnswerStore($db) : null;
     }
 
 

@@ -4597,6 +4597,9 @@ class UPGRADE
                 // (Prosper202\User\SessionGeneration). 0 for everyone, which
                 // a session from before the upgrade, holding none, reads as.
                 \Prosper202\Database\Tables\UserTables::users(),
+                // The last licence answer per key, which the grace period reads
+                // while Tracking202 cannot be reached (ShellAccessCache::validWithinGrace()).
+                \Prosper202\Database\Tables\SecretTables::licenceAnswers(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             if ($step_ok) {

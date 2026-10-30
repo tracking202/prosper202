@@ -15,7 +15,8 @@
 #      answered 200 either way; /capabilities reports the verdict as cli and
 #      stays open to the Go CLI, as does /system/health
 #   2. with the cache holding "the last check went unanswered": the Go CLI
-#      is allowed only beside a 'paid' answer within the 30-day grace period,
+#      is allowed only on a 'paid' answer within the 30-day grace period in
+#      the durable record (202_licence_answers; a cached verdict is not enough),
 #      and refused as "could not be checked" otherwise, and nothing is
 #      asked; a refusal expires after five minutes, an allow after an hour
 #   3. the built Go CLI itself (P202_BIN), when given: exit 6, the licence
@@ -31,7 +32,9 @@
 #      "paid"; on "valid, licence unknown", an outage, a gateway's own 404
 #      body, a message the service never sends and a 'paid' that is not a
 #      boolean (no answer) refused as "could not be checked" for a key with
-#      no paid answer in the grace period, and allowed for one with; a
+#      no paid answer in the grace period, and allowed for one with, with no
+#      temp cache at all (as after a restart); each answer is in the durable
+#      record, by the key's hash; a
 #      redirect to the service itself is followed with the key (both
 #      verdicts), one to another host or a redirect loop is no answer
 #
@@ -162,12 +165,24 @@ if ! ORIGINAL_KEY=$(mysql_q "SELECT COALESCE(p202_customer_api_key, '') FROM 202
     exit 2
 fi
 
+# answered <key> valid|paid 0|1 <age>: the durable record the grace period
+# reads (202_licence_answers, by the key's SHA-256), as answered <age> s ago
+answered() {
+    mysql_q "INSERT INTO 202_licence_answers (key_sha256, $2_yes, $2_at) VALUES (SHA2('$1', 256), $3, UNIX_TIMESTAMP() - $4)
+             ON DUPLICATE KEY UPDATE $2_yes = $3, $2_at = UNIX_TIMESTAMP() - $4"
+}
+recorded() { # recorded <key> valid|paid: prints the durable answer, 0 or 1, or nothing
+    mysql_q "SELECT $2_yes FROM 202_licence_answers WHERE key_sha256 = SHA2('$1', 256)"
+}
+forget_answers() { mysql_q "DELETE FROM 202_licence_answers WHERE key_sha256 = SHA2('$1', 256)"; }
+
 KEYS_TOUCHED=()
 SUB_USER=''
-set_key() { # $1 = the key the install should hold; its caches start empty
+set_key() { # $1 = the key the install should hold; its caches and durable record start empty
     KEYS_TOUCHED+=("$1")
     cache invalidate "$1"
     cache shell-invalidate "$1"
+    forget_answers "$1"
     mysql_q "UPDATE 202_users SET p202_customer_api_key = '$1' WHERE user_id = $USER_ID"
 }
 restore() {
@@ -179,6 +194,7 @@ restore() {
     for k in "${KEYS_TOUCHED[@]}"; do
         cache invalidate "$k"
         cache shell-invalidate "$k"
+        forget_answers "$k" || true
     done
 }
 trap restore EXIT
@@ -282,11 +298,11 @@ request "$GO_UA" /campaigns; expect_unconfirmed "hold-off beside an expired 'not
 cache write "$K1" 1
 cache age "$K1" 7200
 cache mark-unknown "$K1"
-request "$GO_UA" /campaigns; expect_allowed "hold-off beside a 'paid' two hours old: within the grace period, allowed"
-cache write "$K1" 1
-cache age "$K1" $((31 * 86400))
-cache mark-unknown "$K1"
-request "$GO_UA" /campaigns; expect_unconfirmed "hold-off beside a 'paid' 31 days old: past the grace period"
+request "$GO_UA" /campaigns; expect_unconfirmed "hold-off beside an expired cached 'paid' with no durable record"
+answered "$K1" paid 1 7200
+request "$GO_UA" /campaigns; expect_allowed "hold-off, a durable 'paid' two hours old: within the grace period, allowed"
+answered "$K1" paid 1 $((31 * 86400))
+request "$GO_UA" /campaigns; expect_unconfirmed "hold-off, a durable 'paid' 31 days old: past the grace period"
 
 echo "# 2b. a refusal expires sooner than an allow"
 cache write "$K1" 0
@@ -371,7 +387,17 @@ if [ "$STUB" = 1 ]; then
         esac
     }
     stub_case paid     allowed "valid + paid: allowed"
+    if [ "$(recorded live-pass-stub-paid paid)" = 1 ] && [ "$(recorded live-pass-stub-paid valid)" = 1 ]; then
+        ok "the answer is in the durable record, by the key's hash"
+    else
+        ko "valid + paid should be recorded in 202_licence_answers" "paid: $(recorded live-pass-stub-paid paid), valid: $(recorded live-pass-stub-paid valid)"
+    fi
     stub_case unpaid   refused "valid + not paid: refused"
+    if [ "$(recorded live-pass-stub-unpaid paid)" = 0 ]; then
+        ok "a 'not paid' is recorded as a no"
+    else
+        ko "valid + not paid should be recorded as paid 0" "got: $(recorded live-pass-stub-unpaid paid)"
+    fi
     request "$GO_UA" /campaigns; expect_refused "valid + not paid, again: the denial was cached"
     request "$PHP_UA" /campaigns; expect_allowed "valid + not paid: the PHP CLI is still answered"
     stub_case invalid  refused "no such key: refused"
@@ -390,13 +416,12 @@ if [ "$STUB" = 1 ]; then
     else
         ko "an outage should leave a hold-off marker for the key"
     fi
-    # A paid answer two hours old (past its hour, so the service is asked
-    # again) carries the key through the outage. The install holds the last
-    # stub key until set_key names this one again.
+    # As after a restart: no temp cache at all (set_key clears it), and a
+    # durable paid answer 29 days old carries the key through the outage.
+    # The install holds the last stub key until set_key names this one again.
     set_key live-pass-stub-outage
-    cache write live-pass-stub-outage 1
-    cache age live-pass-stub-outage 7200
-    request "$GO_UA" /campaigns; expect_allowed "503 error page, a 'paid' two hours old: within the grace period, allowed"
+    answered live-pass-stub-outage paid 1 $((29 * 86400))
+    request "$GO_UA" /campaigns; expect_allowed "503 error page, no temp cache, a durable 'paid' 29 days old: allowed"
     if [ "$(cache recently-unknown live-pass-stub-outage)" = yes ]; then
         ok "the service was asked again, and its silence left a hold-off"
     else

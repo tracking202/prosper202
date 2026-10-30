@@ -6,6 +6,8 @@ namespace Api\V3\Controllers;
 
 use Prosper202\License\ClickServerKeyValidator;
 use Prosper202\License\CliAccessCache;
+use Prosper202\License\LicenceAnswerStore;
+use Prosper202\License\MysqlLicenceAnswerStore;
 use Prosper202\License\ShellAccessCache;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
@@ -355,7 +357,7 @@ class CapabilitiesController
      * a refusal for DENIAL_TTL_SECONDS) to avoid hitting my.tracking202.com
      * on every capabilities request. If ClickServer
      * is unreachable the key is licensed only on a valid answer within the
-     * grace period (ShellAccessCache::validWithinGrace); the
+     * grace period (ShellAccessCache::validWithinGrace, the durable record); the
      * unanswered check is not repeated for UNKNOWN_TTL_SECONDS.
      */
     private function shellAccess(): bool
@@ -381,13 +383,13 @@ class CapabilitiesController
         // for the CLI: /capabilities is what the Go CLI opens with, and
         // during an outage every call would otherwise pay the timeouts.
         if (ShellAccessCache::recentlyUnknown($customerKey)) {
-            return $this->withinGrace(ShellAccessCache::validWithinGrace($customerKey));
+            return $this->withinGrace(ShellAccessCache::class, $customerKey);
         }
 
         $result = $this->checkKey($customerKey);
         if ($result === null) {
             // checkKey() recorded the hold-off, if this was an outage.
-            return $this->withinGrace(ShellAccessCache::validWithinGrace($customerKey));
+            return $this->withinGrace(ShellAccessCache::class, $customerKey);
         }
         return $result['valid'];
     }
@@ -447,13 +449,13 @@ class CapabilitiesController
             return $cached;
         }
         if (CliAccessCache::recentlyUnknown($customerKey)) {
-            return $this->withinGrace(CliAccessCache::validWithinGrace($customerKey));
+            return $this->withinGrace(CliAccessCache::class, $customerKey);
         }
 
         $result = $this->checkKey($customerKey);
         if ($result === null || $result['paid'] === null) {
             // checkKey() recorded the hold-off, if this was an outage.
-            return $this->withinGrace(CliAccessCache::validWithinGrace($customerKey));
+            return $this->withinGrace(CliAccessCache::class, $customerKey);
         }
         return $result['paid'];
     }
@@ -464,9 +466,15 @@ class CapabilitiesController
         return $this->licenceUnconfirmed ? self::LICENCE_UNCONFIRMED_MESSAGE : $notLicensed;
     }
 
-    /** A no-answer verdict, remembering when it refused for want of an answer. */
-    private function withinGrace(bool $licensed): bool
+    /**
+     * The verdict with no answer: the grace period, from the durable record.
+     * Remembers when it refused for want of an answer (cliRefusal()).
+     *
+     * @param class-string<ShellAccessCache> $cache whose question: a valid key, or a paid licence
+     */
+    private function withinGrace(string $cache, string $customerKey): bool
     {
+        $licensed = $cache::validWithinGrace($this->licenceAnswers(), $customerKey);
         if (!$licensed) {
             $this->licenceUnconfirmed = true;
         }
@@ -579,9 +587,9 @@ class CapabilitiesController
                 ShellAccessCache::markUnknown($customerKey);
                 CliAccessCache::markUnknown($customerKey);
             } else {
-                ShellAccessCache::write($customerKey, $result['valid']);
+                ShellAccessCache::recordAnswer($this->licenceAnswers(), $customerKey, $result['valid']);
                 if ($result['paid'] !== null) {
-                    CliAccessCache::write($customerKey, $result['paid']);
+                    CliAccessCache::recordAnswer($this->licenceAnswers(), $customerKey, $result['paid']);
                 } else {
                     CliAccessCache::markUnknown($customerKey);
                 }
@@ -601,6 +609,15 @@ class CapabilitiesController
     protected function askLicenceService(string $customerKey): ?array
     {
         return ClickServerKeyValidator::check($customerKey, 2, 4);
+    }
+
+    /**
+     * The durable record of licence answers the grace period reads. A seam
+     * the licence tests answer through.
+     */
+    protected function licenceAnswers(): LicenceAnswerStore
+    {
+        return new MysqlLicenceAnswerStore($this->db);
     }
 
     /**
