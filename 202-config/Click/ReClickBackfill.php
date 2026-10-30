@@ -48,9 +48,10 @@ use Prosper202\DataEngine\ClickRollupSql;
  * visit, as every click the walk has not reached is. An error of the moment
  * (MOMENT_ERRNOS: a lock, a timeout, a lost connection, a server that will
  * not write) stops the run at the click the same way and counts towards
- * nothing, however long it lasts, and so does a failure that names no cause
- * (no errno and no value of the click's: a type error, a wrapper that dropped
- * the errno). What counts is a server error of another errno, or a value the
+ * nothing, however long it lasts, as does an error of the install
+ * (INSTALL_ERRNOS: a permission refused, a table missing) and a failure
+ * that names no cause (no errno and no value of the click's: a type error,
+ * a wrapper that dropped the errno). What counts is a server error of another errno, or a value the
  * click's rows hold that reads wrong, and the hour runs from the first run
  * that failed so. A click whose rows name more than one account is left as it
  * is, logged, and counted.
@@ -81,13 +82,28 @@ final class ReClickBackfill
      * timed out (1927, 1040, 1203, 4031, and every client error, 2000-2999),
      * a network read or write that failed or was interrupted (1158-1161), a
      * server shutting down (1053), out of memory (1037, 1038, 1041), full
-     * (1021, 1114) or read-only (1290, 1792, 1836), and the storage engine's
-     * own errors (1030, a temporary one 1297, one during commit 1180).
+     * (1021, 1114) or read-only (1290, 1792, 1836), the storage engine's
+     * own errors (1030, a temporary one 1297, one during commit 1180), a
+     * server limit reached (prepared statements 1461, threads 1135, the
+     * user's resources 1226), and a statement to prepare again (1615). The
+     * lock table full (1206) is not among them: the repair locks every row of
+     * the click, so a click with enough visits reaches it on every run, and
+     * that is the click's.
      */
     public const MOMENT_ERRNOS = [
         1205, 1213, 1317, 1969, 3024, 1927, 1040, 1203, 4031, 1158, 1159, 1160, 1161, 1053, 1037, 1038, 1041,
-        1021, 1114, 1290, 1792, 1836, 1030, 1297, 1180,
+        1021, 1114, 1290, 1792, 1836, 1030, 1297, 1180, 1461, 1135, 1226, 1615,
     ];
+
+    /**
+     * The server's errors that say something about the install, not the
+     * click, and fail every click alike: a permission refused (1044, 1045,
+     * 1142, 1143), a table or column missing (1146, 1054) or changed under
+     * the statement (1412). They count in none, so the walk waits at the
+     * click until the install is mended instead of stepping one click over
+     * an hour for good.
+     */
+    public const INSTALL_ERRNOS = [1044, 1045, 1142, 1143, 1146, 1054, 1412];
 
     /** @var callable(): int */
     private $clock;
@@ -284,10 +300,17 @@ final class ReClickBackfill
             . ' each of its visits, under that visit\'s traffic source and cost.';
         if ($s['finished_at'] !== null) {
             $note = 'The walk is done.';
+        } elseif ($s['failed_click_id'] !== null && $s['failed_runs'] === 0) {
+            $note = 'The walk is stopped at click ' . $s['failed_click_id'] . ', which fails with an error that is'
+                . ' not tied to its own data (a lock, a timeout, a lost connection, a permission or table the'
+                . ' install lacks, or an error that names no cause), so it is not stepped over; the server\'s'
+                . ' error log says why ("p202 re-click backfill: click ' . $s['failed_click_id'] . ' ..."), and'
+                . ' each cron run tries it again. It moves on once that error clears; until then, reports over'
+                . ' dates before the upgrade count it, and every re-clicked click after it, at each of its visits.';
         } elseif ($s['failed_click_id'] !== null) {
             $note = 'The walk is stopped at click ' . $s['failed_click_id'] . ', which has failed with an error of'
-                . ' its own in ' . $s['failed_runs'] . ' run' . ($s['failed_runs'] === 1 ? '' : 's') . ' (a lock,'
-                . ' a timeout, a lost connection or an error that names no cause counts in none); the server\'s'
+                . ' its own in ' . $s['failed_runs'] . ' run' . ($s['failed_runs'] === 1 ? '' : 's') . ' (an error'
+                . ' not tied to its own data counts in none); the server\'s'
                 . ' error log says why ("p202 re-click backfill: click ' . $s['failed_click_id'] . ' ..."), and'
                 . ' each cron run tries it again,'
                 . ' stepping over it once it has failed with its own error in ' . self::STEP_OVER_RUNS
@@ -419,9 +442,9 @@ final class ReClickBackfill
 
     /**
      * Whether the failure is the click's: nothing in its chain carries one of
-     * MOMENT_ERRNOS, and something names a cause — a server errno (a
-     * mysqli_sql_exception's code, or the ` [errno N]` Connection puts last)
-     * or a value of the click's rows that read wrong (the repair's
+     * MOMENT_ERRNOS or INSTALL_ERRNOS, and something names a cause — a server
+     * errno (a mysqli_sql_exception's code, or the ` [errno N]` Connection
+     * puts last) or a value of the click's rows that read wrong (the repair's
      * UnexpectedValueException). A failure that names neither is not counted:
      * a step-over cannot be undone, and an unknown is not evidence.
      */
@@ -431,7 +454,10 @@ final class ReClickBackfill
         for ($current = $e; $current !== null; $current = $current->getPrevious()) {
             $errno = $current instanceof \mysqli_sql_exception ? (int) $current->getCode()
                 : (preg_match('/ \[errno (\d+)\]\z/', $current->getMessage(), $m) === 1 ? (int) $m[1] : 0);
-            if (in_array($errno, self::MOMENT_ERRNOS, true) || ($errno >= 2000 && $errno <= 2999)) {
+            if (
+                in_array($errno, self::MOMENT_ERRNOS, true) || in_array($errno, self::INSTALL_ERRNOS, true)
+                || ($errno >= 2000 && $errno <= 2999)
+            ) {
                 return false;
             }
             $named = $named || $errno > 0 || $current instanceof \UnexpectedValueException;

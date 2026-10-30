@@ -584,6 +584,8 @@ final class ReClickBackfillIntegrationTest extends TestCase
             'a statement timed out' => 1969,
             'a storage engine\'s temporary error' => 1297,
             'an error during commit' => 1180,
+            'a permission refused' => 1142,
+            'a user\'s resources used up' => 1226,
         ];
         foreach ($errors as $what => $errno) {
             foreach ($modes as $how => $mode) {
@@ -647,6 +649,7 @@ final class ReClickBackfillIntegrationTest extends TestCase
             ],
             'stopped at the click since the first run, with no run of its own counted and no hour started'
         );
+        self::assertStringContainsString('so it is not stepped over', (string) ($held['note'] ?? ''));
         self::assertSame(
             [42, $runs, $own, 0],
             [
@@ -670,6 +673,50 @@ final class ReClickBackfillIntegrationTest extends TestCase
         ));
         self::assertCount(1, $skips, $this->logged());
         self::assertStringContainsString('after failing with its own error in ' . ($runs + 1) . ' runs', $skips[0]);
+    }
+
+    /**
+     * An error of the moment after errors of the click's own neither adds
+     * to their count nor resets it or their hour, and the next error of its
+     * own counts on from there.
+     */
+    public function testAnErrorOfTheMomentKeepsTheCountOfTheClicksOwn(): void
+    {
+        $at = self::NOW - 86400;
+        foreach ([51, 52] as $click) {
+            self::legacyReClicked($click, $at, 1, '3.00');
+        }
+        self::mark();
+        $refuse = static function (string $signal): void {
+            self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+            self::q('CREATE TRIGGER p202_test_record_refused BEFORE INSERT ON 202_click_latest_visits FOR EACH ROW'
+                . ' BEGIN IF NEW.click_id = 52 THEN ' . $signal . '; END IF; END');
+        };
+        $state = fn (): array => array_intersect_key(
+            (array) $this->backfill()->state(),
+            array_flip(['failed_click_id', 'failed_runs', 'failing_since'])
+        );
+        try {
+            $refuse("SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'");
+            $this->walk(PHP_INT_MAX, self::NOW);
+            $this->walk(PHP_INT_MAX, self::NOW + 60);
+            $own = $state();
+            $refuse("SIGNAL SQLSTATE 'HY000' SET MYSQL_ERRNO = 1205, MESSAGE_TEXT = 'the moment'");
+            $this->walk(PHP_INT_MAX, self::NOW + 120);
+            $this->walk(PHP_INT_MAX, self::NOW + 180);
+            $moment = $state();
+            $note = (string) ($this->backfill(self::NOW + 180)->progress()['note'] ?? '');
+            $refuse("SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'");
+            $this->walk(PHP_INT_MAX, self::NOW + 240);
+            $again = $state();
+        } finally {
+            self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+        }
+        $expect = ['failed_click_id' => 52, 'failed_runs' => 2, 'failing_since' => self::NOW];
+        self::assertSame($expect, $own, 'two errors of its own');
+        self::assertSame($expect, $moment, 'two errors of the moment after them change nothing');
+        self::assertStringContainsString('has failed with an error of its own in 2 runs', $note);
+        self::assertSame(array_replace($expect, ['failed_runs' => 3]), $again, 'the next error of its own counts on');
     }
 
     /**
