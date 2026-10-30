@@ -10,6 +10,7 @@ use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\SchemaInstaller;
+use Prosper202\Rotator\RuleOrder;
 use Tests\Support\RotatorControllerRemoteApiClient;
 
 /**
@@ -290,6 +291,36 @@ final class SyncRotatorRulesIntegrationTest extends TestCase
         self::assertSame([0, 1], [$result['failed'], $result['updated']], json_encode($result) ?: '');
         self::assertSame(self::rules(self::SOURCE, $source), self::rules(self::TARGET, $target));
         self::assertContains("PUT rotators/$target/rules", $client->requests);
+    }
+
+    /**
+     * A rule stored with a NULL status, which the redirects read as inactive,
+     * stays inactive on the target: the redirects there don't try it.
+     *
+     * @dataProvider routes
+     */
+    public function testARuleWithANullStatusSyncsInactive(bool $ruleSetRoute): void
+    {
+        $source = self::rotator(self::SOURCE, 7300009);
+        self::setRules(self::SOURCE, $source, [
+            self::rule('legacy', 'country ALL', 'https://legacy.example/'),
+            self::rule('live', 'country ALL', 'https://live.example/'),
+        ]);
+        self::assertTrue(self::$db->query(
+            "UPDATE 202_rotator_rules SET status = NULL WHERE rotator_id = $source AND rule_name = 'legacy'"
+        ), (string) self::$db->error);
+        $target = self::rotator(self::TARGET, 7300009);
+
+        [$result] = $this->sync($ruleSetRoute);
+
+        self::assertSame(0, $result['failed'], json_encode($result) ?: '');
+        $active = RuleOrder::activeRules(self::$db, $target, static fn (string $sql): array
+            => self::$db->query($sql)->fetch_all(MYSQLI_ASSOC));
+        $names = [];
+        foreach (self::rotators(self::TARGET)->listRules($target)['data'] as $rule) {
+            $names[(int) $rule['id']] = $rule['rule_name'];
+        }
+        self::assertSame(['live'], array_map(static fn (array $row): string => $names[(int) $row['rule_id']], $active));
     }
 
     /** @return array<string, array{bool}> */
