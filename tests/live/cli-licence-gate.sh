@@ -391,7 +391,9 @@ if [ "$STUB" = 1 ]; then
         ko "an outage should leave a hold-off marker for the key"
     fi
     # A paid answer two hours old (past its hour, so the service is asked
-    # again; writing it ends the hold-off) carries the key through the outage.
+    # again) carries the key through the outage. The install holds the last
+    # stub key until set_key names this one again.
+    set_key live-pass-stub-outage
     cache write live-pass-stub-outage 1
     cache age live-pass-stub-outage 7200
     request "$GO_UA" /campaigns; expect_allowed "503 error page, a 'paid' two hours old: within the grace period, allowed"
