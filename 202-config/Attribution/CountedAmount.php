@@ -84,10 +84,15 @@ final class CountedAmount
         }
         $r = $row . '_r';
 
+        // MySQL 8 can choose a full ledger scan for each conversion when most
+        // reverses_conv_id values are NULL. This hint keeps the lookup indexed;
+        // servers without optimizer-hint support (or the index) ignore it.
+        $indexHint = "/*+ INDEX($r reverses_conv_id) */";
+
         return "(CASE WHEN $row.conv_id IS NULL OR $row.reverses_conv_id IS NOT NULL"
             . " OR ($row.superseded_reason IS NOT NULL AND $row.superseded_reason <> '')"
             . " OR $row.payable <> 1 OR $row.deleted <> 0 THEN 0"
-            . " ELSE (SELECT CASE WHEN COUNT($r.conv_id) > 0"
+            . " ELSE (SELECT $indexHint CASE WHEN COUNT($r.conv_id) > 0"
             . " AND $row.click_payout + COALESCE(SUM($r.click_payout), 0) <= 0 THEN 0"
             . " ELSE $row.click_payout + COALESCE(SUM($r.click_payout), 0) END"
             . " FROM 202_conversion_logs $r"
