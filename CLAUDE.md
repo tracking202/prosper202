@@ -2342,6 +2342,42 @@ Three habits, in order of how often they would have helped:
   behaviour change reads as verified fact to the next reviewer. Before claiming
   an optimization is invisible, construct the input where the shortcut and the
   full computation could disagree and run both.
+  Filter lists have a second trap: joining labels before grouping clicks
+  repeats lookup work per click, even when only 300 choices are returned.
+  Grouping first needs the account/date scope intact, and missing lookup ids
+  removed before LIMIT. Keep id-grouped lists distinct from name-grouped
+  suggestions, which merge ids sharing a name. SeenFilterListsIntegrationTest
+  compares answers and actual MariaDB lookup counts for the shared id-list builder.
+  Optional menus must also stay out of the initial page request:
+  ReportReadFailureIntegrationTest locks the click table while rendering the
+  page. Advanced choices load on expansion after the report settles. Their
+  cache keys include database, account, exact window, dimension and limit;
+  cache only the base choices, then add the current selection per request.
+  Calendar preaggregation has a similar boundary: a UTC hour fits within one
+  local calendar hour only if the zone's offsets and transitions align to whole
+  hours. A half-hour midnight or DST change can split it. Keep the per-click
+  calculation when that condition does not hold. TimeGroupingIntegrationTest
+  compares the two report calculations, including every displayed metric,
+  clipped windows, sparse data, account scope, filters and DST boundaries.
+  For dimension reports, preserve the final name grouping after aggregating
+  IDs: duplicate names and missing labels can collapse several IDs into one
+  displayed row. The pager must count those final groups, not distinct IDs.
+  ReportIntegrationTest checks duplicate/missing browser labels, empty pages
+  and that a normal page does not make a second count scan. Account Overview's
+  temporary aggregate must retain user IDs and raw show-filter flags, including
+  converted/nonconverted groups; OverviewTablesIntegrationTest locks raw clicks
+  after preparation and compares all tables for each Show mode, then checks
+  cleanup. Temporary-table permission is optional: failure must retain working
+  individual reads. Avoid aggregating potentially unique IDs before another
+  large grouping; the custom-variable dictionary probe selects a plan, never
+  a reporting cutoff (VariableReportIntegrationTest). Keep rotator accounting
+  on raw clicks, and do not preaggregate transaction/goal ledger parts.
+
+- **An HTTP failure needs guidance for the status received.** A generic report
+  failure suggested an expired session for HTTP 504, sending a query timeout
+  toward sign-in troubleshooting. ReportRequestFailureTest executes the page
+  script's report, Spy and conversion failure handlers for timeout, server,
+  authorization and connection failures; a session hint belongs to HTTP 401.
 
 - **Answering a reviewer is reporting.** A P2 was declined here with "the
   1-click pages only call `upgrade_databases()` once the feed advertises a

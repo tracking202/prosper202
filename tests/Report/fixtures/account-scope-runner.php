@@ -152,7 +152,33 @@ $prefs = static function () use ($db, $userId): array {
 };
 
 try {
-    if (str_starts_with($reader, 'engine:')) {
+    if ($reader === 'overview-prepared') {
+        $engine = new DataEngine();
+        $engine->prepareAccountOverview($from, $to);
+        $temporary = (new ReflectionProperty(DataEngine::class, 'overviewTable'))->getValue($engine);
+        if (!is_string($temporary)) {
+            throw new RuntimeException('The scratch account cannot create a temporary aggregation table.');
+        }
+        $locker = new mysqli($host, $GLOBALS['dbuser'], $GLOBALS['dbpass'], $dbName, $port !== '' ? (int) $port : 3306);
+        if (!$locker->query('LOCK TABLES 202_dataengine WRITE') || !$db->query('SET SESSION lock_wait_timeout=1')) {
+            throw new RuntimeException('Could not lock the raw click table for the reuse check.');
+        }
+        try {
+            $result = ['tables' => []];
+            foreach (['LpOverview', 'campaignOverview', 'slp_direct_link_per_ppc', 'alp_per_ppc'] as $type) {
+                $result['tables'][$type] = $engine->getReportData($type, $from, $to, false);
+            }
+            unset($engine);
+            try {
+                $probe = @$db->query("SELECT 1 FROM `$temporary` LIMIT 1");
+                $result['dropped'] = $probe === false && $db->errno === 1146;
+            } catch (mysqli_sql_exception $missing) {
+                $result['dropped'] = $missing->getCode() === 1146;
+            }
+        } finally {
+            $locker->close();
+        }
+    } elseif (str_starts_with($reader, 'engine:')) {
         $result = (new DataEngine())->getReportData(substr($reader, 7), $from, $to, false);
     } elseif (str_starts_with($reader, 'group:')) {
         $form = new ReportSummaryForm();
