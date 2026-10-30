@@ -160,6 +160,9 @@ eq "$(Q "SELECT user_pref_same_ip_fallback FROM 202_users_pref WHERE user_id=$OW
 
 say "preferences: every field of the form saves"
 get "202-account/account.php" "$OUT/account.html"
+# The hosted daily email was switched off on 2026-10-29: no field, and a
+# posted hour is not written.
+hasnt "$OUT/account.html" 'user_daily_email' "Personal Settings has no daily email report setting"
 submit "$OUT/account.html" update_profile "202-account/account.php" "$OUT/p-ok.html" \
   user_timezone=Europe/London user_daily_email=09 user_keyword_searched_or_bidded=bidded \
   user_bid=1 user_referer=t202ref user_pref_privacy=eu cloak_referer=never \
@@ -167,8 +170,9 @@ submit "$OUT/account.html" update_profile "202-account/account.php" "$OUT/p-ok.h
 msgs "$OUT/p-ok.html"
 eq "$FIRST_STATUS" "303" "a saved profile redirects (post-redirect-get)"
 has "$OUT/p-ok.html" 'Your settings are saved.' "and says it saved"
-eq "$(Q "SELECT CONCAT_WS('|', u.user_timezone, p.user_daily_email, p.user_keyword_searched_or_bidded, p.user_pref_dynamic_bid, p.user_pref_referer_data, p.user_pref_privacy, p.user_pref_cloak_referer, p.user_pref_ad_settings, p.user_tracking_domain) FROM 202_users u JOIN 202_users_pref p USING (user_id) WHERE u.user_id=$OWNER")" \
-  "Europe/London|09|bidded|1|t202ref|eu|never|hide_login|track.example.test" "all nine preferences stored"
+eq "$(Q "SELECT CONCAT_WS('|', u.user_timezone, p.user_keyword_searched_or_bidded, p.user_pref_dynamic_bid, p.user_pref_referer_data, p.user_pref_privacy, p.user_pref_cloak_referer, p.user_pref_ad_settings, p.user_tracking_domain) FROM 202_users u JOIN 202_users_pref p USING (user_id) WHERE u.user_id=$OWNER")" \
+  "Europe/London|bidded|1|t202ref|eu|never|hide_login|track.example.test" "all eight preferences stored"
+eq "$(Q "SELECT p.user_daily_email FROM 202_users_pref p WHERE p.user_id=$OWNER")" "$(echo "$ORIG_PREFS" | cut -d'|' -f2)" "and the posted daily email hour is not"
 eq "$(Q "SELECT user_pref_same_ip_fallback FROM 202_users_pref WHERE user_id=$OWNER")" "1" "and IP matching, turned on"
 get "202-account/account.php" "$OUT/account2.html"
 has "$OUT/account2.html" '<option value="Europe/London" selected>' "the page shows the stored time zone"

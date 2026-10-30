@@ -1189,7 +1189,7 @@ p202 user identity-key rotate <user_id> [--force] [--json]
                        # cust_sig = hex(HMAC-SHA256(key, "<cust_type>:<cust>")); rotating stops old signatures linking
 
 p202 user prefs get    <user_id> [--json]               # a secret only as {"stored": true|false}, never its value
-p202 user prefs update <user_id> [--user-tracking-domain S] [--user-daily-email never|00..23]
+p202 user prefs update <user_id> [--user-tracking-domain S]
                        [--user-account-currency CODE] [--user-pref-time-predefined R] [--user-pref-limit N]
                        [--user-pref-privacy disabled|eu|all] [--user-pref-same-ip-fallback 0|1]
                        [--cb-key S] [--user-ltv-score-weights S] ... [--json]

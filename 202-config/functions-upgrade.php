@@ -2686,12 +2686,6 @@ class UPGRADE
             $sql = "ALTER TABLE 202_users_pref ADD COLUMN `user_daily_email` char(2) NOT NULL DEFAULT '07'";
             $result = _upgrade_query($sql);
 
-            $sql = "SELECT user_timezone, install_hash, user_daily_email FROM 202_users LEFT JOIN 202_users_pref USING (user_id) WHERE user_id = 1";
-            $result = _upgrade_query($sql);
-            $row = $result->fetch_assoc();
-
-            registerDailyEmail($row['user_daily_email'], $row['user_timezone'], $row['install_hash']);
-
             $sql = "ALTER TABLE 202_keywords CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
             $result = _upgrade_query($sql);
 

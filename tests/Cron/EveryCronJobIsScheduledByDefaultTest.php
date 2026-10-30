@@ -98,7 +98,8 @@ final class EveryCronJobIsScheduledByDefaultTest extends TestCase
         'bridge_config.php' => 'LPO remote config; opt-in for paired installs (docs schedule it every 6 hours)',
         'lpo_dimensions.php' => 'LPO nightly full sync; index.php pushes dirty users hourly, this is the backstop',
         'sync-worker.php' => 'sync job worker; predates the measurement rewrite',
-        'daily-email.php' => 'fetched by the hosted mail service with the install hash, not by cron',
+        'daily-email.php' => 'does nothing: the hosted daily email it served was switched off on 2026-10-29,'
+            . ' and the file stays so an upgrade replaces the old one',
         'dni.php' => 'DNI callback fetched by the hosted service with the install hash',
         'dej.php' => 'data-engine summary fetched on demand',
         'process_dataengine_job.php' => 'included by DataEngine (class-dataengine.php), not scheduled',

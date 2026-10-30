@@ -38,7 +38,11 @@ final class PreferenceRules
     /** p202_report_pref_fields()['user_pref_limit']['options']. */
     public const REPORT_ROW_LIMITS = ['10', '25', '50', '75', '100', '150', '200'];
 
-    /** account.php's $dailyEmailChoices: '' (never) or an hour, 00-23. */
+    /**
+     * '' (never) or an hour, 00-23: what Personal Settings offered until
+     * 1.9.79. The hosted daily email is switched off and nothing reads the
+     * value; it is still held to this, so a script that set it runs as before.
+     */
     public const DAILY_EMAIL_PATTERN = '/^(?:[01][0-9]|2[0-3])$/D';
 
     /**

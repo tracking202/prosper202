@@ -14771,6 +14771,9 @@ components:
           description: Whether a pixel that names no click may credit the latest click from the visitor's IP address.
         user_daily_email:
           type: string
+          description: >-
+            No effect since 1.9.79: Tracking202 switched the hosted daily email
+            report off on 2026-10-29. Still stored and served.
         chart_time_range:
           type: string
         cb_verified:
@@ -14805,7 +14808,11 @@ components:
         user_daily_email:
           type: string
           pattern: "^([01][0-9]|2[0-3])?$"
-          description: Hour (00-23, your time zone) the daily email is sent; "" never.
+          description: >-
+            No effect since 1.9.79: Tracking202 switched the hosted daily email
+            report off on 2026-10-29, and Personal Settings no longer shows it.
+            Still accepted and stored, so existing scripts are not refused: an
+            hour 00-23, or "" for never.
         user_keyword_searched_or_bidded: {type: string, enum: [searched, bidded]}
         user_pref_referer_data: {type: string, enum: [browser, t202ref]}
         user_pref_dynamic_bid: {type: integer, enum: [0, 1]}
