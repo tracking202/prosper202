@@ -79,7 +79,7 @@
       "Fixed: The Redirector page no longer drops every destination but the first of a rule made through the API with several destinations and Split test off when you save; it shows the rule as the split test the redirect links make of it, with each destination's weight",
       "Fixed: Security. Changing a password left every browser kept signed in able to sign in again by its cookie, a stolen copy included. A new password (Personal settings, the reset link, My Account, Users, or the API) now ends them all; the browser making the change on Personal settings stays signed in. A browser already signed in is signed out too",
       "Fixed: Security. Changing or resetting a password now signs out every other browser signed in as the user, not only those kept signed in; the browser making the change on Personal settings stays signed in. Switching a user off ends their sessions for good, also one that was idle meanwhile",
-      "Fixed: A redirector rule on the visitor's ISP or carrier sends a visitor the same way from a redirector link and from a landing page's offer link. The offer link compared the whole ISP name, so a rule for an ISP whose name has a comma (\"Comcast Cable Communications, LLC\") never matched there"
+      "Fixed: A redirector rule on the visitor's ISP or carrier sends a visitor the same way from a redirector link and from a landing page's offer link. The offer link compared the whole ISP name, so for an ISP whose name has a comma (\"Comcast Cable Communications, LLC\") an \"is\" rule never matched there and an \"is not\" rule always did"
     ]
   },
   "1.9.78": {
