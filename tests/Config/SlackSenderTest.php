@@ -54,9 +54,10 @@ final class SlackSenderTest extends TestCase
 
     /**
      * A notice sent the way the cron job sends one from the PHP CLI: no
-     * SERVER_NAME, warnings turned into errors. The webhook is a closed
-     * local port, so the send fails at once; what is under test is that
-     * building and sending it raised nothing, and what the body names.
+     * SERVER_NAME, warnings turned into errors. The webhook is a local
+     * port, which the guard refuses, so nothing is sent and the refusal is
+     * logged; what is under test is that building and sending it raised
+     * nothing, and what the body names.
      */
     public function testANoticeSentWithoutARequestRaisesNoWarning(): void
     {
@@ -65,19 +66,29 @@ final class SlackSenderTest extends TestCase
         }
         $saved = $_SERVER;
         unset($_SERVER['SERVER_NAME']);
+        $log = (string) tempnam(sys_get_temp_dir(), 'p202-slack-log-');
+        $savedLog = ini_get('error_log');
+        ini_set('error_log', $log);
         set_error_handler(static function (int $level, string $message, string $file, int $line): bool {
             throw new \ErrorException($message, 0, $level, $file, $line);
         });
         try {
-            $slack = new \Slack('http://127.0.0.1:9/');
+            $slack = new \Slack('https://127.0.0.1:9/');
             $sent = $slack->push('click_data_deleted', ['user' => 'cron', 'date' => '2026-09-08']);
             $payload = method_exists($slack, 'payload') ? $slack->payload('a notice') : null;
         } finally {
             restore_error_handler();
             $_SERVER = $saved;
+            ini_set('error_log', $savedLog === false ? '' : $savedLog);
+            $logged = (string) file_get_contents($log);
+            @unlink($log);
         }
 
-        self::assertFalse($sent, 'nothing listens on the closed port, so the send itself fails, quietly');
+        self::assertFalse($sent, 'a loopback webhook is refused, so nothing is sent');
+        self::assertStringContainsString(
+            'Slack: the "click_data_deleted" notice was not sent: refused: 127.0.0.1, which is a loopback address',
+            $logged
+        );
         self::assertIsString($payload);
         self::assertStringStartsWith('payload=', $payload);
         $body = json_decode(substr($payload, strlen('payload=')), true, 512, JSON_THROW_ON_ERROR);
