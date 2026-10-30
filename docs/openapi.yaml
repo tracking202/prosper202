@@ -14771,6 +14771,9 @@ components:
           description: Whether a pixel that names no click may credit the latest click from the visitor's IP address.
         user_daily_email:
           type: string
+          description: >-
+            No effect since 1.9.79: Tracking202 switched the hosted daily email
+            report off on 2026-10-29. Still stored and served.
         chart_time_range:
           type: string
         cb_verified:
@@ -14805,7 +14808,11 @@ components:
         user_daily_email:
           type: string
           pattern: "^([01][0-9]|2[0-3])?$"
-          description: Hour (00-23, your time zone) the daily email is sent; "" never.
+          description: >-
+            No effect since 1.9.79: Tracking202 switched the hosted daily email
+            report off on 2026-10-29, and Personal Settings no longer shows it.
+            Still accepted and stored, so existing scripts are not refused: an
+            hour 00-23, or "" for never.
         user_keyword_searched_or_bidded: {type: string, enum: [searched, bidded]}
         user_pref_referer_data: {type: string, enum: [browser, t202ref]}
         user_pref_dynamic_bid: {type: integer, enum: [0, 1]}
@@ -14846,7 +14853,7 @@ components:
           description: The Overview chart's resolution, kept in 202_charts where the chart reads it.
         user_slack_incoming_webhook:
           oneOf:
-            - {type: string, description: An https:// URL; "" stops Slack notifications.}
+            - {type: string, description: 'An https:// URL at a public address, the rule Account › API integrations saves by (P202_WEBHOOK_ALLOW_NETWORKS admits your own network); "" stops Slack notifications.'}
             - $ref: "#/components/schemas/StoredSecret"
         ipqs_api_key:
           oneOf:

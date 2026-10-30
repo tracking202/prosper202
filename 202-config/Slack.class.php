@@ -2,17 +2,28 @@
 declare(strict_types=1);
 class Slack {
 
-  function __construct(private $webhook_url)
-  {
-  }
+    public function __construct(
+        private $webhook_url,
+        private ?\Prosper202\Notifications\SlackWebhook $webhook = null
+    ) {
+    }
 
-  public function push($placeholder, $vars = []){
-	$message = $this->getMessage($placeholder, $vars);
-	if ($message === '') {
-		return false;
-	}
-	return $this->sendMessage($message);
-  }
+    /**
+     * Send a notice: true when the webhook took it. A notice that was not
+     * sent or not taken is logged here with why, and answers false; it never
+     * throws, so the action that sent it goes on and answers for itself.
+     */
+    public function push($placeholder, $vars = []): bool
+    {
+        $message = $this->getMessage($placeholder, $vars);
+        $why = $message === '' ? 'no message is defined for it' : $this->sendMessage($message);
+        if ($why !== null) {
+            error_log('Slack: the "' . $placeholder . '" notice was not sent: ' . $why);
+            return false;
+        }
+
+        return true;
+    }
 
   private function getMessage($placeholder, $vars = []) {
   	static $messages = [
@@ -236,17 +247,12 @@ class Slack {
     }
   }
 
-  private function sendMessage($message) {
+    /** Null when the webhook took it, else why not (SlackWebhook::post()). */
+    private function sendMessage(string $message): ?string
+    {
+        $url = is_string($this->webhook_url) ? $this->webhook_url : '';
+        $this->webhook ??= new \Prosper202\Notifications\SlackWebhook();
 
-    $data = $this->payload((string) $message);
-
-    $ch = curl_init($this->webhook_url);
-    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    $result = curl_exec($ch);
-    curl_close($ch);
-
-    return $result;
-  }
+        return $this->webhook->post($url, $this->payload($message));
+    }
 }

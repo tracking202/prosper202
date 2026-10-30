@@ -106,7 +106,7 @@ but unchanged keys is `422` (`No valid fields to update`).
 | Field | Values | Set on |
 | ----- | ------ | ------ |
 | `user_tracking_domain` | host such as `track.example.com`; `""` (what the installer leaves) builds a page's links on the address the page was opened on, and what is sent elsewhere on the server's own name ([FAQ](../tutorials-and-guides/11-frequently-asked-questions-faq.md#does-the-installer-set-my-tracking-domain)) | Personal settings |
-| `user_daily_email` | hour `00`-`23` in your time zone, or `""` for never | Personal settings |
+| `user_daily_email` | hour `00`-`23`, or `""` for never; **no effect since 1.9.79**, when Tracking202 switched the hosted daily email report off. Still accepted and stored, so existing scripts are not refused | nowhere (Personal settings until 1.9.79) |
 | `user_keyword_searched_or_bidded` | `searched`, `bidded` | Personal settings |
 | `user_pref_referer_data` | `browser`, `t202ref` | Personal settings |
 | `user_pref_dynamic_bid` | `0` (cost from the tracker), `1` (from the `t202b` parameter: a bid from 0 to 99.99, or the tracker's CPC for any other) | Personal settings |
@@ -119,7 +119,7 @@ but unchanged keys is `422` (`No valid fields to update`).
 | `user_pref_limit` | `10`, `25`, `50`, `75`, `100`, `150`, `200` | report pages |
 | `user_cpc_or_cpv` | `cpc`, `cpv` | report pages |
 | `chart_time_range` | `hours`, `days` | Overview chart (kept in `202_charts`, where the chart reads it) |
-| `user_slack_incoming_webhook` | an `https://` URL, or `""` | Integrations |
+| `user_slack_incoming_webhook` | an `https://` URL at a public address, or `""`: the URL Integrations saves, refused when it names a private, loopback, link-local or metadata address, a local name, a user name or a fragment (`P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php` admits the operator's own network). Each notice is checked again when it is sent and gives up after 2 seconds | Integrations |
 | `ipqs_api_key`, `cb_key`, `zaxaa_api_signature` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
 | `jvzoo_ipn_secret_key` | the JVZIPN secret key both JVZoo URLs are verified with, stored trimmed: up to 250 characters of text (a line break, a control character or bytes that are not UTF-8 are refused, since no notification would verify with them), or `""` | Integrations |
 | `paykickstart_ipn_secret_keys` | the keys PayKickstart's product IPN is verified with, one for each PayKickstart campaign, separated by commas, spaces or new lines: at most 20, each 8 to 128 letters, digits and punctuation other than the comma. The list **replaces** every stored key (none can be read back), so send them all; `""` removes them. A key that is not one is refused by its place in the list (`Key 2 is 5 characters long; …`), never by its text | Integrations |
@@ -127,10 +127,6 @@ but unchanged keys is `422` (`No valid fields to update`).
 | `user_ltv_personalization_fields` | comma list of `first_name`, `last_name`, `company`, `city`, `country`, `cf:<field_key>`, `rec:next_offer` | LTV › Settings |
 | `user_ltv_score_weights` | `volume:N,time:N,scroll:N,video:N,recency:N` summing to 100, or `""` for the defaults | LTV › Settings |
 | `user_ltv_rec_fatigue` | `times,days` such as `3,21`, `0` for off, `""` for the defaults | LTV › Settings |
-
-Not covered here: the daily email's send time is registered with the hosted
-mail scheduler when Personal settings saves it; a change made here is stored
-but not re-registered, so set the hour on that page if the email must move.
 
 ### Privacy (`user_pref_privacy`)
 

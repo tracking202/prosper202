@@ -1738,7 +1738,7 @@ request. A free-text flag given `""` clears it.
 | Flag | Values |
 |------|--------|
 | `--user-tracking-domain` | host, e.g. `trk.example.com`; `""` uses the install's own domain |
-| `--user-daily-email` | `never`, `00`-`23` (hour, your time zone) |
+| `--user-daily-email` | `never`, `00`-`23`; no effect since 1.9.79, when Tracking202 switched the hosted daily email report off. Still accepted and stored, so existing scripts run |
 | `--user-account-currency` | 3-letter code; re-prices every campaign's payout into it |
 | `--user-keyword-searched-or-bidded`, `--user-pref-referer-data`, `--user-pref-dynamic-bid`, `--user-pref-privacy`, `--user-pref-cloak-referer`, `--user-pref-ad-settings` | Personal settings' choices |
 | `--user-pref-same-ip-fallback` | `1`: a pixel that names no click credits your latest click from the visitor's IP address (a guess, `same_ip`); `0`: none. New accounts start at `0` |
