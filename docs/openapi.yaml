@@ -14853,7 +14853,7 @@ components:
           description: The Overview chart's resolution, kept in 202_charts where the chart reads it.
         user_slack_incoming_webhook:
           oneOf:
-            - {type: string, description: An https:// URL; "" stops Slack notifications.}
+            - {type: string, description: 'An https:// URL at a public address, the rule Account › API integrations saves by (P202_WEBHOOK_ALLOW_NETWORKS admits your own network); "" stops Slack notifications.'}
             - $ref: "#/components/schemas/StoredSecret"
         ipqs_api_key:
           oneOf:

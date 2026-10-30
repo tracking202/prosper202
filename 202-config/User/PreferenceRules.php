@@ -7,6 +7,7 @@ namespace Prosper202\User;
 use Prosper202\Click\TrackingDomain;
 use Prosper202\Ltv\MysqlEngagementRepository;
 use Prosper202\Ltv\MysqlPersonalizationRepository;
+use Prosper202\Notifications\SlackWebhook;
 use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 
@@ -185,11 +186,8 @@ final class PreferenceRules
                 }
                 return $code;
             case 'user_slack_incoming_webhook':
-                $value = trim($value);
-                if ($value !== '' && (filter_var($value, FILTER_VALIDATE_URL) === false || stripos($value, 'https://') !== 0)) {
-                    throw new \InvalidArgumentException('Must be an https:// webhook URL (or "" to stop Slack notifications)');
-                }
-                return $value;
+                // Account › API integrations asks the same rule.
+                return SlackWebhook::accepted($value);
             case 'user_daily_email':
                 if ($value !== '' && preg_match(self::DAILY_EMAIL_PATTERN, $value) !== 1) {
                     throw new \InvalidArgumentException('Must be the hour to send it, 00-23 in your time zone, or "" for never');

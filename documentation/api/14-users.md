@@ -119,7 +119,7 @@ but unchanged keys is `422` (`No valid fields to update`).
 | `user_pref_limit` | `10`, `25`, `50`, `75`, `100`, `150`, `200` | report pages |
 | `user_cpc_or_cpv` | `cpc`, `cpv` | report pages |
 | `chart_time_range` | `hours`, `days` | Overview chart (kept in `202_charts`, where the chart reads it) |
-| `user_slack_incoming_webhook` | an `https://` URL, or `""` | Integrations |
+| `user_slack_incoming_webhook` | an `https://` URL at a public address, or `""`: the URL Integrations saves, refused when it names a private, loopback, link-local or metadata address, a local name, a user name or a fragment (`P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php` admits the operator's own network). Each notice is checked again when it is sent and gives up after 2 seconds | Integrations |
 | `ipqs_api_key`, `cb_key`, `zaxaa_api_signature` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
 | `jvzoo_ipn_secret_key` | the JVZIPN secret key both JVZoo URLs are verified with, stored trimmed: up to 250 characters of text (a line break, a control character or bytes that are not UTF-8 are refused, since no notification would verify with them), or `""` | Integrations |
 | `paykickstart_ipn_secret_keys` | the keys PayKickstart's product IPN is verified with, one for each PayKickstart campaign, separated by commas, spaces or new lines: at most 20, each 8 to 128 letters, digits and punctuation other than the comma. The list **replaces** every stored key (none can be read back), so send them all; `""` removes them. A key that is not one is refused by its place in the list (`Key 2 is 5 characters long; …`), never by its text | Integrations |

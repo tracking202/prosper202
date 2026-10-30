@@ -18,8 +18,9 @@ use Tests\Support\SourceScan;
  * server makes to a URL a user or a remote party chose goes through
  * WebhookGuard (checkPostback() or check()) and is pinned; one to a fixed
  * host, or to an operator's own constant, says so
- * here. The entries marked UNGUARDED are the sweep's findings, left for the
- * "one outbound guard" item; the list only shrinks.
+ * here. The sweep's last unguarded entry, the Slack notices, sends through
+ * WebhookSender now (SlackWebhook), so none is marked UNGUARDED; a new one
+ * is a finding, not an entry.
  *
  * A new site fails until it is listed with its reason; a site removed, or a
  * count changed, fails until the list follows.
@@ -36,7 +37,8 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         ],
         '202-config/Attribution/WebhookSender.php' => [
             1,
-            'an export webhook or an LTV webhook delivery: WebhookGuard::check(), pinned, no proxy, no redirects',
+            'an export webhook, an LTV webhook delivery or a Slack notice (SlackWebhook): WebhookGuard::check(),'
+            . ' pinned, no proxy, no redirects',
         ],
         '202-config/GeoIp/GuardedCurlTransport.php' => [
             1,
@@ -78,10 +80,6 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         '202-cronjobs/dni.php' => [1, self::FIXED],
         '202-appstore/index.php' => [1, self::FIXED],
         '202-resources/index.php' => [1, self::FIXED],
-        '202-config/Slack.class.php' => [
-            1,
-            'UNGUARDED: user_slack_incoming_webhook, any https URL, no address check or pin',
-        ],
         'api/v3/Support/RemoteApiClient.php' => [
             1,
             "a sync profile's url: WebhookGuard::checkSync() at every request, pinned, no proxy, no redirects",

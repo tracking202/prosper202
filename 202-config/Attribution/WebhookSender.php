@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace Prosper202\Attribution;
 
 /**
- * Sends one export to its webhook, safely (plan §6.3 "Exports", §7.1), and
- * one LTV webhook delivery (Ltv\DeliverySender): both go through post().
+ * Sends one export to its webhook, safely (plan §6.3 "Exports", §7.1), one
+ * LTV webhook delivery (Ltv\DeliverySender) and one Slack notice
+ * (Notifications\SlackWebhook, with a shorter timeout): all go through post().
  *
  * The URL is checked again here, at send time, by WebhookGuard — which
  * resolves the host and checks every address — and the connection is then
@@ -126,7 +127,8 @@ final class WebhookSender
 
     /**
      * POST a body to a webhook URL, the one way this server does it (an
-     * export through send(), an LTV delivery through Ltv\DeliverySender):
+     * export through send(), an LTV delivery through Ltv\DeliverySender, a
+     * Slack notice through Notifications\SlackWebhook):
      * WebhookGuard::check() at the moment of sending, the request made with
      * curlOptions() (pinned, no proxy, https only, no redirects, TLS
      * verified, timed out), at most MAX_BODY_BYTES sent and
@@ -138,10 +140,16 @@ final class WebhookSender
      *
      * @param list<string> $headers
      * @param list<int> $ports the ports the URL may name (WebhookGuard::check()), any when empty
+     * @param int $timeout seconds the transfer may take, at most TIMEOUT (a Slack notice's is shorter)
      * @return Posted
      */
-    public function post(string $url, string $body, array $headers, array $ports = []): array
-    {
+    public function post(
+        string $url,
+        string $body,
+        array $headers,
+        array $ports = [],
+        int $timeout = self::TIMEOUT
+    ): array {
         $none = [
             'refused' => null, 'strayed' => null, 'pinned' => '', 'status' => 0,
             'error' => null, 'location' => null, 'body' => '',
@@ -157,7 +165,7 @@ final class WebhookSender
             return ['refused' => $e->getMessage()] + $none;
         }
 
-        $answer = ($this->transport)(self::curlOptions($target, $body, $headers));
+        $answer = ($this->transport)(self::curlOptions($target, $body, $headers, $timeout));
         $connected = $answer['primary_ip'];
 
         return [
@@ -178,10 +186,15 @@ final class WebhookSender
      * a test can read exactly what the connection is allowed to do.
      *
      * @param list<string> $headers
+     * @param int $timeout seconds the transfer may take; it can only shorten TIMEOUT and CONNECT_TIMEOUT
      * @return array<int, mixed>
      */
-    public static function curlOptions(WebhookTarget $target, string $body, array $headers): array
-    {
+    public static function curlOptions(
+        WebhookTarget $target,
+        string $body,
+        array $headers,
+        int $timeout = self::TIMEOUT
+    ): array {
         $options = [
             CURLOPT_URL => $target->url,
             CURLOPT_POST => true,
@@ -195,8 +208,8 @@ final class WebhookSender
             CURLOPT_NOPROXY => '*',
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT,
-            CURLOPT_TIMEOUT => self::TIMEOUT,
+            CURLOPT_CONNECTTIMEOUT => max(1, min(self::CONNECT_TIMEOUT, $timeout)),
+            CURLOPT_TIMEOUT => max(1, min(self::TIMEOUT, $timeout)),
             CURLOPT_NOSIGNAL => true,
         ];
         $resolve = $target->resolveEntry();

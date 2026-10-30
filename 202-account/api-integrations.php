@@ -100,6 +100,16 @@ function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack,
 	if (!$error) {
 		$new_value = (string)$posted;
 
+		// PUT /users/{id}/preferences asks the same rule of a Slack webhook.
+		if ($field_name === 'user_slack_incoming_webhook') {
+			try {
+				$new_value = Prosper202\Notifications\SlackWebhook::accepted($new_value);
+			} catch (InvalidArgumentException $refused) {
+				$error[$error_key] = $refused->getMessage();
+				return null;
+			}
+		}
+
 		if ($new_value !== $old_value) {
 			try {
 				updateUserPreference($field_name, $new_value, $user_id, $db);
