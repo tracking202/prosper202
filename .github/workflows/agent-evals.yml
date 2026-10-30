@@ -270,6 +270,7 @@ jobs:
           # pins) is installed on its own; the suites load by path. Not the
           # phar: on 2026-10-30 phar.phpunit.de served 19-byte files that php
           # ran silently, so every suite "printed nothing" and the step failed.
+          mkdir -p "$RUNNER_TEMP/phpunit"
           composer require --no-interaction --no-progress --working-dir="$RUNNER_TEMP/phpunit" "phpunit/phpunit:^9.6"
           PHPUNIT="$RUNNER_TEMP/phpunit/vendor/bin/phpunit"
           "$PHPUNIT" --version
