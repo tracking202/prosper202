@@ -38,6 +38,17 @@ final class ReClickBackfillFailureTest extends TestCase
         ];
         yield 'a storage engine error' => [new \mysqli_sql_exception('x', 1030), false];
         yield 'a network write' => [new QueryException('MySQL execute failed: x [errno 1160]'), false];
+        yield 'a limit reached' => [new \mysqli_sql_exception('x', 1226), false];
+        yield 'a lock table the click\'s own rows fill' => [
+            new QueryException('MySQL execute failed: x [errno 1206]'),
+            true,
+        ];
+        yield 'a statement to prepare again' => [new QueryException('MySQL execute failed: x [errno 1615]'), false];
+        yield 'a permission refused' => [new QueryException('MySQL execute failed: x [errno 1142]'), false];
+        yield 'a column missing, wrapped' => [
+            new \RuntimeException('repair', 0, new \mysqli_sql_exception('x', 1054)),
+            false,
+        ];
         yield 'a type error' => [new \TypeError('int expected'), false];
         yield 'a logic error' => [new \LogicException('Click 9 has no first visit under its lock'), false];
         yield 'a runtime error with no errno' => [new QueryException('MySQL execute failed: x'), false];
