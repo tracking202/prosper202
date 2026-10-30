@@ -124,7 +124,14 @@ This is the normal path. CI builds and publishes; you only tag.
    request to show it. Bring master into the version branch with the revert
    reverted, and run the check again.
 
-2. **Write the release notes, on the version branch.** They are
+2. **Fold the changelog fragments in, then write the release notes, on the
+   version branch.** Pull requests add their entries as fragments
+   (`changelogs.d/<version>/`, see `changelogs.d/README.md`). Run
+   `python3 scripts/changelog.py assemble <version>`: it appends them to the
+   version's block in `changelogs.txt` and its list in
+   `202-config/changelogs.json`, in the order they were merged, and deletes
+   them. Commit the result before the release notes, which quote that block.
+   The release notes are
    `.github/release-notes/<version>.md`, and the Release workflow publishes
    that file as the release's notes. It refuses to publish without it, or
    with notes that do not say an upgrade needs a database backup (the check
