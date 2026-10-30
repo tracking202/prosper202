@@ -27,7 +27,7 @@ use Tests\Support\FakeMysqliConnection;
  */
 final class AccountProfileAndKeysTest extends TestCase
 {
-    private const PREFS = ['user_keyword_searched_or_bidded' => 'searched', 'user_pref_dynamic_bid' => 1, 'user_daily_email' => '07'];
+    private const PREFS = ['user_keyword_searched_or_bidded' => 'searched', 'user_pref_dynamic_bid' => 1, 'user_pref_privacy' => 'eu'];
 
     protected function setUp(): void
     {
@@ -40,7 +40,7 @@ final class AccountProfileAndKeysTest extends TestCase
         $page = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/account.php');
         self::assertSame(1, preg_match_all('/\bp202_account_save_profile\(/', $page), 'the profile form saves through the one transaction');
         self::assertSame(1, preg_match_all('/\bp202_account_api_keys\(/', $page), 'the key panel reads through the column-aware list');
-        self::assertDoesNotMatchRegularExpression('/`?(user_timezone|user_pref_privacy|user_daily_email)`?\s*=\s*\'/i', $page, 'no second, autocommitted profile write beside it');
+        self::assertDoesNotMatchRegularExpression('/`?(user_timezone|user_pref_privacy)`?\s*=\s*\'/i', $page, 'no second, autocommitted profile write beside it');
         self::assertDoesNotMatchRegularExpression('/SELECT[^;]*FROM\s+202_api_keys/i', $page, 'no second read of the keys that names a column the install may not have');
     }
 
@@ -58,8 +58,8 @@ final class AccountProfileAndKeysTest extends TestCase
         $prefs = $db->statementsContaining('UPDATE `202_users_pref` SET');
         self::assertCount(1, $prefs);
         self::assertSame('sisi', $prefs[0]->boundTypes, 'each value bound as its column\'s type, the user id last');
-        self::assertSame(['searched', 1, '07', 7], $prefs[0]->boundValues);
-        self::assertStringContainsString('`user_keyword_searched_or_bidded` = ?, `user_pref_dynamic_bid` = ?, `user_daily_email` = ? WHERE `user_id` = ?', $prefs[0]->sql);
+        self::assertSame(['searched', 1, 'eu', 7], $prefs[0]->boundValues);
+        self::assertStringContainsString('`user_keyword_searched_or_bidded` = ?, `user_pref_dynamic_bid` = ?, `user_pref_privacy` = ? WHERE `user_id` = ?', $prefs[0]->sql);
     }
 
     public function testAFailedPreferencesUpdateRollsTheAccountRowBack(): void

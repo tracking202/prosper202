@@ -14,7 +14,7 @@ use Tests\Support\SourceScan;
  * not. Four places asked it whether the request was HTTPS
  * (`stripos($_SERVER['SERVER_PROTOCOL'], 'https')`), so every one answered
  * http: the account home's deeplink pixel, and the install address the
- * autocron, daily-email and DNI registrations hand the hosted service, which
+ * autocron and DNI registrations hand the hosted service, which
  * calls the install back there. They take p202TrackingBaseUrl() now; the
  * scheme of a request is p202_request_is_https() (request-https.php).
  *

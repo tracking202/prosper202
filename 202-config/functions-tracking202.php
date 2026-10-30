@@ -123,7 +123,7 @@ function grab_timeframe($unused = null): array
  * This install's tracking base, `scheme://host[:port]/<install path>/`:
  * TrackingBaseUrl::build() over the install owner's (user 1's) stored
  * tracking domain (a stored scheme kept, the request's otherwise).
- * callAutoCron(), registerDailyEmail(), getDNIHost() and the account home's
+ * callAutoCron(), getDNIHost() and the account home's
  * deeplink pixel hand it to the hosted service, which calls the install back
  * there with the install hash. They took the scheme from SERVER_PROTOCOL,
  * which is "HTTP/1.1" or "HTTP/2.0" and never names https, so every install
@@ -134,7 +134,7 @@ function grab_timeframe($unused = null): array
  * own on Personal settings and every user row carries the install hash, so a
  * session-dependent read let any user save attacker.example and have the
  * hosted service call it with the hash that authenticates the cron
- * callbacks (daily-email.php, dni.php) -- measured, signed in as user 2 this
+ * callbacks (dni.php) -- measured, signed in as user 2 this
  * answered `http://attacker.example/`.
  *
  * Before the installer has made an account there is no owner and nothing
@@ -1303,37 +1303,6 @@ function callAutoCron($endpoint)
     curl_close($ch);
 
     return json_decode($result, true);
-}
-
-function registerDailyEmail($time, $timezone, $hash)
-{
-    $domain = base64_encode(rtrim(p202TrackingBaseUrl(), '/'));
-
-    if ($time) {
-        $date = new DateTime($time . ':00:00', new DateTimeZone($timezone));
-        $date->setTimezone(new DateTimeZone('UTC'));
-        $set_time = $date->format('H');
-    } else {
-        $set_time = 'NA';
-    }
-
-    // Initiate curl
-    $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/' . $hash . '/' . $domain . '/' . $set_time);
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Bound the wait so a slow/unreachable service can't hang the caller (e.g. install)
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    // Execute
-    $result = curl_exec($ch);
-
-    // close connection
-    curl_close($ch);
 }
 
 function tagUserByNetwork($install_hash, $type, $network)

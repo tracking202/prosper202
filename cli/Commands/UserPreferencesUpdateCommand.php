@@ -25,7 +25,12 @@ class UserPreferencesUpdateCommand extends BaseCommand
             ->addOption('user-tracking-domain', null, InputOption::VALUE_REQUIRED, 'Tracking domain')
             ->addOption('user-account-currency', null, InputOption::VALUE_REQUIRED, 'Currency (3-letter code)')
             ->addOption('user-slack-incoming-webhook', null, InputOption::VALUE_REQUIRED, 'Slack webhook URL')
-            ->addOption('user-daily-email', null, InputOption::VALUE_REQUIRED, 'Daily email: on/off')
+            ->addOption(
+                'user-daily-email',
+                null,
+                InputOption::VALUE_REQUIRED,
+                'No effect since 1.9.79: the hosted daily email report was switched off. Still accepted: 00-23, or ""'
+            )
             ->addOption('ipqs-api-key', null, InputOption::VALUE_REQUIRED, 'IPQS fraud detection API key')
             ->addOption('user-pref-same-ip-fallback', null, InputOption::VALUE_REQUIRED, 'When a pixel names no click: 1 credits your latest click from the visitor\'s IP address in the last 30 days (a guess), 0 none');
     }

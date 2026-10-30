@@ -275,7 +275,7 @@ final class RequestHostSourceTest extends TestCase
      * addresses depending on which page loaded the pixel.
      *
      * What this does not see: an address handed to the service any other
-     * way — callAutoCron(), registerDailyEmail() and getDNIHost() build
+     * way — callAutoCron() and getDNIHost() build
      * theirs from p202TrackingBaseUrl() in functions-tracking202.php, and the
      * Landing Page Optimizer's pairing sends the request's origin (an open
      * question for that service's owner, not settled here).
