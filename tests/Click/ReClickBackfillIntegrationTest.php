@@ -584,6 +584,8 @@ final class ReClickBackfillIntegrationTest extends TestCase
             'a statement timed out' => 1969,
             'a storage engine\'s temporary error' => 1297,
             'an error during commit' => 1180,
+            'a permission refused' => 1142,
+            'a user\'s resources used up' => 1226,
         ];
         foreach ($errors as $what => $errno) {
             foreach ($modes as $how => $mode) {
@@ -647,6 +649,7 @@ final class ReClickBackfillIntegrationTest extends TestCase
             ],
             'stopped at the click since the first run, with no run of its own counted and no hour started'
         );
+        self::assertStringContainsString('so it is not stepped over', (string) ($held['note'] ?? ''));
         self::assertSame(
             [42, $runs, $own, 0],
             [

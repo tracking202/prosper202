@@ -1841,7 +1841,12 @@ the errno, and started the hour at the first failure of any kind, so ten
 minutes of the click's own errors after two hours of lock waits stepped it
 over (found by review): what counts is shown to be the click's (a server
 errno that is not the moment's, a value its rows hold that reads wrong), and
-the hour starts at the first of those.
+the hour starts at the first of those. An error of the install is not the
+click's either: a revoked permission or a missing table fails every click
+alike, and counting it stepped one over an hour for good
+(`ReClickBackfill::INSTALL_ERRNOS`, found by review). A click stopped only by
+errors that count in none is never stepped over, and the progress note says
+so rather than promising the step-over a count of 0 never reaches.
 
 ### 36. A lock does not move the snapshot
 The ledger's click lock read the click's values with the locking read itself,
