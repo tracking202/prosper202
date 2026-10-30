@@ -189,6 +189,31 @@ awk -v v="Version $VERSION" '{print} $0==v{print "-- Fixed: Written straight in.
 commit_at "$R" 2000001100 "fold in, plus an entry directly"
 if run "$R" guard base; then bad "a direct entry beside a fold passed"; else ok "a direct entry beside a fold is refused"; fi
 
+# A version branch merged into master: its fragments were added and folded in
+# within its own history, so the net diff against master has no fragments.
+R=$(new_repo version-to-master)
+git -C "$R" checkout -q -b version
+mkdir -p "$R/changelogs.d/$VERSION"
+printf -- '-- Fixed: Added on the version branch.\napp: Fixed: Short.\n' > "$R/changelogs.d/$VERSION/f.txt"
+commit_at "$R" 2000001200 "fragment via a pull request"
+run "$R" assemble "$VERSION"
+commit_at "$R" 2000001300 release
+if run "$R" guard base; then ok "a version branch folding its own fragments passes against master"; else bad "version-to-master was refused: $(cat "$TMP/out")"; fi
+
+awk -v v="Version $VERSION" '{print} $0==v{print "-- Fixed: Written straight in."}' "$R/changelogs.txt" > "$TMP/t" && cp "$TMP/t" "$R/changelogs.txt"
+commit_at "$R" 2000001400 "plus an entry directly"
+if run "$R" guard base; then bad "a direct entry on a version branch passed"; else ok "a direct entry beside an in-branch fold is refused"; fi
+
+# A fragment added and then dropped within the pull request is harmless.
+R=$(new_repo add-drop)
+git -C "$R" checkout -q -b pr
+mkdir -p "$R/changelogs.d/$VERSION"
+printf -- '-- Fixed: Changed my mind.\n' > "$R/changelogs.d/$VERSION/f.txt"
+commit_at "$R" 2000001500 add
+rm "$R/changelogs.d/$VERSION/f.txt"
+commit_at "$R" 2000001600 drop
+if run "$R" guard base; then ok "a fragment added and dropped in the pull request passes"; else bad "add-then-drop was refused: $(cat "$TMP/out")"; fi
+
 echo
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

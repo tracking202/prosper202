@@ -198,24 +198,36 @@ def guard(base):
     if mb.returncode != 0:
         raise Problem('no merge base with %s (fetch it with full history)' % base)
     mb = mb.stdout.strip()
-    removed = subprocess.run(['git', 'diff', '--name-only', '--diff-filter=D', mb, 'HEAD', '--', FRAGMENTS],
-                             capture_output=True, text=True, check=True).stdout.split()
+    # Every fragment deleted by any commit in mb..HEAD, read from just before its deletion: a version branch
+    # adds and folds its fragments within its own history, so the net diff against master shows none.
+    log = subprocess.run(['git', 'log', '--no-renames', '--diff-filter=D', '--name-only', '--format=%x00%H',
+                          '%s..HEAD' % mb, '--', FRAGMENTS], capture_output=True, text=True, check=True).stdout
+    removed = []
+    for chunk in log.split('\0')[1:]:
+        sha, *paths = chunk.split()
+        removed += [(p, git_show(sha + '^', p)) for p in paths if (p, git_show(sha + '^', p)) not in removed]
     now_txt, now_json = txt_blocks(read(TXT)), json_logs(read(JSON))
     # A deleted fragment must have been folded in (assemble); its entries may grow the files.
     folded_txt, folded_app, problems = {}, {}, []
-    for path in removed:
-        version, text = os.path.basename(os.path.dirname(path)), git_show(mb, path)
+    for path, text in removed:
+        version = os.path.basename(os.path.dirname(path))
         if not path.endswith('.txt') or text is None:
             continue
+        # Only a fragment the base had must be folded in; one added and dropped in this range never counted.
+        had = git_show(mb, path) is not None and not os.path.exists(path)
         for line, app in parse_fragment(path, text):
             if line not in now_txt.get(version, []):
-                problems.append('%s was deleted but its entry is not in %s under Version %s: %s'
-                                % (path, TXT, version, line[:80]))
+                if had:
+                    problems.append('%s was deleted but its entry is not in %s under Version %s: %s'
+                                    % (path, TXT, version, line[:80]))
+                continue
             folded_txt[version] = folded_txt.get(version, 0) + 1
             if app is not None:
                 if app not in now_json.get(version, []):
-                    problems.append('%s was deleted but its app line is not in %s under %s: %s'
-                                    % (path, JSON, version, app[:80]))
+                    if had:
+                        problems.append('%s was deleted but its app line is not in %s under %s: %s'
+                                        % (path, JSON, version, app[:80]))
+                    continue
                 folded_app[version] = folded_app.get(version, 0) + 1
     grew = []
     before_txt, before_json = git_show(mb, TXT), git_show(mb, JSON)
