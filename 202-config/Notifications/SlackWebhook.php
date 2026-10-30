@@ -28,7 +28,9 @@ final class SlackWebhook
     public const COLUMN = 'user_slack_incoming_webhook';
 
     /**
-     * Seconds a notice may take, connecting included. A notice is sent while
+     * Seconds a notice may take from connecting to the answer. The address
+     * lookup before it (WebhookGuard) is bounded only by the server's
+     * resolver, so a stalled resolver can still add to it. A notice is sent while
      * a person or a network waits on the request (ClickBank gives its test 3
      * seconds); Slack answers in well under one.
      */
