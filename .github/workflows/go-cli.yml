@@ -61,7 +61,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'   # matches go-cli/go.mod
+          go-version: '1.27'   # matches go-cli/go.mod
           cache-dependency-path: go-cli/go.sum
 
       - name: Check formatting
@@ -108,7 +108,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version: '1.27'
           cache-dependency-path: go-cli/go.sum
 
       # Configured in go-cli/.golangci.yml to report dropped errors

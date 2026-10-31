@@ -1,1 +1,2 @@
--- Changed: The hosted MCP engine prints a read answer without first building a map for every JSON value, and reads a timeseries answer's last bucket without decoding the whole answer twice, so a large answer uses far less memory and CPU per call (built with Go 1.27; older toolchains keep the previous path).
+-- Changed: The hosted MCP engine prints a read answer without first building a map for every JSON value, and reads a timeseries answer's last bucket without decoding the whole answer twice, so a large answer uses far less memory and CPU per call.
+-- Changed: Building the Go CLI from source now needs Go 1.27 (it needed 1.25).
