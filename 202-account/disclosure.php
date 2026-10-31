@@ -49,7 +49,9 @@ template_top('Product Analytics Disclosure');
 			<li><strong>Account-level revenue aggregates:</strong> if you use Customer LTV, only account totals
 				(total revenue, MRR/ARR, customer count, average LTV, active subscriptions).</li>
 			<li><strong>Product usage:</strong> pages viewed inside Prosper202 and setup milestones (e.g.
-				campaign created, tracking link generated, integration connected).</li>
+				campaign created, tracking link generated, integration connected, AI app connected, click filtering
+				changed), whether each was made on the pages, with the CLI or through an AI app, and which of those
+				you use (at most once a day each). Never what you asked an AI app or the data it read.</li>
 		</ul>
 		<p>We never share this data with third parties.</p>
 	</div>
@@ -71,7 +73,7 @@ template_top('Product Analytics Disclosure');
 		<ul>
 			<li>Product analytics is on by default outside the EU/UK, and held behind a one-time consent
 				prompt for EU/UK account holders. You can turn it off (or back on) anytime in
-				<a href="<?php echo get_absolute_url(); ?>202-account/account.php">Account Settings</a>.</li>
+				<a href="<?php echo get_absolute_url(); ?>202-account/account.php#data-consent">Personal Settings › Data &amp; communication</a>.</li>
 			<li>Switching it off stops collection and syncing immediately, and deletes the analytics data on
 				your install that has not yet been delivered (queued events and the computed usage profile).</li>
 			<li>A small <strong>essential</strong> tier stays on for operational use (account lifecycle, login,
