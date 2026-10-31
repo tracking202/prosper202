@@ -229,6 +229,10 @@ final class MessagingServiceIntegrationTest extends TestCase
         $portal = LocalHttpRecorder::start();
         try {
             define('MESSAGING_API_URL', $portal->url() . '/api/v3/messaging');
+            // The profile refresh logs that this scratch database has no report tables.
+            $log = tempnam(sys_get_temp_dir(), 'p202-messaging-cron-');
+            $this->assertIsString($log);
+            ini_set('error_log', $log);
             $db = $this->connect();
             $this->seedUsers($db);
             $service = new \MessagingService($db, 1, (array) \MessagingService::identityFor($db, 1));
@@ -263,6 +267,10 @@ final class MessagingServiceIntegrationTest extends TestCase
         $portal = LocalHttpRecorder::start();
         try {
             define('MESSAGING_API_URL', $portal->url() . '/api/v3/messaging');
+            // The profile refresh logs that this scratch database has no report tables.
+            $log = tempnam(sys_get_temp_dir(), 'p202-messaging-cron-');
+            $this->assertIsString($log);
+            ini_set('error_log', $log);
             $db = $this->connect();
             $this->seedUsers($db);
             (new \MessagingService($db, 1, []))->recordEvent('created_tracker');
