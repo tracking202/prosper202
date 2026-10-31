@@ -1,0 +1,15 @@
+# Estimated CI seconds per suite, read by run-integration-suites.sh to spread suites over shards (a suite not listed counts 3).
+# A suite listed with regexes runs as slices, one per line plus the "*" line for every test no regex names (see the runner).
+# Re-measure from the "PASS ... N s" lines of a CI run when a suite changes size.
+60 tests/Auth/SessionEndsWithUserIntegrationTest.php
+33 tests/Ltv/LtvPagesPostedIdsIntegrationTest.php
+27 tests/Ltv/LtvSettingsPostedValuesIntegrationTest.php
+25 tests/User/RememberMeKeysRevokedIntegrationTest.php
+23 tests/Click/ReClickBackfillIntegrationTest.php
+22 tests/Auth/SessionGenerationIntegrationTest.php
+22 tests/Ltv/WebhookDispatchIntegrationTest.php
+18 tests/DataEngine/ReClickRollupIntegrationTest.php
+56 tests/Attribution/RollupMatchesFullComputationTest.php ::testClickRetentionLeavesTheRollupExact$
+43 tests/Attribution/RollupMatchesFullComputationTest.php ::testRandomizedTenantsReadTheSameFromTheRollup with data set "(dense|sparse)
+42 tests/Attribution/RollupMatchesFullComputationTest.php ::testRandomizedTenantsReadTheSameFromTheRollup with data set "medium|::testChangesAfterTheRollupWasSummedAreReadExactlyUntilItIsSummedAgain$
+41 tests/Attribution/RollupMatchesFullComputationTest.php *
