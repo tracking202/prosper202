@@ -288,6 +288,18 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "click_list", Command: []string{"click", "list"}, Title: "List clicks", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "click_get", Command: []string{"click", "get"}, Title: "Get a click", Kind: mcpRead, Args: []mcpArg{idArg("id", "Click id (from click_list).", true)}},
 	{Name: "click_conversions", Command: []string{"click", "conversions"}, Title: "Explain a click's conversions", Kind: mcpRead, Args: []mcpArg{idArg("click_id", "Click id (from click_list).", true)}},
+	// Click filtering: Personal settings' card, on /users, which the hosted
+	// keys do not reach. The key's own account only (user_id is the CLI's).
+	{Name: "click_filter_get", Command: []string{"click-filter", "get"}, Title: "Get the click filter rules", Kind: mcpRead, NotHosted: true, Omit: []string{"user_id"},
+		Note: "Its always-count and always-filter list too."},
+	{Name: "click_filter_update", Command: []string{"click-filter", "set"}, Title: "Change the click filter's checks", Kind: mcpUpdate, NotHosted: true, Omit: []string{"user_id"}},
+	{Name: "click_filter_test", Command: []string{"click-filter", "test"}, Title: "Test an address against the click filter", Kind: mcpRead, NotHosted: true, Omit: []string{"user_id"},
+		Args: []mcpArg{{Name: "ip", Description: "One IPv4 or IPv6 address.", Required: true, Pattern: clickFilterAddressPattern, Form: "an IP address"}}},
+	{Name: "click_filter_list_add", Command: []string{"click-filter", "list", "add"}, Title: "Always count or filter an address", Kind: mcpCreate, NotHosted: true, Omit: []string{"user_id"},
+		Args:     []mcpArg{{Name: "address", Description: "203.0.113.7 or 203.0.113.0/24.", Required: true, Pattern: clickFilterAddressPattern, Form: "an IP address or a CIDR block"}},
+		Required: []string{"action"}},
+	{Name: "click_filter_list_remove", Command: []string{"click-filter", "list", "remove"}, Title: "Remove an address list entry", Kind: mcpDelete, NotHosted: true, Omit: []string{"user_id", "ids"},
+		Args: []mcpArg{idArg("entry_id", "Entry id (from click_filter_get).", true)}, Note: deleteNote},
 	{Name: "conversion_list", Command: []string{"conversion", "list"}, Title: "List conversions", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "conversion_get", Command: []string{"conversion", "get"}, Title: "Get a conversion", Kind: mcpRead, Args: []mcpArg{idArg("id", "Conversion id (from conversion_list).", true)}},
 	{Name: "conversion_postback_url", Command: []string{"conversion", "postback-url"}, Title: "Get the postback URL", Kind: mcpRead},
@@ -301,6 +313,9 @@ var mcpToolSpecs = []mcpToolSpec{
 	// Account
 	{Name: "whoami", Command: []string{"whoami"}, Title: "Who this connection acts as", Kind: mcpRead},
 	{Name: "system_info", Command: []string{"system", "info"}, Title: "Install information", Kind: mcpRead, NotHosted: true},
+	{Name: "settings_get", Command: []string{"user", "prefs", "get"}, Title: "Get the account's settings", Kind: mcpRead, NotHosted: true,
+		Args: []mcpArg{idArg("user_id", "User id (whoami's user_id).", true)},
+		Note: "Personal settings, report defaults, integrations and LTV settings; a secret only as whether one is stored."},
 }
 
 // rotatorRulesSchema is rotator_set_rules' rules: a rule set as rotator_get

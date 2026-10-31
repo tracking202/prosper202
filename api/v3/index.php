@@ -1074,7 +1074,7 @@ try {
         $router->post('/events', fn() => $idempotent('events', $payload, fn() => $crud(\Api\V3\Controllers\EventsController::class)->create($payload)));
 
         // ── Users (admin-gated writes, self-or-admin for reads) ──────────
-        $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload) {
+        $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload, $queryParams) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
 
             $r->get('/roles', fn() => $make()->listRoles());
@@ -1165,6 +1165,36 @@ try {
             $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
                 return $make()->updatePreferences(PathId::of($ctx), $payload);
+            });
+
+            // Click filtering (Personal settings' card, asked the same way):
+            // the switches, the address list, and a test of one address
+            // (?ip=), a read.
+            $filter = fn() => new \Api\V3\Controllers\ClickFilterController($db);
+            $r->get('/{id}/click-filter', function ($ctx) use ($auth, $filter, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->get(PathId::of($ctx));
+            });
+            $r->put('/{id}/click-filter', function ($ctx) use ($auth, $filter, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->update(PathId::of($ctx), $payload);
+            });
+            $r->post('/{id}/click-filter/entries', function ($ctx) use ($auth, $filter, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->addEntry(PathId::of($ctx), $payload);
+            });
+            $r->put('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->updateEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'), $payload);
+            });
+            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $filter()->deleteEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'));
+                return null;
+            });
+            $r->get('/{id}/click-filter/test', function ($ctx) use ($auth, $filter, $queryParams, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->test(PathId::of($ctx), $queryParams);
             });
         });
 
@@ -1350,6 +1380,13 @@ try {
                 $auth->requireMayChangeRoles($db, PathId::of($ctx), null);
                 return $make()->removeRolePreview(PathId::of($ctx), PathId::of($ctx, 'roleId'));
             });
+            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return (new \Api\V3\Controllers\ClickFilterController($db))->deleteEntryPreview(
+                    PathId::of($ctx),
+                    PathId::of($ctx, 'entryId')
+                );
+            });
         });
 
 
@@ -1463,6 +1500,10 @@ try {
         $r->delete('/{id}/api-keys/{keyId}', $stageable);
         $r->post('/{id}/identity-key/rotate', $stageable);
         $r->put('/{id}/preferences', $stageable);
+        $r->put('/{id}/click-filter', $stageable);
+        $r->post('/{id}/click-filter/entries', $stageable);
+        $r->put('/{id}/click-filter/entries/{entryId}', $stageable);
+        $r->delete('/{id}/click-filter/entries/{entryId}', $stageable);
     });
 
     $stagedChanges = fn() => new \Api\V3\Controllers\StagedChangesController($stateStore, $auth);

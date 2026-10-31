@@ -159,16 +159,16 @@ final class FilterSignedInAddressIntegrationTest extends TestCase
         int $filtered
     ): void {
         self::arrivesFrom($arrived);
-        self::assertSame($filtered, \FILTER::startFilter(self::$db, 0, self::$ids[$stored], $owner));
+        self::assertSame($filtered, \FILTER::verdict(self::$db, self::$ids[$stored], $owner)->flag());
     }
 
     public function testTheCheckStoresNothingAboutTheAddressItLooksUp(): void
     {
         $before = (int) self::$db->query('SELECT COUNT(*) AS n FROM 202_ips')->fetch_assoc()['n'];
         self::arrivesFrom('192.0.2.99');
-        \FILTER::startFilter(self::$db, 0, self::$ids['192.0.2.0'], self::OWNER);
+        \FILTER::verdict(self::$db, self::$ids['192.0.2.0'], self::OWNER);
         self::arrivesFrom('2001:db8:77::99');
-        \FILTER::startFilter(self::$db, 0, self::$ids['2001:db8:77::'], self::OWNER_V6);
+        \FILTER::verdict(self::$db, self::$ids['2001:db8:77::'], self::OWNER_V6);
         self::assertSame($before, (int) self::$db->query('SELECT COUNT(*) AS n FROM 202_ips')->fetch_assoc()['n']);
     }
 }

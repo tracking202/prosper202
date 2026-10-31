@@ -4615,6 +4615,13 @@ class UPGRADE
                 // The last licence answer per key, which the grace period reads
                 // while Tracking202 cannot be reached (ShellAccessCache::validWithinGrace()).
                 \Prosper202\Database\Tables\SecretTables::licenceAnswers(),
+                // The click filter's settings and address list per account,
+                // and why each filtered click is filtered
+                // (Prosper202\Click\Filter). No row is the defaults, which
+                // filter as before.
+                \Prosper202\Database\Tables\UserTables::clickFilterSettings(),
+                \Prosper202\Database\Tables\UserTables::clickFilterEntries(),
+                \Prosper202\Database\Tables\ClickTables::clicksFilterReason(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             // The licence answers this install cached on disk before 1.9.79,

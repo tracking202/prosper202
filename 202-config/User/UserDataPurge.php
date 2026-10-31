@@ -166,6 +166,9 @@ final class UserDataPurge
         RememberMeKeys::REVOKE_ALL,
         'DELETE FROM 202_last_ips WHERE user_id = ?',
         'DELETE FROM 202_offline_conversion_feeds WHERE user_id = ?',
+        // The click filter's settings and address list (the clicks' reasons stay with the clicks).
+        'DELETE FROM 202_click_filter_entries WHERE user_id = ?',
+        'DELETE FROM 202_click_filter_settings WHERE user_id = ?',
     ];
 
     /**
