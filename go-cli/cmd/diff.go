@@ -458,7 +458,8 @@ func normalizeRulesForComparison(rawRules interface{}, lookups entityLookups) []
 func normalizeCriteria(raw interface{}) []interface{} {
 	slice := toInterfaceSlice(raw)
 	if len(slice) == 0 {
-		return []interface{}{}
+		// No criterion is every visitor, as the sync sends it: country is every visitor.
+		return []interface{}{map[string]interface{}{"type": "country", "statement": "is", "value": criterionEveryone}}
 	}
 
 	result := make([]map[string]interface{}, 0, len(slice))

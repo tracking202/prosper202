@@ -80,6 +80,15 @@ func TestDiffComparesCriteriaAsTheRedirectsReadThem(t *testing.T) {
 	}
 }
 
+// A rule stored before 1.9.79 with no criterion is every visitor, as the sync
+// sends it, so it compares equal to country is every visitor.
+func TestNoCriterionComparesAsEveryVisitor(t *testing.T) {
+	everyone := []interface{}{map[string]interface{}{"type": "country", "statement": "is", "value": criterionEveryone}}
+	if a, b := normalizeCriteria([]interface{}{}), normalizeCriteria(everyone); !reflect.DeepEqual(a, b) {
+		t.Errorf("no criterion and every visitor compare as different: %v, %v", a, b)
+	}
+}
+
 // No other file of the CLI spells the every-visitor value: a reader with its
 // own spelling is how rtr.php and offrtr.php came to read "all" two ways.
 // The lower-case "all" is not looked for: it names the --all flags and

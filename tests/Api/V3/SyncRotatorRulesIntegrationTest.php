@@ -39,9 +39,6 @@ final class SyncRotatorRulesIntegrationTest extends TestCase
     private const SOURCE = 5531;
     private const TARGET = 5532;
 
-    /** The target's refusal of the source rule with no criterion, naming it. */
-    private const REFUSED = '422 from PUT rotators/%d/rules: Invalid rules.1.criteria (rules.1.criteria: '
-        . 'the source rule "everyone": A rule needs at least one criterion';
 
     private static ?\mysqli $db = null;
 
@@ -232,46 +229,52 @@ final class SyncRotatorRulesIntegrationTest extends TestCase
     }
 
     /**
-     * A source rule the target refuses (here one stored with no criterion)
-     * leaves the target's redirector with the rules it had: the sync fails
-     * naming the rule and why, and removes nothing.
+     * A source rule stored before 1.9.79 with no criterion, which the
+     * redirects read as every visitor, reaches the target as country is ALL,
+     * which they read the same way, and a second sync finds nothing to change.
+     *
+     * @dataProvider routes
      */
-    public function testARuleTheTargetRefusesLeavesTheTargetsRulesAsTheyWere(): void
+    public function testARuleWithNoCriterionSyncsAsEveryVisitor(bool $ruleSetRoute): void
     {
         $source = self::rotator(self::SOURCE, 7300001);
         self::setRules(self::SOURCE, $source, [self::rule('france', 'country France(FR)', 'https://fr.example/')]);
         self::ruleWithNoCriterion($source, 'everyone', 'https://everyone.example/');
         $target = self::rotator(self::TARGET, 7300001);
-        self::setRules(self::TARGET, $target, [
-            self::rule('kept', 'country ALL', 'https://kept.example/'),
-            self::rule('kept too', 'device bot', 'https://bot.example/'),
-        ]);
+        self::setRules(self::TARGET, $target, [self::rule('replaced', 'device bot', 'https://bot.example/')]);
+
+        [$result] = $this->sync($ruleSetRoute);
+
+        self::assertSame(0, $result['failed'], json_encode($result) ?: '');
+        $everyone = ['rule_name' => 'everyone', 'status' => 1, 'criteria' => ['country is ALL'],
+            'redirects' => ['https://everyone.example/']];
+        self::assertSame($everyone, self::rules(self::TARGET, $target)[1]);
+
+        [$again] = $this->sync($ruleSetRoute);
+        self::assertSame([0, 0], [$again['failed'], $again['updated']], json_encode($again) ?: '');
+    }
+
+    /**
+     * A source redirector with more rules than the target takes in one set
+     * (200) is refused whole, naming how many it has: the target keeps the
+     * rules it had rather than a first part of the source's.
+     */
+    public function testASourceWithTooManyRulesLeavesTheTargetsRulesAsTheyWere(): void
+    {
+        $source = self::rotator(self::SOURCE, 7300002);
+        for ($i = 0; $i < 201; $i++) {
+            self::ruleWithNoCriterion($source, "r$i", "https://r$i.example/");
+        }
+        $target = self::rotator(self::TARGET, 7300002);
+        self::setRules(self::TARGET, $target, [self::rule('kept', 'country ALL', 'https://kept.example/')]);
         $before = self::rules(self::TARGET, $target);
 
         [$result] = $this->sync();
 
         self::assertSame($before, self::rules(self::TARGET, $target), "the target's rules as they were");
         self::assertSame(1, $result['failed'], json_encode($result) ?: '');
-        self::assertCount(1, $result['errors']);
-        self::assertStringContainsString(sprintf(self::REFUSED, $target), $result['errors'][0]);
-    }
-
-    /** A redirector the sync creates gets every rule of the source's, or none. */
-    public function testARedirectorTheSyncCreatesGetsEveryRuleOrNone(): void
-    {
-        $source = self::rotator(self::SOURCE, 7300002);
-        self::setRules(self::SOURCE, $source, [self::rule('france', 'country France(FR)', 'https://fr.example/')]);
-        self::ruleWithNoCriterion($source, 'everyone', 'https://everyone.example/');
-
-        [$result] = $this->sync();
-
-        $made = self::rotators(self::TARGET)->list([])['data'];
-        self::assertCount(1, $made);
-        $target = (int) $made[0]['id'];
-        self::assertSame([], self::rules(self::TARGET, $target), 'no rule, not the ones before the refused one');
-        self::assertSame(1, $result['created'], json_encode($result) ?: '');
-        self::assertSame(1, $result['failed']);
-        self::assertStringContainsString(sprintf(self::REFUSED, $target), $result['errors'][0]);
+        self::assertStringContainsString('At most 200 rules; the source redirector has 201, and none was written',
+            $result['errors'][0]);
     }
 
     /** The target's redirector takes the source's rules in place of its own, in the source's order. */
