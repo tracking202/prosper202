@@ -6,16 +6,17 @@
 final class ConsentPolicy
 {
     /** Pure decision. No I/O. */
-    public static function decide(string $stored, bool $isEu, string $tier): bool
+    public static function decide(string $stored, ?bool $isEu, string $tier): bool
     {
         if ($tier === 'essential') {
             return true;
         }
         // analytics tier
         if ($stored === 'granted') { return true; }
-        if ($stored === 'denied')  { return false; }
-        // unset → on-by-default for non-EU, held for EU
-        return !$isEu;
+        if ($stored !== 'unset')   { return false; } // denied, or a value that is neither
+        // unset: on by default only where the account is known to be outside
+        // the EU/UK; held for the EU/UK and while the location is unknown.
+        return $isEu === false;
     }
 
     public static function analyticsAllowed(mysqli $db, int $userId): bool
@@ -157,7 +158,9 @@ final class ConsentPolicy
     {
         try {
             $conn = new \Prosper202\Database\Connection($db);
-            $stmt = $conn->prepareWrite("UPDATE `202_users_pref` SET `analytics_geo_is_eu` = ? WHERE `user_id` = ?");
+            // Once seen in the EU/UK an account stays so: one sign-in from
+            // elsewhere (travel, a VPN) must not turn its held analytics on.
+            $stmt = $conn->prepareWrite("UPDATE `202_users_pref` SET `analytics_geo_is_eu` = IF(`analytics_geo_is_eu` = 1, 1, ?) WHERE `user_id` = ?");
             $conn->bind($stmt, 'ii', [$isEu ? 1 : 0, $userId]);
             $conn->executeUpdate($stmt);
             return true;
@@ -173,14 +176,17 @@ final class ConsentPolicy
      * A genuine missing row is NOT a failure: it returns the documented
      * defaults (consent unset, unknown geo → non-EU).
      *
-     * @return array{analytics_consent:string,email_marketing_consent:string,is_eu:bool,prompt_seen:bool}|null
+     * is_eu is null while the account's location is unknown (no sign-in
+     * since the upgrade, or an address the GeoIP database cannot place).
+     *
+     * @return array{analytics_consent:string,email_marketing_consent:string,is_eu:?bool,prompt_seen:bool}|null
      */
     private static function loadPref(mysqli $db, int $userId): ?array
     {
         $default = [
             'analytics_consent' => 'unset',
             'email_marketing_consent' => 'unset',
-            'is_eu' => false,          // unknown geo → treat as non-EU (Global Constraints)
+            'is_eu' => false,          // no preferences row at all: the documented non-EU default
             'prompt_seen' => false,
         ];
         try {
@@ -200,7 +206,7 @@ final class ConsentPolicy
             'analytics_consent' => $row['analytics_consent'] ?? 'unset',
             'email_marketing_consent' => $row['email_marketing_consent'] ?? 'unset',
             // NULL geo (unknown) → false per Global Constraints
-            'is_eu' => ((int) ($row['analytics_geo_is_eu'] ?? 0)) === 1,
+            'is_eu' => $row['analytics_geo_is_eu'] === null ? null : ((int) $row['analytics_geo_is_eu']) === 1,
             'prompt_seen' => ((int) ($row['eu_consent_prompt_seen'] ?? 0)) === 1,
         ];
     }

@@ -71,8 +71,9 @@ template_top('Product Analytics Disclosure');
 	<div class="card-modern" style="padding: 24px 28px; margin-bottom: 16px;">
 		<h5>Consent and the off switch</h5>
 		<ul>
-			<li>Product analytics is on by default outside the EU/UK, and held behind a one-time consent
-				prompt for EU/UK account holders. You can turn it off (or back on) anytime in
+			<li>Product analytics is on by default once you have signed in from outside the EU/UK, and held
+				behind a one-time consent prompt for EU/UK account holders. Until Prosper202 knows where you sign
+				in from, it is held. You can turn it off (or back on) anytime in
 				<a href="<?php echo get_absolute_url(); ?>202-account/account.php#data-consent">Personal Settings › Data &amp; communication</a>.</li>
 			<li>Switching it off stops collection and syncing immediately, and deletes the analytics data on
 				your install that has not yet been delivered (queued events and the computed usage profile).</li>

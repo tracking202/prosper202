@@ -37,6 +37,18 @@ final class ConsentPolicyTest extends TestCase
         $this->assertFalse(ConsentPolicy::decide('unset', true, 'analytics'));
     }
 
+    public function test_analytics_unset_unknown_location_is_held(): void
+    {
+        $this->assertFalse(ConsentPolicy::decide('unset', null, 'analytics'));
+        $this->assertTrue(ConsentPolicy::decide('unset', null, 'essential'));
+    }
+
+    public function test_a_stored_value_that_is_no_state_is_held(): void
+    {
+        $this->assertFalse(ConsentPolicy::decide('', false, 'analytics'));
+        $this->assertFalse(ConsentPolicy::decide('yes', false, 'analytics'));
+    }
+
     // ------------------------------------------------------------------
     // Failure semantics (spec §6): a consent LOOKUP FAILURE must never
     // resolve to "granted" — the unreadable stored state might be EU or an
