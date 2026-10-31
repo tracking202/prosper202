@@ -1,7 +1,7 @@
 <?php
 // 202-config/Messaging/UrlScrubber.class.php
-// Cheap belt-and-suspenders: offer URLs are templates and rarely hold PII,
-// but redact any hardcoded email/phone param VALUES before sync just in case.
+// Offer URLs are templates and rarely hold PII, but any email/phone query
+// value is redacted before sync. A URL that cannot be parsed is never sent.
 
 final class UrlScrubber
 {
@@ -10,13 +10,37 @@ final class UrlScrubber
 
     public static function scrub(string $url): string
     {
-        $q = parse_url($url, PHP_URL_QUERY);
-        if ($q === null || $q === false || $q === '') {
+        $parts = parse_url($url);
+        if ($parts === false || !isset($parts['host']) || $parts['host'] === '') {
+            // Unparseable or hostless: nothing of it is sent.
+            return '';
+        }
+        $q = $parts['query'] ?? '';
+        if ($q === '') {
             return $url;
         }
         parse_str($q, $params);
         $changed = false;
+        $params = self::redact($params, $changed);
+        if (!$changed) { return $url; }
+        // http_build_query urlencodes {macros}; only rebuild when something was
+        // redacted, and only the query portion.
+        $base = strtok($url, '?');
+        $frag = $parts['fragment'] ?? null;
+        return $base . '?' . http_build_query($params) . ($frag !== null ? '#' . $frag : '');
+    }
+
+    /**
+     * @param array<array-key, mixed> $params
+     * @return array<array-key, mixed>
+     */
+    private static function redact(array $params, bool &$changed): array
+    {
         foreach ($params as $k => $v) {
+            if (is_array($v)) {
+                $params[$k] = self::redact($v, $changed);
+                continue;
+            }
             if (!is_string($v)) { continue; }
             // parse_str already urldecodes ('+' becomes a space); trim so a
             // leading space from an encoded '+' doesn't defeat the anchors.
@@ -26,12 +50,6 @@ final class UrlScrubber
                 $changed = true;
             }
         }
-        if (!$changed) { return $url; }
-        // http_build_query urlencodes {macros}; only touch params if we actually redacted,
-        // and rebuild only the query portion to preserve the rest of the URL.
-        $rebuilt = http_build_query($params);
-        $base = strtok($url, '?');
-        $frag = parse_url($url, PHP_URL_FRAGMENT);
-        return $base . '?' . $rebuilt . ($frag !== null && $frag !== false ? '#' . $frag : '');
+        return $params;
     }
 }

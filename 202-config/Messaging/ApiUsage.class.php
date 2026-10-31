@@ -74,6 +74,17 @@ final class ApiUsage
             return;
         }
         try {
+            $milestone = $preview ? null : self::milestoneFor($method, $path);
+            // api_used once a day: after the first request of the day a
+            // per-user, per-day APCu key lets a request with no milestone skip
+            // every query. Keyed by the User-Agent's kind (the AI connector
+            // and other API keys share a key; telling them apart needs a query).
+            $bucket = str_starts_with((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 'p202-cli/') ? 'cli' : 'other';
+            $dayKey = 'p202_api_used:' . $userId . ':' . $bucket . ':' . date('Y-m-d');
+            $apcu = function_exists('apcu_fetch') && (bool) ini_get('apc.enabled');
+            if ($milestone === null && $apcu && apcu_fetch($dayKey) !== false) {
+                return;
+            }
             if (!ConsentPolicy::analyticsAllowed($db, $userId)) {
                 return;
             }
@@ -83,7 +94,9 @@ final class ApiUsage
             if (!$service->hasEventSince('api_used', date('Y-m-d 00:00:00'), $meta)) {
                 $service->recordEvent('api_used', $meta, 'analytics');
             }
-            $milestone = $preview ? null : self::milestoneFor($method, $path);
+            if ($apcu) {
+                apcu_store($dayKey, 1, 86400);
+            }
             if ($milestone !== null) {
                 $service->recordEvent($milestone, ['via' => $client], 'analytics');
             }

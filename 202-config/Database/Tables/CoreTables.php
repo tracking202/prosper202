@@ -143,7 +143,8 @@ final class CoreTables
                 `delivery_status` enum('pending','sent','failed') NOT NULL DEFAULT 'pending',
                 `sync_attempts` int(11) NOT NULL DEFAULT '0',
                 PRIMARY KEY (`id`),
-                KEY `user_pending` (`user_id`,`delivery_status`)
+                KEY `user_pending` (`user_id`,`delivery_status`),
+                KEY `user_event_time` (`user_id`,`event_name`,`occurred_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

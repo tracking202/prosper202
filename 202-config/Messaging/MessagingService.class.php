@@ -652,6 +652,28 @@ class MessagingService
             return $e;
         }, $events);
 
+        // Consent read again, uncached, right before sending: rows selected
+        // before a denial that landed since are not sent (the denial purged them).
+        if ($this->analyticsSyncAllowed()) {
+            try {
+                $stillAllowed = ConsentPolicy::analyticsAllowed($this->db, $this->userId);
+            } catch (Throwable $e) {
+                $stillAllowed = false;
+            }
+            if (!$stillAllowed) {
+                $this->analyticsSyncAllowed = false;
+                $events = array_values(array_filter($events, static fn (array $e): bool => ($e['tier'] ?? '') === 'essential'));
+                $payloadEvents = array_map(static function (array $e): array {
+                    unset($e['_local_id']);
+                    return $e;
+                }, $events);
+                $attributesDirty = false;
+                if ($events === []) {
+                    return true;
+                }
+            }
+        }
+
         [$attributes, $attributesVersion] = $this->attributeSnapshot();
         if (!$this->analyticsSyncAllowed()) {
             // Analytics-tier: never sent without consent; the dirty flag stays

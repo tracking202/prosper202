@@ -30,4 +30,18 @@ final class UrlScrubberTest extends TestCase
         $url = 'https://x.com/landing';
         $this->assertSame($url, UrlScrubber::scrub($url));
     }
+
+    public function test_an_unparseable_url_is_never_sent(): void
+    {
+        $this->assertSame('', UrlScrubber::scrub('https://h:99999/x?email=a@b.co&p=+15551234567'));
+        $this->assertSame('', UrlScrubber::scrub('http:///x?email=a@b.co'));
+    }
+
+    public function test_array_values_are_redacted(): void
+    {
+        $out = UrlScrubber::scrub('https://offer.example/x?arr[]=a@b.co&n[k][]=+15551234567&c=1');
+        $this->assertStringNotContainsString('a@b.co', urldecode($out));
+        $this->assertStringNotContainsString('15551234567', urldecode($out));
+        $this->assertStringContainsString('c=1', $out);
+    }
 }
