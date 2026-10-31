@@ -33,6 +33,11 @@ final class LtvPagesRequirePermissionTest extends TestCase
         'tracking202/ajax/ltv_settings.php' => 'access_to_api_integrations',
     ];
 
+    /** page => a permission its reads ask on top of access_to_campaign_data */
+    private const READ_ALSO = [
+        'tracking202/ajax/ltv_settings.php' => 'access_to_api_integrations',
+    ];
+
     public function testEveryLtvEntryPageIsListed(): void
     {
         // By name and by content: a page that reads LTV's repositories or
@@ -75,6 +80,13 @@ final class LtvPagesRequirePermissionTest extends TestCase
         // A Publisher / Campaign viewer holds no permissions: refused on reads and writes.
         self::assertSame($refusedRead, self::runGate($gate, [], []), "$page refuses a read without $read");
         self::assertSame($refusedRead, self::runGate($gate, [], ['action' => 'x']), "$page refuses a write without $read");
+        if (isset(self::READ_ALSO[$page])) {
+            // LTV Settings: webhooks and integrations are API Integrations' to see too.
+            $also = self::READ_ALSO[$page];
+            self::assertSame("This account's role does not have the '$also' permission.", self::runGate($gate, [$read], []), "$page refuses a read without $also");
+            self::assertSame('passed', self::runGate($gate, [$read, $also], ['action' => 'x']), "$page lets a role with $also read and write");
+            return;
+        }
         // A role that may read reads.
         self::assertSame('passed', self::runGate($gate, [$read], []), "$page lets a role with $read read");
 

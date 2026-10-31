@@ -627,8 +627,6 @@ try {
             $r->get('/companies',      fn() => $crud($cls)->listCompanies($queryParams));
             $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
             $r->get('/fields',         fn() => $crud($cls)->fieldsList());
-            $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
-            $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries(PathId::of($ctx), $queryParams));
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:read');
@@ -638,10 +636,13 @@ try {
             },
         ]);
 
-        // ── LTV: integrations read (ltv:read): their stored provider config is
-        // Account › API Integrations' to read, as it is to change.
-        $router->group('/ltv', function (Router $r) use ($crud) {
+        // ── LTV Settings reads (ltv:read): webhook URLs, delivery logs and
+        // integrations' stored config are Account › API Integrations' to read,
+        // as they are to change.
+        $router->group('/ltv', function (Router $r) use ($crud, $queryParams) {
             $cls = \Api\V3\Controllers\LtvController::class;
+            $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
+            $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries(PathId::of($ctx), $queryParams));
             $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
         }, [
             static function () use ($auth): void {

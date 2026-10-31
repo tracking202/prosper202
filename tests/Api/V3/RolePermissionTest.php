@@ -165,7 +165,7 @@ final class RolePermissionTest extends TestCase
      * writes (customers, companies, products) Setup's permission; the
      * Settings writes (fields, webhooks, integrations, which hold secrets)
      * access_to_api_integrations, as Account › API Integrations does, which
-     * GET /ltv/integrations (stored provider config) asks as well. Each
+     * the Settings reads (webhooks, deliveries, integrations) ask as well. Each
      * after the key's ltv scope.
      */
     public function testLtvRoutesAskTheirPagesPermissions(): void
@@ -177,7 +177,7 @@ final class RolePermissionTest extends TestCase
         $seen = ['read' => 0, 'incoming' => 0, 'crm' => 0, 'settings' => 0];
         foreach ($ltv as $route) {
             $key = $route['method'] . ' ' . $route['path'];
-            if ($key === 'GET /ltv/integrations') {
+            if (preg_match('#^GET /ltv/(integrations|webhooks)(/|$)#', $key) === 1) {
                 [$kind, $expected] = ['read', [$scope('ltv:read'), $gate('access_to_campaign_data'), $gate('access_to_api_integrations')]];
             } elseif ($route['method'] === 'GET') {
                 [$kind, $expected] = ['read', [$scope('ltv:read'), $gate('access_to_campaign_data')]];

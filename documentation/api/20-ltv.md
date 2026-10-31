@@ -17,7 +17,7 @@ fields, companies), or sends it on (webhooks).
 ## Rules that hold for every LTV route
 
 - **Scopes.** Reads need `ltv:read`; writes and deletes `ltv:write`.
-- **Role permissions.** The key's user's role must also hold `access_to_campaign_data` for every read and for revenue, event, subscription and next-offer impression writes, `access_to_setup_section` for customer, company and product writes, and `access_to_api_integrations` for field, webhook and integration writes and for reading integrations (`GET /ltv/integrations`); otherwise the answer is 403.
+- **Role permissions.** The key's user's role must also hold `access_to_campaign_data` for every read and for revenue, event, subscription and next-offer impression writes, `access_to_setup_section` for customer, company and product writes, and `access_to_api_integrations` for field, webhook and integration writes and for reading webhooks, their deliveries and integrations; otherwise the answer is 403.
 - **Strict bodies.** A key a route does not take is a `422` naming it and
   listing what it does take; so is a key inside a nested object
   (`items.0.qty`, `aliases.0.tpye`, `customer_crm.frist_name`). Numbers are

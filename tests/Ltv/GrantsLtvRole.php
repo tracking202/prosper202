@@ -19,7 +19,10 @@ trait GrantsLtvRole
         self::row('202_roles', ['role_id' => $role, 'role_name' => 'ltv test ' . $role]);
         foreach (['access_to_campaign_data', 'access_to_setup_section', 'access_to_api_integrations'] as $name) {
             $found = self::$db->query("SELECT permission_id FROM 202_permissions WHERE permission_description = '$name'");
-            $permission = $found instanceof \mysqli_result ? ($found->fetch_row()[0] ?? null) : null;
+            if (!$found instanceof \mysqli_result) {
+                throw new \RuntimeException("looking up $name failed: " . self::$db->error);
+            }
+            $permission = $found->fetch_row()[0] ?? null;
             if ($permission === null) {
                 $permission = self::insert("INSERT INTO 202_permissions SET permission_description = '$name'");
                 self::$ltvAddedPermissions[] = $permission;
