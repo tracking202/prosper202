@@ -125,8 +125,11 @@ final class ConsentPolicy
                 );
                 $conn->bind($stmt, 'si', [$state, $userId]);
             }
-            $conn->executeUpdate($stmt);
-            $ok = true;
+            // No row matched: nothing was stored, so it is not a success.
+            $ok = $conn->executeUpdate($stmt) > 0;
+            if (!$ok) {
+                error_log('[ConsentPolicy] record matched no 202_users_pref row for user ' . $userId);
+            }
         } catch (\Throwable $e) {
             error_log('[ConsentPolicy] record failed: ' . $e->getMessage());
             return false;

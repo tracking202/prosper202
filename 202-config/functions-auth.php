@@ -622,7 +622,9 @@ class AUTH
             if (($record->country->isoCode ?? null) === null) {
                 return null;
             }
-            return (bool) $record->country->isInEuropeanUnion;
+            // The disclosure promises EU/UK: the UK and the EEA outside the EU too.
+            return (bool) $record->country->isInEuropeanUnion
+                || in_array($record->country->isoCode, ['GB', 'NO', 'IS', 'LI'], true);
         } catch (\Throwable) {
             return null; // Private/unroutable IP, bad DB, etc. → inconclusive.
         } finally {

@@ -347,13 +347,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$_SESSION['user_timezone'] = $postedTimezone;
 					// Consent toggles go through ConsentPolicy only, and only when the
 					// form showed them; a failure must not break the settings save.
+					// A box left as the page showed it records nothing, so saving
+					// the page never turns a default into an explicit choice.
 					if (!empty($_POST['consent_form'])) {
 						$consentUserId = (int) $_SESSION['user_id'];
-						if (!ConsentPolicy::record($db, $consentUserId, 'analytics', !empty($_POST['analytics_consent']) ? 'granted' : 'denied', 'settings')) {
-							error_log('[Consent] failed to record analytics consent for user ' . $consentUserId);
-						}
-						if (!ConsentPolicy::record($db, $consentUserId, 'email_marketing', !empty($_POST['email_marketing_consent']) ? 'granted' : 'denied', 'settings')) {
-							error_log('[Consent] failed to record email marketing consent for user ' . $consentUserId);
+						foreach (['analytics' => 'analytics_consent', 'email_marketing' => 'email_marketing_consent'] as $consentFlag => $consentField) {
+							$consentNow = !empty($_POST[$consentField]);
+							if ($consentNow === (($_POST[$consentField . '_shown'] ?? '') === '1')) {
+								continue;
+							}
+							if (!ConsentPolicy::record($db, $consentUserId, $consentFlag, $consentNow ? 'granted' : 'denied', 'settings')) {
+								error_log('[Consent] failed to record ' . $consentFlag . ' consent for user ' . $consentUserId);
+								$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your other settings are saved, but your Data & communication choice could not be. Try again.'];
+							}
 						}
 					}
 					//try to set non expiring cache for values that are used in redirects
@@ -995,6 +1001,8 @@ echo p202_account_render_flashes($extraFlashes);
 						<fieldset class="mb-3" id="data-consent">
 							<legend class="form-label">Data &amp; communication</legend>
 							<input type="hidden" name="consent_form" value="1">
+							<input type="hidden" name="analytics_consent_shown" value="<?php echo $analyticsChecked !== '' ? '1' : '0'; ?>">
+							<input type="hidden" name="email_marketing_consent_shown" value="<?php echo $emailChecked !== '' ? '1' : '0'; ?>">
 							<div class="form-check">
 								<input class="form-check-input" type="checkbox" name="analytics_consent" id="analytics_consent" value="1"<?php echo $analyticsChecked; ?>>
 								<label class="form-check-label" for="analytics_consent"><strong>Product analytics &amp; personalized help</strong>: lets us surface workflow tips and match

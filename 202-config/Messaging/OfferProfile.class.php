@@ -66,8 +66,17 @@ final class OfferProfile
      * Each query checks its return value; on any failure the partial-safe
      * defaults are returned (never throws).
      */
+    /** Whether the last compute() had a read fail (its figures are then partial). */
+    private static bool $readFailed = false;
+
+    public static function lastComputeFailed(): bool
+    {
+        return self::$readFailed;
+    }
+
     public static function compute(mysqli $db, int $userId, int $now): array
     {
+        self::$readFailed = false;
         $since = $now - 30 * 86400;
         $out = [
             'clicks_30d'=>0,'conversions_30d'=>0,'income_30d'=>0.0,'cost_30d'=>0.0,'net_30d'=>0.0,
@@ -134,7 +143,7 @@ final class OfferProfile
         $out['active_trackers'] = count(self::all($conn,
             "SELECT t.tracker_id FROM `202_trackers` t
                JOIN `202_aff_campaigns` cmp ON cmp.aff_campaign_id = t.aff_campaign_id
-                AND cmp.aff_campaign_deleted = 0
+                AND cmp.user_id = t.user_id AND cmp.aff_campaign_deleted = 0
               WHERE t.user_id = ?", 'i', [$userId]));
 
         // --- top geos (top 5 countries by clicks, 30d) ---
@@ -170,9 +179,9 @@ final class OfferProfile
                     COALESCE(SUM(d.clicks),0) clicks, COALESCE(SUM(d.income),0) income,
                     COALESCE(SUM(d.leads),0) leads
                FROM `202_aff_campaigns` cmp
-               LEFT JOIN `202_aff_networks` net ON net.aff_network_id = cmp.aff_network_id
+               LEFT JOIN `202_aff_networks` net ON net.aff_network_id = cmp.aff_network_id AND net.user_id = cmp.user_id
                LEFT JOIN `202_dataengine` d
-                      ON d.aff_campaign_id = cmp.aff_campaign_id AND d.click_time >= ?
+                      ON d.aff_campaign_id = cmp.aff_campaign_id AND d.user_id = cmp.user_id AND d.click_time >= ?
               WHERE cmp.user_id = ? AND cmp.aff_campaign_deleted = 0
               GROUP BY cmp.aff_campaign_id", 'ii', [$since, $userId]) as $r) {
             $out['offers'][] = self::buildOfferRow($r);
@@ -196,6 +205,7 @@ final class OfferProfile
                 'uses_ltv'             => ((int) ($summary['customers'] ?? 0)) > 0,
             ];
         } catch (\Throwable $e) {
+            self::$readFailed = true;
             error_log('[OfferProfile] ltv aggregates unavailable: ' . $e->getMessage());
         }
 
@@ -222,6 +232,7 @@ final class OfferProfile
             $conn->bind($stmt, $types, $values);
             return $conn->fetchOne($stmt);
         } catch (\Throwable $e) {
+            self::$readFailed = true;
             error_log('[OfferProfile] read failed: ' . $e->getMessage());
             return null;
         }
@@ -240,6 +251,7 @@ final class OfferProfile
             $conn->bind($stmt, $types, $values);
             return array_values($conn->fetchAll($stmt));
         } catch (\Throwable $e) {
+            self::$readFailed = true;
             error_log('[OfferProfile] read failed: ' . $e->getMessage());
             return [];
         }

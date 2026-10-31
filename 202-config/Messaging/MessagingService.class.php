@@ -410,6 +410,11 @@ class MessagingService
                     continue;
                 }
                 $profile = OfferProfile::compute($db, $userId, $now);
+                if (OfferProfile::lastComputeFailed()) {
+                    // Partial figures would overwrite a good profile with zeros.
+                    error_log("Analytics profile refresh: user {$userId} kept the last profile; a read failed");
+                    continue;
+                }
                 // Unchanged since the last run: nothing to mark for delivery.
                 if (array_intersect_key($service->getAttributes(), $profile) != $profile) {
                     $service->updateAttributes($profile);
@@ -702,7 +707,7 @@ class MessagingService
             $types = 'iss';
             $params = [$this->userId, $name, $since];
             if ($metadata !== null) {
-                $sql .= ' AND metadata = ?';
+                $sql .= ' AND metadata = CAST(? AS JSON)';
                 $types .= 's';
                 $params[] = (string) json_encode($metadata);
             }
