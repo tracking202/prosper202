@@ -131,6 +131,13 @@ func noteMasked(data []byte) {
 }
 
 func renderJSON(data []byte, compact bool) {
+	if compact {
+		if out, ok := canonicalCompact(data); ok {
+			// A closed stdout (piping to `head`) is not actionable here.
+			_, _ = os.Stdout.Write(out)
+			return
+		}
+	}
 	var parsed interface{}
 	if json.Unmarshal(data, &parsed) == nil {
 		if compact {
