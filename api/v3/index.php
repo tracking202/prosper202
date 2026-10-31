@@ -627,6 +627,20 @@ try {
             $r->get('/companies',      fn() => $crud($cls)->listCompanies($queryParams));
             $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
             $r->get('/fields',         fn() => $crud($cls)->fieldsList());
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:read');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_campaign_data');
+            },
+        ]);
+
+        // ── LTV Settings reads (ltv:read): webhook URLs, delivery logs and
+        // integrations' stored config are Account › API Integrations' to read,
+        // as they are to change.
+        $router->group('/ltv', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\LtvController::class;
             $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
             $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries(PathId::of($ctx), $queryParams));
             $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
@@ -634,9 +648,15 @@ try {
             static function () use ($auth): void {
                 $auth->requireScope('ltv:read');
             },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_campaign_data');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_api_integrations');
+            },
         ]);
 
-        // ── LTV: CRM + inbound integration writes (ltv:write) ──────────
+        // ── LTV: CRM writes (ltv:write) ──────────
         $router->group('/ltv', function (Router $r) use ($crud, $payload) {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->post('/customers',                fn() => ['_status' => 201] + $crud($cls)->upsertCustomer($payload));
@@ -644,12 +664,28 @@ try {
             $r->post('/customers/{id}/merge',     fn($ctx) => $crud($cls)->mergeCustomer(PathId::of($ctx), $payload));
             $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer(PathId::of($ctx))));
             $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias(PathId::of($ctx), $payload));
-            $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression(PathId::of($ctx), $payload));
             $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomerAlias(PathId::of($ctx), PathId::of($ctx, 'aliasId'))));
             $r->post('/companies',                fn() => ['_status' => 201] + $crud($cls)->createCompany($payload));
             $r->patch('/companies/{id}',          fn($ctx) => $crud($cls)->patchCompany(PathId::of($ctx), $payload));
             $r->post('/companies/{id}/merge',     fn($ctx) => $crud($cls)->mergeCompany(PathId::of($ctx), $payload));
             $r->delete('/companies/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCompany(PathId::of($ctx))));
+            $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
+            $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct(PathId::of($ctx), $payload));
+            $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct(PathId::of($ctx))));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:write');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_setup_section');
+            },
+        ]);
+
+        // ── LTV: incoming data (ltv:write): revenue, events, subscriptions
+        // an integration sends; it asks the read permission, not Setup's.
+        $router->group('/ltv', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\LtvController::class;
+            $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression(PathId::of($ctx), $payload));
             $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
             $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
             $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
@@ -658,9 +694,19 @@ try {
             // space, '/', '?'): decode it, or such a subscription could
             // never be found here.
             $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent(rawurldecode((string)$ctx['ref']), $payload));
-            $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
-            $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct(PathId::of($ctx), $payload));
-            $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct(PathId::of($ctx))));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:write');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_campaign_data');
+            },
+        ]);
+
+        // ── LTV Settings writes (ltv:write): fields, webhooks, integrations
+        // hold secrets, so they ask what Account › API Integrations asks.
+        $router->group('/ltv', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\LtvController::class;
             $r->post('/fields',                   fn() => ['_status' => 201] + $crud($cls)->createField($payload));
             $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField(PathId::of($ctx), $payload));
             $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField(PathId::of($ctx))));
@@ -672,6 +718,9 @@ try {
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:write');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_api_integrations');
             },
         ]);
 
@@ -1354,8 +1403,8 @@ try {
             PathId::of($ctx, 'campaignId')
         ), \Api\V3\Support\CampaignFigures::GOAL));
         // The LTV deletes make no authorization check inside their handlers:
-        // the group's ltv:write middleware, run from the main match before
-        // this router is consulted, is their only one.
+        // the groups' ltv:write scope and role-permission middleware, run from
+        // the main match before this router is consulted, are their only ones.
         $previewRouter->group('/ltv', function (Router $r) use ($crud) {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->delete('/customers/{id}',                   fn($ctx) => $crud($cls)->deleteCustomerPreview(PathId::of($ctx)));

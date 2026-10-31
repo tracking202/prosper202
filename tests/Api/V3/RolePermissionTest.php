@@ -75,7 +75,6 @@ final class RolePermissionTest extends TestCase
 
     /** [path pattern, why no role permission] for the rest. */
     private const NO_ROLE_CHECK = [
-        ['#^/ltv(/|$)#', 'Analyze › Customer LTV asks for none (tracking202/analyze/ltv.php); keys need ltv scopes'],
         ['#^/events$#', 'goal events, sent by the account\'s own sites; no page'],
         ['#^/staged-changes(/|$)#', 'a proposal; applying runs the target route, its checks included, as the applier'],
         ['#^/capabilities$#', 'what the server offers; no account data'],
@@ -156,6 +155,43 @@ final class RolePermissionTest extends TestCase
         $expected = array_keys(self::GATED_AND_MASKED);
         sort($expected);
         self::assertSame($expected, $seenGatedMasked, 'every gated and masked route exists');
+    }
+
+    /**
+     * LTV asks what its pages ask: every read access_to_campaign_data (the
+     * customers' revenue, as the reports' money), and so does the incoming
+     * data a site or integration sends (revenue, events, subscriptions,
+     * next-offer impressions); the CRM
+     * writes (customers, companies, products) Setup's permission; the
+     * Settings writes (fields, webhooks, integrations, which hold secrets)
+     * access_to_api_integrations, as Account › API Integrations does, which
+     * the Settings reads (webhooks, deliveries, integrations) ask as well. Each
+     * after the key's ltv scope.
+     */
+    public function testLtvRoutesAskTheirPagesPermissions(): void
+    {
+        $gate = static fn (string $p): string => "staticfunction()use(\$auth,\$db):void{\$auth->requirePermission(\$db,'$p');}";
+        $scope = static fn (string $s): string => "staticfunction()use(\$auth):void{\$auth->requireScope('$s');}";
+        $ltv = array_values(array_filter($this->mainRoutes(), static fn (array $r): bool => preg_match('#^/ltv(/|$)#', $r['path']) === 1));
+        self::assertGreaterThan(40, count($ltv), 'the LTV routes were read');
+        $seen = ['read' => 0, 'incoming' => 0, 'crm' => 0, 'settings' => 0];
+        foreach ($ltv as $route) {
+            $key = $route['method'] . ' ' . $route['path'];
+            if (preg_match('#^GET /ltv/(integrations|webhooks)(/|$)#', $key) === 1) {
+                [$kind, $expected] = ['read', [$scope('ltv:read'), $gate('access_to_campaign_data'), $gate('access_to_api_integrations')]];
+            } elseif ($route['method'] === 'GET') {
+                [$kind, $expected] = ['read', [$scope('ltv:read'), $gate('access_to_campaign_data')]];
+            } elseif (preg_match('#^/ltv/(fields|webhooks|integrations)(/|$)#', $route['path']) === 1) {
+                [$kind, $expected] = ['settings', [$scope('ltv:write'), $gate('access_to_api_integrations')]];
+            } elseif (preg_match('#^/ltv/(revenue|events|subscriptions)(/|$)|^/ltv/customers/\{id\}/next-offer/impression$#', $route['path']) === 1) {
+                [$kind, $expected] = ['incoming', [$scope('ltv:write'), $gate('access_to_campaign_data')]];
+            } else {
+                [$kind, $expected] = ['crm', [$scope('ltv:write'), $gate('access_to_setup_section')]];
+            }
+            $seen[$kind]++;
+            self::assertSame($expected, $route['middleware'], "$key (line {$route['line']}) asks the $kind permission");
+        }
+        self::assertGreaterThan(0, min($seen), 'reads, CRM writes and Settings writes were all found: ' . json_encode($seen));
     }
 
     /**

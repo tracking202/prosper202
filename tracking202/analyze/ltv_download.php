@@ -5,6 +5,7 @@ $rootPath = dirname(__DIR__, 2);
 include_once $rootPath . '/202-config/connect.php';
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_campaign_data'); // LTV shows customers' revenue
 AUTH::set_timezone($_SESSION['user_timezone']);
 
 // Export the window the page drew (the link carries its view), not

@@ -23,6 +23,7 @@ include_once $rootPath . '/202-config/connect.php';
 require_once __DIR__ . '/AnalyzeReportController.php';
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_campaign_data'); // LTV shows customers' revenue
 AUTH::set_timezone($_SESSION['user_timezone']);
 
 $store = new ReportPrefsStore($db);
