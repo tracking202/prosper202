@@ -134,6 +134,12 @@ var searchTasks = []searchTask{
 	// Account menu
 	{Run: "p202 user prefs update", Pages: []string{"Personal Settings"},
 		Phrases: []string{"my preferences", "report defaults", "privacy setting", "same ip fallback"}},
+	{Run: "p202 click-filter get",
+		Phrases: []string{"why are clicks filtered", "click filtering settings", "repeat visit window"}},
+	{Run: "p202 click-filter list add",
+		Phrases: []string{"always count clicks from an office", "filter a click farm", "click filter address list"}},
+	{Run: "p202 click-filter test",
+		Phrases: []string{"would this address be filtered"}},
 	{Run: "p202 config set-url",
 		Phrases: []string{"instance url", "install address", "server address", "connect the cli to an install"}},
 	{Run: "p202 system info", Pages: []string{"Settings"},

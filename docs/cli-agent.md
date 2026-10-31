@@ -851,13 +851,35 @@ p202 click list [--limit 50] [--offset 0] [--time-from T] [--time-to T]
                 [--show all|real|filtered|filtered_bot|leads] [--device-type N] [... every report filter] [--json]
 p202 click list --follow [--limit 10] [--interval 5s] [--stop-after 10m] [--ndjson]
                 # the Spy page: newest clicks, then one JSON line per new click; bound it with --stop-after
-p202 click get <id> [--json]
+p202 click get <id> [--json]           # filter_reason: why a filtered click is (null before 1.9.79)
+p202 click list --filter-reason sign_in_address|crawler_range|repeat_visit|filter_list|bot|not_recorded
 p202 click conversions <id> [--json]   # every conversion on the click, counted or not and why
 p202 click update-cpc --from YYYY-MM-DD --to YYYY-MM-DD --cpc D
                 [--aff-network-id N] [--aff-campaign-id N] [--ppc-network-id N] [--ppc-account-id N]
                 [--landing-page-id N] [--text-ad-id N] [--method-of-promotion directlink|landingpage]
                 [--dry-run] [--force] [--json]   # the only click write: what past clicks cost
 ```
+
+### Click filter
+
+Why clicks are marked filtered (Personal Settings › Click filtering), on the
+key's own account unless `--user-id` names another the key may manage.
+
+```
+p202 click-filter get [--user-id N] [--json]       # checks, repeat window, address list
+p202 click-filter set [--sign-in-addresses 0|1] [--crawler-ranges 0|1] [--repeat-visits 0|1]
+                      [--repeat-window 1h|6h|24h|7d]
+p202 click-filter list                              # the address list
+p202 click-filter list add <address|cidr> --action count|filter [--note T]
+p202 click-filter list update <entry-id> [--address A] [--action count|filter] [--note T]
+p202 click-filter list remove <entry-id> [--dry-run] [--force]
+p202 click-filter test <ip>                         # filtered?, reason, entry, each check's answer
+```
+
+`count` beats every check and `filter` beats the built-in ones; bot detection
+always applies. The defaults (every check on, `24h`) filter as the install did
+before 1.9.79. A refused entry names the field: a block not written where it
+starts names the one it meant, the same block twice is a 409 naming the entry.
 
 ### Conversions
 

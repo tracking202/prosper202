@@ -32,10 +32,10 @@ use Tests\Support\SourceScan;
  * The other direction too: the click filter compares the address a click
  * ARRIVED from with the operator's sign-in address, which is stored as it
  * arrived; comparing the stored, masked one, it matched nobody under privacy
- * and the owner's own clicks were counted. FILTER::startFilter() reads the
- * arrived address itself now, and every call passes the four arguments it
- * takes — a call still handing it an address, the old fifth argument, would
- * shift the user id into the address's place.
+ * and the owner's own clicks were counted. FILTER::verdict() reads the
+ * arrived address itself now, and every call passes the three arguments it
+ * takes — a call still handing it an address would shift the user id into
+ * the address's place.
  */
 final class StoredVisitorIpSourceTest extends TestCase
 {
@@ -137,16 +137,20 @@ final class StoredVisitorIpSourceTest extends TestCase
     {
         $calls = [];
         foreach (SourceScan::phpFiles() as $path => $source) {
-            foreach (CallArgs::calls($source, ['startFilter']) as $call) {
-                $calls[] = [$path, $call['line'], count($call['args'])];
+            foreach (CallArgs::calls($source, ['startFilter', 'verdict']) as $call) {
+                // FILTER::verdict(), and the startFilter() it replaced, by any receiver.
+                if ($call['name'] === 'startfilter' || strtolower($call['receiver']) === 'filter') {
+                    $calls[] = [$path, $call['line'], count($call['args']), $call['name']];
+                }
             }
         }
 
         // dl.php, rtr.php and the two landing-page recorders.
         self::assertGreaterThanOrEqual(4, count($calls), 'the scan finds the click filter\'s callers');
-        foreach ($calls as [$path, $line, $count]) {
-            self::assertSame(4, $count, "$path:$line calls FILTER::startFilter() with $count arguments. It takes"
-                . ' ($db, $click_id, $ip_id, $user_id) and reads the address the click arrived from itself; an'
+        foreach ($calls as [$path, $line, $count, $name]) {
+            self::assertSame('verdict', $name, "$path:$line calls FILTER::startFilter(), which FILTER::verdict() replaced");
+            self::assertSame(3, $count, "$path:$line calls FILTER::verdict() with $count arguments. It takes"
+                . ' ($db, $ip_id, $user_id) and reads the address the click arrived from itself; an'
                 . ' address handed in would land where the user id goes.');
         }
     }
