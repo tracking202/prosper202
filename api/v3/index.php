@@ -639,7 +639,7 @@ try {
             },
         ]);
 
-        // ── LTV: CRM + inbound integration writes (ltv:write) ──────────
+        // ── LTV: CRM writes (ltv:write) ──────────
         $router->group('/ltv', function (Router $r) use ($crud, $payload) {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->post('/customers',                fn() => ['_status' => 201] + $crud($cls)->upsertCustomer($payload));
@@ -653,14 +653,6 @@ try {
             $r->patch('/companies/{id}',          fn($ctx) => $crud($cls)->patchCompany(PathId::of($ctx), $payload));
             $r->post('/companies/{id}/merge',     fn($ctx) => $crud($cls)->mergeCompany(PathId::of($ctx), $payload));
             $r->delete('/companies/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCompany(PathId::of($ctx))));
-            $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
-            $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
-            $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
-            // The external id is the caller's own string, so it arrives
-            // percent-encoded when it has a character a path escapes (a
-            // space, '/', '?'): decode it, or such a subscription could
-            // never be found here.
-            $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent(rawurldecode((string)$ctx['ref']), $payload));
             $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
             $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct(PathId::of($ctx), $payload));
             $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct(PathId::of($ctx))));
@@ -670,6 +662,27 @@ try {
             },
             static function () use ($auth, $db): void {
                 $auth->requirePermission($db, 'access_to_setup_section');
+            },
+        ]);
+
+        // ── LTV: incoming data (ltv:write): revenue, events, subscriptions
+        // an integration sends; it asks the read permission, not Setup's.
+        $router->group('/ltv', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\LtvController::class;
+            $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
+            $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
+            $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
+            // The external id is the caller's own string, so it arrives
+            // percent-encoded when it has a character a path escapes (a
+            // space, '/', '?'): decode it, or such a subscription could
+            // never be found here.
+            $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent(rawurldecode((string)$ctx['ref']), $payload));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:write');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_campaign_data');
             },
         ]);
 

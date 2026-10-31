@@ -159,8 +159,9 @@ final class RolePermissionTest extends TestCase
 
     /**
      * LTV asks what its pages ask: every read access_to_campaign_data (the
-     * customers' revenue, as the reports' money); the CRM writes (customers,
-     * companies, products, revenue, subscriptions) Setup's permission; the
+     * customers' revenue, as the reports' money), and so does the incoming
+     * data an integration sends (revenue, events, subscriptions); the CRM
+     * writes (customers, companies, products) Setup's permission; the
      * Settings writes (fields, webhooks, integrations, which hold secrets)
      * access_to_api_integrations, as Account › API Integrations does. Each
      * after the key's ltv scope.
@@ -171,13 +172,15 @@ final class RolePermissionTest extends TestCase
         $scope = static fn (string $s): string => "staticfunction()use(\$auth):void{\$auth->requireScope('$s');}";
         $ltv = array_values(array_filter($this->mainRoutes(), static fn (array $r): bool => preg_match('#^/ltv(/|$)#', $r['path']) === 1));
         self::assertGreaterThan(40, count($ltv), 'the LTV routes were read');
-        $seen = ['read' => 0, 'crm' => 0, 'settings' => 0];
+        $seen = ['read' => 0, 'incoming' => 0, 'crm' => 0, 'settings' => 0];
         foreach ($ltv as $route) {
             $key = $route['method'] . ' ' . $route['path'];
             if ($route['method'] === 'GET') {
                 [$kind, $expected] = ['read', [$scope('ltv:read'), $gate('access_to_campaign_data')]];
             } elseif (preg_match('#^/ltv/(fields|webhooks|integrations)(/|$)#', $route['path']) === 1) {
                 [$kind, $expected] = ['settings', [$scope('ltv:write'), $gate('access_to_api_integrations')]];
+            } elseif (preg_match('#^/ltv/(revenue|events|subscriptions)(/|$)#', $route['path']) === 1) {
+                [$kind, $expected] = ['incoming', [$scope('ltv:write'), $gate('access_to_campaign_data')]];
             } else {
                 [$kind, $expected] = ['crm', [$scope('ltv:write'), $gate('access_to_setup_section')]];
             }
