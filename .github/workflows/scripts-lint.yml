@@ -87,7 +87,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.3'
           cache-dependency-path: go-cli/go.sum
 
       # The binary only. golangci-lint-action@v7 always runs the linter and
@@ -96,7 +96,7 @@ jobs:
       - name: Install golangci-lint
         run: |
           # go install, so it is built with this job's Go and reads its export data.
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/golangci-lint" --version
 
