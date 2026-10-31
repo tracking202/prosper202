@@ -165,7 +165,7 @@ final class MessagingServiceIntegrationTest extends TestCase
             {
             }
 
-            public function track(array $identity, array $attributes, array $events): ?array
+            public function track(array $identity, array $attributes, array $events, ?array $consent = null): ?array
             {
                 ($this->onTrack)($attributes);
                 return ['ok' => true];
