@@ -437,15 +437,17 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 			$p202ChatJson = JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE;
 			?>
 			<?php
-			// Server-side page-view (analytics tier → self-gates on consent).
-			require_once __DIR__ . '/Messaging/Analytics.class.php';
-			$p202_route = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: 'unknown';
-			Analytics::event('page_viewed', ['path' => $p202_route], 'analytics');
-
-			// One-time EU consent prompt. ConsentPolicy is the only consent
-			// reader; a consent lookup failure must never break the page.
-			require_once __DIR__ . '/Messaging/ConsentPolicy.class.php';
+			// Server-side page-view (analytics tier, consent-gated) and the
+			// one-time EU/UK consent prompt; neither may break the page.
+			$p202_needs_prompt = false;
 			try {
+				$p202_analytics = (defined('CONFIG_PATH') ? CONFIG_PATH : __DIR__) . '/Messaging/Analytics.class.php';
+				if (!is_file($p202_analytics)) {
+					throw new \RuntimeException('product analytics is not installed beside this template');
+				}
+				require_once $p202_analytics;
+				$p202_route = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: 'unknown';
+				Analytics::event('page_viewed', ['path' => $p202_route], 'analytics');
 				$p202_consent_db = $GLOBALS['db'] ?? null;
 				$p202_needs_prompt = ($p202_consent_db instanceof mysqli)
 					&& ConsentPolicy::needsEuPrompt($p202_consent_db, (int) $_SESSION['user_id']);

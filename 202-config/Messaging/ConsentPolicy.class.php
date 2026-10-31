@@ -112,18 +112,18 @@ final class ConsentPolicy
             if ($flag === 'analytics') {
                 $stmt = $conn->prepareWrite(
                     "UPDATE `202_users_pref`
-                        SET `analytics_consent` = ?, `analytics_consent_at` = NOW(),
+                        SET `analytics_consent` = ?, `analytics_consent_at` = ?,
                             `analytics_consent_source` = ?, `eu_consent_prompt_seen` = 1
                       WHERE `user_id` = ?"
                 );
-                $conn->bind($stmt, 'ssi', [$state, $source, $userId]);
+                $conn->bind($stmt, 'sssi', [$state, date('Y-m-d H:i:s'), $source, $userId]);
             } else {
                 $stmt = $conn->prepareWrite(
                     "UPDATE `202_users_pref`
-                        SET `email_marketing_consent` = ?, `email_marketing_consent_at` = NOW()
+                        SET `email_marketing_consent` = ?, `email_marketing_consent_at` = ?
                       WHERE `user_id` = ?"
                 );
-                $conn->bind($stmt, 'si', [$state, $userId]);
+                $conn->bind($stmt, 'ssi', [$state, date('Y-m-d H:i:s'), $userId]);
             }
             // No row matched: nothing was stored, so it is not a success.
             $ok = $conn->executeUpdate($stmt) > 0;

@@ -608,7 +608,7 @@ class AUTH
             return null;
         }
 
-        $mmdb = __DIR__ . '/geo/GeoLite2-City.mmdb';
+        $mmdb = \Prosper202\GeoIp\CityDatabase::PATH;
         if (!is_readable($mmdb)) {
             return null;
         }

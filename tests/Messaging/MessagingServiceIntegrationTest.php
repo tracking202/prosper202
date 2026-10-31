@@ -360,7 +360,7 @@ final class MessagingServiceIntegrationTest extends TestCase
         // A scratch database another suite installed carries foreign keys
         // onto 202_users; they do not concern these tables' rows.
         $this->assertTrue($db->query('SET FOREIGN_KEY_CHECKS = 0'));
-        foreach ([UserTables::users(), CoreTables::messagingSync(), CoreTables::messagingEvents(), CoreTables::messagingAttributes()] as $definition) {
+        foreach ([UserTables::users(), UserTables::usersPref(), CoreTables::messagingSync(), CoreTables::messagingEvents(), CoreTables::messagingAttributes()] as $definition) {
             $this->assertTrue($db->query('DROP TABLE IF EXISTS `' . $definition->tableName . '`'));
             $this->assertTrue($db->query($definition->createStatement));
         }

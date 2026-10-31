@@ -23,7 +23,7 @@ template_top('Product Analytics Disclosure');
 ?>
 
 <div style="max-width: 860px; margin: 24px auto 48px; padding: 0 16px;">
-	<div class="page-header">
+	<div class="p202-page-header">
 		<h4>Product analytics &amp; personalized help</h4>
 		<p>What leaves your install, what never does, and how to switch it off.</p>
 	</div>
