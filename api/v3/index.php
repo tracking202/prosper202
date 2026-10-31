@@ -629,6 +629,19 @@ try {
             $r->get('/fields',         fn() => $crud($cls)->fieldsList());
             $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
             $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries(PathId::of($ctx), $queryParams));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:read');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_campaign_data');
+            },
+        ]);
+
+        // ── LTV: integrations read (ltv:read): their stored provider config is
+        // Account › API Integrations' to read, as it is to change.
+        $router->group('/ltv', function (Router $r) use ($crud) {
+            $cls = \Api\V3\Controllers\LtvController::class;
             $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
         }, [
             static function () use ($auth): void {
@@ -636,6 +649,9 @@ try {
             },
             static function () use ($auth, $db): void {
                 $auth->requirePermission($db, 'access_to_campaign_data');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_api_integrations');
             },
         ]);
 
