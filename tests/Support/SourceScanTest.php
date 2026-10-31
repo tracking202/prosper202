@@ -221,6 +221,7 @@ final class SourceScanTest extends TestCase
             'tests/Apps/Android/CampaignLinkChangeFeedTest.php' => 1,
             'tests/Apps/Android/Integrity/FakeGoogle.php' => 1,
             'tests/Apps/AppTokenHygieneTest.php' => 1,
+            'tests/Config/IntegrationShardRunnerTest.php' => 1,
             'tests/Conversion/ConversionCreateDuplicateTest.php' => 1,
             'tests/Conversion/ConversionIdempotencyIntegrationTest.php' => 1,
             'tests/GeoIp/GeoIpFixture.php' => 1,
