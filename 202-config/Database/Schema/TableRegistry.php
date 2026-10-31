@@ -40,6 +40,8 @@ final class TableRegistry
     public const string ROLE_PERMISSION = '202_role_permission';
     public const string API_KEYS = '202_api_keys';
     public const string AUTH_KEYS = '202_auth_keys';
+    public const string CLICK_FILTER_SETTINGS = '202_click_filter_settings';
+    public const string CLICK_FILTER_ENTRIES = '202_click_filter_entries';
     public const string USER_DATA_FEEDBACK = 'user_data_feedback';
 
     // Click tables
@@ -55,6 +57,7 @@ final class TableRegistry
     public const string CLICKS_TOTAL = '202_clicks_total';
     public const string CLICK_LATEST_VISITS = '202_click_latest_visits';
     public const string RECLICK_BACKFILL = '202_reclick_backfill';
+    public const string CLICKS_FILTER_REASON = '202_clicks_filter_reason';
 
     // Tracking tables
     public const string TRACKING_C1 = '202_tracking_c1';

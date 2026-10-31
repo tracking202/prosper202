@@ -42,7 +42,7 @@ final class ClickBotEntryPointsTest extends TestCase
 
     private const FILTERS_ON_THE_VERDICT = '/if\s*\(\s*\$clickIsBot\s*\)\s*\{'
         . '\s*\$mysql\[\'click_filtered\'\]\s*=\s*\'1\';'
-        . '\s*\}\s*else\s*\{[^}]*FILTER::startFilter\(/s';
+        . '\s*\}\s*else\s*\{[^}]*FILTER::verdict\(/s';
 
     /** The old per-file rule, which would be a second, divergent bot test. */
     private const DEVICE_TYPE_TEST = '/\[\s*[\'"]type[\'"]\s*\]\s*\)?\s*(?:\?\?\s*[\'"]{2}\s*\)?\s*)?'

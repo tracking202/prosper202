@@ -45,7 +45,7 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
     public const CLICK_TABLES = [
         '202_clicks_counter', '202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking',
         '202_clicks_variable', '202_google', '202_bing', '202_facebook', '202_clicks_rotator',
-        '202_clicks_record', '202_clicks_site',
+        '202_clicks_record', '202_clicks_site', '202_clicks_filter_reason',
     ];
 
     /** @var array<string, array<string, string>> file => click table => why */

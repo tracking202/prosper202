@@ -37,6 +37,8 @@ var mcpWriteToolInput = map[string]map[string]interface{}{
 	"text_ad_update":          {"text_ad_headline": "I"},
 	"rotator_create":          {"name": "R", "default_url": "https://example.com/d"},
 	"rotator_update":          {"name": "S"},
+	"click_filter_update":     {"repeat_window": "6h"},
+	"click_filter_list_add":   {"address": "203.0.113.0/24", "action": "filter"},
 	"rotator_set_rules": {"rules": []interface{}{map[string]interface{}{
 		"rule_name": "Mobile",
 		"criteria":  []interface{}{map[string]interface{}{"type": "device", "value": "mobile"}},
@@ -188,8 +190,10 @@ func TestMCPCatalogListsWhatTheHostedServerLeavesOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(cat.HostedExcludes, ",") != "system_info" {
-		t.Fatalf("hosted_excludes = %q, want [system_info]", cat.HostedExcludes)
+	// The click filter and the settings are /users, which no hosted key reaches.
+	want := "click_filter_get,click_filter_update,click_filter_test,click_filter_list_add,click_filter_list_remove,system_info,settings_get"
+	if strings.Join(cat.HostedExcludes, ",") != want {
+		t.Fatalf("hosted_excludes = %q, want %s", cat.HostedExcludes, want)
 	}
 }
 

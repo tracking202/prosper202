@@ -111,6 +111,8 @@ final class ClickRecordBuilder
             clickRedirectSiteUrlId: self::int($mysql, 'click_redirect_site_url_id'),
             rotator: $route,
             identity: $identity,
+            clickFilterReason: self::text($mysql, 'click_filter_reason'),
+            clickFilterEntryId: self::int($mysql, 'click_filter_entry_id'),
         );
     }
 

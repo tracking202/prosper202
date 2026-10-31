@@ -45,4 +45,25 @@ final class SignedInFromAddress
 
         return $conn->fetchOne($stmt) !== null;
     }
+
+    /**
+     * Whether this one user last signed in from the address: the address
+     * test's question (ClickFilterTester), which must not tell an account
+     * where other users of the install signed in from.
+     */
+    public static function byUser(Connection $conn, string $arrived, int $userId): bool
+    {
+        $ipIds = StoredAddressIds::of($conn, $arrived);
+        if ($ipIds === []) {
+            return false;
+        }
+
+        $in = implode(',', array_fill(0, count($ipIds), '?'));
+        $stmt = $conn->prepareRead(
+            'SELECT user_id FROM 202_users WHERE user_id = ? AND user_last_login_ip_id IN (' . $in . ') LIMIT 1'
+        );
+        $conn->bind($stmt, 'i' . str_repeat('i', count($ipIds)), [$userId, ...$ipIds]);
+
+        return $conn->fetchOne($stmt) !== null;
+    }
 }
