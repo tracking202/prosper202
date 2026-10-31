@@ -92,6 +92,14 @@ final class ClickFilterIntegrationTest extends TestCase
         foreach (['202_last_ips', '202_click_filter_entries', '202_click_filter_settings'] as $table) {
             self::q("DELETE FROM $table WHERE user_id IN (" . self::OWNER . ', ' . self::OTHER . ')');
         }
+        self::q('DELETE FROM 202_users_pref WHERE user_id IN (1, ' . self::OWNER . ', ' . self::OTHER . ')');
+    }
+
+    /** The account's privacy setting, which decides the address form its clicks record. */
+    private static function privacy(string $value): void
+    {
+        self::q('INSERT INTO 202_users_pref SET user_id = ' . self::OWNER . ", user_pref_privacy = '$value'"
+            . " ON DUPLICATE KEY UPDATE user_pref_privacy = '$value'");
     }
 
     protected function tearDown(): void
@@ -102,7 +110,7 @@ final class ClickFilterIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $users = self::OWNER . ', ' . self::OTHER . ', ' . self::SIGNER;
-        foreach (['202_last_ips', '202_click_filter_entries', '202_click_filter_settings', '202_users'] as $table) {
+        foreach (['202_last_ips', '202_click_filter_entries', '202_click_filter_settings', '202_users_pref', '202_users'] as $table) {
             self::q("DELETE FROM $table WHERE user_id IN ($users)");
         }
         $range = 'BETWEEN ' . self::FIRST_CLICK . ' AND ' . (self::FIRST_CLICK + 98);
@@ -217,7 +225,9 @@ final class ClickFilterIntegrationTest extends TestCase
         self::store()->saveSettings(self::OWNER, new ClickFilterSettings(true, true, true, '7d'));
         self::assertTrue(self::click('198.51.100.7')->filtered, 'three days ago is inside a week');
         self::store()->saveSettings(self::OWNER, new ClickFilterSettings(true, true, true, '24h'));
-        self::assertTrue(self::click('198.51.100.7')->filtered, '24h asks no time: the cleanup bounds it, as before');
+        self::assertFalse(self::click('198.51.100.7')->filtered, 'shortening to 24h forgets what a week kept, not waiting for the cleanup');
+        self::assertCount(1, self::lastIps(self::OWNER), 'only the click just made is left');
+        self::assertSame('repeat_visit', self::click('198.51.100.7')->reason, 'and that one is a repeat inside the day');
     }
 
     public function testTheListBeatsTheChecksAlwaysCountFirst(): void
@@ -398,6 +408,7 @@ final class ClickFilterIntegrationTest extends TestCase
 
     public function testUnderPrivacyTheTestSaysANeighbourClickedAsTheRepeatCheckDoes(): void
     {
+        self::privacy('all');
         // A click stored masked, as privacy stores it: its block's row.
         self::q('INSERT INTO 202_last_ips (user_id, ip_id, time) VALUES (' . self::OWNER . ', ' . self::$ids['198.51.100.0'] . ', ' . time() . ')');
 
@@ -405,5 +416,26 @@ final class ClickFilterIntegrationTest extends TestCase
 
         self::assertSame('repeat_visit', $answer['reason']);
         self::assertStringContainsString('an address in its /24 clicked already', $answer['explanation']);
+    }
+
+    public function testTheTestAsksOnlyTheFormTheNextClickWouldStore(): void
+    {
+        $tester = new ClickFilterTester(new Connection(self::$db));
+        $address = (string) inet_pton('198.51.100.77');
+
+        // Tracked in full: a masked row left from an earlier privacy mode is not what the next click is checked against.
+        self::privacy('disabled');
+        self::q('INSERT INTO 202_last_ips (user_id, ip_id, time) VALUES (' . self::OWNER . ', ' . self::$ids['198.51.100.0'] . ', ' . time() . ')');
+        $full = $tester->test(self::OWNER, $address);
+        self::assertFalse($full['filtered'], 'a leftover masked row does not make a full-address click a repeat');
+        self::assertFalse($full['checks']['repeat_visit']['matches']);
+
+        // Under privacy: a full-address row left from before is not either.
+        self::q('DELETE FROM 202_last_ips WHERE user_id = ' . self::OWNER);
+        self::privacy('all');
+        self::q('INSERT INTO 202_last_ips (user_id, ip_id, time) VALUES (' . self::OWNER . ', ' . self::$ids['198.51.100.7'] . ', ' . time() . ')');
+        $masked = $tester->test(self::OWNER, (string) inet_pton('198.51.100.7'));
+        self::assertFalse($masked['filtered'], 'a leftover full-address row does not make a masked click a repeat');
+        self::assertFalse($masked['checks']['repeat_visit']['matches']);
     }
 }

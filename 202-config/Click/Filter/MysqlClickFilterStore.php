@@ -72,6 +72,14 @@ final class MysqlClickFilterStore
             time(),
         ]);
         $this->conn->executeUpdate($stmt);
+
+        // 24h asks the check no time, so rows a longer window kept would count
+        // until the daily cleanup: forget this account's, as that cleanup would.
+        if ($settings->repeatWithin() === null) {
+            $stmt = $this->conn->prepareWrite('DELETE FROM 202_last_ips WHERE user_id = ? AND time < ?');
+            $this->conn->bind($stmt, 'ii', [$userId, time() - 86400]);
+            $this->conn->executeUpdate($stmt);
+        }
     }
 
     /** @return list<ClickFilterEntry> in the order they were added */

@@ -22,9 +22,11 @@ use Prosper202\Http\StoredVisitorIp;
  * The repeat check is asked of what the account's clicks have recorded: an
  * address with a click in the window would be filtered as a repeat visit
  * now; one without is counted, and its click is what would start the
- * window. Under privacy a click records the masked address (/24, /48), so
- * both forms are asked. Bot detection reads the visitor's browser, not the
- * address, and is not part of this.
+ * window. Only the form the account's next click would record is asked
+ * (StoredVisitorIp::forAccount(), the click path's policy): the full address,
+ * or under privacy the masked one (/24, /48), as the live check is. Bot
+ * detection reads the visitor's browser, not the address, and is not part of
+ * this.
  */
 final class ClickFilterTester
 {
@@ -85,13 +87,12 @@ final class ClickFilterTester
     /** 'address' or 'block' (the masked address) when a click of the account is in the window, else null. */
     private function recentlySeen(int $userId, string $address, ?int $within): ?string
     {
-        foreach (['address' => $address, 'block' => StoredVisitorIp::mask($address)] as $form => $stored) {
-            if ($this->seenAs($userId, StoredAddressIds::of($this->conn, $stored), $within)) {
-                return $form;
-            }
+        $stored = StoredVisitorIp::forAccount($this->conn, $address, $userId);
+        if ($stored === '' || !$this->seenAs($userId, StoredAddressIds::of($this->conn, $stored), $within)) {
+            return null;
         }
 
-        return null;
+        return $stored === $address ? 'address' : 'block';
     }
 
     /** @param list<int> $ids */
