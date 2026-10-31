@@ -193,7 +193,27 @@ final class SeenFilterListsIntegrationTest extends TestCase
     {
         $db = self::requireScratch();
         if (!str_contains($db->server_info, 'MariaDB')) {
-            self::markTestSkipped('Actual lookup counts use MariaDB ANALYZE FORMAT=JSON.');
+            $rows = self::runSql(
+                new Connection($db),
+                'EXPLAIN ANALYZE ' . p202_overview_seen_list_sql('region_id', false),
+                [self::USER, 1000, 2000]
+            );
+            $plan = (string) array_values($rows[0])[0];
+            preg_match_all(
+                '/^\s*-> [^\n]*\bon (l|c)\b[^\n]*\(actual time=[^\n]*\bloops=(\d+)\)/m',
+                $plan,
+                $matches,
+                PREG_SET_ORDER
+            );
+            $lookups = [];
+            foreach ($matches as $match) {
+                $lookups[$match[1]] = (int) $match[2];
+            }
+            self::assertEqualsCanonicalizing(['l', 'c'], array_keys($lookups), $plan);
+            foreach ($lookups as $table => $loops) {
+                self::assertLessThanOrEqual(8, $loops, "$table must be read per distinct region, not per click");
+            }
+            return;
         }
         $conn = new Connection($db);
         $rows = self::runSql(
