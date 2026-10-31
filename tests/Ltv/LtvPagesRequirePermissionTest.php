@@ -25,6 +25,7 @@ final class LtvPagesRequirePermissionTest extends TestCase
         'tracking202/ajax/ltv_company.php' => null,
         'tracking202/ajax/ltv_merge_search.php' => null,
         'tracking202/ajax/ltv_snapshot.php' => null,
+        'tracking202/ajax/sort_ltv.php' => null,
         'tracking202/ajax/ltv_subscriptions.php' => null,
         'tracking202/ajax/ltv_companies.php' => 'access_to_setup_section',
         'tracking202/ajax/ltv_customer.php' => 'access_to_setup_section',
@@ -34,10 +35,20 @@ final class LtvPagesRequirePermissionTest extends TestCase
 
     public function testEveryLtvEntryPageIsListed(): void
     {
+        // By name and by content: a page that reads LTV's repositories or
+        // helpers is LTV's whatever it is called (sort_ltv.php was missed by name).
         $found = [];
-        foreach (array_merge(glob(self::ROOT . 'tracking202/ajax/ltv_*.php') ?: [], glob(self::ROOT . 'tracking202/analyze/ltv*.php') ?: []) as $file) {
-            if (preg_match('/^AUTH::require_user\(\);$/m', (string) file_get_contents($file)) === 1) {
-                $found[] = substr($file, strlen(self::ROOT));
+        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::ROOT . 'tracking202', \FilesystemIterator::SKIP_DOTS));
+        foreach ($files as $file) {
+            if (!$file->isFile() || $file->getExtension() !== 'php') {
+                continue;
+            }
+            $src = (string) file_get_contents($file->getPathname());
+            $isLtv = str_contains($file->getFilename(), 'ltv')
+                || str_contains($src, 'Prosper202\\Ltv\\')
+                || str_contains($src, 'ltv_helpers.php');
+            if ($isLtv && preg_match('/^AUTH::require_user\(\);$/m', $src) === 1) {
+                $found[] = substr($file->getPathname(), strlen(self::ROOT));
             }
         }
         sort($found);
@@ -55,7 +66,6 @@ final class LtvPagesRequirePermissionTest extends TestCase
     }
 
     /** @dataProvider pages */
-    #[\PHPUnit\Framework\Attributes\DataProvider('pages')]
     public function testThePageRefusesARoleWithoutThePermission(string $page, ?string $write): void
     {
         $gate = self::gate($page);

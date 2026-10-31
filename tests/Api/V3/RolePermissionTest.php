@@ -160,7 +160,8 @@ final class RolePermissionTest extends TestCase
     /**
      * LTV asks what its pages ask: every read access_to_campaign_data (the
      * customers' revenue, as the reports' money), and so does the incoming
-     * data an integration sends (revenue, events, subscriptions); the CRM
+     * data a site or integration sends (revenue, events, subscriptions,
+     * next-offer impressions); the CRM
      * writes (customers, companies, products) Setup's permission; the
      * Settings writes (fields, webhooks, integrations, which hold secrets)
      * access_to_api_integrations, as Account › API Integrations does. Each
@@ -179,7 +180,7 @@ final class RolePermissionTest extends TestCase
                 [$kind, $expected] = ['read', [$scope('ltv:read'), $gate('access_to_campaign_data')]];
             } elseif (preg_match('#^/ltv/(fields|webhooks|integrations)(/|$)#', $route['path']) === 1) {
                 [$kind, $expected] = ['settings', [$scope('ltv:write'), $gate('access_to_api_integrations')]];
-            } elseif (preg_match('#^/ltv/(revenue|events|subscriptions)(/|$)#', $route['path']) === 1) {
+            } elseif (preg_match('#^/ltv/(revenue|events|subscriptions)(/|$)|^/ltv/customers/\{id\}/next-offer/impression$#', $route['path']) === 1) {
                 [$kind, $expected] = ['incoming', [$scope('ltv:write'), $gate('access_to_campaign_data')]];
             } else {
                 [$kind, $expected] = ['crm', [$scope('ltv:write'), $gate('access_to_setup_section')]];

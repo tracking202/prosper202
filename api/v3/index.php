@@ -647,7 +647,6 @@ try {
             $r->post('/customers/{id}/merge',     fn($ctx) => $crud($cls)->mergeCustomer(PathId::of($ctx), $payload));
             $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer(PathId::of($ctx))));
             $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias(PathId::of($ctx), $payload));
-            $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression(PathId::of($ctx), $payload));
             $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomerAlias(PathId::of($ctx), PathId::of($ctx, 'aliasId'))));
             $r->post('/companies',                fn() => ['_status' => 201] + $crud($cls)->createCompany($payload));
             $r->patch('/companies/{id}',          fn($ctx) => $crud($cls)->patchCompany(PathId::of($ctx), $payload));
@@ -669,6 +668,7 @@ try {
         // an integration sends; it asks the read permission, not Setup's.
         $router->group('/ltv', function (Router $r) use ($crud, $payload) {
             $cls = \Api\V3\Controllers\LtvController::class;
+            $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression(PathId::of($ctx), $payload));
             $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
             $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
             $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
