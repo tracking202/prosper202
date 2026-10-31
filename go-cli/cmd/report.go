@@ -281,12 +281,8 @@ const timeseriesMaxRows = 2000
 // say, may have been), else "". Buckets run oldest first, so a cut drops the
 // most recent ones.
 func timeseriesTruncationWarning(data []byte, interval string) string {
-	var resp struct {
-		Data      []map[string]interface{} `json:"data"`
-		Truncated *bool                    `json:"truncated"`
-		Limit     *int                     `json:"limit"`
-	}
-	if json.Unmarshal(data, &resp) != nil || len(resp.Data) == 0 {
+	resp, ok := timeseriesTailOf(data)
+	if !ok || resp.Buckets == 0 {
 		return ""
 	}
 	limit := timeseriesMaxRows
@@ -294,7 +290,7 @@ func timeseriesTruncationWarning(data []byte, interval string) string {
 		limit = *resp.Limit
 	}
 	last := "the last bucket returned"
-	if p, ok := resp.Data[len(resp.Data)-1]["period"].(string); ok && p != "" {
+	if p, ok := resp.Last["period"].(string); ok && p != "" {
 		last = p
 	}
 
@@ -302,8 +298,8 @@ func timeseriesTruncationWarning(data []byte, interval string) string {
 	switch {
 	case resp.Truncated != nil && *resp.Truncated:
 		lead = fmt.Sprintf("Warning: the series was cut at the server's %d-bucket limit; buckets after %s are missing.", limit, last)
-	case resp.Truncated == nil && len(resp.Data) >= timeseriesMaxRows:
-		lead = fmt.Sprintf("Warning: %d buckets is this server's limit and it does not report truncation; buckets after %s may be missing.", len(resp.Data), last)
+	case resp.Truncated == nil && resp.Buckets >= timeseriesMaxRows:
+		lead = fmt.Sprintf("Warning: %d buckets is this server's limit and it does not report truncation; buckets after %s may be missing.", resp.Buckets, last)
 	default:
 		return ""
 	}

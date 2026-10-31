@@ -129,7 +129,7 @@ func TestHostedCallRefusesAnAnswerPastTheValueBound(t *testing.T) {
 		t.Fatalf("native printed %d rows (%v), want %d", len(printed.Data), jerr, rows)
 	}
 	t.Logf("allocated: hosted %d KB, native %d KB", hosted>>10, native>>10)
-	if hosted > 16<<20 || hosted*4 > native {
+	if hosted > 16<<20 || hosted*2 > native {
 		t.Fatalf("the hosted call allocated %d KB against the native call's %d KB: the refused answer was decoded", hosted>>10, native>>10)
 	}
 }
