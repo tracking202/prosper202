@@ -217,6 +217,35 @@ jobs:
       # .github/review-findings-key.asc fails the encryption instead.
       # Maintainers: `gh run download <run> -n review-findings`, then
       # `gpg -d adversarial-review.md.asc`.
+      # Keep failed Claude output private: it may contain review details.
+      - name: Encrypt failed Claude execution
+        id: failed_execution
+        if: failure() && steps.review.outcome == 'failure'
+        env:
+          EXECUTION_FILE: ${{ runner.temp }}/claude-execution-output.json
+          REVIEW_KEY_FPR: BAB7BE5D3B34F59E9BD75C719878332A6782CC78
+        run: |
+          set -euo pipefail
+          if [ ! -s "$EXECUTION_FILE" ]; then
+            echo "No Claude execution file was available."
+            exit 0
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/failed-review-gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --quiet --import .github/review-findings-key.asc
+          gpg --batch --yes --quiet --trust-model always --armor \
+            --encrypt --recipient "$REVIEW_KEY_FPR" --output "$RUNNER_TEMP/failed-claude-execution.json.asc" "$EXECUTION_FILE"
+          echo "captured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Keep encrypted failed execution
+        if: failure() && steps.failed_execution.outputs.captured == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failed-claude-execution
+          path: ${{ runner.temp }}/failed-claude-execution.json.asc
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Encrypt the findings
         id: findings
         env:
