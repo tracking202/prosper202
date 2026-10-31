@@ -20,6 +20,8 @@
 #   P202_PHPUNIT        the PHPUnit command (vendor/bin/phpunit); a phar works:
 #                       P202_PHPUNIT="php /path/to/phpunit-9.phar"
 #   P202_IT_LOG_DIR     where each suite's output is kept (mktemp -d)
+#   P202_IT_SHARD_COUNT / P202_IT_SHARD_INDEX  partition the sorted suite list
+#                       (1 / 0). Each shard needs its own database and checkout.
 
 set -uo pipefail
 
@@ -69,9 +71,26 @@ if [ "${#SUITES[@]}" -lt 30 ]; then
     exit 2
 fi
 
+# Deterministic round-robin partitioning: every selected suite runs once across
+# the shards, and each runner still recreates its own database per suite.
+shard_count=${P202_IT_SHARD_COUNT:-1}
+shard_index=${P202_IT_SHARD_INDEX:-0}
+if [[ ! "$shard_count" =~ ^[1-9][0-9]{0,2}$ || ! "$shard_index" =~ ^(0|[1-9][0-9]{0,2})$ ]] \
+    || (( shard_index >= shard_count || shard_count > ${#SUITES[@]} )); then
+    echo "invalid integration shard index/count: $shard_index/$shard_count" >&2
+    exit 2
+fi
+SHARD_SUITES=()
+for i in "${!SUITES[@]}"; do
+    if (( i % shard_count == shard_index )); then
+        SHARD_SUITES+=("${SUITES[$i]}")
+    fi
+done
+printf 'Running shard %d/%d: %d of %d suites\n' "$((shard_index + 1))" "$shard_count" "${#SHARD_SUITES[@]}" "${#SUITES[@]}"
+
 FAILED=()
 TOTAL_TESTS=0
-for suite in "${SUITES[@]}"; do
+for suite in "${SHARD_SUITES[@]}"; do
     mysql_q -e "DROP DATABASE IF EXISTS \`$P202_TEST_DB_NAME\`; CREATE DATABASE \`$P202_TEST_DB_NAME\`;" || {
         echo "could not recreate $P202_TEST_DB_NAME" >&2
         exit 2
@@ -91,7 +110,7 @@ for suite in "${SUITES[@]}"; do
 done
 
 printf '\n%d suites, %d tests passed; %d suite(s) failed\n' \
-    "$(( ${#SUITES[@]} - ${#FAILED[@]} ))" "$TOTAL_TESTS" "${#FAILED[@]}"
+    "$(( ${#SHARD_SUITES[@]} - ${#FAILED[@]} ))" "$TOTAL_TESTS" "${#FAILED[@]}"
 for suite in "${FAILED[@]}"; do
     log="$LOG_DIR/$(printf '%s' "$suite" | tr '/' '_').log"
     printf '\n----- %s -----\n' "$suite"
