@@ -2,6 +2,12 @@ name: Run Integration Tests
 
 on:
   push:
+    # Feature branches are covered by pull_request; avoid running the same
+    # suites twice when a PR is updated. Still test direct pushes to release
+    # branches and master, including changes merged into them.
+    branches:
+      - master
+      - '[0-9]+.[0-9]+.[0-9]+'
     paths:
       - '**.php'
       - 'tests/run-integration-suites.sh'
@@ -17,8 +23,13 @@ on:
       - 'tests/fixtures/summary-totals/**'
 
 jobs:
-  integration:
+  integration-shard:
+    name: integration shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
 
     services:
       mysql:
@@ -94,12 +105,25 @@ jobs:
           P202_TEST_DB_PASS: root
           P202_TEST_DB_NAME: p202_integration_test
           P202_IT_LOG_DIR: ${{ runner.temp }}/integration-logs
+          P202_IT_SHARD_COUNT: 8
+          P202_IT_SHARD_INDEX: ${{ matrix.shard }}
         run: bash tests/run-integration-suites.sh
 
       - name: Upload the suites' output
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: integration-logs
+          name: integration-logs-${{ matrix.shard }}
           path: ${{ runner.temp }}/integration-logs/
           if-no-files-found: ignore
+
+  # Keep the stable check name and fail it if any shard fails or is cancelled.
+  integration:
+    if: always()
+    needs: integration-shard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every integration shard to pass
+        env:
+          SHARD_RESULT: ${{ needs.integration-shard.result }}
+        run: test "$SHARD_RESULT" = success
