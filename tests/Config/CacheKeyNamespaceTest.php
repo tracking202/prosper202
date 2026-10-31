@@ -35,6 +35,7 @@ final class CacheKeyNamespaceTest extends TestCase
         'tracking202/redirect/rtr.php' => [1, 'the Landing Page Optimizer settings read, for three minutes'],
         '202-account/api-integrations.php' => [1, 'removes rtr.php\'s settings entry, so it names the same key'],
         '202-config/Repository/LookupRepositoryFactory.php' => [1, 'cacheNamespace() itself'],
+        '202-config/Report/FilterChoicesCache.php' => [1, 'report filter choices are cached for five minutes'],
     ];
 
     public function testEveryBareInstallHashKeyIsListed(): void
