@@ -29,6 +29,8 @@ final class UserTables
             self::userRole(),
             self::apiKeys(),
             self::authKeys(),
+            self::clickFilterSettings(),
+            self::clickFilterEntries(),
         ];
     }
 
@@ -269,6 +271,58 @@ final class UserTables
                 `expires` int(11) NOT NULL,
                 KEY `202_auth_keys_user_id_auth_key` (`user_id`,`auth_key`),
                 KEY `202_auth_keys_expires` (`expires`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * An account's click filter switches (Prosper202\Click\Filter\
+     * ClickFilterSettings): none for an account that never changed them,
+     * which is filtered by the defaults, the same values as the columns'.
+     * repeat_window is in seconds, one of ClickFilterSettings::WINDOWS. From
+     * 1.9.79, added by its rung.
+     */
+    public static function clickFilterSettings(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICK_FILTER_SETTINGS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICK_FILTER_SETTINGS . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `sign_in_addresses` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `crawler_ranges` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `repeat_visits` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `repeat_window` int(10) unsigned NOT NULL DEFAULT '86400',
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * An account's address list: an IPv4 or IPv6 block (one address is a /32
+     * or /128) whose clicks are always counted or always filtered
+     * (Prosper202\Click\Filter\ClickFilterEntry). range_start and range_end are
+     * the block's first and last address, packed, so the click path asks one
+     * index probe; family keeps IPv4 and IPv6 apart in it. One entry per
+     * block (user_range). From 1.9.79, added by its rung.
+     */
+    public static function clickFilterEntries(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICK_FILTER_ENTRIES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICK_FILTER_ENTRIES . "` (
+                `entry_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `family` tinyint(1) unsigned NOT NULL,
+                `range_start` varbinary(16) NOT NULL,
+                `range_end` varbinary(16) NOT NULL,
+                `prefix` tinyint(3) unsigned NOT NULL,
+                `action` varchar(6) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `note` varchar(255) NOT NULL DEFAULT '',
+                `created_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`entry_id`),
+                UNIQUE KEY `user_range` (`user_id`, `family`, `range_start`, `prefix`),
+                KEY `user_match` (`user_id`, `family`, `range_start`, `range_end`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

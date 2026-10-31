@@ -69,6 +69,8 @@ final class ClickRecordBuilderTest extends TestCase
         'click_outbound_site_url_id' => ['clickOutboundSiteUrlId', '143', 143],
         'click_cloaking_site_url_id' => ['clickCloakingSiteUrlId', '144', 144],
         'click_redirect_site_url_id' => ['clickRedirectSiteUrlId', '145', 145],
+        'click_filter_reason' => ['clickFilterReason', 'filter_list', 'filter_list'],
+        'click_filter_entry_id' => ['clickFilterEntryId', '146', 146],
     ];
 
     private const FLAGS = [
@@ -113,11 +115,55 @@ final class ClickRecordBuilderTest extends TestCase
     public function testEachFlagIsReadFromItsOwnKey(): void
     {
         foreach (self::FLAGS as $key => $property) {
-            $mysql = array_merge(self::given(), array_fill_keys(array_keys(self::FLAGS), '0'), [$key => '1']);
+            // A counted click has no filter reason.
+            $mysql = array_merge(
+                self::given(),
+                array_fill_keys(array_keys(self::FLAGS), '0'),
+                [$key => '1'],
+                $key === 'click_filtered' ? [] : ['click_filter_reason' => '', 'click_filter_entry_id' => '']
+            );
             $click = ClickRecordBuilder::fromLegacyArray($mysql, 1);
             foreach (self::FLAGS as $other) {
                 self::assertSame($other === $property ? 1 : 0, $click->$other, "$key set alone: $other");
             }
+        }
+    }
+
+    /**
+     * A filter reason belongs to a filtered click, is one the filter gives,
+     * and names a list entry exactly when the list decided it.
+     *
+     * @return iterable<string, array{array<string, string>}>
+     */
+    public static function filterReasonsRefused(): iterable
+    {
+        yield 'a reason on a counted click' => [['click_filtered' => '0', 'click_filter_reason' => 'repeat_visit', 'click_filter_entry_id' => '']];
+        yield 'a reason the filter never gives' => [['click_filter_reason' => 'bot', 'click_filter_entry_id' => '']];
+        yield 'an entry on a reason that is no entry\'s' => [['click_filter_reason' => 'crawler_range']];
+        yield 'the list with no entry' => [['click_filter_entry_id' => '']];
+        yield 'an entry with no reason' => [['click_filter_reason' => '']];
+        yield 'a reason that is no string' => [['click_filter_reason' => 1]];
+    }
+
+    /**
+     * @dataProvider filterReasonsRefused
+     * @param array<string, mixed> $override
+     */
+    public function testAFilterReasonIsReadOnlyAsTheFilterGivesIt(array $override): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        ClickRecordBuilder::fromLegacyArray(array_merge(self::given(), $override), 1);
+    }
+
+    public function testEachRecordedReasonIsTaken(): void
+    {
+        foreach (['sign_in_address', 'crawler_range', 'repeat_visit'] as $reason) {
+            $click = ClickRecordBuilder::fromLegacyArray(
+                array_merge(self::given(), ['click_filter_reason' => $reason, 'click_filter_entry_id' => '0']),
+                1
+            );
+            self::assertSame($reason, $click->clickFilterReason);
+            self::assertSame(0, $click->clickFilterEntryId);
         }
     }
 

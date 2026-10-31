@@ -172,8 +172,9 @@ function RunDailyCronjob()
         $click_sql = "DELETE FROM 202_clicks_spy WHERE click_time < $from";
         cronQuery($db, $click_sql, 'the daily clear of the click spy table');
 
-        //clear the last 24 hour ip addresses
-        $last_ip_sql = "DELETE FROM 202_last_ips WHERE time < $from";
+        //clear the last 24 hour ip addresses, kept longer for an account
+        //whose click filter's repeat window is longer
+        $last_ip_sql = \Prosper202\Click\Filter\RepeatVisitCleanup::sql($now);
         cronQuery($db, $last_ip_sql, 'the daily clear of the last addresses');
 
         // LTV maintenance: the customer rollups reconciled with the ledger

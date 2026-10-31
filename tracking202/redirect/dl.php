@@ -344,10 +344,11 @@ $user_id = $tracker_row['user_id'];
 if ($clickIsBot) {
 	$mysql['click_filtered'] = '1';
 } else {
-	// Initialize click_id as 0 for the filter (will be updated after insert)
-	$click_id_temp = 0;
-	$click_filtered = FILTER::startFilter($db, $click_id_temp, $ip_id, $user_id);
-	$mysql['click_filtered'] = $db->real_escape_string((string)$click_filtered);
+	// Why it is filtered goes with the click (202_clicks_filter_reason).
+	$clickFilter = FILTER::verdict($db, $ip_id, $user_id);
+	$mysql['click_filtered'] = (string) $clickFilter->flag();
+	$mysql['click_filter_reason'] = (string) $clickFilter->reason;
+	$mysql['click_filter_entry_id'] = $clickFilter->filtered ? (string) ($clickFilter->entryId ?? 0) : '0';
 }
 
 

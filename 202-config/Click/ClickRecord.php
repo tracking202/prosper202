@@ -196,6 +196,10 @@ final readonly class ClickRecord
         public ?RotatorRoute $rotator = null,
         // linked after the click's own transaction commits
         public ?ClickIdentity $identity = null,
+        // 202_clicks_filter_reason: why a filtered click is (ClickFilterVerdict),
+        // '' for a counted one, a bot or a re-click
+        public string $clickFilterReason = '',
+        public int $clickFilterEntryId = 0,
     ) {
         foreach (['clickId' => $clickId, 'userId' => $userId, 'clickTime' => $clickTime] as $field => $value) {
             if ($value < 1) {
@@ -227,6 +231,19 @@ final readonly class ClickRecord
             if ($value !== 0 && $value !== 1) {
                 throw new InvalidArgumentException("A click's $field is 0 or 1, not $value");
             }
+        }
+        $reasons = \Prosper202\Click\Filter\ClickFilterVerdict::REASONS;
+        $known = $clickFilterReason === '' || ($clickFiltered === 1 && in_array($clickFilterReason, $reasons, true));
+        if (!$known) {
+            throw new InvalidArgumentException(
+                "A click's clickFilterReason is a reason of a filtered click, not '$clickFilterReason'"
+            );
+        }
+        $listed = $clickFilterReason === \Prosper202\Click\Filter\ClickFilterVerdict::FILTER_LIST;
+        if ($clickFilterEntryId < 0 || ($clickFilterEntryId !== 0) !== $listed) {
+            throw new InvalidArgumentException(
+                "A click's clickFilterEntryId names the list entry of a filter_list click, not $clickFilterEntryId"
+            );
         }
         if (!in_array($clickCloaking, [-1, 0, 1], true)) {
             throw new InvalidArgumentException("A click's clickCloaking is -1, 0 or 1, not $clickCloaking");
