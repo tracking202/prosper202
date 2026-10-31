@@ -4,6 +4,10 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_campaign_data'); // LTV shows customers' revenue
+if (isset($_POST['action']) && $_POST['action'] !== '') {
+    AUTH::require_permissions('access_to_setup_section'); // a write
+}
 
 // Draw the window ltv.php drew, not whatever the stored one says by now: a
 // second tab may have stored another (ReportView). ltv.js sends the view
