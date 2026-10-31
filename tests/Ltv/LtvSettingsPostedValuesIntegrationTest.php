@@ -21,6 +21,7 @@ use PHPUnit\Framework\TestCase;
 final class LtvSettingsPostedValuesIntegrationTest extends TestCase
 {
     use \Tests\Report\ScratchReportDatabase;
+    use GrantsLtvRole;
 
     private const USER = 990960;
     private const HOOK = 96012;
@@ -64,7 +65,7 @@ final class LtvSettingsPostedValuesIntegrationTest extends TestCase
         self::cleanUp();
         self::user(self::USER);
         self::row('202_users_pref', ['user_id' => self::USER]);
-        self::row('202_user_role', ['user_id' => self::USER, 'role_id' => 2]); // Admin: LTV asks for its permissions
+        self::grantLtvRole(self::USER, self::USER); // LTV asks for its permissions
         self::q("UPDATE 202_users SET p202_customer_api_key = 'page-runner' WHERE user_id = " . self::USER);
         self::$sessions = sys_get_temp_dir() . '/p202-ltv-settings-' . getmypid();
         if (!is_dir(self::$sessions) && !mkdir(self::$sessions, 0700)) {
@@ -358,8 +359,9 @@ final class LtvSettingsPostedValuesIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
+        self::revokeLtvRole(self::USER, self::USER);
         $u = self::USER;
-        foreach ([...self::LTV_TABLES, '202_user_role', '202_users_pref', '202_users'] as $table) {
+        foreach ([...self::LTV_TABLES, '202_users_pref', '202_users'] as $table) {
             self::q("DELETE FROM $table WHERE user_id = $u");
         }
     }
