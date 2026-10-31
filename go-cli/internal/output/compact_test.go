@@ -30,6 +30,7 @@ var compactCorpus = []string{
 	`{"data":[0,0,0,1,0.0,1e2,1E2,1.5e-7,1e21,1e20,123456789012345678,9007199254740993,-1.0e-6,5e-324,1.7976931348623157e308]}`,
 	`{"data":[{"a":0},{"a":0}],"pagination":{"total":2}}`,
 	`{"b":1,"a":2,"A":3,"é":4,"z":{"y":[],"x":{}}}`,
+	`{"b":1,"a":2,"A":3,"z":{"y":[],"x":{}},"v":"é 😀 ｡"}`,
 	`{"s":"\u003c\u003e\u0026 <>& \/ \" \\ \n\t\r\b\f \u0001 \u001f \u007f é 😀 \ud83d\ude00"}`,
 	`{"s":"\u2028 \u2029"}`,
 	"{\"s\":\"\xe2\x80\xa8\"}",
@@ -108,5 +109,25 @@ func TestCanonicalCompactLeavesInputAlone(t *testing.T) {
 	}
 	if string(in) != keep || !strings.Contains(string(in), " ") {
 		t.Fatalf("input changed to %q", in)
+	}
+}
+
+// RFC 8785 sorts names by UTF-16 code units and encoding/json by UTF-8
+// bytes; they disagree on {"｡":1,"😀":2}, so a non-ASCII name takes the old
+// path and the output is the old path's.
+func TestCanonicalCompactNonASCIINameTakesOldPath(t *testing.T) {
+	for _, in := range []string{`{"｡":1,"😀":2}`, `{"｡":1,"😀":2}`, `{"a":[{"x":{"😀":1,"｡":2}}]}`} {
+		if got, ok := canonicalCompact([]byte(in)); ok {
+			want, _ := decodeEncodeCompact([]byte(in))
+			t.Fatalf("%s took the canonical path: got %s, old path %s", in, got, want)
+		}
+		want, _ := decodeEncodeCompact([]byte(in))
+		printed := captureStdout(t, func() { renderJSON([]byte(in), true) })
+		if printed != string(want) {
+			t.Fatalf("%s: printed %s, old path %s", in, printed, want)
+		}
+	}
+	if _, ok := canonicalCompact([]byte(`{"name":"｡ 😀 é","b":"😀"}`)); !ok {
+		t.Fatal("non-ASCII values with ASCII names left the canonical path")
 	}
 }

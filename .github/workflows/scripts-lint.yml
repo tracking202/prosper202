@@ -92,12 +92,11 @@ jobs:
 
       # The binary only. golangci-lint-action@v7 always runs the linter and
       # has no install-only input (v6 did; I wrote it from memory and
-      # actionlint caught it), so use golangci's own install script, which
-      # fetches a prebuilt binary and has no Go-version constraint.
+      # actionlint caught it), so install the binary here.
       - name: Install golangci-lint
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-            | sh -s -- -b "$(go env GOPATH)/bin" v2.5.0
+          # go install, so it is built with this job's Go and reads its export data.
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/golangci-lint" --version
 
