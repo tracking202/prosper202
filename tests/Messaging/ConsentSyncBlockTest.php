@@ -158,20 +158,15 @@ final class ConsentSyncBlockTest extends TestCase
 
     public function test_export_distinguishes_fetch_failure_from_missing_row(): void
     {
-        // Guard the loadPref-style raw-mysqli checks: exportForSync must not
-        // route through a helper that conflates get_result() === false with a
-        // zero-row result (Connection::fetchOne does). CLAUDE.md #5 — the
-        // same failure class is already handled correctly in loadPref.
+        // A failed fetch must never read as a missing row (CLAUDE.md #5).
         $src = $this->policySrc();
         preg_match('/function exportForSync.*?\n    \}/s', $src, $m);
         $this->assertNotEmpty($m, 'exportForSync must exist');
         $body = $m[0];
-        $this->assertStringContainsString('get_result()', $body,
-            'exportForSync must inspect get_result() itself (mirroring loadPref)');
-        $this->assertMatchesRegularExpression('/\$res === false/', $body,
-            'exportForSync must treat get_result() === false as a fetch failure, distinct from a zero-row result');
-        $this->assertStringNotContainsString('fetchOne', $body,
-            'Connection::fetchOne conflates a get_result() failure with a missing row — exportForSync must not use it');
+        // Connection::fetchOne() throws on a failed get_result()/fetch and
+        // answers null only for a missing row, so the two stay apart.
+        $this->assertStringContainsString('$conn->fetchOne($stmt)', $body);
+        $this->assertMatchesRegularExpression('/catch \(\\\\Throwable \$e\)\s*\{\s*error_log\([^;]*failed/', $body);
     }
 
     public function test_consent_policy_stays_the_only_reader_of_raw_consent_columns(): void

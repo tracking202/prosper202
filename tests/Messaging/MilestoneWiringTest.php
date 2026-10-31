@@ -37,7 +37,7 @@ final class MilestoneWiringTest extends TestCase
     {
         // Handlers are located by grep during implementation; assert the events
         // exist anywhere outside tests/ and Messaging/ (the emitting call sites).
-        $hits = shell_exec('grep -rl "Analytics::event(\'ltv_integration_connected\'" '
+        $hits = shell_exec('grep -rlE "Analytics::event(For)?\(.*\'ltv_integration_connected\'" '
             . escapeshellarg(dirname(__DIR__, 2)) . ' --include="*.php" | grep -v /tests/');
         $this->assertNotEmpty(trim((string) $hits), 'ltv_integration_connected not wired');
         $hits = shell_exec('grep -rl "Analytics::event(\'lpo_paired\'" '

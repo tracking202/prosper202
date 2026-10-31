@@ -90,6 +90,7 @@ function p202_click_filter_save_settings(MysqlClickFilterStore $store, int $user
     p202_account_flash('ok', $settings->isDefault()
         ? 'Click filtering is saved: every built-in check is on, as it is by default.'
         : 'Click filtering is saved. It applies to clicks from now on; clicks already recorded keep how they were counted.');
+    p202_click_filter_analytics('settings');
     p202_account_redirect(P202_CLICK_FILTER_RETURN);
 }
 
@@ -132,7 +133,15 @@ function p202_click_filter_add_entry(MysqlClickFilterStore $store, int $userId, 
     p202_account_flash('ok', $added->range->text() . ($added->action === ClickFilterEntry::COUNT
         ? ' is always counted from now on.'
         : ' is always filtered from now on.'));
+    p202_click_filter_analytics('entry_added');
     p202_account_redirect(P202_CLICK_FILTER_RETURN);
+}
+
+/** Analytics milestone (consent-gated, never fails the save): no address is sent. */
+function p202_click_filter_analytics(string $change): void
+{
+    require_once __DIR__ . '/Messaging/Analytics.class.php';
+    Analytics::event('click_filter_changed', ['via' => 'ui', 'change' => $change], 'analytics');
 }
 
 /** @param array<array-key, mixed> $post */

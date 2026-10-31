@@ -689,6 +689,33 @@ class MessagingService
     }
 
     /**
+     * Whether this event was recorded at or after $since (Y-m-d H:i:s), with
+     * exactly this metadata when given. A failed read answers true, so a
+     * once-a-day event is skipped rather than duplicated.
+     *
+     * @param array<string,mixed>|null $metadata
+     */
+    public function hasEventSince(string $name, string $since, ?array $metadata = null): bool
+    {
+        try {
+            $sql = 'SELECT id FROM 202_messaging_events WHERE user_id = ? AND event_name = ? AND occurred_at >= ?';
+            $types = 'iss';
+            $params = [$this->userId, $name, $since];
+            if ($metadata !== null) {
+                $sql .= ' AND metadata = ?';
+                $types .= 's';
+                $params[] = (string) json_encode($metadata);
+            }
+            $stmt = $this->conn->prepareRead($sql . ' LIMIT 1');
+            $this->conn->bind($stmt, $types, $params);
+            return $this->conn->fetchOne($stmt) !== null;
+        } catch (Throwable $e) {
+            error_log('MessagingService: hasEventSince failed: ' . $e->getMessage());
+            return true;
+        }
+    }
+
+    /**
      * Remove analytics-tier data that has not left the install: undelivered
      * analytics events and the whole attribute snapshot (all analytics-tier).
      * Called by ConsentPolicy::record() on a denial. False when a delete failed.

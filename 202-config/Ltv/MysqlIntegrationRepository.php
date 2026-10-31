@@ -119,7 +119,10 @@ final class MysqlIntegrationRepository
         // failure). Provider name is config, not customer data. Analytics tier
         // → self-gates on consent; Analytics swallows its own failures.
         require_once dirname(__DIR__) . '/Messaging/Analytics.class.php';
-        \Analytics::event('ltv_integration_connected', ['provider' => (string) $provider], 'analytics');
+        $analyticsDb = $GLOBALS['db'] ?? null;
+        if ($analyticsDb instanceof \mysqli) {
+            \Analytics::eventFor($analyticsDb, $userId, 'ltv_integration_connected', ['provider' => (string) $provider], 'analytics');
+        }
 
         return $integrationId;
     }

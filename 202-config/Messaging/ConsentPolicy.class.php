@@ -48,10 +48,8 @@ final class ConsentPolicy
      * so a failure can never masquerade as a grant on the wire.
      *
      * Failure and missing-row take the same fail-closed shape but stay
-     * distinguished below, mirroring loadPref's raw-mysqli checks: a false
-     * get_result() on a SELECT is a fetch FAILURE (server gone away
-     * mid-fetch, mysqlnd OOM) and is logged as one — a successful SELECT
-     * always yields a mysqli_result, even with zero rows.
+     * distinguished: Connection throws on a failed read (logged as one) and
+     * answers null only for a missing row.
      *
      * @return array{analytics:string,analytics_source:?string,analytics_at:?string,email_marketing:string,email_marketing_at:?string}
      */
@@ -65,30 +63,16 @@ final class ConsentPolicy
             'email_marketing_at' => null,
         ];
         try {
-            $stmt = $db->prepare(
+            // Connection::fetchOne() answers null only for a missing row and
+            // throws on a failed prepare, execute or fetch.
+            $conn = new \Prosper202\Database\Connection($db);
+            $stmt = $conn->prepareRead(
                 "SELECT `analytics_consent`, `analytics_consent_source`, `analytics_consent_at`,
                         `email_marketing_consent`, `email_marketing_consent_at`
                    FROM `202_users_pref` WHERE `user_id` = ? LIMIT 1"
             );
-            if ($stmt === false) {
-                error_log('[ConsentPolicy] exportForSync prepare failed: ' . $db->error);
-                return $unset;
-            }
-            $stmt->bind_param('i', $userId);
-            if (!$stmt->execute()) {
-                error_log('[ConsentPolicy] exportForSync execute failed: ' . $stmt->error);
-                $stmt->close();
-                return $unset;
-            }
-            $res = $stmt->get_result();
-            if ($res === false) {
-                // Fetch FAILURE, not a missing row (see docblock).
-                error_log('[ConsentPolicy] exportForSync get_result failed: ' . $stmt->error);
-                $stmt->close();
-                return $unset;
-            }
-            $row = $res->fetch_assoc();
-            $stmt->close();
+            $conn->bind($stmt, 'i', [$userId]);
+            $row = $conn->fetchOne($stmt);
         } catch (\Throwable $e) {
             error_log('[ConsentPolicy] exportForSync failed: ' . $e->getMessage());
             return $unset;
@@ -124,33 +108,25 @@ final class ConsentPolicy
         if (!in_array($flag, ['analytics','email_marketing'], true)) { return false; }
         if (!in_array($state, ['granted','denied'], true)) { return false; }
         try {
+            $conn = new \Prosper202\Database\Connection($db);
             if ($flag === 'analytics') {
-                $sql = "UPDATE `202_users_pref`
-                           SET `analytics_consent` = ?, `analytics_consent_at` = NOW(),
-                               `analytics_consent_source` = ?, `eu_consent_prompt_seen` = 1
-                         WHERE `user_id` = ?";
-                $stmt = $db->prepare($sql);
-                if ($stmt === false) {
-                    error_log('[ConsentPolicy] record prepare failed: ' . $db->error);
-                    return false;
-                }
-                $stmt->bind_param('ssi', $state, $source, $userId);
+                $stmt = $conn->prepareWrite(
+                    "UPDATE `202_users_pref`
+                        SET `analytics_consent` = ?, `analytics_consent_at` = NOW(),
+                            `analytics_consent_source` = ?, `eu_consent_prompt_seen` = 1
+                      WHERE `user_id` = ?"
+                );
+                $conn->bind($stmt, 'ssi', [$state, $source, $userId]);
             } else {
-                $sql = "UPDATE `202_users_pref`
-                           SET `email_marketing_consent` = ?, `email_marketing_consent_at` = NOW()
-                         WHERE `user_id` = ?";
-                $stmt = $db->prepare($sql);
-                if ($stmt === false) {
-                    error_log('[ConsentPolicy] record prepare failed: ' . $db->error);
-                    return false;
-                }
-                $stmt->bind_param('si', $state, $userId);
+                $stmt = $conn->prepareWrite(
+                    "UPDATE `202_users_pref`
+                        SET `email_marketing_consent` = ?, `email_marketing_consent_at` = NOW()
+                      WHERE `user_id` = ?"
+                );
+                $conn->bind($stmt, 'si', [$state, $userId]);
             }
-            $ok = $stmt->execute();
-            if (!$ok) {
-                error_log('[ConsentPolicy] record execute failed: ' . $stmt->error);
-            }
-            $stmt->close();
+            $conn->executeUpdate($stmt);
+            $ok = true;
         } catch (\Throwable $e) {
             error_log('[ConsentPolicy] record failed: ' . $e->getMessage());
             return false;
@@ -177,19 +153,11 @@ final class ConsentPolicy
     public static function rememberGeo(mysqli $db, int $userId, bool $isEu): bool
     {
         try {
-            $stmt = $db->prepare("UPDATE `202_users_pref` SET `analytics_geo_is_eu` = ? WHERE `user_id` = ?");
-            if ($stmt === false) {
-                error_log('[ConsentPolicy] rememberGeo prepare failed: ' . $db->error);
-                return false;
-            }
-            $v = $isEu ? 1 : 0;
-            $stmt->bind_param('ii', $v, $userId);
-            $ok = $stmt->execute();
-            if (!$ok) {
-                error_log('[ConsentPolicy] rememberGeo execute failed: ' . $stmt->error);
-            }
-            $stmt->close();
-            return (bool) $ok;
+            $conn = new \Prosper202\Database\Connection($db);
+            $stmt = $conn->prepareWrite("UPDATE `202_users_pref` SET `analytics_geo_is_eu` = ? WHERE `user_id` = ?");
+            $conn->bind($stmt, 'ii', [$isEu ? 1 : 0, $userId]);
+            $conn->executeUpdate($stmt);
+            return true;
         } catch (\Throwable $e) {
             error_log('[ConsentPolicy] rememberGeo failed: ' . $e->getMessage());
             return false;
@@ -213,28 +181,13 @@ final class ConsentPolicy
             'prompt_seen' => false,
         ];
         try {
-            $stmt = $db->prepare(
+            $conn = new \Prosper202\Database\Connection($db);
+            $stmt = $conn->prepareRead(
                 "SELECT `analytics_consent`, `email_marketing_consent`, `analytics_geo_is_eu`, `eu_consent_prompt_seen`
                    FROM `202_users_pref` WHERE `user_id` = ? LIMIT 1"
             );
-            if ($stmt === false) {
-                error_log('[ConsentPolicy] loadPref prepare failed: ' . $db->error);
-                return null;
-            }
-            $stmt->bind_param('i', $userId);
-            if (!$stmt->execute()) {
-                error_log('[ConsentPolicy] loadPref execute failed: ' . $stmt->error);
-                $stmt->close();
-                return null;
-            }
-            $res = $stmt->get_result();
-            if ($res === false) {
-                error_log('[ConsentPolicy] loadPref get_result failed: ' . $stmt->error);
-                $stmt->close();
-                return null;
-            }
-            $row = $res->fetch_assoc();
-            $stmt->close();
+            $conn->bind($stmt, 'i', [$userId]);
+            $row = $conn->fetchOne($stmt);
         } catch (\Throwable $e) {
             error_log('[ConsentPolicy] loadPref failed: ' . $e->getMessage());
             return null;

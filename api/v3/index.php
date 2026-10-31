@@ -1712,6 +1712,22 @@ try {
         }
     }
 
+    // Product analytics (consent-gated; never fails the request): which
+    // client kind is used, and the setup milestone a real write reaches.
+    require_once dirname(__DIR__, 2) . '/202-config/Messaging/ApiUsage.class.php';
+    ApiUsage::record(
+        $db,
+        $userId,
+        static fn (): string => ApiUsage::clientKind(
+            ScopeRefusal::keySource($db, Auth::bearerKey($headers), $userId) === ScopeRefusal::AI_CONNECTION,
+            (string) ($_SERVER['HTTP_USER_AGENT'] ?? '')
+        ),
+        $method,
+        $path,
+        $response === null ? 204 : (int) ($response['_status'] ?? 200),
+        $dryRun || $stagedWrite
+    );
+
     // ─── Send response ───────────────────────────────────────────────
     if ($response === null) {
         // DELETE — 204 No Content

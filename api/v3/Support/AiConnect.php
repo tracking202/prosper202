@@ -476,6 +476,13 @@ final class AiConnect
             return $refuse(500, 'server_error', 'The key could not be created; nothing was connected.' . $again);
         }
 
+        // Analytics milestone (consent-gated): the app's kind and the access granted.
+        require_once dirname(__DIR__, 3) . '/202-config/Messaging/Analytics.class.php';
+        \Analytics::eventFor($db, $userId, 'ai_connector_connected', [
+            'client' => mb_substr((string) $grant['client_name'], 0, 40),
+            'access' => (string) $access,
+        ], 'analytics');
+
         return [200, ['data' => [
             'api_key' => $apiKey,
             'scope' => $scope,

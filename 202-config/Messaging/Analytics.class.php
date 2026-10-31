@@ -55,6 +55,23 @@ final class Analytics
         return ConsentPolicy::analyticsAllowed($db, $userId);
     }
 
+    /**
+     * event() for a user named outright, where there is no session (an API
+     * request, a cron job). Same consent gate; never throws.
+     */
+    public static function eventFor(mysqli $db, int $userId, string $name, array $meta = [], string $tier = 'analytics'): void
+    {
+        try {
+            $tier = self::normalizeTier($tier);
+            if ($userId <= 0 || !self::wouldRecord($db, $userId, $tier)) {
+                return;
+            }
+            (new MessagingService($db, $userId, []))->recordEvent($name, $meta, $tier);
+        } catch (\Throwable $e) {
+            error_log('[Analytics] ' . $e->getMessage());
+        }
+    }
+
     private static function guarded(callable $fn): void
     {
         try {
