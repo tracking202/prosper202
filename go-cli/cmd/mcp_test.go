@@ -76,8 +76,10 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// the text ad writes about 3,400 (Setup › Text Ads' own fields), the rotator
 	// writes about 5,000 (rotator_set_rules' rules are a schema of their own);
 	// with both the list was about 89,500; with every 1.9.79 addition (the scope
-	// refusals, the optimizer's and the reports' notes) it is about 93,600.
-	const budget = 94000
+	// refusals, the optimizer's and the reports' notes) it is about 93,600; the
+	// click filter's five tools (user_id and ids left out, no entry update) and
+	// settings_get add about 5,100.
+	const budget = 99000
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}
@@ -268,10 +270,11 @@ func mcpExecute(t *testing.T, args ...string) (string, string, error) {
 // mcpReadToolRequired are the arguments a read tool needs before it sends a
 // request, beyond its ids.
 var mcpReadToolRequired = map[string]map[string]string{
-	"report_groups":    {"by": "campaign"},
-	"report_crosstab":  {"rows": "country", "cols": "ppc_account"},
-	"report_breakeven": {"aff_campaign_id": "1"},
-	"forecast":         {"metric": "clicks"},
+	"report_groups":     {"by": "campaign"},
+	"report_crosstab":   {"rows": "country", "cols": "ppc_account"},
+	"report_breakeven":  {"aff_campaign_id": "1"},
+	"forecast":          {"metric": "clicks"},
+	"click_filter_test": {"ip": "203.0.113.7"},
 }
 
 // Every read tool, run with placeholder arguments, asks the install for data

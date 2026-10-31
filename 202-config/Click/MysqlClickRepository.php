@@ -106,6 +106,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                 ]
             );
         });
+        $this->recordFilterReason($click);
         $this->link($click);
     }
 
@@ -764,6 +765,31 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                 $arrival['click_filtered'], $arrival['click_bot'], $click->clickAlp, $click->clickTime,
             ]
         );
+    }
+
+    /**
+     * Why a filtered click is filtered (202_clicks_filter_reason), written once
+     * the click is committed and outside its transaction: the row is the
+     * reason's only, so a failure (the table not there yet while an upgrade
+     * waits) costs the reason, logged, and never the click, which then reads
+     * as "not recorded". A re-click keeps its first visit's filter flag, and
+     * so its reason.
+     */
+    private function recordFilterReason(ClickRecord $click): void
+    {
+        if ($click->clickFiltered !== 1 || $click->clickFilterReason === '') {
+            return;
+        }
+        try {
+            $this->write(
+                'INSERT INTO 202_clicks_filter_reason (click_id, filter_reason, entry_id) VALUES (?, ?, ?)',
+                'isi',
+                [$click->clickId, $click->clickFilterReason, $click->clickFilterEntryId]
+            );
+        } catch (\Throwable $e) {
+            error_log('Prosper202 click filter: click ' . $click->clickId . '\'s filter reason ('
+                . $click->clickFilterReason . ') was not recorded: ' . $e->getMessage());
+        }
     }
 
     /**

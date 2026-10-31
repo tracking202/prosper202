@@ -22,6 +22,14 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    # A tester's office (visitors.json): an always-count entry wins over every
+    # built-in check, so add one, leave the checks alone, and report a test.
+    *"QA team"*"198.51.100.0/24"*)
+        p202 click-filter list add 198.51.100.0/24 --action count --note "client QA office" >/dev/null
+        out=$(p202 click-filter test 198.51.100.40 --json)
+        printf 'I added 198.51.100.0/24 to the address list as always counted (`p202 click-filter list add 198.51.100.0/24 --action count`) and left the built-in checks as they were. `p202 click-filter test 198.51.100.40` says: %s\n' \
+            "$(printf '%s' "$out" | jq -r 'if .filtered then "filtered (\(.reason))" else "counted" end + ". " + .explanation')"
+        ;;
     # A losing campaign's salvage offer (optimize.json): campaign optimize
     # ranks the other campaigns by EPC on the traffic asked about and, when
     # one earns more per click, its Next step names that campaign's id. The

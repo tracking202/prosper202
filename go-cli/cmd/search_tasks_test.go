@@ -230,7 +230,8 @@ func TestSearchFindsSpyByWhatPeopleCallIt(t *testing.T) {
 // The fused ranker (search_rank.go) found 9 cases the hand-weighted scorer
 // had listed here and lost 2 it had found (attribution-003 and
 // mobile-apps-ui-001), each now second: two tasks in one ask, where the
-// other task's command comes first.
+// other task's command comes first. mobile-apps-ui-001 came first again when
+// the click filter's commands joined the index.
 var searchKnownMisses = map[string]string{
 	"admin-005-a-paykickstart-key-is-stored-never-repeated":                 "save a key and give the URL to paste: two tasks; system integrations first, user prefs update second",
 	"admin-006-a-jvzoo-affiliate-gets-the-affiliate-url":                    "save a key and give the URL to paste: two tasks; system integrations first, user prefs update second",
@@ -238,7 +239,6 @@ var searchKnownMisses = map[string]string{
 	"breakdown-002-no-such-transaction-is-said-not-invented":                "the expected command is a lookup step (conversion list), not the task asked",
 	"ios-sdk-001-encode-a-funnel-goal":                                      "describes the encoding's meaning, not the command; app encoding create third",
 	"ltv-004-line-items-on-a-sale-with-no-known-customer":                   "the expected command is a lookup step (click list, fourth); the task asked, recording revenue, is first",
-	"mobile-apps-ui-001-android-app-and-its-tracking-link":                  "set up an app and give its tracking link: two tasks; the tracker first, app link second",
 	"optimize-002-no-campaign-earns-more-so-nothing-is-routed":              "\"per click\" on a traffic source account puts click update-cpc first; campaign optimize second",
 	"setup-code-002-an-advanced-page-names-its-offers":                      "asks for the buttons' links; nothing says \"code\" (landing-page code fourth)",
 	"setup-code-004-a-traffic-source-variable-reaches-the-link":             "\"pass it along as adid\" names no variable; the link ranks the tracker first",

@@ -307,8 +307,11 @@ if ($user_row['maxmind_isp'] == '1') {
 if ($clickIsBot) {
 	$mysql['click_filtered'] = '1';
 } else {
-	$click_filtered = FILTER::startFilter($db, 0, $ip_id, $user_id);
-	$mysql['click_filtered'] = $db->real_escape_string((string) $click_filtered);
+	// Why it is filtered goes with the click (202_clicks_filter_reason).
+	$clickFilter = FILTER::verdict($db, $ip_id, $user_id);
+	$mysql['click_filtered'] = (string) $clickFilter->flag();
+	$mysql['click_filter_reason'] = (string) $clickFilter->reason;
+	$mysql['click_filter_entry_id'] = $clickFilter->filtered ? (string) ($clickFilter->entryId ?? 0) : '0';
 }
 
 

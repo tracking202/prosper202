@@ -56,7 +56,7 @@ var clickListCmd = &cobra.Command{
 		params := map[string]string{}
 		// The Visitors page's filters: the reports' window and filters
 		// (ReportFilter on the server), and the lead and bot switches.
-		flags := append(append(append([]string{}, reportWindowFlags...), reportFilterFlags...), "click_lead", "click_bot")
+		flags := append(append(append([]string{}, reportWindowFlags...), reportFilterFlags...), "click_lead", "click_bot", "filter_reason")
 		for _, f := range flags {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				params[f] = v
@@ -117,7 +117,10 @@ var clickGetCmd = &cobra.Command{
 	Long: "Gets one click with what `click list` shows for it, plus its c1-c4 values. The\n" +
 		"ad platforms' click ids it arrived with are gclid, gbraid and wbraid (Google Ads),\n" +
 		"ttclid (TikTok), msclkid (Microsoft Advertising) and fbclid (Meta), each null for\n" +
-		"none; --json gives them whole.",
+		"none; --json gives them whole. A filtered click (click_filtered 1) says why in\n" +
+		"filter_reason: sign_in_address, crawler_range, repeat_visit, filter_list (with the\n" +
+		"list's filter_entry_id) or bot; null for a click filtered before 1.9.79, which\n" +
+		"recorded no reason. `p202 click-filter` shows and changes the rules.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -260,6 +263,8 @@ func init() {
 	enumFlag(clickListCmd, "click_lead", newEnum(binaryValues))
 	clickListCmd.Flags().String("click_bot", "", "Filter: 0=human, 1=bot")
 	enumFlag(clickListCmd, "click_bot", newEnum(binaryValues))
+	clickListCmd.Flags().String("filter_reason", "", "Filter: filtered clicks by why ({values}); not_recorded: filtered before 1.9.79")
+	enumFlag(clickListCmd, "filter_reason", newEnum(clickFilterReasons))
 	clickListCmd.Flags().Bool("follow", false, "Keep printing new clicks as they arrive (the Spy page)")
 	clickListCmd.Flags().Duration("interval", 5*time.Second, "With --follow: how often to poll (at least 1s)")
 	clickListCmd.Flags().Duration("stop-after", 0, "With --follow: stop after this long, e.g. 10m (0 follows until interrupted)")
