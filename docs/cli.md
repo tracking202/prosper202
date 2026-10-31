@@ -23,7 +23,7 @@ The binary is always named `p202` on every platform.
 
 ### Build from source
 
-Requires Go 1.27+.
+Requires Go 1.27.3+ (the release with the latest security fixes).
 
 ```bash
 cd go-cli

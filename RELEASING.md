@@ -154,7 +154,7 @@ This is the normal path. CI builds and publishes; you only tag.
    fires on `v*` tags. It:
    - runs on `ubuntu-24.04`, using the image's own PHP 8.3 and Composer
      (checked, with the extensions the build needs, before anything else) and
-     Go 1.27 via `setup-go` (matching `composer.json` and `go-cli/go.mod`). No
+     Go 1.27.3 via `setup-go` (matching `composer.json` and `go-cli/go.mod`). No
      third-party action touches the release job's PHP, and every action is
      pinned to a commit SHA; Dependabot proposes the updates,
    - runs `build/scripts/package-release.sh` (no build logic is duplicated in
@@ -306,7 +306,7 @@ docker run --rm -v "$PWD":/src:ro -v "$PWD/dist":/out ubuntu:24.04 bash -c '
   the runtime code depending on it. The `known_unresolved` list in the
   manifest is for dead references only, each with the reason. It should
   shrink, never grow.
-- **Go build fails** — confirm `go version` is ≥ 1.27 and that
+- **Go build fails** — confirm `go version` is ≥ 1.27.3 and that
   `make -C go-cli all` succeeds on its own. Cross-compiles use
   `CGO_ENABLED=0`, so no C toolchain is needed.
 - **Zip name doesn't match the tag** — you tagged without bumping
