@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3]
 
     services:
       mysql:
@@ -101,7 +101,7 @@ jobs:
           P202_TEST_DB_PASS: root
           P202_TEST_DB_NAME: p202_integration_test
           P202_IT_LOG_DIR: ${{ runner.temp }}/integration-logs
-          P202_IT_SHARD_COUNT: 8
+          P202_IT_SHARD_COUNT: 4
           P202_IT_SHARD_INDEX: ${{ matrix.shard }}
         run: bash tests/run-integration-suites.sh
 
