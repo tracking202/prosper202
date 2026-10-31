@@ -77,8 +77,9 @@ template_top('Product Analytics Disclosure');
 				<a href="<?php echo get_absolute_url(); ?>202-account/account.php#data-consent">Personal Settings › Data &amp; communication</a>.</li>
 			<li>Switching it off stops collection and syncing immediately, and deletes the analytics data on
 				your install that has not yet been delivered (queued events and the computed usage profile).</li>
-			<li>A small <strong>essential</strong> tier stays on for operational use (account lifecycle, login,
-				and support messaging delivery) — it carries no campaign or revenue analytics.</li>
+			<li>A small <strong>essential</strong> tier stays on for operational use: your sign-ins are sent to run
+				your account and licence (how often you sign in feeds the usage profile only while product analytics
+				is on), plus account lifecycle and support messaging delivery — it carries no campaign or revenue analytics.</li>
 			<li><strong>Money-making offers &amp; tips by email</strong> is a separate, opt-in consent. It is
 				never inferred from the analytics setting, and you can unsubscribe anytime.</li>
 		</ul>

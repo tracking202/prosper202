@@ -68,4 +68,13 @@ final class OfferProfileTest extends TestCase
                 "OfferProfile must not touch per-customer surface: $forbidden");
         }
     }
+
+    public function test_login_cadence_is_left_out_without_analytics_consent(): void
+    {
+        // Every read fails, so ConsentPolicy fails closed: no consent.
+        $db = $this->createMock(mysqli::class);
+        $db->method('prepare')->willReturn(false);
+        $profile = OfferProfile::compute($db, 7, 1_800_000_000);
+        $this->assertArrayNotHasKey('login_cadence', $profile);
+    }
 }

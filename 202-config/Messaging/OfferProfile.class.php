@@ -1,6 +1,7 @@
 <?php
 // 202-config/Messaging/OfferProfile.class.php
 require_once __DIR__ . '/UrlScrubber.class.php';
+require_once __DIR__ . '/ConsentPolicy.class.php';
 
 final class OfferProfile
 {
@@ -114,12 +115,18 @@ final class OfferProfile
 
         // Cadence from the essential-tier login events this install records
         // (202_messaging_events); 'dormant' until logins accumulate.
-        $row = self::one($conn,
-            "SELECT COUNT(*) c FROM `202_messaging_events`
-              WHERE user_id = ? AND event_name = 'login' AND tier = 'essential' AND occurred_at >= ?",
-            'is', [$userId, date('Y-m-d H:i:s', $since)]);
-        if ($row !== null) {
-            $out['login_cadence'] = self::loginCadence((int) ($row['c'] ?? 0));
+        // Sign-ins are essential (sent to run the account); how often the
+        // user signs in is profile data, used only with analytics consent.
+        if (!ConsentPolicy::analyticsAllowed($db, $userId)) {
+            unset($out['login_cadence']);
+        } else {
+            $row = self::one($conn,
+                "SELECT COUNT(*) c FROM `202_messaging_events`
+                  WHERE user_id = ? AND event_name = 'login' AND tier = 'essential' AND occurred_at >= ?",
+                'is', [$userId, date('Y-m-d H:i:s', $since)]);
+            if ($row !== null) {
+                $out['login_cadence'] = self::loginCadence((int) ($row['c'] ?? 0));
+            }
         }
 
         $first = static fn (array $rows): array => array_map(static fn (array $r): string => (string) reset($r), $rows);
