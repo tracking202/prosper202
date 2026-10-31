@@ -84,20 +84,26 @@ SH);
         return [proc_close($process), $output];
     }
 
-    public function testShardsRunEverySuiteExactlyOnceWithFreshDatabases(): void
+    /** @dataProvider shardCounts */
+    public function testShardsRunEverySuiteExactlyOnceWithFreshDatabases(int $count): void
     {
         $suites = [];
-        for ($index = 0; $index < 8; $index++) {
-            [$status, $output] = $this->runShard(['P202_IT_SHARD_COUNT' => '8', 'P202_IT_SHARD_INDEX' => (string) $index]);
+        for ($index = 0; $index < $count; $index++) {
+            [$status, $output] = $this->runShard(['P202_IT_SHARD_COUNT' => (string) $count, 'P202_IT_SHARD_INDEX' => (string) $index]);
             self::assertSame(0, $status, $output);
             preg_match_all('/^PASS\s+(tests\/Suite\d+Test\.php)/m', $output, $matches);
-            self::assertCount(5, $matches[1], $output);
+            self::assertCount(intdiv(40, $count), $matches[1], $output);
             $suites = array_merge($suites, $matches[1]);
         }
         self::assertCount(40, array_unique($suites));
         self::assertCount(40, file($this->root . '/mysql.log', FILE_IGNORE_NEW_LINES));
         self::assertContains('tests/Suite00Test.php', $suites);
         self::assertContains('tests/Suite39Test.php', $suites);
+    }
+
+    public static function shardCounts(): array
+    {
+        return [[4], [8]];
     }
 
     public function testDefaultRunsAllSuites(): void
