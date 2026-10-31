@@ -7,7 +7,7 @@ namespace Prosper202\Report;
 use Closure;
 use Throwable;
 
-/** Optional dropdown choices, isolated by database, account and exact report window. */
+/** Optional dropdown choices, isolated by install, account and exact report window. */
 final class FilterChoicesCache
 {
     public const TTL_SECONDS = 300;
@@ -32,6 +32,7 @@ final class FilterChoicesCache
             || !method_exists($client, 'get') || !method_exists($client, 'set')
             || !in_array($backend, ['memcache', 'memcached'], true)
             || !is_string($host) || $host === '' || !is_string($database) || $database === ''
+            || !function_exists('systemHash')
         ) {
             return null;
         }
@@ -41,7 +42,7 @@ final class FilterChoicesCache
             static fn (string $key, array $value, int $ttl): mixed => $backend === 'memcache'
                 ? @$client->set($key, $value, 0, $ttl)
                 : @$client->set($key, $value, $ttl),
-            json_encode([$host, $database], JSON_THROW_ON_ERROR)
+            \systemHash()
         );
     }
 

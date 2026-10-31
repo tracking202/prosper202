@@ -14,7 +14,103 @@ final class FilterChoicesCacheTest extends TestCase
 {
     protected function setUp(): void
     {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-shared.php';
         require_once dirname(__DIR__, 2) . '/202-config/functions-ui-overview.php';
+    }
+
+    public function testGlobalCacheIsIsolatedByInstallNamespace(): void
+    {
+        $names = ['memcache', 'whatCache', 'memcacheWorking', 'dbhost', 'dbname'];
+        $before = [];
+        foreach ($names as $name) {
+            $before[$name] = [array_key_exists($name, $GLOBALS), $GLOBALS[$name] ?? null];
+        }
+        $server = $_SERVER;
+        try {
+            $client = new class {
+                public array $values = [];
+                public function get(string $key): mixed { return $this->values[$key] ?? false; }
+                public function set(string $key, array $value, int $ttl): bool
+                {
+                    $this->values[$key] = $value;
+                    return true;
+                }
+            };
+            $GLOBALS['memcache'] = $client;
+            $GLOBALS['whatCache'] = 'memcached';
+            $GLOBALS['memcacheWorking'] = true;
+            $GLOBALS['dbhost'] = 'localhost';
+            $GLOBALS['dbname'] = 'same_database';
+            $_SERVER['SERVER_ADDR'] = '192.0.2.1';
+            $_SERVER['HTTP_HOST'] = 'first.example.com';
+            $first = FilterChoicesCache::fromGlobals();
+            self::assertNotNull($first);
+            self::assertSame([1 => 'First'], $first->remember('isp_id', 7, 1, 2, 300, static fn (): array => [1 => 'First']));
+            $_SERVER['HTTP_HOST'] = 'second.example.com';
+            $second = FilterChoicesCache::fromGlobals();
+            self::assertNotNull($second);
+            self::assertSame([2 => 'Second'], $second->remember('isp_id', 7, 1, 2, 300, static fn (): array => [2 => 'Second']));
+            self::assertCount(2, $client->values);
+            self::assertSame([1 => 'First'], $first->remember('isp_id', 7, 1, 2, 300, static function (): array {
+                self::fail('The first install should reuse its own entry.');
+            }));
+        } finally {
+            $_SERVER = $server;
+            foreach ($before as $name => [$existed, $value]) {
+                if ($existed) {
+                    $GLOBALS[$name] = $value;
+                } else {
+                    unset($GLOBALS[$name]);
+                }
+            }
+        }
+    }
+
+    public function testIdenticalHostAndDatabaseInDifferentInstallDirectoriesUseDifferentKeys(): void
+    {
+        $root = sys_get_temp_dir() . '/p202-filter-cache-' . bin2hex(random_bytes(8));
+        mkdir($root);
+        $keys = [];
+        try {
+            foreach (['first', 'second'] as $install) {
+                mkdir($root . '/' . $install);
+                copy(dirname(__DIR__, 2) . '/202-config/functions-shared.php', $root . '/' . $install . '/shared.php');
+                $program = <<<'PHP'
+                    require $argv[1];
+                    require $argv[2];
+                    $_SERVER['HTTP_HOST'] = 'example.com';
+                    $_SERVER['SERVER_ADDR'] = '192.0.2.1';
+                    $GLOBALS['dbhost'] = 'localhost';
+                    $GLOBALS['dbname'] = 'same_database';
+                    $GLOBALS['memcacheWorking'] = true;
+                    $GLOBALS['whatCache'] = 'memcached';
+                    $GLOBALS['memcache'] = new class {
+                        public function get(string $key): bool { return false; }
+                        public function set(string $key, array $value, int $ttl): bool { echo $key; return true; }
+                    };
+                    \Prosper202\Report\FilterChoicesCache::fromGlobals()->remember('isp_id', 7, 1, 2, 300, fn () => [1 => 'value']);
+                    PHP;
+                $process = proc_open(
+                    [PHP_BINARY, '-r', $program, $root . '/' . $install . '/shared.php', dirname(__DIR__, 2) . '/202-config/Report/FilterChoicesCache.php'],
+                    [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                    $pipes
+                );
+                self::assertIsResource($process);
+                $keys[] = stream_get_contents($pipes[1]);
+                $error = stream_get_contents($pipes[2]);
+                fclose($pipes[1]);
+                fclose($pipes[2]);
+                self::assertSame(0, proc_close($process), $error);
+            }
+            self::assertNotEmpty($keys[0]);
+            self::assertNotSame($keys[0], $keys[1]);
+        } finally {
+            foreach (['first', 'second'] as $install) {
+                @unlink($root . '/' . $install . '/shared.php');
+                @rmdir($root . '/' . $install);
+            }
+            rmdir($root);
+        }
     }
 
     public function testCacheHitsSkipTheScanAndDoNotShareTheExtraSelectedValue(): void
