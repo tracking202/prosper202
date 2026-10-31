@@ -11,6 +11,7 @@ on:
     paths:
       - '**.php'
       - 'tests/run-integration-suites.sh'
+      - 'tests/integration-suite-weights.txt'
       - '.github/workflows/php-integration.yml'
       # SummaryTotalVectorsIntegrationTest holds these answers to the server.
       - 'tests/fixtures/summary-totals/**'
@@ -18,6 +19,7 @@ on:
     paths:
       - '**.php'
       - 'tests/run-integration-suites.sh'
+      - 'tests/integration-suite-weights.txt'
       - '.github/workflows/php-integration.yml'
       # SummaryTotalVectorsIntegrationTest holds these answers to the server.
       - 'tests/fixtures/summary-totals/**'
