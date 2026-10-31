@@ -28,6 +28,13 @@ Prosper202 — PHP 8.3 self-hosted campaign tracking and marketing analytics pla
   names free of `/` (`release/1.9.77` would not match). Agent Evals and the
   upgrade-equals-install check run on pushes to master only, so the PR is
   where they run for a version branch: read them there before merging.
+- **A PR's changelog entries go in a fragment, never into the two files**:
+  `changelogs.d/<version>/<any-name>.txt`, written as changelogs.txt writes
+  them, with an optional `app:` line for changelogs.json
+  (`changelogs.d/README.md`). The release folds them in (RELEASING.md, step 2).
+  Every PR appending to the same lines made each merge conflict every other
+  open PR; the `changelog` check in pr-checks.yml refuses a PR that adds
+  entries to the files directly. Rewording an entry already there is fine.
 
 ## Error patterns to avoid
 

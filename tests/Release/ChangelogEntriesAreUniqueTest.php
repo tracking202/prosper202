@@ -17,7 +17,8 @@ use Tests\TestCase;
  *
  * A repeated entry is refused in every version of both files. A reworded
  * copy is caught by wording, so it is asked only of the version being
- * written: two of its entries that share most of their five-word runs. An
+ * written, in the two files and its changelogs.d/<version>/ fragments: two
+ * of its entries that share most of their five-word runs. An
  * older version's similar entries were released as they are (1.9.56 lists
  * one change as both an Update and a Fix).
  */
@@ -31,7 +32,7 @@ final class ChangelogEntriesAreUniqueTest extends TestCase
     public function testNoVersionOfTheReleaseNotesListsAnEntryTwice(): void
     {
         $repeated = [];
-        foreach (self::textVersions() as $version => $entries) {
+        foreach (self::textVersions(self::ROOT) as $version => $entries) {
             foreach (array_count_values($entries) as $entry => $count) {
                 if ($count > 1) {
                     $repeated[] = $version . ' (' . $count . 'x): ' . substr((string) $entry, 0, 100);
@@ -44,7 +45,7 @@ final class ChangelogEntriesAreUniqueTest extends TestCase
     public function testNoVersionOfTheInAppNotesListsAnEntryTwice(): void
     {
         $repeated = [];
-        foreach (self::jsonVersions() as $version => $entries) {
+        foreach (self::jsonVersions(self::ROOT) as $version => $entries) {
             foreach (array_count_values($entries) as $entry => $count) {
                 if ($count > 1) {
                     $repeated[] = $version . ' (' . $count . 'x): ' . substr((string) $entry, 0, 100);
@@ -56,12 +57,51 @@ final class ChangelogEntriesAreUniqueTest extends TestCase
 
     public function testTheVersionBeingWrittenHasNoRewordedCopyOfAnEntry(): void
     {
-        $version = self::currentVersion();
-        $lists = [
-            'changelogs.txt' => self::textVersions()[$version] ?? [],
-            '202-config/changelogs.json' => self::jsonVersions()[$version] ?? [],
-        ];
-        self::assertNotSame([], $lists['changelogs.txt'], 'changelogs.txt has no entries under Version ' . $version);
+        $version = self::currentVersion(self::ROOT);
+        self::assertSame([], self::rewordedCopies(self::ROOT), self::rewordedMessage($version));
+    }
+
+    /** Until release a version's entries are fragments, changelogs.d/<version>/*.txt (scripts/changelog.py). */
+    public function testTheVersionBeingWrittenCountsItsFragments(): void
+    {
+        $root = self::fixture('9.9.9', [
+            'a.txt' => "# note\n\n-- Fixed: A new fix that ships in 9.9.9.\napp: Fixed: A new fix.\n",
+        ]);
+        try {
+            $lists = self::currentLists($root);
+            self::assertSame(['-- Fixed: A new fix that ships in 9.9.9.'], $lists['changelogs.txt']);
+            self::assertSame(['Fixed: A new fix.'], $lists['202-config/changelogs.json']);
+            self::assertSame([], self::rewordedCopies($root));
+        } finally {
+            self::removeTree($root);
+        }
+    }
+
+    public function testAFragmentThatRewordsAnEntryInTheFilesIsCaught(): void
+    {
+        $entry = '-- Fixed: The rotator now sends every visitor to the right landing page again.';
+        $root = self::fixture('9.9.9', [
+            'a.txt' => "-- Fixed: The rotator now sends every visitor to the right landing page again, as before.\n",
+        ], $entry);
+        try {
+            $copies = self::rewordedCopies($root);
+            self::assertCount(1, $copies);
+            self::assertStringStartsWith('changelogs.txt', $copies[0]);
+        } finally {
+            self::removeTree($root);
+        }
+    }
+
+    /** @return list<string> */
+    private static function rewordedCopies(string $root): array
+    {
+        $version = self::currentVersion($root);
+        $lists = self::currentLists($root);
+        self::assertNotSame(
+            [],
+            $lists['changelogs.txt'],
+            'changelogs.txt has no entries under Version ' . $version . ' and changelogs.d/' . $version . '/ has none'
+        );
 
         $copies = [];
         foreach ($lists as $file => $entries) {
@@ -83,12 +123,75 @@ final class ChangelogEntriesAreUniqueTest extends TestCase
                 }
             }
         }
-        self::assertSame(
-            [],
-            $copies,
-            'Two ' . $version . ' entries describe one change, most likely an older wording a merge kept:'
-            . ' keep the one the change\'s PR ended with.'
+
+        return $copies;
+    }
+
+    private static function rewordedMessage(string $version): string
+    {
+        return 'Two ' . $version . ' entries describe one change, most likely an older wording a merge kept:'
+            . ' keep the one the change\'s PR ended with.';
+    }
+
+    /**
+     * The current version's entries: the two files plus its fragments, read as scripts/changelog.py does.
+     *
+     * @return array{'changelogs.txt': list<string>, '202-config/changelogs.json': list<string>}
+     */
+    private static function currentLists(string $root): array
+    {
+        $version = self::currentVersion($root);
+        $txt = self::textVersions($root)[$version] ?? [];
+        $json = self::jsonVersions($root)[$version] ?? [];
+        foreach (glob($root . '/changelogs.d/' . $version . '/*.txt') ?: [] as $path) {
+            foreach (preg_split('/\R/', (string) file_get_contents($path)) ?: [] as $line) {
+                if (trim($line) === '' || str_starts_with($line, '#')) {
+                    continue;
+                }
+                if (str_starts_with($line, '-- ')) {
+                    $txt[] = rtrim($line);
+                } elseif (str_starts_with($line, 'app: ')) {
+                    $json[] = rtrim(substr($line, 5));
+                }
+            }
+        }
+
+        return ['changelogs.txt' => $txt, '202-config/changelogs.json' => $json];
+    }
+
+    /** A root with version.php at $version, an older release in both files, and these fragments. */
+    private static function fixture(string $version, array $fragments, ?string $txtEntry = null): string
+    {
+        $root = sys_get_temp_dir() . '/changelog-fixture-' . bin2hex(random_bytes(6));
+        mkdir($root . '/202-config', 0777, true);
+        mkdir($root . '/changelogs.d/' . $version, 0777, true);
+        file_put_contents($root . '/202-config/version.php', "<?php\n\$version_string = '" . $version . "';\n");
+        $txt = "Changelog\n\n";
+        if ($txtEntry !== null) {
+            $txt .= 'Version ' . $version . "\n" . $txtEntry . "\n\n";
+        }
+        file_put_contents($root . '/changelogs.txt', $txt . "Version 1.0.0\n-- New: First release.\n\nVersion 0.9.0\n-- New: Beta.\n");
+        file_put_contents(
+            $root . '/202-config/changelogs.json',
+            json_encode(['1.0.0' => ['version' => '1.0.0', 'logs' => ['New: First release.']]])
         );
+        foreach ($fragments as $name => $text) {
+            file_put_contents($root . '/changelogs.d/' . $version . '/' . $name, $text);
+        }
+
+        return $root;
+    }
+
+    private static function removeTree(string $dir): void
+    {
+        foreach (scandir($dir) ?: [] as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $path = $dir . '/' . $item;
+            is_dir($path) ? self::removeTree($path) : unlink($path);
+        }
+        rmdir($dir);
     }
 
     /** @return array<string, true> */
@@ -105,9 +208,9 @@ final class ChangelogEntriesAreUniqueTest extends TestCase
     }
 
     /** @return array<string, list<string>> */
-    private static function textVersions(): array
+    private static function textVersions(string $root): array
     {
-        $text = file_get_contents(self::ROOT . '/changelogs.txt');
+        $text = file_get_contents($root . '/changelogs.txt');
         self::assertIsString($text);
         $versions = [];
         $current = null;
@@ -127,9 +230,9 @@ final class ChangelogEntriesAreUniqueTest extends TestCase
     }
 
     /** @return array<string, list<string>> */
-    private static function jsonVersions(): array
+    private static function jsonVersions(string $root): array
     {
-        $json = (string) file_get_contents(self::ROOT . '/202-config/changelogs.json');
+        $json = (string) file_get_contents($root . '/202-config/changelogs.json');
         $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
         self::assertIsArray($decoded);
         $versions = [];
@@ -141,9 +244,9 @@ final class ChangelogEntriesAreUniqueTest extends TestCase
         return $versions;
     }
 
-    private static function currentVersion(): string
+    private static function currentVersion(string $root): string
     {
-        $source = (string) file_get_contents(self::ROOT . '/202-config/version.php');
+        $source = (string) file_get_contents($root . '/202-config/version.php');
         $found = preg_match("/\\\$version_string = '([^']+)';/", $source, $m);
         self::assertSame(1, $found, 'no $version_string in version.php');
 
