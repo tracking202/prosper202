@@ -38,7 +38,7 @@ final class LtvPagesRequirePermissionTest extends TestCase
         // By name and by content: a page that reads LTV's repositories or
         // helpers is LTV's whatever it is called (sort_ltv.php was missed by name).
         $found = [];
-        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::ROOT . 'tracking202', \FilesystemIterator::SKIP_DOTS));
+        $files = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree(self::ROOT . 'tracking202'));
         foreach ($files as $file) {
             if (!$file->isFile() || $file->getExtension() !== 'php') {
                 continue;
