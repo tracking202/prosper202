@@ -12,6 +12,9 @@ use Api\V3\Exception\ValidationException;
 
 class SyncEngine
 {
+    /** The criterion the redirects read as every visitor, as a rule with none is read. */
+    private const array EVERY_VISITOR = ['type' => 'country', 'statement' => 'is', 'value' => 'ALL'];
+
     private const array ENTITY_ENDPOINTS = [
         'aff-networks' => 'aff-networks',
         'ppc-networks' => 'ppc-networks',
@@ -598,8 +601,10 @@ class SyncEngine
      * own, as one set (PUT /rotators/{id}/rules), which the target takes
      * whole or refuses with nothing written. Removing the target's rules and
      * posting the source's one at a time left the target with only the rules
-     * before one it refused, and since 1.9.79 it refuses a rule with no
-     * criterion, which a rule stored before then can be. An install without
+     * before one it refused. A source rule stored before 1.9.79 with no
+     * criterion is sent as country is ALL (rotatorRulePayload). A source
+     * with more rules than the target takes in a set is refused whole, with
+     * the count named, rather than written in part. An install without
      * the set's route (before 1.9.79) answers it 404, and is written to one
      * rule at a time; so is a source redirector with no rules, which a set
      * cannot be.
@@ -643,6 +648,9 @@ class SyncEngine
         foreach ($e->fieldErrors as $field => $error) {
             $at = preg_match('/^rules\.(\d+)(?:\.|$)/', (string) $field, $m) === 1 ? $rules[(int) $m[1]] ?? null : null;
             $errors[$field] = $at === null ? $error : 'the source rule "' . self::ruleName($at) . '": ' . $error;
+        }
+        if (isset($errors['rules']) && is_string($errors['rules'])) {
+            $errors['rules'] .= '; the source redirector has ' . count($rules) . ', and none was written';
         }
 
         return new RemoteApiException($e->remoteStatus, $e->remoteMessage, $errors, $e->method, $e->path);
@@ -705,6 +713,9 @@ class SyncEngine
             'status' => $this->scalarString($rule['status'] ?? null) === '1' ? 1 : 0,
         ];
 
+        // A rule stored before 1.9.79 with no criterion is read by the redirects
+        // as every visitor; sent as country is ALL, which they read the same way.
+        $rulePayload['criteria'] = [self::EVERY_VISITOR];
         if (!empty($rule['criteria']) && is_array($rule['criteria'])) {
             $rulePayload['criteria'] = [];
             foreach ($rule['criteria'] as $c) {
@@ -1200,7 +1211,8 @@ class SyncEngine
     private function normalizeRuleCriteria(mixed $rawCriteria): array
     {
         if (!is_array($rawCriteria) || count($rawCriteria) === 0) {
-            return [];
+            // No criterion is every visitor, as the sync sends it
+            return [self::EVERY_VISITOR];
         }
 
         $normalized = [];
