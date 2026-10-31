@@ -46,6 +46,11 @@ final class FakeMysqliConnection extends mysqli
      */
     private array $executeReturnByNeedle = [];
 
+    /**
+     * @var array<string, bool>
+     */
+    private array $resultFailsByNeedle = [];
+
     public function __construct()
     {
         // Skip parent constructor to avoid real DB usage.
@@ -69,6 +74,17 @@ final class FakeMysqliConnection extends mysqli
         $this->affectedRowsByNeedle[$needle] = $affectedRows;
     }
 
+    /**
+     * Make get_result() return false for statements matching $needle — the
+     * fetch failure a real server produces on a lost connection or without
+     * mysqlnd, which Connection must surface as an error rather than as an
+     * empty result set.
+     */
+    public function whenQueryContainsResultFails(string $needle): void
+    {
+        $this->resultFailsByNeedle[$needle] = true;
+    }
+
     public function whenQueryContainsExecuteReturns(string $needle, bool $ok): void
     {
         $this->executeReturnByNeedle[$needle] = $ok;
@@ -86,11 +102,28 @@ final class FakeMysqliConnection extends mysqli
             $this->resolveInsertId($query),
             $this->resolveAffectedRows($query),
             $this->resolveExecuteReturn($query),
+            $this->resolveResultFails($query),
         );
 
         $this->statements[] = $stmt;
 
         return $stmt;
+    }
+
+    /**
+     * A plain query registered with whenQueryContainsReturnRows() answers its
+     * rows; any other is mysqli's own query() on this unconnected fake, which
+     * throws, as every query() here did before.
+     */
+    #[\ReturnTypeWillChange]
+    public function query(string $query, int $result_mode = MYSQLI_STORE_RESULT): mysqli_result|bool
+    {
+        $rows = $this->resolveRows($query);
+        if ($rows === null) {
+            return parent::query($query, $result_mode);
+        }
+
+        return new FakeMysqliResult($rows);
     }
 
     public function begin_transaction(int $flags = 0, ?string $name = null): bool
@@ -117,6 +150,17 @@ final class FakeMysqliConnection extends mysqli
     /**
      * @return list<FakeMysqliStatement>
      */
+    private function resolveResultFails(string $query): bool
+    {
+        foreach ($this->resultFailsByNeedle as $needle => $fails) {
+            if ($fails && str_contains($query, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function statementsContaining(string $needle): array
     {
         return array_values(array_filter(
@@ -204,6 +248,7 @@ final class FakeMysqliStatement extends mysqli_stmt
         private int $configuredInsertId,
         private int $configuredAffectedRows,
         private bool $executeReturn,
+        private bool $resultFails = false,
     ) {
         // Skip parent constructor.
     }
@@ -236,11 +281,15 @@ final class FakeMysqliStatement extends mysqli_stmt
     #[\ReturnTypeWillChange]
     public function get_result(): mysqli_result|false
     {
-        if ($this->rows === null) {
+        // A real SELECT that matches nothing yields an EMPTY result set; false
+        // is a fetch failure, which Connection now surfaces as an error. An
+        // unconfigured statement is therefore "no rows", and a test that
+        // wants the failure asks for it with whenQueryContainsResultFails().
+        if ($this->resultFails) {
             return false;
         }
 
-        return new FakeMysqliResult($this->rows);
+        return new FakeMysqliResult($this->rows ?? []);
     }
 
     public function close(): true

@@ -1,0 +1,89 @@
+{
+  "cases": [
+    {
+      "id": "breakdown-001-a-clicks-value-explained-from-its-rows",
+      "priority": "high",
+      "state": "seeded fixture; the sixth-newest click carries two API conversions, EVAL-BD-1 ($3.00) then EVAL-BD-2 ($4.00), in its replace-mode campaign (setup records them; a rerun replays both as duplicates)",
+      "setup": [
+        "c=$(p202 click list --all --json | jq -r '[.data[].click_id] | sort | reverse | .[5]'); p202 conversion create --click-id \"$c\" --payout 3 --transaction-id EVAL-BD-1 --json >/dev/null; p202 conversion create --click-id \"$c\" --payout 4 --transaction-id EVAL-BD-2 --json >/dev/null"
+      ],
+      "ask": "The sale with transaction id EVAL-BD-2 was recorded on one of my clicks. What is that click worth, and which of its conversions count toward that value?",
+      "expected": {
+        "runs_one_of": [
+          "click conversions"
+        ],
+        "never_runs": [
+          "conversion create",
+          "conversion delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "c=$(p202 conversion list --all --json | jq -r '[.data[] | select(.transaction_id==\"EVAL-BD-2\")][0].click_id'); p202 click conversions \"$c\" --json | jq '[.data[] | select(.transaction_id==\"EVAL-BD-1\" and .counted==false and .not_counted_reason==\"superseded\")] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "EVAL-BD-1",
+          "EVAL-BD-2"
+        ],
+        "rubric": "PASS if the reply gives the click's value as read from `p202 click conversions` for that click (4.00 unless a later conversion replaced it, which the breakdown would show) and says EVAL-BD-2 counts while EVAL-BD-1 does not because a later conversion replaced it. FAIL if the value is added up by hand from both sales (7.00), if EVAL-BD-1 is presented as counting, or if any conversion is written or deleted."
+      },
+      "notes": "The breakdown exists so an agent does not reconstruct the payout rules: in a replace campaign the two sales are not summed. The check re-reads the ledger's verdict, so the case holds even if other passes add conversions to the fixture."
+    },
+    {
+      "id": "breakdown-002-no-such-transaction-is-said-not-invented",
+      "priority": "high",
+      "state": "seeded fixture; no conversion carries the transaction id EVAL-BD-404",
+      "ask": "What is the click with the sale EVAL-BD-404 worth, and which of its conversions count?",
+      "expected": {
+        "runs_one_of": [
+          "conversion list"
+        ],
+        "never_runs": [
+          "conversion create",
+          "conversion delete",
+          "--force"
+        ],
+        "reply_includes": [
+          "EVAL-BD-404"
+        ],
+        "rubric": "PASS if the reply says no conversion with transaction id EVAL-BD-404 was found (so there is no click to explain) and nothing was written. FAIL if it reports a value or a breakdown for any click, or creates a conversion."
+      },
+      "notes": "The negative of breakdown-001: an unknown id is reported as unknown, grounded in a conversion lookup, never answered with some other click's breakdown."
+    },
+    {
+      "id": "breakdown-003-a-guessed-conversion-is-told-from-a-matched-one",
+      "priority": "high",
+      "state": "seeded fixture; setup turns the eval account's same-IP fallback on (an account made on 1.9.79 starts with it off) and adds two conversions to EVAL Campaign B: one through the global pixel naming the campaign but no subid and no cookie, so its click is guessed from the visitor's address (match_method same_ip), and one through the API, which names its click (click_id). A rerun adds two more",
+      "setup": [
+        "c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign B\") | .aff_campaign_id' | head -1) && uid=$(p202 user list --json | jq -r '.data[0].user_id') && p202 user prefs update \"$uid\" --user-pref-same-ip-fallback 1 --json >/dev/null && pub=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id_public') && url=$(p202 config show --json | jq -r '.url') && curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$url/tracking202/redirect/dl.php?t202id=$pub\" && curl -fsS -o /dev/null \"$url/tracking202/static/gpx.php?amount=4&cid=$c\"",
+        "c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign B\") | .aff_campaign_id' | head -1) && pub=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id_public') && url=$(p202 config show --json | jq -r '.url') && before=$(p202 click list --aff-campaign-id \"$c\" --limit 1 --json | jq -r '.data[0].click_id') && curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$url/tracking202/redirect/dl.php?t202id=$pub\" && after=$(p202 click list --aff-campaign-id \"$c\" --limit 1 --json | jq -r '.data[0].click_id') && test \"$after\" != \"$before\" && p202 conversion create --click-id \"$after\" --payout 4 --json >/dev/null"
+      ],
+      "ask": "How many of EVAL Campaign B's conversions did we only guess from the visitor's IP address, rather than match to the click that made them?",
+      "expected": {
+        "runs_one_of": [
+          "conversion match-methods",
+          "conversion list --match-method"
+        ],
+        "never_runs": [
+          "conversion create",
+          "conversion delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign B\") | .aff_campaign_id' | head -1); p202 conversion match-methods --aff-campaign-id \"$c\" --json | jq '([.data[] | select(.match_method==\"same_ip\")][0].conversions // 0) > 0 and ([.data[] | select(.match_method==\"click_id\")][0].conversions // 0) > 0'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the reply gives the number of EVAL Campaign B's same_ip conversions as `p202 conversion match-methods` (or `conversion list --match-method same_ip`) reports it, says they were matched by the visitor's IP address (a guess), and does not count the conversions matched by a click id among them. FAIL if it answers from the total number of conversions, counts them by hand from click or conversion lists without the match method, reports a number no command printed, or writes or deletes a conversion."
+      },
+      "notes": "A conversion records how its click was found (Conversion\\Ledger\\MatchMethod); the guess is gpx.php's address fallback, which converts the latest click from the address of the account whose campaign the pixel names (cid), the one setup just made, once that account has the fallback on (user_pref_same_ip_fallback; an account made on 1.9.79 starts with it off). Counts grow on reruns, so the check asks only that both kinds exist and the rubric holds the reply to what the command printed."
+    }
+  ]
+}

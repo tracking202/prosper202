@@ -1,42 +1,377 @@
 <?php
 include_once(str_repeat("../", 1) . '202-config/connect.php');
-include_once(str_repeat("../", 1) . '202-config/functions-timeframe.php');
 include_once(str_repeat("../", 1) . '202-config/functions-db.php');
-include_once(str_repeat("../", 1) . '202-config/functions-indexes.php');
 include_once(str_repeat("../", 1) . '202-config/functions-icons.php');
 include_once(str_repeat("../", 1) . '202-config/functions-api.php');
 include_once(str_repeat("../", 1) . '202-config/functions-utils.php');
 include_once(str_repeat("../", 1) . '202-config/functions-empty.php');
+require_once __DIR__ . '/../202-config/functions-account-ui.php';
+require_once __DIR__ . '/../202-config/functions-traffic-source-owners-ui.php';
 
 AUTH::require_user();
+
+/*
+ * Account › Settings (administration), on the v2 shell.
+ *
+ * The page the account menu shows only to users with access_to_settings, and
+ * now the page itself asks the same question: the classic page answered
+ * anyone signed in, including the click-data deletion form.
+ *
+ * Every form posts the session token under `token`, and every handler checks
+ * it before writing and says so when it refuses. The AutoCron and MaxMind
+ * switches were AJAX posts from the classic shell's scripts; they are plain
+ * forms now, posting the same fields (`autocron` 1/0, `maxmind` true/false).
+ *
+ * Click-data retention (the automatic deletion days and the one-off deletion
+ * marker) is the install's, kept on user 1's preferences because that is the
+ * only row the cron job reads; any admin's save lands there, as through
+ * /api/v3/system/retention. AutoCron and ISP lookup stay on the signed-in
+ * user's row, which is the one the redirects read for that user's trackers.
+ * The GeoIP database's refresh is the install's too, in 202_geoip_refresh
+ * (Prosper202\GeoIp); its MaxMind credentials are never rendered back.
+ */
+
+if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
+	header('location: ' . get_absolute_url() . '202-account/');
+	exit;
+}
 
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string) $_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
-$user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+$user_results = _mysqli_query($db, $user_sql);
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'];
 $user_time_register = $user_row['user_time_register'];
 
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 
-$cron_log_query = "SELECT last_execution_time FROM 202_cronjob_logs";
-$cron_log_result = $db->query($cron_log_query);
+/** Settings this page changes, and the field errors of a refused submit. */
+$fieldErrors = [];
 
-if ($cron_log_result->num_rows > 0) {
-	$cron_log_row = $cron_log_result->fetch_assoc();
-	$last_cron_job_execution_time = CronJobLastExecution('@' . $cron_log_row['last_execution_time']);
-} else {
-	$last_cron_job_execution_time = '<span style="color:#e74c3c">never</span>';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/administration.php');
+	}
 }
 
+// A traffic source moved back or split from the panel:
+// TrafficSourceOwnersController's repair or split, behind the routes' checks
+// (functions-traffic-source-owners-ui.php).
+if (isset($_POST['traffic_source_repair'])) {
+    p202_ts_owners_repair_posted($db, (int) $_SESSION['user_own_id'], $_POST);
+}
+if (isset($_POST['traffic_source_split'])) {
+    p202_ts_owners_split_posted($db, (int) $_SESSION['user_own_id'], $_POST);
+}
+
+if (isset($_POST['autocron'])) {
+    $turnOn = \Prosper202\Cron\AutoCronSwitch::posted($_POST['autocron']);
+    if ($turnOn === null) {
+        p202_account_flash('bad', 'AutoCron is set On or Off, and the form sent neither, so nothing was changed.');
+        p202_account_redirect('202-account/administration.php#autocron');
+    }
+    if ($turnOn) {
+        $endpoint = 'register';
+        // Whether this install has its own cron job: the last run a scheduler
+        // recorded (Prosper202\Cron\AutoCronSwitch). The footer's ping, which
+        // this page sent as it loaded, records nothing (CronRun), so it no
+        // longer reads as "your own cron job ran".
+        $unchecked = 'Whether your own cron job is running could not be checked just now,'
+            . ' so AutoCron was not changed. Try again in a few minutes.';
+        $cron_sql = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";
+        $cron_result = _mysqli_query($cron_sql);
+        if ($cron_result === false) {
+            p202_account_flash('bad', $unchecked);
+            p202_account_redirect('202-account/administration.php#autocron');
+        }
+        $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+        $on_sql = "SELECT auto_cron FROM 202_users_pref WHERE user_id = '" . $mysql['user_id'] . "'";
+        $on_result = _mysqli_query($on_sql);
+        if ($on_result === false) {
+            p202_account_flash('bad', $unchecked);
+            p202_account_redirect('202-account/administration.php#autocron');
+        }
+        $cron_row = p202FetchRow($cron_result, $cron_sql);
+        $on_row = p202FetchRow($on_result, $on_sql);
+        $lastRun = $cron_row === null ? null : (int) $cron_row['last_execution_time'];
+        $alreadyOn = $on_row !== null && (string) $on_row['auto_cron'] === '1';
+        // The record is advice: anyone can open the cron's address, so a run
+        // recorded is no proof of a cron job, and the owner may say so.
+        $noOwnJob = ($_POST['autocron_no_own_job'] ?? null) === '1';
+        if (!$noOwnJob && \Prosper202\Cron\AutoCronSwitch::ownCronJobRanRecently($lastRun, $alreadyOn, time())) {
+            p202_account_flash('info', \Prosper202\Cron\AutoCronSwitch::RAN_RECENTLY);
+            p202_account_redirect('202-account/administration.php?autocron=confirm#autocron');
+        }
+    } else {
+        $endpoint = 'deregister';
+    }
+
+    // Registering needs this install's address, and a read of it that fails
+    // throws rather than register the server's own name
+    // (p202StoredTrackingDomain()): said here, the setting left as it was,
+    // as Personal Settings says it for the daily email.
+    try {
+        $cron = callAutoCron($endpoint);
+    } catch (Throwable $e) {
+        error_log('AutoCron ' . $endpoint . ' failed: ' . $e->getMessage());
+        p202_account_flash('bad', 'This install\'s address could not be read just now, so AutoCron was not changed. Try again in a few minutes.');
+        p202_account_redirect('202-account/administration.php#autocron');
+    }
+
+    $refusal = \Prosper202\Cron\AutoCronAnswer::refusal($cron);
+    if ($refusal === null) {
+        $mysql['auto_cron'] = $turnOn ? '1' : '0';
+        $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+        $sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
+        if (_mysqli_query($sql)) {
+            p202_account_flash('ok', $turnOn ? 'AutoCron is on.' : 'AutoCron is off.');
+        } else {
+            p202_account_flash('bad', 'AutoCron answered, but the setting could not be saved here; try again.');
+        }
+    } else {
+        p202_account_flash('bad', $refusal);
+    }
+    p202_account_redirect('202-account/administration.php#autocron');
+}
+
+if (isset($_POST['maxmind'])) {
+    $ispOn = \Prosper202\Http\PostedSwitch::read($_POST['maxmind'], 'true', 'false');
+    if ($ispOn === null) {
+        p202_account_flash(
+            'bad',
+            'ISP and carrier lookup is set On or Off, and the form sent neither, so nothing was changed.'
+        );
+        p202_account_redirect('202-account/administration.php#maxmind');
+    }
+    if ($ispOn) {
+        // Same resolution as getisp() in connect2.php: P202_GEO_DIR (persistent
+        // volume on container deployments) or the in-docroot default.
+        $geo_dir = getenv('P202_GEO_DIR') ?: substr(__DIR__, 0, -12) . '/202-config/geo';
+        if (file_exists($geo_dir . '/GeoIP2-ISP.mmdb') || file_exists($geo_dir . '/GeoIPISP.dat')) {
+            $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+            $sql = "UPDATE 202_users_pref SET maxmind_isp='1' WHERE user_id='" . $mysql['user_id'] . "'";
+            if (_mysqli_query($sql)) {
+                if ($slack)
+                    $slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Activated']);
+                p202_account_flash('ok', 'ISP and carrier lookup is on. Live traffic picks it up within five minutes.');
+            } else {
+                p202_account_flash('bad', 'ISP and carrier lookup could not be turned on; try again.');
+            }
+        } else {
+            p202_account_flash('bad', "The ISP database file isn't there, so lookup stays off. Upload GeoIP2-ISP.mmdb (or legacy GeoIPISP.dat) to "
+                . (getenv('P202_GEO_DIR') ?: '/202-config/geo') . ', then turn it on.');
+        }
+    } else {
+        $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+        $sql = "UPDATE 202_users_pref SET maxmind_isp='0' WHERE user_id='" . $mysql['user_id'] . "'";
+        if (_mysqli_query($sql)) {
+            if ($slack)
+                $slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Deactivated']);
+            p202_account_flash('ok', 'ISP and carrier lookup is off.');
+        } else {
+            p202_account_flash('bad', 'ISP and carrier lookup could not be turned off; try again.');
+        }
+    }
+
+    p202_account_redirect('202-account/administration.php#maxmind');
+}
+
+// The GeoIP database's refresh (Prosper202\GeoIp): the install's MaxMind
+// account ID and licence key, which are stored and never shown again (an
+// empty box keeps the stored one), their removal, and a refresh now.
+if (isset($_POST['geoip_action'])) {
+    $geoipStore = new \Prosper202\GeoIp\RefreshStore(new \Prosper202\Database\Connection($db));
+    $geoipAction = (string) $_POST['geoip_action'];
+    try {
+        if ($geoipAction === 'save') {
+            $account = trim((string) ($_POST['geoip_account_id'] ?? ''));
+            $key = trim((string) ($_POST['geoip_license_key'] ?? ''));
+            $stored = $geoipStore->read();
+            $accountError = $account === ''
+                ? ($stored->accountIdStored() ? null : 'Enter your MaxMind account ID: the download needs it.')
+                : \Prosper202\GeoIp\Credentials::accountIdError($account);
+            $keyError = $key === ''
+                ? ($stored->licenseKeyStored() ? null : 'Enter your MaxMind licence key: the download needs it.')
+                : \Prosper202\GeoIp\Credentials::licenseKeyError($key);
+            if ($accountError !== null) {
+                $fieldErrors['geoip_account_id'] = $accountError;
+            }
+            if ($keyError !== null) {
+                $fieldErrors['geoip_license_key'] = $keyError;
+            }
+            if ($fieldErrors === []) {
+                if ($account === '' && $key === '') {
+                    p202_account_flash('info', 'Nothing was changed: the stored account ID and licence key are kept.'
+                        . ' Type a new one to replace it.');
+                } else {
+                    $geoipStore->saveCredentials($account === '' ? null : $account, $key === '' ? null : $key);
+                    p202_account_flash('ok', 'Saved. The cron job refreshes the GeoIP database within the hour, then'
+                        . ' weekly; Refresh now does it at once.');
+                }
+                p202_account_redirect('202-account/administration.php#geoip');
+            }
+        } elseif ($geoipAction === 'forget') {
+            $geoipStore->forgetCredentials();
+            p202_account_flash('ok', 'The MaxMind account ID and licence key were removed, so the GeoIP database is'
+                . ' no longer refreshed. The installed database stays.');
+            p202_account_redirect('202-account/administration.php#geoip');
+        } elseif ($geoipAction === 'refresh') {
+            // A download of tens of megabytes: let it finish if the tab closes.
+            @set_time_limit(\Prosper202\GeoIp\GeoIpRefresh::BUDGET_SECONDS + 120);
+            ignore_user_abort(true);
+            $refresh = (new \Prosper202\GeoIp\GeoIpRefresh($geoipStore, new \Prosper202\GeoIp\DatabaseInstaller()))
+                ->run();
+            $kind = match ($refresh->outcome) {
+                \Prosper202\GeoIp\RefreshResult::REFRESHED => 'ok',
+                \Prosper202\GeoIp\RefreshResult::CURRENT, \Prosper202\GeoIp\RefreshResult::BUSY => 'info',
+                default => 'bad',
+            };
+            p202_account_flash($kind, $refresh->message);
+            p202_account_redirect('202-account/administration.php#geoip');
+        } else {
+            p202_account_flash('bad', 'The GeoIP form sent an action this page does not know, so nothing was changed.');
+            p202_account_redirect('202-account/administration.php#geoip');
+        }
+    } catch (\Throwable $e) {
+        error_log('administration.php: the GeoIP refresh settings could not be read or written: ' . $e->getMessage());
+        p202_account_flash('bad', 'The GeoIP refresh settings could not be read or recorded just now; the server log'
+            . ' says why, and the panel below shows the database installed.');
+        p202_account_redirect('202-account/administration.php#geoip');
+    }
+}
+
+if (isset($_POST['database_management'])) {
+    // The date comes from a native date input (YYYY-MM-DD); the classic
+    // datepicker posted DD-MM-YYYY, which is still read. An empty or
+    // unreadable date is refused: strtotime() of the classic concatenation
+    // with no date in it resolved to today, so a blank submit (the classic
+    // label said "leave blank to reset") queued every click before today for
+    // deletion.
+    $postedDate = trim((string) $_POST['database_management']);
+    // Midnight that begins the day in the account's zone (AUTH::require_user()
+    // put it in force), as POST /system/retention/delete-before reads it.
+    // strtotime() of the day with date('T') appended read today's
+    // abbreviation as the day's offset: "IST" is Israel's to PHP, so India
+    // and Ireland were cut hours off, and a day across a daylight-saving
+    // change from today an hour off (CLAUDE.md #29).
+    $zone = new DateTimeZone(date_default_timezone_get());
+    // A day as written, never rolled over, and not after today, as
+    // POST /system/retention/delete-before reads it: createFromFormat()
+    // read 2026-02-31 as March 3 and 2026-13-01 as 2027-01-01, a day after
+    // every click there is, which deletes all of them in every account. The
+    // input's max stops a browser from picking a later day; this stops a
+    // request that did not come from it.
+    $eraseDate = false;
+    foreach (['Y-m-d', 'd-m-Y'] as $format) {
+        $parsed = DateTimeImmutable::createFromFormat('!' . $format, $postedDate, $zone);
+        if ($parsed !== false && $parsed->format($format) === $postedDate) {
+            $eraseDate = $parsed;
+            break;
+        }
+    }
+    $today = (new DateTimeImmutable('now', $zone))->format('Y-m-d');
+    if ($postedDate === '' || $eraseDate === false) {
+        $fieldErrors['database_management'] = 'Pick the date: click data from before it is deleted.';
+    } elseif ($eraseDate->format('Y-m-d') > $today) {
+        $fieldErrors['database_management'] = 'Pick today or an earlier day: every click recorded so far is from before a later one.';
+    } else {
+        $cutoff = $eraseDate->getTimestamp();
+        $day = $eraseDate->format('M j, Y');
+        // Every account's clicks, on purpose: this is the install's data
+        // retention, set by a role with access_to_settings, and the cron
+        // deletes every click whose rows are all older than the time, in
+        // every account (ClickRetention, the rule the API previews by).
+        try {
+            $retention = new \Prosper202\Click\ClickRetention(new \Prosper202\Database\Connection($db));
+            $anything = $retention->anyOlderThan($cutoff);
+        } catch (\Throwable $e) {
+            error_log('administration.php: the clicks before ' . $cutoff . ' could not be read: ' . $e->getMessage());
+            $anything = null;
+        }
+        if ($anything === null) {
+            $fieldErrors['database_management'] = 'The clicks could not be read just now, so nothing is scheduled '
+                . 'for deletion. Try again.';
+        } else {
+            if ($anything) {
+                // On user 1's row: the cron job reads it there only
+                // (ClearOldClicks()); on another admin's row it deleted
+                // nothing. The id an earlier version stored is cleared in the
+                // same statement: this schedule replaces it.
+                $sql = "UPDATE 202_users_pref SET user_delete_data_before = '" . (int) $cutoff . "',"
+                    . " user_delete_data_clickid = NULL WHERE user_id = '1'";
+                if (_mysqli_query($db, $sql)) {
+                    if ($slack) {
+                        $slack->push('click_data_deleted', [
+                            'user' => $username,
+                            'date' => $eraseDate->format('Y-m-d'),
+                        ]);
+                    }
+                    p202_account_flash('ok', 'Click data from before ' . $day . ' is scheduled for deletion. '
+                        . 'The cron job removes it in batches.');
+                } else {
+                    p202_account_flash('bad', 'The deletion could not be scheduled; nothing will be removed. '
+                        . 'Try again.');
+                }
+            } else {
+                p202_account_flash('info', 'There are no clicks from before ' . $day . ', so nothing is deleted.');
+            }
+            p202_account_redirect('202-account/administration.php#database');
+        }
+    }
+}
+
+if (isset($_POST['auto_database_management'])) {
+	$postedDays = trim((string) $_POST['auto_database_management']);
+	if ($postedDays === '') {
+		$postedDays = '0';
+	}
+	if (!ctype_digit($postedDays) || (int) $postedDays > 36500) {
+		$fieldErrors['auto_database_management'] = 'Enter a whole number of days, or 0 to keep all click data.';
+	} else {
+		$mysql['auto_database_management'] = $db->real_escape_string((string) (int) $postedDays);
+		// User 1's row, where AutoOptimizeDatabase() reads it (as
+		// PUT /api/v3/system/retention writes it).
+		$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '1'";
+		if (!_mysqli_query($db, $sql)) {
+			p202_account_flash('bad', 'The automatic deletion setting could not be saved; try again.');
+		} else {
+			p202_account_flash('ok', (int) $postedDays === 0
+				? 'Automatic deletion is off; click data is kept.'
+				: 'Click data older than ' . (int) $postedDays . ' days is deleted automatically from now on.');
+			p202_account_redirect('202-account/administration.php#database');
+		}
+	}
+}
+
+// The last run a scheduler recorded: a cron job's or AutoCron's, never a
+// signed-in page's ping (Prosper202\Cron\CronRun).
+$cron_log_query = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";
+$cron_log_result = _mysqli_query($db, $cron_log_query);
+if ($cron_log_result === false) {
+	// Not "never": a cron that ran would read the same.
+	record_mysql_error($db, $cron_log_query);
+}
+$cron_log_row = p202FetchRow($cron_log_result, $cron_log_query);
+$last_cron_ran = $cron_log_row !== null;
+$last_cron_job_execution_time = $cron_log_row === null
+    ? 'never'
+    : CronJobLastExecution('@' . $cron_log_row['last_execution_time']);
 
 $de_query = "SELECT count(*) as total, sum(processed) as done FROM 202_dataengine_job";
-$de_result = $db->query($de_query);
-$de_row = $de_result->fetch_assoc();
+$de_result = _mysqli_query($db, $de_query);
+if ($de_result === false) {
+	// Not "0 of 0": the report rebuild's progress is unknown, not done.
+	record_mysql_error($db, $de_query);
+}
+$de_row = p202FetchRow($de_result, $de_query);
 
-if ($de_result->num_rows && $de_row['total'] != 0) {
+if ($de_row && $de_row['total'] != 0) {
 	$de_total = $de_row['total'];
 	$de_done = $de_row['done'];
 	$de_ratio = @round(($de_done / $de_total) * 100, 2);
@@ -52,143 +387,77 @@ $d = floor($de_minutes / 1440);
 $h = floor(($de_minutes - $d * 1440) / 60);
 $m = $de_minutes - ($d * 1440) - ($h * 60);
 
-
-if (isset($_POST['autocron'])) {
-
-	// validate token
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
-		die();
-	}
-
-	if ($_POST['autocron'] == true) {
-		$endpoint = 'register';
-		$sql = "SELECT * FROM 202_cronjob_logs";
-		$result = _mysqli_query($sql);
-		if ($result->num_rows > 0) {
-			$row = $result->fetch_assoc();
-
-			$last_five_minutes = time() - 300;
-
-			if ($row['last_execution_time'] < $last_five_minutes) {
-				$autocron = true;
-			}
-		} else {
-			$autocron = true;
-		}
-	} else {
-		$endpoint = 'deregister';
-		$autocron = true;
-	}
-
-	if ($autocron) {
-		$cron = callAutoCron($endpoint);
-
-		if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
-			$mysql['auto_cron'] = $db->real_escape_string($_POST['autocron']);
-			$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-			$sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
-			$result = _mysqli_query($sql);
-		}
-	}
-
-	die();
-}
-
-if (isset($_POST['maxmind'])) {
-
-	// validate token
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
-		die();
-	}
-
-	if ($_POST['maxmind'] == "true") {
-		if (file_exists(substr(__DIR__, 0, -12) . '/202-config/geo/GeoIP2-ISP.mmdb') || file_exists(substr(__DIR__, 0, -12) . '/202-config/geo/GeoIPISP.dat')) {
-			$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-			$sql = "UPDATE 202_users_pref SET maxmind_isp='1' WHERE user_id='" . $mysql['user_id'] . "'";
-			$result = _mysqli_query($sql);
-			if ($slack)
-				$slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Activated']);
-		} else {
-			echo "ISP Database file doesn't exist. Upload GeoIP2-ISP.mmdb (or legacy GeoIPISP.dat) to /202-config/geo/ folder.";
-		}
-	}
-
-	if ($_POST['maxmind'] == "false") {
-		$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-		$sql = "UPDATE 202_users_pref SET maxmind_isp='0' WHERE user_id='" . $mysql['user_id'] . "'";
-		$result = _mysqli_query($sql);
-
-		if ($slack)
-			$slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Deactivated']);
-	}
-
-	die();
-}
-
-template_top('Administration');
 $click_sql = "SELECT `AUTO_INCREMENT`-1 as clicks FROM  INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '202_clicks_counter';";
 $click_row = memcache_mysql_fetch_assoc($click_sql);
-$clicks = $click_row['clicks'];
-//$click_sql = "SELECT count(*) clicks FROM 202_clicks_total";
-//$click_row = memcache_mysql_fetch_assoc($click_sql);
-//$clicks += $click_row['clicks'];
+$clicks = $click_row['clicks'] ?? null;
 
-
-if (isset($_POST['database_management'])) {
-	// validate token
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
-		die();
-	}
-
-	$tables = explode(',', '202_clicks_advance,202_clicks_record,202_clicks_site,202_clicks_spy,202_clicks_tracking,202_clicks');
-	$click_timestamp = strtotime($_POST['database_management'] . "00:00:00 " . date('T'));
-	$clickid_sql = "SELECT click_id AS click_id FROM 202_clicks WHERE click_time <=" . $click_timestamp . " ORDER BY click_id DESC LIMIT 1";
-
-	$clickid_result = _mysqli_query($clickid_sql);
-	$clickid_row = $clickid_result->fetch_assoc();
-
-	// Make sure we have a valid click_id before continuing
-	if (isset($clickid_row['click_id'])) {
-		global $db;
-		$mysql['user_delete_data_clickid'] = $db->real_escape_string((string) $clickid_row['click_id']);
-
-		$sql = "UPDATE 202_users_pref SET user_delete_data_clickid = '" . $mysql['user_delete_data_clickid'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
-		$db->query($sql);
-
-		if ($slack)
-			$slack->push('click_data_deleted', ['user' => $username, 'date' => $_POST['database_management']]);
-	}
-
-	header('location: ' . get_absolute_url() . '202-account/administration.php');
+$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+$pref_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
+$pref_result = _mysqli_query($pref_sql);
+if ($pref_result === false) {
+    // Read as no row, the page would say AutoCron and MaxMind are off.
+    record_mysql_error($pref_sql);
 }
+$pref_row = p202FetchRow($pref_result, $pref_sql) ?? [];
 
-if (isset($_POST['auto_database_management'])) {
-	// validate token
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
-		die();
-	}
+/** What a deletion by date keeps, said under the form (ClickRetention's rule). */
+const P202_ADMIN_RECLICK_KEPT = 'A click visited again on or after the day is kept whole.';
 
-	global $db;
-	$mysql['auto_database_management'] = $db->real_escape_string((string)$_POST['auto_database_management']);
-	$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
-	$db->query($sql);
-}
-
-function getClicksEraseDate()
+/**
+ * The scheduled one-off deletion, on user 1's row, which the cron job reads:
+ * ['day' => Y-m-d for the date input, 'text' => what the form says], or null
+ * when none is scheduled. A time is shown as its day in the viewer's zone,
+ * with the hour when it is not that day's midnight (another admin scheduled
+ * it in another zone); an id an earlier version stored, as the day of the
+ * click it names. A row that cannot be read says so rather than reading as
+ * "nothing is scheduled".
+ *
+ * @return array{day: string, text: string}|null
+ */
+function p202_admin_scheduled_deletion(): ?array
 {
-	global $db, $mysql;
+    global $db;
 
-	$sql = "SELECT click_time FROM `202_clicks` WHERE click_id <= (SELECT user_delete_data_clickid FROM `202_users_pref` WHERE user_id='" . $mysql['user_own_id'] . "') ORDER BY click_id DESC LIMIT 1";
+    $result = _mysqli_query(
+        $db,
+        "SELECT user_delete_data_before, user_delete_data_clickid FROM 202_users_pref WHERE user_id = '1'"
+    );
+    $row = $result instanceof mysqli_result ? $result->fetch_assoc() : false;
+    try {
+        if ($row === false) {
+            throw new \RuntimeException('the row could not be read: ' . $db->error);
+        }
+        ['before' => $cutoff, 'marker' => $marker] = \Prosper202\Click\ClickRetention::scheduled($row ?? []);
+    } catch (\Throwable $e) {
+        error_log('administration.php: the scheduled deletion could not be read: ' . $e->getMessage());
+        return ['day' => '', 'text' => 'The scheduled deletion could not be read just now; the server log says why.'];
+    }
+    if ($cutoff !== null) {
+        $at = (new DateTimeImmutable('@' . $cutoff))->setTimezone(new DateTimeZone(date_default_timezone_get()));
+        $label = $at->format('H:i:s') === '00:00:00' ? $at->format('M j, Y') : $at->format('M j, Y H:i T');
+        return [
+            'day' => $at->format('Y-m-d'),
+            'text' => 'Currently set: clicks from before ' . $label . ' are deleted. ' . P202_ADMIN_RECLICK_KEPT,
+        ];
+    }
+    if ($marker !== null) {
+        $result = _mysqli_query(
+            $db,
+            'SELECT click_time FROM `202_clicks` WHERE click_id <= ' . (int) $marker . ' ORDER BY click_id DESC LIMIT 1'
+        );
+        $click = $result instanceof mysqli_result ? $result->fetch_assoc() : null;
+        if (!is_array($click)) {
+            return ['day' => '', 'text' => 'Currently set: clicks below click ' . (int) $marker . ' are deleted.'];
+        }
+        return [
+            'day' => date('Y-m-d', (int) $click['click_time']),
+            'text' => 'Currently set: clicks from before ' . date('M j, Y', (int) $click['click_time'])
+                . ' are deleted (by click id, as an earlier version scheduled it).',
+        ];
+    }
 
-	$result = $db->query($sql);
-	$row = $result->fetch_array(MYSQLI_ASSOC);
-	if ($row) {
-		return date('d-m-Y', $row['click_time']);
-	} else {
-		return date('d-m-Y', time());
-	}
+    return null;
 }
-
 
 function database_size()
 {
@@ -198,14 +467,15 @@ function database_size()
 	$GB = 1024 * 1024 * 1024;
 	$decimals = 2;
 
-
-	$sql = $db->query("SHOW TABLE STATUS");
+	$sql = _mysqli_query($db, "SHOW TABLE STATUS");
+	if (!$sql) {
+		return 'unknown';
+	}
 
 	$size = 0;
 	while ($row = $sql->fetch_array(MYSQLI_ASSOC)) {
 		$size += $row["Data_length"] + $row["Index_length"];
 	}
-
 
 	if ($size > GIG) {
 		$mbytes = number_format($size / ($GB), $decimals) . " GB";
@@ -245,320 +515,407 @@ function CronJobLastExecution($datetime, $full = false)
 	return $string ? implode(', ', $string) . ' ago' : 'just now';
 }
 
+$e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+$self = get_absolute_url() . '202-account/administration.php';
+$scheduledDeletion = p202_admin_scheduled_deletion();
+$autoDays = (string) ($_POST['auto_database_management'] ?? ($user_row['user_auto_database_optimization_days'] ?? '0'));
+$autoCronOn = !empty($pref_row['auto_cron']);
+// After Settings left AutoCron off for a recent run, the owner may say that
+// run was not their cron job's (AutoCronSwitch::RAN_RECENTLY).
+$autoCronAsksToConfirm = !$autoCronOn && ($_GET['autocron'] ?? null) === 'confirm' && $cron_log_row !== null
+    && \Prosper202\Cron\AutoCronSwitch::ownCronJobRanRecently(
+        (int) $cron_log_row['last_execution_time'],
+        false,
+        time()
+    );
+$maxmindOn = !empty($pref_row['maxmind_isp']);
+$geoDirShown = getenv('P202_GEO_DIR') ?: getTrackingDomain() . get_absolute_url() . '202-config/geo/';
+$geoipNow = time();
+$geoipDatabase = \Prosper202\GeoIp\CityDatabase::status(\Prosper202\GeoIp\CityDatabase::PATH, $geoipNow);
+try {
+    $geoipState = (new \Prosper202\GeoIp\RefreshStore(new \Prosper202\Database\Connection($db)))->read();
+} catch (\Throwable $e) {
+    // Not "no account stored": that would offer to set up what may be set up.
+    error_log('administration.php: the GeoIP refresh row could not be read: ' . $e->getMessage());
+    $geoipState = null;
+}
+$geoipPill = match ($geoipDatabase->state) {
+    \Prosper202\GeoIp\DatabaseStatus::CURRENT => '<span class="p202-pill p202-pill--good">Current</span>',
+    \Prosper202\GeoIp\DatabaseStatus::STALE => '<span class="p202-pill p202-pill--warn">Stale</span>',
+    \Prosper202\GeoIp\DatabaseStatus::MISSING => '<span class="p202-pill p202-pill--bad">Missing</span>',
+    default => '<span class="p202-pill p202-pill--bad">Unreadable</span>',
+};
+$geoipWhen = static fn (?int $at): string => $at === null ? 'never' : date('M j, Y g:ia', $at);
+$geoipLast = $geoipWhen($geoipState?->lastAttemptAt);
+$geoipLastPill = match ($geoipState?->lastOutcome) {
+    \Prosper202\GeoIp\RefreshState::REFRESHED => '<span class="p202-pill p202-pill--good">Refreshed</span>',
+    \Prosper202\GeoIp\RefreshState::CURRENT => '<span class="p202-pill p202-pill--good">Up to date</span>',
+    \Prosper202\GeoIp\RefreshState::FAILED => '<span class="p202-pill p202-pill--bad">Failed</span>',
+    default => '',
+};
+$geoipDue = $geoipState?->dueAt($geoipDatabase);
+$geoipBuilt = match (true) {
+    $geoipDatabase->builtAt !== null => gmdate('M j, Y', $geoipDatabase->builtAt) . ' · '
+        . number_format((float) $geoipDatabase->ageDays) . ' days ago',
+    $geoipDatabase->state === \Prosper202\GeoIp\DatabaseStatus::MISSING => 'unknown: there is no file',
+    default => 'unknown: the file cannot be read',
+};
+$geoipOn = $geoipState !== null && $geoipState->credentials() !== null;
+$geoipFormOpen = isset($fieldErrors['geoip_account_id']) || isset($fieldErrors['geoip_license_key'])
+    || ($geoipState !== null && !$geoipOn);
+$geoipStoredPill = '<span class="p202-pill p202-pill--good">Stored</span>';
+$geoipReplace = 'stored; type a new one to replace it';
+$geoipAccountStored = $geoipState?->accountIdStored() ? $geoipStoredPill : '';
+$geoipKeyStored = $geoipState?->licenseKeyStored() ? $geoipStoredPill : '';
+$geoipAccountHint = $geoipState?->accountIdStored() ? $geoipReplace : '123456';
+$geoipKeyHint = $geoipState?->licenseKeyStored() ? $geoipReplace : 'the key MaxMind showed you';
+$geoipAccountInvalid = p202_account_invalid($fieldErrors, 'geoip_account_id');
+$geoipKeyInvalid = p202_account_invalid($fieldErrors, 'geoip_license_key');
+$geoipForgetConfirm = 'Remove the MaxMind account ID and licence key? The installed database stays, and is no longer'
+    . ' refreshed.';
+$yesNo = static fn (bool $on, string $yes = 'Yes', string $no = 'No'): string => $on
+	? '<span class="p202-pill p202-pill--good">' . $yes . '</span>'
+	: '<span class="p202-pill p202-pill--warn">' . $no . '</span>';
 
+$user_log_result = _mysqli_query("SELECT * FROM 202_users_log ORDER BY login_id DESC LIMIT 50");
+
+// Traffic sources another user's accounts name: a notice to whoever GET
+// /system/traffic-source-owners answers, and the panel when they open it.
+$tsReview = ($_GET['traffic_sources'] ?? null) === 'review';
+$tsOwners = p202_ts_owners_read($db, (int) $_SESSION['user_own_id'], $tsReview);
+$tsPanel = null;
+if ($tsReview && $tsOwners['controller'] !== null && $tsOwners['report'] !== null) {
+    try {
+        $tsPanel = p202_ts_owners_panel($tsOwners['report'], $tsOwners['controller'], $self);
+    } catch (\Throwable $e) {
+        error_log('Account › Settings: the traffic source owners panel could not be drawn: ' . $e->getMessage());
+        $tsOwners['error'] = 'Who may move each traffic source could not be checked just now; the server log says why.'
+            . ' Reload the page to try again.';
+    }
+}
+
+template_top('Administration');
 ?>
 
+<div class="p202-page-header">
+	<div class="p202-page-header__icon"><i class="bi bi-gear"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">Settings</h1>
+		<p class="p202-page-header__desc">How this install is running, how long it keeps click data, and who has tried to sign in.</p>
+	</div>
+</div>
 
-<div class="row account">
-	<div class="col-xs-12">
+<?php
+$extra = [];
+if ($fieldErrors) {
+	$extra[] = ['kind' => 'bad', 'text' => 'That was not saved. The field below says why.'];
+}
+echo p202_account_render_flashes($extra);
+if ($tsOwners['error'] !== null) {
+    echo p202_flash('bad', $tsOwners['error']);
+} elseif ($tsOwners['report'] !== null && $tsOwners['report']['sources'] !== []) {
+    echo p202_ts_owners_notice($tsOwners['report'], $self);
+}
+?>
 
-		<div class="row">
-			<div class="col-xs-12">
-				<h6>System Configuration</h6>
+<div class="p202-tiles">
+	<div class="p202-tile"><div class="p202-tile__label">Clicks recorded</div><div class="p202-tile__value"><?php echo $clicks === null ? '–' : $e(number_format((float) $clicks)); ?></div><div class="p202-tile__sub">to date</div></div>
+	<div class="p202-tile"><div class="p202-tile__label">Database size</div><div class="p202-tile__value"><?php echo $e(database_size()); ?></div></div>
+	<div class="p202-tile<?php echo $last_cron_ran ? '' : ' is-bad'; ?>"><div class="p202-tile__label">Cron job last ran</div><div class="p202-tile__value"><?php echo $e($last_cron_job_execution_time); ?></div><div class="p202-tile__sub">a cron job or AutoCron</div></div>
+	<div class="p202-tile"><div class="p202-tile__label">DataEngine conversion</div><div class="p202-tile__value"><?php echo $e($de_ratio); ?>%</div><div class="p202-tile__sub"><?php echo $e($de_done . ' of ' . $de_total . ' tasks · ' . "{$d}d {$h}h {$m}m" . ' left'); ?></div></div>
+</div>
+
+<div class="row g-4 mt-0">
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel h-100" id="system">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">System</h2>
+				<span class="p202-panel__sub">versions and caches</span>
 			</div>
-		</div>
+			<div class="p202-panel__body">
+				<div class="p202-strip">
+					<div class="p202-strip__row"><span class="p202-strip__label">Prosper202</span><span class="p202-strip__value"><?php echo $e($version); ?></span></div>
+					<div class="p202-strip__row"><span class="p202-strip__label">PHP</span><span class="p202-strip__value"><?php echo $e(phpversion()); ?></span></div>
+					<div class="p202-strip__row"><span class="p202-strip__label">MySQL</span><span class="p202-strip__value"><?php echo $e(getMYSQLVersion($db)); ?></span></div>
+					<div class="p202-strip__row"><span class="p202-strip__label">PHP safe mode</span><span class="p202-strip__value"><?php echo @ini_get('safe_mode') ? 'On: ask your host to turn it off' : 'Off'; ?></span><span class="p202-strip__aside"><?php echo $yesNo(!@ini_get('safe_mode'), 'Off', 'On'); ?></span></div>
+					<div class="p202-strip__row"><span class="p202-strip__label">Memcache installed</span><span class="p202-strip__value">speeds up redirects</span><span class="p202-strip__aside"><?php echo $yesNo((bool) $memcacheInstalled); ?></span></div>
+					<div class="p202-strip__row"><span class="p202-strip__label">Memcache running</span><span class="p202-strip__value">check 202-config.php if installed but not running</span><span class="p202-strip__aside"><?php echo $yesNo((bool) $memcacheWorking); ?></span></div>
+					<div class="p202-strip__row"><span class="p202-strip__label">BlazerCache</span><span class="p202-strip__value">redirects survive a MySQL outage; user agents parse faster</span><span class="p202-strip__aside"><?php echo $yesNo((bool) $memcacheWorking, 'Yes', 'Needs Memcache'); ?></span></div>
+					<div class="p202-strip__row"><span class="p202-strip__label">Keyword preference</span><span class="p202-strip__value">pick up the <?php echo $e(strtolower((string) ($pref_row['user_keyword_searched_or_bidded'] ?? ''))); ?> keyword</span><span class="p202-strip__aside"><a class="btn btn-secondary btn-sm" href="<?php echo $e(get_absolute_url() . '202-account/account.php#profile'); ?>">Change</a></span></div>
+				</div>
+			</div>
+		</section>
+	</div>
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel h-100" id="php-limits">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">PHP limits</h2>
+				<span class="p202-panel__sub">what uploads and long reports can use</span>
+			</div>
+			<div class="p202-panel__body">
+				<div class="p202-strip">
+					<?php foreach (['post_max_size', 'upload_max_filesize', 'max_input_time', 'max_execution_time'] as $iniKey) { ?>
+						<div class="p202-strip__row"><span class="p202-strip__label"><?php echo $e($iniKey); ?></span><span class="p202-strip__value"><?php echo $e((string) ini_get($iniKey)); ?></span></div>
+					<?php } ?>
+				</div>
+			</div>
+		</section>
+	</div>
 
-		<div class="row" id="system-prefs">
-			<div class="col-xs-6">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-
-						<p>
-							Prosper202 Version: <span class="pull-right"><?php echo $version; ?></span>
-						</p>
-						<p>
-							PHP Version: <span class="pull-right"><?php echo phpversion(); ?></span>
-						</p>
-						<p>
-							MySQL Version: <span class="pull-right">
-								<?php
-								echo getMYSQLVersion($db); ?></span>
-						</p>
-						<p>
-							PHP Safe Mode <span class="fui-info-circle" style="font-size: 10px;"
-								data-toggle="tooltip"
-								title="PHP Safe Mode needs to be turned off in order for Stats202, Offers202 or Alerts202 to work. You will have to contact your web host to have them disable it."></span><span
-								class="pull-right"><?php if (@ini_get('safe_mode')) echo '<span class="label label-important">On</span> - this should be turned off.';
-													else echo 'Off'; ?></span>
-						</p>
-						<p>
-							Memcache Installed <span class="fui-info-circle"
-								style="font-size: 10px;" data-toggle="tooltip"
-								title="If you have memcache installed and working, it will speed up click redirections."></span><span
-								class="pull-right"><?php if ($memcacheInstalled) echo 'Yes';
-													else echo 'No'; ?></span>
-						</p>
-						<p>
-							Memcache Running <span class="fui-info-circle" style="font-size: 10px;"
-								data-toggle="tooltip"
-								title="If memcache is installed, but not running, check your 202-config.php to make sure your connecting to a server that has memcache installed."></span><span
-								class="pull-right"><?php if ($memcacheWorking) echo 'Yes';
-													else echo 'No'; ?></span>
-						</p>
-						<p>
-							Default Keyword Preference <span class="pull-right"
-								style="font-size: 10px; line-height: 2.5;">
-								<?php $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-								$user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
-								$user_result = _mysqli_query($user_sql);
-								$user_row = $user_result->fetch_assoc();
-								$html['keyword_pref'] = htmlentities(strtoupper((string) $user_row['user_keyword_searched_or_bidded']));
-								echo 'Pick up the ' . $html['keyword_pref'] . ' keyword - <a href="' . get_absolute_url() . '202-account/account.php">[change]</a>'; ?></span>
-						</p>
-						<p>
-							BlazerCache during MySQL Failure <span class="fui-info-circle"
-								style="font-size: 10px;" data-toggle="tooltip"
-								title="Make sure this is working, BlazerCache will make sure your redirects still continue to work in the event of a complete MySQL failure."></span><span
-								style="position: absolute; right: 31px"><?php if ($memcacheWorking) echo 'Yes';
-																		else echo '<span style="font-size: 10px; line-height:2.5;"><span class="label label-important">No</span> - install Memcache in PHP!</span>'; ?></span>
-						</p>
-						<p>
-							BlazerCache for User Agent Data Parsing <span class="fui-info-circle"
-								style="font-size: 10px;" data-toggle="tooltip"
-								title="Make sure this is working, BlazerCache will make User Agent data parsing up to 10x faster."></span><span
-								style="position: absolute; right: 31px"><?php if ($memcacheWorking) echo 'Yes';
-																		else echo '<span style="font-size: 10px; line-height:2.5;"><span class="label label-important">No</span> - install Memcache in PHP!</span>'; ?></span>
-						</p>
-
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel h-100" id="database">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Click data</h2>
+				<span class="p202-panel__sub">setup data is never deleted here</span>
+			</div>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo $e($self . '#database'); ?>">
+					<?php echo p202_account_token_field(); ?>
+					<label class="form-label" for="auto_erase_clicks_date">Delete click data older than</label>
+					<div class="input-group">
+						<input type="number" class="form-control<?php echo p202_account_invalid($fieldErrors, 'auto_database_management'); ?>" id="auto_erase_clicks_date" name="auto_database_management" min="0" max="36500" step="1" value="<?php echo $e($autoDays); ?>">
+						<span class="input-group-text">days</span>
+						<button class="btn btn-primary" type="submit">Save</button>
 					</div>
-				</div>
-			</div>
-			<div class="col-xs-6">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-						<p>
-							post_max_size: <span class="pull-right"><?php echo ini_get('post_max_size'); ?></span>
-						</p>
-						<p>
-							upload_max_filesize: <span class="pull-right"><?php echo ini_get('upload_max_filesize'); ?></span>
-						</p>
-						<p>
-							max_input_time: <span class="pull-right"><?php echo ini_get('max_input_time'); ?></span>
-						</p>
-						<p>
-							max_execution_time: <span class="pull-right"><?php echo ini_get('max_execution_time'); ?></span>
-						</p>
-						<p>
-							DataEngine Conversion Status <span class="fui-info-circle"
-								style="font-size: 10px;" data-toggle="tooltip"
-								title="This shows how much of your old data has been converted to the DataEngine format."></span>
-							<span class="pull-right"><?php echo $de_done; ?> done of <?php echo $de_total; ?> tasks (<?php echo $de_ratio; ?>%)</span>
-						</p>
-						<p>
-							DataEngine Conversion ETA <span class="fui-info-circle"
-								style="font-size: 10px;" data-toggle="tooltip"
-								title="This shows an estimate of how much time is left till your old data is all coverted."></span>
-							<span class="pull-right">Estimated time left: <?php echo "{$d}d {$h}h {$m}m"; ?></span>
-						</p>
-						<p>
-							CronJob Last Execution: <span class="pull-right"><?php echo $last_cron_job_execution_time; ?></span>
-						</p>
+					<div class="form-text">0 keeps every click. The cron job deletes older clicks each night.</div>
+					<?php echo p202_account_field_error($fieldErrors, 'auto_database_management'); ?>
+				</form>
+
+				<details class="p202-disclosure mt-3"<?php echo isset($fieldErrors['database_management']) ? ' open' : ''; ?>>
+					<summary>Advanced <span class="p202-disclosure__hint">delete click data before a date, once</span></summary>
+					<div class="p202-disclosure__body">
+						<form method="post" action="<?php echo $e($self . '#database'); ?>" id="erase_clicks_form" data-p202-confirm="Are you sure you want to delete all your click data from before this date? Setup data (campaigns, trackers, landing pages) is kept. This cannot be undone.">
+							<?php echo p202_account_token_field(); ?>
+							<label class="form-label" for="erase_clicks_date">Delete click data from before</label>
+							<div class="input-group">
+								<input type="date" class="form-control<?php echo p202_account_invalid($fieldErrors, 'database_management'); ?>" id="erase_clicks_date" name="database_management" required max="<?php echo $e(date('Y-m-d')); ?>" value="<?php echo $e($scheduledDeletion['day'] ?? ''); ?>">
+								<button class="btn btn-outline-danger" type="submit">Delete data…</button>
+							</div>
+							<div class="form-text"><?php echo $e($scheduledDeletion === null ? 'Nothing is scheduled for deletion. ' . P202_ADMIN_RECLICK_KEPT : $scheduledDeletion['text']); ?></div>
+							<?php echo p202_account_field_error($fieldErrors, 'database_management'); ?>
+						</form>
 					</div>
-				</div>
+				</details>
 			</div>
-		</div>
-
+		</section>
 	</div>
-</div>
 
-<div class="row form_seperator">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row account">
-	<div class="col-xs-4">
-		<h6>Tracking202 Stats</h6>
-	</div>
-	<div class="col-xs-8 text-right" style="padding-top: 15px;">
-		<small><span class="label label-primary"><?php echo $clicks; ?></span>
-			clicks recorded to date.</small>
-	</div>
-</div>
-
-<div class="row form_seperator">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row account">
-	<div class="col-xs-12">
-		<h6>Database Management</h6>
-	</div>
-	<div class="col-xs-4" style="padding-top: 6px;">
-		<small>Current Prosper202 Database Size: <span
-				class="label label-primary"><?php echo database_size(); ?></span>
-		</small>
-	</div>
-	<div class="col-xs-8">
-		<form method="post" id="erase_clicks_form" class="form-horizontal"
-			role="form">
-			<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-			<div class="form-group">
-				<label for="erase_clicks_date" class="col-sm-6 control-label">Delete
-					Click Data Prior to Selected Date:<br>Leave blank to reset</label>
-				<div class="col-sm-6">
-					<input type="text" class="form-control input-sm"
-						id="erase_clicks_date" name="database_management"
-						value="<?php echo getClicksEraseDate(); ?>"> <span
-						class="help-block" style="font-size: 11px;"><span
-							class="label label-important">Warning:</span> This clears out
-						everything except your setup data</span>
-				</div>
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel mb-4" id="autocron">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">AutoCron</h2>
+				<?php echo $yesNo($autoCronOn, 'On', 'Off'); ?>
 			</div>
-			<div class="form-group">
-				<div class="col-sm-6 col-sm-offset-6">
-					<button class="btn btn-xs btn-p202 btn-block" type="submit">Delete
-						data</button>
-				</div>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo $e($self . '#autocron'); ?>">
+					<?php echo p202_account_token_field(); ?>
+					<div class="d-flex gap-3 mb-2" role="radiogroup" aria-label="AutoCron">
+						<div class="form-check"><input class="form-check-input" type="radio" name="autocron" id="autocron_on" value="1"<?php echo $autoCronOn ? ' checked' : ''; ?>><label class="form-check-label" for="autocron_on">On</label></div>
+						<div class="form-check"><input class="form-check-input" type="radio" name="autocron" id="autocron_off" value="0"<?php echo $autoCronOn ? '' : ' checked'; ?>><label class="form-check-label" for="autocron_off">Off</label></div>
+					</div>
+					<div class="form-text mb-2">Prosper202's hosted service calls this install's cron every few minutes, for installs without their own cron job.</div>
+					<button class="btn btn-secondary btn-sm" type="submit">Save</button>
+				</form>
+                <?php if ($autoCronAsksToConfirm) { ?>
+                <form method="post" action="<?php echo $e($self . '#autocron'); ?>" class="mt-3"
+                    id="autocron_no_own_job_form">
+                    <?php echo p202_account_token_field(); ?>
+                    <input type="hidden" name="autocron" value="1">
+                    <input type="hidden" name="autocron_no_own_job" value="1">
+                    <button class="btn btn-outline-secondary btn-sm" type="submit">
+                        I have no cron job of my own: turn AutoCron on
+                    </button>
+                </form>
+                <?php } ?>
 			</div>
-		</form>
-	</div>
-</div>
-<div class="row account">
-	<div class="col-xs-12">
-		<h6>Auto Database Optimization</h6>
-	</div>
-	<div class="col-xs-4" style="padding-top: 6px;">
+		</section>
 
-	</div>
-	<div class="col-xs-8">
-		<form method="post" id="erase_clicks_form" class="form-horizontal"
-			role="form">
-			<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-			<div class="form-group">
-				<label for="erase_clicks_date" class="col-sm-6 control-label">Automatically Delete
-					Click Data Older Than # Of Days Specified:</label>
-				<div class="col-sm-6">
-					<div class="input-group input-group-sm">
-						<input type="number" class="form-control input-sm"
-							id="auto_erase_clicks_date" name="auto_database_management"
-							placeholder="Enter number of days" value="<?php echo $user_row['user_auto_database_optimization_days']; ?>">
-						<span class="input-group-addon" id="basic-addon2">Days</span>
-					</div> <span
-						class="help-block" style="font-size: 11px;"><span
-							class="label label-important">Warning:</span> This deletes data about
-						every click that occured before the specified number of days. <strong>(Enter 0 or leave blank if you don't want old data autormatically deleted)</strong></span>
-				</div>
+		<section class="p202-panel" id="maxmind">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">ISP and carrier lookup</h2>
+				<?php echo $yesNo($maxmindOn, 'On', 'Off'); ?>
 			</div>
-			<div class="form-group">
-				<div class="col-sm-6 col-sm-offset-6">
-					<button class="btn btn-xs btn-p202 btn-block" type="submit">Auto Optimize Database</button>
-				</div>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo $e($self . '#maxmind'); ?>">
+					<?php echo p202_account_token_field(); ?>
+					<div class="d-flex gap-3 mb-2" role="radiogroup" aria-label="ISP and carrier lookup">
+						<div class="form-check"><input class="form-check-input" type="radio" name="maxmind" id="maxmind_on" value="true"<?php echo $maxmindOn ? ' checked' : ''; ?>><label class="form-check-label" for="maxmind_on">On</label></div>
+						<div class="form-check"><input class="form-check-input" type="radio" name="maxmind" id="maxmind_off" value="false"<?php echo $maxmindOn ? '' : ' checked'; ?>><label class="form-check-label" for="maxmind_off">Off</label></div>
+					</div>
+					<div class="form-text mb-2">Needs the <a href="http://click202.com/tracking202/redirect/dl.php?t202id=9159015&amp;t202kw=p202setup" target="_blank" rel="noopener">MaxMind ISP database</a> (GeoIP2-ISP.mmdb, or legacy GeoIPISP.dat) in <code><?php echo $e($geoDirShown); ?></code>. Live traffic picks up a change within five minutes.</div>
+					<button class="btn btn-secondary btn-sm" type="submit">Save</button>
+				</form>
 			</div>
-		</form>
-	</div>
-</div>
-<div class="row form_seperator">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row account">
-	<div class="col-xs-12">
-		<h6>AutoCron Settings</h6>
-		<span class="infotext">AutoCron is enabled by default, after you
-			install Prosper202 Pro. You can change settings here.</span>
+		</section>
 	</div>
 
-	<div class="col-xs-12">
-		<form class="form-horizontal" id="autocron" role="form"
-			style="margin-top: 25px; margin-bottom: 25px;">
-			<div class="form-group">
-				<label for="inputEmail3" class="col-sm-2 control-label">AutoCron:</label>
-				<div class="col-sm-10">
-					<label id="on-label" class="radio radio-inline"
-						style="margin-top: 5px"> <input type="radio" name="autocron"
-							id="on" value="1" data-toggle="radio"
-							<?php if ($user_row['auto_cron'] == true) echo "checked"; ?>> On
-					</label> <label id="off-label" class="radio radio-inline"
-						style="margin-top: 5px"> <input type="radio" name="autocron"
-							id="off" value="0" data-toggle="radio"
-							<?php if ($user_row['auto_cron'] == false) echo "checked"; ?>> Off
-					</label>
-				</div>
+    <div class="col-12">
+        <section class="p202-panel" id="geoip">
+            <div class="p202-panel__head">
+                <h2 class="p202-panel__title">GeoIP database</h2>
+                <?php echo $geoipPill; ?>
+            </div>
+            <div class="p202-panel__body">
+                <p class="text-secondary">The country, region and city in reports, the rotator's location rules
+                    and privacy for European traffic all come from this file. MaxMind publishes a new GeoLite2 City
+                    database twice a week; with your own free MaxMind account, this install downloads it weekly.
+                    Without one, the file stays as it is, and visitors from address blocks handed out since it was
+                    built read as unplaced or in the wrong country.</p>
+                <div class="p202-strip mb-3">
+                    <div class="p202-strip__row">
+                        <?php echo $geoipPill; ?>
+                        <span class="p202-strip__label">Built</span>
+                        <span class="p202-strip__value"><?php echo $e($geoipBuilt); ?></span>
+                    </div>
+                    <div class="p202-strip__row">
+                        <span class="p202-strip__label">File</span>
+                        <span class="p202-strip__value" title="<?php echo $e($geoipDatabase->path); ?>"><?php
+                            echo $e($geoipDatabase->path);
+                        ?></span>
+                    </div>
+                    <?php if ($geoipState === null) { ?>
+                        <div class="p202-strip__row">
+                            <span class="p202-strip__label">Refresh</span>
+                            <span class="p202-strip__value">settings unread</span>
+                        </div>
+                    <?php } else { ?>
+                        <div class="p202-strip__row">
+                            <?php echo $yesNo($geoipOn, 'On', 'Off'); ?>
+                            <span class="p202-strip__label">Refresh</span>
+                            <span class="p202-strip__value"><?php
+                                echo $geoipOn ? 'weekly, with your MaxMind account' : 'no MaxMind account is stored';
+                            ?></span>
+                        </div>
+                        <div class="p202-strip__row">
+                            <?php echo $geoipLastPill; ?>
+                            <span class="p202-strip__label">Last refresh</span>
+                            <span class="p202-strip__value" id="geoip-last-refresh"><?php echo $e($geoipLast); ?></span>
+                        </div>
+                        <?php if ($geoipDue !== null) { ?>
+                            <div class="p202-strip__row">
+                                <span class="p202-strip__label">Next refresh</span>
+                                <span class="p202-strip__value"><?php echo $e($geoipDue <= $geoipNow
+                                    ? 'due now: the cron job\'s next hourly run'
+                                    : $geoipWhen($geoipDue)); ?></span>
+                            </div>
+                        <?php } ?>
+                    <?php } ?>
+                    <?php if ($geoipDatabase->state !== \Prosper202\GeoIp\DatabaseStatus::CURRENT) { ?>
+                        <div class="p202-strip__note"><?php echo $e((string) $geoipDatabase->reason); ?></div>
+                    <?php } ?>
+                </div>
+                <?php if ($geoipState === null) { ?>
+                    <?php echo p202_flash('bad', 'The refresh settings could not be read just now; the server log says'
+                        . ' why. Reload the page to try again.'); ?>
+                <?php } elseif ($geoipState->lastOutcome === \Prosper202\GeoIp\RefreshState::FAILED) { ?>
+                    <?php echo p202_flash('bad', 'The last refresh failed: ' . (string) $geoipState->lastError); ?>
+                <?php } ?>
+
+                <?php if ($geoipState !== null) { ?>
+                    <details class="p202-disclosure"<?php echo $geoipFormOpen ? ' open' : ''; ?>>
+                        <summary><?php echo $geoipOn ? 'Update' : 'Set up the refresh'; ?>
+                            <span class="p202-disclosure__hint">your MaxMind account ID and licence key</span></summary>
+                        <div class="p202-disclosure__body">
+                            <form method="post" action="<?php echo $e($self . '#geoip'); ?>">
+                                <?php echo p202_account_token_field(); ?>
+                                <input type="hidden" name="geoip_action" value="save">
+                                <div class="row g-3">
+                                    <div class="col-12 col-md-5">
+                                        <label class="form-label" for="geoip_account_id">Account ID
+                                            <?php echo $geoipAccountStored; ?></label>
+                                        <input type="text" class="form-control<?php echo $geoipAccountInvalid; ?>"
+                                            id="geoip_account_id" name="geoip_account_id" inputmode="numeric"
+                                            autocomplete="off" spellcheck="false"
+                                            placeholder="<?php echo $e($geoipAccountHint); ?>">
+                                        <?php echo p202_account_field_error($fieldErrors, 'geoip_account_id'); ?>
+                                    </div>
+                                    <div class="col-12 col-md-7">
+                                        <label class="form-label" for="geoip_license_key">Licence key
+                                            <?php echo $geoipKeyStored; ?></label>
+                                        <div class="input-group">
+                                            <input type="password" class="form-control<?php echo $geoipKeyInvalid; ?>"
+                                                id="geoip_license_key" name="geoip_license_key"
+                                                autocomplete="new-password" spellcheck="false"
+                                                placeholder="<?php echo $e($geoipKeyHint); ?>">
+                                            <button class="btn btn-primary" type="submit">Save</button>
+                                        </div>
+                                        <?php echo p202_account_field_error($fieldErrors, 'geoip_license_key'); ?>
+                                    </div>
+                                </div>
+                                <div class="form-text">Sign up for a free GeoLite account at
+                                    <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank"
+                                    rel="noopener">maxmind.com</a>, then make a licence key under Manage License Keys:
+                                    MaxMind shows it once. Both are stored here and never shown again.</div>
+                            </form>
+                        </div>
+                    </details>
+
+                    <?php if ($geoipOn) { ?>
+                        <div class="p202-toolbar mt-3">
+                            <form method="post" action="<?php echo $e($self . '#geoip'); ?>">
+                                <?php echo p202_account_token_field(); ?>
+                                <input type="hidden" name="geoip_action" value="refresh">
+                                <button class="btn btn-secondary btn-sm" type="submit">Refresh now</button>
+                            </form>
+                            <form method="post" action="<?php echo $e($self . '#geoip'); ?>"
+                                data-p202-confirm="<?php echo $e($geoipForgetConfirm); ?>">
+                                <?php echo p202_account_token_field(); ?>
+                                <input type="hidden" name="geoip_action" value="forget">
+                                <button class="btn btn-outline-danger btn-sm" type="submit">Remove the account</button>
+                            </form>
+                        </div>
+                    <?php } ?>
+                <?php } ?>
+
+                <div class="form-text mt-3">This product includes GeoLite2 Data created by MaxMind, available from
+                    <a href="https://www.maxmind.com" target="_blank" rel="noopener">https://www.maxmind.com</a>.</div>
+            </div>
+        </section>
+    </div>
+    <?php if ($tsPanel !== null) { ?>
+    <div class="col-12">
+        <?php echo $tsPanel['panel']; ?>
+    </div>
+    <?php } ?>
+
+	<div class="col-12">
+		<section class="p202-panel" id="logins">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Last 50 sign-in attempts</h2>
+				<span class="p202-panel__sub">newest first</span>
 			</div>
-		</form>
-	</div>
-</div>
-
-<div class="row account">
-	<div class="col-xs-12">
-		<h6>MaxMind ISP/Carrier Lookup</h6>
-		<span class="infotext"><span><a href="http://click202.com/tracking202/redirect/dl.php?t202id=9159015&t202kw=p202setup" target="_blank"><img src="<?php echo get_absolute_url(); ?>202-img/maxmind_logo-202.png"></a></span><br>To turn on ISP/Carrier lookup feature, you need
-			to <strong><a href="http://click202.com/tracking202/redirect/dl.php?t202id=9159015&t202kw=p202setup" target="_blank">buy MaxMind ISP database</a></strong> and upload (GeoIP2-ISP.mmdb or legacy GeoIPISP.dat) to <code><?php echo getTrackingDomain() . get_absolute_url() . '202-config/geo/'; ?></code>
-			folder.<br />(Settings will take place after 5 minutes in live
-			traffic)
-		</span>
-	</div>
-
-	<div class="col-xs-12">
-		<form class="form-horizontal" id="maxmindisp" role="form"
-			style="margin-top: 25px; margin-bottom: 25px;">
-			<div class="form-group">
-				<label for="inputEmail3" class="col-sm-2 control-label">ISP/Carrier
-					Lookup:</label>
-				<div class="col-sm-10">
-					<label id="on-label" class="radio radio-inline"
-						style="margin-top: 5px"> <input type="radio" name="maxmind-isp"
-							id="on" value="true" data-toggle="radio"
-							<?php if ($user_row['maxmind_isp'] == true) echo "checked"; ?>> On
-					</label> <label id="off-label" class="radio radio-inline"
-						style="margin-top: 5px"> <input type="radio" name="maxmind-isp"
-							id="off" value="false" data-toggle="radio"
-							<?php if ($user_row['maxmind_isp'] == false) echo "checked"; ?>> Off
-					</label>
-				</div>
+			<div class="p202-panel__body">
+				<?php if (!$user_log_result) { ?>
+					<?php echo p202_flash('bad', 'The sign-in log could not be read just now. Reload the page to see it.'); ?>
+				<?php } elseif ($user_log_result->num_rows === 0) { ?>
+					<div class="p202-empty">
+						<i class="bi bi-shield-check p202-empty__icon"></i>
+						<strong class="p202-empty__title">No sign-in attempts yet</strong>
+						<div>Every sign-in to this install, successful or not, is listed here.</div>
+					</div>
+				<?php } else { ?>
+					<div class="p202-table-wrap">
+						<table class="table p202-table" id="sign-in-attempts">
+							<thead><tr><th>Time</th><th>Username</th><th>IP address</th><th>Attempt</th></tr></thead>
+							<tbody>
+								<?php while ($user_log_row = $user_log_result->fetch_assoc()) {
+									$ip = (string) $user_log_row['ip_address']; ?>
+									<tr>
+										<td class="text-nowrap"><?php echo $e(date('M d, y \a\t g:ia', (int) $user_log_row['login_time'])); ?></td>
+										<td><?php echo $e($user_log_row['user_name']); ?></td>
+										<td><?php echo $e($ip); ?> · <a target="_blank" rel="noopener" href="https://whois.arin.net/ui/query.do?q=<?php echo rawurlencode($ip); ?>">ARIN</a> · <a target="_blank" rel="noopener" href="https://apps.db.ripe.net/search/query.html?searchtext=<?php echo rawurlencode($ip); ?>&amp;sources=RIPE_NCC">RIPE</a></td>
+										<td><?php echo p202_account_sign_in_attempt_pill($user_log_row['login_success']); ?></td>
+									</tr>
+								<?php } ?>
+							</tbody>
+						</table>
+					</div>
+				<?php } ?>
 			</div>
-		</form>
+		</section>
 	</div>
 </div>
 
-<div class="row form_seperator">
-	<div class="col-xs-12"></div>
-</div>
-<div class="row account">
-	<div class="col-xs-12">
-		<h6>Last 50 Login Attempts</h6>
-	</div>
-	<div class="col-xs-12">
-
-		<?php
-		//show the last 20 logins failed or pass
-		$user_log_sql = "SELECT * FROM 202_users_log ORDER BY login_id DESC LIMIT 50";
-		$user_log_result = _mysqli_query($user_log_sql);
-		?>
-
-		<table class="table table-bordered">
-			<thead>
-				<tr>
-					<th>Time</th>
-					<th>Username</th>
-					<th>IP Address</th>
-					<th>Attempt</th>
-				</tr>
-			</thead>
-			<tbody>
-				<?php
-				while ($user_log_row = $user_log_result->fetch_assoc()) {
-
-					$html['user_name'] = htmlentities((string) $user_log_row['user_name'], ENT_QUOTES, 'UTF-8');
-					$html['ip_address'] = htmlentities((string) $user_log_row['ip_address'], ENT_QUOTES, 'UTF-8');
-					$html['login_time'] = htmlentities(date('M d, y \a\t g:ia', $user_log_row['login_time']), ENT_QUOTES, 'UTF-8');
-
-					if ($user_log_row['login_success'] == 0) {
-						$html['login_success'] = '<span style="color: #900;">Failed</span>';
-					} else {
-						$html['login_success'] = 'Passed';
-					}
-
-					printf('<tr>
-					<td>%s</td>
-					<td>%s</td>
-					<td>%s :: <a target="_new" href="https://whois.arin.net/ui/query.do?q=%s">ARIN</a> / <a target="_new" href="https://apps.db.ripe.net/search/query.html?searchtext=%s&sources=RIPE_NCC">RIPE</a></td>
-					<td>%s</td>
-				     </tr>', $html['login_time'], $html['user_name'], $html['ip_address'], $html['ip_address'], $html['ip_address'], $html['login_success']);
-				}
-				?>
-			</tbody>
-		</table>
-	</div>
-</div>
-<?php template_bottom();
+<?php
+echo $tsPanel['modals'] ?? '';
+template_bottom();

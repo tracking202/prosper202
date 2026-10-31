@@ -133,13 +133,36 @@ final class LtvGuardsTest extends TestCase
 
         $repo->breakdown(new LtvQuery(7, 1700000000, 1700086400), 'campaign', 25, 0);
 
-        $queries = $read->statementsContaining('SUM(click_cpc)');
+        $queries = $read->statementsContaining('SUM(sc.click_cpc)');
         self::assertCount(1, $queries);
         self::assertStringContainsString('ltv_cac', $queries[0]->sql);
         // Bind order follows SQL text: spend subquery (user, from, to), then
         // the customer scope (user, from, to), then limit/offset.
         self::assertSame('iiiiiiii', $queries[0]->boundTypes);
         self::assertSame([7, 1700000000, 1700086400, 7, 1700000000, 1700086400, 25, 0], $queries[0]->boundValues);
+    }
+
+    public function testPagedBreakdownsBreakRevenueTiesByIdForStablePaging(): void
+    {
+        // total_revenue ties (often 0) have no defined order, so LIMIT/OFFSET
+        // pages could skip some rows and repeat others. The grouped id breaks it.
+        $cases = [
+            'campaign' => 'ORDER BY total_revenue DESC, ref.aff_campaign_id ASC',
+            'ppc_account' => 'ORDER BY total_revenue DESC, ref.ppc_account_id ASC',
+            'landing_page' => 'ORDER BY total_revenue DESC, ref.landing_page_id ASC',
+            'product' => 'ORDER BY total_revenue DESC, pc.product_id ASC',
+        ];
+        foreach ($cases as $breakdown => $order) {
+            $read = new FakeMysqliConnection();
+            $repo = new MysqlLtvRepository(new Connection(new FakeMysqliConnection(), $read));
+
+            $repo->breakdown(new LtvQuery(7), $breakdown, 50, 50);
+
+            $queries = $read->statementsContaining('LIMIT ? OFFSET ?');
+            self::assertCount(1, $queries, $breakdown);
+            $pattern = '/' . preg_quote($order, '/') . '\s+LIMIT \? OFFSET \?$/';
+            self::assertMatchesRegularExpression($pattern, $queries[0]->sql, $breakdown);
+        }
     }
 
     public function testCohortsBucketByMonthsSinceAcquisition(): void
@@ -197,21 +220,68 @@ final class LtvGuardsTest extends TestCase
     public function testWebhookGuardRejectsNonHttpsAndPrivateAddresses(): void
     {
         foreach ([
-            'http://example.com/hook',          // not https
-            'https://127.0.0.1/hook',           // loopback
-            'https://10.0.0.5/hook',            // RFC1918
-            'https://192.168.1.1/hook',         // RFC1918
-            'https://169.254.169.254/hook',     // link-local / metadata
-            'https://example.com:8080/hook',    // disallowed port
-            'not a url',
-        ] as $url) {
-            try {
-                MysqlWebhookRepository::assertUrlAllowed($url);
-                self::fail('Expected rejection for ' . $url);
-            } catch (\RuntimeException) {
-                $this->addToAssertionCount(1);
+            'http://example.com/hook'                   => 'must start with https://',
+            'https://127.0.0.1/hook'                    => 'loopback',
+            'https://10.0.0.5/hook'                     => 'private',
+            'https://192.168.1.1/hook'                  => 'private',
+            'https://169.254.169.254/hook'              => 'link-local',
+            'https://168.63.129.16/hook'                => 'metadata',
+            'https://[::ffff:169.254.169.254]/hook'     => 'link-local',
+            'https://[::ffff:127.0.0.1]/hook'           => 'loopback',
+            'https://[64:ff9b::a9fe:a9fe]/hook'         => 'link-local',
+            'https://hooks.example.com@10.0.0.1/hook'   => 'not in the form',
+            'https://2130706433/hook'                   => 'dotted form',
+            'https://printer.local/hook'                => 'local name',
+            'https://example.com:8080/hook'             => 'only sent to port 443 or 8443',
+            'not a url'                                 => 'must start with https://',
+        ] as $url => $why) {
+            self::assertStringContainsString($why, (string) MysqlWebhookRepository::urlRefusal($url), $url);
+        }
+        // A name is not looked up where a webhook is saved: a resolver that
+        // stalls would hold the request. It is resolved when each delivery
+        // is sent (DeliverySenderTest).
+        self::assertNull(MysqlWebhookRepository::urlRefusal('https://this-host-must-not-be-looked-up.invalid/hook'));
+        self::assertNull(MysqlWebhookRepository::urlRefusal('https://hooks.example.com:8443/hook'));
+        // A query straight after the host is checked as the root path it means.
+        self::assertNull(MysqlWebhookRepository::urlRefusal('https://hooks.example.com?token=x'));
+        self::assertSame('https://hooks.example.com/?token=x', MysqlWebhookRepository::sendableUrl('https://hooks.example.com?token=x'));
+        self::assertSame('https://hooks.example.com:8443/?a=b', MysqlWebhookRepository::sendableUrl('https://hooks.example.com:8443?a=b'));
+        self::assertSame('https://hooks.example.com/p?a=b', MysqlWebhookRepository::sendableUrl('https://hooks.example.com/p?a=b'));
+        self::assertSame('https://hooks.example.com/?@10.0.0.1/', MysqlWebhookRepository::sendableUrl('https://hooks.example.com?@10.0.0.1/'));
+        self::assertStringContainsString('not in the form', (string) MysqlWebhookRepository::urlRefusal('https://hooks.example.com@10.0.0.1?x'));
+    }
+
+    public function testTheOperatorsAllowlistIsHonouredAtSavingAndOneThatDoesNotParseAdmitsNothing(): void
+    {
+        $refusal = static fn (string $url, string $allow): string
+            => (string) MysqlWebhookRepository::urlRefusal($url, $allow);
+        self::assertNull(MysqlWebhookRepository::urlRefusal('https://10.20.0.5/hook', '10.20.0.0/16'));
+        self::assertStringContainsString('link-local', $refusal('https://[::ffff:169.254.169.254]/hook', '0.0.0.0/0'));
+        self::assertStringContainsString('private', $refusal('https://10.20.0.5/hook', '10.20.0.0/x'));
+        self::assertSame('', $refusal('https://8.8.8.8/hook', '10.20.0.0/x'), 'a public address is still saved');
+    }
+
+    /**
+     * The Landing Page Optimizer's bridge config can move a webhook to
+     * another URL; the move is held to the rules a new webhook is, before
+     * the URL is written, and a refusal keeps the URL the webhook has.
+     */
+    public function testTheBridgeConfigHoldsAHookUrlToTheWebhookRules(): void
+    {
+        $code = '';
+        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/202-cronjobs/bridge_config.php');
+        foreach (\PhpToken::tokenize($source) as $t) {
+            if (!$t->is([T_WHITESPACE, T_COMMENT, T_DOC_COMMENT])) {
+                $code .= $t->text;
             }
         }
+        self::assertStringContainsString(
+            '{$refused=MysqlWebhookRepository::urlRefusal($newUrl);if($refused!==null){'
+            . 'thrownewRuntimeException(\'hook_url refused: \'.$refused);}'
+            . '$update=$conn->prepareWrite(\'UPDATE 202_ltv_webhooks SET webhook_url = ?',
+            $code
+        );
+        self::assertSame(1, substr_count($code, 'SET webhook_url'), 'one write of the URL, the checked one');
     }
 
     public function testReservedIdempotencyPrefixesAreRejected(): void

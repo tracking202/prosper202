@@ -1,0 +1,127 @@
+name: Go CLI
+
+# The p202 CLI had no test or lint job: `go test` and `go vet` only ever ran
+# on a developer's machine, and golangci-lint not at all. This runs them on
+# every change to go-cli/.
+
+on:
+  push:
+    paths:
+      - 'go-cli/**'
+      - '.github/workflows/go-cli.yml'
+      # Files outside the module that tests hold the CLI to (repoPath in
+      # go-cli/cmd/repo_paths_test.go, which fails when one is not here).
+      - 'api/v3/index.php'
+      - 'api/v3/Controllers/**'
+      - 'api/v3/Support/CampaignFigures.php'
+      - 'api/v3/Support/AiConnect.php'
+      - '202-config/Click/TrackingLinkVariables.php'
+      - '202-config/User/PreferenceRules.php'
+      - '202-config/Click/Filter/**'
+      - 'docs/cli-agent.md'
+      - 'tracking202/_config/sub-menu.php'
+      - 'tracking202/_config/top.php'
+      - '202-config/template.php'
+      - 'tests/fixtures/agent-eval/cases/**'
+      - 'tests/fixtures/summary-totals/**'
+      - '202-config/Database/Tables/MiscTables.php'
+      - 'tests/fixtures/rotator-criterion-values.json'
+      - 'documentation/tools--resources/999-common-network-subid-parameters.md'
+  pull_request:
+    paths:
+      - 'go-cli/**'
+      - '.github/workflows/go-cli.yml'
+      # Files outside the module that tests hold the CLI to (repoPath in
+      # go-cli/cmd/repo_paths_test.go, which fails when one is not here).
+      - 'api/v3/index.php'
+      - 'api/v3/Controllers/**'
+      - 'api/v3/Support/CampaignFigures.php'
+      - 'api/v3/Support/AiConnect.php'
+      - '202-config/Click/TrackingLinkVariables.php'
+      - '202-config/User/PreferenceRules.php'
+      - '202-config/Click/Filter/**'
+      - 'docs/cli-agent.md'
+      - 'tracking202/_config/sub-menu.php'
+      - 'tracking202/_config/top.php'
+      - '202-config/template.php'
+      - 'tests/fixtures/agent-eval/cases/**'
+      - 'tests/fixtures/summary-totals/**'
+      - '202-config/Database/Tables/MiscTables.php'
+      - 'tests/fixtures/rotator-criterion-values.json'
+      - 'documentation/tools--resources/999-common-network-subid-parameters.md'
+
+jobs:
+  test:
+    name: Vet and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go-cli
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'   # matches go-cli/go.mod
+          cache-dependency-path: go-cli/go.sum
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would reformat these files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # Runs everything, forecast acceptance suites included (~40s of the
+      # total). They have a -short guard for local iteration; CI does not use
+      # it, so nothing here is skipped.
+      - name: go test
+        run: go test ./... -count=1
+
+      # The same source built for js/wasm is the hosted MCP relay's engine
+      # (`p202 mcp call` per tool call, inside a Cloudflare Worker). Nobody
+      # builds it locally, so it rots unless CI does: vet it, run the tests
+      # that hold its entry check, tool mapping and value bounds under Node,
+      # and build it.
+      - name: js/wasm vet, tests and build
+        run: |
+          GOOS=js GOARCH=wasm go vet ./...
+          GOOS=js GOARCH=wasm go test -count=1 \
+            -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
+            -run 'TestHostedRunTakesToolCallsOnly|TestHostedEngineOmitsEveryPage|TestHostedEngineBoundsWhatACallDecodes|TestHostedSearchAnswersCompactJSON|TestHostedSearchErrorsReachTheRelayAsJSON|TestHostedScopeRefusalSaysConnectAgain|TestMCPToolArgv|TestMCPCatalogBuilds|TestMCPToolPositionalsMatchCommands' ./cmd/
+          GOOS=js GOARCH=wasm go test -count=1 \
+            -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
+            -run 'TestHostedRequestsRefuseRedirectsAndWaitLess|TestJSONValuesOver|FuzzJSONValuesOverBoundsEveryDecoder|TestAnswerBound|TestAnswerTooManyValuesReadsTheWholeChain|TestBound|TestAnswerBodiesAreReadOnlyByReadAnswer' ./internal/api/
+          GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/p202.wasm" .
+          ls -l "$RUNNER_TEMP/p202.wasm"
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: go-cli/go.sum
+
+      # Configured in go-cli/.golangci.yml to report dropped errors
+      # (CLAUDE.md #1 in its Go form) rather than style preferences.
+      # golangci-lint-action v6 cannot install golangci-lint v2 — it rejects
+      # the version string outright. v7 is the first release that can.
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.13.2
+          # Built with the Go setup-go installed: a prebuilt binary built with
+          # an older Go cannot read go1.27 export data.
+          install-mode: goinstall
+          working-directory: go-cli

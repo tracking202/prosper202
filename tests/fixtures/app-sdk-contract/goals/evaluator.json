@@ -1,0 +1,3942 @@
+{
+  "description": "Goal evaluator vectors (plan §5.5). Each case gives the goal set, the subject and its events; an evaluator must produce exactly expect.outcomes, in this order, and expect.disabled. expect.progress, where present, is the state the evaluation ends in. The format and every rule are in README.md beside this file. The PHP suite (tests/Goals/GoalVectorsTest.php) runs every case; the Swift (PR 8) and Kotlin (PR 7) suites are to read this same file.",
+  "format_version": 1,
+  "cases": [
+    {
+      "name": "the first matching event reaches a count-1 goal",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Signup",
+                "trigger": {
+                  "event": "signup"
+                },
+                "value": {
+                  "type": "fixed",
+                  "amount": "2.50"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "name": "view",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        },
+        {
+          "event_id": "e2",
+          "name": "signup",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {}
+        },
+        {
+          "event_id": "e3",
+          "name": "signup",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "e2",
+            "reached_at": 1200,
+            "value": "2.50000",
+            "value_source": "fixed",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 2,
+            "sum": "0.00000",
+            "times_reached": 1,
+            "reached_at": 1200
+          }
+        ]
+      },
+      "why": "count keeps counting matching events after the goal is reached; repeat once stops further outcomes"
+    },
+    {
+      "name": "event names match exactly, case included",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Purchase",
+                "trigger": {
+                  "event": "Purchase"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        },
+        {
+          "event_id": "b",
+          "name": "PURCHASE",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {}
+        },
+        {
+          "event_id": "c",
+          "name": "Purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "c",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "eq compares strings byte for byte",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Boss",
+                "trigger": {
+                  "event": "level",
+                  "where": [
+                    {
+                      "prop": "stage",
+                      "op": "eq",
+                      "value": "boss"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "level",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "stage": "Boss"
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "level",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "stage": "boss"
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "numbers compare by value; a string never equals a number",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "L3",
+                "trigger": {
+                  "event": "level",
+                  "where": [
+                    {
+                      "prop": "level",
+                      "op": "eq",
+                      "value": 3
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "level",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "level": "3"
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "level",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "level": 3.0
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "neq needs the property to be present",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Paid tier",
+                "trigger": {
+                  "event": "login",
+                  "where": [
+                    {
+                      "prop": "tier",
+                      "op": "neq",
+                      "value": "free"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "login",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        },
+        {
+          "event_id": "b",
+          "name": "login",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "tier": "free"
+          }
+        },
+        {
+          "event_id": "c",
+          "name": "login",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "tier": "pro"
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "c",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "comparators take numbers only, and predicates are ANDed",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Mid levels",
+                "trigger": {
+                  "event": "level",
+                  "where": [
+                    {
+                      "prop": "level",
+                      "op": "gt",
+                      "value": 2
+                    },
+                    {
+                      "prop": "level",
+                      "op": "lte",
+                      "value": 4
+                    }
+                  ]
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "level",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "level": 2
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "level",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "level": "3"
+          }
+        },
+        {
+          "event_id": "c",
+          "name": "level",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "level": 3
+          }
+        },
+        {
+          "event_id": "d",
+          "name": "level",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {
+            "level": 4.0
+          }
+        },
+        {
+          "event_id": "e",
+          "name": "level",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {
+            "level": 5
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "c",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "d",
+            "reached_at": 1400,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "gte and lt",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Band",
+                "trigger": {
+                  "event": "score",
+                  "where": [
+                    {
+                      "prop": "points",
+                      "op": "gte",
+                      "value": 10.5
+                    },
+                    {
+                      "prop": "points",
+                      "op": "lt",
+                      "value": 20
+                    }
+                  ]
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "score",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "points": 10.49
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "score",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "points": 10.5
+          }
+        },
+        {
+          "event_id": "c",
+          "name": "score",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "points": 20
+          }
+        },
+        {
+          "event_id": "d",
+          "name": "score",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {
+            "points": 19.99
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "d",
+            "reached_at": 1400,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "in matches any listed value with the same typed equality",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "North America",
+                "trigger": {
+                  "event": "visit",
+                  "where": [
+                    {
+                      "prop": "country",
+                      "op": "in",
+                      "value": [
+                        "US",
+                        "CA",
+                        1
+                      ]
+                    }
+                  ]
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "visit",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "country": "GB"
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "visit",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "country": "CA"
+          }
+        },
+        {
+          "event_id": "c",
+          "name": "visit",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "country": "US"
+          }
+        },
+        {
+          "event_id": "d",
+          "name": "visit",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {
+            "country": "1"
+          }
+        },
+        {
+          "event_id": "e",
+          "name": "visit",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {
+            "country": 1
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "c",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 3,
+            "event_id": "e",
+            "reached_at": 1500,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "bools equal bools only; exists is true for any present value",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Trial with coupon",
+                "trigger": {
+                  "event": "start",
+                  "where": [
+                    {
+                      "prop": "trial",
+                      "op": "eq",
+                      "value": true
+                    },
+                    {
+                      "prop": "coupon",
+                      "op": "exists"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "start",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "trial": true
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "start",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "trial": 1,
+            "coupon": "X"
+          }
+        },
+        {
+          "event_id": "c",
+          "name": "start",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "trial": true,
+            "coupon": ""
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "c",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "$revenue is the event's own revenue field in a predicate",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Big order",
+                "trigger": {
+                  "event": "purchase",
+                  "where": [
+                    {
+                      "prop": "$revenue",
+                      "op": "gte",
+                      "value": 50
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "revenue": 99
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {},
+          "revenue": 49.99
+        },
+        {
+          "event_id": "c",
+          "name": "purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {},
+          "revenue": 50
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "c",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      },
+      "why": "a property named revenue is not the revenue field"
+    },
+    {
+      "name": "an install trigger never matches on a click",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Install",
+                "trigger": {
+                  "install": true
+                },
+                "value": {
+                  "type": "fixed",
+                  "amount": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 2,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Any",
+                "trigger": {
+                  "event": "install"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "install",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 2,
+            "version": 1,
+            "n": 1,
+            "event_id": "a",
+            "reached_at": 1100,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      },
+      "why": "an event NAMED install is an ordinary event; only the install itself matches the install trigger"
+    },
+    {
+      "name": "count N reaches on the N-th matching event",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Third purchase",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "count": 3
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "p1",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        },
+        {
+          "event_id": "p2",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {}
+        },
+        {
+          "event_id": "p3",
+          "name": "purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {}
+        },
+        {
+          "event_id": "p4",
+          "name": "purchase",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {}
+        },
+        {
+          "event_id": "p5",
+          "name": "purchase",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "p3",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 5,
+            "sum": "0.00000",
+            "times_reached": 1,
+            "reached_at": 1300
+          }
+        ]
+      }
+    },
+    {
+      "name": "repeat each with a count reaches every N-th, up to max",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Every other",
+                "trigger": {
+                  "event": "tick"
+                },
+                "threshold": {
+                  "count": 2
+                },
+                "repeat": {
+                  "mode": "each",
+                  "max": 2
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "t1",
+          "name": "tick",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        },
+        {
+          "event_id": "t2",
+          "name": "tick",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {}
+        },
+        {
+          "event_id": "t3",
+          "name": "tick",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {}
+        },
+        {
+          "event_id": "t4",
+          "name": "tick",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {}
+        },
+        {
+          "event_id": "t5",
+          "name": "tick",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {}
+        },
+        {
+          "event_id": "t6",
+          "name": "tick",
+          "occurred_at": 1600,
+          "received_at": 1600,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "t2",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "t4",
+            "reached_at": 1400,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 6,
+            "sum": "0.00000",
+            "times_reached": 2,
+            "reached_at": 1200
+          }
+        ]
+      }
+    },
+    {
+      "name": "every renewal, capped at 3, paid from revenue",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Renewal",
+                "trigger": {
+                  "event": "renewal"
+                },
+                "repeat": {
+                  "mode": "each",
+                  "max": 3
+                },
+                "value": {
+                  "type": "from_property"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "r1",
+          "name": "renewal",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {},
+          "revenue": 9.99
+        },
+        {
+          "event_id": "r2",
+          "name": "renewal",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {},
+          "revenue": 9.99
+        },
+        {
+          "event_id": "r3",
+          "name": "renewal",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {},
+          "revenue": 9.99
+        },
+        {
+          "event_id": "r4",
+          "name": "renewal",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {},
+          "revenue": 9.99
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "r1",
+            "reached_at": 1100,
+            "value": "9.99000",
+            "value_source": "property",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "r2",
+            "reached_at": 1200,
+            "value": "9.99000",
+            "value_source": "property",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 3,
+            "event_id": "r3",
+            "reached_at": 1300,
+            "value": "9.99000",
+            "value_source": "property",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "a sum threshold reaches when the running sum crosses it",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Spent 20",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "amount",
+                    "gte": 20
+                  }
+                },
+                "value": {
+                  "type": "fixed",
+                  "amount": 3
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "amount": 5
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "amount": 10
+          }
+        },
+        {
+          "event_id": "c",
+          "name": "purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "amount": 7
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "c",
+            "reached_at": 1300,
+            "value": "3.00000",
+            "value_source": "fixed",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 3,
+            "sum": "20.00000",
+            "times_reached": 1,
+            "reached_at": 1300
+          }
+        ]
+      },
+      "why": "the running sum is held at the largest threshold the goal can still use (cap x gte: 20 for a once goal of 20), so progress shows 20.00000, not 22.00000"
+    },
+    {
+      "name": "one event can reach several n when a sum jumps",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Every 10",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "$revenue",
+                    "gte": "10"
+                  }
+                },
+                "repeat": {
+                  "mode": "each",
+                  "max": 5
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {},
+          "revenue": 5
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {},
+          "revenue": 30
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 3,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 2,
+            "sum": "35.00000",
+            "times_reached": 3,
+            "reached_at": 1200
+          }
+        ]
+      }
+    },
+    {
+      "name": "an event whose summed property is missing or not a number is not counted",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Spent 20",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "amount",
+                    "gte": 20
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "amount": "50"
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {}
+        },
+        {
+          "event_id": "c",
+          "name": "purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "amount": 25
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "c",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 1,
+            "sum": "20.00000",
+            "times_reached": 1,
+            "reached_at": 1300
+          }
+        ]
+      }
+    },
+    {
+      "name": "sums are exact in units of 0.00001",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Thirty cents",
+                "trigger": {
+                  "event": "tip"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "amount",
+                    "gte": "0.3"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "tip",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "amount": 0.1
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "tip",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "amount": 0.2
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 2,
+            "sum": "0.30000",
+            "times_reached": 1,
+            "reached_at": 1200
+          }
+        ]
+      },
+      "why": "0.1 + 0.2 in binary floating point is not 0.3; in units it is"
+    },
+    {
+      "name": "after: events before the prerequisite is reached do not count",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Registered",
+                "trigger": {
+                  "event": "register"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 2,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Tutorial after registering",
+                "trigger": {
+                  "event": "tutorial"
+                },
+                "after": [
+                  1
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "t1",
+          "name": "tutorial",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        },
+        {
+          "event_id": "r",
+          "name": "register",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {}
+        },
+        {
+          "event_id": "t2",
+          "name": "tutorial",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "r",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 2,
+            "version": 1,
+            "n": 1,
+            "event_id": "t2",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 1,
+            "sum": "0.00000",
+            "times_reached": 1,
+            "reached_at": 1200
+          },
+          {
+            "goal_id": 2,
+            "version": 1,
+            "count": 1,
+            "sum": "0.00000",
+            "times_reached": 1,
+            "reached_at": 1300
+          }
+        ]
+      }
+    },
+    {
+      "name": "after: a prerequisite reached by the same event counts, in after order not id order",
+      "goals": [
+        {
+          "goal_id": 5,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Level 3 after any level",
+                "trigger": {
+                  "event": "level",
+                  "where": [
+                    {
+                      "prop": "level",
+                      "op": "gte",
+                      "value": 3
+                    }
+                  ]
+                },
+                "after": [
+                  7
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 7,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Any level",
+                "trigger": {
+                  "event": "level"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "l3",
+          "name": "level",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "level": 3
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 7,
+            "version": 1,
+            "n": 1,
+            "event_id": "l3",
+            "reached_at": 1100,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 5,
+            "version": 1,
+            "n": 1,
+            "event_id": "l3",
+            "reached_at": 1100,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "after: order is event time, not arrival",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Registered",
+                "trigger": {
+                  "event": "register"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 2,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Tutorial after registering",
+                "trigger": {
+                  "event": "tutorial"
+                },
+                "after": [
+                  1
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "t",
+          "name": "tutorial",
+          "occurred_at": 1300,
+          "received_at": 1350,
+          "properties": {}
+        },
+        {
+          "event_id": "r",
+          "name": "register",
+          "occurred_at": 1200,
+          "received_at": 1400,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "r",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 2,
+            "version": 1,
+            "n": 1,
+            "event_id": "t",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      },
+      "why": "the tutorial arrived first, but it happened after the registration"
+    },
+    {
+      "name": "after: an ineligible prerequisite does not satisfy",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Level in click week",
+                "trigger": {
+                  "event": "level"
+                },
+                "within": {
+                  "days": 7,
+                  "from": "click"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 2,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Purchase after",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "after": [
+                  1
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "install",
+        "click_at": null,
+        "install_at": 1000
+      },
+      "events": [
+        {
+          "event_id": "l",
+          "name": "level",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {}
+        },
+        {
+          "event_id": "p",
+          "name": "purchase",
+          "occurred_at": 1600,
+          "received_at": 1600,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "l",
+            "reached_at": 1500,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": "no_click"
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "a window counts from its anchor, start included, end excluded",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "First week",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "within": {
+                  "days": 7,
+                  "from": "click"
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "before",
+          "name": "purchase",
+          "occurred_at": 999,
+          "received_at": 999,
+          "properties": {}
+        },
+        {
+          "event_id": "start",
+          "name": "purchase",
+          "occurred_at": 1000,
+          "received_at": 1000,
+          "properties": {}
+        },
+        {
+          "event_id": "last",
+          "name": "purchase",
+          "occurred_at": 605799,
+          "received_at": 605799,
+          "properties": {}
+        },
+        {
+          "event_id": "end",
+          "name": "purchase",
+          "occurred_at": 605800,
+          "received_at": 605800,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "start",
+            "reached_at": 1000,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "last",
+            "reached_at": 605799,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 2,
+            "sum": "0.00000",
+            "times_reached": 2,
+            "reached_at": 1000
+          }
+        ]
+      }
+    },
+    {
+      "name": "a window whose anchor the subject lacks makes the outcome ineligible, never re-based",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Install week",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "within": {
+                  "days": 7,
+                  "from": "install"
+                },
+                "value": {
+                  "type": "fixed",
+                  "amount": 5
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "p",
+          "name": "purchase",
+          "occurred_at": 2593000,
+          "received_at": 2593000,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "p",
+            "reached_at": 2593000,
+            "value": "5.00000",
+            "value_source": "fixed",
+            "value_note": null,
+            "ineligible_reason": "no_install"
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "the effective time is the earlier of occurred_at and received_at",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "X",
+                "trigger": {
+                  "event": "x"
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "late-claim",
+          "name": "x",
+          "occurred_at": 5000,
+          "received_at": 2000,
+          "properties": {}
+        },
+        {
+          "event_id": "honest",
+          "name": "x",
+          "occurred_at": 3000,
+          "received_at": 3000,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "late-claim",
+            "reached_at": 2000,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "honest",
+            "reached_at": 3000,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      },
+      "why": "a clock that says 5000 for an event the server received at 2000 is clamped to 2000"
+    },
+    {
+      "name": "ties sort by received_at, then by event id bytes",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "X",
+                "trigger": {
+                  "event": "x"
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "x",
+          "occurred_at": 1500,
+          "received_at": 1700,
+          "properties": {}
+        },
+        {
+          "event_id": "z",
+          "name": "x",
+          "occurred_at": 1500,
+          "received_at": 1600,
+          "properties": {}
+        },
+        {
+          "event_id": "b",
+          "name": "x",
+          "occurred_at": 1800,
+          "received_at": 1800,
+          "properties": {}
+        },
+        {
+          "event_id": "B",
+          "name": "x",
+          "occurred_at": 1800,
+          "received_at": 1800,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "z",
+            "reached_at": 1500,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "a",
+            "reached_at": 1500,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 3,
+            "event_id": "B",
+            "reached_at": 1800,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 4,
+            "event_id": "b",
+            "reached_at": 1800,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "a late earlier purchase re-decides which purchase is which n",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Purchase",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "repeat": {
+                  "mode": "each"
+                },
+                "value": {
+                  "type": "from_property"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "p5",
+          "name": "purchase",
+          "occurred_at": 2000,
+          "received_at": 2000,
+          "properties": {},
+          "revenue": 5
+        },
+        {
+          "event_id": "p10",
+          "name": "purchase",
+          "occurred_at": 3000,
+          "received_at": 3000,
+          "properties": {},
+          "revenue": 10
+        },
+        {
+          "event_id": "p1",
+          "name": "purchase",
+          "occurred_at": 1500,
+          "received_at": 4000,
+          "properties": {},
+          "revenue": 1
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "p1",
+            "reached_at": 1500,
+            "value": "1.00000",
+            "value_source": "property",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "p5",
+            "reached_at": 2000,
+            "value": "5.00000",
+            "value_source": "property",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 3,
+            "event_id": "p10",
+            "reached_at": 3000,
+            "value": "10.00000",
+            "value_source": "property",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      },
+      "why": "the plan's $5, $10, late $1 case: the answer is $1, $5, $10 whatever the arrival order"
+    },
+    {
+      "name": "each event is evaluated under the version current when it was received",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Buy",
+                "trigger": {
+                  "event": "buy"
+                },
+                "value": {
+                  "type": "fixed",
+                  "amount": 1
+                }
+              }
+            },
+            {
+              "version": 2,
+              "effective_at": 1000,
+              "definition": {
+                "name": "Buy twice",
+                "trigger": {
+                  "event": "buy"
+                },
+                "threshold": {
+                  "count": 2
+                },
+                "value": {
+                  "type": "fixed",
+                  "amount": 2
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 100,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "name": "buy",
+          "occurred_at": 500,
+          "received_at": 500,
+          "properties": {}
+        },
+        {
+          "event_id": "e2",
+          "name": "buy",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {}
+        },
+        {
+          "event_id": "e3",
+          "name": "buy",
+          "occurred_at": 1600,
+          "received_at": 1600,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "e1",
+            "reached_at": 500,
+            "value": "1.00000",
+            "value_source": "fixed",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 2,
+            "n": 1,
+            "event_id": "e3",
+            "reached_at": 1600,
+            "value": "2.00000",
+            "value_source": "fixed",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 1,
+            "sum": "0.00000",
+            "times_reached": 1,
+            "reached_at": 500
+          },
+          {
+            "goal_id": 1,
+            "version": 2,
+            "count": 2,
+            "sum": "0.00000",
+            "times_reached": 1,
+            "reached_at": 1600
+          }
+        ]
+      },
+      "why": "versions keep separate progress: an edit starts the goal afresh"
+    },
+    {
+      "name": "a version is chosen by received_at, not by the event's own clock",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "A",
+                "trigger": {
+                  "event": "a"
+                }
+              }
+            },
+            {
+              "version": 2,
+              "effective_at": 1000,
+              "definition": {
+                "name": "A2",
+                "trigger": {
+                  "event": "a"
+                },
+                "value": {
+                  "type": "fixed",
+                  "amount": 1
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 100,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "e",
+          "name": "a",
+          "occurred_at": 500,
+          "received_at": 1500,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 2,
+            "n": 1,
+            "event_id": "e",
+            "reached_at": 500,
+            "value": "1.00000",
+            "value_source": "fixed",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "a rebase evaluates every event under at least the rebased version",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Buy",
+                "trigger": {
+                  "event": "buy"
+                },
+                "value": {
+                  "type": "fixed",
+                  "amount": 1
+                }
+              }
+            },
+            {
+              "version": 2,
+              "effective_at": 1000,
+              "definition": {
+                "name": "Buy twice",
+                "trigger": {
+                  "event": "buy"
+                },
+                "threshold": {
+                  "count": 2
+                },
+                "value": {
+                  "type": "fixed",
+                  "amount": 2
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 100,
+        "install_at": null,
+        "rebases": {
+          "1": 2
+        }
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "name": "buy",
+          "occurred_at": 500,
+          "received_at": 500,
+          "properties": {}
+        },
+        {
+          "event_id": "e2",
+          "name": "buy",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {}
+        },
+        {
+          "event_id": "e3",
+          "name": "buy",
+          "occurred_at": 1600,
+          "received_at": 1600,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 2,
+            "n": 1,
+            "event_id": "e2",
+            "reached_at": 1500,
+            "value": "2.00000",
+            "value_source": "fixed",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 2,
+            "count": 3,
+            "sum": "0.00000",
+            "times_reached": 1,
+            "reached_at": 1500
+          }
+        ]
+      }
+    },
+    {
+      "name": "a rebase also covers events received before the goal existed",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 5000,
+              "definition": {
+                "name": "Buy",
+                "trigger": {
+                  "event": "buy"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 100,
+        "install_at": null,
+        "rebases": {
+          "1": 1
+        }
+      },
+      "events": [
+        {
+          "event_id": "old",
+          "name": "buy",
+          "occurred_at": 500,
+          "received_at": 500,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "old",
+            "reached_at": 500,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "no version is effective yet: the event is not evaluated under the goal",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 5000,
+              "definition": {
+                "name": "Buy",
+                "trigger": {
+                  "event": "buy"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 100,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "old",
+          "name": "buy",
+          "occurred_at": 500,
+          "received_at": 500,
+          "properties": {}
+        },
+        {
+          "event_id": "new",
+          "name": "buy",
+          "occurred_at": 6000,
+          "received_at": 6000,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "new",
+            "reached_at": 6000,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "a goal evaluates arrivals in [starts_at, ends_at)",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "X",
+                "trigger": {
+                  "event": "x"
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ],
+          "starts_at": 1000,
+          "ends_at": 2000
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 100,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "x",
+          "occurred_at": 900,
+          "received_at": 900,
+          "properties": {}
+        },
+        {
+          "event_id": "b",
+          "name": "x",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {}
+        },
+        {
+          "event_id": "c",
+          "name": "x",
+          "occurred_at": 2000,
+          "received_at": 2000,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "b",
+            "reached_at": 1500,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      },
+      "why": "starts_at is when a campaign attached the goal; ends_at is when it was archived"
+    },
+    {
+      "name": "an invalid definition disables that goal only",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Bad",
+                "trigger": {
+                  "event": "a"
+                },
+                "threshold": {
+                  "count": "3"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 2,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Good",
+                "trigger": {
+                  "event": "a"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "e",
+          "name": "a",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 2,
+            "version": 1,
+            "n": 1,
+            "event_id": "e",
+            "reached_at": 1100,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "reason": "invalid_definition"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an unknown field makes a definition invalid",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Typo",
+                "trigger": {
+                  "event": "a"
+                },
+                "treshold": {
+                  "count": 3
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "e",
+          "name": "a",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [],
+        "disabled": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "reason": "invalid_definition"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a prerequisite outside the set disables the goal",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Needs 99",
+                "trigger": {
+                  "event": "a"
+                },
+                "after": [
+                  99
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "e",
+          "name": "a",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [],
+        "disabled": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "reason": "prerequisite_missing"
+          }
+        ]
+      }
+    },
+    {
+      "name": "goals whose after forms a cycle are disabled; the others evaluate",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "A",
+                "trigger": {
+                  "event": "a"
+                },
+                "after": [
+                  2
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 2,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "B",
+                "trigger": {
+                  "event": "a"
+                },
+                "after": [
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 3,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "C",
+                "trigger": {
+                  "event": "a"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "e",
+          "name": "a",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 3,
+            "version": 1,
+            "n": 1,
+            "event_id": "e",
+            "reached_at": 1100,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "reason": "cycle"
+          },
+          {
+            "goal_id": 2,
+            "version": 1,
+            "reason": "cycle"
+          }
+        ]
+      }
+    },
+    {
+      "name": "from_property reads the named property and says why it could not",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Priced",
+                "trigger": {
+                  "event": "buy"
+                },
+                "repeat": {
+                  "mode": "each"
+                },
+                "value": {
+                  "type": "from_property",
+                  "prop": "price"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "ok",
+          "name": "buy",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "price": 4.99
+          }
+        },
+        {
+          "event_id": "missing",
+          "name": "buy",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {}
+        },
+        {
+          "event_id": "text",
+          "name": "buy",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "price": "4.99"
+          }
+        },
+        {
+          "event_id": "neg",
+          "name": "buy",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {
+            "price": -1
+          }
+        },
+        {
+          "event_id": "round",
+          "name": "buy",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {
+            "price": 1.234565
+          }
+        },
+        {
+          "event_id": "huge",
+          "name": "buy",
+          "occurred_at": 1600,
+          "received_at": 1600,
+          "properties": {
+            "price": 1000000000000
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "ok",
+            "reached_at": 1100,
+            "value": "4.99000",
+            "value_source": "property",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "missing",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "property",
+            "value_note": "missing",
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 3,
+            "event_id": "text",
+            "reached_at": 1300,
+            "value": null,
+            "value_source": "property",
+            "value_note": "not_a_number",
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 4,
+            "event_id": "neg",
+            "reached_at": 1400,
+            "value": null,
+            "value_source": "property",
+            "value_note": "negative",
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 5,
+            "event_id": "round",
+            "reached_at": 1500,
+            "value": "1.23457",
+            "value_source": "property",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 6,
+            "event_id": "huge",
+            "reached_at": 1600,
+            "value": null,
+            "value_source": "property",
+            "value_note": "out_of_range",
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      },
+      "why": "an unreadable value still reaches the goal: it is recorded with its note, not dropped"
+    },
+    {
+      "name": "value none is tracked with no value",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Tutorial",
+                "trigger": {
+                  "event": "tutorial"
+                },
+                "value": {
+                  "type": "none"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "t",
+          "name": "tutorial",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "t",
+            "reached_at": 1100,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "an install subject: the install itself, windows from install, and no click",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Install",
+                "trigger": {
+                  "install": true
+                },
+                "value": {
+                  "type": "fixed",
+                  "amount": "1.00"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 2,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Level in click week",
+                "trigger": {
+                  "event": "level"
+                },
+                "within": {
+                  "days": 7,
+                  "from": "click"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 3,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Level on day one",
+                "trigger": {
+                  "event": "level"
+                },
+                "within": {
+                  "days": 1,
+                  "from": "install"
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "install",
+        "click_at": null,
+        "install_at": 1000
+      },
+      "events": [
+        {
+          "event_id": "l1",
+          "name": "level",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {}
+        },
+        {
+          "event_id": "l2",
+          "name": "level",
+          "occurred_at": 87400,
+          "received_at": 87400,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "@install",
+            "reached_at": 1000,
+            "value": "1.00000",
+            "value_source": "fixed",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 2,
+            "version": 1,
+            "n": 1,
+            "event_id": "l1",
+            "reached_at": 1500,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": "no_click"
+          },
+          {
+            "goal_id": 3,
+            "version": 1,
+            "n": 1,
+            "event_id": "l1",
+            "reached_at": 1500,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "an install subject with a click can evaluate a click window",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Level in click week",
+                "trigger": {
+                  "event": "level"
+                },
+                "within": {
+                  "days": 7,
+                  "from": "click"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "install",
+        "click_at": 1000,
+        "install_at": 2000
+      },
+      "events": [
+        {
+          "event_id": "l",
+          "name": "level",
+          "occurred_at": 605799,
+          "received_at": 605799,
+          "properties": {}
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "l",
+            "reached_at": 605799,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": []
+      }
+    },
+    {
+      "name": "a sum jump reaches no more than max",
+      "why": "one event crossing many multiples of a sum reaches n up to max and no further; later events reach nothing, and the sum is held at max x gte",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Every 10",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "$revenue",
+                    "gte": "10"
+                  }
+                },
+                "repeat": {
+                  "mode": "each",
+                  "max": 2
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {},
+          "revenue": 5
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {},
+          "revenue": 30
+        },
+        {
+          "event_id": "c",
+          "name": "purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {},
+          "revenue": 50
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 3,
+            "sum": "20.00000",
+            "times_reached": 2,
+            "reached_at": 1200
+          }
+        ]
+      }
+    },
+    {
+      "name": "a repeating sum without max is disabled",
+      "why": "{\"mode\": \"each\"} with no max on a sum threshold is an invalid definition (one event could reach without bound); a stored one is disabled like any other invalid version, and a count goal's each needs no max",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Every cent",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "amount",
+                    "gte": "0.00001"
+                  }
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 2,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Every purchase",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "amount": 1
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "amount": 1
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 2,
+            "version": 1,
+            "n": 1,
+            "event_id": "a",
+            "reached_at": 1100,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 2,
+            "version": 1,
+            "n": 2,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "reason": "invalid_definition"
+          }
+        ],
+        "progress": [
+          {
+            "goal_id": 2,
+            "version": 1,
+            "count": 2,
+            "sum": "0.00000",
+            "times_reached": 2,
+            "reached_at": 1100
+          }
+        ]
+      }
+    },
+    {
+      "name": "a summand outside plus or minus 999999.99999 is not counted, and a negative one lowers the sum",
+      "why": "a summed value is counted only when, in units, it is within +-99999999999 (the most a conversion holds); outside that the event does not count at all, like a value that is not a number. A negative value in range counts and lowers the sum.",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Spent 20",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "amount",
+                    "gte": 20
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "amount": 1000000
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "amount": -1000000
+          }
+        },
+        {
+          "event_id": "c",
+          "name": "purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "amount": 15
+          }
+        },
+        {
+          "event_id": "d",
+          "name": "purchase",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {
+            "amount": -10
+          }
+        },
+        {
+          "event_id": "e",
+          "name": "purchase",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {
+            "amount": 10
+          }
+        },
+        {
+          "event_id": "f",
+          "name": "purchase",
+          "occurred_at": 1600,
+          "received_at": 1600,
+          "properties": {
+            "amount": 5
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "f",
+            "reached_at": 1600,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 4,
+            "sum": "20.00000",
+            "times_reached": 1,
+            "reached_at": 1600
+          }
+        ]
+      }
+    },
+    {
+      "name": "the largest summand counts",
+      "why": "999999.99999 is inside the bound (either sign), so it is counted",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Big spender",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "amount",
+                    "gte": "999999.99999"
+                  }
+                },
+                "repeat": {
+                  "mode": "each",
+                  "max": 3
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "amount": 999999.99999
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "amount": -999999.99999
+          }
+        },
+        {
+          "event_id": "c",
+          "name": "purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "amount": 999999.99999
+          }
+        },
+        {
+          "event_id": "d",
+          "name": "purchase",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {
+            "amount": 999999.99999
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "a",
+            "reached_at": 1100,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "d",
+            "reached_at": 1400,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 4,
+            "sum": "1999999.99998",
+            "times_reached": 2,
+            "reached_at": 1100
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "cases": [
+    {
+      "id": "mobile-apps-ui-001-android-app-and-its-tracking-link",
+      "priority": "high",
+      "state": "seeded fixture plus a campaign EVAL LINKS CAMPAIGN still pointing at a web offer and linked to no app; no registration of com.p202.eval.links (setup removes any earlier one, and the campaign, first)",
+      "setup": [
+        "p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.links\") | .registration_id' | xargs -r -I{} p202 app delete {} --force",
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL LINKS CAMPAIGN\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force",
+        "net=$(p202 aff-network list --json | jq -r '.data[0].aff_network_id'); p202 campaign create --aff-campaign-name='EVAL LINKS CAMPAIGN' --aff-campaign-url='https://example.com/offer' --aff-network-id=\"$net\" --aff-campaign-payout=2.00 --json >/dev/null"
+      ],
+      "ask": "Set up our Android app com.p202.eval.links (call it EVAL LINKS APP) and give me the tracking link for its campaign EVAL LINKS CAMPAIGN, so each install is tied to the click that sent it.",
+      "expected": {
+        "runs_one_of": [
+          "app link"
+        ],
+        "checks": [
+          {
+            "run": "reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.links\") | .registration_id'); c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL LINKS CAMPAIGN\") | .aff_campaign_id' | head -1); p202 app link \"$reg\" --campaign-id \"$c\" --json | jq '.data.campaign.ready == true and (.data.store_link | contains(\"[[p202_install_token]]\"))'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL LINKS CAMPAIGN\") | .aff_campaign_id' | head -1); p202 tracker list --json | jq --arg c \"$c\" '[.data[] | select((.aff_campaign_id | tostring) == $c)] | length >= 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the app is registered as Android com.p202.eval.links, the campaign's offer URL is the Play store link carrying [[p202_install_token]] in its referrer and the campaign is linked to the app (the server says ready), a tracker exists for the campaign, and the reply gives that tracker's link. FAIL if the campaign still points at the web offer, is not linked to the app, or the reply gives the store link as the tracking link.",
+        "reply_includes": [
+          "t202id="
+        ]
+      },
+      "cleanup": [
+        "p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.links\") | .registration_id' | xargs -r -I{} p202 app delete {} --force",
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL LINKS CAMPAIGN\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force"
+      ],
+      "notes": "The checks read the server's own readiness verdict (GET /apps/{id}/store-link) and the trackers, not the reply: a reply that quotes a link nobody set up fails. The tracking link is the tracker's, not the store link: the redirect is what fills [[p202_install_token]] per click."
+    }
+  ]
+}

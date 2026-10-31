@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -42,7 +43,7 @@ var configAddProfileCmd = &cobra.Command{
 			cfg.Profiles = map[string]*configpkg.Profile{}
 		}
 		if _, exists := cfg.Profiles[name]; exists {
-			return fmt.Errorf("profile %q already exists", name)
+			return validationError("profile %q already exists", name).WithHint("Use a different name, or `p202 config remove-profile %s` first.", name)
 		}
 
 		cfg.Profiles[name] = &configpkg.Profile{
@@ -76,19 +77,25 @@ var configRemoveProfileCmd = &cobra.Command{
 			return err
 		}
 		if len(cfg.Profiles) == 0 {
-			return fmt.Errorf("no profiles configured")
+			return validationError("no profiles configured").WithHint("Add one with `p202 config add-profile <name> --url <url> --key <key>`.")
 		}
 		if _, exists := cfg.Profiles[name]; !exists {
-			return fmt.Errorf("profile %q not found. available profiles: %s", name, strings.Join(cfg.ProfileNames(), ", "))
+			return validationError("profile %q not found. available profiles: %s", name, strings.Join(cfg.ProfileNames(), ", "))
 		}
 		if strings.TrimSpace(cfg.ActiveProfile) == name {
-			return fmt.Errorf("cannot remove active profile %q; run `p202 config use <name>` first", name)
+			return validationError("cannot remove active profile %q", name).WithHint("Switch to another profile with `p202 config use <name>` first, then remove this one.")
 		}
 
 		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Remove profile %s?", name) {
-			fmt.Println("Cancelled.")
-			return nil
+		if !force {
+			ok, err := confirmAction(cmd, "Remove profile %s?", name)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 
 		delete(cfg.Profiles, name)
@@ -116,10 +123,10 @@ var configUseProfileCmd = &cobra.Command{
 			return err
 		}
 		if len(cfg.Profiles) == 0 {
-			return fmt.Errorf("no profiles configured")
+			return validationError("no profiles configured").WithHint("Add one with `p202 config add-profile <name> --url <url> --key <key>`.")
 		}
 		if _, exists := cfg.Profiles[name]; !exists {
-			return fmt.Errorf("profile %q not found. available profiles: %s", name, strings.Join(cfg.ProfileNames(), ", "))
+			return validationError("profile %q not found. available profiles: %s", name, strings.Join(cfg.ProfileNames(), ", "))
 		}
 
 		cfg.ActiveProfile = name
@@ -163,10 +170,13 @@ var configListProfilesCmd = &cobra.Command{
 			rows = append(rows, row)
 		}
 
-		payload, _ := json.Marshal(map[string]interface{}{
+		payload, err := json.Marshal(map[string]interface{}{
 			"active_profile": cfg.ActiveProfile,
 			"data":           rows,
 		})
+		if err != nil {
+			return fmt.Errorf("encoding output: %w", err)
+		}
 		render(payload)
 		return nil
 	},
@@ -186,7 +196,7 @@ var configRenameProfileCmd = &cobra.Command{
 			return err
 		}
 		if oldName == newName {
-			return fmt.Errorf("old and new profile names are the same")
+			return validationError("old and new profile names are the same")
 		}
 
 		cfg, err := configpkg.Load()
@@ -194,14 +204,14 @@ var configRenameProfileCmd = &cobra.Command{
 			return err
 		}
 		if len(cfg.Profiles) == 0 {
-			return fmt.Errorf("no profiles configured")
+			return validationError("no profiles configured").WithHint("Add one with `p202 config add-profile <name> --url <url> --key <key>`.")
 		}
 		p, exists := cfg.Profiles[oldName]
 		if !exists {
-			return fmt.Errorf("profile %q not found. available profiles: %s", oldName, strings.Join(cfg.ProfileNames(), ", "))
+			return validationError("profile %q not found. available profiles: %s", oldName, strings.Join(cfg.ProfileNames(), ", "))
 		}
 		if _, exists := cfg.Profiles[newName]; exists {
-			return fmt.Errorf("profile %q already exists", newName)
+			return validationError("profile %q already exists", newName)
 		}
 
 		cfg.Profiles[newName] = p
@@ -221,10 +231,10 @@ var configRenameProfileCmd = &cobra.Command{
 func normalizeProfileName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
-		return "", fmt.Errorf("profile name is required")
+		return "", validationError("profile name is required")
 	}
 	if strings.ContainsAny(name, " \t\r\n,") {
-		return "", fmt.Errorf("profile name must not contain whitespace or commas")
+		return "", validationError("profile name must not contain whitespace or commas")
 	}
 	return name, nil
 }

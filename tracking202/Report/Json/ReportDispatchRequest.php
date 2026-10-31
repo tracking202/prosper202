@@ -36,7 +36,6 @@ final class ReportDispatchRequest
         'reportType',
         'offset',
         'order',
-        'includeDependentFilters',
     ];
 
     /**
@@ -75,8 +74,7 @@ final class ReportDispatchRequest
     public function __construct(
         public readonly string $reportType,
         public readonly int $offset,
-        public readonly string $order,
-        public readonly bool $includeDependentFilters
+        public readonly string $order
     ) {
     }
 
@@ -145,11 +143,7 @@ final class ReportDispatchRequest
         $order = array_key_exists('order', $payload)
             ? self::parseOrder($payload['order'])
             : '';
-        $includeDependentFilters = array_key_exists('includeDependentFilters', $payload)
-            ? self::parseBoolean($payload['includeDependentFilters'], 'includeDependentFilters')
-            : true;
-
-        return new self($reportType, $offset, $order, $includeDependentFilters);
+        return new self($reportType, $offset, $order);
     }
 
     /**
@@ -202,14 +196,5 @@ final class ReportDispatchRequest
         }
 
         return $order;
-    }
-
-    private static function parseBoolean(mixed $value, string $fieldName): bool
-    {
-        if (is_bool($value)) {
-            return $value;
-        }
-
-        throw new InvalidArgumentException($fieldName . ' must be a boolean.', 422);
     }
 }

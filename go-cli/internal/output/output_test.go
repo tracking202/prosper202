@@ -86,6 +86,42 @@ func TestRenderJSONModePrettyPrints(t *testing.T) {
 	}
 }
 
+// Compact is the agent form: the same document as --json on one line, with
+// & < > left as they are. Pretty (--json) keeps its indentation and escaping.
+func TestRenderJSONCompactVersusPretty(t *testing.T) {
+	input := `{"data":[{"id":2,"url":"https://x.example/?a=1&b=<2>"},{"id":1,"name":"n"}],"pagination":{"total":2}}`
+
+	compact := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{JSON: true, Compact: true})
+	})
+	if strings.Count(compact, "\n") != 1 || !strings.HasSuffix(compact, "}\n") {
+		t.Fatalf("compact JSON should be exactly one line, got %q", compact)
+	}
+	if !strings.Contains(compact, `"url":"https://x.example/?a=1&b=<2>"`) {
+		t.Errorf("compact JSON should keep & < > unescaped and have no spaces, got %s", compact)
+	}
+
+	pretty := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{JSON: true})
+	})
+	if !strings.Contains(pretty, "\n  \"data\": [") || !strings.Contains(pretty, `\u0026`) {
+		t.Errorf("--json output should stay indented and HTML-escaped as before, got:\n%s", pretty)
+	}
+
+	var a, b interface{}
+	if err := json.Unmarshal([]byte(compact), &a); err != nil {
+		t.Fatalf("compact output is not JSON: %v", err)
+	}
+	if err := json.Unmarshal([]byte(pretty), &b); err != nil {
+		t.Fatalf("pretty output is not JSON: %v", err)
+	}
+	ca, _ := json.Marshal(a)
+	cb, _ := json.Marshal(b)
+	if string(ca) != string(cb) {
+		t.Errorf("compact and pretty must carry the same document:\n%s\n%s", ca, cb)
+	}
+}
+
 func TestRenderJSONModeWithArray(t *testing.T) {
 	input := `[{"id":1},{"id":2}]`
 	out := captureStdout(t, func() {
@@ -326,6 +362,15 @@ func TestFormatValue(t *testing.T) {
 			input: float64(1000000),
 			want:  "1000000",
 		},
+		// Money the API sends as numbers: cents stay cents, a finer amount keeps up
+		// to four decimals as a long decimal string does, and none reads as zero.
+		{name: "float64 cents", input: float64(12.5), want: "12.50"},
+		{name: "float64 sub-cent CPC", input: float64(0.00125), want: "0.0013"},
+		{name: "float64 half-cent CPC", input: float64(0.015), want: "0.015"},
+		{name: "float64 computed metric", input: float64(0.288613861), want: "0.2886"},
+		{name: "float64 smallest stored amount", input: float64(0.00001), want: "0.00001"},
+		{name: "float64 negative sub-cent", input: float64(-0.00001), want: "-0.00001"},
+		{name: "float64 large amount", input: float64(1234567.89), want: "1234567.89"},
 		{
 			name:  "bool true",
 			input: true,
@@ -458,6 +503,51 @@ func TestRenderQuietIdOnly(t *testing.T) {
 	}
 }
 
+func TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId(t *testing.T) {
+	// user_id is a foreign key on almost every row; printing it as the id
+	// hands scripts the OWNER's id to feed into get/delete. Each row here
+	// carries its entity's primary key plus user_id, and the primary key
+	// must win.
+	// Row shapes mirror the API's actual response schemas (docs/openapi.yaml)
+	// for each list endpoint, including the foreign keys that ride along; the
+	// ids are chosen so a wrong pick is visible.
+	cases := map[string]string{
+		`{"data":[{"registration_id":2,"app_key":"525463029","user_id":1}]}`:            "2",
+		`{"data":[{"encoding_id":7,"registration_id":2,"user_id":1}]}`:                  "7",
+		`{"data":[{"postback_id":31,"user_id":1,"registration_id":2,"campaign_id":9}]}`: "31",
+		`{"data":[{"event_id":12,"user_id":1,"event_name":"Black Friday"}]}`:            "12",
+		`{"data":[{"model_id":3,"user_id":1,"model_name":"U-shaped"}]}`:                 "3",
+		`{"data":[{"snapshot_id":44,"model_id":3,"user_id":1}]}`:                        "44",
+		`{"data":[{"export_id":5,"user_id":1,"model_id":3}]}`:                           "5",
+		`{"data":[{"subscription_id":8,"customer_id":21,"user_id":1}]}`:                 "8",
+		`{"data":[{"customer_id":21,"user_id":1,"company":"Acme"}]}`:                    "21",
+		`{"data":[{"company_id":6,"name":"Acme","domain":"acme.io"}]}`:                  "6",
+		`{"data":[{"product_id":9,"sku":"pro-annual"}]}`:                                "9",
+		`{"data":[{"field_id":2,"field_key":"plan","user_id":1}]}`:                      "2",
+		`{"data":[{"webhook_id":4,"webhook_url":"https://x","user_id":1}]}`:             "4",
+		`{"data":[{"delivery_id":15,"webhook_id":4,"user_id":1}]}`:                      "15",
+		`{"data":[{"integration_id":3,"provider":"stripe","user_id":1}]}`:               "3",
+		`{"data":[{"alias_id":11,"alias_type":"email"}]}`:                               "11",
+		// Core entities, whose rows carry other entities' keys as references.
+		`{"data":[{"click_id":6,"aff_campaign_id":2,"ppc_account_id":1,"landing_page_id":4,"rotator_id":null,"rule_id":null,"user_id":1}]}`: "6",
+		`{"data":[{"conv_id":3,"click_id":6,"campaign_id":2,"user_id":1}]}`:                                                                 "3",
+		`{"data":[{"tracker_id":7,"aff_campaign_id":2,"ppc_account_id":1,"text_ad_id":5,"landing_page_id":4,"rotator_id":0,"user_id":1}]}`:  "7",
+		`{"data":[{"text_ad_id":5,"aff_campaign_id":2,"landing_page_id":4,"user_id":1}]}`:                                                   "5",
+		`{"data":[{"landing_page_id":4,"aff_campaign_id":2,"user_id":1}]}`:                                                                  "4",
+		`{"data":[{"aff_campaign_id":2,"aff_network_id":1,"user_id":1}]}`:                                                                   "2",
+		`{"data":[{"ppc_account_id":3,"ppc_network_id":1,"user_id":1}]}`:                                                                    "3",
+		`{"data":[{"rule_id":9,"rotator_id":1,"weight":50}]}`:                                                                               "9",
+	}
+	for input, want := range cases {
+		out := captureStdout(t, func() {
+			RenderWith([]byte(input), Opts{Quiet: true})
+		})
+		if strings.TrimSpace(out) != want {
+			t.Errorf("quiet output for %s = %q, want %q", input, out, want)
+		}
+	}
+}
+
 func TestRenderFieldsSelection(t *testing.T) {
 	input := `[{"id":1,"name":"A","total_net":5,"roi":10}]`
 	out := captureStdout(t, func() {
@@ -515,17 +605,154 @@ func TestRenderNDJSON(t *testing.T) {
 	}
 }
 
+// A truncated answer's flag sits beside its rows, as masked does: each NDJSON
+// line carries it, so a reader summing the lines knows rows remain. A
+// `truncated` that is not true (false, or a count) stamps nothing and leaves
+// masked read.
+func TestRenderNDJSONStampsATruncatedAnswersLines(t *testing.T) {
+	out := captureStdout(t, func() {
+		RenderWith([]byte(`{"data":[{"id":1},{"id":2}],"truncated":true,"limit":2}`), Opts{NDJSON: true})
+	})
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], `"truncated":true`) || !strings.Contains(lines[1], `"truncated":true`) {
+		t.Errorf("every line carries truncated, got:\n%s", out)
+	}
+	for _, body := range []string{
+		`{"data":[{"id":1}],"truncated":false}`,
+		`{"data":[{"id":1}],"truncated":3,"masked":true}`,
+	} {
+		out = captureStdout(t, func() { RenderWith([]byte(body), Opts{NDJSON: true}) })
+		if strings.Contains(out, "truncated") {
+			t.Errorf("%s: no stamp, got %s", body, out)
+		}
+		if strings.Contains(body, "masked") && !strings.Contains(out, `"masked":true`) {
+			t.Errorf("%s: a count in truncated must not unread masked, got %s", body, out)
+		}
+	}
+}
+
 func TestTrimLongDecimal(t *testing.T) {
 	cases := map[string]string{
 		"0.288613861":   "0.2886",
 		"-54.807953180": "-54.808",
-		"2.20":          "2.20",   // <=4 decimals untouched
-		"90008":         "90008",  // integer untouched
+		"2.20":          "2.20",  // <=4 decimals untouched
+		"90008":         "90008", // integer untouched
 		"Bing - Search": "Bing - Search",
+		"0.00001":       "0.00001", // smaller than four decimals show: not "0"
 	}
 	for in, want := range cases {
 		if got := trimLongDecimal(in); got != want {
 			t.Errorf("trimLongDecimal(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// --- terminal hardening ---
+
+func TestTerminalCellStripsAnsiEscapes(t *testing.T) {
+	got := terminalCell("evil\x1b[2J\x1b[0;31mred")
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("terminalCell left an ESC byte in %q", got)
+	}
+	if !strings.Contains(got, "evil") || !strings.Contains(got, "red") {
+		t.Errorf("visible text should survive, got %q", got)
+	}
+}
+
+func TestTerminalCellDropsInvisibleAndBidi(t *testing.T) {
+	got := terminalCell("safe\u202E\u2066\u200B\uFEFFtext")
+	if got != "safetext" {
+		t.Errorf("terminalCell = %q, want %q", got, "safetext")
+	}
+	// Tag characters spell out invisible ASCII.
+	got = terminalCell("x\U000E0069\U000E0067y")
+	if got != "xy" {
+		t.Errorf("terminalCell = %q, want %q", got, "xy")
+	}
+}
+
+func TestTerminalCellCollapsesControlRunsAndKeepsColumns(t *testing.T) {
+	if got := terminalCell("a\n\t\r\x00b"); got != "a b" {
+		t.Errorf("terminalCell = %q, want %q", got, "a b")
+	}
+	if got := terminalCell("plain keyword 42"); got != "plain keyword 42" {
+		t.Errorf("plain text must pass unchanged, got %q", got)
+	}
+}
+
+func TestTableRenderingSanitizesCellsButJSONStaysRaw(t *testing.T) {
+	payload := []byte("{\"data\":[{\"name\":\"kw\\u001b[2Jboom\",\"total_clicks\":3}]}")
+
+	table := captureStdout(t, func() { RenderWith(payload, Opts{}) })
+	if strings.Contains(table, "\x1b") {
+		t.Errorf("table output contains a raw ESC byte:\n%q", table)
+	}
+	if !strings.Contains(table, "boom") {
+		t.Errorf("visible text should survive in the table:\n%q", table)
+	}
+
+	raw := captureStdout(t, func() { RenderWith(payload, Opts{JSON: true}) })
+	if !strings.Contains(raw, "\\u001b") && !strings.Contains(raw, "\x1b") {
+		t.Errorf("JSON output must keep the raw value for machine consumers:\n%q", raw)
+	}
+}
+
+func TestQuietIdSkipsANullForeignKeyRatherThanDroppingTheRow(t *testing.T) {
+	// An LTV customer row selects customer_id AND company_id, and company_id
+	// is NULL for a customer attached to no company. Returning on key
+	// presence printed the company's id when set and nothing at all when
+	// null, so `p202 ltv customers <id> -q` silently produced no output for
+	// the ordinary case.
+	for name, row := range map[string]map[string]interface{}{
+		"no company":   {"customer_id": 8821, "company_id": nil, "user_id": 1},
+		"with company": {"customer_id": 8821, "company_id": 44, "user_id": 1},
+	} {
+		if got := idOf(row); got != "8821" {
+			t.Errorf("%s: idOf = %q, want \"8821\"", name, got)
+		}
+	}
+}
+
+// A masked answer (a role without access_to_campaign_data) says so in every
+// view: the table and CSV with a note on stderr (their cells are blank), each
+// NDJSON line with "masked": true, JSON as the server sent it, and stderr
+// left to errors in the machine views.
+func TestAMaskedAnswerSaysSoInEveryView(t *testing.T) {
+	masked := []byte(`{"data":[{"name":"A","total_clicks":null,"epc":2.5}],"masked":true}`)
+	plain := []byte(`{"data":[{"name":"A","total_clicks":4,"epc":2.5}]}`)
+
+	for _, view := range []struct {
+		name string
+		opts Opts
+		note bool
+	}{
+		{"table", Opts{}, true},
+		{"csv", Opts{CSV: true}, true},
+		{"json", Opts{JSON: true}, false},
+		{"ndjson", Opts{NDJSON: true}, false},
+	} {
+		var stdout string
+		stderr := captureStderr(t, func() {
+			stdout = captureStdout(t, func() { RenderWith(masked, view.opts) })
+		})
+		if got := strings.Contains(stderr, MaskedNote); got != view.note {
+			t.Errorf("%s: note on stderr = %v, want %v (stderr %q)", view.name, got, view.note, stderr)
+		}
+		if !view.note && stderr != "" {
+			t.Errorf("%s: stderr is for errors, got %q", view.name, stderr)
+		}
+		if view.name == "ndjson" && !strings.Contains(stdout, `"masked":true`) {
+			t.Errorf("ndjson: each line carries the flag, got %q", stdout)
+		}
+		if view.name == "json" && !strings.Contains(stdout, `"masked": true`) {
+			t.Errorf("json: the flag is in the answer, got %q", stdout)
+		}
+
+		stderr = captureStderr(t, func() {
+			_ = captureStdout(t, func() { RenderWith(plain, view.opts) })
+		})
+		if stderr != "" {
+			t.Errorf("%s: an unmasked answer printed %q", view.name, stderr)
 		}
 	}
 }

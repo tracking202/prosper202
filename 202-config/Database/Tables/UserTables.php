@@ -29,9 +29,17 @@ final class UserTables
             self::userRole(),
             self::apiKeys(),
             self::authKeys(),
+            self::clickFilterSettings(),
+            self::clickFilterEntries(),
         ];
     }
 
+    /**
+     * user_session_generation counts the changes that end every session of
+     * the user (a new password, a switch-off, a removal): a session holds the
+     * value it began with, and connect.php ends one that holds another
+     * (Prosper202\User\SessionGeneration). From 1.9.79, added by its rung.
+     */
     public static function users(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -62,6 +70,7 @@ final class UserTables
                 `secret_key` char(48) DEFAULT NULL,
                 `user_mods_lb` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 `p202_customer_api_key` char(60) DEFAULT NULL,
+                `user_session_generation` int(10) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`user_id`),
                 UNIQUE KEY `user_name_2` (`user_name`),
                 KEY `user_name` (`user_name`,`user_pass`),
@@ -72,6 +81,19 @@ final class UserTables
         );
     }
 
+    /**
+     * user_pref_privacy's DEFAULT is a new account's setting: every path that
+     * makes an account inserts this row naming user_id alone
+     * (NewAccountPrivacyIsTheColumnDefaultTest). 'eu' from 1.9.79, which the
+     * 1.9.78 -> 1.9.79 rung sets on an upgraded table; an account made
+     * before keeps what it had ('disabled', the default until then).
+     *
+     * user_pref_same_ip_fallback's DEFAULT, off, is a new account's: an
+     * account made from 1.9.79 on credits no conversion by address until it
+     * turns the guess on (Prosper202\Conversion\SameIpFallback). The 1.9.78
+     * -> 1.9.79 rung turns it on for every account already there, which is
+     * how they converted until then (_upgrade_same_ip_fallback()).
+     */
     public static function usersPref(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -100,13 +122,14 @@ final class UserTables
                 `user_pref_subid` bigint(20) unsigned DEFAULT NULL,
                 `user_pref_ip` varchar(100) DEFAULT NULL,
                 `user_pref_dynamic_bid` tinyint(1) NOT NULL DEFAULT '0',
+                `user_pref_same_ip_fallback` tinyint(1) NOT NULL DEFAULT '0',
                 `user_pref_referer` varchar(100) DEFAULT NULL,
                 `user_pref_keyword` varchar(100) DEFAULT NULL,
                 `user_pref_breakdown` varchar(100) NOT NULL DEFAULT 'day',
                 `user_pref_chart` varchar(255) NOT NULL DEFAULT 'net',
                 `user_cpc_or_cpv` char(3) NOT NULL DEFAULT 'cpc',
                 `user_keyword_searched_or_bidded` varchar(255) NOT NULL DEFAULT 'searched',
-                `user_pref_privacy` varchar(100) NOT NULL DEFAULT 'disabled',
+                `user_pref_privacy` varchar(100) NOT NULL DEFAULT 'eu',
                 `user_pref_referer_data` varchar(10) NOT NULL DEFAULT 'browser',
                 `user_tracking_domain` varchar(255) NOT NULL DEFAULT '',
                 `user_pref_group_2` tinyint(3) DEFAULT NULL,
@@ -140,6 +163,8 @@ final class UserTables
                 `lpo_status` varchar(16) NOT NULL DEFAULT '',
                 `lpo_bridge_config` text DEFAULT NULL,
                 `lpo_ctx_kw` tinyint(1) NOT NULL DEFAULT '1',
+                `user_delete_data_before` int(10) unsigned DEFAULT NULL,
+                `paykickstart_ipn_secret_keys` text DEFAULT NULL,
                 `analytics_consent` enum('granted','denied','unset') NOT NULL DEFAULT 'unset',
                 `analytics_consent_at` datetime DEFAULT NULL,
                 `analytics_consent_source` varchar(32) DEFAULT NULL,
@@ -237,6 +262,7 @@ final class UserTables
                 `user_id` mediumint(8) unsigned NOT NULL,
                 `api_key` varchar(250) NOT NULL DEFAULT '',
                 `scope` text DEFAULT NULL,
+                `label` varchar(100) DEFAULT NULL,
                 `created_at` int(10) NOT NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
@@ -252,6 +278,58 @@ final class UserTables
                 `expires` int(11) NOT NULL,
                 KEY `202_auth_keys_user_id_auth_key` (`user_id`,`auth_key`),
                 KEY `202_auth_keys_expires` (`expires`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * An account's click filter switches (Prosper202\Click\Filter\
+     * ClickFilterSettings): none for an account that never changed them,
+     * which is filtered by the defaults, the same values as the columns'.
+     * repeat_window is in seconds, one of ClickFilterSettings::WINDOWS. From
+     * 1.9.79, added by its rung.
+     */
+    public static function clickFilterSettings(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICK_FILTER_SETTINGS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICK_FILTER_SETTINGS . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `sign_in_addresses` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `crawler_ranges` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `repeat_visits` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `repeat_window` int(10) unsigned NOT NULL DEFAULT '86400',
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * An account's address list: an IPv4 or IPv6 block (one address is a /32
+     * or /128) whose clicks are always counted or always filtered
+     * (Prosper202\Click\Filter\ClickFilterEntry). range_start and range_end are
+     * the block's first and last address, packed, so the click path asks one
+     * index probe; family keeps IPv4 and IPv6 apart in it. One entry per
+     * block (user_range). From 1.9.79, added by its rung.
+     */
+    public static function clickFilterEntries(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICK_FILTER_ENTRIES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICK_FILTER_ENTRIES . "` (
+                `entry_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `family` tinyint(1) unsigned NOT NULL,
+                `range_start` varbinary(16) NOT NULL,
+                `range_end` varbinary(16) NOT NULL,
+                `prefix` tinyint(3) unsigned NOT NULL,
+                `action` varchar(6) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `note` varchar(255) NOT NULL DEFAULT '',
+                `created_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`entry_id`),
+                UNIQUE KEY `user_range` (`user_id`, `family`, `range_start`, `prefix`),
+                KEY `user_match` (`user_id`, `family`, `range_start`, `range_end`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

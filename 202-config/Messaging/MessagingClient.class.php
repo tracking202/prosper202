@@ -5,82 +5,131 @@ declare(strict_types=1);
 /**
  * MessagingClient
  *
- * HTTP transport between a self-hosted Prosper202 install and the central
- * messaging API at my.tracking202.com. All communication is client-initiated
- * (the install can only make outbound requests), so this class only ever POSTs
- * and reads the JSON response.
+ * HTTP transport between a self-hosted Prosper202 install and the portal's
+ * product-analytics endpoint (POST <MESSAGING_API_URL>/track). The install can
+ * only make outbound requests, so this class only ever POSTs and reads the
+ * JSON response. The contract is in 202-config/Messaging/CENTRAL-API.md.
  *
- * The contract implemented here is exercised end-to-end by the local mock server
- * (202-config/Messaging/mock-server.php, see MOCK-SERVER.md).
+ * Chat no longer travels through the install: the browser talks to the chat
+ * service with a pass that 202-account/ajax/chat-pass.php fetches
+ * (ChatPassClient), which makes its transport decision here too.
  *
- * Every method returns a decoded associative array on success, or null on any
- * transport/parse/HTTP failure. Callers must treat null as "could not reach the
- * server" and keep their local cache — they must NOT treat it as "no data".
+ * track() returns a decoded associative array on success, or null on any
+ * transport/parse/HTTP failure. Callers must treat null as "could not reach
+ * the server" and keep their queued rows — never as "delivered".
  */
 class MessagingClient
 {
     private readonly string $baseUrl;
+    private readonly int $curlProtocols;
+    /** @var array<int, mixed> */
+    private readonly array $transport;
     private readonly int $timeout;
     private readonly int $maxRetries;
 
     public function __construct()
     {
-        // MESSAGING_API_URL is defined in 202-config/connect.php.
-        $this->baseUrl    = defined('MESSAGING_API_URL') ? MESSAGING_API_URL : 'https://my.tracking202.com/api/v3/messaging';
-        $this->timeout    = 10;
-        // Kept low so the synchronous widget-poll path stays responsive when the
-        // central server is slow/unreachable; a healthy server answers on the first
-        // try. The cron path tolerates the occasional miss and catches up next run.
-        $this->maxRetries = 2;
+        // MESSAGING_API_URL is defined in 202-config/connect.php. Every
+        // request body carries the install's customer API key and the user's
+        // email, so cleartext is refused even if the URL is misconfigured.
+        //
+        // Trimmed once, here. The transport decision below normalises its input,
+        // and storing the raw value let a whitespace-padded URL pass the check
+        // and then fail every request at curl with "Malformed input to a URL".
+        $configuredUrl = trim((string) (defined('MESSAGING_API_URL') ? MESSAGING_API_URL : 'https://my.tracking202.com/api/v3/messaging'));
+        $transport = self::transportOptions($configuredUrl);
+        if ($transport === null) {
+            throw new \RuntimeException('MESSAGING_API_URL must be an https:// URL (http:// is allowed only for loopback); refusing to send credentials in cleartext.');
+        }
+        $this->baseUrl       = $configuredUrl;
+        $this->transport     = $transport;
+        $this->curlProtocols = (int) $transport[CURLOPT_PROTOCOLS];
+        $this->timeout       = 10;
+        // A healthy server answers on the first try; the second absorbs a
+        // blip. A queued event that still fails is retried by the next sync.
+        $this->maxRetries    = 2;
     }
 
     /**
-     * Pull all conversations/messages visible to the identified user.
+     * The one transport decision: which curl protocols may carry requests to
+     * $url, or null when the URL must be refused outright.
      *
-     * @param array       $identity Identity payload (see buildPayload()).
-     * @param string|null $cursor   Opaque cursor from the previous pull, or null.
-     * @return array|null Decoded response, or null on failure.
+     * Credentials must not cross a network in cleartext, so https is required --
+     * except against loopback, which never leaves the host. The carve-out is
+     * for local development against a stub portal (MESSAGING_API_URL and
+     * CHAT_PASS_URL both take an environment override in connect.php).
+     *
+     * Acceptance and the curl allowlist used to be two functions that had to
+     * agree. They did not: the allowlist was pinned to CURLPROTO_HTTPS, so the
+     * constructor accepted a loopback URL and every request then failed with
+     * CURLE_UNSUPPORTED_PROTOCOL. One function returning both answers cannot
+     * drift.
+     *
+     *   https://...              -> CURLPROTO_HTTPS
+     *   http://<loopback>...     -> CURLPROTO_HTTPS | CURLPROTO_HTTP
+     *   anything else            -> null (refused)
      */
-    public function pull(array $identity, ?string $cursor): ?array
+    private static function transportProtocols(string $url): ?int
     {
-        return $this->postJson('pull', [
-            'identity' => $identity,
-            'cursor'   => $cursor,
-        ]);
+        $url = strtolower(trim($url));
+        if (str_starts_with($url, 'https://')) {
+            return CURLPROTO_HTTPS;
+        }
+        if (!str_starts_with($url, 'http://')) {
+            return null;
+        }
+
+        return self::isLoopback($url) ? CURLPROTO_HTTPS | CURLPROTO_HTTP : null;
     }
 
     /**
-     * Send a user-composed message.
-     *
-     * @param array       $identity               Identity payload.
-     * @param string|null $conversationExternalId  Existing thread, or null to start one.
-     * @param string      $body                    Plain-text message body.
-     * @param string      $clientToken             Idempotency token generated client-side.
-     * @return array|null Decoded response, or null on failure.
+     * localhost, ::1 and 127.0.0.0/8 only -- not every RFC1918 address,
+     * which does traverse a network.
      */
-    public function send(array $identity, ?string $conversationExternalId, string $body, string $clientToken): ?array
+    private static function isLoopback(string $url): bool
     {
-        return $this->postJson('send', [
-            'identity'                 => $identity,
-            'conversation_external_id' => $conversationExternalId,
-            'body'                     => $body,
-            'client_token'             => $clientToken,
-        ]);
+        $host = (string) parse_url(strtolower(trim($url)), PHP_URL_HOST);
+
+        return $host === 'localhost'
+            || $host === '::1'
+            || $host === '[::1]'
+            || (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false && str_starts_with($host, '127.'));
     }
 
     /**
-     * Report inbound messages the user has read.
+     * The curl options every call to a portal URL is made with: the protocol
+     * allowlist above, and for a loopback URL no proxy. Null when the URL is
+     * refused.
      *
-     * @param array         $identity     Identity payload.
-     * @param array<string> $externalIds  Message external IDs that were read.
-     * @return array|null Decoded response, or null on failure.
+     * An https URL takes the environment's proxy (https_proxy), as every
+     * call to a fixed first-party host here does: nothing is pinned to an
+     * address (CLAUDE.md #24's proxy bypass exists where CURLOPT_RESOLVE pins
+     * a checked address, which a proxy would void), TLS still runs end to end
+     * through a CONNECT proxy and is verified, and an install whose network
+     * only reaches out through a proxy keeps working. A loopback URL is the
+     * cleartext carve-out, justified only because the request never leaves
+     * the host; libcurl sends an http:// request to http_proxy whatever its
+     * host, which would carry the API key in cleartext to the proxy. So
+     * loopback never goes through one.
+     *
+     * ChatPassClient makes its calls with these options too;
+     * MessagingTransportAllowlistTest holds the two to the same set.
+     *
+     * @return array<int, mixed>|null
      */
-    public function markRead(array $identity, array $externalIds): ?array
+    public static function transportOptions(string $url): ?array
     {
-        return $this->postJson('read', [
-            'identity'             => $identity,
-            'message_external_ids' => array_values($externalIds),
-        ]);
+        $protocols = self::transportProtocols($url);
+        if ($protocols === null) {
+            return null;
+        }
+        $options = [CURLOPT_PROTOCOLS => $protocols];
+        if (self::isLoopback($url)) {
+            $options[CURLOPT_PROXY] = '';
+            $options[CURLOPT_NOPROXY] = '*';
+        }
+
+        return $options;
     }
 
     /**
@@ -151,7 +200,9 @@ class MessagingClient
             return null;
         }
 
-        curl_setopt_array($ch, [
+        // The transport options on the left: in `+` the left side wins, so
+        // nothing listed here can replace them (CLAUDE.md #24).
+        curl_setopt_array($ch, $this->transport + [
             CURLOPT_URL            => $url,
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $body,
@@ -200,7 +251,7 @@ class MessagingClient
         }
 
         // The server signals application-level failure with ok:false; treat that
-        // as a non-result so the caller keeps its cache.
+        // as a non-result so the caller keeps its queued rows.
         if (array_key_exists('ok', $decoded) && $decoded['ok'] === false) {
             $serverError = isset($decoded['error']) ? (string) $decoded['error'] : 'unknown';
             error_log("MessagingClient: server returned ok:false for {$url}: {$serverError}");

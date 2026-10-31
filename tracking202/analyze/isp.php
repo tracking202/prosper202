@@ -1,33 +1,13 @@
 <?php
+
 declare(strict_types=1);
-include_once(substr(__DIR__, 0,-20) . '/202-config/connect.php');
 
-AUTH::require_user();
+// Analyze › ISP/Carrier. One of the thirteen report pages that share
+// AnalyzeReportController and templates/report.php; see the controller for
+// what a page does with its query string.
+$rootPath = dirname(__DIR__, 2);
+include_once $rootPath . '/202-config/connect.php';
+include_once $rootPath . '/202-config/class-dataengine.php';
+require_once __DIR__ . '/AnalyzeReportController.php';
 
-//set the timezone for the user, for entering their dates.
-AUTH::set_timezone($_SESSION['user_timezone']);
-
-$reportSortUrl = get_absolute_url() . 'tracking202/ajax/sort_isp.php';
-$reportCanary = tracking202_report_canary_config('isp', $reportSortUrl);
-
-//show the template
-template_top('Analyze Incoming ISP/Carrier'); ?>
-
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<h6>Analyze Incoming ISP/Carrier</h6>
-	</div>
-</div>
-
-<?php display_calendar($reportSortUrl, true, true, true, true, true, true, true, false, [
-	'json_bootstrap_dependent_filters' => $reportCanary['dependentFilters']['jsonBootstrap'],
-]); ?>
-
-<?php tracking202_render_report_canary($reportCanary); ?>
-    
-<script type="text/javascript">
-   loadContent('<?php echo $reportSortUrl; ?>', null);
-</script>
-
-<?php  template_bottom();
-    
+(new \Tracking202\Analyze\AnalyzeReportController('isp'))->handleRequest();

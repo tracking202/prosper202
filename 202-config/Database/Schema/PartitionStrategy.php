@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Prosper202\Database\Schema;
 
 use mysqli;
+use Prosper202\Database\Exceptions\QueryException;
 
 /**
  * Strategies for creating MySQL table partitions.
@@ -95,6 +96,8 @@ final class PartitionStrategy
      *
      * @param mysqli $connection The database connection
      * @return bool True if partitioning is supported
+     * @throws QueryException when the server's plugins cannot be read: that
+     *   is not "unsupported", which the installer skips without a word
      */
     public static function isSupported(mysqli $connection): bool
     {
@@ -107,7 +110,9 @@ final class PartitionStrategy
         $result = $connection->query($sql);
 
         if ($result === false) {
-            return false;
+            throw new QueryException(
+                'MySQL query failed: ' . $connection->error . ' [errno ' . $connection->errno . ']'
+            );
         }
 
         $supported = $result->num_rows === 1;

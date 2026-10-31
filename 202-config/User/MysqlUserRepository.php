@@ -69,6 +69,9 @@ final class MysqlUserRepository implements UserRepositoryInterface
             $this->conn->execute($stmt);
             $stmt->close();
 
+            // Every account starts with its default attribution model (plan §6.4).
+            \Prosper202\Attribution\DefaultModel::ensureFor($this->conn, $userId);
+
             return $userId;
         });
     }
@@ -89,10 +92,12 @@ final class MysqlUserRepository implements UserRepositoryInterface
             }
         }
 
+        $changesPassword = false;
         if (array_key_exists('user_pass', $data) && $data['user_pass'] !== '') {
             $sets[] = 'user_pass = ?';
             $values[] = hash_user_pass((string) $data['user_pass']);
             $types .= 's';
+            $changesPassword = true;
         }
 
         if (empty($sets)) {
@@ -101,23 +106,35 @@ final class MysqlUserRepository implements UserRepositoryInterface
 
         $values[] = $id;
         $types .= 'i';
+        $revokes = $changesPassword
+            || (array_key_exists('user_active', $data) && !UserStanding::isActive($data['user_active']));
 
-        $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?'
-        );
-        $this->conn->bind($stmt, $types, $values);
-        $this->conn->execute($stmt);
-        $stmt->close();
+        // Switched off, or given a new password, the user's remember-me keys
+        // and open sessions end in the same transaction (RememberMeKeys,
+        // SessionGeneration).
+        $this->conn->transaction(function () use ($sets, $types, $values, $id, $revokes): void {
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?'
+            );
+            $this->conn->bind($stmt, $types, $values);
+            $this->conn->execute($stmt);
+            $stmt->close();
+            if ($revokes) {
+                RememberMeKeys::revokeAll($this->conn, $id);
+                SessionGeneration::bump($this->conn, $id);
+            }
+        });
     }
 
     public function softDelete(int $id): void
     {
-        $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?'
-        );
-        $this->conn->bind($stmt, 'i', [$id]);
-        $this->conn->execute($stmt);
-        $stmt->close();
+        // Every user delete purges what must not outlive the user, in the
+        // same transaction as the soft delete (UserDataPurge).
+        //
+        // deleteUser() runs in a transaction of its own, which
+        // Connection::transaction() refuses to begin inside another (a nested
+        // begin commits the outer one, CLAUDE.md #13).
+        (new UserDataPurge($this->conn->writeConnection()))->deleteUser($id);
     }
 
     public function listRoles(): array

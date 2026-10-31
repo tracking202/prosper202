@@ -2,7 +2,11 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    # Once per PR, not per push. The code-review plugin stops on a PR it has
+    # already commented on, so a run on a later push would be a green check
+    # that reviewed nothing. Later pushes to the risky paths are covered by
+    # adversarial-review, which rewrites its verdict on every push.
+    types: [opened, ready_for_review, reopened]
     # Optional: Only run on specific file changes
     # paths:
     #   - "src/**/*.ts"
@@ -21,24 +25,202 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      # The publish step comments the verdict with this token; the model
+      # posts nothing (see claude_args below).
+      pull-requests: write
       issues: read
       id-token: write
 
     steps:
+      # Depth 2: the PR's merge commit and both its parents, for the diff below.
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
+          fetch-depth: 2
+
+      - name: Note when the review started
+        run: echo "REVIEW_STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      # The whole diff, in a file the review reads with Read and Grep, made
+      # from the merge commit rather than asked of GitHub: its diff endpoint
+      # refuses a PR of more than 300 files (406; 1.9.78's release PR had
+      # 481), and a diff it does answer can be too long for one `gh pr diff`
+      # and cannot be paged, since the allowed tools refuse a pipe or a
+      # redirect (one review stopped there and answered CLEAN).
+      - name: Write the diff for the review
+        run: |
+          set -euo pipefail
+          if ! git rev-parse --verify -q 'HEAD^2' > /dev/null; then
+            echo "::error::the checkout is not the PR's merge commit, so its diff could not be written"
+            exit 1
+          fi
+          # Made here, never taken from the PR: one that brings its own (a
+          # symbolic link, say) would have this write wherever it points.
+          if [ -e .p202-review ] || [ -L .p202-review ]; then
+            echo "::error::the PR's tree has a .p202-review, where the review's diff is written"
+            exit 1
+          fi
+          mkdir .p202-review
+          git diff --no-color --no-ext-diff 'HEAD^1' HEAD > .p202-review/pr.diff
+          if [ ! -s .p202-review/pr.diff ]; then
+            echo "::error::the PR changes nothing against its base, so there is nothing to review"
+            exit 1
+          fi
 
       - name: Run Claude Code Review
         id: claude-review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6 # v1.0.264
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Stated, not left to the default: the full output holds the review,
+          # and the job log is public.
+          show_full_output: false
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           allowed_bots: 'claude'
+          # Without --comment the plugin posts nothing; its review comes back
+          # as structured output, because this repository is public and a
+          # review can say how a defect could be used. The steps below
+          # publish the verdict and a count and keep the review encrypted for
+          # the maintainers (see adversarial-review.yml, which does the same).
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # The plugin's read tools and the file readers; the tools that post
+          # are denied, so no settings source can grant them back. A run ends
+          # when the model stops, and the plugin's agents ran in the
+          # background and were lost: two reviews answered CLEAN with their
+          # agents still running (a third, unable to read the diff, above).
+          # The appended prompt runs them in the foreground, and `complete` is
+          # how a run says it did not finish.
+          claude_args: >-
+            --allowedTools "Read,Grep,Glob,Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
+            --disallowedTools "mcp__github_comment__update_claude_comment,mcp__github_inline_comment__create_inline_comment,Bash(gh api:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh issue comment:*),Bash(git push:*)"
+            --append-system-prompt "This run ends when you stop. Launch every agent with run_in_background set to false and wait for its report before the next step: an agent still running when you answer is lost. The pull request's whole diff is in .p202-review/pr.diff and its files are checked out: read them with Read, Grep and Glob rather than paging command output. Set complete to true only if every step of the review ran: every agent you launched reported, every issue you found was validated, and you read the whole diff. Otherwise set complete to false and say in report what did not run."
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["FINDINGS","CLEAN"],"description":"FINDINGS when the review found any issue"},"findings":{"type":"integer","minimum":0,"description":"How many issues the review lists"},"complete":{"type":"boolean","description":"true only when every step of the review ran to its end; false when any agent did not report, any issue went unvalidated or the diff was not read in full"},"report":{"type":"string","minLength":1,"description":"The whole review in Markdown, every issue with its file and line"}},"required":["verdict","findings","complete","report"],"additionalProperties":false}'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
+
+      # The action reports success when it skips without running Claude (it
+      # does on a PR that changes this workflow file: the Claude app refuses
+      # its token to a workflow that differs from master's copy). Its
+      # conclusion output is set only when Claude ran, so empty means this PR
+      # was not reviewed, and the check says so instead of passing. The
+      # review never goes into a comment, the job summary, or a step's env or
+      # script (the job log prints both): it is read from the execution file
+      # and encrypted to the maintainers' key, pinned here by fingerprint.
+      # Maintainers: `gh run download <run> -n review-findings`, then
+      # `gpg -d code-review.md.asc`.
+      # Keep failed Claude output private: it may contain review details.
+      - name: Encrypt failed Claude execution
+        id: failed_execution
+        if: failure() && steps.claude-review.outcome == 'failure'
+        env:
+          EXECUTION_FILE: ${{ runner.temp }}/claude-execution-output.json
+          REVIEW_KEY_FPR: BAB7BE5D3B34F59E9BD75C719878332A6782CC78
+        run: |
+          set -euo pipefail
+          if [ ! -s "$EXECUTION_FILE" ]; then
+            echo "No Claude execution file was available."
+            exit 0
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/failed-review-gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --quiet --import .github/review-findings-key.asc
+          gpg --batch --yes --quiet --trust-model always --armor \
+            --encrypt --recipient "$REVIEW_KEY_FPR" --output "$RUNNER_TEMP/failed-claude-execution.json.asc" "$EXECUTION_FILE"
+          echo "captured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Keep encrypted failed execution
+        if: failure() && steps.failed_execution.outputs.captured == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failed-claude-execution
+          path: ${{ runner.temp }}/failed-claude-execution.json.asc
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Encrypt the review
+        id: findings
+        env:
+          EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+          CONCLUSION: ${{ steps.claude-review.outputs.conclusion }}
+          REVIEW_KEY_FPR: BAB7BE5D3B34F59E9BD75C719878332A6782CC78
+        run: |
+          set -euo pipefail
+          if [ -z "$CONCLUSION" ]; then
+            echo "::error::the code review did not run, so this PR was not reviewed (see the 'Run Claude Code Review' step log)"
+            exit 1
+          fi
+          result=$(jq -cs 'flatten | map(select(type == "object" and .type == "result")) | last | .structured_output // empty' "$EXECUTION_FILE")
+          verdict=$(jq -r '.verdict // empty' <<<"$result")
+          case "$verdict" in
+            FINDINGS|CLEAN) ;;
+            *) echo "::error::the review returned no usable verdict (got '${verdict}')"; exit 1 ;;
+          esac
+          findings=$(jq -r '.findings // empty' <<<"$result")
+          if ! [[ "$findings" =~ ^[0-9]+$ ]]; then
+            echo "::error::the review returned no finding count"
+            exit 1
+          fi
+          # Only a literal true is a finished review: a missing or other value
+          # is not. The report is still kept, for what did run.
+          if [ "$(jq -r '.complete == true' <<<"$result")" != true ]; then
+            verdict='NOT FINISHED'
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --quiet --import .github/review-findings-key.asc
+          mkdir -p "$RUNNER_TEMP/review-findings"
+          jq -r '.report' <<<"$result" | gpg --batch --yes --quiet --trust-model always --armor \
+            --encrypt --recipient "$REVIEW_KEY_FPR" --output "$RUNNER_TEMP/review-findings/code-review.md.asc"
+          echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
+          echo "findings=${findings}" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the encrypted review with the run
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: review-findings
+          path: ${{ runner.temp }}/review-findings
+          if-no-files-found: error
+          retention-days: 30
+
+      # Once per PR (the workflow runs when a PR opens): the verdict and the
+      # count, never the review.
+      - name: Publish the verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERDICT: ${{ steps.findings.outputs.verdict }}
+          FINDINGS: ${{ steps.findings.outputs.findings }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          marker='<!-- claude-code-review -->'
+          body=$(mktemp)
+          {
+            echo "$marker"
+            echo "## Code review: ${VERDICT}"
+            echo
+            if [ "$VERDICT" = 'NOT FINISHED' ]; then
+              echo "For ${HEAD_SHA}: the review did not finish, so this PR has not been reviewed in full. What did run lists ${FINDINGS} issue(s), encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
+            else
+              echo "For ${HEAD_SHA}: ${FINDINGS} issue(s). The review is encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
+            fi
+          } > "$body"
+          cat "$body" >> "$GITHUB_STEP_SUMMARY"
+          existing=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" | head -n 1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${existing}" -F body=@"$body" > /dev/null
+          else
+            gh pr comment "$PR" -R "$REPO" --body-file "$body"
+          fi
+
+      # After the verdict is published and the report kept: an unfinished
+      # review fails the check rather than passing as CLEAN.
+      - name: Fail an unfinished review
+        if: steps.findings.outputs.verdict == 'NOT FINISHED'
+        run: |
+          echo "::error::the code review did not finish, so this PR has not been reviewed (the partial report is in this run's review-findings artifact, encrypted)"
+          exit 1

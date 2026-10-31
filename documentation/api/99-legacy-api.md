@@ -30,8 +30,8 @@ The v1 API supports a single `reports` method.
 | `apikey` | Yes | API key for authentication (sent in the URL — see the security warning above) |
 | `date_from` | No | Start date (mm/dd/yyyy, defaults to start of today) |
 | `date_to` | No | End date (mm/dd/yyyy, defaults to end of today) |
-| `cid` | No | Campaign ID filter |
-| `c1`, `c2`, `c3`, `c4` | No | Custom variable filters |
+| `cid` | No | Campaign ID filter. Absent, empty or `0` is every campaign; anything that is not one of the account's campaign ids, written as the id (`012` is not), answers `Campaign not found` |
+| `c1`, `c2`, `c3`, `c4` | No | Custom variable filters. A value of `0` is a value; only an empty one is no filter. A list (`c1[]=x`) answers `c1 takes one value` |
 
 ### Report Types
 
@@ -43,6 +43,10 @@ The v1 API supports a single `reports` method.
 - `cities` — City report
 - `carriers` — Carrier and ISP report
 - `landing_pages` — Landing page report
+
+A click a redirector link re-clicked counts once, at its latest visit, as in
+every report ([Reports](11-reports.md#a-click-a-redirector-link-re-clicked));
+it counted at each visit before 1.9.79.
 
 ### Example
 

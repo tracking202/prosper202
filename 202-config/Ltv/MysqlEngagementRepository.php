@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Bridge\EventBridge;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 
 /**
@@ -15,6 +16,9 @@ use Prosper202\Database\Connection;
  * ABM views group customers by the CRM `company` field, turning per-person
  * browsing into account-level interest: which offers is each target account
  * engaging with, how often, and how recently.
+ *
+ * A click is counted once, at its latest visit (LatestVisit::isLatest()): a
+ * redirector re-click is the same click, now on the offer it was sent to.
  */
 final class MysqlEngagementRepository
 {
@@ -102,7 +106,8 @@ final class MysqlEngagementRepository
         $normalized = (string) preg_replace('/\s+/', '_', $normalized);
         if ($normalized === '' || strlen($normalized) > 64
             || preg_match('/^[a-z0-9_.\-]+$/', $normalized) !== 1) {
-            throw new \RuntimeException(
+            throw new LtvInputException(
+                'event',
                 'Invalid event name; use 1-64 chars of a-z, 0-9, underscore, dot or dash'
             );
         }
@@ -128,7 +133,12 @@ final class MysqlEngagementRepository
         );
         $this->conn->bind($stmt, 'iiii', [$userId, $customerId, $since, $limit]);
 
-        return $this->conn->fetchAll($stmt);
+        // A number, not the DECIMAL string mysqli hands back ("75.000").
+        return array_map(static function (array $row): array {
+            $row['event_value'] = $row['event_value'] === null ? null : (float) $row['event_value'];
+
+            return $row;
+        }, $this->conn->fetchAll($stmt));
     }
 
     /**
@@ -149,17 +159,22 @@ final class MysqlEngagementRepository
                     MAX(c.click_time) AS last_seen,
                     SUM(c.click_lead) AS conversions
              FROM 202_clicks_tracking ct
-             JOIN 202_clicks c ON c.click_id = ct.click_id
-             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id
-             LEFT JOIN 202_landing_pages lp ON lp.landing_page_id = c.landing_page_id
-             WHERE ct.customer_id = ? AND c.user_id = ? AND c.click_time >= ?
+             JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = ?
+             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
+             LEFT JOIN 202_landing_pages lp ON lp.landing_page_id = c.landing_page_id AND lp.user_id = c.user_id
+             WHERE ct.customer_id = ? AND c.click_time >= ? AND ' . LatestVisit::isLatest('c') . '
              GROUP BY c.aff_campaign_id, ac.aff_campaign_name, lp.landing_page_nickname
              ORDER BY last_seen DESC
              LIMIT ?'
         );
-        $this->conn->bind($stmt, 'iiii', [$customerId, $userId, $since, $limit]);
+        $this->conn->bind($stmt, 'iiii', [$userId, $customerId, $since, $limit]);
 
-        return $this->conn->fetchAll($stmt);
+        // A count, not the DECIMAL string SUM() answers ("1").
+        return array_map(static function (array $row): array {
+            $row['conversions'] = (int) $row['conversions'];
+
+            return $row;
+        }, $this->conn->fetchAll($stmt));
     }
 
     /**
@@ -193,10 +208,10 @@ final class MysqlEngagementRepository
                         SUBSTRING_INDEX(GROUP_CONCAT(ac.aff_campaign_name ORDER BY c.click_time DESC SEPARATOR ','), ',', 1) AS top_campaign_name
                  FROM 202_customers cu2
                  JOIN 202_clicks_tracking ct ON ct.customer_id = cu2.customer_id
-                 JOIN 202_clicks c ON c.click_id = ct.click_id AND c.click_time >= ?
-                 LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id
+                 JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = cu2.user_id AND c.click_time >= ?
+                 LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
                  WHERE cu2.user_id = ? AND cu2.company IS NOT NULL AND cu2.company <> ''
-                   AND cu2.merged_into_customer_id IS NULL
+                   AND cu2.merged_into_customer_id IS NULL AND " . LatestVisit::isLatest('c') . "
                  GROUP BY cu2.company
              ) eng ON eng.company = cu.company
              LEFT JOIN (
@@ -216,7 +231,7 @@ final class MysqlEngagementRepository
                AND cu.merged_into_customer_id IS NULL
              GROUP BY cu.company, eng.clicks, eng.top_campaign_name, ev.events, ev.top_event_name,
                       ev.avg_time_on_page, ev.avg_scroll_depth, ev.avg_video_pct
-             ORDER BY engagements DESC, total_revenue DESC
+             ORDER BY engagements DESC, total_revenue DESC, cu.company ASC
              LIMIT ? OFFSET ?"
         );
         $this->conn->bind($stmt, 'iiiiiii', [$since, $userId, $since, $userId, $userId, $limit, $offset]);
@@ -225,11 +240,26 @@ final class MysqlEngagementRepository
         $now = time();
         $weights = $this->scoreWeights($userId);
         foreach ($rows as &$row) {
+            $row = self::abmNumbers($row);
             $row['engagement_score'] = self::engagementScore($row, $now, $weights);
         }
         unset($row);
 
         return $rows;
+    }
+
+    /**
+     * An ABM row's money, averages, counts and times as numbers (LtvNumbers).
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function abmNumbers(array $row): array
+    {
+        return LtvNumbers::integers(
+            LtvNumbers::decimals($row, ['total_revenue', 'mrr', 'avg_time_on_page', 'avg_scroll_depth', 'avg_video_pct']),
+            ['contacts', 'order_count', 'engagements', 'custom_events', 'last_activity', 'last_activity_time']
+        );
     }
 
     /**
@@ -399,10 +429,10 @@ final class MysqlEngagementRepository
         $clickStmt = $this->conn->prepareRead(
             'SELECT COUNT(*) AS clicks, MAX(c.click_time) AS last_click
              FROM 202_clicks_tracking ct
-             JOIN 202_clicks c ON c.click_id = ct.click_id
-             WHERE ct.customer_id = ? AND c.user_id = ? AND c.click_time >= ?'
+             JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = ?
+             WHERE ct.customer_id = ? AND c.click_time >= ? AND ' . LatestVisit::isLatest('c')
         );
-        $this->conn->bind($clickStmt, 'iii', [$customerId, $userId, $since]);
+        $this->conn->bind($clickStmt, 'iii', [$userId, $customerId, $since]);
         $clicks = $this->conn->fetchOne($clickStmt) ?? [];
 
         $eventStmt = $this->conn->prepareRead(
@@ -451,7 +481,8 @@ final class MysqlEngagementRepository
              LEFT JOIN (
                  SELECT ct.customer_id, COUNT(*) AS clicks, MAX(c.click_time) AS last_click
                  FROM 202_clicks_tracking ct
-                 JOIN 202_clicks c ON c.click_id = ct.click_id AND c.click_time >= ?
+                 JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = ? AND c.click_time >= ?
+                 WHERE " . LatestVisit::isLatest('c') . "
                  GROUP BY ct.customer_id
              ) eng ON eng.customer_id = cu.customer_id
              LEFT JOIN (
@@ -466,11 +497,12 @@ final class MysqlEngagementRepository
              WHERE cu.user_id = ? AND cu.company = ? AND cu.merged_into_customer_id IS NULL
              ORDER BY engagements DESC, cu.total_revenue DESC"
         );
-        $this->conn->bind($stmt, 'iiiis', [$since, $userId, $since, $userId, $company]);
+        $this->conn->bind($stmt, 'iiiiis', [$userId, $since, $userId, $since, $userId, $company]);
         $rows = $this->conn->fetchAll($stmt);
 
         $weights = $this->scoreWeights($userId);
         foreach ($rows as &$row) {
+            $row = self::abmNumbers($row);
             $row['engagement_score'] = self::engagementScore($row, $now, $weights);
         }
         unset($row);

@@ -1,6 +1,7 @@
 package output
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,7 @@ type Opts struct {
 	Wide       bool     // show all columns (no width cap)
 	RawHeaders bool     // keep raw API keys as headers instead of friendly names
 	Fields     []string // explicit column selection (in order)
+	Compact    bool     // JSON on one line, HTML characters unescaped (for agents)
 }
 
 // friendlyHeaders maps raw API field names to human-readable column headers.
@@ -36,17 +38,19 @@ var friendlyHeaders = map[string]string{
 	"cpa":                  "CPA",
 	"avg_cpc":              "Avg CPC",
 	"conv_rate":            "Conv %",
+	"click_conv_rate":      "Conv % of clicks",
 	"breakeven_cpc":        "Breakeven CPC",
 	"margin":               "Margin",
+	"payout_net":           "Profit at payout",
 }
 
 // metricOrder is the fixed business sequence for metric columns so the row
 // label stays left and numbers read in a consistent order across commands.
 var metricOrder = []string{
 	"geo", "device", "name", "keyword",
-	"total_clicks", "total_click_throughs", "total_leads", "conv_rate",
+	"total_clicks", "total_click_throughs", "total_leads", "conv_rate", "click_conv_rate",
 	"total_income", "total_cost", "total_net", "roi", "epc", "cpa", "avg_cpc",
-	"breakeven_cpc", "margin", "verdict", "bucket", "reason",
+	"payout_net", "breakeven_cpc", "margin", "verdict", "bucket", "reason",
 	"matched_rule", "status", "destination", "criteria",
 }
 
@@ -74,20 +78,22 @@ func RenderWith(data []byte, opts Opts) {
 		return
 	}
 	if opts.JSON {
-		renderJSON(data)
+		renderJSON(data, opts.Compact)
 		return
 	}
 	if opts.CSV {
 		renderCSVData(data, opts)
+		noteMasked(data)
 		return
 	}
 
 	var parsed interface{}
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		os.Stdout.Write(data)
+		_, _ = os.Stdout.Write(data)
 		fmt.Println()
 		return
 	}
+	defer noteMasked(data)
 
 	switch v := parsed.(type) {
 	case []interface{}:
@@ -108,20 +114,64 @@ func RenderWith(data []byte, opts Opts) {
 	}
 }
 
-func renderJSON(data []byte) {
+// MaskedNote is what a human view prints, on stderr, under an answer the
+// server masked: a role without access_to_campaign_data reads reports,
+// clicks and conversions with the absolute clicks, leads and money null
+// (`"masked": true`), which a table shows as blank cells. JSON and NDJSON
+// carry the flag themselves and keep stderr for errors.
+const MaskedNote = "Note: this account's role does not have the access_to_campaign_data permission, so clicks, leads and money are hidden (blank); the ratios are shown."
+
+func noteMasked(data []byte) {
+	var top struct {
+		Masked bool `json:"masked"`
+	}
+	if json.Unmarshal(data, &top) == nil && top.Masked {
+		fmt.Fprintln(os.Stderr, MaskedNote)
+	}
+}
+
+func renderJSON(data []byte, compact bool) {
+	if compact {
+		if out, ok := canonicalCompact(data); ok {
+			// A closed stdout (piping to `head`) is not actionable here.
+			_, _ = os.Stdout.Write(out)
+			return
+		}
+	}
 	var parsed interface{}
 	if json.Unmarshal(data, &parsed) == nil {
+		if compact {
+			renderCompactJSON(data, parsed)
+			return
+		}
 		pretty, err := json.MarshalIndent(parsed, "", "  ")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error formatting JSON:", err)
-			os.Stdout.Write(data)
+			// A closed stdout (piping to `head`) is not actionable here.
+			_, _ = os.Stdout.Write(data)
 			return
 		}
 		fmt.Println(string(pretty))
 		return
 	}
-	os.Stdout.Write(data)
+	_, _ = os.Stdout.Write(data)
 	fmt.Println()
+}
+
+// renderCompactJSON prints parsed as one line. It decodes and sorts exactly
+// as the pretty form does; only whitespace and HTML escaping differ, since an
+// agent reads the bytes and \u0026 in every URL costs tokens.
+func renderCompactJSON(data []byte, parsed interface{}) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(parsed); err != nil {
+		fmt.Fprintln(os.Stderr, "Error formatting JSON:", err)
+		_, _ = os.Stdout.Write(data)
+		return
+	}
+	// A closed stdout (piping to `head`) is not actionable here.
+	_, _ = os.Stdout.Write(buf.Bytes())
 }
 
 // renderQuiet prints one id per row (no header) for scripting pipelines.
@@ -135,7 +185,24 @@ func renderQuiet(data []byte) {
 
 // renderNDJSON prints one compact JSON object per row.
 func renderNDJSON(data []byte) {
+	// A masked answer's flag sits beside its rows; each line carries it, so
+	// a reader of one line knows its blanks are hidden, not zero. So does a
+	// truncated one's: a reader summing the lines knows rows remain.
+	var top struct {
+		Masked bool `json:"masked"`
+		// Raw: a `truncated` that is a count elsewhere must not unread masked.
+		Truncated json.RawMessage `json:"truncated"`
+	}
+	parsed := json.Unmarshal(data, &top) == nil
+	masked := parsed && top.Masked
+	truncated := parsed && string(top.Truncated) == "true"
 	for _, obj := range rowsOf(data) {
+		if masked {
+			obj["masked"] = true
+		}
+		if truncated {
+			obj["truncated"] = true
+		}
 		if b, err := json.Marshal(obj); err == nil {
 			fmt.Println(string(b))
 		}
@@ -172,11 +239,34 @@ func rowsOf(data []byte) []map[string]interface{} {
 
 // idOf returns the best identifier field for a row (id, or a known primary key).
 func idOf(obj map[string]interface{}) string {
-	for _, k := range []string{"id", "aff_campaign_id", "tracker_id", "ppc_account_id",
-		"aff_network_id", "ppc_network_id", "landing_page_id", "text_ad_id", "conv_id",
-		"rotator_id", "user_id", "click_id"} {
+	// The row's OWN key must come before any key that appears on it as a
+	// reference, or quiet mode prints a foreign key and scripts feed the
+	// wrong entity's id to get/delete. The order is a topological sort of the
+	// API's row shapes (docs/openapi.yaml): conversions carry click_id;
+	// clicks carry campaign, account, landing-page, rotator and rule ids;
+	// trackers carry campaign, account, text-ad, landing-page and rotator
+	// ids; text ads and landing pages carry aff_campaign_id; campaigns carry
+	// aff_network_id; accounts carry ppc_network_id; snapshots and exports
+	// carry model_id; subscriptions carry customer_id; webhook deliveries
+	// carry webhook_id, and customer_id precedes company_id because an LTV
+	// customer row carries the company it belongs to. user_id is last
+	// because it is a foreign key on almost every row.
+	// TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId pins one row per
+	// shape, including the nullable-foreign-key case.
+	for _, k := range []string{"id", "conv_id", "click_id", "tracker_id", "text_ad_id",
+		"landing_page_id", "aff_campaign_id", "ppc_account_id", "aff_network_id",
+		"ppc_network_id", "rule_id", "rotator_id", "event_id", "encoding_id",
+		"postback_id", "registration_id", "snapshot_id", "export_id", "model_id", "delivery_id",
+		"webhook_id", "integration_id", "field_id", "alias_id", "subscription_id",
+		"customer_id", "company_id", "product_id", "user_id"} {
+		// Presence is not enough: a nullable foreign key (a customer with no
+		// company) is present with a nil value, and returning its empty
+		// string here both shadows the row's real key and makes renderQuiet
+		// drop the row entirely.
 		if v, ok := obj[k]; ok {
-			return formatValue(v)
+			if id := formatValue(v); id != "" {
+				return id
+			}
 		}
 	}
 	return ""
@@ -277,7 +367,7 @@ func renderTable(items []interface{}, opts Opts) {
 		width := len([]rune(headers[i]))
 		for _, item := range items {
 			obj, _ := item.(map[string]interface{})
-			cell := truncate(formatValue(obj[k]), opts.Wide)
+			cell := truncate(terminalCell(formatValue(obj[k])), opts.Wide)
 			if n := len([]rune(cell)); n > width {
 				width = n
 			}
@@ -293,11 +383,12 @@ func renderTable(items []interface{}, opts Opts) {
 		}
 		vals := make([]string, len(keys))
 		for i, k := range keys {
-			vals[i] = truncate(trimLongDecimal(formatValue(obj[k])), opts.Wide)
+			vals[i] = truncate(terminalCell(trimLongDecimal(formatValue(obj[k]))), opts.Wide)
 		}
 		fmt.Fprintln(w, strings.Join(vals, "\t"))
 	}
-	w.Flush()
+	// Flushing a table to a closed stdout is not actionable.
+	_ = w.Flush()
 }
 
 // trimLongDecimal shortens noisy long-decimal numeric strings (e.g. the API's
@@ -314,8 +405,78 @@ func trimLongDecimal(s string) string {
 		return s
 	}
 	out := strconv.FormatFloat(f, 'f', 4, 64)
-	out = strings.TrimRight(out, "0")
-	return strings.TrimRight(out, ".")
+	out = strings.TrimRight(strings.TrimRight(out, "0"), ".")
+	if f != 0 && (out == "0" || out == "-0") {
+		// Smaller than four decimals show: the value itself, not a zero.
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return out
+}
+
+// terminalCell makes a value safe to print into a human terminal. Report and
+// click fields carry visitor-authored text (keywords, geo/device names), and
+// a hostile value can smuggle ANSI escape sequences (clear the screen, move
+// the cursor, restyle later output) or invisible/bidi characters that make
+// the rendered table lie about its contents. Control characters (C0, C1,
+// DEL) become spaces; invisible and bidirectional format characters are
+// dropped; whitespace runs collapse so tabwriter columns stay intact. Only
+// the human table/object views go through this — JSON, NDJSON, CSV, and
+// --quiet keep raw values for machine consumers, which must treat them as
+// data anyway (docs/cli-agent.md, "Untrusted data in responses").
+func terminalCell(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	lastSpace := false
+	for _, r := range s {
+		switch {
+		case r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0x9F), // C0, DEL, C1
+			r == '\t', r == '\n', r == '\r':
+			if !lastSpace {
+				b.WriteRune(' ')
+				lastSpace = true
+			}
+		case isInvisibleRune(r):
+			// dropped outright
+		case r == ' ':
+			// Ordinary spaces collapse too. lastSpace was tracked here but
+			// never consulted, so a value padded with hundreds of spaces
+			// passed through at full width and the column-sizing pass below
+			// then squeezed every other column off screen.
+			if !lastSpace {
+				b.WriteRune(' ')
+				lastSpace = true
+			}
+		default:
+			b.WriteRune(r)
+			lastSpace = false
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// isInvisibleRune reports the zero-width, bidirectional, and format
+// characters that hide or reorder rendered text (the same ranges the server
+// strips at serialization; this guards output from servers that predate
+// that, and any field the server does not cover).
+func isInvisibleRune(r rune) bool {
+	switch {
+	case r == 0x00AD, // soft hyphen
+		r >= 0x200B && r <= 0x200F, // zero-width space/joiners, LRM/RLM
+		r == 0x2028, r == 0x2029,   // line/paragraph separators
+		r >= 0x202A && r <= 0x202E,   // bidi embedding/overrides
+		r >= 0x2060 && r <= 0x2064,   // word joiner, invisible operators
+		r >= 0x2066 && r <= 0x2069,   // bidi isolates
+		r == 0x061C,                  // Arabic letter mark
+		r == 0x180E,                  // Mongolian vowel separator
+		r >= 0x206A && r <= 0x206F,   // deprecated format controls
+		r >= 0xFE00 && r <= 0xFE0F,   // variation selectors
+		r >= 0xFFF9 && r <= 0xFFFB,   // interlinear annotation controls
+		r == 0xFEFF,                  // BOM / zero-width no-break space
+		r >= 0xE0000 && r <= 0xE007F, // tag characters (invisible ASCII)
+		r >= 0xE0100 && r <= 0xE01EF: // variation selectors supplement
+		return true
+	}
+	return false
 }
 
 func truncate(s string, wide bool) string {
@@ -338,9 +499,10 @@ func renderObject(obj map[string]interface{}) {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	for _, k := range keys {
-		fmt.Fprintf(w, "%s:\t%s\n", k, formatValue(obj[k]))
+		fmt.Fprintf(w, "%s:\t%s\n", k, terminalCell(formatValue(obj[k])))
 	}
-	w.Flush()
+	// Flushing a table to a closed stdout is not actionable.
+	_ = w.Flush()
 }
 
 // renderPagination writes the page summary and the truncation warning to
@@ -417,7 +579,7 @@ func numericValue(raw interface{}) (float64, bool) {
 func renderCSVData(data []byte, opts Opts) {
 	var parsed interface{}
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		os.Stdout.Write(data)
+		_, _ = os.Stdout.Write(data)
 		if len(data) == 0 || data[len(data)-1] != '\n' {
 			fmt.Println()
 		}
@@ -435,7 +597,7 @@ func renderCSVData(data []byte, opts Opts) {
 			renderObjectCSV(v)
 		}
 	default:
-		os.Stdout.Write(data)
+		_, _ = os.Stdout.Write(data)
 		if len(data) == 0 || data[len(data)-1] != '\n' {
 			fmt.Println()
 		}
@@ -474,7 +636,7 @@ func renderTableCSV(items []interface{}, opts Opts) {
 		}
 		record := make([]string, len(keys))
 		for i, k := range keys {
-			record[i] = formatValue(obj[k])
+			record[i] = formatValueExact(obj[k])
 		}
 		if err := writer.Write(record); err != nil {
 			fmt.Fprintln(os.Stderr, "Error writing CSV row:", err)
@@ -500,7 +662,7 @@ func renderObjectCSV(obj map[string]interface{}) {
 		return
 	}
 	for _, k := range keys {
-		if err := writer.Write([]string{k, formatValue(obj[k])}); err != nil {
+		if err := writer.Write([]string{k, formatValueExact(obj[k])}); err != nil {
 			fmt.Fprintln(os.Stderr, "Error writing CSV row:", err)
 			return
 		}
@@ -511,7 +673,26 @@ func renderObjectCSV(obj map[string]interface{}) {
 	}
 }
 
+// FormatNumber is a number as the table shows it.
+func FormatNumber(v float64) string {
+	return trimLongDecimal(formatValue(v))
+}
+
+// formatValue renders a value for human display, rounding floats to 2 decimals.
 func formatValue(v interface{}) string {
+	return formatScalar(v, false)
+}
+
+// formatValueExact renders a value without lossy rounding, for machine-facing
+// output. The API sends computed metrics (roi, epc, margin) as JSON numbers
+// rather than strings, so rounding them here truncated exported data: a --csv
+// export of 0.288613861 came out as 0.29, and the caller had no way to tell it
+// had lost precision.
+func formatValueExact(v interface{}) string {
+	return formatScalar(v, true)
+}
+
+func formatScalar(v interface{}, exact bool) string {
 	if v == nil {
 		return ""
 	}
@@ -520,7 +701,17 @@ func formatValue(v interface{}) string {
 		return val
 	case float64:
 		if val == float64(int64(val)) {
-			return fmt.Sprintf("%d", int64(val))
+			return strconv.FormatInt(int64(val), 10)
+		}
+		if exact {
+			return strconv.FormatFloat(val, 'f', -1, 64)
+		}
+		// Cents as cents; a finer value keeps up to four decimals, as a long
+		// decimal string does (trimLongDecimal). The API sends money as numbers,
+		// and a $0.00125 or $0.015 CPC rounded to two decimals read as 0.00 or
+		// 0.01: a cost the table said was nothing, or a third less.
+		if s := strconv.FormatFloat(val, 'f', -1, 64); strings.IndexByte(s, '.') < len(s)-3 {
+			return trimLongDecimal(s)
 		}
 		return fmt.Sprintf("%.2f", val)
 	case bool:
@@ -529,7 +720,10 @@ func formatValue(v interface{}) string {
 		}
 		return "false"
 	case map[string]interface{}, []interface{}:
-		data, _ := json.Marshal(val)
+		data, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprintf("%v", val)
+		}
 		return string(data)
 	default:
 		return fmt.Sprintf("%v", val)

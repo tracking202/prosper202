@@ -1,6 +1,11 @@
 <?php
 
 declare(strict_types=1);
+
+use Prosper202\Click\ClickRecord;
+use Prosper202\Click\ClickRequest;
+use Prosper202\Click\DynamicBid;
+
 include_once(substr(__DIR__, 0, -19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0, -19) . '/202-config/static-endpoint-helpers.php');
@@ -9,58 +14,54 @@ $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 $trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 
 $_GET += [
-	't202id' => '',
-	't202b' => '',
-	't202kw' => '',
-	't202ref' => '',
-	'OVKEY' => '',
-	'OVRAW' => '',
-	'target_passthrough' => '',
-	'keyword' => '',
-	'gclid' => '',
-	'c1' => '',
-	'c2' => '',
-	'c3' => '',
-	'c4' => '',
-	'utm_source' => '',
-	'utm_medium' => '',
-	'utm_campaign' => '',
-	'utm_term' => '',
-	'utm_content' => '',
-	'referer' => '',
-	'ua' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+    't202id' => '',
+    't202b' => '',
+    't202kw' => '',
+    't202ref' => '',
+    'OVKEY' => '',
+    'OVRAW' => '',
+    'target_passthrough' => '',
+    'keyword' => '',
+    'gclid' => '',
+    'gbraid' => '',
+    'wbraid' => '',
+    'ttclid' => '',
+    'msclkid' => '',
+    'fbclid' => '',
+    'c1' => '',
+    'c2' => '',
+    'c3' => '',
+    'c4' => '',
+    'utm_source' => '',
+    'utm_medium' => '',
+    'utm_campaign' => '',
+    'utm_term' => '',
+    'utm_content' => '',
+    'referer' => '',
+    'ua' => $_SERVER['HTTP_USER_AGENT'] ?? '',
 ];
 
-$landing_page_id_public = $_GET['lpip'] ?? '';
-$mysql['landing_page_id_public'] = $db->real_escape_string($landing_page_id_public);
+// The landing page and its campaign, when the campaign is the page's account's.
+$landing_page_id_public = ClickRequest::string($_GET, 'lpip');
+$rsLandingPageId = \Prosper202\Click\PublicId::parse($landing_page_id_public);
+$rsReads = \Prosper202\Repository\LookupRepositoryFactory::reads($db);
+$tracker_row = null;
+if ($rsLandingPageId !== null) {
+    try {
+        $tracker_row = $rsReads->landingPageOffer($rsLandingPageId);
+    } catch (\Throwable $rsReadError) {
+        record_mysql_error($db, 'reading landing page ' . $rsLandingPageId, $rsReadError->getMessage());
+    }
+}
 
-$mod_sql = "SHOW COLUMNS FROM 202_landing_pages like  'leave_behind_page_url'";
-$mod_row = memcache_mysql_fetch_assoc($db, $mod_sql);
-
-$tracker_sql = "SELECT 202_landing_pages.user_id,
-						202_landing_pages.landing_page_id,";
-
-if ($mod_row)
-	$tracker_sql .= "202_landing_pages.leave_behind_page_url,";
-
-$tracker_sql .= "202_landing_pages.aff_campaign_id,
-						202_aff_campaigns.aff_campaign_url,
-						202_aff_campaigns.aff_campaign_url_2,
-						202_aff_campaigns.aff_campaign_url_3,
-						202_aff_campaigns.aff_campaign_url_4,
-						202_aff_campaigns.aff_campaign_url_5,
-						202_aff_campaigns.aff_campaign_payout,
-						202_aff_campaigns.aff_campaign_cloaking,
-						202_aff_campaigns.aff_campaign_rotate
-				FROM    202_landing_pages, 202_aff_campaigns
-				WHERE   202_landing_pages.landing_page_id_public='" . $mysql['landing_page_id_public'] . "'
-					AND     202_aff_campaigns.aff_campaign_id = 202_landing_pages.aff_campaign_id";
-
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
-
-if (!$tracker_row) {
+if ($tracker_row === null) {
 	die();
 }
+
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this landing page's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($tracker_row['user_id'] ?? null);
 
 //set the timezone to the users timezone
 $mysql['user_id'] = $db->real_escape_string((string) ($tracker_row['user_id'] ?? '0'));
@@ -68,7 +69,8 @@ $user_sql = "SELECT 		user_timezone,
 							user_keyword_searched_or_bidded,
                             user_pref_referer_data,
                             user_pref_dynamic_bid,
-							maxmind_isp
+							maxmind_isp,
+                            user_public_publisher_id
 			   FROM 		202_users
 				   LEFT JOIN	202_users_pref USING (user_id)
 				   WHERE 		202_users.user_id='" . $mysql['user_id'] . "'";
@@ -76,24 +78,20 @@ $user_row = memcache_mysql_fetch_assoc($db, $user_sql);
 $mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string) ($user_row['user_pref_dynamic_bid'] ?? '0'));
 AUTH::set_timezone((string) ($user_row['user_timezone'] ?? 'UTC'));
 
-if ($_GET['t202id']) {
-	//grab tracker data if avaliable
-	$mysql['tracker_id_public'] = $db->real_escape_string((string)$_GET['t202id']);
+// The tracker the visit names, when it is the landing page's account's: its
+// text ad, traffic source and cost were copied into this account's click.
+$rsTrackerId = \Prosper202\Click\PublicId::parse(ClickRequest::string($_GET, 't202id'));
+if ($rsTrackerId !== null) {
+    try {
+        $tracker_row2 = $rsReads->accountTracker((int) $tracker_row['user_id'], $rsTrackerId);
+    } catch (\Throwable $rsReadError) {
+        record_mysql_error($db, 'reading tracker ' . $rsTrackerId, $rsReadError->getMessage());
+    }
 
-	$tracker_sql2 = "SELECT 2tr.text_ad_id,
-							2tr.ppc_account_id,
-							2tr.click_cpc,
-							2tr.click_cloaking,
-							2cv.ppc_variable_ids,
-							2cv.parameters
-					FROM    202_trackers AS 2tr
-					LEFT JOIN 202_ppc_accounts AS 2ppc USING (ppc_account_id)
-					LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
-					WHERE   2tr.tracker_id_public='" . $mysql['tracker_id_public'] . "'";
-	$tracker_row2 = memcache_mysql_fetch_assoc($db, $tracker_sql2);
-
-	if ($tracker_row2) {
-		$tracker_row = array_merge($tracker_row, $tracker_row2);
+    if ($tracker_row2 !== null) {
+        $tracker_row = array_merge($tracker_row, array_intersect_key($tracker_row2, array_flip([
+            'text_ad_id', 'ppc_account_id', 'click_cpc', 'click_cloaking', 'ppc_variable_ids', 'parameters',
+        ])));
 	}
 }
 
@@ -105,141 +103,67 @@ $mysql['user_id'] = $db->real_escape_string((string) ($tracker_row['user_id'] ??
 $mysql['aff_campaign_id'] = $db->real_escape_string((string) ($tracker_row['aff_campaign_id'] ?? '0'));
 $mysql['ppc_account_id'] = $db->real_escape_string((string) ($tracker_row['ppc_account_id'] ?? '0'));
 
-// set cpc use dynamic variable if set or the default if not
-if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
-	$_GET['t202b'] = ltrim($_GET['t202b'], '$');
-	if (is_numeric($_GET['t202b'])) {
-		$bid = number_format($_GET['t202b'], 5, '.', '');
-		$mysql['click_cpc'] = $db->real_escape_string($bid);
-	} else {
-		$mysql['click_cpc'] = $db->real_escape_string((string) ($tracker_row['click_cpc'] ?? '0'));
-	}
-} else
-	$mysql['click_cpc'] = $db->real_escape_string((string) ($tracker_row['click_cpc'] ?? '0'));
+// The bid the link names when the account takes dynamic bids, else the tracker's CPC.
+$bid = $mysql['user_pref_dynamic_bid'] == '1' ? DynamicBid::fromRequest($_GET['t202b'] ?? null) : null;
+$mysql['click_cpc'] = $bid ?? $db->real_escape_string((string) ($tracker_row['click_cpc'] ?? '0'));
 $mysql['click_payout'] = $db->real_escape_string((string) ($tracker_row['aff_campaign_payout'] ?? '0'));
 $mysql['click_time'] = time();
 $mysql['landing_page_id'] = $db->real_escape_string((string) ($tracker_row['landing_page_id'] ?? '0'));
 $mysql['text_ad_id'] = $db->real_escape_string((string) ($tracker_row['text_ad_id'] ?? '0'));
 
-/* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
-//so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
-$referer_url_parsed = @parse_url((string) $_GET['referer']);
+// The referring page's query: its q is a searched keyword (ClickRequest::keyword()), its url the referer.
+$referer_url_parsed = @parse_url(ClickRequest::string($_GET, 'referer'));
 $referer_url_query = $referer_url_parsed['query'] ?? '';
 
 @parse_str($referer_url_query, $referer_query);
 
-$keyword = '';
-switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
-
-	case "bidded":
-		#try to get the bidded keyword first
-		if ($_GET['OVKEY']) { //if this is a Y! keyword
-			$keyword = $db->real_escape_string((string)$_GET['OVKEY']);
-		} elseif ($_GET['t202kw']) {
-			$keyword = $db->real_escape_string((string)$_GET['t202kw']);
-		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
-			$keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
-		} else { //if this is a zango, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['keyword']);
-		}
-		break;
-
-	case "searched":
-		#try to get the searched keyword
-		if (!empty($referer_query['q'])) {
-			$keyword = $db->real_escape_string($referer_query['q']);
-		} elseif ($_GET['OVRAW']) { //if this is a Y! keyword
-			$keyword = $db->real_escape_string((string)$_GET['OVRAW']);
-		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
-			$keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
-		} elseif ($_GET['keyword']) { //if this is a zango, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['keyword']);
-		} elseif ($_GET['search_word']) { //if this is a eniro, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['search_word']);
-		} elseif ($_GET['query']) { //if this is a naver, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['query']);
-		} elseif ($_GET['encquery']) { //if this is a aol, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['encquery']);
-		} elseif ($_GET['terms']) { //if this is a about.com, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['terms']);
-		} elseif ($_GET['rdata']) { //if this is a viola, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['rdata']);
-		} elseif ($_GET['qs']) { //if this is a virgilio, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['qs']);
-		} elseif ($_GET['wd']) { //if this is a baidu, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['wd']);
-		} elseif ($_GET['text']) { //if this is a yandex, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['text']);
-		} elseif ($_GET['szukaj']) { //if this is a wp.pl, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['szukaj']);
-		} elseif ($_GET['qt']) { //if this is a O*net, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['qt']);
-		} elseif ($_GET['k']) { //if this is a yam, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['k']);
-		} elseif ($_GET['words']) { //if this is a Rambler, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['words']);
-		} else {
-			$keyword = $db->real_escape_string((string)$_GET['t202kw']);
-		}
-		break;
-}
-
-if (str_starts_with((string) $keyword, 't202var_')) {
-	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
-
-	if (isset($_GET[$t202var])) {
-		$keyword = $db->real_escape_string((string) $_GET[$t202var]);
-	}
-}
-
-$keyword = str_replace('%20', ' ', $keyword);
-$keyword = mb_convert_encoding($keyword, 'UTF-8', 'auto');
+$keyword = ClickRequest::keyword($_GET, $referer_query, $user_row['user_keyword_searched_or_bidded'] ?? null);
 $keyword_id = $trackingRepo->findOrCreateKeyword($keyword);
 $mysql['keyword_id'] = $db->real_escape_string((string) $keyword_id);
 
-$mysql['gclid'] = $db->real_escape_string((string)$_GET['gclid']);
+// The ad platforms' click ids (ClickRecord::AD_CLICK_IDS). Raw: the
+// writer binds them, so an escaped value was stored with its backslashes.
+$adClickIds = ClickRequest::adClickIds($_GET);
+foreach ($adClickIds as $adClickIdName => $adClickId) {
+    $mysql[$adClickIdName] = $adClickId;
+}
 
-$c1 = $db->real_escape_string((string)$_GET['c1']);
+$c1 = ClickRequest::text($_GET, 'c1');
 $c1 = str_replace('%20', ' ', $c1);
 $c1_id = $trackingRepo->findOrCreateC1($c1);
 $mysql['c1_id'] = $db->real_escape_string((string) $c1_id);
 
-$c2 = $db->real_escape_string((string)$_GET['c2']);
+$c2 = ClickRequest::text($_GET, 'c2');
 $c2 = str_replace('%20', ' ', $c2);
 $c2_id = $trackingRepo->findOrCreateC2($c2);
 $mysql['c2_id'] = $db->real_escape_string((string) $c2_id);
 
-$c3 = $db->real_escape_string((string)$_GET['c3']);
+$c3 = ClickRequest::text($_GET, 'c3');
 $c3 = str_replace('%20', ' ', $c3);
 $c3_id = $trackingRepo->findOrCreateC3($c3);
 $mysql['c3_id'] = $db->real_escape_string((string) $c3_id);
 
-$c4 = $db->real_escape_string((string)$_GET['c4']);
+$c4 = ClickRequest::text($_GET, 'c4');
 $c4 = str_replace('%20', ' ', $c4);
 $c4_id = $trackingRepo->findOrCreateC4($c4);
 $mysql['c4_id'] = $db->real_escape_string((string) $c4_id);
 
 $custom_var_ids = [];
 
-$ppc_variable_ids = explode(',', (string) $tracker_row['ppc_variable_ids']);
-$parameters = explode(',', (string) $tracker_row['parameters']);
-
-foreach ($parameters as $key => $value) {
-	if ($value === '' || !isset($_GET[$value])) {
-		continue;
-	}
-
-	$variable = $db->real_escape_string((string)$_GET[$value]);
+// The traffic source's variables; none for a click with no tracker (no
+// t202id, or one that names none), as for a source that has none.
+foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $ppcVariableId]) {
+	$variable = ClickRequest::text($_GET, $value);
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
-		$variable_id = $trackingRepo->findOrCreateVariable($variable, (int) $ppc_variable_ids[$key]);
+		$variable_id = $trackingRepo->findOrCreateVariable($variable, $ppcVariableId);
 		$custom_var_ids[] = $variable_id;
 	}
 }
 
 //utm_source
-$utm_source = $db->real_escape_string((string)$_GET['utm_source']);
+$utm_source = ClickRequest::text($_GET, 'utm_source');
 if (isset($utm_source) && $utm_source != '') {
 	$utm_source = str_replace('%20', ' ', $utm_source);
 	$utm_source_id = $trackingRepo->findOrCreateUtm($utm_source, 'utm_source');
@@ -249,7 +173,7 @@ if (isset($utm_source) && $utm_source != '') {
 $mysql['utm_source_id'] = $db->real_escape_string((string) $utm_source_id);
 
 //utm_medium
-$utm_medium = $db->real_escape_string((string)$_GET['utm_medium']);
+$utm_medium = ClickRequest::text($_GET, 'utm_medium');
 if (isset($utm_medium) && $utm_medium != '') {
 	$utm_medium = str_replace('%20', ' ', $utm_medium);
 	$utm_medium_id = $trackingRepo->findOrCreateUtm($utm_medium, 'utm_medium');
@@ -259,7 +183,7 @@ if (isset($utm_medium) && $utm_medium != '') {
 $mysql['utm_medium_id'] = $db->real_escape_string((string) $utm_medium_id);
 
 //utm_campaign
-$utm_campaign = $db->real_escape_string((string)$_GET['utm_campaign']);
+$utm_campaign = ClickRequest::text($_GET, 'utm_campaign');
 if (isset($utm_campaign) && $utm_campaign != '') {
 	$utm_campaign = str_replace('%20', ' ', $utm_campaign);
 	$utm_campaign_id = $trackingRepo->findOrCreateUtm($utm_campaign, 'utm_campaign');
@@ -269,7 +193,7 @@ if (isset($utm_campaign) && $utm_campaign != '') {
 $mysql['utm_campaign_id'] = $db->real_escape_string((string) $utm_campaign_id);
 
 //utm_term
-$utm_term = $db->real_escape_string((string)$_GET['utm_term']);
+$utm_term = ClickRequest::text($_GET, 'utm_term');
 if (isset($utm_term) && $utm_term != '') {
 	$utm_term = str_replace('%20', ' ', $utm_term);
 	$utm_term_id = $trackingRepo->findOrCreateUtm($utm_term, 'utm_term');
@@ -279,7 +203,7 @@ if (isset($utm_term) && $utm_term != '') {
 $mysql['utm_term_id'] = $db->real_escape_string((string) $utm_term_id);
 
 //utm_content
-$utm_content = $db->real_escape_string((string)$_GET['utm_content']);
+$utm_content = ClickRequest::text($_GET, 'utm_content');
 if (isset($utm_content) && $utm_content != '') {
 	$utm_content = str_replace('%20', ' ', $utm_content);
 	$utm_content_id = $trackingRepo->findOrCreateUtm($utm_content, 'utm_content');
@@ -288,20 +212,20 @@ if (isset($utm_content) && $utm_content != '') {
 }
 $mysql['utm_content_id'] = $db->real_escape_string((string) $utm_content_id);
 
-$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
-$ip_id = $locationRepo->findOrCreateIp($ip);
+$ip = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
+// Stored masked under the owner's privacy setting (p202StoredVisitorIp).
+$ip_id = $locationRepo->findOrCreateIp(p202StoredVisitorIp());
 $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
 $detect = new DeviceDetect();
-$device_id = PLATFORMS::get_device_info($db, $detect, $_GET['ua']);
+$device_id = PLATFORMS::get_device_info($db, $detect, ClickRequest::text($_GET, 'ua'));
 $mysql['platform_id'] = $db->real_escape_string((string) $device_id['platform']);
 $mysql['browser_id'] = $db->real_escape_string((string) $device_id['browser']);
 $mysql['device_id'] = $db->real_escape_string((string) $device_id['device']);
 
-$mysql['click_bot'] = '0';
-if ($device_id['type'] == '4') {
-	$mysql['click_bot'] = '1';
-}
+// Bots are recorded like anyone else; only the flags differ.
+$clickIsBot = \Prosper202\Click\ClickBotDetector::isBot($detect->getUserAgent(), $device_id);
+$mysql['click_bot'] = $clickIsBot ? '1' : '0';
 
 $mysql['click_in'] = 1;
 $mysql['click_out'] = 0;
@@ -313,33 +237,33 @@ $mysql['click_out'] = 0;
 // if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
 $_referer_site_url = '';
 if (($user_row['user_pref_referer_data'] ?? '') == 't202ref') {
-	if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
+	if (is_string($_GET['t202ref'] ?? null) && $_GET['t202ref'] !== '') { //check for t202ref value
 		$mysql['t202ref'] = $db->real_escape_string((string)$_GET['t202ref']);
 		$_referer_site_url = (string) $_GET['t202ref'];
 	} else { //if not found revert to what we usually do
-		if (!empty($referer_query['url'])) {
+		if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
 			$_referer_site_url = (string) $referer_query['url'];
 		} else {
-			$_referer_site_url = (string) ($_GET['referer'] ?? '');
+			$_referer_site_url = ClickRequest::string($_GET, 'referer');
 		}
 	}
 } else { //user wants the real referer first
 
 	// now lets get variables for clicks site
 	// so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
-	if (!empty($referer_query['url'])) {
+	if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
 		$_referer_site_url = (string) $referer_query['url'];
 	} else {
-		$_referer_site_url = (string) ($_GET['referer'] ?? '');
+		$_referer_site_url = ClickRequest::string($_GET, 'referer');
 	}
 }
-$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_referer_site_url);
+$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($_referer_site_url);
 
 $mysql['click_referer_site_url_id'] = $db->real_escape_string((string) $click_referer_site_url_id);
 
 
 //see if this click should be filtered
-$ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+$ip_address = $ip;
 $user_id = $tracker_row['user_id'];
 
 //GEO Lookup
@@ -371,11 +295,14 @@ if ($user_row['maxmind_isp'] == '1') {
 	$mysql['isp_id'] = '0';
 }
 
-if ($device_id['type'] == '4') {
+if ($clickIsBot) {
 	$mysql['click_filtered'] = '1';
 } else {
-	$click_filtered = FILTER::startFilter($db, 0, $ip_id, $ip_address, $user_id);
-	$mysql['click_filtered'] = $db->real_escape_string((string) $click_filtered);
+	// Why it is filtered goes with the click (202_clicks_filter_reason).
+	$clickFilter = FILTER::verdict($db, $ip_id, $user_id);
+	$mysql['click_filtered'] = (string) $clickFilter->flag();
+	$mysql['click_filter_reason'] = (string) $clickFilter->reason;
+	$mysql['click_filter_entry_id'] = $clickFilter->filtered ? (string) ($clickFilter->entryId ?? 0) : '0';
 }
 
 
@@ -401,11 +328,9 @@ if ($total_vars > 0) {
 	$mysql['variable_set_id'] = '0';
 }
 
-// Determine cloaking
-if (($tracker_row['click_cloaking'] == 1) or
-	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
-	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1))
-) {
+// Determine cloaking: the tracker's setting, or the campaign's when there is
+// no tracker or it leaves the decision to the campaign (ClickCloaking).
+if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
 } else {
@@ -414,30 +339,71 @@ if (($tracker_row['click_cloaking'] == 1) or
 }
 
 // Compute site URLs (depend on click_id_public)
-$landing_site_url = $_SERVER['HTTP_REFERER'] ?? ((string) ($_GET['referer'] ?? ''));
-$click_landing_site_url_id = $locationRepo->findOrCreateSiteUrl($landing_site_url);
+$landing_site_url = $_SERVER['HTTP_REFERER'] ?? ClickRequest::string($_GET, 'referer');
+$click_landing_site_url_id = $locationRepo->findOrCreateClickSiteUrl($landing_site_url);
 $mysql['click_landing_site_url_id'] = (string) $click_landing_site_url_id;
 
-$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/pci.php?pci=' . $click_id_public;
-$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/pci.php?pci=' . $click_id_public;
+$click_outbound_site_url_id = $locationRepo->findOrCreateClickSiteUrl($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 $mysql['click_cloaking_site_url_id'] = '0';
 
 if ($cloaking_on === true) {
-	$cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
-	$click_cloaking_site_url_id = $locationRepo->findOrCreateSiteUrl($cloaking_site_url);
+	$cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
+	$click_cloaking_site_url_id = $locationRepo->findOrCreateClickSiteUrl($cloaking_site_url);
 	$mysql['click_cloaking_site_url_id'] = (string) $click_cloaking_site_url_id;
 }
 
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
-$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
-$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl($redirect_site_url);
+// The click's rows are written below, so its URL's tokens come from the values
+// in hand: read back, they are not there yet.
+$redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $click_id, [
+    'keyword' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword($keyword),
+    't202pubid' => $user_row['user_public_publisher_id'] ?? '',
+    // As stored: a value past the columns' 350 bytes is sent as cut.
+    'c1' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c1),
+    'c2' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c2),
+    'c3' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c3),
+    'c4' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c4),
+    ...ClickRecord::storedAdClickIds($adClickIds),
+    'utm_source' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_source),
+    'utm_medium' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_medium),
+    'utm_campaign' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_campaign),
+    'utm_term' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_term),
+    'utm_content' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_content),
+    'country' => $countryName,
+    'country_code' => $countryCode,
+    'region' => $regionName,
+    'city' => $cityName,
+    // As stored: a tracker with no CPC stores 0.00000.
+    'cpc' => number_format((float) $mysql['click_cpc'], 5, '.', ''),
+    'payout' => $tracker_row['aff_campaign_payout'] ?? '',
+    'ppc_account_id' => $tracker_row['ppc_account_id'] ?? '',
+]);
+$click_redirect_site_url_id = $locationRepo->findOrCreateClickSiteUrl($redirect_site_url);
 $mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
 
-// Record click via repository (replaces 9 raw INSERT statements with parameterized, transactional writes)
-$clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
-$clickRecord->clickId = $click_id;
-$clickRepo->recordClick($clickRecord);
+// Identity signals (plan §6.2): the tracking domain's p202vid cookie, the
+// p202lpid the landing page's script sends, a signed customer id — linked
+// after the click is stored; nothing when consent is withheld or the
+// campaign's identity capture is off.
+$clickIdentity = p202ClickIdentity(
+	$_GET,
+	\Prosper202\Identity\RequestSignals::campaignAllows(array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
+	// Minted only when the landing page is on the tracker's own site; a
+	// cross-site script request links by the page's p202lpid instead.
+	(string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '') !== 'cross-site'
+);
+// Every row in one transaction (MysqlClickRepository), its cache writes held
+// until it commits; a failure is the error page, as rtr.php's is.
+// Built outside the try: a record the builder refuses is a bug, not a
+// database failure, and the uncaught handler logs it as one.
+$rsClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
+try {
+    p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($rsClick));
+} catch (\Throwable $rsWriteError) {
+    record_mysql_error($db, 'recording click ' . $click_id, $rsWriteError->getMessage());
+}
 
 //update the click summary table if this is a 'real click'
 #if ($click_filtered == 0) {
@@ -462,14 +428,13 @@ $mysql['click_time'] = $db->real_escape_string((string) $click_time);
 
 //set the cookie
 setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);
+$clickIdentity->sendCookie($_SERVER);
 //set outbound cookie
 setOutboundCookie($outbound_site_url);
 
 //set dirty hour
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
-
-p202LinkImpressionToClick($db, $mysql['click_id'], $mysql['landing_page_id'], 'record_simple');
 
 header('Content-Type: application/javascript; charset=UTF-8');
 ?>
@@ -490,11 +455,18 @@ header('Content-Type: application/javascript; charset=UTF-8');
 (function () {
 
 var subid =<?php echo json_encode((string) $click_id); ?>;
-createCookie('tracking202subid',subid,0);
-
 var outbound = <?php echo json_encode((string) $outbound_site_url); ?>;
-createCookie('tracking202outbound',outbound,0);
 
-<?php echo p202MintPersonalizationCookieJs($db, (int) $mysql['user_id'], $_GET, (int) $click_id); ?>
+<?php
+// The click cookies on the landing page's own site: none for a visitor the
+// privacy setting holds back (p202ClickCookieJs()). The variables above are
+// what the script has always answered with (the live passes read the click
+// id from them); they set nothing.
+echo p202ClickCookieJs([
+    'tracking202subid' => (string) $click_id,
+    'tracking202outbound' => (string) $outbound_site_url,
+]);
+echo p202MintPersonalizationCookieJs($db, (int) $mysql['user_id'], $_GET, (int) $click_id, trackingEnabled());
+?>
 
 }());

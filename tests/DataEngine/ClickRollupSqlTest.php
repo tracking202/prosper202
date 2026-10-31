@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace Tests\DataEngine;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
+use Prosper202\Database\Tables\ClickTables;
 use Prosper202\DataEngine\ClickRollupSql;
+use Tests\Support\SourceScan;
 
 /**
  * Tests for the click rollup statement shared by DataEngine::setDirtyHour(),
@@ -20,7 +23,7 @@ final class ClickRollupSqlTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=123', true);
+        $this->sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=123');
     }
 
     public function testInsertSelectJoinsAllRequiredTables(): void
@@ -75,7 +78,7 @@ final class ClickRollupSqlTest extends TestCase
             explode(',', $insertMatch[1])
         );
 
-        preg_match('/SELECT\s+(.*?)\s+FROM 202_clicks/s', $this->sql, $selectMatch);
+        preg_match('/SELECT\s+(.*?)\nFROM 202_clicks AS 2c\n/s', $this->sql, $selectMatch);
         self::assertNotEmpty($selectMatch, 'Must find the SELECT list');
         $selectExpressions = array_map('trim', explode(",\n", $selectMatch[1]));
 
@@ -114,7 +117,7 @@ final class ClickRollupSqlTest extends TestCase
             explode(',', $insertMatch[1])
         );
 
-        preg_match('/SELECT\s+(.*?)\s+FROM 202_clicks/s', $this->sql, $selectMatch);
+        preg_match('/SELECT\s+(.*?)\nFROM 202_clicks AS 2c\n/s', $this->sql, $selectMatch);
         $selectExpressions = array_map('trim', explode(",\n", $selectMatch[1]));
 
         $sourcePosition = array_search('utm_source_id', $insertColumns, true);
@@ -152,16 +155,40 @@ final class ClickRollupSqlTest extends TestCase
         }
     }
 
-    public function testLandingPageUpdateCanBeExcluded(): void
+    /**
+     * A re-roll converges a row to what a fresh rollup computes: every
+     * column the SELECT derives is refreshed, the key alone excepted. The
+     * list named fourteen columns, so a row kept the traffic source, text ad
+     * and the rest of what its first rollup saw (ClickRollupSql says what
+     * that looked like in the reports).
+     */
+    public function testADuplicateKeyRefreshesEveryColumnButTheKey(): void
     {
-        $sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=123', false);
-
-        self::assertStringNotContainsString(
-            'landing_page_id=values(landing_page_id)',
-            $sql,
-            'Batch re-aggregation paths must not refresh landing_page_id'
+        preg_match('/insert into 202_dataengine\(([^)]+)\)/s', $this->sql, $insertMatch);
+        $insertColumns = array_map(
+            static fn(string $column): string => preg_replace('/\s+/', '', $column),
+            explode(',', $insertMatch[1])
         );
-        self::assertStringContainsString('leads=values(leads)', $sql);
+        preg_match('/on duplicate key update\s+(.*)$/s', $this->sql, $updateMatch);
+        $updated = array_map(
+            static fn(string $set): string => preg_replace('/=values\((\w+)\)$/', '', trim($set)),
+            explode(",\n", $updateMatch[1])
+        );
+        foreach (explode(",\n", $updateMatch[1]) as $set) {
+            self::assertMatchesRegularExpression(
+                '/^(\w+)=values\(\1\)$/',
+                trim($set),
+                'each column takes its own new value'
+            );
+        }
+
+        self::assertSame(array_values(array_diff($insertColumns, ['click_id', 'click_time'])), $updated);
+        $copied = ['ppc_network_id', 'text_ad_id', 'landing_page_id', 'keyword_id', 'country_id', 'variable_set_id'];
+        foreach ($copied as $column) {
+            self::assertContains($column, $updated);
+        }
+        self::assertNotContains('click_id', $updated);
+        self::assertNotContains('click_time', $updated);
     }
 
     public function testIncomeCalculationOnlyCountsLeads(): void
@@ -187,6 +214,209 @@ final class ClickRollupSqlTest extends TestCase
         $sql = ClickRollupSql::insertSelect('202_dataengine_new', '2c.click_time >= 1 AND 2c.click_time <= 2');
 
         self::assertStringContainsString('insert into 202_dataengine_new(', $sql);
-        self::assertStringContainsString('WHERE 2c.click_time >= 1 AND 2c.click_time <= 2', $sql);
+        self::assertStringContainsString('WHERE (2c.click_time >= 1 AND 2c.click_time <= 2) AND ', $sql);
+    }
+
+    /**
+     * A click has one report row, at its latest visit: the caller's
+     * condition is held whole (an OR in it cannot reach past the latest
+     * visit's), and an earlier visit writes nothing.
+     */
+    public function testOnlyEachClicksLatestVisitIsWritten(): void
+    {
+        $sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=1 OR 2c.click_id=2');
+
+        self::assertStringContainsString(
+            "WHERE (2c.click_id=1 OR 2c.click_id=2) AND " . LatestVisit::isLatest('2c') . "\non duplicate key update",
+            $sql
+        );
+    }
+
+    /**
+     * The removal that follows the rollup is keyed on the same rows as the
+     * rollup: the latest visits the caller's condition names, through the
+     * same campaign join, held whole. It deletes, from the table it names,
+     * the rows of those clicks before the latest visit their record names,
+     * whatever their hour, and of the click's own account.
+     */
+    public function testTheRemovalOfEarlierVisitsIsKeyedOnTheRollupsLatestVisits(): void
+    {
+        $where = '2c.click_time >= 1 AND 2c.click_time <= 2 AND 2c.user_id = 5 OR 2ac.aff_campaign_id = 7';
+        $sql = ClickRollupSql::deleteEarlierVisits('202_dataengine_new', $where);
+        $insert = ClickRollupSql::insertSelect('202_dataengine', $where);
+
+        self::assertStringEndsWith("WHERE ($where) AND " . LatestVisit::isLatest('2c'), $sql);
+        self::assertStringContainsString("WHERE ($where) AND " . LatestVisit::isLatest('2c') . "\n", $insert);
+        self::assertStringContainsString(
+            'STRAIGHT_JOIN 202_dataengine_new AS de ON (de.click_id = 2c.click_id AND de.user_id = 2c.user_id'
+                . ' AND de.click_time < lv.click_time)',
+            $sql
+        );
+        self::assertSame(1, substr_count($sql, '202_dataengine'), 'one table is deleted from');
+        self::assertStringStartsWith('DELETE de FROM ', $sql);
+
+        preg_match('/^LEFT OUTER JOIN 202_aff_campaigns AS 2ac .*$/m', $sql, $join);
+        self::assertNotEmpty($join, 'the removal joins the campaign the condition may name');
+        self::assertStringContainsString($join[0] . "\n", $insert);
+    }
+
+    /**
+     * Read in this order and no other: the latest visits the condition names,
+     * their records, their rows. The rollup table is partitioned by
+     * click_time, so a click's rows read by its id probe every partition;
+     * the server's own order began from the records, and a one-hour rebuild
+     * of a partitioned install took 6 s rather than 0.1 s.
+     */
+    public function testTheRemovalReadsTheLatestVisitsFirst(): void
+    {
+        $sql = ClickRollupSql::deleteEarlierVisits('202_dataengine', '2c.click_id=1');
+
+        self::assertStringStartsWith(
+            "DELETE de FROM 202_clicks AS 2c\n"
+                . "STRAIGHT_JOIN 202_click_latest_visits AS lv ON (lv.click_id = 2c.click_id)\n"
+                . 'STRAIGHT_JOIN 202_dataengine AS de ON ',
+            $sql
+        );
+    }
+
+    /**
+     * Every value is the latest visit's row's own, as the re-click writer
+     * and the backfill leave it: no column looks another visit up.
+     */
+    public function testEveryValueIsTheLatestRowsOwn(): void
+    {
+        preg_match('/SELECT\s+(.*?)\nFROM 202_clicks AS 2c\n/s', $this->sql, $selectMatch);
+        self::assertNotEmpty($selectMatch, 'Must find the SELECT list');
+
+        self::assertStringNotContainsStringIgnoringCase('SELECT', $selectMatch[1], 'no subquery in the SELECT list');
+        foreach (['click_filtered', 'click_bot', 'click_lead', 'ppc_account_id'] as $column) {
+            self::assertMatchesRegularExpression('/^2c\.`?' . $column . '`?,$/m', $selectMatch[1], $column);
+        }
+    }
+
+    /** By id: the rollup first, then the removal, both of the one click, on the table named. */
+    public function testRollingAClickWritesItsRowBeforeRemovingTheOthers(): void
+    {
+        $steps = ClickRollupSql::forClick('202_dataengine_new', 42);
+
+        self::assertSame([
+            'rollup' => str_replace(
+                "\nFROM 202_clicks AS 2c\n",
+                "\nFROM 202_clicks AS 2c FORCE INDEX (`click_id`)\n",
+                ClickRollupSql::insertSelect('202_dataengine_new', '2c.click_id=42')
+            ),
+            'removal of the earlier visits\' rows' => ClickRollupSql::deleteEarlierVisitsOfClick('202_dataengine_new', 42),
+        ], $steps);
+    }
+
+    /**
+     * The per-click removal is the window form's predicate for one click
+     * (its condition and isLatest()), begun from the record: the record and
+     * the tie of the rollup row to the click's rows and account are the
+     * window form's own.
+     */
+    public function testThePerClickRemovalReadsTheWindowFormsPredicate(): void
+    {
+        $sql = ClickRollupSql::deleteEarlierVisitsOfClick('202_dataengine', 42);
+
+        self::assertStringStartsWith('DELETE de FROM 202_click_latest_visits AS lv', $sql);
+        self::assertStringContainsString('WHERE lv.click_id = 42 AND ' . \Prosper202\Click\LatestVisit::isLatest('2c'), $sql);
+        self::assertStringContainsString(
+            '202_dataengine AS de ON (de.click_id = 2c.click_id AND de.user_id = 2c.user_id AND de.click_time < lv.click_time)',
+            ClickRollupSql::deleteEarlierVisits('202_dataengine', '2c.click_id=42')
+        );
+        self::assertStringContainsString(
+            '202_dataengine AS de ON (de.click_id = 2c.click_id AND de.user_id = 2c.user_id AND de.click_time < lv.click_time)',
+            $sql
+        );
+    }
+
+    /**
+     * On MariaDB 10.11 a small 202_clicks was scanned (EXPLAIN type ALL), and
+     * the scan's shared locks deadlocked the rollup of one click with the next
+     * click's insert, which was rolled back and lost (errno 1213). The rollup
+     * of one click is the range statement with 202_clicks read by its key.
+     */
+    public function testTheRollupOfOneClickReadsTheClickThroughItsKey(): void
+    {
+        $click = ClickRollupSql::forClick('202_dataengine', 123)['rollup'];
+
+        self::assertStringContainsString(
+            "\nFROM 202_clicks AS 2c FORCE INDEX (`click_id`)\nLEFT OUTER JOIN 202_clicks_record AS 2cr",
+            $click,
+            'The rollup of one click must read 202_clicks through its click_id key'
+        );
+        self::assertStringContainsString("\nWHERE (2c.click_id=123) AND " . LatestVisit::isLatest('2c') . "\n", $click);
+        self::assertSame(
+            str_replace(
+                "\nFROM 202_clicks AS 2c\n",
+                "\nFROM 202_clicks AS 2c FORCE INDEX (`click_id`)\n",
+                ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=123')
+            ),
+            $click,
+            'Only the read of 202_clicks differs from the range statement'
+        );
+    }
+
+    public function testARangeRollupKeepsTheOptimizersChoice(): void
+    {
+        $sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_time >= 1 AND 2c.click_time <= 2');
+
+        self::assertStringContainsString("\nFROM 202_clicks AS 2c\nLEFT OUTER JOIN 202_clicks_record AS 2cr", $sql);
+        self::assertDoesNotMatchRegularExpression('/\b(FORCE|USE|IGNORE)\s+(INDEX|KEY)\b/i', $sql);
+    }
+
+    /** A hint naming a key the table lacks fails every rollup: "Key 'click_id' doesn't exist". */
+    public function testTheKeyTheHintNamesIsInTheSchema(): void
+    {
+        self::assertStringContainsString('KEY `click_id` (`click_id`)', ClickTables::clicks()->createStatement);
+    }
+
+    /**
+     * Every rollup of one click goes through forClick(); insertSelect() is
+     * left the ranges. Read from tokens: the argument list of each
+     * insertSelect() call in the served tree, to its closing parenthesis. A
+     * predicate put in a variable first is not seen.
+     */
+    public function testNoServedFileRollsUpOneClickThroughTheRangeStatement(): void
+    {
+        $calls = 0;
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            $tokens = token_get_all($source);
+            foreach ($tokens as $i => $token) {
+                if (!is_array($token) || $token[0] !== T_STRING || $token[1] !== 'insertSelect') {
+                    continue;
+                }
+                $before = $i - 1;
+                while (is_array($tokens[$before]) && $tokens[$before][0] === T_WHITESPACE) {
+                    $before--;
+                }
+                $j = $i + 1;
+                while (is_array($tokens[$j]) && $tokens[$j][0] === T_WHITESPACE) {
+                    $j++;
+                }
+                if ((is_array($tokens[$before]) && $tokens[$before][0] === T_FUNCTION) || $tokens[$j] !== '(') {
+                    continue;
+                }
+                $depth = 0;
+                $arguments = '';
+                for ($k = $j; $k < count($tokens); $k++) {
+                    $text = is_array($tokens[$k]) ? $tokens[$k][1] : $tokens[$k];
+                    $depth += $text === '(' ? 1 : ($text === ')' ? -1 : 0);
+                    $arguments .= $text;
+                    if ($depth === 0) {
+                        break;
+                    }
+                }
+                $calls++;
+                $where = $path . ':' . $token[2];
+                self::assertStringNotContainsString(
+                    'click_id',
+                    $arguments,
+                    "$where rolls up one click with insertSelect(); use ClickRollupSql::forClick()"
+                );
+            }
+        }
+        self::assertGreaterThanOrEqual(1, $calls, 'the scan found the range rollup DataEngine::getSummary() makes');
     }
 }

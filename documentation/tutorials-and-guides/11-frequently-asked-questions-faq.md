@@ -28,6 +28,32 @@ In general, installs and upgrades work fine. If there is an issue, it might warr
 
 In general it is best to install Prosper on its own standalone domain but people have installed Prosper on subdomains and made it work.
 
+## Does my tracking domain need HTTPS?
+
+Serve it over HTTPS if you can. The click cookies a landing page or a conversion pixel on another site relies on are `Secure; SameSite=None`, and browsers only keep those over HTTPS.
+
+Tracking links, pixels and postback URLs (Get Links, Postback / Pixel, API integrations, and the API and CLI) use https:// unless your install is explicitly http-only: a tracking domain saved with `https://` or `http://` keeps that scheme, and one saved without a scheme takes the one you reach Prosper202 on. Save it as `https://track.example.com` to hand out https:// links whichever way you sign in, or as `http://track.example.com` on a domain with no certificate.
+
+Over plain HTTP, Prosper202 reads each click cookie's second copy (`tracking202subid-legacy` and so on), which browsers keep on the usual first-party terms:
+
+- A landing page or thank-you page on the tracking domain's own site works. An example is a tracker at `track.example.com` with a landing page at `www.example.com`.
+- The Get LP Code redirect page (options 2 and 3) works from any site. It finds the click through a cookie on the landing page itself.
+- A plain `lp.php` link or a pixel on another site cannot carry the click. A browser will not keep or send the tracker's cookie there. Pass the subid in the pixel. Without one, a pixel can fall back to the visitor's last click from the same IP address, a guess, only for an account with **Match conversions by IP address** on (Personal Settings, under Advanced): an account made on 1.9.79 or later starts with it off ([Same-IP fallback](../api/14-users.md#same-ip-fallback-user_pref_same_ip_fallback)).
+
+## Where does the password reset email link to?
+
+To the tracking domain stored in **Account › Personal Settings**, never to the address the reset was requested from. Whoever asks for a reset chooses that address, and the email goes to the account's owner. If no tracking domain is set, the email gives the reset page and its code without a link: open it on the address you sign in at.
+
+## Does the installer set my tracking domain?
+
+No. A fresh install has no tracking domain stored, and until you set one:
+
+- The pages build the links, snippets and postback URLs they show you on the address your browser used to open the page. Open them on the address your visitors and networks will use, or the links name that other address.
+- Anything sent to someone else uses the server's own name and port instead: the address registered with the hosted service (which runs the automatic cron jobs by calling your install back) and its cookie for your install's address. Behind a reverse proxy or a published container port, that may be an address nobody outside can reach.
+- The password reset email has no link (see above).
+
+To set one, sign in as the account the installer created, open **Account › Personal Settings**, expand **Advanced** and fill in **Tracking domain** with the host only, such as `track.example.com`. The same value is `user_tracking_domain` on `PUT /api/v3/users/1/preferences`, or `p202 user prefs update 1 --user-tracking-domain track.example.com` from the CLI. That first account's value is the one the password reset email, the landing-page script and the scheduled jobs use; any other account's value is used only by the pages that account signs in to.
+
  ## Is Memcache required?
 
 No, but strongly recommended.
@@ -38,7 +64,9 @@ This could be due to a number of reasons. Have you checked to see if Prosper is 
 
  ## What's the difference between a filtered click and a real click?
 
-By default Prosper tries to detect whether or not a click is real (green) or fake but either way it records all clicks for the record. A filtered click (red), while recorded, does not count towards cost measurements in your Prosper analytics. An example of a filtered click could be bots crawling your ads. Another example might be a repeat IP that reloads your page but did not click on your ad again. 
+By default Prosper tries to detect whether or not a click is real (green) or fake but either way it records all clicks for the record. A filtered click (red), while recorded, does not count towards cost measurements in your Prosper analytics. An example of a filtered click could be bots crawling your ads. Another example might be a repeat IP that reloads your page but did not click on your ad again. By default a click is filtered when it comes from an address a user of your install last signed in from (your own clicks), from one of the built-in search engine crawler ranges, or from an address that already clicked within the last day (a repeat visit).
+
+You can change this in **My Account › Personal Settings › Click filtering**: switch any of those three checks off, set the repeat visit window to 1 hour, 6 hours, 24 hours or 7 days, and keep a list of addresses or blocks (such as `203.0.113.0/24`) that are always counted (a client's office that tests your links) or always filtered (a click farm). The same card tests an address: it says whether a click from it would be filtered, and by which rule. Changes apply to clicks from then on. To see why a click was filtered, `p202 click get <id>` and the API's click answer show `filter_reason` (clicks recorded before 1.9.79 have none). See [Why a click is filtered](../api/09-clicks.md#why-a-click-is-filtered). Clicks from crawlers, ad reviewers (such as AdsBot-Google), link previews, headless browsers and uptime monitors are still redirected normally, but are recorded as bot clicks: they show under "Filtered out bot clicks", not under "Real clicks". See [Bot clicks](../api/09-clicks.md#bot-clicks). 
 
 ## I tried to analyze my campaign but the data is not showing, why?
 

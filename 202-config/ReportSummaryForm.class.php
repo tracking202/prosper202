@@ -21,7 +21,7 @@ class ReportSummaryForm extends ReportBasicForm
 	const DEBUG = 'MO_DEBUG';
 
 	private static $DISPLAY_LEVEL_ARRAY = [ReportBasicForm::DISPLAY_LEVEL_TITLE, ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT, ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT, ReportBasicForm::DISPLAY_LEVEL_SU, ReportBasicForm::DISPLAY_LEVEL_PAYOUT, ReportBasicForm::DISPLAY_LEVEL_EPC, ReportBasicForm::DISPLAY_LEVEL_CPC, ReportBasicForm::DISPLAY_LEVEL_INCOME, ReportBasicForm::DISPLAY_LEVEL_COST, ReportBasicForm::DISPLAY_LEVEL_NET, ReportBasicForm::DISPLAY_LEVEL_ROI];
-	private static $DETAIL_LEVEL_ARRAY = [ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK, ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT, ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK, ReportBasicForm::DETAIL_LEVEL_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE, ReportBasicForm::DETAIL_LEVEL_KEYWORD, ReportBasicForm::DETAIL_LEVEL_TEXT_AD, ReportBasicForm::DETAIL_LEVEL_REFERER, ReportBasicForm::DETAIL_LEVEL_COUNTRY, ReportBasicForm::DETAIL_LEVEL_REGION, ReportBasicForm::DETAIL_LEVEL_CITY, ReportBasicForm::DETAIL_LEVEL_ISP, ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME, ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE, ReportBasicForm::DETAIL_LEVEL_BROWSER, ReportBasicForm::DETAIL_LEVEL_PLATFORM, ReportBasicForm::DETAIL_LEVEL_IP, ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT, ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM, ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE, ReportBasicForm::DETAIL_LEVEL_UTM_TERM, ReportBasicForm::DETAIL_LEVEL_C1, ReportBasicForm::DETAIL_LEVEL_C2, ReportBasicForm::DETAIL_LEVEL_C3, ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ ReportBasicForm::DETAIL_LEVEL_ROTATOR, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT, ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_PUBLISHERS];
+	private static $DETAIL_LEVEL_ARRAY = [ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK, ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT, ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK, ReportBasicForm::DETAIL_LEVEL_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE, ReportBasicForm::DETAIL_LEVEL_KEYWORD, ReportBasicForm::DETAIL_LEVEL_TEXT_AD, ReportBasicForm::DETAIL_LEVEL_REFERER, ReportBasicForm::DETAIL_LEVEL_COUNTRY, ReportBasicForm::DETAIL_LEVEL_REGION, ReportBasicForm::DETAIL_LEVEL_CITY, ReportBasicForm::DETAIL_LEVEL_ISP, ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME, ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE, ReportBasicForm::DETAIL_LEVEL_BROWSER, ReportBasicForm::DETAIL_LEVEL_PLATFORM, ReportBasicForm::DETAIL_LEVEL_IP, ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT, ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM, ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE, ReportBasicForm::DETAIL_LEVEL_UTM_TERM, ReportBasicForm::DETAIL_LEVEL_C1, ReportBasicForm::DETAIL_LEVEL_C2, ReportBasicForm::DETAIL_LEVEL_C3, ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ ReportBasicForm::DETAIL_LEVEL_ROTATOR, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT, ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE, ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD, ReportBasicForm::DETAIL_LEVEL_PUBLISHERS];
 	private static $SORT_LEVEL_ARRAY = [ReportBasicForm::SORT_NAME, ReportBasicForm::SORT_CLICK, ReportBasicForm::SORT_LEAD, ReportBasicForm::SORT_SU, ReportBasicForm::SORT_PAYOUT, ReportBasicForm::SORT_EPC, ReportBasicForm::SORT_CPC, ReportBasicForm::SORT_INCOME, ReportBasicForm::SORT_COST, ReportBasicForm::SORT_NET, ReportBasicForm::SORT_ROI];
 
 	// +-----------------------------------------------------------------------+
@@ -332,7 +332,11 @@ class ReportSummaryForm extends ReportBasicForm
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT) {
 			return "rule_redirect_id";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS) {
-			return "transaction_id";
+			return "transaction_key";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE) {
+			return "goal_source_key";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD) {
+			return "match_method_key";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_PUBLISHERS) {
 			return "publisher_id";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_INTERVAL) {
@@ -416,6 +420,10 @@ class ReportSummaryForm extends ReportBasicForm
 			return "ReportSummaryRotatorRuleRedirectForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS) {
 			return "ReportSummaryTransactionsForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE) {
+			return "ReportSummaryGoalSourceForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD) {
+			return "ReportSummaryMatchMethodForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_PUBLISHERS) {
 			return "ReportSummaryPublishersForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_INTERVAL) {
@@ -459,6 +467,21 @@ class ReportSummaryForm extends ReportBasicForm
 
 	function wrapGroupBy($gb)
 	{
+		// The ledger levels' keys are built never empty and never null
+		// (ledgerLevelKeys()); folding '' or '0' into one group would merge a
+		// transaction id "0" with rows that carry none.
+		if ($gb === 'transaction_key' || $gb === 'goal_source_key' || $gb === 'match_method_key') {
+			return $gb;
+		}
+		// c1-c4 group by the value itself, which is text: a value of "0" is
+		// a value. The fold below (NULL or '0' read as none) is for ids,
+		// where 0 means none; applied to a c1 it put every click with c1=0
+		// under "[No c1]" with the clicks that carried no c1 at all. Only
+		// NULL (no tracking row) joins '' (an empty c1) as none, as the
+		// SELECT shows them.
+		if (in_array($gb, ['c1', 'c2', 'c3', 'c4'], true)) {
+			return "IFNULL(2t" . $gb . "." . $gb . ", '')";
+		}
 		switch ($gb) {
 			case 'ppc_network_id':
 				$gb = '2pn.' . $gb;
@@ -478,22 +501,6 @@ class ReportSummaryForm extends ReportBasicForm
 				$gb = '2c.' . $gb;
 				$groupby_null = '0';
 				break;
-			case 'c1':
-				$gb = '2tc1.' . $gb;
-				$groupby_null = '0';
-				break;
-			case 'c2':
-				$gb = '2tc2.' . $gb;
-				$groupby_null = '0';
-				break;
-			case 'c3':
-				$gb = '2tc3.' . $gb;
-				$groupby_null = '0';
-				break;
-			case 'c4':
-				$gb = '2tc4.' . $gb;
-				$groupby_null = '0';
-				break;
 			case 'utm_campaign_id':
 			case 'utm_content_id':
 			case 'utm_medium_id':
@@ -507,12 +514,66 @@ class ReportSummaryForm extends ReportBasicForm
 			case 'transaction_id':
 				$groupby_null = '';
 				break;
+			// A redirector, rule and redirect group by the joined row, the id
+			// the SELECT names them by. Grouped by the click's own id (the
+			// bare name resolves to 2c's column), a click naming another
+			// account's redirector, or one removed since, made a second group
+			// whose selected id was as empty as the none group's, and one of
+			// the two replaced the other in the tree: its clicks vanished from
+			// the report. Now both are the none group, counted (CLAUDE.md #27).
+			case 'rotator_id':
+				$gb = '2rt.id';
+				$groupby_null = '0';
+				break;
+			case 'rule_id':
+				$gb = '2rr.id';
+				$groupby_null = '0';
+				break;
+			case 'rule_redirect_id':
+				$gb = '2rrr.id';
+				$groupby_null = '0';
+				break;
 			default:
 				$groupby_null = '0';
 				break;
 		}
 		// return "IFNULL(".$gb.", '".$groupby_null."')";
 		return "IF(" . $gb . " is null or " . $gb . " = '0', '', " . $gb . ")";
+	}
+
+	/**
+	 * The group keys of the two ledger levels, over a part aliased lcp joined
+	 * to its report row 2c. A key is never empty and never shared by two
+	 * different things (CLAUDE.md #17): a fixed one-letter prefix names the
+	 * kind, and a transaction id is carried as HEX of its bytes, so neither
+	 * the column's case-insensitive collation nor trailing-space padding can
+	 * fold two ids into one group. ReportSummaryTransactionsForm and
+	 * ReportSummaryGoalSourceForm read them back.
+	 *
+	 *   transaction_key  n (a click with no counted row), b (a counted row
+	 *                    with no transaction id, or a pre-ledger lead whose
+	 *                    value is its cache), t:<hex of the id>
+	 *   goal_source_key  n, g:<goal id>, s:<source>; a pre-ledger lead's
+	 *                    cached value is s:legacy_baseline, the row its next
+	 *                    conversion carries it in as
+	 *   match_method_key n, m:<match method>; a pre-ledger lead's cached
+	 *                    value is m:unknown, as its legacy_baseline row will be
+	 *
+	 * @return array{transaction_key: string, goal_source_key: string, match_method_key: string}
+	 */
+	static function ledgerLevelKeys(): array
+	{
+		return [
+			'transaction_key' => "CASE WHEN lcp.conv_id IS NULL THEN IF(2c.leads > 0, 'b', 'n')"
+				. " WHEN lcp.transaction_id IS NULL OR lcp.transaction_id = '' THEN 'b'"
+				. " ELSE CONCAT('t:', HEX(lcp.transaction_id)) END",
+			'goal_source_key' => "CASE WHEN lcp.conv_id IS NULL THEN IF(2c.leads > 0, 's:legacy_baseline', 'n')"
+				. " WHEN lcp.goal_id > 0 THEN CONCAT('g:', lcp.goal_id)"
+				. " ELSE CONCAT('s:', lcp.source) END",
+			'match_method_key' => "CASE WHEN lcp.conv_id IS NULL THEN IF(2c.leads > 0, 'm:"
+				. \Prosper202\Conversion\Ledger\MatchMethod::UNKNOWN->value . "', 'n')"
+				. " ELSE CONCAT('m:', lcp.match_method) END",
+		];
 	}
 
 	/**
@@ -525,11 +586,9 @@ class ReportSummaryForm extends ReportBasicForm
 		$database = DB::getInstance();
 		$db = $database->getConnection();
 
-		if (isset($_SESSION['publisher']) && $_SESSION['publisher'] == false) { //user is able to see all camapigns
-			$user_id_query = " != '0' ";
-		} else {
-			$user_id_query = " = '" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
-		}
+		// Whose clicks: the rule every report page reads (DataScope).
+		$dataUserId = \Prosper202\DataEngine\DataScope::userId();
+		$user_id_query = $dataUserId === null ? " != '0' " : " = '" . $dataUserId . "' ";
 
 		$info_sql = '';
 		//select regular setup
@@ -704,14 +763,14 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C3)) {
 			$info_sql .= "
-            2c.c3_id,
-			IF(c3 is null or c3 = '0', '', c3) AS c3,
+			IF(2tc3.c3 is null, '', 2tc3.c3) AS c3,
+			IF(2c.c3_id is null or 2c.c3_id= '0', '', 2c.c3_id) AS c3_id,
 			";
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C4)) {
 			$info_sql .= "
-			2c.c4_id,
-			IF(c4 is null or c4 = '0', '', c4) AS c4,
+			IF(2tc4.c4 is null, '', 2tc4.c4) AS c4,
+			IF(2c.c4_id is null or 2c.c4_id= '0', '', 2c.c4_id) AS c4_id,
 			";
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR)) {
@@ -732,17 +791,21 @@ class ReportSummaryForm extends ReportBasicForm
 				2rrr.name as rule_redirect_name,
 			";
 		}
-		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
-			$info_sql .= "
-				2cl.click_id as sub_id,
-			    CASE
-                    WHEN 2cl.transaction_id IS NULL OR 2cl.transaction_id = ''
-                    THEN ''
-                    ELSE 2cl.transaction_id
-                END as transaction_id,
-				
-				2cl.conv_id,
-			";
+		$ledgerLevel = $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)
+			|| $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE)
+			|| $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD);
+		if ($ledgerLevel) {
+			$keys = self::ledgerLevelKeys();
+			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
+				$info_sql .= $keys['transaction_key'] . " AS transaction_key,\n";
+			}
+			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE)) {
+				$info_sql .= $keys['goal_source_key'] . " AS goal_source_key,\n";
+				$info_sql .= "MAX(lcp.goal_name) AS goal_name,\n";
+			}
+			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD)) {
+				$info_sql .= $keys['match_method_key'] . " AS match_method_key,\n";
+			}
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
@@ -752,57 +815,72 @@ class ReportSummaryForm extends ReportBasicForm
 			";
 		}
 
-		$info_sql .= "
+		if ($ledgerLevel) {
+			// One row per counted ledger row (a part) of each click: income is
+			// the part's own amount, and the click's clicks, click-throughs,
+			// leads and cost sit on exactly one part of it, so every group
+			// adds up to its parent and to the report without the ledger
+			// levels (LedgerReportSql). A click with no counted row is one
+			// part with none, carrying its report row whole.
+			$whole = "(lcp.conv_id IS NULL OR lcp.primary_part = 1)";
+			$info_sql .= "
+				SUM(IF($whole, 2c.clicks, 0)) AS clicks,
+				SUM(IF($whole, 2c.click_out, 0)) AS click_out,
+				SUM(IF($whole, 2c.leads, 0)) AS leads,
+				SUM(IF(lcp.conv_id IS NULL, 2c.income, lcp.amount)) AS income,
+				SUM(IF($whole, 2c.cost, 0)) AS cost
+			";
+		} else {
+			$info_sql .= "
 				SUM(2c.clicks) AS clicks,
 				SUM(2c.click_out) AS click_out,
 				SUM(2c.leads) AS leads,
-				2ac.aff_campaign_payout AS payout,
 				SUM(2c.income) AS income,
 				SUM(2c.cost) AS cost
-		";
+			";
+		}
 
 		$info_sql .= "
 			FROM
 				202_dataengine AS 2c";
 
+		// Every account-owned record is named only within the click's own
+		// account (CLAUDE.md #27): a click naming another account's campaign,
+		// source, landing page, text ad or redirector is still counted, in the
+		// unnamed group, as ReportsController::dimensionJoin() reads it. A rule
+		// and its redirect have no user_id; they are the account's through
+		// their redirector.
 		$info_sql .= "
-			LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id)
+			LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2c.user_id)
 		";
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK) || $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT) || $user_row['user_pref_ppc_network_id']) {
-			$info_sql .= "LEFT OUTER JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2c.user_id)";
 
 			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK) || $user_row['user_pref_ppc_network_id']) {
-				$info_sql .= "LEFT OUTER JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id)";
+				$info_sql .= "LEFT OUTER JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id AND 2pn.user_id = 2c.user_id)";
 			}
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK) || $user_row['user_pref_aff_network_id']) {
-			$info_sql .= "LEFT OUTER JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id AND 2an.user_id = 2c.user_id)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE)) {
-			$info_sql .= "LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2c.landing_page_id = 2lp.landing_page_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2c.landing_page_id = 2lp.landing_page_id AND 2lp.user_id = 2c.user_id)";
 		}
 
-		if ($user_row['user_pref_keyword']) {
-			$mysql['user_pref_keyword'] = $db->real_escape_string($user_row['user_pref_keyword']);
-			$info_sql .= "INNER JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id AND 2k.keyword LIKE '%" . $mysql['user_pref_keyword'] . "%')";
-		} else if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_KEYWORD)) {
+		// The keyword, referer and IP filters are WHERE terms (TextFilterSql,
+		// below), not joins.
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_KEYWORD)) {
 			$info_sql .= "LEFT OUTER JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TEXT_AD)) {
-			$info_sql .= "LEFT OUTER JOIN 202_text_ads AS 2ta ON (2c.text_ad_id = 2ta.text_ad_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_text_ads AS 2ta ON (2c.text_ad_id = 2ta.text_ad_id AND 2ta.user_id = 2c.user_id)";
 		}
 
-		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REFERER) || $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REDIRECT) || $user_row['user_pref_referer']) {
-			if ($user_row['user_pref_referer']) {
-				$mysql['user_pref_referer'] = $db->real_escape_string($user_row['user_pref_referer']);
-				$info_sql .= "LEFT OUTER JOIN 202_site_urls AS 2ru ON (2ru.site_url_address = '" . $mysql['user_pref_referer'] . "')";
-				$info_sql .= "INNER JOIN 202_clicks_site AS 2cs ON (2cs.click_referer_site_url_id = 2ru.site_url_id AND 2c.click_referer_site_url_id = 2cs.click_referer_site_url_id)";
-			}
-
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REFERER) || $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REDIRECT)) {
 			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REFERER)) {
 				$info_sql .= "LEFT OUTER JOIN 202_site_urls AS 2suf ON (2c.click_referer_site_url_id = 2suf.site_url_id)";
 			}
@@ -843,17 +921,9 @@ class ReportSummaryForm extends ReportBasicForm
 			$info_sql .= "LEFT OUTER JOIN 202_platforms AS 2p ON (2c.platform_id = 2p.platform_id)";
 		}
 
-		if ($user_row['user_pref_ip']) {
-			$mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
-
-			$ip_address = (ipAddress($mysql['user_pref_ip']));
-			$mysql['ip_id'] = $db->real_escape_string(INDEXES::get_ip_id($ip_address));
-
-			$info_sql .= "INNER JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id AND 2c.ip_id ='" . $mysql['ip_id'] . "')";
-			$info_sql .= "INNER JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci)";
-		} else if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
 			$info_sql .= "LEFT OUTER JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id)";
-			$info_sql .= "LEFT OUTER JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci)";
+			$info_sql .= \Prosper202\DataEngine\IpAddressSql::join('2i', '2i6');
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN)) {
@@ -893,19 +963,24 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR)) {
-			$info_sql .= "LEFT OUTER JOIN 202_rotators AS 2rt ON (2c.rotator_id = 2rt.id)";
+			$info_sql .= "LEFT OUTER JOIN 202_rotators AS 2rt ON (2c.rotator_id = 2rt.id AND 2rt.user_id = 2c.user_id)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE)) {
-			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules AS 2rr ON (2c.rule_id = 2rr.id)";
+			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules AS 2rr ON (2c.rule_id = 2rr.id AND 2rr.rotator_id IN (SELECT own_ro.id FROM 202_rotators AS own_ro WHERE own_ro.user_id = 2c.user_id))";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT)) {
-			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules_redirects AS 2rrr ON (2c.rule_redirect_id = 2rrr.id)";
+			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules_redirects AS 2rrr ON (2c.rule_redirect_id = 2rrr.id AND 2rrr.rule_id IN (SELECT own_rr.id FROM 202_rotator_rules AS own_rr INNER JOIN 202_rotators AS own_rro ON (own_rro.id = own_rr.rotator_id) WHERE own_rro.user_id = 2c.user_id))";
 		}
 
-		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
-			$info_sql .= "LEFT OUTER JOIN 202_conversion_logs AS 2cl ON (2c.click_id = 2cl.click_id)";
+		if ($ledgerLevel) {
+			// The parts are read for exactly the clicks this report reads: the
+			// same owner condition and window, both built from integers above.
+			$clickScope = "s.user_id" . $user_id_query
+				. " AND s.click_time >= " . (int) $this->getStartTime()
+				. " AND s.click_time <= " . (int) $this->getEndTime();
+			$info_sql .= "LEFT OUTER JOIN " . \Prosper202\Conversion\Ledger\LedgerReportSql::partsTable($clickScope) . " AS lcp ON (2c.click_id = lcp.click_id)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
@@ -926,6 +1001,17 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 
 		$info_sql .= \Prosper202\DataEngine\UserPrefFilters::showFilter((string)($user_row['user_pref_show'] ?? ''), '2c.');
+		// Referer, keyword and IP, as every report and the API read them.
+		// This report matched the keyword as a LIKE pattern, the referer only
+		// when it was the whole URL and through a join that paired each click
+		// with every click sharing its referer, and the address through its
+		// first 202_ips row and an inner join to 202_ips_v6 that no IPv4
+		// address has: an IPv4 filter showed nothing.
+		$info_sql .= \Prosper202\DataEngine\TextFilterSql::where(
+			$user_row,
+			'2c',
+			static fn (string $text): string => $db->real_escape_string($text)
+		);
 		if ($user_row['user_pref_country_id']) {
 			$mysql['user_pref_country_id'] = $db->real_escape_string($user_row['user_pref_country_id']);
 			$info_sql .= "
@@ -1008,7 +1094,7 @@ class ReportSummaryForm extends ReportBasicForm
 				AND 2c.ppc_account_id='" . $mysql['user_pref_ppc_account_id'] . "'
 			";
 		} else if ($user_row['user_pref_ppc_network_id'] == '16777215') {
-			$info_sql .= " AND 2c.ppc_network_id IS NULL ";
+			$info_sql .= ' AND ' . \Prosper202\DataEngine\NoTrafficSource::condition('2c.ppc_network_id') . ' ';
 		} else if ($user_row['user_pref_ppc_network_id'] != '0' && !empty($user_row['user_pref_ppc_network_id'])) {
 			$info_sql .= " AND 2pn.ppc_network_id=" . $user_row['user_pref_ppc_network_id'] . " ";
 			$info_sql .= " AND 2pn.ppc_network_deleted = 0 ";
@@ -1016,11 +1102,57 @@ class ReportSummaryForm extends ReportBasicForm
 			//$info_sql.= " AND COALESCE(2pn.ppc_network_deleted,0) = 0 ";
 		}
 
-		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
-			//$info_sql.= " AND 2c.click_lead != 0 ";
-		}
-
 		$info_sql .= $this->getGroupBy();
+        // Keep click-specific ledger parts and potentially unique dimensions
+        // on their raw path; grouping those IDs first can add a second huge sort.
+        $rawLevels = [
+            ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE,
+            ReportBasicForm::DETAIL_LEVEL_IP, ReportBasicForm::DETAIL_LEVEL_KEYWORD,
+            ReportBasicForm::DETAIL_LEVEL_REFERER, ReportBasicForm::DETAIL_LEVEL_REDIRECT,
+            ReportBasicForm::DETAIL_LEVEL_C1, ReportBasicForm::DETAIL_LEVEL_C2,
+            ReportBasicForm::DETAIL_LEVEL_C3, ReportBasicForm::DETAIL_LEVEL_C4,
+            ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT,
+            ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM, ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE,
+            ReportBasicForm::DETAIL_LEVEL_UTM_TERM,
+        ];
+        if (array_intersect($this->getDetails(), $rawLevels) === []) {
+            $rawPrefs = $user_row;
+            // Group Overview resolves a source through its joined account;
+            // campaign and account selections override their parent filters.
+            if (
+                !empty($rawPrefs['user_pref_ppc_account_id'])
+                || ($rawPrefs['user_pref_ppc_network_id'] ?? '') != '16777215'
+            ) {
+                unset($rawPrefs['user_pref_ppc_network_id']);
+            }
+            if (!empty($rawPrefs['user_pref_aff_campaign_id'])) {
+                unset($rawPrefs['user_pref_aff_network_id']);
+            }
+            unset($rawPrefs['user_pref_method_of_promotion'], $rawPrefs['user_pref_subid']);
+            $early = \Prosper202\DataEngine\UserPrefFilters::build(
+                $rawPrefs,
+                0,
+                true,
+                static fn (string $text): string => $db->real_escape_string($text)
+            );
+            $where = ' WHERE 2st.user_id' . $user_id_query
+                . ' AND 2st.click_time >= ' . (int) $this->getStartTime()
+                . ' AND 2st.click_time <= ' . (int) $this->getEndTime() . $early['filter'];
+            if (!empty($user_row['user_pref_subid'])) {
+                $where .= " AND 2st.click_id='" . $db->real_escape_string($user_row['user_pref_subid']) . "'";
+            }
+            $metrics = ['clicks', 'click_out', 'leads', 'income', 'cost'];
+            preg_match_all('/\b2c\.([a-z_][a-z0-9_]*)\b/', $info_sql, $references);
+            $dimensions = array_values(array_diff(array_unique($references[1]), [...$metrics, 'click_time']));
+            $source = \Prosper202\DataEngine\ReportAggregation::byDimensions(
+                '2st',
+                $dimensions,
+                $where,
+                $metrics,
+                '2c'
+            );
+            $info_sql = str_replace("FROM\n\t\t\t\t202_dataengine AS 2c", ltrim($source), $info_sql);
+        }
 		return $info_sql;
 	}
 
@@ -1240,6 +1372,14 @@ class ReportSummaryForm extends ReportBasicForm
 			ReportBasicForm::echoCell("Transaction ID");
 		}
 
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE)) {
+			ReportBasicForm::echoCell("Goal / source");
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD)) {
+			ReportBasicForm::echoCell("Match method");
+		}
+
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
 			ReportBasicForm::echoCell("Publisher/User");
 		}
@@ -1287,13 +1427,10 @@ class ReportSummaryForm extends ReportBasicForm
 	#[\Override]
     function getRowHtml($row, $tr_class = "")
 	{
-		global $userObj;
-
-		$hideDate = false;
-
-		if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
-			$hideDate = true;
-		}
+		// Same decision as every other report surface (and empty() rather than
+		// a bare !$_SESSION['publisher'], which raised an undefined-index notice
+		// on every non-publisher render).
+		$hideDate = \Prosper202\Report\CampaignDataMask::hidden();
 
 		$html_val = "";
 		if ($this->getRollupSubTables() && ($row->getDetailId() > 1)) {
@@ -1388,11 +1525,11 @@ class ReportSummaryForm extends ReportBasicForm
 			} else if (ReportBasicForm::DISPLAY_LEVEL_ROI == $display_item_key) {
 
 				if ($row->getRoi() < 0) {
-					$html_val .= '<td><span class="label label-important">';
+					$html_val .= '<td><span class="badge text-bg-danger">';
 				} else if ($row->getRoi() > 0) {
-					$html_val .= '<td><span class="label label-primary">';
+					$html_val .= '<td><span class="badge text-bg-success">';
 				} else {
-					$html_val .= '<td><span class="label label-default">';
+					$html_val .= '<td><span class="badge text-bg-secondary">';
 				}
 				$html_val .= $row->getRoi() . "%</span></td>";
 			}
@@ -1483,13 +1620,10 @@ class ReportSummaryForm extends ReportBasicForm
 	function getExportRowHtml($row)
 	{
 
-		global $userObj;
-
-		$hideDate = false;
-
-		if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
-			$hideDate = true;
-		}
+		// Same decision as every other report surface (and empty() rather than
+		// a bare !$_SESSION['publisher'], which raised an undefined-index notice
+		// on every non-publisher render).
+		$hideDate = \Prosper202\Report\CampaignDataMask::hidden();
 
 		$current_detail = $this->getCurrentDetailByKey($row->getDetailId());
 
@@ -1612,8 +1746,18 @@ class ReportSummaryForm extends ReportBasicForm
 			ReportBasicForm::echoCell($row->getRuleRedirectName());
 		}
 
+		// The ledger levels select their group keys, not transaction_id or
+		// a goal's name column (ReportSummaryForm::ledgerLevelKeys()).
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
-			ReportBasicForm::echoCell($row->getTransactionIDName());
+			ReportBasicForm::echoCell($row->getTransactionKeyLabel());
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE)) {
+			ReportBasicForm::echoCell($row->getGoalSourceKeyLabel());
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MATCH_METHOD)) {
+			ReportBasicForm::echoCell($row->getMatchMethodKeyLabel());
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
@@ -3382,48 +3526,102 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm
 class ReportSummaryTransactionsForm extends ReportSummaryTotalForm
 {
 	/**
-	 * Alias for getC4
+	 * The group's key (ReportSummaryForm::ledgerLevelKeys()), which is
+	 * what the report's rows are grouped on.
 	 * @return mixed
 	 */
 	#[\Override]
     function getId()
 	{
-		return $this->getConvId();
+		return $this->getTransactionKey();
 	}
 
 	/**
-	 * Alias for getC4
-	 * @return mixed
+	 * The transaction id the key carries, or a bracketed label for the
+	 * two groups that have none. Plain text: every renderer escapes it.
+	 * @return string
 	 */
 	#[\Override]
     function getName()
 	{
-		return $this->getTransactionIDName();
+		return $this->getTransactionKeyLabel();
 	}
 
-	/**
-	 * Alias for getName()
-	 * @return mixed
-	 */
 	#[\Override]
     function getTitle()
 	{
-		if ($this->getName() == '') {
-			return '[No Transaction ID]';
-		}
 		return $this->getName();
 	}
 
-	/**
-	 * Alias for getName()
-	 * @return mixed
-	 */
 	#[\Override]
     function getPrintTitle()
 	{
-		if ($this->getName() == '') {
-			return '[No Transaction ID]';
-		}
+		return $this->getName();
+	}
+}
+
+/**
+ * Group Overview's Goal / source level: income by what generated it — each
+ * goal (every version of it) or each conversion source — from the ledger's
+ * counted rows, as the Transaction ID level is.
+ */
+class ReportSummaryGoalSourceForm extends ReportSummaryTotalForm
+{
+	#[\Override]
+    function getId()
+	{
+		return $this->getGoalSourceKey();
+	}
+
+	#[\Override]
+    function getName()
+	{
+		return $this->getGoalSourceKeyLabel();
+	}
+
+	#[\Override]
+    function getTitle()
+	{
+		return $this->getName();
+	}
+
+	#[\Override]
+    function getPrintTitle()
+	{
+		return $this->getName();
+	}
+}
+
+/**
+ * Group Overview's Match method level: income by how each conversion's
+ * click was found (Prosper202\Conversion\Ledger\MatchMethod) — a click id
+ * the request named, a cookie, the landing page's visitor id, or the
+ * visitor's address — from the ledger's counted rows, as the Goal / source
+ * level is.
+ */
+class ReportSummaryMatchMethodForm extends ReportSummaryTotalForm
+{
+	#[\Override]
+    function getId()
+	{
+		return $this->getMatchMethodKey();
+	}
+
+	#[\Override]
+    function getName()
+	{
+		return $this->getMatchMethodKeyLabel();
+	}
+
+	#[\Override]
+    function getTitle()
+	{
+		return $this->getName();
+	}
+
+	#[\Override]
+    function getPrintTitle()
+	{
 		return $this->getName();
 	}
 }
@@ -3586,6 +3784,10 @@ class ReportSummaryTotalForm
 	private $sub_id;
 	private $conv_id;
 	private $transaction_id;
+	private $transaction_key;
+	private $goal_source_key;
+	private $match_method_key;
+	private $goal_name;
 	private $publisher_name;
 
 	// Missing properties for geographic and device tracking
@@ -3637,15 +3839,20 @@ class ReportSummaryTotalForm
 	}
 
 	/**
-	 * Returns the payout
-	 * @return integer
+	 * The payout: income per lead, from this group's own sums, as the Analyze
+	 * reports compute it. The query selected one campaign's payout outside
+	 * its GROUP BY, which is whichever row the server read first, and a
+	 * parent group kept whatever its last child row set.
+	 *
+	 * @return float|int
 	 */
 	function getPayout()
 	{
-		if (is_null($this->payout)) {
-			$this->payout = 0;
+		$leads = (float) $this->getLeads();
+		if ($leads != 0) {
+			return (float) $this->getIncome() / $leads;
 		}
-		return $this->payout;
+		return 0;
 	}
 
 	/**
@@ -4718,6 +4925,46 @@ class ReportSummaryTotalForm
 	}
 
 	/**
+	 * Returns the c3_id
+	 * @return integer
+	 */
+	function getC3Id()
+	{
+		if (is_null($this->c3_id) || $this->c3_id == '') {
+			$this->c3_id = 0;
+		}
+		return $this->c3_id;
+	}
+
+	/**
+	 * Sets the c3_id
+	 */
+	function setC3Id($arg0)
+	{
+		$this->c3_id = $arg0;
+	}
+
+	/**
+	 * Returns the c4_id
+	 * @return integer
+	 */
+	function getC4Id()
+	{
+		if (is_null($this->c4_id) || $this->c4_id == '') {
+			$this->c4_id = 0;
+		}
+		return $this->c4_id;
+	}
+
+	/**
+	 * Sets the c4_id
+	 */
+	function setC4Id($arg0)
+	{
+		$this->c4_id = $arg0;
+	}
+
+	/**
 	 * Returns the c3
 	 * @return string
 	 */
@@ -4906,6 +5153,98 @@ class ReportSummaryTotalForm
 	function setSubId($arg0)
 	{
 		$this->sub_id = $arg0;
+	}
+
+	function getTransactionKey()
+	{
+		return $this->transaction_key;
+	}
+
+	function setTransactionKey($arg0)
+	{
+		$this->transaction_key = (string) $arg0;
+	}
+
+	function getGoalSourceKey()
+	{
+		return $this->goal_source_key;
+	}
+
+	function setGoalSourceKey($arg0)
+	{
+		$this->goal_source_key = (string) $arg0;
+	}
+
+	function getMatchMethodKey()
+	{
+		return $this->match_method_key;
+	}
+
+	function setMatchMethodKey($arg0)
+	{
+		$this->match_method_key = (string) $arg0;
+	}
+
+	function getGoalName()
+	{
+		return $this->goal_name;
+	}
+
+	/**
+	 * The Transaction ID level's label for this row's key
+	 * (ReportSummaryForm::ledgerLevelKeys()): the transaction id it carries,
+	 * or a bracketed label for the two groups that have none. Read by the
+	 * level's own form and by the download, which labels every leaf row.
+	 * Plain text: every renderer escapes it.
+	 */
+	function getTransactionKeyLabel(): string
+	{
+		$key = (string) $this->getTransactionKey();
+		if (str_starts_with($key, 't:')) {
+			$id = hex2bin(substr($key, 2));
+			return $id === false ? '[Unreadable transaction ID]' : $id;
+		}
+		if ($key === 'n') {
+			return '[Not converted]';
+		}
+		return '[No transaction ID]';
+	}
+
+	/**
+	 * The Goal / source level's label for this row's key: the goal's name,
+	 * or the conversion source's. Read as getTransactionKeyLabel() is.
+	 */
+	function getGoalSourceKeyLabel(): string
+	{
+		$key = (string) $this->getGoalSourceKey();
+		if (str_starts_with($key, 'g:')) {
+			$name = (string) $this->getGoalName();
+			return 'Goal: ' . ($name !== '' ? $name : '#' . substr($key, 2) . ' (not found)');
+		}
+		if (str_starts_with($key, 's:')) {
+			$source = \Prosper202\Conversion\Ledger\ConversionSource::tryFrom(substr($key, 2));
+			return $source !== null ? $source->label() : substr($key, 2);
+		}
+		return '[Not converted]';
+	}
+
+	/**
+	 * The Match method level's label for this row's key: how the click of
+	 * the conversions in it was found. Read as getTransactionKeyLabel() is.
+	 */
+	function getMatchMethodKeyLabel(): string
+	{
+		$key = (string) $this->getMatchMethodKey();
+		if (str_starts_with($key, 'm:')) {
+			$method = \Prosper202\Conversion\Ledger\MatchMethod::tryFrom(substr($key, 2));
+			return $method !== null ? $method->label() : substr($key, 2);
+		}
+		return '[Not converted]';
+	}
+
+	function setGoalName($arg0)
+	{
+		$this->goal_name = $arg0 === null ? null : (string) $arg0;
 	}
 
 	function getTransactionId()

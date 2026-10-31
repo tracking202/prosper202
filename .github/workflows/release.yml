@@ -3,9 +3,14 @@ name: Release
 # Build a self-contained release zip and publish it to GitHub Releases.
 #
 # The heavy lifting lives in build/scripts/package-release.sh — this workflow
-# only provisions the toolchain that script preflights for (php, composer, go,
-# git, zip), runs it on a version tag, and attaches the artifact. Release logic
-# is never duplicated in YAML.
+# only checks or provisions the toolchain that script preflights for (php and
+# composer from the runner image, go via setup-go, git, zip), runs it on a
+# version tag, and attaches the artifact. Release logic is never duplicated in
+# YAML.
+#
+# Every action is pinned to a full commit SHA: a tag such as @v2 can be moved
+# to other code, and this job holds contents: write over the zip customers
+# install. Dependabot (.github/dependabot.yml) proposes the updates.
 #
 # Flow: bump 202-config/version.php -> git tag vX.Y.Z -> git push --tags
 
@@ -20,23 +25,45 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # This job builds the zip customers install and holds contents: write, so
+    # it runs no third-party action for PHP: ubuntu-24.04 ships PHP 8.3 and
+    # Composer. The image is named rather than "latest" so a newer PHP cannot
+    # arrive unannounced, and the check below fails the build if it ever does.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout (full history)
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # package-release.sh uses `git archive HEAD`
 
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.3'   # matches composer.json "php": ">=8.3"
-          tools: composer
+      - name: Check the runner's PHP and Composer
+        # 8.3 matches composer.json's platform pin. The extensions are the ext-*
+        # requirements in composer.lock's runtime packages, plus tokenizer for
+        # build/scripts/release-tree.php.
+        run: |
+          php -v
+          composer --version
+          php <<'PHP'
+          <?php
+          if (PHP_MAJOR_VERSION !== 8 || PHP_MINOR_VERSION !== 3) {
+              fwrite(STDERR, "::error::expected PHP 8.3, got " . PHP_VERSION . PHP_EOL);
+              exit(1);
+          }
+          $missing = array_filter(
+              ['openssl', 'pcre', 'json', 'curl', 'libxml', 'simplexml', 'iconv', 'tokenizer'],
+              fn ($e) => !extension_loaded($e)
+          );
+          if ($missing) {
+              fwrite(STDERR, '::error::runner PHP lacks: ' . implode(', ', $missing) . PHP_EOL);
+              exit(1);
+          }
+          echo 'PHP ' . PHP_VERSION . ' has every extension the build needs' . PHP_EOL;
+          PHP
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.22'   # matches go-cli/go.mod
+          go-version: '1.27.1'   # matches go-cli/go.mod
 
       - name: Verify tag matches version.php
         # On a tag push, the GitHub Release is named after the tag while the zip
@@ -52,6 +79,26 @@ jobs:
             exit 1
           fi
           echo "Tag ${GITHUB_REF_NAME} matches version.php (v${version})."
+
+      - name: Check the release notes
+        # The Release's notes are .github/release-notes/<version>.md, written
+        # before the tag, and they must say that an upgrade needs a database
+        # backup (RELEASING.md, "Upgrades are one-way"). Checked before the
+        # build so a missing file costs seconds, not the build.
+        id: notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(php -r 'require "202-config/version.php"; echo PROSPER202_VERSION;')"
+          notes=".github/release-notes/${version}.md"
+          if [ ! -f "${notes}" ]; then
+            echo "::error::${notes} is missing. Write the release's notes there and tag again (RELEASING.md)." >&2
+            exit 1
+          fi
+          if ! grep -q 'there is no downgrade' "${notes}"; then
+            echo "::error::${notes} does not say that an upgrade needs a database backup and has no downgrade (RELEASING.md, \"Upgrades are one-way\")." >&2
+            exit 1
+          fi
+          echo "path=${notes}" >> "$GITHUB_OUTPUT"
 
       - name: Build release artifact
         id: build
@@ -85,8 +132,81 @@ jobs:
         # no release tag, so it builds + summarizes the artifact (per
         # RELEASING.md) without invoking action-gh-release, which would fail.
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/prosper202-*.zip
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.path }}
           fail_on_unmatched_files: true
+
+  # Publish the production container image (the Dockerfile's default `app`
+  # stage) to GitHub Container Registry. This is what image-based deployments
+  # — including the Coolify service template in build/coolify-service-template/
+  # — pull instead of building from a git checkout. Uses the built-in
+  # GITHUB_TOKEN; no external registry account. NOTE: the ghcr.io package is
+  # private after the very first push — flip it to public once in the package's
+  # settings on GitHub so anonymous `docker pull` works.
+  docker-image:
+    # Same pinned image as the release job: the version it builds ships to
+    # customers, so nothing in it may move unannounced.
+    runs-on: ubuntu-24.04
+    # Publish only after the release job succeeds: its tag-vs-version.php check
+    # and artifact build are the release validation — without this dependency a
+    # bad tag could still ship an image (and move `latest`) with no
+    # corresponding GitHub Release.
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The versioned image tag comes straight from the git tag (which the
+      # release job this job depends on has already validated against
+      # version.php) rather than a semver parser: version.php's format permits
+      # values strict SemVer rejects (e.g. leading zeros), and a parser would
+      # silently skip the versioned tag for those.
+      - name: Derive version from tag
+        id: version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            # `latest` only for stable versions: version.php permits suffixed
+            # prereleases (e.g. v2.0.0-beta), and those must not replace the
+            # production image the Coolify template pulls by `:latest`.
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
+            # Non-tag (workflow_dispatch) runs build without pushing; give the
+            # local build a deterministic name so the tag list is never empty.
+            type=sha,enable=${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+      # A workflow_dispatch run from a branch builds without pushing, so the
+      # image build stays verifiable outside the release flow.
+      - name: Build (and push on tags)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

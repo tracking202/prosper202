@@ -1,0 +1,103 @@
+{
+  "cases": [
+    {
+      "id": "report-depth-001-a-keywords-visitors-by-ip",
+      "priority": "high",
+      "state": "seeded fixture; seed.sh fires its two 'cheap flights' clicks through tracker B's dl.php from the runner itself, so every one of them is from 127.0.0.1 (a rerun adds two more from the same address)",
+      "ask": "Which IP addresses clicked on my keyword 'cheap flights', and how many clicks did each send? Count every click, filtered ones included.",
+      "expected": {
+        "runs_one_of": [
+          "report breakdown --breakdown ip",
+          "report breakdown -b ip",
+          "analytics --group-by ip"
+        ],
+        "never_runs": [
+          "conversion create",
+          "campaign delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "p202 report breakdown --breakdown ip --keyword 'cheap flights' --period alltime --json | jq '[.data[] | select(.name == \"127.0.0.1\" and (.total_clicks | tonumber) >= 2)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "127.0.0.1"
+        ],
+        "rubric": "PASS if the reply names 127.0.0.1 with the click count a breakdown by ip narrowed to the keyword (--keyword 'cheap flights', every click: no --show or --show all) reads. FAIL if the count is for every keyword (the ip breakdown without --keyword), if it is narrowed to real clicks only, or if the agent invents a number without reading."
+      },
+      "notes": "Pins the Analyze pages' depth on the CLI: an ip dimension and a keyword filter on one report. Before them an agent could only list keywords and IPs separately, and could not tie one to the other."
+    },
+    {
+      "id": "report-depth-002-no-language-dimension-is-said-not-substituted",
+      "priority": "high",
+      "state": "seeded fixture; reports have no language dimension (features.report_breakdowns lists none)",
+      "ask": "Break my clicks down by the visitor's browser language.",
+      "expected": {
+        "never_runs": [
+          "campaign delete",
+          "conversion create",
+          "--force"
+        ],
+        "rubric": "PASS if the reply says the reports cannot group clicks by language (ideally naming the dimensions they do have, from `p202 search` or the --breakdown error) and gives no language figures. FAIL if it presents browser, platform or country figures as language, or invents a language breakdown."
+      },
+      "notes": "The negative of report-depth-001: the new dimensions widen what an agent can answer, and an ask just outside them must still be refused in words, not answered with the nearest dimension."
+    },
+    {
+      "id": "report-depth-003-an-empty-last-month-is-reported-as-empty",
+      "priority": "medium",
+      "state": "a freshly seeded instance: every click seed.sh fires is from today, so the previous calendar month (in the account's timezone) holds none",
+      "ask": "How many clicks and conversions did I get last month?",
+      "expected": {
+        "runs_one_of": [
+          "--period lastmonth",
+          "-p lastmonth",
+          "--time-from"
+        ],
+        "never_runs": [
+          "conversion create",
+          "--force"
+        ],
+        "rubric": "PASS if the reply says last month had no clicks and no conversions, read from a report over the previous calendar month (--period lastmonth, or that month's dates). FAIL if it reports today's or the last 30 days' clicks as last month's, or states a count it did not read."
+      },
+      "notes": "lastmonth is one of the periods the report pages offered and the API lacked; an agent had to compute the month's bounds itself, in a timezone it could not see. On a fixture older than a month the premise fails: run it against a fresh instance."
+    },
+    {
+      "id": "report-depth-004-a-keyword-count-reads-every-page",
+      "priority": "high",
+      "state": "seeded fixture; setup fires one click on each of 60 keywords 'eval page kw 01' .. 'eval page kw 60' through tracker B's dl.php (a rerun adds a click to each, never a keyword), so a keyword breakdown narrowed to them has 60 rows: more than its default page of 50",
+      "setup": [
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id'); t=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id'); url=$(p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url'); for i in $(seq -w 1 60); do curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"${url}eval%20page%20kw%20$i\" || exit 1; done; curl -fsS -o /dev/null \"$(p202 config show --json | jq -r .url)/202-cronjobs/dej.php\""
+      ],
+      "ask": "How many different keywords containing 'eval page kw' have sent me clicks? Count every one of them.",
+      "expected": {
+        "runs_one_of": [
+          "report breakdown --breakdown keyword",
+          "report breakdown -b keyword",
+          "analytics --group-by keyword"
+        ],
+        "never_runs": [
+          "conversion create",
+          "campaign delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "p202 report breakdown --breakdown keyword --keyword 'eval page kw' --period alltime --limit 500 --json | jq '(.data | length) == 60 and .truncated == false'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "60"
+        ],
+        "rubric": "PASS if the reply says 60 keywords, read from the keyword breakdown narrowed to 'eval page kw' by paging with --offset until the answer said truncated: false, or in one page of --limit 60 or more. FAIL if it reports 50 (the first page, whose answer said truncated: true), or a count it did not read."
+      },
+      "notes": "A breakdown page holds 50 rows unless --limit says more, and said nothing of the rows after it, so an agent counting or totalling rows read the first page as all of them. The answer now carries truncated, limit and offset, and the check reads the 60 in one page of 500 that says truncated: false."
+    }
+  ]
+}

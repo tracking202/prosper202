@@ -4,10 +4,13 @@
 declare(strict_types=1);
 
 /**
- * p202 - Prosper202 CLI Client
+ * p202 - the legacy PHP CLI for Prosper202 (Symfony Console)
  *
- * A local CLI tool for managing a remote Prosper202 installation.
- * Designed for both human operators and AI agents.
+ * A local CLI tool for managing a remote Prosper202 installation: a subset
+ * of the API, with `noun:verb` command names. The primary CLI, also invoked
+ * as `p202`, is the Go one in go-cli/ (documentation/cli/10-go-cli.md); it
+ * has the full command set. This entry point stays at bin/p202 because
+ * scripts call it by that path.
  *
  * Quick start:
  *   p202 config:set-url https://your-prosper202.com

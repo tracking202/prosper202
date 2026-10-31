@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use Prosper202\Attribution\ModelType;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
@@ -18,39 +19,31 @@ class AttributionModelCreateCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Create an attribution model')
-            ->addOption('model_name', null, InputOption::VALUE_REQUIRED, 'Model name (required)')
-            ->addOption('model_type', null, InputOption::VALUE_REQUIRED, 'Type: first_touch, last_touch, linear, time_decay, position_based, algorithmic (required)')
-            ->addOption('weighting_config', null, InputOption::VALUE_REQUIRED, 'Weighting config as JSON')
-            ->addOption('is_active', null, InputOption::VALUE_REQUIRED, '1=active, 0=inactive', '1')
-            ->addOption('is_default', null, InputOption::VALUE_REQUIRED, '1=default, 0=not default', '0');
+            ->addOption('model-name', null, InputOption::VALUE_REQUIRED, 'Model name (required)')
+            ->addOption('model-type', null, InputOption::VALUE_REQUIRED, 'Type: ' . implode(', ', ModelType::values()) . ' (required)')
+            ->addOption('weighting-config', null, InputOption::VALUE_REQUIRED, 'Weighting config as a JSON object: time_decay takes {"half_life_hours":48}, position_based {"first_weight":0.4,"last_weight":0.4}')
+            ->addOption('lookback-days', null, InputOption::VALUE_REQUIRED, 'Days before a conversion whose clicks can earn credit, 1-365 (default 30)')
+            ->addOption('status', null, InputOption::VALUE_REQUIRED, 'active or inactive (default active)')
+            ->addOption('default', null, InputOption::VALUE_NONE, 'Make this the account default model');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $name = $input->getOption('model_name');
-        $type = $input->getOption('model_type');
+        $name = $input->getOption('model-name');
+        $type = $input->getOption('model-type');
         if (!$name || !$type) {
-            $output->writeln('<error>--model_name and --model_type are required</error>');
+            $output->writeln('<error>--model-name and --model-type are required</error>');
             return Command::FAILURE;
         }
 
-        $body = [
-            'model_name' => $name,
-            'model_type' => $type,
-            'is_active' => (int)$input->getOption('is_active'),
-            'is_default' => (int)$input->getOption('is_default'),
-        ];
-
-        $weightingConfig = $input->getOption('weighting_config');
-        if ($weightingConfig !== null) {
-            $decodedConfig = json_decode((string)$weightingConfig, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                $output->writeln(
-                    sprintf('<error>Invalid --weighting_config JSON: %s</error>', json_last_error_msg())
-                );
-                return Command::FAILURE;
-            }
-            $body['weighting_config'] = $decodedConfig;
+        $body = ['model_name' => $name, 'model_type' => $type];
+        $error = AttributionModelUpdateCommand::collectDefinition($input, $body);
+        if ($error !== null) {
+            $output->writeln('<error>' . $error . '</error>');
+            return Command::FAILURE;
+        }
+        if ($input->getOption('default')) {
+            $body['is_default'] = true;
         }
 
         $result = $this->client()->post('attribution/models', $body);

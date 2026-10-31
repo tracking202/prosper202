@@ -3,14 +3,15 @@
 declare(strict_types=1);
 
 /**
- * Shared authentication gate for the messaging AJAX endpoints.
+ * Shared authentication gate for the analytics endpoint (track.php beside
+ * this file) and the chat box's pass (202-account/ajax/chat-pass.php).
  *
  * Requires a logged-in user but deliberately NOT a valid license — unlike
  * AUTH::require_user(), which also calls AUTH::require_valid_api_key() and
  * redirects to api-key-required.php when the central license check fails.
  *
- * Messaging must stay reachable even when a user's license is invalid or expired:
- * that is precisely when they need to open the messenger to contact support.
+ * Chat must stay reachable even when a user's license is invalid or expired:
+ * that is precisely when they need to open the chat box to contact support.
  * Gating it behind the license check would lock the user out of the one channel
  * they need.
  *

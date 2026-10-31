@@ -12,9 +12,10 @@ declare(strict_types=1);
  * both sides sign json_encode(config) with PHP defaults), persists it to
  * 202_users_pref.lpo_bridge_config, and applies it to the local webhook
  * row: enabled_events maps onto subscribed_events ('*' = '' = subscribe-all)
- * and a hook_url change re-runs the SSRF guard (assertUrlAllowed) before the
- * URL is updated. This makes event routing and endpoints adjustable
- * server-side after install, without a Prosper202 release.
+ * and a hook_url change is held to the LTV webhooks' URL check
+ * (MysqlWebhookRepository::urlRefusal()) before the URL is updated. This
+ * makes event routing and endpoints adjustable server-side after install,
+ * without a Prosper202 release.
  *
  * Fails closed: any verification, validation, or transport failure keeps the
  * currently applied config for that user — the bridge never guesses.
@@ -22,7 +23,7 @@ declare(strict_types=1);
 
 error_reporting(E_ALL);
 
-include_once(str_repeat("../", 1) . '202-config/connect.php');
+require_once __DIR__ . '/../202-config/connect.php';
 
 use Prosper202\Lpo\CtxToken;
 use Prosper202\Lpo\DimensionSync;
@@ -167,7 +168,10 @@ foreach ($paired as $row) {
         // Apply a hook_url change, re-running the SSRF guard first.
         $newUrl = trim((string) ($config['hook_url'] ?? ''));
         if ($newUrl !== '' && $newUrl !== (string) $hook['webhook_url']) {
-            MysqlWebhookRepository::assertUrlAllowed($newUrl);
+            $refused = MysqlWebhookRepository::urlRefusal($newUrl);
+            if ($refused !== null) {
+                throw new RuntimeException('hook_url refused: ' . $refused);
+            }
             $update = $conn->prepareWrite(
                 'UPDATE 202_ltv_webhooks SET webhook_url = ?, updated_at = ? WHERE webhook_id = ? AND user_id = ?'
             );

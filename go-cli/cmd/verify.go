@@ -27,10 +27,24 @@ func probeClient() *http.Client {
 // appendTrackingKW appends the test keyword param using the correct separator
 // whether or not the link already has a query string.
 func appendTrackingKW(link string) string {
-	if strings.Contains(link, "?") {
-		return link + "&t202kw=test"
+	return withLinkParam(link, "t202kw", "test")
+}
+
+// withLinkParam adds key=value to a tracking link's query, before any
+// fragment: a landing-page tracker's link keeps the page's #fragment, and a
+// parameter after it never reaches the server. The link already carries
+// t202kw= (empty, or the traffic source's macro); the redirects read the
+// last occurrence, so the appended value wins.
+func withLinkParam(link, key, value string) string {
+	fragment := ""
+	if i := strings.IndexByte(link, '#'); i >= 0 {
+		link, fragment = link[:i], link[i:]
 	}
-	return link + "?t202kw=test"
+	sep := "?"
+	if strings.Contains(link, "?") {
+		sep = "&"
+	}
+	return link + sep + key + "=" + value + fragment
 }
 
 // geoIPs maps an ISO country code to a representative public IP, used to spoof
@@ -114,8 +128,8 @@ func rotatorDestination(data map[string]interface{}, geo string) (rule, dest str
 			val, _ := cr["value"].(string)
 			ok := true
 			switch {
-			case strings.EqualFold(strings.TrimSpace(val), "ALL"):
-				ok = true // catch-all criterion matches any visitor
+			case criterionMatchesEveryone(criterionValues(val)):
+				ok = true // ALL, in any case and among other values, matches any visitor
 				explain = append(explain, fmt.Sprintf("rule %q: %s ALL -> true", r["rule_name"], stmt))
 			case ctype == "country":
 				codes := countryCodesFromValue(val)
@@ -223,8 +237,7 @@ var rotatorTestCmd = &cobra.Command{
 			}
 			rows = append(rows, row)
 		}
-		render(rowsToJSON(rows))
-		return nil
+		return renderRows(rows)
 	},
 }
 
@@ -253,7 +266,7 @@ var trackerTestCmd = &cobra.Command{
 		}
 		link := resp.Data.DirectURL
 		if link == "" {
-			return validationError("tracker has no resolvable link")
+			return validationError("tracker has no resolvable link").WithHint("Check the tracker with `p202 tracker get <id>`; it needs a landing page or redirect URL before it can be verified.")
 		}
 		if !strings.HasPrefix(link, "http") {
 			scheme := "http"
@@ -304,8 +317,7 @@ var trackerTestCmd = &cobra.Command{
 			}
 			rows = append(rows, row)
 		}
-		render(rowsToJSON(rows))
-		return nil
+		return renderRows(rows)
 	},
 }
 
@@ -356,6 +368,7 @@ var rotatorCheckCmd = &cobra.Command{
 			return err
 		}
 		var datas []map[string]interface{}
+		var fetchFailures []map[string]interface{}
 		if len(args) == 1 {
 			raw, err := c.Get("rotators/"+args[0], nil)
 			if err != nil {
@@ -382,19 +395,35 @@ var rotatorCheckCmd = &cobra.Command{
 			for _, r := range resp.Data {
 				full, err := c.Get(fmt.Sprintf("rotators/%v", normalizeID(r["id"])), nil)
 				if err != nil {
+					// This command gates deploys, so a rotator whose detail
+					// fetch failed must count as a failure — silently skipping
+					// it let a broken rotator ride an exit code 0.
+					fetchFailures = append(fetchFailures, map[string]interface{}{
+						"id":     normalizeID(r["id"]),
+						"name":   r["name"],
+						"status": "ERROR",
+						"reason": fmt.Sprintf("could not fetch rotator: %v", err),
+					})
 					continue
 				}
 				var fr struct {
 					Data map[string]interface{} `json:"data"`
 				}
-				if json.Unmarshal(full, &fr) == nil {
-					datas = append(datas, fr.Data)
+				if err := json.Unmarshal(full, &fr); err != nil {
+					fetchFailures = append(fetchFailures, map[string]interface{}{
+						"id":     normalizeID(r["id"]),
+						"name":   r["name"],
+						"status": "ERROR",
+						"reason": fmt.Sprintf("could not parse rotator: %v", err),
+					})
+					continue
 				}
+				datas = append(datas, fr.Data)
 			}
 		}
 
-		rows := make([]map[string]interface{}, 0, len(datas))
-		failed := 0
+		rows := make([]map[string]interface{}, 0, len(datas)+len(fetchFailures))
+		failed := len(fetchFailures)
 		for _, d := range datas {
 			issues := rotatorIssues(d)
 			status := "OK"
@@ -409,7 +438,10 @@ var rotatorCheckCmd = &cobra.Command{
 				"reason": strings.Join(issues, "; "),
 			})
 		}
-		render(rowsToJSON(rows))
+		rows = append(rows, fetchFailures...)
+		if err := renderRows(rows); err != nil {
+			return err
+		}
 		if failed > 0 {
 			return partialFailureError("%d rotator(s) have configuration issues", failed)
 		}
@@ -443,7 +475,12 @@ var rotatorTraceCmd = &cobra.Command{
 		var tr struct {
 			Data []map[string]interface{} `json:"data"`
 		}
-		_ = json.Unmarshal(trk, &tr)
+		// Discarding this error made tr.Data nil, so a malformed response was
+		// reported as "fed by 0 tracker(s)" — a confident false claim from a
+		// command whose whole purpose is verification.
+		if err := json.Unmarshal(trk, &tr); err != nil {
+			return fmt.Errorf("parsing trackers for rotator %s: %w", args[0], err)
+		}
 
 		fmt.Fprintf(os.Stderr, "Rotator %s %q — default %s, %d rule(s), fed by %d tracker(s)\n",
 			args[0], fmt.Sprintf("%v", rot.Data["name"]), defaultDest(rot.Data),
@@ -457,8 +494,7 @@ var rotatorTraceCmd = &cobra.Command{
 				"click_cpc":         t["click_cpc"],
 			})
 		}
-		render(rowsToJSON(rows))
-		return nil
+		return renderRows(rows)
 	},
 }
 
@@ -468,11 +504,12 @@ func asSlice(v interface{}) []interface{} {
 }
 
 // resolveTrackerLink fetches and follows a tracker's link, returning status and
-// destination (used by tracker test and tracker check).
-func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest string) {
+// destination (used by tracker check), and the API's error when the link
+// itself could not be fetched.
+func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest string, apiErr error) {
 	urlData, err := c.Get("trackers/"+id+"/url", nil)
 	if err != nil {
-		return "ERR", err.Error()
+		return "ERR", err.Error(), err
 	}
 	var resp struct {
 		Data struct {
@@ -480,7 +517,7 @@ func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest str
 		} `json:"data"`
 	}
 	if json.Unmarshal(urlData, &resp) != nil || resp.Data.DirectURL == "" {
-		return "ERR", "no link"
+		return "ERR", "no link", nil
 	}
 	link := resp.Data.DirectURL
 	if !strings.HasPrefix(link, "http") {
@@ -493,7 +530,7 @@ func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest str
 	client := probeClient()
 	req, reqErr := http.NewRequest("GET", appendTrackingKW(link), nil)
 	if reqErr != nil {
-		return "ERR", reqErr.Error()
+		return "ERR", reqErr.Error(), nil
 	}
 	if ip, ok := geoIPs[strings.ToUpper(geo)]; ok {
 		req.Header.Set("X-Forwarded-For", ip)
@@ -503,14 +540,14 @@ func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest str
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return "ERR", err.Error()
+		return "ERR", err.Error(), nil
 	}
 	defer res.Body.Close()
 	loc := res.Header.Get("Location")
 	if loc == "" {
-		return fmt.Sprintf("%d", res.StatusCode), "(blank — click dropped!)"
+		return fmt.Sprintf("%d", res.StatusCode), "(blank — click dropped!)", nil
 	}
-	return fmt.Sprintf("%d", res.StatusCode), loc
+	return fmt.Sprintf("%d", res.StatusCode), loc, nil
 }
 
 var trackerCheckCmd = &cobra.Command{
@@ -534,7 +571,11 @@ var trackerCheckCmd = &cobra.Command{
 			var resp struct {
 				Data []map[string]interface{} `json:"data"`
 			}
-			_ = json.Unmarshal(list, &resp)
+			// Without this check a malformed list left resp.Data nil, so the
+			// command verified nothing at all and still reported success.
+			if err := json.Unmarshal(list, &resp); err != nil {
+				return fmt.Errorf("parsing tracker list: %w", err)
+			}
 			for _, t := range resp.Data {
 				ids = append(ids, fmt.Sprintf("%v", normalizeID(t["tracker_id"])))
 			}
@@ -542,7 +583,12 @@ var trackerCheckCmd = &cobra.Command{
 		rows := make([]map[string]interface{}, 0, len(ids))
 		failed := 0
 		for _, id := range ids {
-			status, dest := resolveTrackerLink(c, id, "", "")
+			status, dest, apiErr := resolveTrackerLink(c, id, "", "")
+			if refused := licenceRefusal(apiErr); refused != nil {
+				// The install refuses the CLI, not this tracker: every
+				// remaining check would meet the same 402.
+				return fmt.Errorf("checking tracker %s (%d of %d checked before it; the rest not attempted): %w", id, len(rows), len(ids), refused)
+			}
 			ok := strings.HasPrefix(status, "3")
 			if !ok {
 				failed++
@@ -553,7 +599,9 @@ var trackerCheckCmd = &cobra.Command{
 				"destination": dest,
 			})
 		}
-		render(rowsToJSON(rows))
+		if err := renderRows(rows); err != nil {
+			return err
+		}
 		if failed > 0 {
 			return partialFailureError("%d tracker(s) did not resolve to a redirect", failed)
 		}
@@ -571,7 +619,8 @@ func init() {
 	rotatorCmd.AddCommand(rotatorTestCmd)
 
 	trackerTestCmd.Flags().String("geo", "", "Comma-separated country codes to simulate (spoofs X-Forwarded-For)")
-	trackerTestCmd.Flags().String("device", "", "Device to simulate: mobile, desktop, tablet")
+	trackerTestCmd.Flags().String("device", "", "Device to simulate")
+	enumFlag(trackerTestCmd, "device", newEnum(sortedKeys(deviceUAs), enumFoldCase()))
 	// The tracker command is built dynamically in crud.go's init() (which runs
 	// before this file's init), so look it up by name to attach the subcommand.
 	if tc := findChildCommand("tracker"); tc != nil {

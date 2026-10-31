@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"p202/internal/api"
 	"p202/internal/metrics"
+	"p202/internal/output"
 	syncdata "p202/internal/sync"
 	"p202/internal/syncstate"
 
@@ -100,7 +102,7 @@ var syncStatusCmd = &cobra.Command{
 		fromProfile := firstFlag(cmd, "from", "source")
 		toProfile := firstFlag(cmd, "to", "target")
 		if fromProfile == "" || toProfile == "" {
-			return fmt.Errorf("--from and --to are required")
+			return validationError("--from and --to are required").WithHint("Pass profile names, e.g. --from prod --to staging; `p202 config list-profiles` shows them.")
 		}
 		if handled, err := tryServerSyncRead("sync/status", fromProfile, toProfile); err != nil {
 			return err
@@ -164,12 +166,15 @@ var syncStatusCmd = &cobra.Command{
 			}
 		}
 
-		payload, _ := json.Marshal(map[string]interface{}{
+		payload, err := json.Marshal(map[string]interface{}{
 			"source":    fromProfile,
 			"target":    toProfile,
 			"last_sync": manifest.LastSync,
 			"data":      perEntity,
 		})
+		if err != nil {
+			return fmt.Errorf("encoding output: %w", err)
+		}
 		render(payload)
 		return nil
 	},
@@ -182,7 +187,7 @@ var syncHistoryCmd = &cobra.Command{
 		fromProfile := firstFlag(cmd, "from", "source")
 		toProfile := firstFlag(cmd, "to", "target")
 		if fromProfile == "" || toProfile == "" {
-			return fmt.Errorf("--from and --to are required")
+			return validationError("--from and --to are required").WithHint("Pass profile names, e.g. --from prod --to staging; `p202 config list-profiles` shows them.")
 		}
 		if handled, err := tryServerSyncRead("sync/history", fromProfile, toProfile); err != nil {
 			return err
@@ -195,12 +200,15 @@ var syncHistoryCmd = &cobra.Command{
 			return err
 		}
 
-		payload, _ := json.Marshal(map[string]interface{}{
+		payload, err := json.Marshal(map[string]interface{}{
 			"source":    fromProfile,
 			"target":    toProfile,
 			"last_sync": manifest.LastSync,
 			"data":      manifest.History,
 		})
+		if err != nil {
+			return fmt.Errorf("encoding output: %w", err)
+		}
 		render(payload)
 		return nil
 	},
@@ -220,6 +228,19 @@ var reSyncCmd = &cobra.Command{
 }
 
 func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) error {
+	// A sync resolves each entity's foreign keys from ids the preceding
+	// creates returned. A staged create returns a proposal, not a record, so
+	// those ids do not exist yet: the run would count proposals as synced,
+	// then fail to resolve the dependents, leaving a half-usable proposal
+	// queue and a sync history that never happened. The server-side path
+	// refuses `staged=1` on sync/jobs already, but that rejection is
+	// swallowed by the probe-and-fall-back below, so refuse here where it is
+	// still one clear answer.
+	if api.StagedMode() {
+		return validationError("sync cannot be staged").
+			WithHint("Sync needs the ids that staged creates do not have yet. Drop --staged; use `--dry-run` to see what a sync would change, or stage individual writes instead.")
+	}
+
 	done := metrics.Timer("sync", entityArg)
 	if handled, err := tryServerSideSync(entityArg, fromProfile, toProfile, opts); err != nil {
 		done(false, err.Error())
@@ -277,7 +298,7 @@ func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) err
 	}
 
 	done(true, "")
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"source":       fromProfile,
 		"target":       toProfile,
 		"dry_run":      opts.DryRun,
@@ -285,7 +306,21 @@ func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) err
 		"incremental":  opts.Incremental,
 		"results":      runOutput.Results,
 	})
+	if err != nil {
+		return fmt.Errorf("encoding output: %w", err)
+	}
 	render(payload)
+	// --skip-errors goes on past a failed record; it does not make the sync
+	// a success. It exited 0 with records failed, which a script reads as
+	// everything synced. The results list each failure.
+	failed := 0
+	for _, r := range runOutput.Results {
+		failed += r.Failed
+	}
+	if failed > 0 {
+		return partialFailureError("%d record(s) failed to sync; the results list each under errors", failed).
+			WithHint("Fix the cause on the source (or the target) and run the same sync again: records already synced are found on the target by their natural key, not created twice.")
+	}
 	return nil
 }
 
@@ -349,7 +384,10 @@ func runSyncProfiles(entities []string, fromProfile, toProfile string, opts sync
 
 			if opts.Incremental && manifest != nil && sourceID != "" {
 				if entry, exists := manifest.GetMapping(currentEntity, sourceID); exists {
-					if entry.SourceHash == sourceHash {
+					// "" means no fingerprint (see comparableHash); it must never
+					// satisfy the unchanged-skip, else unencodable rows are
+					// silently dropped from every incremental sync.
+					if entry.SourceHash != "" && entry.SourceHash == sourceHash {
 						result.Skipped++
 						idMap.Set(currentEntity, sourceID, entry.TargetID)
 						continue
@@ -476,7 +514,7 @@ func readSyncFlags(cmd *cobra.Command) (syncOptions, string, string, error) {
 	fromProfile := firstFlag(cmd, "from", "source")
 	toProfile := firstFlag(cmd, "to", "target")
 	if fromProfile == "" || toProfile == "" {
-		return syncOptions{}, "", "", fmt.Errorf("--from and --to are required")
+		return syncOptions{}, "", "", validationError("--from and --to are required").WithHint("Pass profile names, e.g. --from prod --to staging; `p202 config list-profiles` shows them.")
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -495,7 +533,7 @@ func selectedSyncEntities(entity string) ([]string, error) {
 		return append([]string(nil), syncDependencyOrder...), nil
 	}
 	if _, ok := portableEntities[entity]; !ok {
-		return nil, fmt.Errorf("unsupported entity %q", entity)
+		return nil, validationError("unsupported entity %q (supported: all, %s)", entity, strings.Join(sortedPortableEntities(), ", ")).WithHint("Pass one of those as the first argument; `all` syncs every entity in dependency order.")
 	}
 	return []string{entity}, nil
 }
@@ -523,12 +561,12 @@ func buildSyncPayload(entity string, sourceRow map[string]interface{}, sourceLoo
 
 		sourceNatural := referenceNaturalByEntity(refEntity, rawSourceID, sourceLookups)
 		if sourceNatural == "" {
-			return nil, fmt.Errorf("unresolvable source foreign key %s=%s (entity %s)", fkField, rawSourceID, entity)
+			return nil, withHint(fmt.Errorf("unresolvable source foreign key %s=%s (entity %s)", fkField, rawSourceID, entity), "The source record references a %s that does not exist on the source; fix or remove the dangling reference there, or sync with --skip-errors to leave that record out.", fkField)
 		}
 
 		targetID := referenceIDByNatural(refEntity, sourceNatural, targetLookups)
 		if targetID == "" {
-			return nil, fmt.Errorf("unresolvable target foreign key %s via %s=%s", fkField, refEntity, sourceNatural)
+			return nil, withHint(fmt.Errorf("unresolvable target foreign key %s via %s=%s", fkField, refEntity, sourceNatural), "The target has no %s matching the source's; sync that entity first (dependency order: aff-network/ppc-network -> ppc-account -> campaign -> landing-page -> text-ad -> rotator -> tracker) or run `p202 sync all`.", refEntity)
 		}
 
 		payload[fkField] = parseNumericOrString(targetID)
@@ -625,15 +663,27 @@ func replaceEntityRecord(targetData map[string][]map[string]interface{}, entity,
 	targetData[entity] = append(targetData[entity], updated)
 }
 
+// handleSyncRecordError records a record's failure and says whether to go on.
+// --skip-errors goes past a record's own failure, never past the key's: a 401
+// or 403 fails every later record the same way, so it stops the run.
 func handleSyncRecordError(entity, key string, err error, skipErrors bool, result *syncdata.EntityResult) bool {
 	result.Failed++
 	msg := fmt.Sprintf("%s[%s]: %v", entity, key, err)
 	result.Errors = append(result.Errors, msg)
-	return skipErrors
+	return skipErrors && api.ErrorCategory(err) != "auth"
 }
 
+// comparableHash fingerprints a record for incremental-sync change detection.
+// A row that cannot be encoded returns "" — never a real hash — because hashing
+// the nil bytes from a failed Marshal gave every unencodable row the SAME
+// digest, so a changed record could match its stored hash and be skipped as
+// unchanged. Callers must treat "" as "no fingerprint" (see the skip check in
+// runSyncProfiles), which errs toward re-syncing.
 func comparableHash(row map[string]interface{}) string {
-	data, _ := json.Marshal(row)
+	data, err := json.Marshal(row)
+	if err != nil {
+		return ""
+	}
 	sum := sha1.Sum(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -655,7 +705,7 @@ func addSyncFlags(cmd *cobra.Command) {
 	cmd.Flags().String("source", "", "Source profile name (alias of --from)")
 	cmd.Flags().String("target", "", "Target profile name (alias of --to)")
 	cmd.Flags().Bool("dry-run", false, "Show sync actions without writing")
-	cmd.Flags().Bool("skip-errors", false, "Continue processing after record-level failures")
+	cmd.Flags().Bool("skip-errors", false, "Continue processing after record-level failures; exits 5 when any record failed, and a 401 or 403 still stops it")
 	cmd.Flags().Bool("force-update", false, "Update mismatched target records")
 }
 
@@ -673,19 +723,23 @@ func firstFlag(cmd *cobra.Command, names ...string) string {
 func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOptions) (bool, error) {
 	orchestrator, err := api.NewFromProfile(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	if !orchestrator.SupportsCapability("sync_features", "async_jobs") {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	sourceConn, err := loadProfileConnection(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	targetConn, err := loadProfileConnection(toProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	payload := map[string]interface{}{
@@ -704,10 +758,21 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	}
 	resp, err := orchestrator.Post(endpoint, payload)
 	if err != nil {
-		return false, nil
+		// A profile url the server will not call is its answer, not "server
+		// sync unavailable": falling back would run the sync from this
+		// machine instead and the refusal would never be read.
+		if refused := syncURLRefusal(err, fromProfile, toProfile); refused != nil {
+			return true, refused
+		}
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	obj, parseErr := parseDataObject(resp)
+	// A failed status poll is not a failed sync: the job already exists on the
+	// server, so returning anything that makes the caller fall back would run
+	// the whole sync a second time. But it must not vanish either — the
+	// rendered response is then the job-creation reply, not its outcome.
+	var pollErr error
 	if parseErr == nil {
 		jobID := scalarString(obj["job_id"])
 		if jobID != "" {
@@ -715,56 +780,138 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				_, _ = orchestrator.Post("sync/worker/run", map[string]interface{}{"limit": 10})
 				jobResp, getErr := orchestrator.Get("sync/jobs/"+jobID, nil)
 				if getErr != nil {
+					pollErr = getErr
 					break
 				}
 				jobObj, objErr := parseDataObject(jobResp)
 				if objErr != nil {
+					pollErr = objErr
 					break
 				}
 				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
 				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
 					render(jobResp)
-					return true, nil
+					// The job's own outcome is the command's: a failed,
+					// partial or cancelled job exited 0 here, read by a
+					// script as a sync that happened.
+					if status != "succeeded" {
+						hint := syncJobErrorHint(scalarString(jobObj["error_code"]))
+						if hint == "" {
+							hint = "Fix the cause and run the same sync again: records already synced are found on the target by their natural key, not created twice. `p202 sync history` lists past runs."
+						}
+						return true, partialFailureError("sync job %s ended %s; the job above lists what failed", jobID, status).
+							WithHint("%s", hint)
+					}
+					return true, nil // server-side sync ran; the caller must not fall back
 				}
 				time.Sleep(250 * time.Millisecond)
 			}
 		}
 	}
 
+	if pollErr != nil {
+		output.Success(
+			"Warning: the sync job was created but its status could not be read (%v). "+
+				"The output below is the job as queued, not its result — check `p202 sync status`.",
+			pollErr)
+	}
 	render(resp)
-	return true, nil
+
+	// nilerr is right that an error was seen and nil is returned; that is
+	// deliberate here and the warning above says so.
+	return true, nil //nolint:nilerr // the job exists server-side; falling back would run the sync twice
+}
+
+// syncURLHint is the next step for a profile url the server that runs the
+// sync will not call (WebhookGuard::checkSync()).
+func syncURLHint(profile string) string {
+	point := "Point the profile the error names (--from or --to) at its install's public https:// URL: `p202 --profile <name> config set-url https://…`. "
+	if profile != "" {
+		point = fmt.Sprintf("Point profile %q at its install's public https:// URL: `p202 --profile %s config set-url https://…`. ", profile, profile)
+	}
+	return "The server that runs the sync (the --from profile's install) calls both profiles' urls, and only public https:// addresses. " +
+		point +
+		"For an install on that server's own machine or network, its operator can admit the address with " +
+		"P202_WEBHOOK_ALLOW_NETWORKS in that install's 202-config.php (for example 127.0.0.1/32 for the same machine), " +
+		"which also allows http:// there; link-local and cloud metadata addresses are never admitted."
+}
+
+// syncURLRefusal is the 422 a sync job or plan is refused with when a
+// profile's url is one the server will not call, with its hint; nil for any
+// other error. Every path that has the server call the profiles, and falls
+// back to this machine, asks it first
+// (TestEveryPathThatSendsTheProfilesIsHeldToTheRefusal).
+func syncURLRefusal(err error, fromProfile, toProfile string) error {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
+		return nil
+	}
+	if _, ok := apiErr.FieldErrors["source.url"]; ok {
+		return withHint(err, "%s", syncURLHint(fromProfile))
+	}
+	if _, ok := apiErr.FieldErrors["target.url"]; ok {
+		return withHint(err, "%s", syncURLHint(toProfile))
+	}
+	return nil
+}
+
+// syncJobErrorHint is the next step for a server-side job that stopped for
+// one of the reasons it names by error_code (SyncException); "" for the rest.
+func syncJobErrorHint(code string) string {
+	switch code {
+	case "sync_url_refused":
+		return syncURLHint("")
+	case "sync_url_unresolved":
+		return "A profile's host does not resolve from the server that runs the sync; the job tries again by itself. " +
+			"Check the name in `p202 config list-profiles`, and that the server can resolve it."
+	case "sync_limit":
+		return "A remote answered more, or more slowly, than a sync reads (the error names the cap and the remote): " +
+			"a Prosper202 API does not, so check that install with `p202 --profile <name> system health` before running the same sync again."
+	case "sync_key_unreadable":
+		return "The job's stored API key could not be opened on the server. Run the same `p202 sync` again: it queues a new job with the profiles' keys."
+	}
+	return ""
 }
 
 func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
 	orchestrator, err := api.NewFromProfile(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	if !orchestrator.SupportsCapability("sync_features", "async_jobs") {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	sourceConn, err := loadProfileConnection(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	targetConn, err := loadProfileConnection(toProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
+	// scalarString instead of type assertions: loadProfileConnection builds
+	// string values today, but a bare .(string) here would panic at a distance
+	// if that map's shape ever changed in diff.go.
 	params := map[string]string{
-		"source[name]": sourceConn["name"].(string),
-		"source[url]":  sourceConn["url"].(string),
-		"target[name]": targetConn["name"].(string),
-		"target[url]":  targetConn["url"].(string),
+		"source[name]": scalarString(sourceConn["name"]),
+		"source[url]":  scalarString(sourceConn["url"]),
+		"target[name]": scalarString(targetConn["name"]),
+		"target[url]":  scalarString(targetConn["url"]),
 	}
 	resp, err := orchestrator.Get(path, params)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	render(resp)
-	return true, nil
+
+	return true, nil // server-side sync ran; the caller must not fall back
 }
 
 func init() {

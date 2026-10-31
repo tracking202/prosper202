@@ -1,0 +1,2 @@
+-- Fixed: Syncing a Smart Redirector whose rules include one saved before 1.9.79 with no criterion (which sends every visitor) now copies that rule as "country is ALL", which sends the same visitors, instead of stopping the redirector's sync. A redirector with more rules than the target accepts in one write (200) now fails its sync saying how many rules it has, and the target keeps its rules unchanged.
+app: Fixed: Redirector sync copies an older rule with no criterion as "country is ALL" instead of stopping.

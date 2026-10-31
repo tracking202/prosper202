@@ -236,15 +236,18 @@ func ApplyEventAdjustments(predictions []Prediction, events []Event, impacts map
 	for i := range adjusted {
 		key := truncateToDay(adjusted[i].T).Format("2006-01-02")
 		if adj, ok := adjustments[key]; ok {
-			adjusted[i].Value *= adj.Multiplier
-			adjusted[i].LowerBound *= adj.Multiplier
-			adjusted[i].UpperBound *= adj.Multiplier
-			// Multiplicative adjustment can invert bounds when the multiplier
-			// is negative (e.g., learned from negative-profit actuals).
-			// Guarantee Lower ≤ Upper.
-			if adjusted[i].LowerBound > adjusted[i].UpperBound {
-				adjusted[i].LowerBound, adjusted[i].UpperBound = adjusted[i].UpperBound, adjusted[i].LowerBound
+			// scalePrediction guarantees Lower ≤ Upper and ordered quantiles
+			// even when the multiplier is negative (e.g., learned from
+			// negative-profit actuals). Copy the quantile map first so the
+			// input predictions stay unmodified.
+			if len(adjusted[i].Quantiles) > 0 {
+				qs := make(map[string]float64, len(adjusted[i].Quantiles))
+				for k, v := range adjusted[i].Quantiles {
+					qs[k] = v
+				}
+				adjusted[i].Quantiles = qs
 			}
+			scalePrediction(&adjusted[i], adj.Multiplier)
 		}
 	}
 

@@ -1,0 +1,176 @@
+{
+  "cases": [
+    {
+      "id": "ltv-001-revenue-from-another-system-lands-once-on-the-customer",
+      "priority": "high",
+      "state": "seeded fixture; setup makes an LTV customer with the reference EVAL-LTV-CUST (no revenue yet)",
+      "setup": [
+        "p202 ltv customer upsert --customer-ref EVAL-LTV-CUST --email eval-ltv@example.com --first-name Eve --json >/dev/null"
+      ],
+      "ask": "Our billing system reports that customer EVAL-LTV-CUST bought the Pro plan (SKU EVAL-PRO) for $49.00, order EVAL-LTV-ORD-1. Record that revenue on the customer.",
+      "expected": {
+        "runs_one_of": [
+          "ltv revenue record"
+        ],
+        "checks": [
+          {
+            "run": "id=$(p202 ltv customers --search EVAL-LTV-CUST --json | jq -r '.data[0].customer_id'); p202 ltv customers \"$id\" --json | jq '[.data.recent_events[] | select(.event_type==\"purchase\" and (.amount|tonumber)==49)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if customer EVAL-LTV-CUST has exactly one 49.00 purchase on its revenue ledger, recorded with the order as its idempotency key or reference so a retry cannot double it. FAIL if the revenue went to another or a new customer, was recorded twice, or was recorded as a click conversion instead of on the customer.",
+        "reply_includes": [
+          "EVAL-LTV-CUST"
+        ]
+      },
+      "notes": "The check reads the customer's ledger, not the reply: a purchase on a fresh customer (a typo in --customer-ref creates one), a second purchase from a retry without --idempotency-key, or a refund-signed amount all fail it. Re-running on the same instance stays green when the agent keys the order (the server answers duplicate: true and records nothing), which is the behaviour the case wants."
+    },
+    {
+      "id": "ltv-002-gdpr-erasure-keeps-the-revenue",
+      "priority": "high",
+      "state": "seeded fixture; setup makes an LTV customer EVAL-LTV-GDPR (email eval-gdpr@example.com) with one 31.57 purchase",
+      "setup": [
+        "p202 ltv customer upsert --customer-ref EVAL-LTV-GDPR --email eval-gdpr@example.com --first-name Gina --json >/dev/null",
+        "p202 ltv revenue record --customer-ref EVAL-LTV-GDPR --amount 31.57 --idempotency-key EVAL-LTV-GDPR-1 --json >/dev/null"
+      ],
+      "ask": "Customer EVAL-LTV-GDPR asked us to forget them under GDPR. Erase their personal data, but our revenue numbers must stay intact.",
+      "expected": {
+        "runs_one_of": [
+          "ltv customer erase"
+        ],
+        "checks": [
+          {
+            "run": "p202 ltv customers --search eval-gdpr@example.com --json | jq '.pagination.total == 0'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "p202 ltv customers --search erased: --all --json | jq '[.data[] | select((.total_revenue|tonumber) == 31.57)] | length >= 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the customer's personal data is gone (no customer is found by its email or reference) while an anonymized customer still carries its 31.57 of revenue, and the reply says the revenue was kept. FAIL if the customer is still findable, its revenue was removed or moved, or the agent only reported what it would do.",
+        "reply_includes": [
+          "EVAL-LTV-GDPR"
+        ]
+      },
+      "notes": "Erasure in Prosper202 anonymizes rather than deletes (`p202 ltv customer erase`): the second check finds the anonymized row (primary_ref erased:<id>) by its untouched revenue, so an agent that found some other way to make the customer disappear — merging it away, or clearing fields by hand while the reference alias survives — fails one check or the other."
+    },
+    {
+      "id": "ltv-003-a-webhook-takes-only-the-event-asked-for",
+      "priority": "medium",
+      "state": "seeded fixture; setup removes any webhook at https://hooks.example.com/eval-ltv-revenue",
+      "setup": [
+        "for id in $(p202 ltv webhooks list --json | jq -r '.data[] | select(.webhook_url==\"https://hooks.example.com/eval-ltv-revenue\") | .webhook_id'); do p202 ltv webhooks delete \"$id\" --force >/dev/null; done"
+      ],
+      "ask": "Our billing system wants a signed notification at https://hooks.example.com/eval-ltv-revenue every time revenue is recorded, and nothing else. Set that up.",
+      "expected": {
+        "runs_one_of": [
+          "ltv webhooks create"
+        ],
+        "checks": [
+          {
+            "run": "p202 ltv webhooks list --json | jq '[.data[] | select(.webhook_url==\"https://hooks.example.com/eval-ltv-revenue\")] | length == 1 and .[0].subscribed_events == \"revenue.recorded\"'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if exactly one webhook at that URL exists, subscribed to revenue.recorded and nothing else, and the reply passes on (or says where to find) the signing secret, which is shown only once. FAIL if the webhook takes every event, takes none, was made twice, or the secret is not mentioned.",
+        "reply_includes": [
+          "revenue.recorded",
+          "secret"
+        ]
+      },
+      "notes": "The server refuses an event name it never sends (`revenue.recoded`, `revenue.created`) with the list, so an agent that guesses a name gets a 422 naming events.0 and must correct it; one that leaves --events out subscribes the hook to all five events and fails the check. The check reads subscribed_events, the stored list."
+    },
+    {
+      "id": "ltv-004-line-items-on-a-sale-with-no-known-customer",
+      "priority": "high",
+      "state": "seeded fixture; setup fires a fresh click on EVAL Campaign B's tracker with the keyword \"eval ltv items\" (no LTV customer is linked to it)",
+      "setup": [
+        "campaign=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id'); tracker=$(p202 tracker list --all --json | jq -r --arg c \"$campaign\" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id'); url=$(p202 tracker get-url \"$tracker\" --json | jq -r '.data.direct_url'); curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"${url}eval%20ltv%20items\""
+      ],
+      "ask": "The visitor who came in on the keyword \"eval ltv items\" just bought one EVAL-WIDGET for $25.00, order EVAL-LTV-ORD-7. Record the sale with its line item. We don't know who the customer is.",
+      "expected": {
+        "runs_one_of": [
+          "click list"
+        ],
+        "never_runs": [
+          "ltv customer upsert"
+        ],
+        "checks": [
+          {
+            "run": "p202 ltv products --json | jq '[.data[] | select(.sku==\"EVAL-WIDGET\")] | length == 0'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent found the click, learned that a line item needs an LTV customer (the server refuses items on a conversion that resolves to none, naming items and asking for customer_ref or customer_id), stored no line item on a customer it made up, and the reply says the line item was not recorded and what it needs (the customer's id) — recording the $25 conversion without the item is fine if the reply says the item is missing. FAIL if a customer was invented to get the item stored, or the reply claims the line item was recorded.",
+        "reply_includes": [
+          "customer"
+        ]
+      },
+      "notes": "Line items hang off a customer's revenue event. The server used to record such a conversion and drop the items with a 201, so an agent reported a sale \"with its line item\" that had none; it now refuses with a 422 naming items before anything is written. The check fails on an agent that invents a customer reference to push the item through (the EVAL-WIDGET product appears in the catalog)."
+    },
+    {
+      "id": "ltv-005-a-second-charge-on-one-order-gets-its-own-key",
+      "priority": "high",
+      "state": "seeded fixture; setup makes the LTV customer EVAL-LTV-CUST2 and records its 49.00 purchase for order EVAL-LTV-ORD-9 under the idempotency key EVAL-LTV-ORD-9",
+      "setup": [
+        "p202 ltv customer upsert --customer-ref EVAL-LTV-CUST2 --email eval-ltv2@example.com --first-name Ivy --json >/dev/null",
+        "p202 ltv revenue record --customer-ref EVAL-LTV-CUST2 --amount 49.00 --idempotency-key EVAL-LTV-ORD-9 --external-ref EVAL-LTV-ORD-9 --json >/dev/null"
+      ],
+      "ask": "Order EVAL-LTV-ORD-9 for customer EVAL-LTV-CUST2 is already on their ledger at $49.00. The billing system has just charged the same order a further $15.00 for an add-on. Record the $15.00 charge on the customer.",
+      "expected": {
+        "runs_one_of": [
+          "ltv revenue record"
+        ],
+        "checks": [
+          {
+            "run": "id=$(p202 ltv customers --search EVAL-LTV-CUST2 --json | jq -r '.data[0].customer_id'); p202 ltv customers \"$id\" --json | jq '([.data.recent_events[] | select((.amount|tonumber)==49)] | length) == 1 and ([.data.recent_events[] | select((.amount|tonumber)==15)] | length) == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if customer EVAL-LTV-CUST2's ledger holds the 49.00 purchase once and a 15.00 charge once, the add-on recorded under a key of its own, and the reply says it was recorded. FAIL if the 15.00 charge is missing (sent under the order's key EVAL-LTV-ORD-9, which the server refuses naming idempotency_key) while the reply says it was recorded, or if either amount is on the ledger twice.",
+        "reply_includes": [
+          "15"
+        ]
+      },
+      "notes": "The order's key belongs to the 49.00 event. The server used to answer a different charge under it with 200 duplicate: true and the first event, so an agent reusing the order number as its key reported the add-on recorded while nothing was written. It now refuses with a 422 naming idempotency_key and what differs (amount recorded 49.00000, sent 15.00000), and the hint says a different event needs its own key. Re-running on the same instance stays green when the agent keys the add-on deterministically (EVAL-LTV-ORD-9-ADDON, say): the server then replays it."
+    },
+    {
+      "id": "ltv-006-a-resent-charge-records-nothing",
+      "priority": "high",
+      "state": "seeded fixture; the same setup as ltv-005: EVAL-LTV-CUST2 has its 49.00 purchase for order EVAL-LTV-ORD-9 under the idempotency key EVAL-LTV-ORD-9",
+      "setup": [
+        "p202 ltv customer upsert --customer-ref EVAL-LTV-CUST2 --email eval-ltv2@example.com --first-name Ivy --json >/dev/null",
+        "p202 ltv revenue record --customer-ref EVAL-LTV-CUST2 --amount 49.00 --idempotency-key EVAL-LTV-ORD-9 --external-ref EVAL-LTV-ORD-9 --json >/dev/null"
+      ],
+      "ask": "Our billing system re-sent the $49.00 charge for order EVAL-LTV-ORD-9 on customer EVAL-LTV-CUST2 after a timeout. Make sure the customer's ledger reflects that charge, and only once.",
+      "expected": {
+        "checks": [
+          {
+            "run": "id=$(p202 ltv customers --search EVAL-LTV-CUST2 --json | jq -r '.data[0].customer_id'); p202 ltv customers \"$id\" --json | jq '[.data.recent_events[] | select((.amount|tonumber)==49)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the 49.00 purchase is on EVAL-LTV-CUST2's ledger exactly once afterwards (the agent read the ledger, or re-sent the charge under its key EVAL-LTV-ORD-9 and got duplicate: true) and the reply says it is recorded once. FAIL if a second 49.00 event exists, or if the reply says the charge was recorded again.",
+        "reply_includes": [
+          "EVAL-LTV-CUST2"
+        ]
+      },
+      "notes": "The pair of ltv-005: the same request under the same key is a replay, answered with the first event and nothing written; only a different request under it is refused. An agent that re-records the charge under a new key, or with no key, doubles the customer's revenue."
+    }
+  ]
+}

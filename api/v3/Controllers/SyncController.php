@@ -6,24 +6,63 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\RemoteApiException;
+use Api\V3\Exception\SyncException;
+use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\PayloadKeys;
+use Api\V3\Support\RemoteApiClient;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
+use Api\V3\Support\SyncProfileKeys;
+use Api\V3\Support\QueryInt;
+use Api\V3\Support\RequestFlag;
 
 class SyncController
 {
     private readonly SyncEngine $engine;
+    private readonly ServerStateStore $store;
 
-    public function __construct(\mysqli $db, private readonly int $userId, private readonly ?ServerStateStore $store = new ServerStateStore(), ?SyncEngine $engine = null)
-    {
+    /** The statuses a job ends in: it runs no more, and keeps no key. */
+    private const FINISHED = ['succeeded', 'failed', 'cancelled', 'partial'];
+
+    public function __construct(
+        private readonly \mysqli $db,
+        private readonly int $userId,
+        ?ServerStateStore $store = null,
+        ?SyncEngine $engine = null,
+        private ?SyncProfileKeys $keys = null,
+    ) {
         if ($db->connect_errno !== 0) {
             throw new DatabaseException('Database connection unavailable for sync controller');
         }
+        $this->store = $store ?? ServerStateStore::forInstall($db);
         $this->engine = $engine ?? new SyncEngine($this->store);
     }
 
+    private function keys(): SyncProfileKeys
+    {
+        return $this->keys ??= SyncProfileKeys::fromDatabase($this->db);
+    }
+
+    /** What a sync job body may carry; resolveSyncOptions() and resolveProfiles() read them. */
+    private const JOB_FIELDS = [
+        'source', 'from', 'target', 'to', 'entity', 'dry_run', 'skip_errors', 'force_update', 'incremental',
+        'prune', 'prune_preview', 'confirmation_token', 'prune_allowlist', 'prune_denylist', 'max_attempts',
+    ];
+
+    /**
+     * A field a job body used to carry, refused saying why. `updated_since`
+     * was handed to the source's lists, none of which can filter by update
+     * time, so a job given one failed on its first run.
+     */
+    private const NOT_JOB_FIELDS = [
+        'updated_since' => SyncEngine::UPDATED_SINCE_REFUSAL,
+    ];
+
     public function plan(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['source', 'from', 'target', 'to', 'entity', 'collision_mode', 'prune_preview', 'prune'], 'a sync plan');
         [$source, $target] = $this->resolveProfiles($payload);
         $entity = trim((string)($payload['entity'] ?? 'all'));
         $collisionMode = strtolower(trim((string)($payload['collision_mode'] ?? 'warn')));
@@ -32,8 +71,8 @@ class SyncController
         }
 
         $options = [
-            'prune_preview' => (bool)($payload['prune_preview'] ?? false),
-            'prune' => (bool)($payload['prune'] ?? false),
+            'prune_preview' => RequestFlag::param($payload, 'prune_preview', false),
+            'prune' => RequestFlag::param($payload, 'prune', false),
             'fail_on_collision' => $collisionMode === 'manual',
             'collision_mode' => $collisionMode,
         ];
@@ -45,6 +84,7 @@ class SyncController
 
     public function createJob(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::JOB_FIELDS, 'a sync job', self::NOT_JOB_FIELDS);
         [$source, $target] = $this->resolveProfiles($payload);
         $entity = trim((string)($payload['entity'] ?? 'all'));
         $this->enforceQueueLimit($source, $target);
@@ -52,28 +92,52 @@ class SyncController
         $options = $this->resolveSyncOptions($payload);
         $this->validatePruneToken($source, $target, $options);
         $idempotencyKey = (string)(\Api\V3\RequestContext::header('idempotency-key') ?? '');
+        // Read before anything is stored, so a refused value queues nothing,
+        // and fingerprinted with the rest, so a key reused with another
+        // max_attempts is a different request, not a replay.
+        $maxAttempts = QueryInt::param($payload, 'max_attempts', 3, 1, 10, 'tries before the job fails');
 
         $jobPayload = [
             'entity' => $entity,
             'source' => $source,
             'target' => $target,
             'options' => $options,
+            'max_attempts' => $maxAttempts,
             'idempotency_key' => $idempotencyKey,
         ];
-        $requestHash = ServerStateStore::canonicalHash($jobPayload);
-        $idempotencyScope = 'sync-job:' . sha1(strtolower((string)$source['url']) . '|' . strtolower((string)$target['url']) . '|' . $entity) . ':request:' . $requestHash;
+        // The request hash is a fingerprint recorded beside the response,
+        // not part of the scope. Scoping by the request meant a key reused
+        // with a different source, target, entity or option set addressed a
+        // different record, found nothing, and queued a second job — the
+        // duplicate the key was sent to prevent. Scope is the caller alone,
+        // so any reuse of the key is seen and a changed request is refused.
+        $requestHash = ServerStateStore::idempotencyFingerprint('sync-job', $jobPayload);
+        $idempotencyScope = ServerStateStore::idempotencyScopeForUser($this->userId);
         if ($idempotencyKey !== '') {
-            $cached = $this->store->getIdempotent($idempotencyScope, $idempotencyKey);
-            if (is_array($cached)) {
+            $lookup = $this->store->lookupIdempotent($idempotencyScope, $idempotencyKey, $requestHash);
+            if ($lookup['state'] === 'mismatch') {
+                throw new ValidationException(
+                    'This Idempotency-Key was already used for a different request. Resend the original '
+                    . 'sync request to replay its recorded response, or send a new Idempotency-Key to '
+                    . 'queue a different job.',
+                    ['idempotency_key' => 'Already used for a different request']
+                );
+            }
+            if ($lookup['state'] === 'replay' && is_array($lookup['response'])) {
+                $cached = $lookup['response'];
                 $cached['idempotent_replay'] = true;
                 return ['_status' => 202] + $cached;
             }
         }
 
         $jobPayload['request_hash'] = $requestHash;
+        // The keys are sealed in the job file and dropped when it ends
+        // (SyncProfileKeys); the fingerprint above is of the request as sent.
+        $jobPayload['source'] = $this->keys()->seal($source, 'source');
+        $jobPayload['target'] = $this->keys()->seal($target, 'target');
         $job = $this->store->createJob($jobPayload, $this->userId);
         $job['attempts'] = 0;
-        $job['max_attempts'] = max(1, min(10, (int)($payload['max_attempts'] ?? 3)));
+        $job['max_attempts'] = $maxAttempts;
         $job['next_run_at'] = time();
         $job['status'] = 'queued';
         $this->store->saveJob($job);
@@ -84,7 +148,7 @@ class SyncController
 
         $response = ['data' => $this->sanitizeJobForResponse($job)];
         if ($idempotencyKey !== '') {
-            $this->store->putIdempotent($idempotencyScope, $idempotencyKey, $response);
+            $this->store->putIdempotent($idempotencyScope, $idempotencyKey, $response, $requestHash);
         }
         return ['_status' => 202] + $response;
     }
@@ -105,7 +169,7 @@ class SyncController
         if ($job === null) {
             throw new NotFoundException('Sync job not found');
         }
-        if (in_array((string)($job['status'] ?? ''), ['succeeded', 'failed', 'cancelled', 'partial'], true)) {
+        if (in_array((string)($job['status'] ?? ''), self::FINISHED, true)) {
             return ['data' => $this->sanitizeJobForResponse($job)];
         }
 
@@ -113,6 +177,7 @@ class SyncController
         if ((string)($job['status'] ?? '') === 'queued') {
             $job['status'] = 'cancelled';
             $job['next_run_at'] = null;
+            $job = self::withoutKeys($job);
             $this->store->incrementMetric('jobs_cancelled', 1);
             $this->appendAuditForJob($job);
         }
@@ -129,22 +194,35 @@ class SyncController
             throw new NotFoundException('Sync job not found');
         }
 
-        $limit = max(1, min(500, (int)($params['limit'] ?? 100)));
-        $offset = max(0, (int)($params['offset'] ?? 0));
+        $limit = QueryInt::param($params, 'limit', 100, 1, 500, 'events per page');
+        $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'events to skip');
 
         return $this->store->listJobEvents($jobId, $offset, $limit);
     }
 
     public function reSync(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::JOB_FIELDS, 'a re-sync job', self::NOT_JOB_FIELDS);
         $payload['incremental'] = true;
         return $this->createJob($payload);
     }
 
     public function runWorker(array $payload): array
     {
-        $limit = max(1, min(100, (int)($payload['limit'] ?? 10)));
-        $jobs = $this->store->listJobs(['queued'], $limit);
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['limit'], 'a worker run');
+        $limit = QueryInt::param($payload, 'limit', 10, 1, 100, 'queued jobs to run');
+        $all = $this->store->listJobs([], 0);
+        // A job that ended before 1.9.79 still holds both keys as sent; a
+        // finished job needs none.
+        foreach ($all as $job) {
+            if (in_array((string)($job['status'] ?? ''), self::FINISHED, true) && self::holdsKey($job)) {
+                $this->store->saveJob(self::withoutKeys($job));
+            }
+        }
+        $jobs = array_slice(array_values(array_filter(
+            $all,
+            static fn (array $job): bool => (string)($job['status'] ?? '') === 'queued'
+        )), 0, $limit);
 
         $processed = 0;
         $succeeded = 0;
@@ -223,27 +301,41 @@ class SyncController
         }
 
         $cursor = isset($params['cursor']) ? (string)$params['cursor'] : null;
-        $limit = max(1, min(1000, (int)($params['limit'] ?? 200)));
-        $cursorTtl = max(60, min(86400, (int)($params['cursor_ttl'] ?? 3600)));
-        $updatedSince = isset($params['updated_since']) ? (int)$params['updated_since'] : null;
-        $deletedSince = isset($params['deleted_since']) ? (int)$params['deleted_since'] : null;
+        $limit = QueryInt::param($params, 'limit', 200, 1, 1000, 'changes per page');
+        $cursorTtl = QueryInt::param($params, 'cursor_ttl', 3600, 60, 86400, 'seconds the next_cursor stays valid');
+        $updatedSince = QueryInt::param($params, 'updated_since', -1, 0, PHP_INT_MAX, 'a unix time');
+        $deletedSince = QueryInt::param($params, 'deleted_since', -1, 0, PHP_INT_MAX, 'a unix time');
+        $updatedSince = $updatedSince >= 0 ? $updatedSince : null;
+        $deletedSince = $deletedSince >= 0 ? $deletedSince : null;
 
         return $this->store->listChanges($entity, $cursor, $limit, $cursorTtl, $updatedSince, $deletedSince);
     }
 
+    /** The statuses an audit record is written with: a job's terminal ones. */
+    private const AUDIT_STATUSES = ['succeeded', 'partial', 'failed', 'cancelled'];
+
     public function auditList(array $params): array
     {
+        $format = self::auditFormat($params);
+        $status = $params['status'] ?? '';
+        if ($status !== '' && (!is_string($status) || !in_array($status, self::AUDIT_STATUSES, true))) {
+            // A filter nothing can match answered an empty list that read
+            // as "no such jobs" (status=sucess, status=success).
+            throw new ValidationException(
+                'Invalid status',
+                ['status' => 'Valid values: ' . implode(', ', self::AUDIT_STATUSES)]
+            );
+        }
         $filters = [
             'actor' => $params['actor'] ?? '',
             'source' => $params['source'] ?? '',
             'target' => $params['target'] ?? '',
             'status' => $params['status'] ?? '',
-            'from_epoch' => isset($params['from_epoch']) ? (int)$params['from_epoch'] : null,
-            'to_epoch' => isset($params['to_epoch']) ? (int)$params['to_epoch'] : null,
+            'from_epoch' => self::epochOrNull($params, 'from_epoch'),
+            'to_epoch' => self::epochOrNull($params, 'to_epoch'),
         ];
 
         $records = $this->store->listAudit($filters);
-        $format = strtolower(trim((string)($params['format'] ?? 'json')));
 
         $response = ['data' => $records];
         if ($format === 'csv') {
@@ -255,12 +347,12 @@ class SyncController
 
     public function auditGet(string $jobId, array $params): array
     {
+        $format = self::auditFormat($params);
         $record = $this->store->getAudit($jobId);
         if ($record === null) {
             throw new NotFoundException('Audit record not found');
         }
 
-        $format = strtolower(trim((string)($params['format'] ?? 'json')));
         if ($format === 'csv') {
             return ['data' => $record, 'csv' => $this->toCsv([$record])];
         }
@@ -275,7 +367,7 @@ class SyncController
             throw new NotFoundException('Sync job not found');
         }
         $status = (string)($job['status'] ?? '');
-        if (in_array($status, ['succeeded', 'failed', 'cancelled', 'partial'], true)) {
+        if (in_array($status, self::FINISHED, true)) {
             return $job;
         }
         if (!in_array($status, ['queued', 'running'], true)) {
@@ -296,6 +388,7 @@ class SyncController
             $job = $this->store->getJob($jobId) ?? $job;
             if ((bool)($job['cancel_requested'] ?? false)) {
                 $job['status'] = 'cancelled';
+                $job = self::withoutKeys($job);
                 $this->store->saveJob($job);
                 $this->store->appendJobEvent($jobId, 'warning', 'Job cancelled before execution');
                 $this->store->incrementMetric('jobs_cancelled', 1);
@@ -308,12 +401,22 @@ class SyncController
             $target = is_array($request['target'] ?? null) ? $request['target'] : [];
             $entity = trim((string)($request['entity'] ?? 'all'));
             $options = is_array($request['options'] ?? null) ? $request['options'] : [];
-
-            $pairKey = sha1(strtolower((string)($source['url'] ?? '')) . '|' . strtolower((string)($target['url'] ?? '')));
-            $manifest = $this->store->loadSyncManifest($pairKey);
-            if (!empty($options['incremental']) && empty($options['updated_since']) && !empty($manifest['last_sync_epoch'])) {
-                $options['updated_since'] = (string)((int)$manifest['last_sync_epoch']);
+            // A job queued before 1.9.79 holds its keys as sent: sealed now,
+            // so nothing this run saves holds them.
+            if (SyncProfileKeys::holdsPlainKey($source) || SyncProfileKeys::holdsPlainKey($target)) {
+                $source = $this->keys()->seal($source, 'source');
+                $target = $this->keys()->seal($target, 'target');
+                $job['request']['source'] = $source;
+                $job['request']['target'] = $target;
+                $this->store->saveJob($job);
             }
+
+            $pairKey = SyncEngine::pairKeyFor($source, $target);
+            $manifest = $this->store->loadSyncManifest($pairKey);
+            // An incremental sync skips what the manifest's hashes show
+            // unchanged (SyncEngine). It also sent last_sync_epoch as the
+            // source lists' updated_since, which no list can apply, so every
+            // re-sync after the first failed.
             $options['manifest'] = $manifest;
 
             $pairLock = $this->store->acquirePairLock((string)($source['url'] ?? ''), (string)($target['url'] ?? ''));
@@ -323,6 +426,8 @@ class SyncController
                 $this->store->saveJob($job);
                 $this->store->appendJobEvent($jobId, 'info', 'Job started', ['attempt' => $job['attempts']]);
 
+                $source = $this->keys()->open($source, 'source');
+                $target = $this->keys()->open($target, 'target');
                 $results = $this->engine->execute(
                     $source,
                     $target,
@@ -336,7 +441,16 @@ class SyncController
                 $summary = $this->summarizeJobResults($results);
                 $job['results'] = $results;
                 $job['error'] = null;
+                $job['error_code'] = null;
+                $job['written'] = null;
+                $job['conflict'] = null;
                 $job['next_run_at'] = null;
+                // Re-read the persisted flag: a cancel may have landed while
+                // execute() was running and our in-memory copy is stale.
+                $fresh = $this->store->getJob($jobId);
+                if (is_array($fresh) && !empty($fresh['cancel_requested'])) {
+                    $job['cancel_requested'] = true;
+                }
                 if ((bool)($job['cancel_requested'] ?? false)) {
                     $job['status'] = 'cancelled';
                     $this->store->incrementMetric('jobs_cancelled', 1);
@@ -360,6 +474,7 @@ class SyncController
                 }
                 $this->store->saveSyncManifest($pairKey, $manifest);
 
+                $job = self::withoutKeys($job);
                 $this->store->saveJob($job);
                 $this->store->appendJobEvent($jobId, 'info', 'Job completed', ['status' => $job['status']]);
                 $this->appendAuditForJob($job);
@@ -370,13 +485,26 @@ class SyncController
             $job = $this->store->getJob($jobId) ?? $job;
             $attempts = (int)($job['attempts'] ?? 1);
             $maxAttempts = max(1, (int)($job['max_attempts'] ?? 3));
-            $job['error'] = $e->getMessage();
+            // Named, not "Internal server error": a remote refusal's own
+            // getMessage() is that sentence (RemoteApiException).
+            $job['error'] = $e instanceof RemoteApiException ? $e->describe() : $e->getMessage();
             $job['results'] = null;
+            // A write the target refused with a 409 is not retried by the
+            // job: the retry re-reads the target and force-writes over the
+            // change the 409 protected (CLAUDE.md #13). The record is named
+            // so the caller can look before re-running.
+            $conflict = $e instanceof SyncRecordException ? $e->conflict : null;
+            $job['conflict'] = $conflict;
+            // Nor is a URL this server will not call, a cap the sync reached
+            // or a key that does not open: the next try meets the same.
+            $cause = SyncException::in($e);
+            $job['error_code'] = $cause?->errorCode;
+            $job['written'] = $e instanceof SyncRecordException ? $e->written : null;
 
             if ((bool)($job['cancel_requested'] ?? false)) {
                 $job['status'] = 'cancelled';
                 $this->store->incrementMetric('jobs_cancelled', 1);
-            } elseif ($attempts < $maxAttempts) {
+            } elseif ($conflict === null && ($cause === null || $cause->retryable) && $attempts < $maxAttempts) {
                 $job['status'] = 'queued';
                 $backoff = min(900, 15 * (2 ** max(0, $attempts - 1)));
                 $job['next_run_at'] = time() + $backoff;
@@ -387,9 +515,17 @@ class SyncController
                 $this->store->incrementMetric('jobs_failed', 1);
                 $this->appendAuditForJob($job);
             }
+            if ($job['status'] !== 'queued') {
+                $job = self::withoutKeys($job);
+            }
 
             $this->store->saveJob($job);
-            $this->store->appendJobEvent($jobId, 'error', 'Job execution error', ['error' => $e->getMessage()]);
+            $this->store->appendJobEvent(
+                $jobId,
+                'error',
+                'Job execution error',
+                ['error' => $job['error']] + ($conflict !== null ? ['conflict' => $conflict] : [])
+            );
         } finally {
             $releaseLock();
         }
@@ -432,17 +568,33 @@ class SyncController
 
     private function resolveSyncOptions(array $payload): array
     {
+        // Lists of entity names. Anything that was not an array was read as
+        // an empty list, and a name the engine does not know matched
+        // nothing, so `"prune_denylist": "campaigns"` protected no
+        // campaign from the prune it was sent to stop (CLAUDE.md #4).
+        $entities = SyncEngine::supportedEntities();
+        $entity = static fn (mixed $name): ?string => is_string($name) && in_array(trim($name), $entities, true)
+            ? null
+            : 'must be an entity name: one of ' . implode(', ', $entities);
+        $what = 'entity names, e.g. ["campaigns"] (one of ' . implode(', ', $entities) . ')';
+        PayloadKeys::refuse(
+            PayloadKeys::valueListErrors($payload, 'prune_allowlist', $what, $entity)
+            + PayloadKeys::valueListErrors($payload, 'prune_denylist', $what, $entity)
+        );
+
         return [
-            'dry_run' => (bool)($payload['dry_run'] ?? false),
-            'skip_errors' => (bool)($payload['skip_errors'] ?? false),
-            'force_update' => (bool)($payload['force_update'] ?? false),
-            'incremental' => (bool)($payload['incremental'] ?? false),
-            'prune' => (bool)($payload['prune'] ?? false),
-            'prune_preview' => (bool)($payload['prune_preview'] ?? false),
+            // Flags, read strictly: (bool) made every non-empty string true,
+            // so "force_update": "false" overwrote the target's differing
+            // records (RequestFlag).
+            'dry_run' => RequestFlag::param($payload, 'dry_run', false),
+            'skip_errors' => RequestFlag::param($payload, 'skip_errors', false),
+            'force_update' => RequestFlag::param($payload, 'force_update', false),
+            'incremental' => RequestFlag::param($payload, 'incremental', false),
+            'prune' => RequestFlag::param($payload, 'prune', false),
+            'prune_preview' => RequestFlag::param($payload, 'prune_preview', false),
             'confirmation_token' => (string)($payload['confirmation_token'] ?? ''),
-            'prune_allowlist' => is_array($payload['prune_allowlist'] ?? null) ? $payload['prune_allowlist'] : [],
-            'prune_denylist' => is_array($payload['prune_denylist'] ?? null) ? $payload['prune_denylist'] : [],
-            'updated_since' => isset($payload['updated_since']) ? (string)$payload['updated_since'] : '',
+            'prune_allowlist' => $payload['prune_allowlist'] ?? [],
+            'prune_denylist' => $payload['prune_denylist'] ?? [],
         ];
     }
 
@@ -457,21 +609,48 @@ class SyncController
             throw new ValidationException('Prune confirmation token required', ['confirmation_token' => 'Required when prune=true']);
         }
 
-        $pairKey = sha1(strtolower((string)$source['url']) . '|' . strtolower((string)$target['url']));
+        $pairKey = SyncEngine::pairKeyFor($source, $target);
         if (!$this->store->validatePruneToken($token, $pairKey)) {
             throw new ValidationException('Invalid prune confirmation token', ['confirmation_token' => 'Token is invalid or expired']);
         }
     }
 
-    private function resolveProfiles(array $payload, bool $requireApiKey = true): array
+    /** What a source or target profile carries; resolveProfileEntry() reads them. */
+    private const PROFILE_KEYS = ['url', 'api_key', 'name'];
+
+    /**
+     * @param bool $forCalls the profiles will be called (a plan, a job): each
+     *        needs a key and a URL this server may call
+     */
+    private function resolveProfiles(array $payload, bool $forCalls = true): array
     {
-        $source = $this->resolveProfileEntry($payload['source'] ?? $payload['from'] ?? null, 'source', $requireApiKey);
-        $target = $this->resolveProfileEntry($payload['target'] ?? $payload['to'] ?? null, 'target', $requireApiKey);
+        // A profile is an object of PROFILE_KEYS, each a string (or null,
+        // read as not given): a key it does not take was dropped (`nmae`
+        // named the job by its URL), and each side is named once, by
+        // `source` or its alias `from` (`target` or `to`): with both, the
+        // alias was dropped without a word.
+        $text = static fn (array $profile): array => array_map(
+            static fn (): string => 'must be a string',
+            array_filter($profile, static fn (mixed $value): bool => $value !== null && !is_string($value))
+        );
+        $errors = PayloadKeys::objectErrors($payload, 'source', self::PROFILE_KEYS, 'a sync profile', $text)
+            + PayloadKeys::objectErrors($payload, 'from', self::PROFILE_KEYS, 'a sync profile', $text)
+            + PayloadKeys::objectErrors($payload, 'target', self::PROFILE_KEYS, 'a sync profile', $text)
+            + PayloadKeys::objectErrors($payload, 'to', self::PROFILE_KEYS, 'a sync profile', $text);
+        foreach (['source' => 'from', 'target' => 'to'] as $side => $alias) {
+            if (isset($payload[$side], $payload[$alias])) {
+                $errors[$alias] = "is another name for $side: send one of them";
+            }
+        }
+        PayloadKeys::refuse($errors);
+
+        $source = $this->resolveProfileEntry($payload['source'] ?? $payload['from'] ?? null, 'source', $forCalls);
+        $target = $this->resolveProfileEntry($payload['target'] ?? $payload['to'] ?? null, 'target', $forCalls);
 
         return [$source, $target];
     }
 
-    private function resolveProfileEntry(mixed $entry, string $label, bool $requireApiKey): array
+    private function resolveProfileEntry(mixed $entry, string $label, bool $forCalls): array
     {
         if (!is_array($entry)) {
             throw new ValidationException('Validation failed', [$label => 'Must be an object with url/api_key']);
@@ -484,8 +663,17 @@ class SyncController
         if ($url === '') {
             throw new ValidationException('Validation failed', [$label . '.url' => 'Required']);
         }
-        if ($requireApiKey && $apiKey === '') {
+        if ($forCalls && $apiKey === '') {
             throw new ValidationException('Validation failed', [$label . '.api_key' => 'Required']);
+        }
+        // What can be told without a resolver; each request is checked again,
+        // resolved and pinned, when it is sent (RemoteApiClient).
+        $refused = $forCalls ? RemoteApiClient::profileUrlRefusal($url) : null;
+        if ($refused !== null) {
+            throw new ValidationException(
+                'This server does not call the sync ' . $label . '\'s url',
+                [$label . '.url' => $refused]
+            );
         }
 
         return [
@@ -493,6 +681,34 @@ class SyncController
             'url' => $url,
             'api_key' => $apiKey,
         ];
+    }
+
+    /** @param array<string, mixed> $job */
+    private static function holdsKey(array $job): bool
+    {
+        foreach (['source', 'target'] as $side) {
+            $profile = $job['request'][$side] ?? null;
+            if (is_array($profile) && SyncProfileKeys::forget($profile) !== $profile) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed> $job
+     * @return array<string, mixed>
+     */
+    private static function withoutKeys(array $job): array
+    {
+        foreach (['source', 'target'] as $side) {
+            if (isset($job['request'][$side]) && is_array($job['request'][$side])) {
+                $job['request'][$side] = SyncProfileKeys::forget($job['request'][$side]);
+            }
+        }
+
+        return $job;
     }
 
     private function profileLabel(array $profile): string
@@ -516,6 +732,7 @@ class SyncController
             'skipped' => 0,
             'failed' => 0,
             'pruned' => 0,
+            'conflicted' => 0,
         ];
 
         foreach ($perEntity as $entityResult) {
@@ -526,6 +743,7 @@ class SyncController
             $summary['skipped'] += (int)($entityResult['skipped'] ?? 0);
             $summary['failed'] += (int)($entityResult['failed'] ?? 0);
             $summary['pruned'] += (int)($entityResult['pruned'] ?? 0);
+            $summary['conflicted'] += (int)($entityResult['conflicted'] ?? 0);
         }
 
         return $summary;
@@ -536,17 +754,37 @@ class SyncController
         $copy = $job;
         if (isset($copy['request']) && is_array($copy['request'])) {
             $copy['request'] = $this->store->sanitize($copy['request']);
-            if (isset($copy['request']['source']) && is_array($copy['request']['source'])) {
-                unset($copy['request']['source']['api_key']);
-            }
-            if (isset($copy['request']['target']) && is_array($copy['request']['target'])) {
-                unset($copy['request']['target']['api_key']);
+            foreach (['source', 'target'] as $side) {
+                if (isset($copy['request'][$side]) && is_array($copy['request'][$side])) {
+                    $copy['request'][$side] = SyncProfileKeys::forget($copy['request'][$side]);
+                }
             }
         }
         if (isset($copy['results']) && is_array($copy['results'])) {
             $copy['results'] = $this->store->sanitize($copy['results']);
         }
         return $copy;
+    }
+
+    /**
+     * json (the default) or csv, in either case. Anything else used to be
+     * answered as json, so format=xml or a typo read as "the format asked
+     * for" to a caller that then parsed the wrong thing.
+     *
+     * @param array<string, mixed> $params
+     */
+    private static function auditFormat(array $params): string
+    {
+        $format = $params['format'] ?? '';
+        if ($format === '') {
+            return 'json';
+        }
+        $format = is_string($format) ? strtolower($format) : '';
+        if ($format !== 'json' && $format !== 'csv') {
+            throw new ValidationException('Invalid format', ['format' => 'Valid values: json, csv']);
+        }
+
+        return $format;
     }
 
     /** @param array<int, array<string, mixed>> $records */
@@ -613,5 +851,18 @@ class SyncController
                 ['queue' => "Limit {$maxQueuedPerPair} reached for pair; wait for current jobs to complete"]
             );
         }
+    }
+
+    /**
+     * An audit-list time bound: a unix time, or null when absent. It was
+     * `(int)`, so `from_epoch=yesterday` was 0 and listed everything.
+     *
+     * @param array<string, mixed> $params
+     */
+    private static function epochOrNull(array $params, string $name): ?int
+    {
+        $epoch = QueryInt::param($params, $name, -1, 0, PHP_INT_MAX, 'a unix time');
+
+        return $epoch >= 0 ? $epoch : null;
     }
 }

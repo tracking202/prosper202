@@ -1,0 +1,220 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Prosper202\GeoIp;
+
+use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Attribution\WebhookRefused;
+use Prosper202\Notifications\PostbackSender;
+
+/**
+ * The GeoIP download's HTTP: every URL, MaxMind's and each one it
+ * redirects to, is approved by WebhookGuard::check() (https, port 443, every
+ * address it resolves to public) and fetched with PostbackSender::curlOptions(),
+ * the set the senders pin a request with: pinned to an approved address, no
+ * proxy, no redirects, TLS verified. The values changed are the time limit,
+ * which the sender sets for a postback and a download of tens of megabytes
+ * needs longer, and the protocols (https only); a transfer slower than 1 KB/s
+ * for a minute is stopped instead. Given a deadline, every request of a run
+ * shares it: each is limited to the time left, and none starts after it.
+ * Options curl refuses to set stop the request (curl_setopt_array() stops at
+ * the first it cannot set and leaves the rest of the pin unset), and a URL is
+ * named in a message by its origin alone: a presigned redirect's query is a
+ * credential.
+ *
+ * Tests and the live pass cannot reach MaxMind: constructed with a loopback
+ * origin (MaxMindDownload::fromEnvironment(), P202_GEOIP_DOWNLOAD_ORIGIN),
+ * only that origin is fetched, pinned to its own address, over TLS verified
+ * against the CA file given. Any other URL is refused, so a stray setting
+ * cannot send the licence key anywhere but this machine.
+ */
+final class GuardedCurlTransport implements HttpTransport
+{
+    public const TIMEOUT = 600;
+    public const LOW_SPEED_LIMIT = 1024;
+    public const LOW_SPEED_TIME = 60;
+    private const ERROR_BODY_BYTES = 4096;
+
+    /** @param int|null $deadline when every request of this run must be done by (a Unix time) */
+    public function __construct(
+        private readonly ?string $loopbackOrigin = null,
+        private readonly ?string $caFile = null,
+        private readonly ?int $deadline = null,
+    ) {
+    }
+
+    #[\Override]
+    public function get(string $url, ?array $basicAuth, $sink, int $maxBytes): HttpResponse
+    {
+        if ($url === '') {
+            throw new RefreshFailed('No URL to download from.');
+        }
+        $pinned = $this->pinnedOptions($url);
+        $ch = curl_init();
+        if ($ch === false) {
+            throw new RefreshFailed('curl could not be started, so nothing was downloaded.');
+        }
+        $status = 0;
+        $location = null;
+        $body = '';
+        $bytes = 0;
+        $tooBig = false;
+        $unwritten = false;
+        $request = [
+            CURLOPT_URL => $url,
+            CURLOPT_HTTPGET => true,
+            CURLOPT_USERAGENT => 'Prosper202-GeoIP-Refresh/1.0',
+            CURLOPT_HEADERFUNCTION => static function (
+                \CurlHandle $handle,
+                string $line,
+            ) use (
+                &$status,
+                &$location,
+            ): int {
+                if (preg_match('#^HTTP/\S+\s+(\d{3})#', $line, $match) === 1) {
+                    $status = (int) $match[1];
+                    $location = null;
+                } elseif (stripos($line, 'location:') === 0) {
+                    $location = trim(substr($line, 9));
+                }
+
+                return strlen($line);
+            },
+            CURLOPT_WRITEFUNCTION => static function (
+                \CurlHandle $handle,
+                string $data,
+            ) use (
+                &$status,
+                &$body,
+                &$bytes,
+                &$tooBig,
+                &$unwritten,
+                $sink,
+                $maxBytes,
+            ): int {
+                $length = strlen($data);
+                if ($status !== 200) {
+                    $body .= substr($data, 0, max(0, self::ERROR_BODY_BYTES - strlen($body)));
+
+                    return $length;
+                }
+                if ($bytes + $length > $maxBytes) {
+                    $tooBig = true;
+
+                    return 0;
+                }
+                $bytes += $length;
+                if ($sink === null) {
+                    $body .= $data;
+
+                    return $length;
+                }
+                if (fwrite($sink, $data) !== $length) {
+                    $unwritten = true;
+
+                    return 0;
+                }
+
+                return $length;
+            },
+        ];
+        if ($basicAuth !== null) {
+            $request[CURLOPT_HTTPAUTH] = CURLAUTH_BASIC;
+            $request[CURLOPT_USERPWD] = $basicAuth[0] . ':' . $basicAuth[1];
+        }
+        try {
+            self::apply($ch, $request, 'request');
+            // Last, so nothing set above can loosen the pin (CLAUDE.md #24).
+            self::apply($ch, $pinned, 'pinned');
+        } catch (RefreshFailed $e) {
+            curl_close($ch);
+            throw $e;
+        }
+        $done = curl_exec($ch);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        $host = (string) parse_url($url, PHP_URL_HOST);
+        if ($tooBig) {
+            throw new RefreshFailed('The download from ' . $host . ' passed ' . $maxBytes
+                . ' bytes, so it was stopped.');
+        }
+        if ($unwritten) {
+            throw new RefreshFailed('The download from ' . $host . ' could not be written to disk (is it full?).');
+        }
+        if ($done === false) {
+            throw new RefreshFailed('Could not download from ' . $host . ': '
+                . ($error !== '' ? $error : 'no reason given') . '.');
+        }
+
+        return new HttpResponse($status, $location, $body, $bytes);
+    }
+
+    /**
+     * Every curl option the request is pinned and hardened by: the sender's
+     * set with the download's time limit and protocols (and, on the loopback
+     * test origin, its CA file) put in place of the sender's.
+     *
+     * @return array<int, mixed>
+     * @throws RefreshFailed when the guard, or the loopback origin, refuses the URL
+     */
+    public function pinnedOptions(string $url): array
+    {
+        $timeout = self::TIMEOUT;
+        if ($this->deadline !== null) {
+            $left = $this->deadline - time();
+            if ($left < 1) {
+                throw new RefreshFailed('The refresh ran out of time before ' . self::shown($url) . ' was asked,'
+                    . ' so it was stopped; the next refresh tries again.');
+            }
+            $timeout = min($timeout, $left);
+        }
+        $download = [
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_LOW_SPEED_LIMIT => self::LOW_SPEED_LIMIT,
+            CURLOPT_LOW_SPEED_TIME => self::LOW_SPEED_TIME,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_USERAGENT => 'Prosper202-GeoIP-Refresh',
+        ];
+        $guard = new WebhookGuard();
+        $ports = [443];
+        if ($this->loopbackOrigin !== null) {
+            if (MaxMindDownload::originOf($url) !== $this->loopbackOrigin) {
+                throw new RefreshFailed('In test mode (' . MaxMindDownload::ENV_ORIGIN . ') only '
+                    . $this->loopbackOrigin . ' is fetched, and ' . self::shown($url) . ' is not it.');
+            }
+            // The one address the guard is told to admit: the test origin's own.
+            $guard = new WebhookGuard(null, '127.0.0.0/8,::1/128');
+            $ports = [];
+            if ($this->caFile !== null) {
+                $download[CURLOPT_CAINFO] = $this->caFile;
+            }
+        }
+        try {
+            return array_replace(PostbackSender::curlOptions($guard->check($url, $ports), $timeout), $download);
+        } catch (WebhookRefused $e) {
+            throw new RefreshFailed('The outbound guard refused ' . self::shown($url) . ': '
+                . str_replace($url, self::shown($url), $e->getMessage()) . '.');
+        }
+    }
+
+    /**
+     * @param array<int, mixed> $options
+     * @throws RefreshFailed
+     */
+    public static function apply(\CurlHandle $ch, array $options, string $which): void
+    {
+        if (!@curl_setopt_array($ch, $options)) {
+            throw new RefreshFailed('curl would not take one of the download\'s ' . $which . ' options, so nothing'
+                . ' was sent.');
+        }
+    }
+
+    /** A URL as a message names it: its origin, never its path's query or user info. */
+    public static function shown(string $url): string
+    {
+        return MaxMindDownload::originOf($url) ?? 'a URL that does not parse';
+    }
+}

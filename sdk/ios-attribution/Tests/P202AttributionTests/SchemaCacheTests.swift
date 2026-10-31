@@ -1,0 +1,120 @@
+import XCTest
+@testable import P202Attribution
+
+final class InMemoryStore: P202KeyValueStore {
+    private var storage: [String: Data] = [:]
+
+    func data(forKey key: String) -> Data? {
+        return storage[key]
+    }
+
+    func set(_ value: Data, forKey key: String) {
+        storage[key] = value
+    }
+
+    func removeValue(forKey key: String) {
+        storage[key] = nil
+    }
+
+    var keys: [String] {
+        return Array(storage.keys)
+    }
+}
+
+final class SchemaCacheTests: XCTestCase {
+    func testRoundTripsThroughTheStore() throws {
+        let store = InMemoryStore()
+        var cache = SchemaCache()
+        cache.store(body: TestSchema.body, schema: try P202AttributionSchema.decode(responseBody: TestSchema.body))
+        cache.fetchedAt = Date(timeIntervalSince1970: 1_725_690_000)
+        cache.save(to: store, appToken: "token-a")
+
+        let loaded = SchemaCache.load(from: store, appToken: "token-a")
+        XCTAssertEqual(loaded, cache)
+        XCTAssertEqual(loaded.etag, "\"abc\"")
+        XCTAssertEqual(loaded.schema?.encodings[1]?.fineValue, 63, "the schema is decoded again from the stored body")
+    }
+
+    func testTheStoredBodyKeepsIntegersApartFromFractions() throws {
+        // A goal definition's count of 3 is valid and 3.0 is not; a cache
+        // that re-encoded the decoded document could turn one into the
+        // other. The server's own bytes are what is kept.
+        let body = TestSchema.document(goals: [TestSchema.goal(1, #"{"name":"A","trigger":{"event":"a"},"threshold":{"count":3.0}}"#)], encodings: [])
+        let store = InMemoryStore()
+        var cache = SchemaCache()
+        cache.store(body: body, schema: try P202AttributionSchema.decode(responseBody: body))
+        cache.save(to: store, appToken: "t")
+        let definition = try XCTUnwrap(SchemaCache.load(from: store, appToken: "t").schema?.goals.first?.versions.first?.definition)
+        XCTAssertThrowsError(try GoalDefinition.parse(definition), "3.0 must still read as 3.0")
+    }
+
+    func testLastFineValueLivesOutsideTheTokenKeyedCache() {
+        // It is device conversion state, not fetch state: rotating the
+        // schema token must NOT forget the last fine value, or the next
+        // coarse-only update would regress the postback to fine 0.
+        let store = InMemoryStore()
+        LastFineValueStore.save(41, to: store)
+
+        XCTAssertEqual(LastFineValueStore.load(from: store), 41)
+        XCTAssertFalse(store.keys.contains(SchemaCache.storageKey(appToken: "token-a")))
+        XCTAssertTrue(store.keys.contains(LastFineValueStore.key))
+
+        store.set(Data("junk".utf8), forKey: LastFineValueStore.key)
+        XCTAssertNil(LastFineValueStore.load(from: store), "corrupt data must load as nil, not crash")
+    }
+
+    func testTheReengagementFineValueHasItsOwnSlot() {
+        // Two postbacks, two conversion values: the slots must not alias,
+        // and the install slot keeps its pre-re-engagement key so devices
+        // upgrading the helper keep the value they already reported.
+        let store = InMemoryStore()
+        LastFineValueStore.save(40, to: store, for: .install)
+        LastFineValueStore.save(7, to: store, for: .reengagement)
+        XCTAssertEqual(LastFineValueStore.load(from: store, for: .install), 40)
+        XCTAssertEqual(LastFineValueStore.load(from: store, for: .reengagement), 7)
+        XCTAssertEqual(LastFineValueStore.load(from: store), 40, "the default is the install postback")
+        XCTAssertEqual(LastFineValueStore.key(for: .install), "p202attribution.lastFineValue")
+        XCTAssertNotEqual(LastFineValueStore.key(for: .install), LastFineValueStore.key(for: .reengagement))
+    }
+
+    func testDifferentTokensUseDifferentSlots() {
+        // Rotating the token in a new build must never serve the old
+        // token's cached schema.
+        let store = InMemoryStore()
+        var cache = SchemaCache()
+        cache.etag = "\"abc\""
+        cache.save(to: store, appToken: "token-a")
+
+        XCTAssertEqual(SchemaCache.load(from: store, appToken: "token-b"), SchemaCache())
+        XCTAssertNotEqual(
+            SchemaCache.storageKey(appToken: "token-a"),
+            SchemaCache.storageKey(appToken: "token-b")
+        )
+    }
+
+    func testALegacyCacheWithoutItsBodyLoadsWithoutItsETag() throws {
+        // Written before the body was stored: the document itself cannot be
+        // read back, so its ETag must not be either — sent as If-None-Match
+        // it would be answered 304 for a document this device does not hold.
+        let store = InMemoryStore()
+        let legacy = #"{"schema":{"app_id":42,"schema_version":"abc"},"etag":"\"abc\"","fetchedAt":748000000}"#
+        store.set(Data(legacy.utf8), forKey: SchemaCache.storageKey(appToken: "token-a"))
+        let loaded = SchemaCache.load(from: store, appToken: "token-a")
+        XCTAssertNil(loaded.schema)
+        XCTAssertNil(loaded.etag, "no body, no ETag")
+        XCTAssertNil(loaded.fetchedAt, "no body, no fetch to throttle on")
+
+        // A cache with its body keeps both.
+        var cache = SchemaCache()
+        cache.store(body: TestSchema.body, schema: try P202AttributionSchema.decode(responseBody: TestSchema.body))
+        cache.fetchedAt = Date(timeIntervalSince1970: 1_725_690_000)
+        cache.save(to: store, appToken: "token-b")
+        XCTAssertEqual(SchemaCache.load(from: store, appToken: "token-b").etag, "\"abc\"")
+    }
+
+    func testCorruptStoredDataLoadsAsEmptyNotACrash() {
+        let store = InMemoryStore()
+        store.set(Data("not json".utf8), forKey: SchemaCache.storageKey(appToken: "token-a"))
+        XCTAssertEqual(SchemaCache.load(from: store, appToken: "token-a"), SchemaCache())
+    }
+}

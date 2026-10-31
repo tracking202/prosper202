@@ -9,8 +9,8 @@
 declare(strict_types=1);
 
 // Require authentication for health endpoint
-include_once(str_repeat("../", 1) . '202-config/connect.php');
-include_once(str_repeat("../", 1) . '202-config/functions-auth.php');
+require_once __DIR__ . '/../202-config/connect.php';
+require_once __DIR__ . '/../202-config/functions-auth.php';
 
 // connect.php already starts the session on the non-AJAX path; guard against a duplicate start.
 if (session_status() !== PHP_SESSION_ACTIVE) {
@@ -36,13 +36,19 @@ try {
     // Get last cron execution time
     $log_sql = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";
     $log_result = $db->query($log_sql);
+    // A read that failed is an error (the catch below), not "never run".
+    if ($log_result === false) {
+        throw new \Prosper202\Database\Exceptions\QueryException(
+            'MySQL query failed: ' . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']'
+        );
+    }
     
     $lastRun = null;
     $timeSinceLastRun = null;
     $status = 'unknown';
     
-    if ($log_result && $log_result->num_rows > 0) {
-        $log_row = $log_result->fetch_assoc();
+    $log_row = p202FetchRow($log_result, $log_sql);
+    if ($log_row !== null) {
         $lastRun = (int)$log_row['last_execution_time'];
         $timeSinceLastRun = time() - $lastRun;
         
@@ -61,6 +67,11 @@ try {
     // Get DataEngine job status
     $de_sql = "SELECT COUNT(*) as total, SUM(processed) as done FROM 202_dataengine_job";
     $de_result = $db->query($de_sql);
+    if ($de_result === false) {
+        throw new \Prosper202\Database\Exceptions\QueryException(
+            'MySQL query failed: ' . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']'
+        );
+    }
     
     $dataEngineStatus = [
         'total' => 0,
@@ -69,8 +80,8 @@ try {
         'percentage' => 0
     ];
     
-    if ($de_result && $de_result->num_rows > 0) {
-        $de_row = $de_result->fetch_assoc();
+    $de_row = p202FetchRow($de_result, $de_sql);
+    if ($de_row !== null) {
         $dataEngineStatus['total'] = (int)($de_row['total'] ?? 0);
         $dataEngineStatus['processed'] = (int)($de_row['done'] ?? 0);
         $dataEngineStatus['pending'] = $dataEngineStatus['total'] - $dataEngineStatus['processed'];
@@ -80,11 +91,15 @@ try {
         }
     }
     
-    // Check for lock file
-    $lockFile = __DIR__ . '/cron.lock';
-    $isLocked = file_exists($lockFile);
-    $lockAge = $isLocked ? (time() - filemtime($lockFile)) : null;
+    // Whether a run holds the cron lock now (null: that could not be read).
+    // The file stays between runs, and the lock records no start.
+    $isLocked = \Prosper202\Cron\CronLock::isHeld(\Prosper202\Cron\CronLock::path());
     
+    // The GeoIP database's build date and age, from the file's own metadata:
+    // its state and date only, since any signed-in user may read this page
+    // (Account › Settings shows the path and the reader's error to admins).
+    $geoip = \Prosper202\GeoIp\CityDatabase::status();
+
     // Build response
     $response = [
         'status' => $status,
@@ -93,9 +108,8 @@ try {
         'timeSinceLastRun' => $timeSinceLastRun,
         'timeSinceLastRunFormatted' => $timeSinceLastRun ? formatTimeDiff($timeSinceLastRun) : null,
         'isLocked' => $isLocked,
-        'lockAge' => $lockAge,
-        'lockAgeFormatted' => $lockAge ? formatTimeDiff($lockAge) : null,
         'dataEngine' => $dataEngineStatus,
+        'geoipDatabase' => $geoip->healthFields(),
         'serverTime' => date('Y-m-d H:i:s'),
         'serverTimestamp' => time()
     ];
@@ -107,12 +121,19 @@ try {
         $response['recommendations'][] = 'Cron jobs have not run recently. Check AutoCron or set up server cron.';
     }
     
-    if ($isLocked && $lockAge > 600) {
-        $response['recommendations'][] = 'Lock file is stale. Previous cron job may have failed.';
+    if ($isLocked === null) {
+        $response['recommendations'][] = 'The cron lock file (202-cronjobs/' . \Prosper202\Cron\CronLock::FILE
+            . ') could not be opened or locked here, so a cron run the web server makes cannot take it either:'
+            . ' 202-config/cronjob.log has what the run said.';
     }
     
     if ($dataEngineStatus['pending'] > 1000) {
         $response['recommendations'][] = 'Large DataEngine backlog. Consider running manual processing.';
+    }
+
+    $geoipWarning = $geoip->warning();
+    if ($geoipWarning !== null) {
+        $response['recommendations'][] = $geoipWarning;
     }
     
     echo json_encode($response, JSON_PRETTY_PRINT);

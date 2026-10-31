@@ -3,12 +3,15 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	osexec "os/exec"
 	"sort"
 	"strings"
 	"sync"
+
+	"p202/internal/api"
 
 	"github.com/spf13/cobra"
 )
@@ -40,20 +43,20 @@ var execCmd = &cobra.Command{
 			return err
 		}
 		if len(profiles) == 0 {
-			return fmt.Errorf("exec requires one of --all-profiles, --profiles, or --group")
+			return validationError("exec requires one of --all-profiles, --profiles, or --group").WithHint("Example: `p202 exec --all-profiles -- campaign list --limit 5`.")
 		}
 
 		subArgs := append([]string(nil), args...)
 		if len(subArgs) == 0 {
-			return fmt.Errorf("exec requires a subcommand after --")
+			return validationError("exec requires a subcommand after --").WithHint("Put the command to run after a literal `--`, e.g. `p202 exec --profiles prod,staging -- report summary --period today`.")
 		}
 		if subArgs[0] == "exec" {
-			return fmt.Errorf("recursive exec invocation is not allowed")
+			return validationError("recursive exec invocation is not allowed").WithHint("Run the inner command directly after `--`; do not nest `exec` inside `exec`.")
 		}
 
 		concurrency, _ := cmd.Flags().GetInt("concurrency")
 		if concurrency < 1 {
-			return fmt.Errorf("--concurrency must be at least 1")
+			return validationError("--concurrency must be at least 1")
 		}
 		if concurrency > len(profiles) {
 			concurrency = len(profiles)
@@ -125,11 +128,14 @@ var execCmd = &cobra.Command{
 				}
 			}
 
-			data, _ := json.Marshal(payload)
+			data, err := json.Marshal(payload)
+			if err != nil {
+				return fmt.Errorf("encoding output: %w", err)
+			}
 			render(data)
 
 			if anyFailed {
-				return fmt.Errorf("one or more profiles failed")
+				return execFailure(resultMap)
 			}
 			return nil
 		}
@@ -153,10 +159,46 @@ var execCmd = &cobra.Command{
 		}
 
 		if anyFailed {
-			return fmt.Errorf("one or more profiles failed")
+			return execFailure(resultMap)
 		}
 		return nil
 	},
+}
+
+// execFailure is the parent's error for a run with failed children: the
+// licence refusal (category licence, exit 6, the trial hint) when every
+// failed child exited for it, so the contract the children honoured survives
+// the process boundary; the generic failure otherwise.
+func execFailure(results map[string]execResult) error {
+	failed, refused := 0, 0
+	for _, r := range results {
+		if r.Err == nil && r.ExitCode == 0 {
+			continue
+		}
+		failed++
+		if r.ExitCode == ExitLicence {
+			refused++
+		}
+	}
+	if failed > 0 && refused == failed {
+		return licenceRefusalError(fmt.Sprintf("%d of %d selected profiles failed, each refused the CLI: its install's ClickServer API key needs an active Prosper202 ClickServer Pro licence", failed, len(results)))
+	}
+	return fmt.Errorf("one or more profiles failed")
+}
+
+// execChildArgs builds the argv for one profile's child process. Split out
+// so the flags that must survive the process boundary are testable: a child
+// inherits none of the parent's, and --staged silently not crossing would
+// turn a proposal into a performed write.
+func execChildArgs(call execCall) []string {
+	args := []string{"--profile", call.Profile}
+	if call.ForceJSON {
+		args = append(args, "--json")
+	}
+	if api.StagedMode() {
+		args = append(args, "--staged")
+	}
+	return append(args, call.SubArgs...)
 }
 
 func defaultExecProfileRunner(call execCall) execResult {
@@ -165,13 +207,10 @@ func defaultExecProfileRunner(call execCall) execResult {
 		return execResult{Profile: call.Profile, ExitCode: 1, Err: err}
 	}
 
-	args := []string{"--profile", call.Profile}
-	if call.ForceJSON {
-		args = append(args, "--json")
+	command := osexec.Command(executable, execChildArgs(call)...)
+	if extra := execChildEnv(call); len(extra) > 0 {
+		command.Env = append(os.Environ(), extra...)
 	}
-	args = append(args, call.SubArgs...)
-
-	command := osexec.Command(executable, args...)
 	// Capture stdout and stderr into distinct buffers so per-profile JSON on
 	// stdout parses cleanly and stderr (warnings, hints) is reported separately
 	// instead of being mixed in by CombinedOutput().
@@ -190,7 +229,8 @@ func defaultExecProfileRunner(call execCall) execResult {
 
 	result.ExitCode = 1
 	result.Err = err
-	if exitErr, ok := err.(*osexec.ExitError); ok {
+	var exitErr *osexec.ExitError
+	if errors.As(err, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
 	}
 	return result

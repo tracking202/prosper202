@@ -110,6 +110,7 @@ final class ConversionBridgeIntegrationTest extends TestCase
             'time_difference' => '0 days, 0 hours, 1 min and 40 sec',
             'ip' => '203.0.113.9', 'pixel_type' => 3,
             'user_agent' => 'BridgeIntegrationTest/1.0', 'click_payout' => '10.0',
+            'once_per_click' => false,
         ];
     }
 
@@ -144,7 +145,7 @@ final class ConversionBridgeIntegrationTest extends TestCase
         self::assertSame('', $hook['subscribed_events']);
 
         $this->insertClick(9000);
-        $result = p202RecordConversion(self::$db, $this->log(9000), '', true, '10.0', 'TX-1');
+        $result = p202RecordConversion(self::$db, $this->log(9000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'TX-1');
         self::assertFalse($result['duplicate']);
 
         $deliveries = $this->deliveries();
@@ -184,8 +185,8 @@ final class ConversionBridgeIntegrationTest extends TestCase
         $this->subscribeWildcard();
         $this->insertClick(9100);
 
-        $first = p202RecordConversion(self::$db, $this->log(9100), '', true, '10.0', 'TX-DUP');
-        $replay = p202RecordConversion(self::$db, $this->log(9100), '', true, '10.0', 'TX-DUP');
+        $first = p202RecordConversion(self::$db, $this->log(9100), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'TX-DUP');
+        $replay = p202RecordConversion(self::$db, $this->log(9100), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'TX-DUP');
 
         self::assertFalse($first['duplicate']);
         self::assertTrue($replay['duplicate']);
@@ -200,8 +201,8 @@ final class ConversionBridgeIntegrationTest extends TestCase
         // Blank txids are stored as distinct NULL rows (no dedupe SELECT runs),
         // so two REAL conversions on one click are legitimate — their bridge
         // events must not collapse onto a shared "<clickId>:" key.
-        $first = p202RecordConversion(self::$db, $this->log(9400), '', true, '10.0', '');
-        $second = p202RecordConversion(self::$db, $this->log(9400), '', true, '10.0', '');
+        $first = p202RecordConversion(self::$db, $this->log(9400), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', '');
+        $second = p202RecordConversion(self::$db, $this->log(9400), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', '');
 
         self::assertFalse($first['duplicate']);
         self::assertFalse($second['duplicate']);
@@ -222,7 +223,7 @@ final class ConversionBridgeIntegrationTest extends TestCase
     public function testNoSubscriberMeansNoDeliveryRow(): void
     {
         $this->insertClick(9200);
-        $result = p202RecordConversion(self::$db, $this->log(9200), '', true, '10.0', 'TX-2');
+        $result = p202RecordConversion(self::$db, $this->log(9200), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'TX-2');
 
         self::assertFalse($result['duplicate']);
         self::assertGreaterThan(0, $result['conv_id'], 'the conversion itself must still record');
@@ -234,7 +235,7 @@ final class ConversionBridgeIntegrationTest extends TestCase
         $this->subscribeWildcard(2); // a different tenant's wildcard endpoint
         $this->insertClick(9300);
 
-        p202RecordConversion(self::$db, $this->log(9300), '', true, '10.0', 'TX-3');
+        p202RecordConversion(self::$db, $this->log(9300), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'TX-3');
 
         self::assertCount(0, $this->deliveries(), 'enqueue is tenant-scoped even for wildcard endpoints');
     }

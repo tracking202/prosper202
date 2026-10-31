@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use RuntimeException;
 
 /**
@@ -21,7 +22,8 @@ use RuntimeException;
  *    ABM report and the entity-keyed views always agree.
  *  - A company's email domain enables auto-attach: a customer whose email
  *    matches and who has never been attached joins it automatically. An
- *    explicitly detached customer (company = '' marker) is never re-attached.
+ *    explicitly detached customer (company = '' marker) is never re-attached,
+ *    nor is one whose company string named nothing (the sweep stores '').
  */
 final class MysqlCompanyRepository
 {
@@ -65,7 +67,7 @@ final class MysqlCompanyRepository
 
         if ($domain === '' || strlen($domain) > 191
             || preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/', $domain) !== 1) {
-            throw new RuntimeException('domain must be a bare hostname like example.com');
+            throw new LtvInputException('domain', 'domain must be a bare hostname like example.com');
         }
 
         return $domain;
@@ -91,7 +93,7 @@ final class MysqlCompanyRepository
     {
         $name = self::canonicalName($name);
         if ($name === '') {
-            throw new RuntimeException('Company name must not be empty');
+            throw new LtvInputException('company', 'Company name must not be empty');
         }
         $now = $now ?? time();
 
@@ -123,7 +125,7 @@ final class MysqlCompanyRepository
     {
         $name = self::canonicalName($name);
         if ($name === '') {
-            throw new RuntimeException('Company name must not be empty');
+            throw new LtvInputException('name', 'Company name must not be empty');
         }
         // Friendly fast-path message with the existing id; the unique key
         // below still catches the race this check cannot.
@@ -204,9 +206,7 @@ final class MysqlCompanyRepository
                 $companyId = (int) $entity['company_id'];
                 $entityName = (string) $entity['name'];
             }
-            if ($companyId <= 0) {
-                return;
-            }
+            $companyId = self::companyIdOrFail($companyId, $userId, $companyName);
             // Serialize against delete(): lock the company row before stamping
             // it onto the customer. If a concurrent delete already removed it,
             // re-create the entity so the customer never points at a dead id
@@ -215,10 +215,11 @@ final class MysqlCompanyRepository
             // which point delete's in-lock count check sees this customer.
             $locked = $this->lockCompanyRow($userId, $companyId);
             if ($locked === null) {
-                $companyId = $this->resolveOrCreate($userId, $companyName, $now);
-                if ($companyId <= 0) {
-                    return;
-                }
+                $companyId = self::companyIdOrFail(
+                    $this->resolveOrCreate($userId, $companyName, $now),
+                    $userId,
+                    $companyName
+                );
             } else {
                 $entityName = (string) $locked['name'];
             }
@@ -310,12 +311,6 @@ final class MysqlCompanyRepository
     }
 
     /**
-     * Companies with contact/revenue rollups aggregated live from attached
-     * customers (merged customer records excluded).
-     *
-     * @return array{rows: list<array<string, mixed>>, total: int}
-     */
-    /**
      * Type-ahead search for the merge picker: match name or domain
      * (LIKE-escaped), excluding one id (the merge target itself), with the
      * attached-contact count for display.
@@ -342,6 +337,13 @@ final class MysqlCompanyRepository
         return $this->conn->fetchAll($stmt);
     }
 
+    /**
+     * Companies with contact/revenue rollups aggregated live from attached
+     * customers (merged customer records excluded). last_activity_time is 0
+     * for a company with no customer.
+     *
+     * @return array{rows: list<array<string, mixed>>, total: int}
+     */
     public function listWithRollups(int $userId, int $limit = 50, int $offset = 0): array
     {
         $stmt = $this->conn->prepareRead(
@@ -360,7 +362,10 @@ final class MysqlCompanyRepository
              LIMIT ? OFFSET ?'
         );
         $this->conn->bind($stmt, 'iii', [$userId, max(1, $limit), max(0, $offset)]);
-        $rows = $this->conn->fetchAll($stmt);
+        $rows = array_map(static fn (array $row): array => LtvNumbers::integers(
+            LtvNumbers::decimals($row, ['total_revenue', 'mrr']),
+            ['contacts', 'order_count', 'last_activity_time']
+        ), $this->conn->fetchAll($stmt));
 
         $countStmt = $this->conn->prepareRead(
             'SELECT COUNT(*) AS total FROM 202_companies WHERE user_id = ?'
@@ -383,10 +388,14 @@ final class MysqlCompanyRepository
     public function update(int $userId, int $companyId, array $changes): void
     {
         if (!array_key_exists('name', $changes) && !array_key_exists('domain', $changes)) {
-            throw new RuntimeException('Nothing to update — supply name and/or domain');
+            throw new LtvInputException(
+                'name',
+                'Nothing to update — supply name and/or domain',
+                'Send name, domain or both'
+            );
         }
         if ($this->get($userId, $companyId) === null) {
-            throw new RuntimeException('Company not found');
+            throw new RecordNotFoundException('Company not found');
         }
 
         $newName = null;
@@ -394,7 +403,7 @@ final class MysqlCompanyRepository
         if (array_key_exists('name', $changes)) {
             $newName = self::canonicalName((string) $changes['name']);
             if ($newName === '') {
-                throw new RuntimeException('Company name must not be empty');
+                throw new LtvInputException('name', 'Company name must not be empty');
             }
             $normalized = self::normalizeName($newName);
             $dupStmt = $this->conn->prepareWrite(
@@ -495,12 +504,19 @@ final class MysqlCompanyRepository
     public function merge(int $userId, int $sourceCompanyId, int $targetCompanyId): void
     {
         if ($sourceCompanyId === $targetCompanyId) {
-            throw new RuntimeException('Cannot merge a company into itself');
+            throw new LtvInputException('source_company_id', 'Cannot merge a company into itself');
         }
         $source = $this->get($userId, $sourceCompanyId);
         $target = $this->get($userId, $targetCompanyId);
-        if ($source === null || $target === null) {
-            throw new RuntimeException('Both companies must exist and belong to this account');
+        if ($target === null) {
+            throw new RecordNotFoundException('Company not found');
+        }
+        if ($source === null) {
+            throw new LtvInputException(
+                'source_company_id',
+                'source_company_id ' . $sourceCompanyId . ' not found for this account',
+                'No such company in this account (see `p202 ltv companies`)'
+            );
         }
 
         $now = time();
@@ -522,7 +538,7 @@ final class MysqlCompanyRepository
                 $locked[(int) $row['company_id']] = $row;
             }
             if (!isset($locked[$sourceCompanyId], $locked[$targetCompanyId])) {
-                throw new RuntimeException('Company was merged or deleted concurrently; retry the merge');
+                throw new LtvConflictException('Company was merged or deleted concurrently; retry the merge');
             }
             $targetName = (string) $locked[$targetCompanyId]['name'];
 
@@ -572,18 +588,47 @@ final class MysqlCompanyRepository
         $this->conn->transaction(function () use ($userId, $companyId): void {
         $company = $this->lockCompanyRow($userId, $companyId);
         if ($company === null) {
-            throw new RuntimeException('Company not found');
+            throw new RecordNotFoundException('Company not found');
         }
 
+        // Refused by what the company holds, not by anything sent: a 409,
+        // as a product a line item names is.
+        $refusal = $this->deleteRefusal($userId, $companyId, (string) $company['name']);
+        if ($refusal !== null) {
+            throw new LtvConflictException($refusal);
+        }
+
+        $stmt = $this->conn->prepareWrite(
+            'DELETE FROM 202_companies WHERE company_id = ? AND user_id = ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$companyId, $userId]);
+        $this->conn->executeUpdate($stmt);
+        });
+    }
+
+    /**
+     * Why delete() would refuse this company, or null when it would not:
+     * attached customers (the right operation is a merge), or customers
+     * whose company STRING matches but who are not yet stamped (removing the
+     * entity would only have the linking sweep re-create it). delete() asks
+     * this under the company row's lock; the delete preview asks it without
+     * one, so its answer can be overtaken by a concurrent attach — the
+     * delete re-asks and is the arbiter.
+     */
+    public function deleteRefusal(int $userId, int $companyId, string $companyName): ?string
+    {
         $countStmt = $this->conn->prepareWrite(
             'SELECT COUNT(*) AS c FROM 202_customers WHERE company_id = ? AND user_id = ?'
         );
         $this->conn->bind($countStmt, 'ii', [$companyId, $userId]);
         $count = $this->conn->fetchOne($countStmt);
-        if (((int) ($count['c'] ?? 0)) > 0) {
-            throw new RuntimeException(
-                'Company still has ' . (int) $count['c'] . ' attached customer(s); merge it into another company instead'
-            );
+        if ($count === null) {
+            // COUNT(*) always yields a row; none means the read failed, and
+            // "no attached customers" must not stand in for "unknown".
+            throw new QueryException('COUNT(*) over 202_customers returned no row');
+        }
+        if ((int) $count['c'] > 0) {
+            return 'Company still has ' . (int) $count['c'] . ' attached customer(s); merge it into another company instead';
         }
 
         // Unstamped legacy rows may hold UNCANONICAL strings (pre-fix
@@ -597,7 +642,7 @@ final class MysqlCompanyRepository
              GROUP BY company"
         );
         $this->conn->bind($strayStmt, 'i', [$userId]);
-        $targetNormalized = self::normalizeName((string) $company['name']);
+        $targetNormalized = self::normalizeName($companyName);
         $strayCount = 0;
         foreach ($this->conn->fetchAll($strayStmt) as $strayRow) {
             if (self::normalizeName((string) $strayRow['company']) === $targetNormalized) {
@@ -605,18 +650,11 @@ final class MysqlCompanyRepository
             }
         }
         if ($strayCount > 0) {
-            throw new RuntimeException(
-                'Company has ' . $strayCount . ' customer(s) pending entity linking;'
-                . ' run the maintenance cron (202-cronjobs/ltv_maintenance.php) and retry'
-            );
+            return 'Company has ' . $strayCount . ' customer(s) pending entity linking;'
+                . ' run the maintenance cron (202-cronjobs/ltv_maintenance.php) and retry';
         }
 
-        $stmt = $this->conn->prepareWrite(
-            'DELETE FROM 202_companies WHERE company_id = ? AND user_id = ?'
-        );
-        $this->conn->bind($stmt, 'ii', [$companyId, $userId]);
-        $this->conn->executeUpdate($stmt);
-        });
+        return null;
     }
 
     /**
@@ -640,59 +678,129 @@ final class MysqlCompanyRepository
      * Maintenance sweep: attach customers that carry a company string but no
      * company_id (rows written before the entity existed, or by paths that
      * only set the string). The string is rewritten to the canonical entity
-     * name so string-grouped reports and entity views agree. Chunked and
-     * idempotent. DB errors propagate — the caller decides how to surface
-     * them; only genuinely-blank names are skipped.
+     * name so string-grouped reports and entity views agree. DB errors
+     * propagate — the caller decides how to surface them.
+     *
+     * Walks the account's customers in id order, $limit at a time, until
+     * $limit are linked or none are left: fewer than $limit means the account
+     * has nothing left to link. A string canonicalName() reduces to nothing
+     * (tabs, no-break or ideographic spaces) can never link, and SQL cannot
+     * read it the way canonicalName() does, so it is stored as '' — what
+     * clearing an unlinked string writes, and still not the NULL that domain
+     * auto-attach reads as eligible — and is never taken again.
      *
      * @return int customers linked this pass
      */
     public function linkUnlinkedCustomers(int $userId, int $limit = 500): int
     {
-        $stmt = $this->conn->prepareWrite(
-            "SELECT customer_id, company FROM 202_customers
-             WHERE user_id = ? AND company IS NOT NULL AND company <> ''
-               AND company_id IS NULL AND merged_into_customer_id IS NULL
-             LIMIT ?"
-        );
-        $this->conn->bind($stmt, 'ii', [$userId, max(1, $limit)]);
-        $pending = $this->conn->fetchAll($stmt);
-
+        $limit = max(1, $limit);
         $linked = 0;
+        $after = 0;
         $entities = [];
-        foreach ($pending as $row) {
-            $canonical = self::canonicalName((string) $row['company']);
-            if ($canonical === '') {
-                continue; // whitespace-only string — nothing to link
-            }
-            // Resolve once per distinct name; stamp the ENTITY's stored name
-            // so case/truncation variants of one company converge on a single
-            // string for the string-grouped reports.
-            $normalized = self::normalizeName($canonical);
-            if (!isset($entities[$normalized])) {
-                $entity = $this->findByName($userId, $canonical);
-                if ($entity === null) {
-                    $entities[$normalized] = ['id' => $this->resolveOrCreate($userId, $canonical), 'name' => $canonical];
-                } else {
-                    $entities[$normalized] = ['id' => (int) $entity['company_id'], 'name' => (string) $entity['name']];
+        do {
+            // Forced: left to itself the server walks merged_into, which holds
+            // every account's customers in id order, from the cursor on.
+            $stmt = $this->conn->prepareWrite(
+                "SELECT customer_id, company FROM 202_customers FORCE INDEX (`user_company`)
+                 WHERE user_id = ? AND company_id IS NULL AND customer_id > ?
+                   AND company IS NOT NULL AND company <> ''
+                   AND merged_into_customer_id IS NULL
+                 ORDER BY customer_id
+                 LIMIT ?"
+            );
+            $this->conn->bind($stmt, 'iii', [$userId, $after, $limit]);
+            $pending = $this->conn->fetchAll($stmt);
+
+            $blank = [];
+            foreach ($pending as $row) {
+                $after = (int) $row['customer_id'];
+                $canonical = self::canonicalName((string) $row['company']);
+                if ($canonical === '') {
+                    $blank[$after] = (string) $row['company'];
+                    continue;
+                }
+                // Resolve once per distinct name; stamp the ENTITY's stored name
+                // so case/truncation variants of one company converge on a single
+                // string for the string-grouped reports.
+                $normalized = self::normalizeName($canonical);
+                if (!isset($entities[$normalized])) {
+                    $entity = $this->findByName($userId, $canonical);
+                    if ($entity === null) {
+                        $entities[$normalized] = [
+                            'id' => $this->resolveOrCreate($userId, $canonical),
+                            'name' => $canonical,
+                        ];
+                    } else {
+                        $entities[$normalized] = [
+                            'id' => (int) $entity['company_id'],
+                            'name' => (string) $entity['name'],
+                        ];
+                    }
+                }
+                $companyId = self::companyIdOrFail($entities[$normalized]['id'], $userId, $canonical);
+                $update = $this->conn->prepareWrite(
+                    'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
+                     WHERE customer_id = ? AND user_id = ? AND company_id IS NULL'
+                );
+                $this->conn->bind($update, 'isiii', [
+                    $companyId,
+                    $entities[$normalized]['name'],
+                    time(),
+                    $after,
+                    $userId,
+                ]);
+                $linked += $this->conn->executeUpdate($update);
+                if ($linked >= $limit) {
+                    break;
                 }
             }
-            if ($entities[$normalized]['id'] <= 0) {
-                continue;
-            }
-            $update = $this->conn->prepareWrite(
-                'UPDATE 202_customers SET company_id = ?, company = ?
-                 WHERE customer_id = ? AND user_id = ? AND company_id IS NULL'
-            );
-            $this->conn->bind($update, 'isii', [
-                $entities[$normalized]['id'],
-                $entities[$normalized]['name'],
-                (int) $row['customer_id'],
-                $userId,
-            ]);
-            $linked += $this->conn->executeUpdate($update);
-        }
+            $this->clearBlankCompanies($userId, $blank);
+        } while ($linked < $limit && count($pending) === $limit);
 
         return $linked;
+    }
+
+    /**
+     * Store '' over company strings that name nothing, each only while the
+     * customer is still unlinked and still holds a string read as blank.
+     *
+     * @param array<int, string> $blank customer_id => the string as read
+     */
+    private function clearBlankCompanies(int $userId, array $blank): void
+    {
+        if ($blank === []) {
+            return;
+        }
+        $ids = array_keys($blank);
+        $strings = array_values(array_unique($blank));
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_customers SET company = '', updated_at = ?
+             WHERE user_id = ? AND company_id IS NULL
+               AND customer_id IN (" . implode(', ', array_fill(0, count($ids), '?')) . ')
+               AND company IN (' . implode(', ', array_fill(0, count($strings), '?')) . ')'
+        );
+        $this->conn->bind(
+            $stmt,
+            'ii' . str_repeat('i', count($ids)) . str_repeat('s', count($strings)),
+            [time(), $userId, ...$ids, ...$strings]
+        );
+        $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * An id a lookup or an insert answered for a company, refused when it is
+     * none: a stamp would point at no company, and skipping the customer
+     * would read as nothing to do and take it again on every pass.
+     */
+    private static function companyIdOrFail(int $companyId, int $userId, string $name): int
+    {
+        if ($companyId <= 0) {
+            throw new QueryException(
+                'Company "' . $name . '" of account ' . $userId . ' resolved to no company id (' . $companyId . ')'
+            );
+        }
+
+        return $companyId;
     }
 
     /**

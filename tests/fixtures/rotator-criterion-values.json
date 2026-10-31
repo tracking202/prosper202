@@ -1,0 +1,18 @@
+{
+  "about": "How a redirector rule's criterion value is read, by every reader: Prosper202\\Rotator\\Criterion (rtr.php, offrtr.php, the Redirectors page, Overview > Rotator Breakdown, the API's writes; tests/Rotator/CriterionTest.php) and go-cli's criterionValues/criterionMatchesEveryone/criterionNormalize (p202 rotator test, p202 diff; go-cli/cmd/rotator_criterion_test.go). Each case is a value as some writer stored it: values is what the redirects compare, everyone whether it matches every visitor, normalized what the writers store now.",
+  "cases": [
+    {"stored": "ALL", "values": ["ALL"], "everyone": true, "normalized": "ALL", "writer": "the page, and the API since 1.9.79"},
+    {"stored": "all", "values": ["all"], "everyone": true, "normalized": "ALL", "writer": "the page as typed, and the API before 1.9.79 (rtr.php read it as every visitor, offrtr.php as no one)"},
+    {"stored": "All", "values": ["All"], "everyone": true, "normalized": "ALL", "writer": "the API as sent (no redirect read it as every visitor; p202 rotator test did)"},
+    {"stored": " all ", "values": ["all"], "everyone": true, "normalized": "ALL", "writer": "the API as sent"},
+    {"stored": "United States(US), all", "values": ["United States(US)", "all"], "everyone": true, "normalized": "United States(US),ALL", "writer": "the API as sent: the space kept the second value from being read"},
+    {"stored": "United States(US),ALL", "values": ["United States(US)", "ALL"], "everyone": true, "normalized": "United States(US),ALL", "writer": "the page"},
+    {"stored": "United States(US), Canada(CA)", "values": ["United States(US)", "Canada(CA)"], "everyone": false, "normalized": "United States(US),Canada(CA)", "writer": "the API as sent: Canada was never matched"},
+    {"stored": "United States(US),,Canada(CA),", "values": ["United States(US)", "Canada(CA)"], "everyone": false, "normalized": "United States(US),Canada(CA)", "writer": "the API as sent"},
+    {"stored": "", "values": [], "everyone": false, "normalized": "", "writer": "the API before 1.9.79, for a criterion sent with no value"},
+    {"stored": " , ", "values": [], "everyone": false, "normalized": "", "writer": "the API as sent"},
+    {"stored": "ALLEN(US)", "values": ["ALLEN(US)"], "everyone": false, "normalized": "ALLEN(US)", "writer": "a value that begins with ALL is not ALL"},
+    {"stored": "Mall", "values": ["Mall"], "everyone": false, "normalized": "Mall", "writer": "nor is one that contains it"},
+    {"stored": "mobile,tablet", "values": ["mobile", "tablet"], "everyone": false, "normalized": "mobile,tablet", "writer": "the page"}
+  ]
+}

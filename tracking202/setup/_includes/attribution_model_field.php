@@ -1,71 +1,59 @@
 <?php
 declare(strict_types=1);
 
-// Attribution Model Selection Field
-// Include this in campaign forms to add attribution model selection
+/**
+ * The campaign form's attribution model override (plan §6.3), v2 markup,
+ * included by _includes/campaign_form/advanced.php.
+ *
+ * Blank means the account default; the override is what the attribution
+ * reports' effective mode reads for this campaign's conversions.
+ * aff_campaigns.php refuses an id that is not one of the account's own
+ * models, keyed on the same $_SESSION['user_id'] this list reads.
+ *
+ * Reads the selected model from $campaignForm['values']['attribution_model_id']
+ * and the handler's sentence from $campaignForm['errors'].
+ */
 
-// Ensure we have the necessary dependencies
-if (!isset($db) || !isset($_SESSION['user_own_id'])) {
+if (!isset($db) || !isset($_SESSION['user_id'])) {
     return;
 }
 
-// Get current attribution model for editing
-$currentAttributionModelId = null;
-if (isset($html['attribution_model_id']) && $html['attribution_model_id'] !== '') {
-    $currentAttributionModelId = (int)$html['attribution_model_id'];
-}
+$attributionValue = (string) ($campaignForm['values']['attribution_model_id'] ?? '');
+$currentAttributionModelId = $attributionValue !== '' ? (int) $attributionValue : null;
+$attributionErrors = (array) ($campaignForm['errors'] ?? []);
+$attributionPageUrl = get_absolute_url() . '202-account/attribution.php';
 
-// Initialize attribution service
 try {
-    // Include required attribution classes
-    // Path: _includes -> setup -> tracking202 -> root (3 levels up)
-    require_once dirname(__DIR__, 3) . '/202-config/Attribution/ModelType.php';
-    require_once dirname(__DIR__, 3) . '/202-config/Attribution/ModelDefinition.php';
-    require_once dirname(__DIR__, 3) . '/202-config/Attribution/Repository/ModelRepositoryInterface.php';
-    require_once dirname(__DIR__, 3) . '/202-config/Attribution/Repository/Mysql/MysqlModelRepository.php';
-    require_once dirname(__DIR__, 3) . '/202-config/Attribution/AttributionIntegrationService.php';
-
-    // Create the model repository and integration service directly
-    $modelRepository = new \Prosper202\Attribution\Repository\Mysql\MysqlModelRepository($db, $db);
-    $integrationService = new \Prosper202\Attribution\AttributionIntegrationService(
-        $modelRepository,
-        $db
-    );
-
-    $userId = (int)$_SESSION['user_own_id'];
-    $modelOptions = $integrationService->getModelOptionsForUser($userId, $currentAttributionModelId);
-    $defaultModelId = $integrationService->getDefaultModelIdForUser($userId);
-    
-} catch (Exception $e) {
-    // If attribution system is not available, don't show the field
-    error_log('Attribution field error: ' . $e->getMessage());
+    $attributionModelRows = (new \Prosper202\Attribution\ModelRepository(new \Prosper202\Database\Connection($db)))
+        ->rows((int) $_SESSION['user_id']);
+} catch (\Throwable $e) {
+    // The rest of the campaign form must still work; say why the field is missing.
+    error_log('Attribution model field: ' . $e->getMessage());
+    echo '<div class="mb-3"><div class="form-text">Attribution models could not be loaded, so this campaign keeps its current model.</div></div>';
     return;
+}
+
+$attributionDefaultName = '';
+foreach ($attributionModelRows as $attributionModelRow) {
+    if ((int) ($attributionModelRow['is_default'] ?? 0) === 1) {
+        $attributionDefaultName = (string) $attributionModelRow['model_name'];
+    }
 }
 ?>
-
-<!-- Attribution Model Selection Field -->
-<div class="form-group" style="margin-bottom: 0px;">
-    <label for="attribution_model_id" class="col-xs-4 control-label" style="text-align: left;">
-        Attribution Model 
-        <span class="fui-info" data-toggle="tooltip" 
-              title="How conversions will be attributed to different touchpoints in the customer journey"></span>
-    </label>
-    <div class="col-xs-6">
-        <select class="form-control input-sm" name="attribution_model_id" id="attribution_model_id">
-            <?php echo $modelOptions; ?>
-        </select>
-        <small class="help-block">
-            <?php if ($defaultModelId): ?>
-                Leave blank to use your default attribution model. 
-                <a href="<?php echo get_absolute_url(); ?>tracking202/setup/attribution_models.php" target="_blank">
-                    Manage Models
-                </a>
-            <?php else: ?>
-                No attribution models configured. 
-                <a href="<?php echo get_absolute_url(); ?>tracking202/setup/attribution_models.php" target="_blank">
-                    Create your first model
-                </a>
-            <?php endif; ?>
-        </small>
+<div class="mb-3">
+    <label class="form-label" for="attribution_model_id">Attribution model</label>
+    <select class="form-select<?php echo p202_setup_invalid($attributionErrors, 'attribution_model_id'); ?>" name="attribution_model_id" id="attribution_model_id">
+        <option value="">Account default<?php echo $attributionDefaultName !== '' ? ' (' . htmlspecialchars($attributionDefaultName, ENT_QUOTES, 'UTF-8') . ')' : ''; ?></option>
+        <?php foreach ($attributionModelRows as $attributionModelRow) {
+            $attributionModelId = (int) $attributionModelRow['model_id']; ?>
+            <option value="<?php echo $attributionModelId; ?>"<?php echo $attributionModelId === $currentAttributionModelId ? ' selected' : ''; ?>><?php
+                echo htmlspecialchars((string) $attributionModelRow['model_name'] . ' — ' . (string) $attributionModelRow['model_type']
+                    . ((string) $attributionModelRow['status'] !== 'active' ? ' (' . (string) $attributionModelRow['status'] . ')' : ''), ENT_QUOTES, 'UTF-8'); ?></option>
+        <?php } ?>
+    </select>
+    <?php echo p202_setup_feedback($attributionErrors, 'attribution_model_id'); ?>
+    <div class="form-text">
+        Leave on the account default unless this campaign needs its own model: how a conversion's credit is shared across the touchpoints before it.
+        <a href="<?php echo htmlspecialchars($attributionPageUrl, ENT_QUOTES, 'UTF-8'); ?>">Manage models</a>
     </div>
 </div>

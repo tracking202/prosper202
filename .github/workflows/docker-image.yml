@@ -1,0 +1,138 @@
+name: Docker Image
+
+# Nothing built the Dockerfile before this: a change to it, to the entrypoint
+# or to composer.json reached Coolify and docker compose hosts unbuilt. This
+# builds the default (app) stage from a fresh pull, as a first deploy would,
+# and holds the image to the PHP release the Dockerfile names. The base is
+# pinned to a patch release (php:8.3.36-apache, not php:8.3-apache) because a
+# host with the moving tag cached keeps building on the PHP it pulled first;
+# the check refuses a FROM line that is not pinned that way. The image's
+# vendor/ is held to composer.lock, the set the release zip ships.
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'build/scripts/docker-entrypoint.sh'
+      - 'build/scripts/write-config.php'
+      - 'build/scripts/release-tree.php'
+      - 'build/scripts/ReleaseTree.php'
+      - '.github/workflows/docker-image.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'build/scripts/docker-entrypoint.sh'
+      - 'build/scripts/write-config.php'
+      - 'build/scripts/release-tree.php'
+      - 'build/scripts/ReleaseTree.php'
+      - '.github/workflows/docker-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and boot the app image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the PHP release the Dockerfile pins
+        id: pin
+        run: |
+          version=$(sed -nE 's/^FROM php:([0-9]+\.[0-9]+\.[0-9]+)-apache AS base$/\1/p' Dockerfile)
+          if [ -z "$version" ]; then
+            echo "::error file=Dockerfile::the base stage must be FROM php:<major>.<minor>.<patch>-apache AS base; a moving tag keeps whatever PHP a host cached" >&2
+            grep -n '^FROM' Dockerfile >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Dockerfile pins PHP $version"
+
+      # A vendor/ in the build context (a developer's, with the dev set) must
+      # not reach the image: the marker shows .dockerignore leaves it out.
+      - name: Build
+        run: |
+          mkdir -p vendor
+          echo 'from the build context' > vendor/p202-context-marker
+          docker build --pull --tag prosper202-ci .
+
+      - name: Check the image's PHP and extensions
+        env:
+          PINNED: ${{ steps.pin.outputs.version }}
+        run: |
+          actual=$(docker run --rm --entrypoint php prosper202-ci -r 'echo PHP_VERSION;')
+          echo "image runs PHP $actual"
+          if [ "$actual" != "$PINNED" ]; then
+            echo "::error::the image runs PHP $actual, the Dockerfile pins $PINNED" >&2
+            exit 1
+          fi
+          modules=$(docker run --rm --entrypoint php prosper202-ci -m)
+          missing=0
+          for ext in mysqli pdo_mysql memcached 'Zend OPcache'; do
+            if ! grep -qxF "$ext" <<<"$modules"; then
+              echo "::error::extension not loaded: $ext" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      # The Dockerfile installs from composer.lock (ImageInstallsTheLockedSetTest
+      # holds its shape); this reads what the build installed, against the
+      # checkout's lock, with the check the release zip's vendor/ passes.
+      - name: Check the image's vendor/ is exactly composer.lock's runtime set
+        run: |
+          if ! docker run --rm --volume "$PWD:/p202-checkout:ro" --entrypoint php prosper202-ci \
+              /p202-checkout/build/scripts/release-tree.php vendor /var/www/html /p202-checkout/composer.lock; then
+            echo "::error::the image's vendor/ is not composer.lock's runtime set" >&2
+            exit 1
+          fi
+          state=$(docker run --rm --entrypoint sh prosper202-ci -c \
+            'if [ -e /var/www/html/vendor/p202-context-marker ]; then echo shipped; else echo absent; fi')
+          echo "the build context's vendor/ in the image: $state"
+          if [ "$state" != absent ]; then
+            echo "::error::the build context's vendor/ reached the image; .dockerignore must leave it out" >&2
+            exit 1
+          fi
+
+      # tests/ holds runner scripts that act on a database with no sign-in;
+      # .dockerignore keeps it out of the build context, and so out of the
+      # docroot (TestScriptsAreNotServedTest reads the file).
+      - name: Check the image leaves the test suite out
+        run: |
+          state=$(docker run --rm --entrypoint sh prosper202-ci -c \
+            'if [ ! -f /var/www/html/index.php ]; then echo no-app; elif [ -e /var/www/html/tests ]; then echo shipped; else echo absent; fi')
+          echo "tests/ in the image: $state"
+          if [ "$state" != absent ]; then
+            echo "::error::the image's docroot holds tests/ (or no app at all: $state); .dockerignore must leave it out" >&2
+            exit 1
+          fi
+
+      - name: Boot and serve a request
+        run: |
+          docker run --detach --name p202 --publish 127.0.0.1:8080:80 prosper202-ci
+          status=000
+          for _ in $(seq 1 30); do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/health/ || true)
+            [ "$status" = 200 ] && break
+            sleep 1
+          done
+          docker logs p202
+          if [ "$status" != 200 ]; then
+            echo "::error::/health/ answered $status, not 200" >&2
+            exit 1
+          fi
+          runner=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:8080/tests/Install/fixtures/schema-installer-runner.php || true)
+          if [ "$runner" != 404 ]; then
+            echo "::error::a request for a test runner answered $runner, not 404" >&2
+            exit 1
+          fi

@@ -2,17 +2,28 @@
 declare(strict_types=1);
 class Slack {
 
-  function __construct(private $webhook_url)
-  {
-  }
+    public function __construct(
+        private $webhook_url,
+        private ?\Prosper202\Notifications\SlackWebhook $webhook = null
+    ) {
+    }
 
-  public function push($placeholder, $vars = []){
-	$message = $this->getMessage($placeholder, $vars);
-	if ($message === '') {
-		return false;
-	}
-	return $this->sendMessage($message);
-  }
+    /**
+     * Send a notice: true when the webhook took it. A notice that was not
+     * sent or not taken is logged here with why, and answers false; it never
+     * throws, so the action that sent it goes on and answers for itself.
+     */
+    public function push($placeholder, $vars = []): bool
+    {
+        $message = $this->getMessage($placeholder, $vars);
+        $why = $message === '' ? 'no message is defined for it' : $this->sendMessage($message);
+        if ($why !== null) {
+            error_log('Slack: the "' . $placeholder . '" notice was not sent: ' . $why);
+            return false;
+        }
+
+        return true;
+    }
 
   private function getMessage($placeholder, $vars = []) {
   	static $messages = [
@@ -134,6 +145,7 @@ class Slack {
       'zaxaa_api_signature_updated' => '#[user] entered a new Zaxaa API Signature',
 	  'jvzoo_secret_key_updated' => '#[user] entered a new JVZoo Secret Key',
 	  'ipqs_api_key_updated' => '#[user] entered a new IPQualityScore API Key',
+	  'paykickstart_ipn_keys_updated' => '#[user] changed the PayKickstart IPN secret keys',
 
       //User Management
       'user_management_user' => '#[user] [type] a Prosper202 ClickServer User: #[username] ([role])',
@@ -143,6 +155,14 @@ class Slack {
 
       //MaxMind ISP/Carrier Lookup
       'maxmind_isp_changed' => '#[user] [type] MaxMind ISP/Carrier Lookup',
+
+        //Mobile App Attribution
+        'mobile_app_registered' => 'Mobile App: [app] (id [app_id]) Registered by #[user]',
+
+        //Attribution Model
+        'attribution_model_created' => 'Attribution Model: [model_name] ([model_type]) Created by #[user]',
+        'attribution_model_updated' => 'Attribution Model: [model_name] ([model_type]) Updated by #[user]',
+        'attribution_model_deleted' => 'Attribution Model: [model_name] Deleted by #[user]',
 
       //Failed Login Attempt
       'failed_login' => 'Failed Login Attempt:\n - Username: [username]\n - IP Address: [ip]',
@@ -162,22 +182,77 @@ class Slack {
 	return $message;
   }
 
-  private function sendMessage($message) {
+  /** The name a notice goes out under when nothing better is known. */
+  public const NEUTRAL_SENDER = 'Prosper202';
 
-    $data = "payload=" . json_encode([
+  /**
+   * Who a notice says it is from (Slack's username), so a channel that hears
+   * from several installs can tell them apart: the host the request named.
+   * A run with no request — the cron job from the PHP CLI — has no
+   * SERVER_NAME (read raw, that was an "Undefined array key" warning on
+   * every notice it sent), so it is the install's tracking domain, as
+   * getTrackingDomain() falls back to it, and NEUTRAL_SENDER when none is
+   * set.
+   *
+   * @param array<string, mixed> $server normally $_SERVER
+   * @param string|null $trackingDomain user 1's user_tracking_domain, as stored; null when it could not be read
+   */
+  public static function senderName(array $server, ?string $trackingDomain): string
+  {
+    $name = is_scalar($server['SERVER_NAME'] ?? null) ? trim((string) $server['SERVER_NAME']) : '';
+    if ($name !== '') {
+      return $name;
+    }
+    $domain = $trackingDomain === null ? '' : \Prosper202\Click\TrackingDomain::normalize($trackingDomain);
+
+    return $domain !== '' ? $domain : self::NEUTRAL_SENDER;
+  }
+
+  /** The body sendMessage() posts. */
+  public function payload(string $message): string
+  {
+    $hasName = is_scalar($_SERVER['SERVER_NAME'] ?? null) && trim((string) $_SERVER['SERVER_NAME']) !== '';
+
+    return "payload=" . json_encode([
             "channel"  		=> "#prosper202",
-            "text"      	=> urlencode((string) $message),
-            "username" 		=> $_SERVER['SERVER_NAME'],
+            "text"      	=> urlencode($message),
+            "username" 		=> self::senderName($_SERVER, $hasName ? null : self::installTrackingDomain()),
             "icon_url"    	=> "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2015-02-28/3879263534_1958d0336574bea6f52d_48.jpg"
     		]);
-
-    $ch = curl_init($this->webhook_url);
-    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    $result = curl_exec($ch);
-    curl_close($ch);
-
-    return $result;
   }
+
+  /**
+   * User 1's tracking domain, as stored; null when there is no database to
+   * ask or it could not be read. It only names the sender, so a read that
+   * fails costs the notice its install's name, never the notice.
+   */
+  private static function installTrackingDomain(): ?string
+  {
+    try {
+      if (!class_exists('DB', false)) {
+        return null;
+      }
+      $database = DB::getInstance();
+      $mysqli = $database ? $database->getConnection() : null;
+      if (!$mysqli instanceof mysqli) {
+        return null;
+      }
+      $conn = new \Prosper202\Database\Connection($mysqli);
+      $row = $conn->fetchOne($conn->prepareRead('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1 LIMIT 1'));
+
+      return is_array($row) && is_string($row['user_tracking_domain'] ?? null) ? $row['user_tracking_domain'] : null;
+    } catch (\Throwable $e) {
+      error_log('Slack: the tracking domain could not be read for the sender name: ' . $e->getMessage());
+      return null;
+    }
+  }
+
+    /** Null when the webhook took it, else why not (SlackWebhook::post()). */
+    private function sendMessage(string $message): ?string
+    {
+        $url = is_string($this->webhook_url) ? $this->webhook_url : '';
+        $this->webhook ??= new \Prosper202\Notifications\SlackWebhook();
+
+        return $this->webhook->post($url, $this->payload($message));
+    }
 }

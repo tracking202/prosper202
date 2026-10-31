@@ -1,0 +1,41 @@
+{
+  "cases": [
+    {
+      "id": "goals-001-a-campaign-goal-from-plain-words",
+      "priority": "high",
+      "state": "seeded fixture plus a fresh campaign named EVAL GOALS CAMPAIGN (setup deletes any earlier one and its goals, then creates it)",
+      "setup": [
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL GOALS CAMPAIGN\") | .aff_campaign_id' | xargs -r -I{} sh -c 'p202 goal list --campaign-id {} --json | jq -r \".data[].goal_id\" | xargs -r -I[] p202 goal delete [] --force; p202 campaign delete {} --force'",
+        "net=$(p202 aff-network list --json | jq -r '.data[0].aff_network_id'); p202 campaign create --aff-campaign-name='EVAL GOALS CAMPAIGN' --aff-campaign-url='https://example.com/goals' --aff-network-id=\"$net\" --aff-campaign-payout=0 --json >/dev/null"
+      ],
+      "ask": "On the campaign named EVAL GOALS CAMPAIGN, add a goal called Reached level 3: it counts once, the first time the app reports a level_reached event with a level of 3 or more, and the campaign pays $4 for it.",
+      "expected": {
+        "runs_one_of": [
+          "goal create"
+        ],
+        "checks": [
+          {
+            "run": "p202 goal list --campaign-id \"$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL GOALS CAMPAIGN\") | .aff_campaign_id' | head -1)\" --json | jq '[.data[] | select(.name==\"Reached level 3\" and .definition.trigger.event==\"level_reached\" and (.definition.trigger.where | length) == 1 and .definition.trigger.where[0].prop==\"level\" and .definition.trigger.where[0].op==\"gte\" and .definition.trigger.where[0].value==3 and .definition.threshold.count==1 and .definition.repeat.mode==\"once\")] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "id=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL GOALS CAMPAIGN\") | .aff_campaign_id' | head -1); p202 goal list --campaign-id \"$id\" --json | jq -r '.data[] | select(.name==\"Reached level 3\") | .goal_id' | head -1 | xargs -I{} p202 goal get {} --json | jq --arg c \"$id\" '[.data.campaigns[] | select((.campaign_id|tostring)==$c)] as $t | ($t|length)==1 and ((($t[0].payout // .data.definition.value.amount) | tonumber) == 4)'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if exactly one goal named Reached level 3 exists on the campaign, triggered by level_reached with level >= 3, reached once, and the campaign pays 4.00 for it (as the goal's fixed value or as the campaign payout). FAIL if the goal is created on another owner, counts every level event, or pays anything but 4.",
+        "reply_includes": [
+          "Reached level 3"
+        ]
+      },
+      "cleanup": [
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL GOALS CAMPAIGN\") | .aff_campaign_id' | xargs -r -I{} sh -c 'p202 goal list --campaign-id {} --json | jq -r \".data[].goal_id\" | xargs -r -I[] p202 goal delete [] --force; p202 campaign delete {} --force'"
+      ],
+      "notes": "The checks read the stored definition, not the reply: a goal whose where clause was dropped (every level counts) or whose value landed on a different owner fails. Either spelling of the $4 is accepted — the goal's fixed value, or a campaign payout override — because both pay $4 on that campaign."
+    }
+  ]
+}

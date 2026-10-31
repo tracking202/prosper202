@@ -1,0 +1,106 @@
+<?php
+
+// The connect2.php functions lp.php and off.php call before and around their
+// fallback refresh, for the stand-in connect2.php beside this file.
+
+declare(strict_types=1);
+
+function systemHash(): string
+{
+    return 'h';
+}
+
+function setCache($key, $value, $exp = null)
+{
+    global $memcache;
+    $memcache->entries[$key] = $value;
+    $memcache->writes[$key] = $value;
+
+    return true;
+}
+
+// The click path's setup reads (ClickPathReads) find the run's row in the
+// row cache, so a script reaches its refresh without a query; any other key
+// is the recorded memcache's.
+function getCache(string $key, $default = false)
+{
+    global $memcache, $p202Harness;
+    if (str_starts_with($key, 'p202-row2-')) {
+        return json_encode(['row' => $p202Harness['row']], JSON_THROW_ON_ERROR);
+    }
+
+    return $memcache->get($key);
+}
+
+function memcache_mysql_fetch_assoc($db, $sql)
+{
+    global $p202Harness;
+
+    return $p202Harness['row'];
+}
+
+// The script's first write after the refresh ends the run.
+function record_mysql_error(...$args)
+{
+    exit;
+}
+
+function p202IsSpeculativeRequest(): bool
+{
+    return false;
+}
+
+function p202DeclineSpeculativeRequest(): void
+{
+}
+
+function rotateTrackerUrl($db, $row)
+{
+    return (string) ($row['aff_campaign_url'] ?? '');
+}
+
+function replaceTrackerPlaceholders($db, $url, $clickId)
+{
+    return $url;
+}
+
+function getPrePopVars($vars)
+{
+    return [];
+}
+
+function setPrePopVars($vars, $url, $encode)
+{
+    return $url;
+}
+
+function p202NoStore(): void
+{
+}
+
+// dl.php and off.php put the link owner's privacy setting in force before
+// they store an address or set a cookie; nothing here does either.
+function p202ApplyOwnerPrivacy($ownerId): void
+{
+}
+
+// The address off.php looks a cookie-less visitor's last click up by. Empty:
+// LastClickFromAddress then answers "no click" without a query, which is what
+// this harness's reads answer anyway (its mysqli never connects).
+function p202StoredVisitorIp(): string
+{
+    return '';
+}
+
+// Whether the address above is stored masked, which LastClickFromAddress is
+// told; the address is empty, so the answer changes nothing here.
+function trackingEnabled(): bool
+{
+    return true;
+}
+
+// connect2.php's click-cookie reader, as it is: the cookie or its -legacy twin.
+function getCookie202($cookieName)
+{
+    return \Prosper202\Http\ClickCookie::value($_COOKIE, (string) $cookieName);
+}

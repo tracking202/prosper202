@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__, 2) . '/vendor/autoload.php';
+// For p202UncaughtLogLine(): a failure answered as a 500 is logged as the pages log theirs.
+require_once dirname(__DIR__, 2) . '/202-config/mysql-error-args.php';
+require_once dirname(__DIR__, 2) . '/202-config/functions-shared.php';
 
 // Load config at file scope so DB globals ($dbhost, $dbuser, etc.) are
 // available via the 'global' keyword in the DB class constructor.
@@ -13,10 +16,14 @@ use Api\V3\Auth;
 use Api\V3\AuthException;
 use Api\V3\Bootstrap;
 use Api\V3\HttpException;
+use Api\V3\InsufficientScopeException;
 use Api\V3\RequestContext;
 use Api\V3\Router;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\WriteCommittedException;
+use Api\V3\Support\PathId;
+use Api\V3\Support\ScopeRefusal;
 use Api\V3\Support\ServerStateStore;
 
 // ─── Security headers ────────────────────────────────────────────────
@@ -29,6 +36,7 @@ try {
     Bootstrap::init();
     $db = Bootstrap::db();
 } catch (\Throwable $e) {
+    error_log(p202UncaughtLogLine('API v3 could not start, answered 503', $e));
     Bootstrap::errorResponse('Service unavailable', 503);
     exit;
 }
@@ -38,7 +46,7 @@ $allowedOrigin = defined('API_CORS_ORIGIN') ? API_CORS_ORIGIN : '';
 if ($allowedOrigin !== '') {
     header('Access-Control-Allow-Origin: ' . $allowedOrigin);
     header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Authorization, Content-Type, X-P202-API-Version, Idempotency-Key, If-Match');
+    header('Access-Control-Allow-Headers: Authorization, Content-Type, X-P202-API-Version, Idempotency-Key, If-Match, If-None-Match, X-P202-App-Token');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -63,24 +71,103 @@ $queryParams = $_GET;
 $headers     = getallheaders() ?: [];
 RequestContext::setHeaders($headers);
 
+// ─── The Android intake (pre-auth) ────────────────────────────────────
+// POST /apps/installs and POST /apps/installs/{install_uuid}/events are
+// what the Android SDK calls: an app binary holds no API key, so the
+// registration is selected by the X-P202-App-Token header (plan §5.2,
+// §5.5). They are routed before the general body read because they read
+// their own, bounded one, and through PublicIntake's shared plumbing: the
+// method check and a declared body over the cap refused first, then the
+// soft rate limit keyed on the TCP peer, never on a header the sender
+// chooses (CLAUDE.md #16). The per-registration install cap and the
+// per-install event cap run inside the intakes, once the token has named
+// the registration (InstallIntake::admit()). GET /apps/installs is the
+// reachability probe.
+if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D', $path, $androidEventsMatch) === 1) {
+    $androidEvents = isset($androidEventsMatch[1]);
+    $androidCap = $androidEvents ? \Api\V3\Apps\Android\InstallEventsIntake::MAX_BODY_BYTES : \Api\V3\Apps\Android\InstallIntake::MAX_BODY_BYTES;
+    $androidMethod = \Api\V3\Apps\PublicIntake::preflight($androidCap, $androidEvents ? ['POST'] : ['GET', 'POST']);
+    \Api\V3\Apps\PublicIntake::rateLimit($androidEvents ? 'app-install-events' : 'app-installs', $androidEvents ? 600 : 120, 60);
+    try {
+        if ($androidMethod === 'GET' || $androidMethod === 'HEAD') {
+            // The reachability probe the SDK and the Setup page call.
+            $androidResult = ['status' => 200, 'body' => ['data' => ['status' => 'ready']]];
+        } else {
+            $androidBody = \Api\V3\Apps\PublicIntake::readBody($androidCap);
+            $androidToken = RequestContext::header(\Api\V3\Apps\AppToken::HEADER_LOOKUP);
+            // An install stores the device's address as every row stores a
+            // visitor's — VisitorIp's, masked under privacy inside the intake
+            // (StoredVisitorIp::forAccount()) — as the Apple receiver does.
+            // The rate limit above keyed on REMOTE_ADDR and never reads it.
+            $androidResult = $androidEvents
+                ? (new \Api\V3\Apps\Android\InstallEventsIntake($db))->receive($androidToken, $androidEventsMatch[1], $androidBody)
+                : (new \Api\V3\Apps\Android\InstallIntake($db))->receive($androidToken, $androidBody, \AUTH::client_ip());
+        }
+    } catch (\Throwable $androidError) {
+        // Nothing was committed (every write is one transaction that rolled
+        // back), so a 5xx is the truthful answer and the SDK's retry is safe.
+        error_log('p202 android intake: ' . $androidError->getMessage());
+        $pending = Bootstrap::pendingUpgrade($db);
+        if ($pending !== null) {
+            header('Retry-After: 300');
+        }
+        Bootstrap::errorResponse(
+            $pending ?? 'The install could not be recorded; retry later',
+            $pending !== null ? 503 : 500
+        );
+        exit;
+    }
+    foreach ($androidResult['headers'] ?? [] as $androidHeader => $androidValue) {
+        header($androidHeader . ': ' . $androidValue);
+    }
+    Bootstrap::jsonResponse($androidResult['body'], $androidResult['status']);
+    exit;
+}
+
+// ─── An offline conversion file's fetch URL (pre-auth) ───────────────
+// GET /offline-conversions/{key}, which Google Ads or Microsoft
+// Advertising fetch on a schedule: the key in the path is the credential
+// (Prosper202\OfflineConversion\FeedStore). Every refusal is the same 404
+// (OfflineConversionsController::serveFeed()), and the soft rate limit keys
+// on the TCP peer, never on a header the sender chooses (CLAUDE.md #16).
+if ($path === '/offline-conversions' || str_starts_with($path, '/offline-conversions/')) {
+    $feedMethod = \Api\V3\Apps\PublicIntake::preflight(0, ['GET']);
+    \Api\V3\Apps\PublicIntake::rateLimit('offline-conversions', 60, 60);
+    \Api\V3\Controllers\OfflineConversionsController::serveFeed($db, substr($path, strlen('/offline-conversions/')), $queryParams, $feedMethod);
+    exit;
+}
+
 $payload = [];
 if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
-    $raw = file_get_contents('php://input', false, null, 0, 1_048_576); // 1 MB limit
+    // 1 MB, except for a revenue report upload, whose body carries the
+    // report itself (UpdateController::UPLOAD_MAX_BYTES).
+    $maxBody = $method === 'POST' && $path === '/conversions/uploads'
+        ? \Api\V3\Controllers\UpdateController::UPLOAD_MAX_BYTES
+        : 1_048_576;
+    $raw = file_get_contents('php://input', false, null, 0, $maxBody + 1);
+    if ($raw !== false && strlen($raw) > $maxBody) {
+        Bootstrap::errorResponse('Request body too large', 413, ['max_bytes' => $maxBody]);
+        exit;
+    }
     if ($raw !== '' && $raw !== false) {
         $payload = json_decode($raw, true);
         if ($payload === null && json_last_error() !== JSON_ERROR_NONE) {
             Bootstrap::errorResponse('Invalid JSON body', 400);
             exit;
         }
-        if ($payload !== null && !is_array($payload)) {
+        // A body of literal `null` decodes without a JSON error, so it slips
+        // past the check above. Coercing it to [] would run the handler with
+        // no fields — and stage() would record that empty payload as though
+        // it were the reviewed body. Error pattern #4: a malformed body is
+        // rejected, never silently emptied.
+        if (!is_array($payload)) {
             Bootstrap::errorResponse('Invalid JSON body', 400);
             exit;
         }
-        $payload = $payload ?? [];
     }
 }
 
-$requestedVersion = strtolower(trim((string)($headers['X-P202-API-Version'] ?? $headers['x-p202-api-version'] ?? '')));
+$requestedVersion = strtolower((string)RequestContext::header('x-p202-api-version', ''));
 if ($requestedVersion !== '' && !in_array($requestedVersion, ['v3', '3'], true)) {
     Bootstrap::errorResponse(
         'Unsupported API version',
@@ -111,11 +198,104 @@ try {
         exit;
     }
 
-    // Unauthenticated health probe
+    // Unauthenticated health probe. A stale, missing or unreadable GeoIP
+    // database is a warning, never a status other than healthy: liveness
+    // checks restart a container on that, and a new container has the same
+    // file. Only its state and date are said here, not its path.
     if ($path === '/system/health' && $method === 'GET') {
+        $geoip = \Prosper202\GeoIp\CityDatabase::status();
+        $geoipWarning = $geoip->warning();
         Bootstrap::jsonResponse([
-            'data' => ['status' => 'healthy', 'timestamp' => time(), 'api_version' => 'v3'],
+            'data' => [
+                'status' => 'healthy',
+                'timestamp' => time(),
+                'api_version' => 'v3',
+                'geoip_database' => $geoip->healthFields(),
+                'warnings' => $geoipWarning === null ? [] : [$geoipWarning],
+            ],
         ]);
+        exit;
+    }
+
+    // AI connections (Api\V3\Support\AiConnect, 202-account/connect-ai.php).
+    // GET /connect tells Tracking202's MCP server the install offers them,
+    // before anyone has signed in. POST /connect/token is that server
+    // exchanging a one-time approval for the connection's key, so it has no
+    // key to present yet: the code and its verifier are the credential.
+    // POST /connect/revoke (after authentication, below) is a connection's
+    // key removing itself. Neither write previews or proposes, so ?dry_run
+    // and ?staged are refused rather than ignored (CLAUDE.md #14).
+    if ($path === '/connect' && $method === 'GET') {
+        Bootstrap::jsonResponse(['data' => ['connect' => 1]]);
+        exit;
+    }
+    if ($path === '/connect/token' || $path === '/connect/revoke') {
+        $withheld = \Api\V3\Support\AiConnect::withheldFlag($queryParams);
+        if ($withheld !== null) {
+            Bootstrap::errorResponse($withheld . ' is not supported on ' . $path . '; it writes or does nothing', 422);
+            exit;
+        }
+    }
+    if ($path === '/connect/token' && $method === 'POST') {
+        // Only failed exchanges are counted, per address: every MCP server
+        // call can arrive from one shared address (a proxy, Cloudflare's
+        // Worker egress), so counting every exchange let junk requests turn
+        // real ones away. A good exchange is a 256-bit one-time code plus its
+        // verifier, so it is never refused; a failure past the limit is
+        // answered 429 (AiConnect::tokenWithFailureBudget: a source past its
+        // budget is refused before the work unless its code is a live one).
+        // The budget check reads only the presented code; the body goes
+        // whole to ConnectController::token, which refuses unknown keys.
+        $connectStore = ServerStateStore::forInstall($db);
+        $presentedCode = is_array($payload) ? ($payload['code'] ?? null) : null;
+        [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::tokenWithFailureBudget(
+            $connectStore,
+            $presentedCode,
+            fn (): array => (new \Api\V3\Controllers\ConnectController($db, $connectStore))->token($payload)
+        );
+        if (($connectBody['rate_limited'] ?? false) === true) {
+            header('Retry-After: ' . (int) $connectBody['retry_after_seconds']);
+            Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $connectBody['retry_after_seconds']]);
+            exit;
+        }
+        Bootstrap::jsonResponse($connectBody, $connectStatus);
+        exit;
+    }
+    // Unauthenticated app schema, fetched by an app build at runtime so a
+    // change on the server needs no store resubmission. An app binary cannot
+    // hold an API key; the registration is selected by the app token in the
+    // X-P202-App-Token header instead (AppSchemaController). The shared
+    // pre-auth plumbing — method check, peer-keyed soft rate limit — is
+    // PublicIntake's, the same the /.well-known/ postback endpoints use.
+    if ($path === '/apps/schema') {
+        \Api\V3\Apps\PublicIntake::preflight(0, ['GET']);
+        \Api\V3\Apps\PublicIntake::rateLimit('app-schema', 300, 60);
+
+        // Header-only token transport: a token in a GET query string would
+        // be captured by ordinary request logging (the p13n endpoints'
+        // rule), and the SDKs and CLI all send the header.
+        $schemaResult = (new \Api\V3\Controllers\AppSchemaController($db))
+            ->publicSchema(RequestContext::header(\Api\V3\Apps\AppToken::HEADER_LOOKUP), RequestContext::header('if-none-match'));
+        // The document is selected by the token header, not by the URL, so
+        // every cache between here and the device must key on it too —
+        // without Vary a shared cache can serve one app's schema to another
+        // app's token, and a rotated token would keep working from cache.
+        header('Vary: ' . \Api\V3\Apps\AppToken::HEADER);
+        $schemaCacheControl = 'no-store';
+        if ($schemaResult['etag'] !== null) {
+            header('ETag: ' . $schemaResult['etag']);
+            $schemaCacheControl = 'private, max-age=300';
+            header('Cache-Control: ' . $schemaCacheControl);
+        }
+        if ($schemaResult['status'] === 304) {
+            http_response_code(304);
+            exit;
+        }
+        // Passed in, not left to the header() above: jsonResponse sets
+        // Cache-Control itself and would otherwise replace it with
+        // no-store, leaving the 200 uncacheable while the 304 above
+        // advertised five minutes.
+        Bootstrap::jsonResponse($schemaResult['body'] ?? [], $schemaResult['status'], $schemaCacheControl);
         exit;
     }
 
@@ -123,9 +303,18 @@ try {
     $auth = Auth::fromRequest($headers, $db);
     $userId = $auth->userId();
     RequestContext::setActorUserId($userId);
+    RequestContext::setApiKeyRef($auth->apiKeyRef());
+
+    // The key that authenticated removes itself, and only itself, whatever
+    // its scope: so before the limits, the CLI licence gate and the scopes.
+    if ($path === '/connect/revoke' && $method === 'POST') {
+        [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::revoke($db, Auth::bearerKey($headers));
+        Bootstrap::jsonResponse($connectBody, $connectStatus);
+        exit;
+    }
 
     // Lightweight fixed-window rate limits for high-impact operations.
-    $stateStore = new ServerStateStore();
+    $stateStore = ServerStateStore::forInstall($db);
     $bucketKey = 'user:' . $userId;
     $limit = null;
     $windowSeconds = 60;
@@ -153,10 +342,33 @@ try {
         }
     }
 
-    // Controller factories — instantiated lazily by the router handlers.
-    $crud = fn(string $class) => new $class($db, $userId);
-
-    $router = new Router();
+    // Pro-only Go CLI: requests from the Go CLI need this install's ClickServer
+    // key to belong to an active Prosper202 ClickServer subscription (trials
+    // count). /capabilities, the API root and three diagnostic reads stay
+    // open, so the CLI can explain the refusal (isCliGateExempt). When
+    // my.tracking202.com can't be reached, a paid answer within the grace
+    // period still counts (see CapabilitiesController::cliAccess). The PHP
+    // bin/p202 CLI is not gated.
+    // The check keys on the User-Agent the Go CLI sends — a licensing prompt,
+    // not an access control (see isGoCliUserAgent) — and runs after the rate
+    // limiter above, so a burst that is refused there never reaches
+    // my.tracking202.com on a cold cache.
+    $licenceGate = new \Api\V3\Controllers\CapabilitiesController($db, $userId);
+    if (\Api\V3\Controllers\CapabilitiesController::isGoCliUserAgent((string)($_SERVER['HTTP_USER_AGENT'] ?? ''))
+        && !\Api\V3\Controllers\CapabilitiesController::isCliGateExempt($method, $path)
+        && !$licenceGate->cliAccess()) {
+        Bootstrap::errorResponse(
+            $licenceGate->cliRefusal(
+                'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install\'s '
+                . 'ClickServer API key. Start a Pro trial or subscription at '
+                . 'https://my.tracking202.com/api/customers/subscriptions/support; an install with no '
+                . 'ClickServer API key yet enters one on its api-key-required.php page first.'
+            ),
+            402,
+            ['category' => 'licence']
+        );
+        exit;
+    }
 
     // ── CRUD resources ───────────────────────────────────────────────
     $crudMap = [
@@ -170,303 +382,1156 @@ try {
         'forecast-events'   => \Api\V3\Controllers\ForecastEventsController::class,
     ];
 
+    // ── Route definitions ────────────────────────────────────────────
+    // Routes are built as a pure function of the request context: the
+    // payload, the query string, and the user the write is performed as.
+    // Applying a staged change rebuilds them around the recorded payload
+    // and the proposer's id, so the applied write is exactly the reviewed
+    // one. Nothing is swapped by reference: a handler written as an arrow
+    // function captures by value at definition time and would otherwise
+    // never see a later swap.
+    //
+    // Every {id} in a path is read with PathId::of($ctx[, 'name']): digits
+    // the int cast leaves unchanged, or a 404. Read as (int) $ctx['id'],
+    // DELETE /campaigns/2e0 deleted campaign 2 (PathIdsAreReadStrictlyTest).
+    $buildRouters = function (array $payload, array $queryParams, int $actorUserId)
+        use ($db, $auth, $stateStore, $crudMap): array {
+        // Controller factories — instantiated lazily by the router handlers.
+        $crud = fn(string $class) => new $class($db, $actorUserId);
+
+        // Single-create idempotency (Idempotency-Key): see IdempotentCreate.
+        // A handler's failure spends the key only when it says its write
+        // committed (WriteCommittedException); any other failure frees it.
+        $idempotent = new \Api\V3\Support\IdempotentCreate($stateStore, $actorUserId);
+
+        $router = new Router();
+
+
+        // The Setup pages' role permissions (CLAUDE.md #5): every Setup page
+        // asks for access_to_setup_section, and each removal for its own
+        // remove_* permission as well (delete_tracker.php, aff_campaigns.php,
+        // …); a delete asks for both, the remove_* first so a refusal names
+        // the narrower one. The API asked for neither, so a key of a Campaign
+        // viewer — a role that "changes nothing" — could create and delete
+        // campaigns, while the
+        // Update and attribution routes already held to their pages' rules.
+        // Group middleware runs from the main match, so a dry-run preview and
+        // a staged write are refused exactly as the write is (and a staged
+        // change is applied with the applier's permissions). Forecast events
+        // have no Setup page and stay ungated.
+        $setupSection = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_setup_section');
+        };
+        // A write to an app's goal (scope registration) or the account's
+        // (every app's) is Setup › Mobile Apps', whose writes ask for
+        // manage_attribution_models on top of Setup (MobileAppsController::
+        // requireManage()); a campaign's goal is Setup › Campaigns', which
+        // asks for Setup alone. $scope is the goal's, or null when there is
+        // no such goal (the controller then answers 404 or 422); a scope that
+        // is not 'campaign' is held to the stricter rule, so one that reads
+        // as nothing known is never the laxer (CLAUDE.md #11).
+        $appGoalWrite = static function (?string $scope) use ($auth, $db): void {
+            if ($scope !== null && $scope !== 'campaign') {
+                $auth->requirePermission($db, 'manage_attribution_models');
+            }
+        };
+        // Each with its permission as a literal, so PreviewAuthParityTest
+        // can read what a delete (and so its preview) asks for.
+        $setupRemove = [
+            'campaigns'     => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_campaign'); },
+            'aff-networks'  => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_campaign_category'); },
+            'ppc-networks'  => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_traffic_source'); },
+            'ppc-accounts'  => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_traffic_source_account'); },
+            'trackers'      => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_tracker'); },
+            'landing-pages' => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_landing_page'); },
+            'text-ads'      => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_text_ad'); },
+        ];
+        // Reads too: the Setup pages are the only place these records are
+        // shown, and every one of them asks for access_to_setup_section first
+        // (SetupController). The reports name a campaign or a source to any
+        // role; the record itself -- its URL, payout, cost -- only Setup does.
+        // A Campaign viewer's key listed every campaign the page hid from it.
+        foreach ($crudMap as $resource => $class) {
+            $router->group("/$resource", function (Router $r) use ($class, $crud, $queryParams) {
+                $r->get('',       fn() => $crud($class)->list($queryParams));
+                $r->get('/{id}',  fn($ctx) => $crud($class)->get(PathId::of($ctx)));
+            }, isset($setupRemove[$resource]) ? [$setupSection] : []);
+            $router->group("/$resource", function (Router $r) use ($resource, $class, $crud, $idempotent, $payload) {
+                $r->post('/bulk-upsert', fn() => $crud($class)->bulkUpsert($payload));
+                $r->post('',      fn() => ['_status' => 201] + $idempotent($resource, $payload, fn() => $crud($class)->create($payload)));
+                $r->put('/{id}',  fn($ctx) => $crud($class)->update(PathId::of($ctx), $payload));
+            }, isset($setupRemove[$resource]) ? [$setupSection] : []);
+            $router->group("/$resource", function (Router $r) use ($class, $crud) {
+                $r->delete('/{id}', fn($ctx) => tap($crud($class), fn($c) => $c->delete(PathId::of($ctx))));
+            }, isset($setupRemove[$resource]) ? [$setupRemove[$resource], $setupSection] : []);
+        }
+
+        // Tracker sub-resource: Setup › Get Links' link.
+        $router->group('/trackers', function (Router $r) use ($crud, $queryParams) {
+            $r->get('/{id}/url', fn($ctx) => $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl(PathId::of($ctx), $queryParams));
+        }, [$setupSection]);
+
+        // ── Setup: its code, a traffic source's variables, an account's pixels
+        // Get LP Code, Postback / Pixel, and Traffic Sources' custom
+        // variables and account pixels: what those pages hand out and edit,
+        // built by the classes the pages build theirs with
+        // (Prosper202\Setup\LandingPageCode, PostbackCode) and held to the
+        // pages' rules. Every route asks for access_to_setup_section
+        // ($setupSection, above), reads included: these pages are the only
+        // place the code, the variables and the pixels are shown. The
+        // variables dialog opens only for a role with remove_traffic_source
+        // as well (ppc_accounts.php renders its button, and the variables it
+        // edits, inside that check), so the variables routes ask for both,
+        // the narrower first, as the deletes above do. Registered before the
+        // /conversions routes, whose GET /conversions/{id} would otherwise
+        // answer GET /conversions/postback-code. SetupRoutesPermissionTest
+        // holds all of this.
+        $router->group('', function (Router $r) use ($crud, $queryParams) {
+            $code = \Api\V3\Controllers\SetupCodeController::class;
+            $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode(PathId::of($ctx), $queryParams));
+            $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams));
+        }, [$setupSection]);
+        $router->group('/ppc-networks/{id}/variables', function (Router $r) use ($crud, $idempotent, $payload) {
+            $vars = \Api\V3\Controllers\PpcNetworkVariablesController::class;
+            $r->get('', fn($ctx) => $crud($vars)->list(PathId::of($ctx)));
+            $r->post('', fn($ctx) => ['_status' => 201] + $idempotent('ppc-networks/' . PathId::of($ctx) . '/variables', $payload, fn() => $crud($vars)->create(PathId::of($ctx), $payload)));
+            $r->put('/{variableId}', fn($ctx) => $crud($vars)->update(PathId::of($ctx), PathId::of($ctx, 'variableId'), $payload));
+            $r->delete('/{variableId}', fn($ctx) => tap($crud($vars), fn($c) => $c->delete(PathId::of($ctx), PathId::of($ctx, 'variableId'))));
+        }, [$setupRemove['ppc-networks'], $setupSection]);
+        $router->group('/ppc-accounts/{id}/pixels', function (Router $r) use ($crud, $idempotent, $payload) {
+            $pixels = \Api\V3\Controllers\PpcAccountPixelsController::class;
+            $r->get('', fn($ctx) => $crud($pixels)->list(PathId::of($ctx)));
+            $r->post('', fn($ctx) => ['_status' => 201] + $idempotent('ppc-accounts/' . PathId::of($ctx) . '/pixels', $payload, fn() => $crud($pixels)->create(PathId::of($ctx), $payload)));
+            $r->put('/{pixelId}', fn($ctx) => $crud($pixels)->update(PathId::of($ctx), PathId::of($ctx, 'pixelId'), $payload));
+            $r->delete('/{pixelId}', fn($ctx) => tap($crud($pixels), fn($c) => $c->delete(PathId::of($ctx), PathId::of($ctx, 'pixelId'))));
+        }, [$setupSection]);
+
+        // ── Campaign figures ─────────────────────────────────────────────
+        // A role without access_to_campaign_data reads the reports, the clicks
+        // and the conversions with the absolute clicks, leads and money null
+        // and `masked: true` (CampaignFigures), as every report page prints
+        // them as '?' (CampaignDataMask); ratios stay. RolePermissionTest
+        // holds which routes pass through this.
+        $campaignFigures = static function (mixed $response, array $keys) use ($auth, $db): mixed {
+            if (!is_array($response) || $auth->hasPermission($db, 'access_to_campaign_data')) {
+                return $response;
+            }
+            return \Api\V3\Support\CampaignFigures::mask($response, $keys);
+        };
+        $recordMoney = \Api\V3\Support\CampaignFigures::RECORD;
+        $reportFigures = \Api\V3\Support\CampaignFigures::REPORT;
+        $matchFigures = \Api\V3\Support\CampaignFigures::MATCH_METHODS;
+
+        // ── Clicks (read-only) ───────────────────────────────────────────
+        $router->get('/clicks', fn() => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams), $recordMoney));
+        $router->get('/clicks/{id}', fn($ctx) => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->get(PathId::of($ctx)), $recordMoney));
+        // A click's conversions, each with whether it counts toward the
+        // click's value. It is the clicks area by path and shows conversion
+        // rows, so a key needs read scope on both.
+        $router->get('/clicks/{id}/conversions', function ($ctx) use ($crud, $auth, $campaignFigures, $recordMoney) {
+            $auth->requireScope('conversions:read');
+            return $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->conversions(PathId::of($ctx)), $recordMoney);
+        });
+
+        // ── Conversions ──────────────────────────────────────────────────
+        // Reading is the click's conversions panel's (no permission; money
+        // masked). Recording one is what Update › Subids does, and removing
+        // one what Update › Delete Subids does, so they ask what those pages
+        // ask ($updateSection, below; delete_individual_subids first for a
+        // removal). They asked for nothing: any role's key recorded and
+        // deleted conversions.
+        $updateSection = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_update_section');
+        };
+        // The offline conversion import files (Setup › Offline Conversions):
+        // every conversion's value, which a role without campaign data is
+        // not shown, and a CSV that cannot be masked as the JSON reads are,
+        // so the role is refused. Before /{id}, which would read the segment
+        // as an id.
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\OfflineConversionsController::class;
+            $r->get('/offline-export', fn() => $crud($cls)->export($queryParams));
+            $r->get('/offline-export/summary', fn() => $crud($cls)->summary($queryParams));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_campaign_data'); }]);
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
+            $cls = \Api\V3\Controllers\ConversionsController::class;
+            $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
+            // Before /{id}, which would read the segment as an id.
+            $r->get('/match-methods', fn() => $campaignFigures($crud($cls)->matchMethods($queryParams), $matchFigures));
+            $r->get('/{id}',   fn($ctx) => $campaignFigures($crud($cls)->get(PathId::of($ctx)), $recordMoney));
+        });
+        $router->group('/conversions', function (Router $r) use ($crud, $idempotent, $payload) {
+            $cls = \Api\V3\Controllers\ConversionsController::class;
+            $r->post('',       fn() => ['_status' => 201] + $idempotent('conversions', $payload, fn() => $crud($cls)->create($payload)));
+        }, [$updateSection]);
+        $router->group('/conversions', function (Router $r) use ($crud) {
+            $cls = \Api\V3\Controllers\ConversionsController::class;
+            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'delete_individual_subids'); }, $updateSection]);
+
+        // ── Update (the UI's Update section, tracking202/update/) ────────
+        // Update CPC, Update Subids, Delete Subids, Reset Campaign Subids and
+        // Upload Revenue Reports, through the pages' own domain code
+        // (Prosper202\Update, RevenueUploadImporter). Gated by the pages' role
+        // permissions (one permission check per operation on every surface,
+        // CLAUDE.md #5): access_to_update_section on every route, and
+        // delete_individual_subids as well to delete subids by list, as
+        // delete-subids.php asks. `?dry_run=1` previews through the same
+        // handler, after the same checks, and writes nothing. None is
+        // stageable: a report travels in the body (up to 8 MB), and a CPC
+        // write confirms a count taken moments before.
+        // UpdateRoutesPermissionTest holds all of this. ($updateSection is
+        // defined above, with the conversions it also gates.)
+        $router->group('/clicks', function (Router $r) use ($crud, $payload, $queryParams) {
+            $r->post('/cpc', fn() => $crud(\Api\V3\Controllers\UpdateController::class)->cpc($payload, writeDryRunRequested($queryParams)));
+        }, [$updateSection]);
+        $router->group('/conversions', function (Router $r) use ($crud, $payload, $queryParams, $auth, $db) {
+            $cls = \Api\V3\Controllers\UpdateController::class;
+            $r->post('/subids',        fn() => $crud($cls)->markSubids($payload, writeDryRunRequested($queryParams)));
+            $r->post('/subids/delete', function () use ($crud, $cls, $payload, $queryParams, $auth, $db) {
+                $auth->requirePermission($db, 'delete_individual_subids');
+                return $crud($cls)->deleteSubids($payload, writeDryRunRequested($queryParams));
+            });
+            $r->post('/subids/reset',  fn() => $crud($cls)->resetSubids($payload, writeDryRunRequested($queryParams)));
+            $r->post('/uploads',       fn() => $crud($cls)->uploadRevenue($payload, writeDryRunRequested($queryParams)));
+        }, [$updateSection]);
+
+        // ── Reports ──────────────────────────────────────────────────────
+        // Overview and Analyze ask for no permission; a role without
+        // access_to_campaign_data gets them masked ($campaignFigures).
+        $router->group('/reports', function (Router $r) use ($crud, $queryParams, $campaignFigures, $reportFigures) {
+            $cls = \Api\V3\Controllers\ReportsController::class;
+            $r->get('/summary',    fn() => $campaignFigures($crud($cls)->summary($queryParams), $reportFigures));
+            $r->get('/breakdown',  fn() => $campaignFigures($crud($cls)->breakdown($queryParams), $reportFigures));
+            $r->get('/timeseries', fn() => $campaignFigures($crud($cls)->timeseries($queryParams), $reportFigures));
+            $r->get('/daypart',    fn() => $campaignFigures($crud($cls)->daypart($queryParams), $reportFigures));
+            $r->get('/weekpart',   fn() => $campaignFigures($crud($cls)->weekpart($queryParams), $reportFigures));
+            $r->get('/groups',     fn() => $campaignFigures($crud($cls)->groups($queryParams), $reportFigures));
+        });
+
+        // ── LTV: reads (ltv:read) ───────────────────────────────────────
+        $router->group('/ltv', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\LtvController::class;
+            $r->get('/summary',        fn() => $crud($cls)->summary($queryParams));
+            $r->get('/customers',      fn() => $crud($cls)->customers($queryParams));
+            $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail(PathId::of($ctx)));
+            $r->get('/customers/{id}/engagement', fn($ctx) => $crud($cls)->customerEngagement(PathId::of($ctx), $queryParams));
+            $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer(PathId::of($ctx)));
+            $r->get('/abm',            fn() => $crud($cls)->abm($queryParams));
+            $r->get('/abm/company',    fn() => $crud($cls)->abmCompany($queryParams));
+            $r->get('/breakdown',      fn() => $crud($cls)->breakdown($queryParams));
+            $r->get('/cohorts',        fn() => $crud($cls)->cohorts($queryParams));
+            $r->get('/mrr',            fn() => $crud($cls)->mrr());
+            $r->get('/predict',        fn() => $crud($cls)->predict($queryParams));
+            $r->get('/products',       fn() => $crud($cls)->products($queryParams));
+            $r->get('/companies',      fn() => $crud($cls)->listCompanies($queryParams));
+            $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
+            $r->get('/fields',         fn() => $crud($cls)->fieldsList());
+            $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
+            $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries(PathId::of($ctx), $queryParams));
+            $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:read');
+            },
+        ]);
+
+        // ── LTV: CRM + inbound integration writes (ltv:write) ──────────
+        $router->group('/ltv', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\LtvController::class;
+            $r->post('/customers',                fn() => ['_status' => 201] + $crud($cls)->upsertCustomer($payload));
+            $r->patch('/customers/{id}',          fn($ctx) => $crud($cls)->patchCustomer(PathId::of($ctx), $payload));
+            $r->post('/customers/{id}/merge',     fn($ctx) => $crud($cls)->mergeCustomer(PathId::of($ctx), $payload));
+            $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer(PathId::of($ctx))));
+            $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias(PathId::of($ctx), $payload));
+            $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression(PathId::of($ctx), $payload));
+            $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomerAlias(PathId::of($ctx), PathId::of($ctx, 'aliasId'))));
+            $r->post('/companies',                fn() => ['_status' => 201] + $crud($cls)->createCompany($payload));
+            $r->patch('/companies/{id}',          fn($ctx) => $crud($cls)->patchCompany(PathId::of($ctx), $payload));
+            $r->post('/companies/{id}/merge',     fn($ctx) => $crud($cls)->mergeCompany(PathId::of($ctx), $payload));
+            $r->delete('/companies/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCompany(PathId::of($ctx))));
+            $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
+            $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
+            $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
+            // The external id is the caller's own string, so it arrives
+            // percent-encoded when it has a character a path escapes (a
+            // space, '/', '?'): decode it, or such a subscription could
+            // never be found here.
+            $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent(rawurldecode((string)$ctx['ref']), $payload));
+            $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
+            $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct(PathId::of($ctx), $payload));
+            $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct(PathId::of($ctx))));
+            $r->post('/fields',                   fn() => ['_status' => 201] + $crud($cls)->createField($payload));
+            $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField(PathId::of($ctx), $payload));
+            $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField(PathId::of($ctx))));
+            $r->post('/webhooks',                 fn() => ['_status' => 201] + $crud($cls)->createWebhook($payload));
+            $r->put('/webhooks/{id}', fn($ctx) => $crud($cls)->updateWebhook(PathId::of($ctx), $payload));
+            $r->delete('/webhooks/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteWebhook(PathId::of($ctx))));
+            $r->post('/integrations',             fn() => ['_status' => 201] + $crud($cls)->createIntegration($payload));
+            $r->delete('/integrations/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->deleteIntegration(PathId::of($ctx))));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:write');
+            },
+        ]);
+
+        // ── API capabilities ────────────────────────────────────────────
+        // The principal is who the key acts as and what it may do: the probe
+        // an agent makes first, and the only way a key holder learns its own
+        // user id and scopes without already knowing them. The key's own
+        // facts only, so it needs no scope (Auth::isScopeExemptPath()).
+        $router->get('/capabilities', function () use ($db, $actorUserId, $auth) {
+            $answer = (new \Api\V3\Controllers\CapabilitiesController($db, $actorUserId))->capabilities();
+            $answer['data']['principal'] = [
+                'user_id' => $auth->userId(),
+                'roles' => $auth->roles(),
+                'scopes' => $auth->scopes(),
+            ];
+
+            return $answer;
+        });
+
+        // ── Server-side sync planning (admin + read scope) ─────────────
+        $router->group('/sync', function (Router $r) use ($crud, $queryParams, $payload) {
+            $cls = \Api\V3\Controllers\SyncController::class;
+            $r->post('/plan', fn() => $crud($cls)->plan($payload));
+            $r->get('/status', fn() => $crud($cls)->status($queryParams));
+            $r->get('/history', fn() => $crud($cls)->history($queryParams));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireAdmin();
+                $auth->requireScope('sync:read');
+            },
+        ]);
+
+        // ── Server-side sync orchestration (admin + write scope) ───────
+        $router->group('/sync', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\SyncController::class;
+            $r->post('/jobs', fn() => ['_status' => 202] + $crud($cls)->createJob($payload));
+            $r->post('/worker/run', fn() => $crud($cls)->runWorker($payload));
+            $r->post('/jobs/{id}/run', fn($ctx) => $crud($cls)->runJob((string)$ctx['id']));
+            $r->post('/jobs/{id}/cancel', fn($ctx) => $crud($cls)->cancelJob((string)$ctx['id']));
+            $r->post('/re-sync', fn() => ['_status' => 202] + $crud($cls)->reSync($payload));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireAdmin();
+                $auth->requireScope('sync:write');
+            },
+        ]);
+
+        $router->group('/sync', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\SyncController::class;
+            $r->get('/jobs/{id}', fn($ctx) => $crud($cls)->getJob((string)$ctx['id']));
+            $r->get('/jobs/{id}/events', fn($ctx) => $crud($cls)->events((string)$ctx['id'], $queryParams));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireAdmin();
+                $auth->requireScope('sync:read');
+            },
+        ]);
+
+        // ── Incremental changes feed (admin only) ──────────────────────
+        $router->group('/changes', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\SyncController::class;
+            $r->get('/{entity}', fn($ctx) => $crud($cls)->listChanges((string)$ctx['entity'], $queryParams));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireAdmin();
+                $auth->requireScope('sync:read');
+            },
+        ]);
+
+        // ── Audit & provenance (admin only) ────────────────────────────
+        $router->group('/audit', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\SyncController::class;
+            $r->get('/sync-jobs', fn() => $crud($cls)->auditList($queryParams));
+            $r->get('/sync-jobs/{id}', fn($ctx) => $crud($cls)->auditGet((string)$ctx['id'], $queryParams));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireAdmin();
+                $auth->requireScope('sync:read');
+            },
+        ]);
+
+        // ── Rotators ─────────────────────────────────────────────────────
+        // Setup > Redirectors' permissions, as for the CRUD resources above.
+        $rotators = \Api\V3\Controllers\RotatorsController::class;
+        $router->group('/rotators', function (Router $r) use ($crud, $queryParams, $rotators) {
+            $r->get('',                        fn() => $crud($rotators)->list($queryParams));
+            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get(PathId::of($ctx)));
+            $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules(PathId::of($ctx)));
+        }, [$setupSection]);
+        // A rule set that leaves out a rule removes it: the page's save asks
+        // for remove_rotator_rule then (ajax/rotator.php), and so does this.
+        $mayRemoveRules = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'remove_rotator_rule');
+        };
+        $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $payload, $queryParams, $rotators, $mayRemoveRules) {
+            $r->post('',                       fn() => ['_status' => 201] + $idempotent('rotators', $payload, fn() => $crud($rotators)->create($payload)));
+            $r->put('/{id}',                   fn($ctx) => $crud($rotators)->update(PathId::of($ctx), $payload));
+            $r->post('/{id}/rules',            fn($ctx) => $idempotent('rotators/' . PathId::of($ctx) . '/rules', $payload, fn() => $crud($rotators)->createRule(PathId::of($ctx), $payload)));
+            $r->put('/{id}/rules',             fn($ctx) => $crud($rotators)->setRules(PathId::of($ctx), $payload, writeDryRunRequested($queryParams), $mayRemoveRules));
+            $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($rotators)->updateRule(PathId::of($ctx), PathId::of($ctx, 'ruleId'), $payload));
+        }, [$setupSection]);
+        $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
+            $r->delete('/{id}', fn($ctx) => tap($crud($rotators), fn($c) => $c->delete(PathId::of($ctx))));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_rotator'); }, $setupSection]);
+        $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
+            $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($rotators), fn($c) => $c->deleteRule(PathId::of($ctx), PathId::of($ctx, 'ruleId'))));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_rotator_rule'); }, $setupSection]);
+        // A rotator's report — its totals, each rule and its default — as the
+        // Overview's Rotator Breakdown shows it (ReportsController::
+        // rotatorStats). The path is the rotators area; the figures are
+        // report data, so a key needs read scope on both, as
+        // /clicks/{id}/conversions needs it on clicks and conversions. A report
+        // asks for no role permission, and is masked as the others are.
+        $router->get('/rotators/{id}/stats', function ($ctx) use ($crud, $auth, $queryParams, $campaignFigures, $reportFigures) {
+            $auth->requireScope('reports:read');
+            return $campaignFigures($crud(\Api\V3\Controllers\ReportsController::class)->rotatorStats(PathId::of($ctx), $queryParams), $reportFigures);
+        });
+
+        // ── Multi-touch attribution ──────────────────────────────────────
+        // Gated by the same role permissions as the session pages (plan
+        // §6.3: one permission check per operation on every surface):
+        // view_attribution_reports to read, manage_attribution_models to
+        // change a model. Scope enforcement (attribution:read/write) runs as
+        // well, centrally below.
+        $router->group('/attribution/models', function (Router $r) use ($crud, $idempotent, $queryParams, $payload, $auth, $db) {
+            $cls = \Api\V3\Controllers\AttributionController::class;
+            $manage = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'manage_attribution_models');
+            };
+            $r->get('',        fn() => $crud($cls)->listModels($queryParams));
+            $r->get('/{id}',   fn($ctx) => $crud($cls)->getModel(PathId::of($ctx)));
+            $r->post('',       function () use ($manage, $crud, $cls, $idempotent, $payload) {
+                $manage();
+                return ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload));
+            });
+            $r->put('/{id}',   function ($ctx) use ($manage, $crud, $cls, $payload) {
+                $manage();
+                return $crud($cls)->updateModel(PathId::of($ctx), $payload);
+            });
+            $r->delete('/{id}', function ($ctx) use ($manage, $crud, $cls) {
+                $manage();
+                $crud($cls)->deleteModel(PathId::of($ctx));
+                return null; // 204
+            });
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
+        $router->group('/attribution', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\AttributionController::class;
+            $r->get('/reports/breakdown',          fn() => $crud($cls)->breakdown($queryParams));
+            $r->get('/reports/journeys',           fn() => $crud($cls)->journeyMetrics($queryParams));
+            $r->get('/conversions/{id}/journey',   fn($ctx) => $crud($cls)->journey(PathId::of($ctx)));
+            $r->get('/queue',                      fn() => $crud($cls)->queue($queryParams));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
+        // Exports (plan §6.3): a breakdown written to CSV by the export
+        // runner, downloadable and optionally sent to an SSRF-checked
+        // webhook. Reading the account's reports is what an export does, so
+        // view_attribution_reports gates every route, the same permission
+        // the dashboard's Exports tab asks for.
+        $router->group('/attribution/exports', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+            $cls = \Api\V3\Controllers\AttributionController::class;
+            $r->get('',                fn() => $crud($cls)->listExports($queryParams));
+            $r->get('/{id}',           fn($ctx) => $crud($cls)->getExport(PathId::of($ctx)));
+            $r->get('/{id}/download',  fn($ctx) => $crud($cls)->downloadExport(PathId::of($ctx)));
+            $r->post('',               fn() => ['_status' => 201] + $idempotent('attribution/exports', $payload, fn() => $crud($cls)->createExport($payload)));
+            $r->post('/{id}/retry',    fn($ctx) => $crud($cls)->retryExport(PathId::of($ctx)));
+            $r->delete('/{id}',        fn($ctx) => tap($crud($cls), fn($c) => $c->deleteExport(PathId::of($ctx))));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
+
+        // ── App measurement ──────────────────────────────────────────────
+        // The registry (both platforms), the Apple source's SKAN encodings,
+        // and its postbacks — read-only here: they arrive through the public
+        // receivers under /.well-known/. The literal paths are registered
+        // before /apps/{id}, which would otherwise match them (first match
+        // wins).
+        // Role permissions mirror the Mobile Apps pages (plan §7.1, one
+        // permission check per operation on every surface): reading the
+        // registry, its encodings and its integrity status needs no more
+        // than the Setup pages do, as MobileAppsController reads them;
+        // changing anything needs manage_attribution_models, as that page's
+        // writes do; the report and the rows behind it (postbacks, installs)
+        // need view_attribution_reports, as MobileAppsReportController does.
+        // The checks sit inside the handlers because one path carries both a
+        // read and a write; the DELETE previews repeat them below.
+        $router->group('/apps', function (Router $r) use ($crud, $idempotent, $queryParams, $payload, $auth, $db) {
+            $apps = \Api\V3\Controllers\AppRegistrationsController::class;
+            $encodings = \Api\V3\Controllers\AppSkanEncodingsController::class;
+            $postbacks = \Api\V3\Controllers\AppPostbacksController::class;
+            $manage = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'manage_attribution_models');
+            };
+            $view = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            };
+            // What Setup › Mobile Apps shows: its base class asks for
+            // access_to_setup_section before anything ("Reading the list
+            // needs Setup"), and these reads asked for nothing.
+            $setup = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_setup_section');
+            };
+
+            $r->get('/skan-encodings',         function () use ($setup, $crud, $encodings, $queryParams) {
+                $setup();
+                return $crud($encodings)->list($queryParams);
+            });
+            $r->get('/skan-encodings/{id}',    function ($ctx) use ($setup, $crud, $encodings) {
+                $setup();
+                return $crud($encodings)->get(PathId::of($ctx));
+            });
+            $r->post('/skan-encodings',        function () use ($manage, $crud, $encodings, $idempotent, $payload) {
+                $manage();
+                return ['_status' => 201] + $idempotent('apps/skan-encodings', $payload, fn() => $crud($encodings)->create($payload));
+            });
+            $r->put('/skan-encodings/{id}',    function ($ctx) use ($manage, $crud, $encodings, $payload) {
+                $manage();
+                return $crud($encodings)->update(PathId::of($ctx), $payload);
+            });
+            $r->delete('/skan-encodings/{id}', function ($ctx) use ($manage, $crud, $encodings) {
+                $manage();
+                $crud($encodings)->delete(PathId::of($ctx));
+                return null; // 204
+            });
+
+            $r->get('/postbacks',      function () use ($view, $crud, $postbacks, $queryParams) {
+                $view();
+                return $crud($postbacks)->list($queryParams);
+            });
+            $r->get('/postbacks/{id}', function ($ctx) use ($view, $crud, $postbacks) {
+                $view();
+                return $crud($postbacks)->get(PathId::of($ctx));
+            });
+            // Both platforms: Apple's postbacks and Android's installs
+            // (AppReportController picks, and refuses a one-platform
+            // grouping or filter without that platform).
+            $r->get('/report',         function () use ($view, $crud, $queryParams) {
+                $view();
+                return $crud(\Api\V3\Controllers\AppReportController::class)->report($queryParams);
+            });
+            $r->post('/verify',        function () use ($view, $crud, $postbacks, $payload) {
+                $view();
+                return $crud($postbacks)->verify($payload);
+            });
+
+            // The traffic-source postbacks app installs' goals queued, with
+            // where each stands (sent, failed, pending, …): a read, and a tab
+            // of the report page, so it asks for what the report does.
+            $r->get('/notifications', function () use ($view, $crud, $queryParams) {
+                $view();
+                return $crud(\Api\V3\Controllers\AppNotificationsController::class)->list($queryParams);
+            });
+
+            // An Android registration's installs, written only by the
+            // public intake (POST /apps/installs, routed before auth), and
+            // the install token for one of the caller's clicks: all reads.
+            // The token is tracking plumbing (the landing page's server asks
+            // for it, as it posts conversions), so it takes no role check.
+            $installs = \Api\V3\Controllers\AppInstallsController::class;
+            $r->get('/{id}/installs',        function ($ctx) use ($view, $crud, $installs, $queryParams) {
+                $view();
+                return $crud($installs)->list(PathId::of($ctx), $queryParams);
+            });
+            $r->get('/{id}/installs/{uuid}', function ($ctx) use ($view, $crud, $installs) {
+                $view();
+                return $crud($installs)->get(PathId::of($ctx), (string)$ctx['uuid']);
+            });
+            $r->get('/{id}/install-token',   fn($ctx) => $crud($installs)->installToken(PathId::of($ctx), $queryParams));
+
+            // The link builder's read: the store link a campaign should send
+            // its clicks to, and whether campaign_id already does (a read;
+            // applying it is PUT /campaigns/{id}).
+            $r->get('/{id}/store-link', function ($ctx) use ($setup, $crud, $queryParams) {
+                $setup();
+                return $crud(\Api\V3\Controllers\AppLinksController::class)->storeLink(PathId::of($ctx), $queryParams);
+            });
+
+            // Play Integrity (plan §5.6, §5.11): the status read, and the
+            // service-account credential — set/rotate and clear. Neither
+            // write is stageable: its body is a private key, which a staged
+            // change would store and show to reviewers.
+            $integrity = \Api\V3\Controllers\AppIntegrityController::class;
+            $r->get('/{id}/integrity',               function ($ctx) use ($setup, $crud, $integrity) {
+                $setup();
+                return $crud($integrity)->status(PathId::of($ctx));
+            });
+            $r->put('/{id}/integrity-credential',    function ($ctx) use ($manage, $crud, $integrity, $payload) {
+                $manage();
+                return $crud($integrity)->setCredential(PathId::of($ctx), $payload);
+            });
+            $r->delete('/{id}/integrity-credential', function ($ctx) use ($manage, $crud, $integrity) {
+                $manage();
+                return $crud($integrity)->clearCredential(PathId::of($ctx));
+            });
+
+            $r->get('',            function () use ($setup, $crud, $apps, $queryParams) {
+                $setup();
+                return $crud($apps)->list($queryParams);
+            });
+            // Deliberately NOT wrapped in $idempotent, for the same reason
+            // API-key creation is not: the response carries the app token,
+            // which must not persist in the server-state store as a
+            // replayable record. Retry safety comes from the global UNIQUE
+            // (platform, app_key) instead — a duplicate create answers 409.
+            $r->post('',           function () use ($manage, $crud, $apps, $payload) {
+                $manage();
+                return ['_status' => 201] + $crud($apps)->create($payload);
+            });
+            $r->get('/{id}',       function ($ctx) use ($setup, $crud, $apps) {
+                $setup();
+                return $crud($apps)->get(PathId::of($ctx));
+            });
+            $r->put('/{id}',       function ($ctx) use ($manage, $crud, $apps, $payload) {
+                $manage();
+                return $crud($apps)->update(PathId::of($ctx), $payload);
+            });
+            $r->delete('/{id}',    function ($ctx) use ($manage, $crud, $apps) {
+                $manage();
+                $crud($apps)->delete(PathId::of($ctx));
+                return null; // 204
+            });
+            $r->post('/{id}/app-token/rotate', function ($ctx) use ($manage, $crud, $apps) {
+                $manage();
+                return $crud($apps)->rotateAppToken(PathId::of($ctx));
+            });
+        });
+
+        // ── Goals (plan §2.2, §5.5) ─────────────────────────────────────
+        // Definitions and versions, the campaigns that pay for them, their
+        // outcomes, and the two computations (validate, evaluate) that write
+        // nothing. The literal paths come before /goals/{id}.
+        //
+        // Goals are Setup's: a campaign's are edited on Setup › Campaigns
+        // (aff_campaigns.php asks for access_to_setup_section before it
+        // includes the goal editor, which saves through GoalsController) and
+        // an app's on Setup › Mobile Apps (its base class asks the same, and
+        // every write manage_attribution_models as well). These routes asked
+        // for nothing: measured live, a Campaign viewer's key created a paid
+        // goal, set its campaign's payout for it to 99.99, ran a
+        // re-evaluation (which re-scores past clicks and announces new
+        // outcomes to the traffic source) and read every payout back. Every
+        // route now asks for access_to_setup_section ($setupSection), reads
+        // and the two computations included; a write to an app's or the
+        // account's goal asks for manage_attribution_models too
+        // ($appGoalWrite, repeated on the DELETE preview); and the money --
+        // a campaign's payout for a goal, a goal's fixed value, an outcome's
+        // value -- is masked for a role without access_to_campaign_data
+        // ($campaignFigures), as the reports mask theirs.
+        $goalFigures = \Api\V3\Support\CampaignFigures::GOAL;
+        $outcomeFigures = \Api\V3\Support\CampaignFigures::GOAL_OUTCOME;
+        $router->group('/goals', function (Router $r) use ($crud, $idempotent, $queryParams, $payload, $campaignFigures, $goalFigures, $outcomeFigures, $appGoalWrite) {
+            $cls = \Api\V3\Controllers\GoalsController::class;
+
+            $r->get('',               fn() => $campaignFigures($crud($cls)->list($queryParams), $goalFigures));
+            $r->post('',              function () use ($crud, $cls, $idempotent, $payload, $campaignFigures, $goalFigures, $appGoalWrite) {
+                $appGoalWrite(is_string($payload['scope'] ?? null) ? $payload['scope'] : null);
+                return $campaignFigures(['_status' => 201] + $idempotent('goals', $payload, fn() => $crud($cls)->create($payload)), $goalFigures);
+            });
+            $r->post('/validate',     fn() => $crud($cls)->validate($payload));
+            $r->post('/evaluate',     fn() => $crud($cls)->evaluate($payload));
+            $r->get('/{id}',          fn($ctx) => $campaignFigures($crud($cls)->get(PathId::of($ctx)), $goalFigures));
+            $r->put('/{id}',          function ($ctx) use ($crud, $cls, $payload, $campaignFigures, $goalFigures, $appGoalWrite) {
+                $appGoalWrite($crud($cls)->scopeOf(PathId::of($ctx)));
+                return $campaignFigures($crud($cls)->update(PathId::of($ctx), $payload), $goalFigures);
+            });
+            $r->delete('/{id}',       function ($ctx) use ($crud, $cls, $appGoalWrite) {
+                $appGoalWrite($crud($cls)->scopeOf(PathId::of($ctx)));
+                $crud($cls)->delete(PathId::of($ctx));
+                return null; // 204
+            });
+            $r->get('/{id}/versions', fn($ctx) => $campaignFigures($crud($cls)->versions(PathId::of($ctx)), $goalFigures));
+            $r->get('/{id}/versions/{version}', fn($ctx) => $campaignFigures($crud($cls)->version(PathId::of($ctx), PathId::of($ctx, 'version')), $goalFigures));
+            $r->get('/{id}/outcomes', fn($ctx) => $campaignFigures($crud($cls)->outcomes(PathId::of($ctx), $queryParams), $outcomeFigures));
+            $r->get('/{id}/campaigns', fn($ctx) => $campaignFigures($crud($cls)->campaigns(PathId::of($ctx)), $goalFigures));
+            // What a campaign pays for a goal is the campaign's, set on its
+            // Setup page whatever owns the goal: Setup's permission alone.
+            $r->put('/{id}/campaigns/{campaignId}', fn($ctx) => $campaignFigures($crud($cls)->attachCampaign(PathId::of($ctx), PathId::of($ctx, 'campaignId'), $payload), $goalFigures));
+            $r->delete('/{id}/campaigns/{campaignId}', fn($ctx) => tap($crud($cls), fn($c) => $c->detachCampaign(PathId::of($ctx), PathId::of($ctx, 'campaignId'))));
+            $r->get('/{id}/reevaluation',  fn($ctx) => $campaignFigures($crud($cls)->reevaluationPreview(PathId::of($ctx), $queryParams), $outcomeFigures));
+            $r->post('/{id}/reevaluation', function ($ctx) use ($crud, $cls, $payload, $campaignFigures, $outcomeFigures, $appGoalWrite) {
+                $appGoalWrite($crud($cls)->scopeOf(PathId::of($ctx)));
+                return $campaignFigures($crud($cls)->reevaluate(PathId::of($ctx), $payload), $outcomeFigures);
+            });
+        }, [$setupSection]);
+
+        // ── Events (plan §2.2) ──────────────────────────────────────────
+        // A web campaign's events, keyed by click_id, evaluated by its
+        // goals. Not wrapped in the 201 of a create: an all-duplicate retry
+        // answers 200, and the controller says which. Idempotency-Key is
+        // honored as for every write; each event's own id already makes a
+        // retry safe.
+        $router->post('/events', fn() => $idempotent('events', $payload, fn() => $crud(\Api\V3\Controllers\EventsController::class)->create($payload)));
+
+        // ── Users (admin-gated writes, self-or-admin for reads) ──────────
+        $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload, $queryParams) {
+            $make = fn() => new \Api\V3\Controllers\UsersController($db);
+
+            $r->get('/roles', fn() => $make()->listRoles());
+
+            $r->get('', function () use ($auth, $make) {
+                $auth->requireAdmin();
+                return $make()->list();
+            });
+            $r->post('', function () use ($auth, $make, $idempotent, $payload) {
+                $auth->requireAdmin();
+                return ['_status' => 201] + $idempotent('users', $payload, fn() => $make()->create($payload));
+            });
+            $r->get('/{id}', function ($ctx) use ($auth, $make) {
+                $auth->requireSelfOrAdmin(PathId::of($ctx));
+                return $make()->get(PathId::of($ctx));
+            });
+            // Writes to another user's account follow user-management.php:
+            // requireSelfOrMayManageUser() and its siblings in Auth say how.
+            $r->put('/{id}', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requireSelfOrMayManageUser($db, PathId::of($ctx));
+                // A rename and the active flag are the Users page's, not
+                // Personal settings': they need a user you may manage, even
+                // when that is you. The time zone is Personal settings'.
+                if (array_key_exists('user_name', $payload) || array_key_exists('user_active', $payload)) {
+                    $auth->requireMayManageUser($db, PathId::of($ctx));
+                }
+                if (array_key_exists('user_timezone', $payload)) {
+                    $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                }
+                return $make()->update(PathId::of($ctx), $payload, $auth->userId());
+            });
+            $r->delete('/{id}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireMayDeleteUser($db, PathId::of($ctx));
+                $make()->delete(PathId::of($ctx));
+                return null; // 204
+            });
+
+            // Roles sub-resource
+            $r->post('/{id}/roles', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requireMayChangeRoles($db, PathId::of($ctx), \Api\V3\Controllers\UsersController::roleIdFrom($payload));
+                return $make()->assignRole(PathId::of($ctx), $payload);
+            });
+            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireMayChangeRoles($db, PathId::of($ctx), null);
+                $make()->removeRole(PathId::of($ctx), PathId::of($ctx, 'roleId'));
+                return null;
+            });
+
+            // API keys (Personal settings: yours with the page's permission,
+            // or a user you may manage)
+            $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $make()->listApiKeys(PathId::of($ctx));
+            });
+            $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return ['_status' => 201] + $make()->createApiKey(PathId::of($ctx), $payload, $auth);
+            });
+            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $make()->deleteApiKey(PathId::of($ctx), (string)$ctx['keyId']);
+                return null;
+            });
+
+            // Identity linking key (self-or-admin): what the operator's
+            // server signs customer ids with (cust_sig).
+            $r->get('/{id}/identity-key', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireSelfOrMayManageUser($db, PathId::of($ctx));
+                // A read that hands out a signing secret: whoever holds the
+                // key can link any click to any customer id, which is a write
+                // to the account's identity graph. So a read-only or
+                // propose-only key (a reporting agent's) cannot fetch it.
+                $auth->requireScope('users:write');
+                return $make()->identityKey(PathId::of($ctx));
+            });
+            $r->post('/{id}/identity-key/rotate', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireSelfOrMayManageUser($db, PathId::of($ctx));
+                return $make()->rotateIdentityKey(PathId::of($ctx));
+            });
+
+            // Preferences (Personal settings: yours with the page's
+            // permission, or a user you may manage; they hold the account's
+            // integration secrets, which GET answers only as stored or not)
+            $r->get('/{id}/preferences', function ($ctx) use ($auth, $make, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $make()->getPreferences(PathId::of($ctx));
+            });
+            $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $make()->updatePreferences(PathId::of($ctx), $payload);
+            });
+
+            // Click filtering (Personal settings' card, asked the same way):
+            // the switches, the address list, and a test of one address
+            // (?ip=), a read.
+            $filter = fn() => new \Api\V3\Controllers\ClickFilterController($db);
+            $r->get('/{id}/click-filter', function ($ctx) use ($auth, $filter, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->get(PathId::of($ctx));
+            });
+            $r->put('/{id}/click-filter', function ($ctx) use ($auth, $filter, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->update(PathId::of($ctx), $payload);
+            });
+            $r->post('/{id}/click-filter/entries', function ($ctx) use ($auth, $filter, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->addEntry(PathId::of($ctx), $payload);
+            });
+            $r->put('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->updateEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'), $payload);
+            });
+            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $filter()->deleteEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'));
+                return null;
+            });
+            $r->get('/{id}/click-filter/test', function ($ctx) use ($auth, $filter, $queryParams, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->test(PathId::of($ctx), $queryParams);
+            });
+        });
+
+        // ── System (admin only; /health is handled above without auth) ─────
+        // Account › Settings shows these (versions, cron, the data engine,
+        // database size, errors): Admin, and the page's own permission,
+        // access_to_settings, as the routes below ask for it. These asked for
+        // Admin alone, so a custom Admin-like role without Settings read them.
+        $settingsPage = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_settings');
+        };
+        $router->group('/system', function (Router $r) use ($db, $queryParams) {
+            $make = fn() => new \Api\V3\Controllers\SystemController($db);
+
+            $r->get('/version',    fn() => $make()->version());
+            $r->get('/db-stats',   fn() => $make()->dbStats());
+            $r->get('/cron',       fn() => $make()->cronStatus());
+            $r->get('/errors',     fn() => $make()->errors($queryParams));
+            $r->get('/dataengine', fn() => $make()->dataengineStatus());
+            $r->get('/metrics',    fn() => $make()->metrics());
+        }, [$auth->requireAdmin(...), $settingsPage]);
+
+        // ── Administration (202-account/administration.php, api-integrations.php) ──
+        // What Account › Settings shows and changes for this install, and the
+        // URLs Account › API integrations hands out. Admin, as the rest of
+        // /system, and the pages' own permission on top (CLAUDE.md #5):
+        // access_to_settings for Settings, access_to_api_integrations for the
+        // integrations. Not stageable; the one-off deletion previews with
+        // `?dry_run=1` through the same handler, so it is gated identically.
+        // AdministrationRoutesPermissionTest holds all of this. ($settingsPage
+        // is defined above, with the older /system routes it also gates.)
+        $integrationsPage = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_api_integrations');
+        };
+        $router->group('/system', function (Router $r) use ($crud, $payload, $queryParams) {
+            $cls = \Api\V3\Controllers\AdministrationController::class;
+            $r->get('/info',                     fn() => $crud($cls)->info(isset($GLOBALS['mchost']) && is_string($GLOBALS['mchost']) ? $GLOBALS['mchost'] : null));
+            $r->get('/login-log',                fn() => $crud($cls)->loginLog($queryParams));
+            $r->get('/retention',                fn() => $crud($cls)->retention());
+            $r->put('/retention',                fn() => $crud($cls)->setRetention($payload));
+            $r->post('/retention/delete-before', fn() => $crud($cls)->scheduleDeletion($payload, writeDryRunRequested($queryParams)));
+            $r->get('/isp-lookup',               fn() => $crud($cls)->ispLookup());
+            $r->put('/isp-lookup',               fn() => $crud($cls)->setIspLookup($payload));
+        }, [$auth->requireAdmin(...), $settingsPage]);
+        $router->group('/system', function (Router $r) use ($crud) {
+            $r->get('/integrations', fn() => $crud(\Api\V3\Controllers\AdministrationController::class)->integrations());
+        }, [$auth->requireAdmin(...), $integrationsPage]);
+
+        // ── Traffic sources another user's accounts name ─────────────────
+        // What Setup › Traffic Sources' rename could leave before 1.9.79, and
+        // the repair and split an operator runs on it. Gated as the install
+        // settings above (it names every user's sources); a repair or split
+        // also asks that the caller may act on each user it changes
+        // (TrafficSourceOwnersController). Not stageable, and no preview: the
+        // GET is what a repair or split would do.
+        $router->group('/system', function (Router $r) use ($db, $auth, $payload) {
+            $make = fn() => new \Api\V3\Controllers\TrafficSourceOwnersController($db, $auth);
+            $r->get('/traffic-source-owners', fn() => $make()->report());
+            $r->post('/traffic-source-owners/repair', fn() => $make()->repair($payload));
+            $r->post('/traffic-source-owners/split', fn() => $make()->split($payload));
+        }, [$auth->requireAdmin(...), $settingsPage]);
+
+        // ── API root ─────────────────────────────────────────────────────
+        $router->get('/', fn() => [
+            'api' => 'Prosper202 API v3',
+            'endpoints' => [
+                'versions'      => '/versions',
+                'capabilities'  => '/capabilities',
+                'campaigns'     => '/campaigns',
+                'aff_networks'  => '/aff-networks',
+                'ppc_networks'  => '/ppc-networks',
+                'ppc_accounts'  => '/ppc-accounts',
+                'trackers'      => '/trackers',
+                'landing_pages' => '/landing-pages',
+                'setup'         => '/landing-pages/{id}/code, /conversions/postback-code, /ppc-networks/{id}/variables, /ppc-accounts/{id}/pixels',
+                'text_ads'      => '/text-ads',
+                'forecast_events' => '/forecast-events',
+                'clicks'        => '/clicks',
+                'conversions'   => '/conversions',
+                'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
+                'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups}',
+                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
+                'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
+                'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
+                'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
+                'goals'         => '/goals/{id|validate|evaluate}',
+                'events'        => '/events',
+                'users'         => '/users',
+                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
+                'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
+                'changes'       => '/changes/{entity}',
+                'audit'         => '/audit/sync-jobs',
+            ],
+            'auth' => 'Authorization: Bearer <api_key>',
+        ]);
+
+        // ── DELETE dry-run previews ─────────────────────────────────────
+        // `?dry_run=1` on a DELETE returns what the delete would remove without
+        // removing anything. Fail-closed by construction: a dry-run DELETE is
+        // only ever dispatched to a handler registered here, and a DELETE with
+        // dry_run set whose path has no preview is rejected — it can never fall
+        // through to the real delete. Auth checks that live inside a main
+        // DELETE handler are replicated on its preview below
+        // (PreviewAuthParityTest holds that); group middleware runs from the
+        // main match before this router is consulted, for a dry run and for a
+        // staged write alike.
+        $previewRouter = new Router();
+        foreach ($crudMap as $resource => $class) {
+            $previewRouter->delete("/$resource/{id}", fn($ctx) => $crud($class)->deletePreview(PathId::of($ctx)));
+        }
+        $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview(PathId::of($ctx)));
+        $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview(PathId::of($ctx)));
+        $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview(PathId::of($ctx), PathId::of($ctx, 'ruleId')));
+        // The Setup variables and pixels deletes ask for their groups'
+        // permissions (remove_traffic_source and access_to_setup_section;
+        // access_to_setup_section) in middleware, which runs from the main
+        // match before this router is consulted; their handlers check
+        // nothing more.
+        $previewRouter->delete('/ppc-networks/{id}/variables/{variableId}', fn($ctx) => $crud(\Api\V3\Controllers\PpcNetworkVariablesController::class)->deletePreview(
+            PathId::of($ctx),
+            PathId::of($ctx, 'variableId')
+        ));
+        $previewRouter->delete('/ppc-accounts/{id}/pixels/{pixelId}', fn($ctx) => $crud(\Api\V3\Controllers\PpcAccountPixelsController::class)->deletePreview(
+            PathId::of($ctx),
+            PathId::of($ctx, 'pixelId')
+        ));
+        // The real DELETE checks manage_attribution_models inside its handler
+        // (the group middleware only asks for view_attribution_reports), so
+        // the preview repeats it, as the users previews repeat requireAdmin.
+        $previewRouter->delete('/attribution/models/{id}', function ($ctx) use ($crud, $auth, $db) {
+            $auth->requirePermission($db, 'manage_attribution_models');
+            return $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview(PathId::of($ctx));
+        });
+        $previewRouter->delete('/attribution/exports/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteExportPreview(PathId::of($ctx)));
+        // The /apps deletes check manage_attribution_models inside their
+        // handlers; the previews repeat it.
+        $previewRouter->delete('/apps/skan-encodings/{id}', function ($ctx) use ($crud, $auth, $db) {
+            $auth->requirePermission($db, 'manage_attribution_models');
+            return $crud(\Api\V3\Controllers\AppSkanEncodingsController::class)->deletePreview(PathId::of($ctx));
+        });
+        $previewRouter->delete('/apps/{id}', function ($ctx) use ($crud, $auth, $db) {
+            $auth->requirePermission($db, 'manage_attribution_models');
+            return $crud(\Api\V3\Controllers\AppRegistrationsController::class)->deletePreview(PathId::of($ctx));
+        });
+        // The goals routes ask for access_to_setup_section in middleware; the
+        // archive of an app's or the account's goal also checks
+        // manage_attribution_models inside its handler, so its preview
+        // repeats that. Both previews show a goal's money, masked as the
+        // goal's own reads are.
+        $previewRouter->delete('/goals/{id}', function ($ctx) use ($crud, $appGoalWrite, $campaignFigures) {
+            $goals = $crud(\Api\V3\Controllers\GoalsController::class);
+            $appGoalWrite($goals->scopeOf(PathId::of($ctx)));
+            return $campaignFigures($goals->deletePreview(PathId::of($ctx)), \Api\V3\Support\CampaignFigures::GOAL);
+        });
+        $previewRouter->delete('/goals/{id}/campaigns/{campaignId}', fn($ctx) => $campaignFigures($crud(\Api\V3\Controllers\GoalsController::class)->detachCampaignPreview(
+            PathId::of($ctx),
+            PathId::of($ctx, 'campaignId')
+        ), \Api\V3\Support\CampaignFigures::GOAL));
+        // The LTV deletes make no authorization check inside their handlers:
+        // the group's ltv:write middleware, run from the main match before
+        // this router is consulted, is their only one.
+        $previewRouter->group('/ltv', function (Router $r) use ($crud) {
+            $cls = \Api\V3\Controllers\LtvController::class;
+            $r->delete('/customers/{id}',                   fn($ctx) => $crud($cls)->deleteCustomerPreview(PathId::of($ctx)));
+            $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => $crud($cls)->deleteCustomerAliasPreview(PathId::of($ctx), PathId::of($ctx, 'aliasId')));
+            $r->delete('/companies/{id}',                   fn($ctx) => $crud($cls)->deleteCompanyPreview(PathId::of($ctx)));
+            $r->delete('/fields/{id}',                      fn($ctx) => $crud($cls)->deleteFieldPreview(PathId::of($ctx)));
+            $r->delete('/products/{id}',                    fn($ctx) => $crud($cls)->deleteProductPreview(PathId::of($ctx)));
+            $r->delete('/webhooks/{id}',                    fn($ctx) => $crud($cls)->deleteWebhookPreview(PathId::of($ctx)));
+            $r->delete('/integrations/{id}',                fn($ctx) => $crud($cls)->deleteIntegrationPreview(PathId::of($ctx)));
+        });
+        $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
+            $make = fn() => new \Api\V3\Controllers\UsersController($db);
+            $r->delete('/{id}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireMayDeleteUser($db, PathId::of($ctx));
+                return $make()->deletePreview(PathId::of($ctx));
+            });
+            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $make()->deleteApiKeyPreview(PathId::of($ctx), (string)$ctx['keyId']);
+            });
+            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireMayChangeRoles($db, PathId::of($ctx), null);
+                return $make()->removeRolePreview(PathId::of($ctx), PathId::of($ctx, 'roleId'));
+            });
+            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return (new \Api\V3\Controllers\ClickFilterController($db))->deleteEntryPreview(
+                    PathId::of($ctx),
+                    PathId::of($ctx, 'entryId')
+                );
+            });
+        });
+
+
+        return ['router' => $router, 'preview' => $previewRouter];
+    };
+
+    $built = $buildRouters($payload, $queryParams, $userId);
+    $router = $built['router'];
+    $previewRouter = $built['preview'];
+    // ── Write previews ──────────────────────────────────────────────
+    // `?dry_run=1` on a POST, PUT or PATCH previews only where the route's
+    // own handler implements a preview: it reads writeDryRunRequested() and
+    // writes nothing when asked (the Update routes, the scheduled click
+    // deletion). Every other write refuses the parameter, as a DELETE with
+    // no preview does. It was ignored there, so the write ran: measured
+    // live, PUT /system/retention?dry_run=1 -- the spelling the route's own
+    // 422 for a body dry_run told callers to use -- changed the retention
+    // setting, and POST /aff-networks?dry_run=1 created a category.
+    // DryRunRoutesTest holds this list to the handlers that read the flag.
+    $writePreviewRouter = new Router();
+    $writePreview = static fn() => true;
+    $writePreviewRouter->post('/clicks/cpc', $writePreview);
+    $writePreviewRouter->group('/conversions', function (Router $r) use ($writePreview) {
+        $r->post('/subids', $writePreview);
+        $r->post('/subids/delete', $writePreview);
+        $r->post('/subids/reset', $writePreview);
+        $r->post('/uploads', $writePreview);
+    });
+    $writePreviewRouter->post('/system/retention/delete-before', $writePreview);
+    $writePreviewRouter->put('/rotators/{id}/rules', $writePreview);
+    // ── Staged writes ───────────────────────────────────────────────
+    // `?staged=1` on an operator-surface write records it as a proposal
+    // (server-issued change id) instead of executing it; a person applies
+    // or discards it through /staged-changes. Fail-closed like dry-run: a
+    // write outside this allowlist rejects the parameter rather than
+    // executing, and applying re-dispatches through the real route so
+    // validation and authorization re-run against current state and the
+    // applier's credentials.
+    $stageableRouter = new Router();
+    $stageable = static fn() => true;
     foreach ($crudMap as $resource => $class) {
-        $router->group("/$resource", function (Router $r) use ($class, $crud, &$queryParams, &$payload) {
-            $r->get('',       fn() => $crud($class)->list($queryParams));
-            $r->post('/bulk-upsert', fn() => $crud($class)->bulkUpsert($payload));
-            $r->get('/{id}',  fn($ctx) => $crud($class)->get((int)$ctx['id']));
-            $r->post('',      fn() => ['_status' => 201] + $crud($class)->create($payload));
-            $r->put('/{id}',  fn($ctx) => $crud($class)->update((int)$ctx['id'], $payload));
-            $r->delete('/{id}', fn($ctx) => tap($crud($class), fn($c) => $c->delete((int)$ctx['id'])));
+        $stageableRouter->group("/$resource", function (Router $r) use ($stageable) {
+            $r->post('', $stageable);
+            $r->put('/{id}', $stageable);
+            $r->delete('/{id}', $stageable);
         });
     }
-
-    // Tracker sub-resource
-    $router->get('/trackers/{id}/url', function ($ctx) use ($crud) {
-        return $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl((int)$ctx['id']);
+    $stageableRouter->group('/conversions', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->delete('/{id}', $stageable);
+    });
+    // A traffic source's variables and an account's pixels are Setup records
+    // like the CRUD entities they hang off: stageable, and applied through
+    // the real route, whose permission middleware (access_to_setup_section,
+    // and remove_traffic_source for the variables) runs against the applier.
+    $stageableRouter->group('/ppc-networks/{id}/variables', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{variableId}', $stageable);
+        $r->delete('/{variableId}', $stageable);
+    });
+    $stageableRouter->group('/ppc-accounts/{id}/pixels', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{pixelId}', $stageable);
+        $r->delete('/{pixelId}', $stageable);
+    });
+    $stageableRouter->group('/rotators', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{id}', $stageable);
+        $r->delete('/{id}', $stageable);
+        $r->post('/{id}/rules', $stageable);
+        $r->put('/{id}/rules', $stageable);
+        $r->put('/{id}/rules/{ruleId}', $stageable);
+        $r->delete('/{id}/rules/{ruleId}', $stageable);
+    });
+    $stageableRouter->group('/attribution/models', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{id}', $stageable);
+        $r->delete('/{id}', $stageable);
+    });
+    $stageableRouter->group('/attribution/exports', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->post('/{id}/retry', $stageable);
+        $r->delete('/{id}', $stageable);
+    });
+    $stageableRouter->group('/apps', function (Router $r) use ($stageable) {
+        $r->post('/skan-encodings', $stageable);
+        $r->put('/skan-encodings/{id}', $stageable);
+        $r->delete('/skan-encodings/{id}', $stageable);
+        $r->post('', $stageable);
+        $r->put('/{id}', $stageable);
+        $r->delete('/{id}', $stageable);
+        $r->post('/{id}/app-token/rotate', $stageable);
+    });
+    $stageableRouter->group('/goals', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{id}', $stageable);
+        $r->delete('/{id}', $stageable);
+        $r->put('/{id}/campaigns/{campaignId}', $stageable);
+        $r->delete('/{id}/campaigns/{campaignId}', $stageable);
+        $r->post('/{id}/reevaluation', $stageable);
+    });
+    // An event is a write like a conversion: stageable, and applied through
+    // the real route (received at apply time).
+    $stageableRouter->post('/events', $stageable);
+    $stageableRouter->group('/users', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{id}', $stageable);
+        $r->delete('/{id}', $stageable);
+        $r->post('/{id}/roles', $stageable);
+        $r->delete('/{id}/roles/{roleId}', $stageable);
+        $r->delete('/{id}/api-keys/{keyId}', $stageable);
+        $r->post('/{id}/identity-key/rotate', $stageable);
+        $r->put('/{id}/preferences', $stageable);
+        $r->put('/{id}/click-filter', $stageable);
+        $r->post('/{id}/click-filter/entries', $stageable);
+        $r->put('/{id}/click-filter/entries/{entryId}', $stageable);
+        $r->delete('/{id}/click-filter/entries/{entryId}', $stageable);
     });
 
-    // ── Clicks (read-only) ───────────────────────────────────────────
-    $router->get('/clicks', fn() => $crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams));
-    $router->get('/clicks/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ClicksController::class)->get((int)$ctx['id']));
+    $stagedChanges = fn() => new \Api\V3\Controllers\StagedChangesController($stateStore, $auth);
 
-    // ── Conversions ──────────────────────────────────────────────────
-    $router->group('/conversions', function (Router $r) use ($crud, &$queryParams, &$payload) {
-        $cls = \Api\V3\Controllers\ConversionsController::class;
-        $r->get('',        fn() => $crud($cls)->list($queryParams));
-        $r->get('/{id}',   fn($ctx) => $crud($cls)->get((int)$ctx['id']));
-        $r->post('',       fn() => ['_status' => 201] + $crud($cls)->create($payload));
-        $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
-    });
-
-    // ── Reports ──────────────────────────────────────────────────────
-    $router->group('/reports', function (Router $r) use ($crud, &$queryParams) {
-        $cls = \Api\V3\Controllers\ReportsController::class;
-        $r->get('/summary',    fn() => $crud($cls)->summary($queryParams));
-        $r->get('/breakdown',  fn() => $crud($cls)->breakdown($queryParams));
-        $r->get('/timeseries', fn() => $crud($cls)->timeseries($queryParams));
-        $r->get('/daypart',    fn() => $crud($cls)->daypart($queryParams));
-        $r->get('/weekpart',   fn() => $crud($cls)->weekpart($queryParams));
-    });
-
-    // ── LTV: reads (ltv:read) ───────────────────────────────────────
-    $router->group('/ltv', function (Router $r) use ($crud, &$queryParams) {
-        $cls = \Api\V3\Controllers\LtvController::class;
-        $r->get('/summary',        fn() => $crud($cls)->summary($queryParams));
-        $r->get('/customers',      fn() => $crud($cls)->customers($queryParams));
-        $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail((int)$ctx['id']));
-        $r->get('/customers/{id}/engagement', fn($ctx) => $crud($cls)->customerEngagement((int)$ctx['id'], $queryParams));
-        $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer((int)$ctx['id']));
-        $r->get('/abm',            fn() => $crud($cls)->abm($queryParams));
-        $r->get('/abm/company',    fn() => $crud($cls)->abmCompany($queryParams));
-        $r->get('/breakdown',      fn() => $crud($cls)->breakdown($queryParams));
-        $r->get('/cohorts',        fn() => $crud($cls)->cohorts($queryParams));
-        $r->get('/mrr',            fn() => $crud($cls)->mrr());
-        $r->get('/predict',        fn() => $crud($cls)->predict($queryParams));
-        $r->get('/products',       fn() => $crud($cls)->products($queryParams));
-        $r->get('/companies',      fn() => $crud($cls)->listCompanies($queryParams));
-        $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
-        $r->get('/fields',         fn() => $crud($cls)->fieldsList());
-        $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
-        $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
-    }, [
-        static function () use ($auth): void {
-            $auth->requireScope('ltv:read');
-        },
-    ]);
-
-    // ── LTV: CRM + inbound integration writes (ltv:write) ──────────
-    $router->group('/ltv', function (Router $r) use ($crud, &$payload) {
-        $cls = \Api\V3\Controllers\LtvController::class;
-        $r->post('/customers',                fn() => ['_status' => 201] + $crud($cls)->upsertCustomer($payload));
-        $r->patch('/customers/{id}',          fn($ctx) => $crud($cls)->patchCustomer((int)$ctx['id'], $payload));
-        $r->post('/customers/{id}/merge',     fn($ctx) => $crud($cls)->mergeCustomer((int)$ctx['id'], $payload));
-        $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer((int)$ctx['id'])));
-        $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias((int)$ctx['id'], $payload));
-        $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression((int)$ctx['id'], $payload));
-        $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomerAlias((int)$ctx['id'], (int)$ctx['aliasId'])));
-        $r->post('/companies',                fn() => ['_status' => 201] + $crud($cls)->createCompany($payload));
-        $r->patch('/companies/{id}',          fn($ctx) => $crud($cls)->patchCompany((int)$ctx['id'], $payload));
-        $r->post('/companies/{id}/merge',     fn($ctx) => $crud($cls)->mergeCompany((int)$ctx['id'], $payload));
-        $r->delete('/companies/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCompany((int)$ctx['id'])));
-        $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
-        $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
-        $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
-        $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent((string)$ctx['ref'], $payload));
-        $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
-        $r->post('/fields',                   fn() => ['_status' => 201] + $crud($cls)->createField($payload));
-        $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField((int)$ctx['id'], $payload));
-        $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField((int)$ctx['id'])));
-        $r->post('/webhooks',                 fn() => ['_status' => 201] + $crud($cls)->createWebhook($payload));
-        $r->delete('/webhooks/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteWebhook((int)$ctx['id'])));
-        $r->post('/integrations',             fn() => ['_status' => 201] + $crud($cls)->createIntegration($payload));
-        $r->delete('/integrations/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->deleteIntegration((int)$ctx['id'])));
-    }, [
-        static function () use ($auth): void {
-            $auth->requireScope('ltv:write');
-        },
-    ]);
-
-    // ── API capabilities ────────────────────────────────────────────
-    $router->get('/capabilities', fn() => (new \Api\V3\Controllers\CapabilitiesController($db, $userId))->capabilities());
-
-    // ── Server-side sync planning (admin + read scope) ─────────────
-    $router->group('/sync', function (Router $r) use ($crud, &$queryParams, &$payload) {
-        $cls = \Api\V3\Controllers\SyncController::class;
-        $r->post('/plan', fn() => $crud($cls)->plan($payload));
-        $r->get('/status', fn() => $crud($cls)->status($queryParams));
-        $r->get('/history', fn() => $crud($cls)->history($queryParams));
-    }, [
-        static function () use ($auth): void {
-            $auth->requireAdmin();
-            $auth->requireScope('sync:read');
-        },
-    ]);
-
-    // ── Server-side sync orchestration (admin + write scope) ───────
-    $router->group('/sync', function (Router $r) use ($crud, &$payload) {
-        $cls = \Api\V3\Controllers\SyncController::class;
-        $r->post('/jobs', fn() => ['_status' => 202] + $crud($cls)->createJob($payload));
-        $r->post('/worker/run', fn() => $crud($cls)->runWorker($payload));
-        $r->post('/jobs/{id}/run', fn($ctx) => $crud($cls)->runJob((string)$ctx['id']));
-        $r->post('/jobs/{id}/cancel', fn($ctx) => $crud($cls)->cancelJob((string)$ctx['id']));
-        $r->post('/re-sync', fn() => ['_status' => 202] + $crud($cls)->reSync($payload));
-    }, [
-        static function () use ($auth): void {
-            $auth->requireAdmin();
-            $auth->requireScope('sync:write');
-        },
-    ]);
-
-    $router->group('/sync', function (Router $r) use ($crud, &$queryParams) {
-        $cls = \Api\V3\Controllers\SyncController::class;
-        $r->get('/jobs/{id}', fn($ctx) => $crud($cls)->getJob((string)$ctx['id']));
-        $r->get('/jobs/{id}/events', fn($ctx) => $crud($cls)->events((string)$ctx['id'], $queryParams));
-    }, [
-        static function () use ($auth): void {
-            $auth->requireAdmin();
-            $auth->requireScope('sync:read');
-        },
-    ]);
-
-    // ── Incremental changes feed (admin only) ──────────────────────
-    $router->group('/changes', function (Router $r) use ($crud, &$queryParams) {
-        $cls = \Api\V3\Controllers\SyncController::class;
-        $r->get('/{entity}', fn($ctx) => $crud($cls)->listChanges((string)$ctx['entity'], $queryParams));
-    }, [
-        static function () use ($auth): void {
-            $auth->requireAdmin();
-            $auth->requireScope('sync:read');
-        },
-    ]);
-
-    // ── Audit & provenance (admin only) ────────────────────────────
-    $router->group('/audit', function (Router $r) use ($crud, &$queryParams) {
-        $cls = \Api\V3\Controllers\SyncController::class;
-        $r->get('/sync-jobs', fn() => $crud($cls)->auditList($queryParams));
-        $r->get('/sync-jobs/{id}', fn($ctx) => $crud($cls)->auditGet((string)$ctx['id'], $queryParams));
-    }, [
-        static function () use ($auth): void {
-            $auth->requireAdmin();
-            $auth->requireScope('sync:read');
-        },
-    ]);
-
-    // ── Rotators ─────────────────────────────────────────────────────
-    $router->group('/rotators', function (Router $r) use ($crud, &$queryParams, &$payload) {
-        $cls = \Api\V3\Controllers\RotatorsController::class;
-        $r->get('',        fn() => $crud($cls)->list($queryParams));
-        $r->get('/{id}',   fn($ctx) => $crud($cls)->get((int)$ctx['id']));
-        $r->post('',       fn() => ['_status' => 201] + $crud($cls)->create($payload));
-        $r->put('/{id}',   fn($ctx) => $crud($cls)->update((int)$ctx['id'], $payload));
-        $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
-
-        // Sub-resource: rules
-        $r->get('/{id}/rules',             fn($ctx) => $crud($cls)->listRules((int)$ctx['id']));
-        $r->post('/{id}/rules',            fn($ctx) => $crud($cls)->createRule((int)$ctx['id'], $payload));
-        $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($cls)->updateRule((int)$ctx['id'], (int)$ctx['ruleId'], $payload));
-        $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
-    });
-
-    // ── Attribution ──────────────────────────────────────────────────
-    $router->group('/attribution/models', function (Router $r) use ($crud, &$queryParams, &$payload) {
-        $cls = \Api\V3\Controllers\AttributionController::class;
-        $r->get('',        fn() => $crud($cls)->listModels($queryParams));
-        $r->post('',       fn() => ['_status' => 201] + $crud($cls)->createModel($payload));
-        $r->get('/{id}',   fn($ctx) => $crud($cls)->getModel((int)$ctx['id']));
-        $r->put('/{id}',   fn($ctx) => $crud($cls)->updateModel((int)$ctx['id'], $payload));
-        $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteModel((int)$ctx['id'])));
-
-        $r->get('/{id}/snapshots', fn($ctx) => $crud($cls)->listSnapshots((int)$ctx['id'], $queryParams));
-        $r->get('/{id}/exports',   fn($ctx) => $crud($cls)->listExports((int)$ctx['id']));
-        $r->post('/{id}/exports',  fn($ctx) => ['_status' => 201] + $crud($cls)->scheduleExport((int)$ctx['id'], $payload));
-    });
-
-    // ── Users (admin-gated writes, self-or-admin for reads) ──────────
-    $router->group('/users', function (Router $r) use ($db, $auth, &$payload) {
-        $make = fn() => new \Api\V3\Controllers\UsersController($db);
-
-        $r->get('/roles', fn() => $make()->listRoles());
-
-        $r->get('', function () use ($auth, $make) {
-            $auth->requireAdmin();
-            return $make()->list();
-        });
-        $r->post('', function () use ($auth, $make, &$payload) {
-            $auth->requireAdmin();
-            return ['_status' => 201] + $make()->create($payload);
-        });
-        $r->get('/{id}', function ($ctx) use ($auth, $make) {
-            $auth->requireSelfOrAdmin((int)$ctx['id']);
-            return $make()->get((int)$ctx['id']);
-        });
-        $r->put('/{id}', function ($ctx) use ($auth, $make, &$payload) {
-            $auth->requireSelfOrAdmin((int)$ctx['id']);
-            return $make()->update((int)$ctx['id'], $payload);
-        });
-        $r->delete('/{id}', function ($ctx) use ($auth, $make) {
-            $auth->requireAdmin();
-            $make()->delete((int)$ctx['id']);
-            return null; // 204
-        });
-
-        // Roles sub-resource (admin only)
-        $r->post('/{id}/roles', function ($ctx) use ($auth, $make, &$payload) {
-            $auth->requireAdmin();
-            return $make()->assignRole((int)$ctx['id'], $payload);
-        });
-        $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make) {
-            $auth->requireAdmin();
-            $make()->removeRole((int)$ctx['id'], (int)$ctx['roleId']);
-            return null;
-        });
-
-        // API keys (self-or-admin)
-        $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make) {
-            $auth->requireSelfOrAdmin((int)$ctx['id']);
-            return $make()->listApiKeys((int)$ctx['id']);
-        });
-        $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make) {
-            $auth->requireSelfOrAdmin((int)$ctx['id']);
-            return ['_status' => 201] + $make()->createApiKey((int)$ctx['id']);
-        });
-        $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make) {
-            $auth->requireSelfOrAdmin((int)$ctx['id']);
-            $make()->deleteApiKey((int)$ctx['id'], $ctx['keyId']);
-            return null;
-        });
-
-        // Preferences (self-or-admin)
-        $r->get('/{id}/preferences', function ($ctx) use ($auth, $make) {
-            $auth->requireSelfOrAdmin((int)$ctx['id']);
-            return $make()->getPreferences((int)$ctx['id']);
-        });
-        $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, &$payload) {
-            $auth->requireSelfOrAdmin((int)$ctx['id']);
-            return $make()->updatePreferences((int)$ctx['id'], $payload);
+    $router->group('/staged-changes', function (Router $r) use ($stagedChanges, $buildRouters, $queryParams) {
+        $r->get('', fn() => $stagedChanges()->list($queryParams));
+        $r->get('/{id}', fn($ctx) => $stagedChanges()->get((string)$ctx['id']));
+        $r->post('/{id}/discard', fn($ctx) => $stagedChanges()->discard((string)$ctx['id']));
+        $r->post('/{id}/apply', function ($ctx) use ($stagedChanges, $buildRouters) {
+            return $stagedChanges()->apply(
+                (string)$ctx['id'],
+                // Rebuild the routes around the recorded payload and the
+                // PROPOSER's id: the write lands in the account that
+                // proposed it, while authorization (requireAdmin, scope)
+                // still runs against the applier's credentials below.
+                function (string $m, string $p, array $body, int $proposerId) use ($buildRouters) {
+                    $target = $buildRouters($body, [], $proposerId)['router']->match($m, $p);
+                    if ($target === null) {
+                        throw new ConflictException('The staged operation no longer matches a route on this server.');
+                    }
+                    foreach ($target['middleware'] as $mw) {
+                        $mw();
+                    }
+                    return ($target['handler'])($target['pathParams']);
+                }
+            );
         });
     });
-
-    // ── System (admin only; /health is handled above without auth) ─────
-    $router->group('/system', function (Router $r) use ($db, &$queryParams) {
-        $make = fn() => new \Api\V3\Controllers\SystemController($db);
-
-        $r->get('/version',    fn() => $make()->version());
-        $r->get('/db-stats',   fn() => $make()->dbStats());
-        $r->get('/cron',       fn() => $make()->cronStatus());
-        $r->get('/errors',     fn() => $make()->errors($queryParams));
-        $r->get('/dataengine', fn() => $make()->dataengineStatus());
-        $r->get('/metrics',    fn() => $make()->metrics());
-    }, [$auth->requireAdmin(...)]);
-
-    // ── API root ─────────────────────────────────────────────────────
-    $router->get('/', fn() => [
-        'api' => 'Prosper202 API v3',
-        'endpoints' => [
-            'versions'      => '/versions',
-            'capabilities'  => '/capabilities',
-            'campaigns'     => '/campaigns',
-            'aff_networks'  => '/aff-networks',
-            'ppc_networks'  => '/ppc-networks',
-            'ppc_accounts'  => '/ppc-accounts',
-            'trackers'      => '/trackers',
-            'landing_pages' => '/landing-pages',
-            'text_ads'      => '/text-ads',
-            'forecast_events' => '/forecast-events',
-            'clicks'        => '/clicks',
-            'conversions'   => '/conversions',
-            'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
-            'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
-            'rotators'      => '/rotators',
-            'attribution'   => '/attribution/models',
-            'users'         => '/users',
-            'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
-            'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
-            'changes'       => '/changes/{entity}',
-            'audit'         => '/audit/sync-jobs',
-        ],
-        'auth' => 'Authorization: Bearer <api_key>',
-    ]);
 
     // ─── Dispatch ────────────────────────────────────────────────────
     $match = $router->match($method, $path);
@@ -475,19 +1540,199 @@ try {
         Bootstrap::errorResponse('Not found', 404);
         exit;
     }
-
-    // Run middleware stack
-    foreach ($match['middleware'] as $mw) {
-        $mw();
+    // A PATCH reaches every PUT route (Router::match), and a rule set is
+    // replaced whole: a PATCH naming one rule would remove the others.
+    if ($method === 'PATCH' && preg_match('#^/rotators/[^/]+/rules$#', $path) === 1) {
+        throw new HttpException('A rule set is replaced whole: send it with PUT, listing every rule the redirector is to have. '
+            . 'PUT /rotators/{id}/rules/{ruleId} changes one rule.', 405);
     }
 
-    // Execute handler
-    $response = ($match['handler'])($match['pathParams']);
+    // Central scope enforcement: every authenticated endpoint requires
+    // `<area>:read` for GET/HEAD and `<area>:write` for anything else, so a
+    // key scoped `read` can never write and a key scoped to one area can
+    // never touch another. Keys without a stored scope parse to `*` and pass
+    // everything, exactly as before scoping existed. `/capabilities` and the
+    // API root stay readable by any valid key — clients probe them to decide
+    // what they can do. Route-level checks (requireAdmin, the ltv/sync
+    // requireScope middleware) still run below; this is the floor, not a
+    // replacement.
+    $stagedWrite = stagedWriteRequested($method, $queryParams);
+    // Read for every write, not only a DELETE: a POST, PUT or PATCH that
+    // asks for a preview gets one or a 422 (below), never the write.
+    $dryRun = $method === 'DELETE'
+        ? deleteDryRunRequested($method, $queryParams)
+        : in_array($method, ['POST', 'PUT', 'PATCH'], true) && writeDryRunRequested($queryParams);
+    if ($stagedWrite && $dryRun) {
+        throw new ValidationException('staged and dry_run are mutually exclusive', [
+            'staged' => 'Use dry_run=1 to preview a write, or staged=1 to record it for approval — not both.',
+        ]);
+    }
+
+    $scopeArea = scopeAreaForPath($path);
+    if ($scopeArea === null && !Auth::isScopeExemptPath($path)) {
+        // Default-deny. The route matched, so it exists; it just has no
+        // scope area. Letting it through would hand every key unchecked
+        // access to a whole route family — the failure mode of a mapping
+        // list maintained separately from the routes themselves.
+        // The 500 handler replaces the message with a generic one, so log
+        // the specifics or the operator sees an unexplained failure.
+        error_log(sprintf(
+            'p202: refusing %s %s — its route family has no API key scope area. '
+            . 'Add it to Auth::KNOWN_SCOPE_AREAS (or Auth::isScopeExemptPath if deliberately unscoped).',
+            $method,
+            $path
+        ));
+        throw new HttpException(
+            'This endpoint is not mapped to an API key scope and cannot be served. '
+            . 'Add its area to Auth::KNOWN_SCOPE_AREAS.',
+            500
+        );
+    }
+    if ($scopeArea !== null) {
+        $scopeAction = in_array($method, ['GET', 'HEAD'], true) ? 'read' : 'write';
+        if ($method === 'POST' && $path === '/sync/plan') {
+            // Planning computes a diff without applying it; sync:read keys
+            // could always call it through the group middleware.
+            $scopeAction = 'read';
+        }
+        if ($stagedWrite) {
+            // Staging proposes rather than performs, so a propose-only
+            // (`stage`) key suffices; the write scope is required of the
+            // applier instead.
+            $scopeAction = 'stage';
+        }
+        if ($method === 'POST' && $path === '/apps/verify') {
+            // Signature verification computes over the submitted payload and
+            // stores nothing — a read that arrives as POST only because the
+            // postback JSON is its input. Deliberately AFTER the staged
+            // override: verify?staged=1 stays a read, so a read-scoped key
+            // reaches the staging branch's "staged is not supported here"
+            // 422 instead of a baffling 403 about stage scope.
+            $scopeAction = 'read';
+        }
+        if ($method === 'POST' && ($path === '/goals/validate' || $path === '/goals/evaluate')) {
+            // Validating a definition and evaluating definitions against
+            // events compute over the body and store nothing: reads that
+            // arrive as POST because the definitions are their input. After
+            // the staged override for the same reason as /apps/verify.
+            $scopeAction = 'read';
+        }
+        if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {
+            // Gated on the change's own area, like apply below. Demanding
+            // `staged-changes:stage` here locked the documented granular
+            // approver key (`read,campaigns:write`) out of *rejecting* a
+            // proposal while leaving it able to approve one — an approval
+            // queue that can only be drained by approving. The controller
+            // requires `<area>:write` (an approver), or `<area>:stage` from
+            // the key that staged the change, withdrawing its own proposal.
+            $scopeArea = null;
+        }
+        if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/apply$#', $path) === 1) {
+            // Applying is gated on the area the change actually touches —
+            // StagedChangesController::apply() requires `<area>:write` once
+            // it has read the record. Demanding `staged-changes:write` here
+            // as well would lock out the documented granular approver key
+            // (e.g. `read,campaigns:write`), which no scope token satisfies.
+            $scopeArea = null;
+        }
+    }
+    if ($scopeArea !== null) {
+        $auth->requireScope($scopeArea . ':' . $scopeAction);
+    }
+
+    if ($stagedWrite) {
+        // Record the proposal instead of executing. Fail-closed: a write
+        // outside the stageable allowlist rejects the parameter — it must
+        // never fall through to the immediate write.
+        if ($stageableRouter->match($method, $path) === null) {
+            throw new ValidationException('staged is not supported for this endpoint', [
+                'staged' => 'This write cannot be staged; remove staged to perform it directly.',
+            ]);
+        }
+        // The real route's middleware (its role gate: e.g. the attribution
+        // routes' view_attribution_reports) runs before a proposal is
+        // recorded, exactly as it does before the write and before a dry
+        // run. Without it a key whose role may not read the area could
+        // stage a DELETE and read the record back from the preview
+        // embedded in the staged change. A refusal here is the route's own
+        // 403, not a proposal without a preview.
+        foreach ($match['middleware'] as $mw) {
+            $mw();
+        }
+        $stagePreview = null;
+        if ($method === 'DELETE') {
+            $previewMatch = $previewRouter->match('DELETE', $path);
+            if ($previewMatch !== null) {
+                try {
+                    // The preview embeds the full record in the staged
+                    // change, so it is a read: a propose-only key without
+                    // read scope must not obtain through staging what GET
+                    // would refuse it.
+                    if ($scopeArea !== null) {
+                        $auth->requireScope($scopeArea . ':read');
+                    }
+                    $previewResponse = ($previewMatch['handler'])($previewMatch['pathParams']);
+                    if (is_array($previewResponse)) {
+                        $stagePreview = $previewResponse['data'] ?? null;
+                    }
+                } catch (AuthException) {
+                    // The proposer may lack the preview's authorization (e.g.
+                    // a non-admin staging a user delete for an admin to
+                    // apply); stage without the embedded preview. Not-found
+                    // and validation errors still propagate — a proposal
+                    // that cannot name its target is rejected up front.
+                    $stagePreview = null;
+                }
+            }
+        }
+        $response = ['_status' => 202] + $stagedChanges()->stage($method, $path, $payload, $stagePreview);
+    } else {
+        // Run middleware stack
+        foreach ($match['middleware'] as $mw) {
+            $mw();
+        }
+
+        // Execute handler (or the dry-run preview for a DELETE that asked for one)
+        if ($dryRun && $method === 'DELETE') {
+            $preview = $previewRouter->match('DELETE', $path);
+            if ($preview === null) {
+                throw new ValidationException('dry_run is not supported for this endpoint', [
+                    'dry_run' => 'This DELETE has no preview; remove dry_run to perform the delete.',
+                ]);
+            }
+            $response = ($preview['handler'])($preview['pathParams']);
+        } elseif ($dryRun && $writePreviewRouter->match($method, $path) === null) {
+            // A write whose handler has no preview: refused, never run.
+            throw new ValidationException('dry_run is not supported for this endpoint', [
+                'dry_run' => 'This route has no preview; remove dry_run to perform the write.',
+            ]);
+        } else {
+            // A previewing write's handler reads dry_run itself.
+            $response = ($match['handler'])($match['pathParams']);
+        }
+    }
 
     // ─── Send response ───────────────────────────────────────────────
     if ($response === null) {
         // DELETE — 204 No Content
         http_response_code(204);
+    } elseif (isset($response['_file']) && is_array($response['_file'])) {
+        // A file download (an attribution export): the bytes, not JSON.
+        // The filename is built by the controller from fixed parts; it is
+        // still reduced to a safe set here because it reaches a header.
+        $file = $response['_file'];
+        $filename = preg_replace('/[^A-Za-z0-9._-]+/', '-', (string) ($file['filename'] ?? 'download')) ?? 'download';
+        http_response_code(200);
+        header('Content-Type: ' . (string) ($file['content_type'] ?? 'application/octet-stream'));
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen((string) $file['body']));
+        header('Cache-Control: no-store');
+        echo (string) $file['body'];
+    } elseif (isset($response['_stream']) && is_array($response['_stream'])) {
+        // A file written to a temporary stream (an offline conversion file),
+        // sent without reading it into memory.
+        $stream = $response['_stream'];
+        \Prosper202\OfflineConversion\OfflineFile::send($stream['handle'], (string) $stream['filename'], $stream['summary'] ?? null);
     } else {
         $status = $response['_status'] ?? 200;
         unset($response['_status']);
@@ -495,17 +1740,42 @@ try {
     }
 
 } catch (AuthException $e) {
-    Bootstrap::errorResponse($e->getMessage(), $e->getCode() ?: 401);
+    $code = $e->getCode() ?: 401;
+    $message = $e->getMessage();
+    $extra = [];
+    if ($e instanceof InsufficientScopeException) {
+        $keySource = ScopeRefusal::keySource($db, Auth::bearerKey($headers), RequestContext::actorUserId());
+        [$message, $extra] = ScopeRefusal::answer($e, $keySource);
+    }
+    if ($code >= 500) {
+        error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
+        $pending = Bootstrap::pendingUpgrade($db);
+        if ($pending !== null) {
+            [$message, $code] = [$pending, 503];
+        }
+    }
+    Bootstrap::errorResponse($message, $code, $extra);
 } catch (ValidationException $e) {
     Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
 } catch (ConflictException $e) {
     Bootstrap::errorResponse($e->getMessage(), 409, $e->getDetails() ? ['details' => $e->getDetails()] : []);
+} catch (WriteCommittedException $e) {
+    error_log(p202UncaughtLogLine('API v3 write committed, then failed', $e));
+    Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
-    $message = $code >= 500 ? 'Internal server error' : $e->getMessage();
+    $message = $e->getMessage();
+    if ($code >= 500) {
+        // The answer names no cause but a pending upgrade; the log keeps it.
+        error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
+        $pending = Bootstrap::pendingUpgrade($db);
+        [$message, $code] = $pending !== null ? [$pending, 503] : ['Internal server error', $code];
+    }
     Bootstrap::errorResponse($message, $code);
-} catch (\Throwable) {
-    Bootstrap::errorResponse('Internal server error', 500);
+} catch (\Throwable $e) {
+    error_log(p202UncaughtLogLine('API v3 answered 500', $e));
+    $pending = Bootstrap::pendingUpgrade($db);
+    Bootstrap::errorResponse($pending ?? 'Internal server error', $pending !== null ? 503 : 500);
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────
@@ -516,6 +1786,86 @@ function tap(object $obj, callable $fn): null
 {
     $fn($obj);
     return null;
+}
+
+/**
+ * Whether a DELETE request asked for a dry-run preview. The parameter is
+ * strictly validated: an unrecognized value is an error, never a fall-through
+ * to the real delete — a typo like dry_run=tru must not destroy data.
+ */
+function deleteDryRunRequested(string $method, array $queryParams): bool
+{
+    if ($method !== 'DELETE' || !array_key_exists('dry_run', $queryParams)) {
+        return false;
+    }
+    $flag = strtolower(trim((string)$queryParams['dry_run']));
+    if (in_array($flag, ['1', 'true', 'yes', ''], true)) {
+        return true;
+    }
+    if (in_array($flag, ['0', 'false', 'no'], true)) {
+        return false;
+    }
+    throw new ValidationException('Invalid dry_run value', [
+        'dry_run' => "Use dry_run=1 to preview the delete, or omit the parameter to perform it (got '$flag').",
+    ]);
+}
+
+/**
+ * Whether a POST, PUT or PATCH asked for a preview with `?dry_run=1`. Read
+ * by the dispatcher for every write, which refuses it where the route has
+ * no preview ($writePreviewRouter), and by a previewing route's handler,
+ * which previews instead of writing; the strict values are
+ * deleteDryRunRequested()'s, so a typo like dry_run=tru is an error and
+ * never the write.
+ */
+function writeDryRunRequested(array $queryParams): bool
+{
+    if (!array_key_exists('dry_run', $queryParams)) {
+        return false;
+    }
+    $raw = $queryParams['dry_run'];
+    $flag = is_string($raw) ? strtolower(trim($raw)) : null;
+    if (in_array($flag, ['1', 'true', 'yes', ''], true)) {
+        return true;
+    }
+    if (in_array($flag, ['0', 'false', 'no'], true)) {
+        return false;
+    }
+    throw new ValidationException('Invalid dry_run value', [
+        'dry_run' => 'Use dry_run=1 to preview without writing, or omit the parameter to write (got '
+            . ($flag === null ? 'a list' : "'$flag'") . ').',
+    ]);
+}
+
+/**
+ * Map a request path to the scope area that governs it, or null for paths
+ * exempt from scope checks (discovery metadata and the pre-auth endpoints).
+ */
+function scopeAreaForPath(string $path): ?string
+{
+    return Auth::scopeAreaForPath($path);
+}
+
+/**
+ * Whether a mutating request asked to be staged for approval instead of
+ * executed. Same strict validation as dry_run: an unrecognized value is an
+ * error, never a fall-through to the immediate write.
+ */
+function stagedWriteRequested(string $method, array $queryParams): bool
+{
+    if (!in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true) || !array_key_exists('staged', $queryParams)) {
+        return false;
+    }
+    $flag = strtolower(trim((string)$queryParams['staged']));
+    if (in_array($flag, ['1', 'true', 'yes', ''], true)) {
+        return true;
+    }
+    if (in_array($flag, ['0', 'false', 'no'], true)) {
+        return false;
+    }
+    throw new ValidationException('Invalid staged value', [
+        'staged' => "Use staged=1 to stage the write for approval, or omit the parameter to perform it (got '$flag').",
+    ]);
 }
 
 function shouldEmitDeprecationNotice(string $path, string $requestedVersion): bool

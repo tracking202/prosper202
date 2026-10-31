@@ -32,6 +32,7 @@ var allowedDefaultKeys = map[string]bool{
 	"crud.text_ad_id":        true,
 	"crud.rotator_id":        true,
 	"crud.country_id":        true,
+	outputDefaultKey:         true,
 }
 
 func supportedDefaultKeys() []string {

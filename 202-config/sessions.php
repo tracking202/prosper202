@@ -46,12 +46,19 @@ class SessionManager
 		$db = DB::getInstance()->getConnection();
 		$id = $db->real_escape_string($id);
 		$sql = "SELECT session_data FROM 202_sessions WHERE session_id = '$id' AND expires > UNIX_TIMESTAMP()";
-		$rs = $db->query($sql);
-		if ($rs && $rs->num_rows > 0) {
-			$row = $rs->fetch_assoc();
-			$data = $row['session_data'];
-		}
-		return $data;
+        $rs = $db->query($sql);
+        // Thrown, session_start() throws and nothing is written back. '' is
+        // no session, which PHP writes back over the stored one when the
+        // request ends; false only warns, and the page reads the visitor as
+        // signed out.
+        if ($rs === false) {
+            throw self::failed($db);
+        }
+        $row = p202FetchRow($rs, $sql);
+        if ($row !== null) {
+            $data = (string) $row['session_data'];
+        }
+        return $data;
 	}
 
 	function write($id, $data)
@@ -61,8 +68,13 @@ class SessionManager
 		$id = $db->real_escape_string($id);
 		$data = $db->real_escape_string($data);
 		$sql = "REPLACE INTO 202_sessions (session_id, session_data, expires) VALUES('$id', '$data', $time)";
-		$db->query($sql);
-		return true;
+        // PHP warns that the session could not be written, and the stored
+        // one stays as it was.
+        if ($db->query($sql) === false) {
+            p202LogFailedQuery($db, $sql, ['file' => __FILE__, 'line' => __LINE__]);
+            return false;
+        }
+        return true;
 	}
 
 	function destroy($id)
@@ -70,15 +82,29 @@ class SessionManager
 		$db = DB::getInstance()->getConnection();
 		$id = $db->real_escape_string($id);
 		$sql = "DELETE FROM 202_sessions WHERE session_id = '$id'";
-		$db->query($sql);
-		return true;
+        // Not false: session_destroy() would answer it with a warning that
+        // sign-out never reads, and the row it left signs the cookie in again.
+        if ($db->query($sql) === false) {
+            throw self::failed($db);
+        }
+        return true;
 	}
 
 	function gc()
 	{
 		$db = DB::getInstance()->getConnection();
 		$sql = 'DELETE FROM 202_sessions WHERE expires < UNIX_TIMESTAMP()';
-		$db->query($sql);
-		return true;
+        // read() takes no expired row, and the next collection deletes them.
+        if ($db->query($sql) === false) {
+            p202LogFailedQuery($db, $sql, ['file' => __FILE__, 'line' => __LINE__]);
+            return false;
+        }
+        return true;
 	}
+
+    private static function failed(\mysqli $db): \Prosper202\Database\Exceptions\QueryException
+    {
+        return new \Prosper202\Database\Exceptions\QueryException('MySQL query failed: '
+            . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+    }
 }

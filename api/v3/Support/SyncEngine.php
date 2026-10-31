@@ -5,10 +5,16 @@ declare(strict_types=1);
 namespace Api\V3\Support;
 
 use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\RemoteApiException;
+use Api\V3\Exception\SyncException;
+use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
 
 class SyncEngine
 {
+    /** The criterion the redirects read as every visitor, as a rule with none is read. */
+    private const array EVERY_VISITOR = ['type' => 'country', 'statement' => 'is', 'value' => 'ALL'];
+
     private const array ENTITY_ENDPOINTS = [
         'aff-networks' => 'aff-networks',
         'ppc-networks' => 'ppc-networks',
@@ -19,6 +25,10 @@ class SyncEngine
         'rotators' => 'rotators',
         'trackers' => 'trackers',
     ];
+
+    /** Why a sync takes no updated_since, said by the job request's 422 and by a queued job that carries one. */
+    public const string UPDATED_SINCE_REFUSAL = 'A sync cannot be limited by update time: the records it carries keep none, so no list can be filtered by one. '
+        . 'Send "incremental": true instead, which skips the records unchanged since the last sync of this pair.';
 
     private const array DEPENDENCY_ORDER = [
         'aff-networks',
@@ -69,15 +79,42 @@ class SyncEngine
         ],
     ];
 
+    /**
+     * The fields of a source record that a write to the target must not
+     * carry: its ids and owner, what the server assigns (public ids, times),
+     * and the version/etag every GET adds. The target refuses a read-only
+     * field on a create, and on an update unless it holds the target record's
+     * own value (Controller::validatePayload()), so they are left out. A
+     * rotator's rules go through /rotators/{id}/rules (syncRotatorRules()) and
+     * its auto-monetizer is the Setup page's, so neither travels in the
+     * rotator's own body. Compared records drop them too.
+     */
     private const array IMMUTABLE_FIELDS = [
-        'campaigns' => ['id', 'user_id', 'aff_campaign_id', 'aff_campaign_time', 'aff_campaign_id_public', 'aff_campaign_deleted'],
-        'aff-networks' => ['id', 'user_id', 'aff_network_id', 'aff_network_deleted'],
-        'ppc-networks' => ['id', 'user_id', 'ppc_network_id', 'ppc_network_deleted'],
-        'ppc-accounts' => ['id', 'user_id', 'ppc_account_id', 'ppc_account_deleted'],
-        'rotators' => ['id', 'user_id'],
-        'trackers' => ['id', 'user_id', 'tracker_id', 'tracker_time'],
-        'landing-pages' => ['id', 'user_id', 'landing_page_id', 'landing_page_deleted'],
-        'text-ads' => ['id', 'user_id', 'text_ad_id', 'text_ad_deleted'],
+        'campaigns' => ['id', 'user_id', 'aff_campaign_id', 'aff_campaign_time', 'aff_campaign_id_public', 'aff_campaign_deleted', 'version', 'etag'],
+        'aff-networks' => ['id', 'user_id', 'aff_network_id', 'aff_network_deleted', 'version', 'etag'],
+        'ppc-networks' => ['id', 'user_id', 'ppc_network_id', 'ppc_network_deleted', 'version', 'etag'],
+        'ppc-accounts' => ['id', 'user_id', 'ppc_account_id', 'ppc_account_deleted', 'version', 'etag'],
+        'rotators' => ['id', 'user_id', 'auto_monetizer', 'rules'],
+        'trackers' => ['id', 'user_id', 'tracker_id', 'tracker_time', 'version', 'etag'],
+        'landing-pages' => ['id', 'user_id', 'landing_page_id', 'landing_page_id_public', 'landing_page_deleted', 'version', 'etag'],
+        'text-ads' => ['id', 'user_id', 'text_ad_id', 'text_ad_deleted', 'version', 'etag'],
+    ];
+
+    /**
+     * One entity's counts in a run. `conflicted` is the part of `failed` the
+     * target refused with a 409, each named in `conflicts`
+     * (recordSyncError()); a job never retries those by itself.
+     */
+    private const array ENTITY_RESULT = [
+        'synced' => 0,
+        'skipped' => 0,
+        'failed' => 0,
+        'pruned' => 0,
+        'created' => 0,
+        'updated' => 0,
+        'conflicted' => 0,
+        'errors' => [],
+        'conflicts' => [],
     ];
 
     public function __construct(private readonly ServerStateStore $store)
@@ -196,11 +233,32 @@ class SyncEngine
         try {
             [$sourceClient, $targetClient] = $this->buildClients($sourceProfile, $targetProfile);
             $entities = $this->selectedEntities($entityArg);
-            $manifest = is_array($options['manifest'] ?? null) ? $options['manifest'] : ['mappings' => [], 'source_hashes' => []];
+            $manifest = is_array($options['manifest'] ?? null)
+                ? $options['manifest']
+                : ['mappings' => [], 'source_hashes' => []];
 
-            $updatedSince = isset($options['updated_since']) ? (string)$options['updated_since'] : '';
-            $sourceData = $this->fetchPortableData($sourceClient, $updatedSince !== '' ? ['updated_since' => $updatedSince] : []);
-            $targetData = $this->fetchPortableData($targetClient);
+            // The source is read whole. The records a sync carries keep no
+            // update time, so a list cannot be filtered by one: the source's
+            // lists answered `updated_since` with a 500 (a column probe no
+            // server prepares), and now refuse it. An incremental sync sent
+            // the manifest's last_sync_epoch as updated_since, so every
+            // re-sync after the first failed -- measured live, "500 from GET
+            // aff-networks". It skips what has not changed by the manifest's
+            // hashes instead (`incremental`, below), which needs no time. A
+            // job that still carries an explicit updated_since (queued before
+            // SyncController refused one) fails saying so, rather than
+            // syncing more than it asked for.
+            if (isset($options['updated_since']) && (string) $options['updated_since'] !== '') {
+                throw new ValidationException('updated_since cannot limit a sync', [
+                    'updated_since' => self::UPDATED_SINCE_REFUSAL,
+                ]);
+            }
+            try {
+                $sourceData = $this->fetchPortableData($sourceClient);
+                $targetData = $this->fetchPortableData($targetClient);
+            } catch (SyncException $e) {
+                throw $e->beforeAnyWrite();
+            }
 
             $sourceLookups = $this->buildEntityLookups($sourceData);
             $targetLookups = $this->buildEntityLookups($targetData);
@@ -220,15 +278,8 @@ class SyncEngine
                 $entitySpan = $this->startTraceSpan('sync.execute.entity', ['entity' => $entity]);
                 $remapSpan = $this->startTraceSpan('sync.execute.remap', ['entity' => $entity]);
                 $remapOps = 0;
-            $result = [
-                'synced' => 0,
-                'skipped' => 0,
-                'failed' => 0,
-                'pruned' => 0,
-                'created' => 0,
-                'updated' => 0,
-                'errors' => [],
-            ];
+                try {
+            $result = self::ENTITY_RESULT;
 
             $sourceRows = $sourceData[$entity];
             usort($sourceRows, function (array $a, array $b) use ($entity, $sourceLookups): int {
@@ -302,12 +353,14 @@ class SyncEngine
                     }
 
                     if (!$dryRun) {
+                        $putLanded = false; // a failure after it (a rotator's rules) is not the PUT's refusal
                         try {
                             $extraHeaders = [];
                             if (!empty($targetRow['etag'])) {
                                 $extraHeaders['If-Match'] = (string)$targetRow['etag'];
                             }
                             $targetClient->put(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId, $payload, $extraHeaders);
+                            $putLanded = true;
                             if (
                                 $entity === 'rotators'
                                 && $sourceId !== ''
@@ -327,8 +380,10 @@ class SyncEngine
                             if ($entity === 'rotators') {
                                 $this->store->incrementMetric('rotator_rule_resync_failed', 1);
                             }
-                            if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors)) {
-                                throw $e;
+                            $op = $putLanded ? 'update (applied; its rules then failed)' : 'update';
+                            $refused = !$putLanded;
+                            if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, $op, $targetId, $refused)) {
+                                throw $this->stopped($results, $dryRun, $result, $entity, $key, $op, $e, $putLanded);
                             }
                             continue;
                         }
@@ -346,8 +401,8 @@ class SyncEngine
                 try {
                     $payload = $this->buildSyncPayload($entity, $sourceRow, $sourceLookups, $targetLookups);
                 } catch (\Throwable $e) {
-                    if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors)) {
-                        throw $e;
+                    if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'create')) {
+                        throw $this->stopped($results, $dryRun, $result, $entity, $key, 'create', $e);
                     }
                     continue;
                 }
@@ -360,8 +415,8 @@ class SyncEngine
                 try {
                     $created = $targetClient->post(self::ENTITY_ENDPOINTS[$entity], $payload);
                 } catch (\Throwable $e) {
-                    if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors)) {
-                        throw $e;
+                    if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'create', '', true)) {
+                        throw $this->stopped($results, $dryRun, $result, $entity, $key, 'create', $e);
                     }
                     continue;
                 }
@@ -384,8 +439,9 @@ class SyncEngine
                         try {
                             $this->syncRotatorRules($sourceClient, $targetClient, $sourceId, $createdId, $sourceLookups, $targetLookups);
                         } catch (\Throwable $e) {
-                            if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors)) {
-                                throw $e;
+                            $op = 'create (applied; its rules then failed)';
+                            if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, $op, $createdId)) {
+                                throw $this->stopped($results, $dryRun, $result, $entity, $key, $op, $e);
                             }
                         }
                     }
@@ -397,6 +453,7 @@ class SyncEngine
             }
 
             $this->endTraceSpan($remapSpan, 'ok', ['operations' => $remapOps]);
+            $remapSpan = null;
             $writeSpan = $this->startTraceSpan('sync.execute.write', ['entity' => $entity]);
             $this->endTraceSpan($writeSpan, 'ok', [
                 'created' => (int)($result['created'] ?? 0),
@@ -408,10 +465,13 @@ class SyncEngine
                 $pruneSpan = $this->startTraceSpan('sync.execute.prune', ['entity' => $entity]);
                 $allow = $this->normalizeEntitySet($options['prune_allowlist'] ?? []);
                 $deny = $this->normalizeEntitySet($options['prune_denylist'] ?? []);
+                // Every source record, the skipped-as-unchanged included: the
+                // source is read whole, so nothing it holds is "only in target".
+                $knownSourceKeys = $sourceKeys;
 
                 foreach ($targetData[$entity] as $targetRow) {
                     $targetKey = $this->naturalKeyForEntity($entity, $targetRow, $targetLookups);
-                    if ($targetKey === '' || isset($sourceKeys[$targetKey])) {
+                    if ($targetKey === '' || isset($knownSourceKeys[$targetKey])) {
                         continue;
                     }
 
@@ -440,8 +500,9 @@ class SyncEngine
                         $targetClient->delete(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId);
                         $result['pruned']++;
                     } catch (\Throwable $e) {
-                        if (!$this->recordSyncError($result, $entity, $targetKey, $e, $skipErrors)) {
-                            throw $e;
+                        $recorded = $this->recordSyncError($result, $entity, $targetKey, $e, $skipErrors, 'delete', $targetId, true);
+                        if (!$recorded) {
+                            throw $this->stopped($results, $dryRun, $result, $entity, $targetKey, 'delete', $e);
                         }
                     }
                 }
@@ -462,6 +523,13 @@ class SyncEngine
                     'synced' => (int)($result['synced'] ?? 0),
                     'failed' => (int)($result['failed'] ?? 0),
                 ]);
+                $entitySpan = null;
+                } finally {
+                    // On the success path both are null; a thrown error must
+                    // not leave spans stuck in 'running' forever.
+                    $this->endTraceSpan($remapSpan, 'error');
+                    $this->endTraceSpan($entitySpan, 'error');
+                }
         }
 
             $traceMeta = ['entities' => count($entities)];
@@ -516,78 +584,103 @@ class SyncEngine
         array $sourceLookups,
         array $targetLookups
     ): void {
-        $sourceRotator = $sourceClient->get('rotators/' . $sourceRotatorId);
-        $rules = $sourceRotator['data']['rules'] ?? [];
-
-        foreach ($rules as $rule) {
-            $rulePayload = [
-                'rule_name' => $rule['rule_name'] ?? '',
-                'splittest' => $rule['splittest'] ?? 0,
-                'status' => $rule['status'] ?? 1,
-            ];
-
-            if (!empty($rule['criteria']) && is_array($rule['criteria'])) {
-                $rulePayload['criteria'] = [];
-                foreach ($rule['criteria'] as $c) {
-                    $rulePayload['criteria'][] = [
-                        'type' => $c['type'] ?? '',
-                        'statement' => $c['statement'] ?? '',
-                        'value' => $c['value'] ?? '',
-                    ];
-                }
-            }
-
-            if (!empty($rule['redirects']) && is_array($rule['redirects'])) {
-                $rulePayload['redirects'] = [];
-                foreach ($rule['redirects'] as $r) {
-                    $redirect = [
-                        'redirect_url' => $r['redirect_url'] ?? '',
-                        'weight' => $r['weight'] ?? 100,
-                        'name' => $r['name'] ?? '',
-                        'redirect_campaign' => 0,
-                        'redirect_lp' => 0,
-                    ];
-
-                    $rawCampaign = $this->scalarString($r['redirect_campaign'] ?? null);
-                    if ($rawCampaign !== '' && $rawCampaign !== '0') {
-                        $natural = $sourceLookups['campaigns']['by_id'][$rawCampaign] ?? '';
-                        if ($natural !== '') {
-                            $targetId = $targetLookups['campaigns']['by_natural'][$natural] ?? '';
-                            if ($targetId !== '') {
-                                $redirect['redirect_campaign'] = (int)$targetId;
-                            }
-                        }
-                    }
-
-                    $rawLp = $this->scalarString($r['redirect_lp'] ?? null);
-                    if ($rawLp !== '' && $rawLp !== '0') {
-                        $natural = $sourceLookups['landing_pages']['by_id'][$rawLp] ?? '';
-                        if ($natural !== '') {
-                            $targetId = $targetLookups['landing_pages']['by_natural'][$natural] ?? '';
-                            if ($targetId !== '') {
-                                $redirect['redirect_lp'] = (int)$targetId;
-                            }
-                        }
-                    }
-
-                    $rulePayload['redirects'][] = $redirect;
-                }
-            }
-
-            $targetClient->post('rotators/' . $targetRotatorId . '/rules', $rulePayload);
-        }
+        $rules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
+        $this->writeRotatorRules($targetClient, $targetRotatorId, $rules, $sourceLookups, $targetLookups);
     }
 
-    private function resyncRotatorRules(
-        RemoteApiClient $sourceClient,
+    /** @return array<int, array<string, mixed>> */
+    private function fetchSourceRotatorRules(RemoteApiClient $sourceClient, string $sourceRotatorId): array
+    {
+        $sourceRotator = $sourceClient->get('rotators/' . $sourceRotatorId);
+        $rules = $sourceRotator['data']['rules'] ?? [];
+        return is_array($rules) ? $rules : [];
+    }
+
+    /**
+     * The source's rules written on the target's redirector in place of its
+     * own, as one set (PUT /rotators/{id}/rules), which the target takes
+     * whole or refuses with nothing written. Removing the target's rules and
+     * posting the source's one at a time left the target with only the rules
+     * before one it refused. A source rule stored before 1.9.79 with no
+     * criterion is sent as country is ALL (rotatorRulePayload). A source
+     * with more rules than the target takes in a set is refused whole, with
+     * the count named, rather than written in part. An install without
+     * the set's route (before 1.9.79) answers it 404, and is written to one
+     * rule at a time; so is a source redirector with no rules, which a set
+     * cannot be.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     */
+    private function writeRotatorRules(
         RemoteApiClient $targetClient,
-        string $sourceRotatorId,
         string $targetRotatorId,
+        array $rules,
         array $sourceLookups,
         array $targetLookups
     ): void {
+        $payloads = [];
+        foreach ($rules as $rule) {
+            $payloads[] = $this->rotatorRulePayload($rule, $sourceLookups, $targetLookups);
+        }
+        if ($payloads !== []) {
+            try {
+                $targetClient->put('rotators/' . $targetRotatorId . '/rules', ['rules' => $payloads]);
+                return;
+            } catch (RemoteApiException $e) {
+                if ($e->remoteStatus !== 404) {
+                    throw self::namingSourceRules($e, $rules);
+                }
+            }
+        }
+        $this->replaceRotatorRulesOneByOne($targetClient, $targetRotatorId, $payloads);
+    }
+
+    /**
+     * A refusal of the set with each field error naming the source rule it
+     * is about: `rules.1` is the source redirector's second rule, which the
+     * operator finds by its name.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     */
+    private static function namingSourceRules(RemoteApiException $e, array $rules): RemoteApiException
+    {
+        $errors = [];
+        foreach ($e->fieldErrors as $field => $error) {
+            $at = preg_match('/^rules\.(\d+)(?:\.|$)/', (string) $field, $m) === 1 ? $rules[(int) $m[1]] ?? null : null;
+            $errors[$field] = $at === null ? $error : 'the source rule "' . self::ruleName($at) . '": ' . $error;
+        }
+        if (isset($errors['rules']) && is_string($errors['rules'])) {
+            $errors['rules'] .= '; the source redirector has ' . count($rules) . ', and none was written';
+        }
+
+        return new RemoteApiException($e->remoteStatus, $e->remoteMessage, $errors, $e->method, $e->path);
+    }
+
+    /** @param array<string, mixed> $rule */
+    private static function ruleName(array $rule): string
+    {
+        $name = $rule['rule_name'] ?? '';
+
+        return is_scalar($name) ? (string) $name : '';
+    }
+
+    /**
+     * The target's rules removed and the source's posted one at a time, for
+     * an install without PUT /rotators/{id}/rules (before 1.9.79, which
+     * stores any rule it is sent) and for a source redirector with no rules.
+     *
+     * @param list<array<string, mixed>> $payloads
+     */
+    private function replaceRotatorRulesOneByOne(
+        RemoteApiClient $targetClient,
+        string $targetRotatorId,
+        array $payloads
+    ): void {
         $targetRotator = $targetClient->get('rotators/' . $targetRotatorId);
         $targetRules = $targetRotator['data']['rules'] ?? [];
+        if (!is_array($targetRules)) {
+            $targetRules = [];
+        }
         foreach ($targetRules as $rule) {
             if (!is_array($rule)) {
                 continue;
@@ -598,21 +691,108 @@ class SyncEngine
             }
             $targetClient->delete('rotators/' . $targetRotatorId . '/rules/' . $ruleId);
         }
-
-        $this->syncRotatorRules(
-            $sourceClient,
-            $targetClient,
-            $sourceRotatorId,
-            $targetRotatorId,
-            $sourceLookups,
-            $targetLookups
-        );
+        foreach ($payloads as $payload) {
+            $targetClient->post('rotators/' . $targetRotatorId . '/rules', $payload);
+        }
     }
 
+    /**
+     * One source rule as the target is sent it: its destinations' campaigns
+     * and landing pages by the target's ids.
+     *
+     * @param array<string, mixed> $rule
+     * @return array<string, mixed>
+     */
+    private function rotatorRulePayload(array $rule, array $sourceLookups, array $targetLookups): array
+    {
+        $rulePayload = [
+            'rule_name' => $rule['rule_name'] ?? '',
+            'splittest' => $rule['splittest'] ?? 0,
+            // Active only as the redirects read it (status '1'); a NULL status
+            // is inactive, and a create sent NULL would store it active
+            'status' => $this->scalarString($rule['status'] ?? null) === '1' ? 1 : 0,
+        ];
+
+        // A rule stored before 1.9.79 with no criterion is read by the redirects
+        // as every visitor; sent as country is ALL, which they read the same way.
+        $rulePayload['criteria'] = [self::EVERY_VISITOR];
+        if (!empty($rule['criteria']) && is_array($rule['criteria'])) {
+            $rulePayload['criteria'] = [];
+            foreach ($rule['criteria'] as $c) {
+                $rulePayload['criteria'][] = [
+                    'type' => $c['type'] ?? '',
+                    'statement' => $c['statement'] ?? '',
+                    'value' => $c['value'] ?? '',
+                ];
+            }
+        }
+
+        if (!empty($rule['redirects']) && is_array($rule['redirects'])) {
+            $rulePayload['redirects'] = [];
+            foreach ($rule['redirects'] as $r) {
+                $redirect = [
+                    'redirect_url' => $r['redirect_url'] ?? '',
+                    'weight' => $r['weight'] ?? 100,
+                    'name' => $r['name'] ?? '',
+                    'redirect_campaign' => 0,
+                    'redirect_lp' => 0,
+                ];
+
+                $rawCampaign = $this->scalarString($r['redirect_campaign'] ?? null);
+                if ($rawCampaign !== '' && $rawCampaign !== '0') {
+                    $natural = $sourceLookups['campaigns']['by_id'][$rawCampaign] ?? '';
+                    if ($natural !== '') {
+                        $targetId = $targetLookups['campaigns']['by_natural'][$natural] ?? '';
+                        if ($targetId !== '') {
+                            $redirect['redirect_campaign'] = (int)$targetId;
+                        }
+                    }
+                }
+
+                $rawLp = $this->scalarString($r['redirect_lp'] ?? null);
+                if ($rawLp !== '' && $rawLp !== '0') {
+                    $natural = $sourceLookups['landing_pages']['by_id'][$rawLp] ?? '';
+                    if ($natural !== '') {
+                        $targetId = $targetLookups['landing_pages']['by_natural'][$natural] ?? '';
+                        if ($targetId !== '') {
+                            $redirect['redirect_lp'] = (int)$targetId;
+                        }
+                    }
+                }
+
+                $rulePayload['redirects'][] = $redirect;
+            }
+        }
+
+        return $rulePayload;
+    }
+
+    private function resyncRotatorRules(
+        RemoteApiClient $sourceClient,
+        RemoteApiClient $targetClient,
+        string $sourceRotatorId,
+        string $targetRotatorId,
+        array $sourceLookups,
+        array $targetLookups
+    ): void {
+        // The source's rules are read before anything on the target is
+        // written: a failed read leaves the target's rules as they are.
+        $sourceRules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
+        $this->writeRotatorRules($targetClient, $targetRotatorId, $sourceRules, $sourceLookups, $targetLookups);
+    }
+
+    /** The two remotes of one sync, sharing its deadline (RemoteApiClient::MAX_SECONDS). */
     protected function buildClients(array $sourceProfile, array $targetProfile): array
     {
-        $source = new RemoteApiClient((string)($sourceProfile['url'] ?? ''), (string)($sourceProfile['api_key'] ?? ''));
-        $target = new RemoteApiClient((string)($targetProfile['url'] ?? ''), (string)($targetProfile['api_key'] ?? ''));
+        $deadline = microtime(true) + RemoteApiClient::MAX_SECONDS;
+        $client = static fn (array $profile, string $side): RemoteApiClient => new RemoteApiClient(
+            (string)($profile['url'] ?? ''),
+            (string)($profile['api_key'] ?? ''),
+            $deadline,
+            $side
+        );
+        $source = $client($sourceProfile, 'source');
+        $target = $client($targetProfile, 'target');
 
         return [$source, $target];
     }
@@ -651,8 +831,15 @@ class SyncEngine
                         $detailData = is_array($detail['data'] ?? null) ? $detail['data'] : [];
                         $rules = $detailData['rules'] ?? [];
                         $row['rules'] = is_array($rules) ? $rules : [];
-                    } catch (\Throwable) {
-                        $row['rules'] = [];
+                    } catch (SyncException $e) {
+                        throw $e;
+                    } catch (\Throwable $e) {
+                        // Do not map a failed detail fetch to "no rules": the
+                        // diff would see a rule-less rotator and a force_update
+                        // run would delete every rule on the other side.
+                        throw new DatabaseException(
+                            'Failed to fetch rotator ' . $rotatorId . ' detail: ' . $e->getMessage()
+                        );
                     }
                     $enriched[] = $row;
                 }
@@ -1024,7 +1211,8 @@ class SyncEngine
     private function normalizeRuleCriteria(mixed $rawCriteria): array
     {
         if (!is_array($rawCriteria) || count($rawCriteria) === 0) {
-            return [];
+            // No criterion is every visitor, as the sync sends it
+            return [self::EVERY_VISITOR];
         }
 
         $normalized = [];
@@ -1115,16 +1303,113 @@ class SyncEngine
         };
     }
 
-    /** @param array<string, mixed> $result */
-    private function recordSyncError(array &$result, string $entity, string $key, \Throwable $error, bool $skipErrors): bool
-    {
+    /**
+     * Count a record that failed and say why, by name: a remote refusal is
+     * described with the status and message the other instance answered
+     * (RemoteApiException). This recorded $error->getMessage(), and a
+     * remote refusal's message was "Internal server error" - a 409 from a
+     * force-update whose target changed after the sync read it read exactly
+     * like an outage, and the conflict metric (which matched "version
+     * mismatch" in that text) never counted one.
+     *
+     * A 409 to a write this sync made ($refusedWrite: the request was the
+     * write itself, not a step after it) is a conflict: the target refused
+     * it, so nothing was written, and the record is listed in `conflicts`
+     * with what to do. It is not retried here or by the job: re-sending it
+     * after a re-read would force the source over whatever change the 409
+     * protected (CLAUDE.md #13); re-running the sync is the caller's call.
+     *
+     * A failure that stops the whole sync (SyncException: a URL refused, a
+     * cap reached) stops it with skip_errors too: the next record would meet
+     * it again.
+     *
+     * @param array<string, mixed> $result
+     * @return bool whether to go on (skip_errors)
+     */
+    private function recordSyncError(
+        array &$result,
+        string $entity,
+        string $key,
+        \Throwable $error,
+        bool $skipErrors,
+        string $operation = '',
+        string $targetId = '',
+        bool $refusedWrite = false
+    ): bool {
         $result['failed']++;
-        $result['errors'][] = sprintf('%s[%s]: %s', $entity, $key, $error->getMessage());
-        $msg = strtolower($error->getMessage());
-        if (str_contains($msg, 'version mismatch') || str_contains($msg, 'etag')) {
+        $what = self::describeFailure($error);
+        $result['errors'][] = sprintf('%s[%s]: %s%s', $entity, $key, $operation !== '' ? $operation . ': ' : '', $what);
+        if ($refusedWrite && $error instanceof RemoteApiException && $error->isConflict()) {
             $this->store->incrementMetric('conflicts', 1);
+            $result['conflicted'] = (int)($result['conflicted'] ?? 0) + 1;
+            $result['conflicts'][] = [
+                'entity' => $entity,
+                'key' => $key,
+                'operation' => $operation,
+                'target_id' => $targetId !== '' ? $targetId : null,
+                'status' => $error->remoteStatus,
+                'reason' => $error->remoteMessage,
+                'written' => false,
+                'next_step' => 'The target refused this write: the record changed after this sync read it, or a '
+                    . 'matching one already exists. Nothing was written, and it is not retried by itself. Re-run '
+                    . 'the sync to compare against the target as it is now (plan first to see the difference).',
+            ];
+        }
+        if (SyncException::in($error)?->stopsSync === true) {
+            return false;
         }
         return $skipErrors;
+    }
+
+    /** A failure as a sync job reports it: a remote refusal by its status and message. */
+    private static function describeFailure(\Throwable $error): string
+    {
+        return $error instanceof RemoteApiException ? $error->describe() : $error->getMessage();
+    }
+
+    /**
+     * What a run stops with: the record and operation named, the cause
+     * described, the conflict record when the cause is one (the job runner
+     * does not retry a conflict), and what the run had written by then
+     * (CLAUDE.md #13): the entities finished, and this one so far.
+     *
+     * @param array<string, array<string, mixed>> $results the entities finished
+     * @param array<string, mixed> $result this entity's, after recordSyncError()
+     * @param bool $updated whether this record's own update landed before what failed after it
+     */
+    private function stopped(
+        array $results,
+        bool $dryRun,
+        array $result,
+        string $entity,
+        string $key,
+        string $operation,
+        \Throwable $error,
+        bool $updated = false
+    ): SyncRecordException {
+        $conflicts = is_array($result['conflicts'] ?? null) ? $result['conflicts'] : [];
+        $last = $conflicts !== [] ? $conflicts[array_key_last($conflicts)] : null;
+        $conflict = is_array($last) && ($last['key'] ?? null) === $key && ($last['operation'] ?? null) === $operation
+            && $error instanceof RemoteApiException && $error->isConflict() ? $last : null;
+
+        $written = [];
+        if (!$dryRun) {
+            $result['updated'] = (int) ($result['updated'] ?? 0) + ($updated ? 1 : 0);
+            foreach ($results + [$entity => $result] as $name => $counts) {
+                $done = array_filter([
+                    'created' => (int) ($counts['created'] ?? 0),
+                    'updated' => (int) ($counts['updated'] ?? 0),
+                    'pruned' => (int) ($counts['pruned'] ?? 0),
+                ]);
+                if ($done !== []) {
+                    $written[$name] = $done;
+                }
+            }
+        }
+
+        $what = self::describeFailure($error);
+
+        return new SyncRecordException($entity, $key, $operation, $what, $conflict, $error, $written);
     }
 
     /** @param array<string, array<string, string>> $mappings */
@@ -1176,7 +1461,9 @@ class SyncEngine
         $this->sortRecursive($copy);
         $json = json_encode($copy, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if ($json === false) {
-            return sha1((string)microtime(true));
+            // A random fallback would silently defeat incremental-sync
+            // hash matching (every run re-syncs every record, forever).
+            throw new DatabaseException('Failed to encode record for hashing: ' . json_last_error_msg());
         }
         return sha1($json);
     }
@@ -1286,9 +1573,22 @@ class SyncEngine
         return !in_array($value, ['0', 'false', 'no', 'off', 'disabled'], true);
     }
 
+    /**
+     * Single source of truth for the source/target pair key. Prune tokens,
+     * manifests, and audit records must all agree on this formula — an
+     * independent copy that drifts silently breaks token validation and
+     * incremental manifests.
+     */
+    public static function pairKeyFor(array $sourceProfile, array $targetProfile): string
+    {
+        return sha1(
+            strtolower((string)($sourceProfile['url'] ?? '')) . '|' . strtolower((string)($targetProfile['url'] ?? ''))
+        );
+    }
+
     private function pairKey(array $sourceProfile, array $targetProfile): string
     {
-        return sha1(strtolower((string)($sourceProfile['url'] ?? '')) . '|' . strtolower((string)($targetProfile['url'] ?? '')));
+        return self::pairKeyFor($sourceProfile, $targetProfile);
     }
 
     private function profileLabel(array $profile): string

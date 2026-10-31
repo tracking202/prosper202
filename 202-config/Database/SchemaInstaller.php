@@ -12,10 +12,15 @@ use Prosper202\Database\Tables\ClickTables;
 use Prosper202\Database\Tables\TrackingTables;
 use Prosper202\Database\Tables\CampaignTables;
 use Prosper202\Database\Tables\AttributionTables;
+use Prosper202\Database\Tables\ConversionTables;
+use Prosper202\Database\Tables\IdentityTables;
 use Prosper202\Database\Tables\LtvTables;
 use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
 use Prosper202\Database\Tables\MiscTables;
+use Prosper202\Database\Tables\AppTables;
+use Prosper202\Database\Tables\GoalTables;
+use Prosper202\Database\Tables\SecretTables;
 use Prosper202\Database\Tables\SyncTables;
 use Prosper202\Database\Exceptions\SchemaInstallException;
 
@@ -53,10 +58,15 @@ final class SchemaInstaller
             $this->createClickTables();
             $this->createTrackingTables();
             $this->createCampaignTables();
+            $this->createConversionTables();
+            $this->createIdentityTables();
             $this->createAttributionTables();
             $this->createLtvTables();
             $this->createRotatorTables();
             $this->createAdNetworkTables();
+            $this->createAppTables();
+            $this->createGoalTables();
+            $this->createSecretTables();
             $this->createMiscTables();
             $this->setCollations();
         } catch (SchemaInstallException $e) {
@@ -121,6 +131,22 @@ final class SchemaInstaller
     }
 
     /**
+     * Create the conversion ledger, its MTA outbox and upload batches.
+     */
+    public function createConversionTables(): void
+    {
+        $this->createTablesFromDefinitions(ConversionTables::getDefinitions());
+    }
+
+    /**
+     * Create the identity graph's tables.
+     */
+    public function createIdentityTables(): void
+    {
+        $this->createTablesFromDefinitions(IdentityTables::getDefinitions());
+    }
+
+    /**
      * Create attribution tables.
      */
     public function createAttributionTables(): void
@@ -150,6 +176,32 @@ final class SchemaInstaller
     public function createAdNetworkTables(): void
     {
         $this->createTablesFromDefinitions(AdNetworkTables::getDefinitions());
+    }
+
+    /**
+     * Create the app tables (AppTables): registrations, their SKAN
+     * encodings, and the Apple postbacks.
+     */
+    public function createAppTables(): void
+    {
+        $this->createTablesFromDefinitions(AppTables::getDefinitions());
+    }
+
+    /**
+     * Create the goals engine's tables.
+     */
+    public function createGoalTables(): void
+    {
+        $this->createTablesFromDefinitions(GoalTables::getDefinitions());
+    }
+
+    /**
+     * Create the installation-wide secrets table (the Android install-token
+     * key lives there; INSTALL::install_databases() mints it).
+     */
+    public function createSecretTables(): void
+    {
+        $this->createTablesFromDefinitions(SecretTables::getDefinitions());
     }
 
     /**
@@ -210,7 +262,11 @@ final class SchemaInstaller
     private function disableStrictMode(): void
     {
         $sql = "SET session sql_mode= ''";
-        _mysqli_query($this->connection, $sql);
+        // Logged and carried on, as PartitionInstaller does: a table the
+        // server's own mode refuses fails the install where it is created.
+        if (_mysqli_query($this->connection, $sql) === false) {
+            error_log('SchemaInstaller: clearing sql_mode failed (logged by _mysqli_query()); the install goes on');
+        }
     }
 
     /**
@@ -220,7 +276,14 @@ final class SchemaInstaller
     {
         // Set collation for IPv6 table
         $sql = "ALTER TABLE `202_ips_v6` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
-        _mysqli_query($this->connection, $sql);
+        // Logged and carried on: the table's CREATE declares the same, and it
+        // has no character column for a default to apply to.
+        if (_mysqli_query($this->connection, $sql) === false) {
+            error_log(
+                'SchemaInstaller: setting the collation of 202_ips_v6 failed (logged by _mysqli_query()); '
+                . 'the install goes on'
+            );
+        }
     }
 
     /**

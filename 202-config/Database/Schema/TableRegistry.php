@@ -25,9 +25,7 @@ final class TableRegistry
     public const string DELETED_LOG = '202_deleted_log';
     public const string SYNC_AUDIT = '202_sync_audit';
 
-    // Messaging tables (Intercom-style messenger)
-    public const string MESSAGING_CONVERSATIONS = '202_messaging_conversations';
-    public const string MESSAGING_MESSAGES = '202_messaging_messages';
+    // Product analytics for the portal (202-config/Messaging/MessagingService.class.php)
     public const string MESSAGING_SYNC = '202_messaging_sync';
     public const string MESSAGING_EVENTS = '202_messaging_events';
     public const string MESSAGING_ATTRIBUTES = '202_messaging_attributes';
@@ -42,6 +40,8 @@ final class TableRegistry
     public const string ROLE_PERMISSION = '202_role_permission';
     public const string API_KEYS = '202_api_keys';
     public const string AUTH_KEYS = '202_auth_keys';
+    public const string CLICK_FILTER_SETTINGS = '202_click_filter_settings';
+    public const string CLICK_FILTER_ENTRIES = '202_click_filter_entries';
     public const string USER_DATA_FEEDBACK = 'user_data_feedback';
 
     // Click tables
@@ -55,6 +55,9 @@ final class TableRegistry
     public const string CLICKS_VARIABLE = '202_clicks_variable';
     public const string CLICKS_ROTATOR = '202_clicks_rotator';
     public const string CLICKS_TOTAL = '202_clicks_total';
+    public const string CLICK_LATEST_VISITS = '202_click_latest_visits';
+    public const string RECLICK_BACKFILL = '202_reclick_backfill';
+    public const string CLICKS_FILTER_REASON = '202_clicks_filter_reason';
 
     // Tracking tables
     public const string TRACKING_C1 = '202_tracking_c1';
@@ -88,13 +91,40 @@ final class TableRegistry
 
     // Attribution tables
     public const string ATTRIBUTION_MODELS = '202_attribution_models';
-    public const string ATTRIBUTION_SNAPSHOTS = '202_attribution_snapshots';
-    public const string ATTRIBUTION_TOUCHPOINTS = '202_attribution_touchpoints';
-    public const string ATTRIBUTION_SETTINGS = '202_attribution_settings';
+    public const string ATTRIBUTION_JOURNEYS = '202_attribution_journeys';
+    public const string ATTRIBUTION_JOURNEY_META = '202_attribution_journey_meta';
+    public const string ATTRIBUTION_CREDITS = '202_attribution_credits';
     public const string ATTRIBUTION_AUDIT = '202_attribution_audit';
     public const string ATTRIBUTION_EXPORTS = '202_attribution_exports';
+    public const string ATTRIBUTION_ROLLUP = '202_attribution_rollup';
+    public const string ATTRIBUTION_ROLLUP_STATE = '202_attribution_rollup_state';
+    public const string ATTRIBUTION_ROLLUP_OVERRIDES = '202_attribution_rollup_overrides';
+    public const string ATTRIBUTION_ROLLUP_DIRTY = '202_attribution_rollup_dirty';
+    public const string ATTRIBUTION_ROLLUP_DIRTY_CLICKS = '202_attribution_rollup_dirty_clicks';
     public const string CONVERSION_LOGS = '202_conversion_logs';
-    public const string CONVERSION_TOUCHPOINTS = '202_conversion_touchpoints';
+
+    // Conversion ledger (ConversionTables)
+    public const string ATTRIBUTION_PENDING = '202_attribution_pending';
+    public const string ATTRIBUTION_BACKFILL = '202_attribution_backfill';
+    public const string CONVERSION_UPLOADS = '202_conversion_uploads';
+    public const string NOTIFICATION_PENDING = '202_notification_pending';
+    public const string NOTIFICATION_CORRECTION_URLS = '202_notification_correction_urls';
+    public const string OFFLINE_CONVERSION_FEEDS = '202_offline_conversion_feeds';
+    public const string OFFLINE_CONVERSION_NAMES = '202_offline_conversion_names';
+
+    // Deployment-wide secrets (SecretTables): owned by the installation, not
+    // by any user
+    public const string DEPLOYMENT_SECRETS = '202_deployment_secrets';
+    public const string GEOIP_REFRESH = '202_geoip_refresh';
+    public const string LICENCE_ANSWERS = '202_licence_answers';
+
+    // Identity graph (IdentityTables)
+    public const string IDENTITY_KEYS = '202_identity_keys';
+    public const string IDENTITY_VISITORS = '202_identity_visitors';
+    public const string IDENTITY_SIGNALS = '202_identity_signals';
+    public const string IDENTITY_OBSERVATIONS = '202_identity_observations';
+    public const string IDENTITY_MERGES = '202_identity_merges';
+    public const string CLICKS_VISITOR = '202_clicks_visitor';
 
     // LTV tables (customer identity, revenue ledger, subscriptions)
     public const string CUSTOMERS = '202_customers';
@@ -162,6 +192,27 @@ final class TableRegistry
 
     // Forecast tables
     public const string FORECAST_EVENTS = '202_forecast_events';
+
+    // App measurement (AppTables): the registry both platforms share, and
+    // the Apple signal source's postbacks and SKAN encodings
+    public const string APP_REGISTRATIONS = '202_app_registrations';
+    public const string APP_POSTBACKS = '202_app_postbacks';
+    public const string APP_SKAN_ENCODINGS = '202_app_skan_encodings';
+    public const string APP_SKAN_ENCODING_HISTORY = '202_app_skan_encoding_history';
+    // and the Android signal source's installs
+    public const string APP_INSTALLS = '202_app_installs';
+    // and the Play Integrity service-account credentials (PR 6)
+    public const string APP_INTEGRITY_CREDENTIALS = '202_app_integrity_credentials';
+
+    // Goals engine (GoalTables): definitions and their versions, campaign
+    // payouts, and per-subject events, progress and outcomes
+    public const string GOALS = '202_goals';
+    public const string GOAL_VERSIONS = '202_goal_versions';
+    public const string CAMPAIGN_GOALS = '202_campaign_goals';
+    public const string GOAL_SUBJECTS = '202_goal_subjects';
+    public const string GOAL_EVENTS = '202_goal_events';
+    public const string GOAL_PROGRESS = '202_goal_progress';
+    public const string GOAL_OUTCOMES = '202_goal_outcomes';
 
     // Data engine tables
     public const string DATAENGINE = '202_dataengine';

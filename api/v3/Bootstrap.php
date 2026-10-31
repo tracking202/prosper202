@@ -32,6 +32,17 @@ final class Bootstrap
 
         require_once $configFile;
 
+        // 202-config.php assigns $dbhost/$dbuser/... at whatever scope includes
+        // it. When this method is the first include, those land in local scope
+        // and DB::getInstance()'s `global` lookups would find nothing — so
+        // export them. (When index.php already required the config at file
+        // scope, require_once is a no-op and the globals are already set.)
+        foreach (['dbhost', 'dbhostro', 'dbuser', 'dbpass', 'dbname'] as $var) {
+            if (isset($$var) && !isset($GLOBALS[$var])) {
+                $GLOBALS[$var] = $$var;
+            }
+        }
+
         $authHelpers = $root . '/202-config/functions-auth.php';
         if (file_exists($authHelpers)) {
             require_once $authHelpers;
@@ -62,12 +73,19 @@ final class Bootstrap
         }
     }
 
-    public static function jsonResponse(array $data, int $status = 200): void
+    /**
+     * @param string $cacheControl Cache-Control to send. Defaults to
+     *     no-store: an API response is not cacheable unless the endpoint
+     *     says otherwise. A caller that sets the header itself before
+     *     calling would have it REPLACED here (PHP's header() replaces by
+     *     default), so a cacheable endpoint passes its directives in.
+     */
+    public static function jsonResponse(array $data, int $status = 200, string $cacheControl = 'no-store'): void
     {
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
         header('X-Content-Type-Options: nosniff');
-        header('Cache-Control: no-store');
+        header('Cache-Control: ' . $cacheControl);
         $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if ($json === false) {
             $json = json_encode(['error' => true, 'message' => 'Response encoding failed', 'status' => 500]);
@@ -80,6 +98,18 @@ final class Bootstrap
     {
         $body = array_merge(['error' => true, 'message' => $message, 'status' => $status], $extra);
         self::jsonResponse($body, $status);
+    }
+
+    /**
+     * The answer to a 5xx while the database's schema is not this code's
+     * version (the files deployed, the upgrade not run): the schema is the
+     * likely cause, and /system/health still answers healthy. Null otherwise.
+     */
+    public static function pendingUpgrade(\mysqli $db): ?string
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/version.php';
+
+        return \Prosper202\Database\SchemaVersion::pendingUpgrade($db, \PROSPER202_VERSION);
     }
 
     /** @internal */

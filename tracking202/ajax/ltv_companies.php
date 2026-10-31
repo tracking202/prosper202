@@ -4,6 +4,12 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
+
+// Draw the window ltv.php drew, not whatever the stored one says by now: a
+// second tab may have stored another (ReportView). ltv.js sends the view
+// with every request under tracking202/ajax/.
+require_once(substr(__DIR__, 0, -17) . '/202-config/functions-report-prefs.php');
+$reportView = p202_report_view_begin();
 AUTH::set_timezone($_SESSION['user_timezone']);
 
 /**
@@ -14,8 +20,10 @@ AUTH::set_timezone($_SESSION['user_timezone']);
  */
 
 $userId = (int) $_SESSION['user_id'];
-$action = (string) ($_POST['action'] ?? '');
-$offset = max(0, (int) ($_POST['offset'] ?? 0));
+$action = $_POST['action'] ?? '';
+if (!is_string($action)) {
+    $action = '?'; // a list names no action: the switch below says "Unknown action."
+}
 $limit = 50;
 
 require_once __DIR__ . '/ltv_ui.php';
@@ -28,39 +36,65 @@ $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_companies.php';
 $notice = null;
 $error = null;
 
+// What to show is read first: a request naming a page or a row nobody can
+// name runs no action either.
+$offset = p202_ltv_posted_or(fn (): int => p202_ltv_posted_offset($_POST['offset'] ?? null), 0, $error);
+$editId = p202_ltv_posted_or(fn (): int => p202_ltv_posted_id_or_none(
+    $_POST['edit'] ?? null,
+    'Pick the company to edit from the list.'
+), 0, $error);
+
 try {
     $conn = new \Prosper202\Database\Connection($db);
     $companiesRepo = new \Prosper202\Ltv\MysqlCompanyRepository($conn);
 
-    if ($action !== '') {
+    if ($action !== '' && $error === null) {
         if (!AUTH::check_csrf_token()) {
             $error = 'Your session token was invalid — please try again.';
         } else {
             try {
                 switch ($action) {
                     case 'add_company':
-                        $companiesRepo->resolveOrCreate($userId, (string) ($_POST['company_name'] ?? ''));
+                        $companiesRepo->resolveOrCreate(
+                            $userId,
+                            p202_ltv_posted_text($_POST['company_name'] ?? null, 'company_name')
+                        );
                         $notice = 'Company saved.';
                         break;
 
                     case 'update_company':
+                        $companyId = p202_ltv_posted_id(
+                            $_POST['company_id'] ?? null,
+                            'Pick the company to edit from the list.'
+                        );
                         // One atomic update: name and domain are validated
                         // together before anything commits, so a rejected
                         // domain can never leave a half-applied rename.
-                        $companiesRepo->update($userId, (int) ($_POST['company_id'] ?? 0), [
-                            'name' => (string) ($_POST['company_name'] ?? ''),
-                            'domain' => (string) ($_POST['company_domain'] ?? ''),
+                        $companiesRepo->update($userId, $companyId, [
+                            'name' => p202_ltv_posted_text($_POST['company_name'] ?? null, 'company_name'),
+                            'domain' => p202_ltv_posted_text($_POST['company_domain'] ?? null, 'company_domain'),
                         ]);
                         $notice = 'Company updated. Customers with matching email domains will auto-attach.';
                         break;
 
                     case 'merge_company':
-                        $companiesRepo->merge($userId, (int) ($_POST['source_company_id'] ?? 0), (int) ($_POST['company_id'] ?? 0));
+                        $keptId = p202_ltv_posted_id(
+                            $_POST['company_id'] ?? null,
+                            'Pick the company to keep from the list.'
+                        );
+                        $goneId = p202_ltv_posted_id(
+                            $_POST['source_company_id'] ?? null,
+                            'Pick the company to merge away from the list.'
+                        );
+                        $companiesRepo->merge($userId, $goneId, $keptId);
                         $notice = 'Companies merged.';
                         break;
 
                     case 'delete_company':
-                        $companiesRepo->delete($userId, (int) ($_POST['company_id'] ?? 0));
+                        $companiesRepo->delete(
+                            $userId,
+                            p202_ltv_posted_id($_POST['company_id'] ?? null, 'Pick the company to delete from the list.')
+                        );
                         $notice = 'Company deleted.';
                         break;
 
@@ -82,9 +116,9 @@ try {
 }
 
 $csrfToken = (string) ($_SESSION['token'] ?? '');
-$editId = (int) ($_POST['edit'] ?? 0);
 if ($error !== null && $action === 'update_company') {
-    $editId = (int) ($_POST['company_id'] ?? 0);
+    // The row a refused save named stays open, when it names one exactly.
+    $editId = \Prosper202\Http\PostedId::read($_POST['company_id'] ?? null) ?? 0;
 }
 ?>
 
@@ -100,8 +134,8 @@ if ($error !== null && $action === 'update_company') {
 
 <?php echo p202_ltv_card_open('Companies',
     number_format((int) $list['total']) . ' account(s) — customers attach by company name or email domain'); ?>
-    <div class="ltv-table-wrap">
-        <table class="ltv-table ltv-table-hover">
+    <div class="p202-table-wrap">
+        <table class="table p202-table table-hover">
             <thead>
                 <tr>
                     <th>Company</th>
@@ -117,7 +151,7 @@ if ($error !== null && $action === 'update_company') {
             <tbody>
                 <?php if ($list['rows'] === []) { ?>
                     <tr><td colspan="8">
-                        <?php echo p202_ltv_empty('fa-building-o', 'No companies yet',
+                        <?php echo p202_ltv_empty('bi-building', 'No companies yet',
                             'They are created when a customer gets a company name, by the nightly linking sweep, or manually below.'); ?>
                     </td></tr>
                 <?php } ?>
@@ -129,10 +163,10 @@ if ($error !== null && $action === 'update_company') {
                         <td>
                             <input type="hidden" name="token" value="<?php echo $esc($csrfToken); ?>" />
                             <input type="hidden" name="company_id" value="<?php echo $companyId; ?>" />
-                            <input type="text" class="ltv-input ltv-input-sm" name="company_name" maxlength="255"
+                            <input type="text" class="form-control form-control-sm" name="company_name" maxlength="255"
                                 value="<?php echo $esc($companyRow['name'] ?? ''); ?>">
                         </td>
-                        <td><input type="text" class="ltv-input ltv-input-sm" name="company_domain" maxlength="191"
+                        <td><input type="text" class="form-control form-control-sm" name="company_domain" maxlength="191"
                                 placeholder="example.com" value="<?php echo $esc($companyRow['domain'] ?? ''); ?>"></td>
                         <td class="num"><?php echo number_format((int) ($companyRow['contacts'] ?? 0)); ?></td>
                         <td class="num"><?php echo number_format((int) ($companyRow['order_count'] ?? 0)); ?></td>
@@ -140,33 +174,33 @@ if ($error !== null && $action === 'update_company') {
                         <td class="num">$<?php echo $money($companyRow['mrr'] ?? 0); ?></td>
                         <td><?php echo $when($companyRow['last_activity_time'] ?? 0); ?></td>
                         <td class="num" style="white-space: nowrap;">
-                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-primary" onclick="ltvCompanySave(<?php echo $companyId; ?>);">Save</button>
-                            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvCompaniesLoad(<?php echo $offset; ?>);">Cancel</button>
+                            <button type="button" class="btn btn-sm btn-primary" onclick="ltvCompanySave(<?php echo $companyId; ?>);">Save</button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="ltvCompaniesLoad(<?php echo $offset; ?>);">Cancel</button>
                         </td>
                     </tr>
                 <?php } else { ?>
                     <tr>
-                        <td class="ltv-row-link" onclick="ltvCompanyView(this.getAttribute('data-company'));"
+                        <td class="p202-table__link-row" onclick="ltvCompanyView(this.getAttribute('data-company'));"
                             data-company="<?php echo $esc($companyRow['name'] ?? ''); ?>" title="View engagement drill-down">
-                            <a href="#" onclick="return false;" class="ltv-strong"><?php echo $esc($companyRow['name'] ?? ''); ?></a>
-                            <span class="ltv-dim" style="font-size: 12px;">#<?php echo $companyId; ?></span>
+                            <a href="#" onclick="return false;" class="fw-bold"><?php echo $esc($companyRow['name'] ?? ''); ?></a>
+                            <span class="text-secondary" style="font-size: 12px;">#<?php echo $companyId; ?></span>
                         </td>
-                        <td><?php echo $esc($companyRow['domain'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></td>
+                        <td><?php echo $esc($companyRow['domain'] ?? '') ?: '<span class="text-secondary">—</span>'; ?></td>
                         <td class="num"><?php echo number_format((int) ($companyRow['contacts'] ?? 0)); ?></td>
                         <td class="num"><?php echo number_format((int) ($companyRow['order_count'] ?? 0)); ?></td>
-                        <td class="num ltv-strong">$<?php echo $money($companyRow['total_revenue'] ?? 0); ?></td>
+                        <td class="num fw-bold">$<?php echo $money($companyRow['total_revenue'] ?? 0); ?></td>
                         <td class="num">$<?php echo $money($companyRow['mrr'] ?? 0); ?></td>
                         <td><?php echo $when($companyRow['last_activity_time'] ?? 0); ?></td>
                         <td class="num" style="white-space: nowrap;">
-                            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvCompanyEdit(<?php echo $companyId; ?>);"><i class="fa fa-pencil"></i> Edit</button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="ltvCompanyEdit(<?php echo $companyId; ?>);"><i class="bi bi-pencil"></i> Edit</button>
                             <?php $mergeTargetJson = json_encode([
                                 'id' => $companyId,
                                 'label' => (string) ($companyRow['name'] ?? ('#' . $companyId)),
                                 'sub' => trim(implode(' · ', array_filter([(string) ($companyRow['domain'] ?? ''), '#' . $companyId]))),
                                 'meta' => number_format((int) ($companyRow['contacts'] ?? 0)) . ' contact' . (((int) ($companyRow['contacts'] ?? 0)) === 1 ? '' : 's'),
                             ], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>
-                            <button type="button" class="ltv-btn ltv-btn-xs" onclick='ltvCompanyMerge(<?php echo $mergeTargetJson; ?>);' title="Merge another company into this one"><i class="fa fa-compress"></i> Merge</button>
-                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-danger" onclick="ltvCompanyDelete(<?php echo $companyId; ?>);">Delete</button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick='ltvCompanyMerge(<?php echo $mergeTargetJson; ?>);' title="Merge another company into this one"><i class="bi bi-arrows-collapse"></i> Merge</button>
+                            <button type="button" class="btn btn-sm btn-outline-danger" onclick="ltvCompanyDelete(<?php echo $companyId; ?>);">Delete</button>
                         </td>
                     </tr>
                 <?php } ?>
@@ -175,10 +209,10 @@ if ($error !== null && $action === 'update_company') {
         </table>
     </div>
     <?php echo p202_ltv_pager($offset, $limit, (int) $list['total'], 'ltvCompaniesLoad'); ?>
-    <div class="ltv-toolbar" style="padding-bottom: 12px; border-top: 1px solid #f0f1f2; padding-top: 12px;">
-        <input type="text" class="ltv-input ltv-input-sm" id="ltv-new-company" maxlength="255" placeholder="New company name"
+    <div class="p202-toolbar p202-panel__filter border-top py-3">
+        <input type="text" class="form-control form-control-sm" id="ltv-new-company" maxlength="255" placeholder="New company name"
                onkeydown="if (event.key === 'Enter') { ltvCompanyAdd(); return false; }">
-        <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvCompanyAdd();"><i class="fa fa-plus"></i> Add Company</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="ltvCompanyAdd();"><i class="bi bi-plus-lg"></i> Add Company</button>
     </div>
 <?php echo p202_ltv_card_close(); ?>
 

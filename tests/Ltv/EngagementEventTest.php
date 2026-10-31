@@ -106,12 +106,17 @@ final class EngagementEventTest extends TestCase
     {
         $read = new FakeMysqliConnection();
         $read->whenQueryContainsReturnRows('FROM 202_engagement_events', [
-            ['event_name' => 'pricing_viewed', 'source' => 'site', 'occurred_at' => 1700000200, 'click_id' => null],
+            // Every column the SELECT names, event_value as mysqli hands a DECIMAL back.
+            [
+                'event_name' => 'pricing_viewed', 'source' => 'site', 'event_value' => '12.500',
+                'occurred_at' => 1700000200, 'click_id' => null,
+            ],
         ]);
         $repo = new MysqlEngagementRepository(new Connection(new FakeMysqliConnection(), $read));
 
         $rows = $repo->customerEvents(7, 501, 90, 25);
         self::assertCount(1, $rows);
+        self::assertSame(12.5, $rows[0]['event_value']);
 
         $queries = $read->statementsContaining('FROM 202_engagement_events');
         self::assertCount(1, $queries);
@@ -119,6 +124,24 @@ final class EngagementEventTest extends TestCase
         self::assertContains(7, $queries[0]->boundValues);
         self::assertContains(501, $queries[0]->boundValues);
         self::assertStringContainsString('ORDER BY occurred_at DESC', $queries[0]->sql);
+    }
+
+    public function testAbmBreakdownBreaksSortTiesByCompanyForStablePaging(): void
+    {
+        // Accounts tied on engagements and revenue (often 0 and 0) have no
+        // defined order, so LIMIT/OFFSET pages could skip or repeat one.
+        $read = new FakeMysqliConnection();
+        $repo = new MysqlEngagementRepository(new Connection(new FakeMysqliConnection(), $read));
+
+        $repo->abmBreakdown(7, 90, 50, 50);
+
+        $queries = $read->statementsContaining('LIMIT ? OFFSET ?');
+        self::assertCount(1, $queries);
+        self::assertStringContainsString('GROUP BY cu.company,', $queries[0]->sql);
+        self::assertMatchesRegularExpression(
+            '/ORDER BY engagements DESC, total_revenue DESC, cu\.company ASC\s+LIMIT \? OFFSET \?$/',
+            $queries[0]->sql
+        );
     }
 
     public function testEngagementScoreIsDeterministicAndBounded(): void

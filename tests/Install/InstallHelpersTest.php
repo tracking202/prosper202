@@ -16,6 +16,7 @@ use PHPUnit\Framework\TestCase;
  * @covers ::install_encode_response
  * @covers ::install_request_base_url
  * @covers ::render_install_success
+ * @covers ::install_license_key_is_valid
  */
 final class InstallHelpersTest extends TestCase
 {
@@ -282,5 +283,44 @@ final class InstallHelpersTest extends TestCase
         // The injected markup must be escaped, never reflected raw.
         $this->assertStringNotContainsString('<img src=x', $out);
         $this->assertStringContainsString('&lt;img', $out);
+    }
+
+    public function testLicenseKeyValidAcceptsOnlyKeyValid(): void
+    {
+        $this->assertTrue(install_license_key_is_valid('{"code":200,"msg":"Key valid","paid":true}'));
+    }
+
+    /**
+     * Everything that is not an explicit "Key valid" is not valid, so the
+     * installer fails closed: an invalid-key reply, an HTML error page, an
+     * empty body (an unreachable service), malformed JSON, a JSON non-object,
+     * and a near-miss message all return false.
+     */
+    public function testLicenseKeyValidFailsClosed(): void
+    {
+        $this->assertFalse(install_license_key_is_valid('{"code":404,"msg":"Key not found"}'));
+        $this->assertFalse(install_license_key_is_valid('<!DOCTYPE html><html>Set up</html>'));
+        $this->assertFalse(install_license_key_is_valid(''));
+        $this->assertFalse(install_license_key_is_valid(false));
+        $this->assertFalse(install_license_key_is_valid(true));
+        $this->assertFalse(install_license_key_is_valid('{"msg":'));
+        $this->assertFalse(install_license_key_is_valid('"Key valid"'));
+        $this->assertFalse(install_license_key_is_valid('null'));
+        $this->assertFalse(install_license_key_is_valid('{"msg":"key valid"}'));
+    }
+
+    /** The installer checks and stores one value: the posted key, trimmed. */
+    public function testTheLicenceKeyIsReadOnceAndTrimmed(): void
+    {
+        self::assertSame('ABC123', install_typed_license_key(['user_api' => "  ABC123\n"]));
+        self::assertSame('', install_typed_license_key([]));
+        self::assertSame('', install_typed_license_key(['user_api' => ['ABC123']]));
+        $page = (string) file_get_contents(__DIR__ . '/../../202-config/install.php');
+        self::assertSame(1, substr_count($page, '$typed_license_key = install_typed_license_key($_POST);'));
+        self::assertSame(1, substr_count($page, 'api_key_validate($typed_license_key, $typed_licence)'));
+        self::assertSame(1, substr_count($page, '$user_api           = $typed_license_key;'));
+        // Besides the helper, the posted key is only shown back in the form.
+        self::assertSame(4, substr_count($page, "\$_POST['user_api']"));
+        self::assertSame(2, substr_count($page, "htmlentities((string) \$_POST['user_api'], ENT_QUOTES, 'UTF-8')"));
     }
 }

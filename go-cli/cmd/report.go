@@ -1,6 +1,11 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+
 	"p202/internal/api"
 
 	"github.com/spf13/cobra"
@@ -11,13 +16,38 @@ var reportCmd = &cobra.Command{
 	Short: "Generate performance reports — summary, breakdown by dimension, time series, and day/week parting",
 }
 
-// collectReportParams gathers the shared filter flags used across report subcommands.
+// timeFromHelp and timeToHelp describe the forms the server reads
+// (Api\V3\Support\TimeBound): a bare 2026-10-01 used to be read as 2026
+// seconds, so the answer was every row.
+const (
+	timeFromHelp = "Start: unix seconds, a date (2026-10-01, from its first second in the account's timezone) or a time with its offset (2026-10-01T09:30:00Z)"
+	timeToHelp   = "End, inclusive: unix seconds, a date (2026-10-01, through its last second in the account's timezone) or a time with its offset"
+)
+
+// reportWindowFlags are the window every report takes.
+var reportWindowFlags = []string{"period", "time_from", "time_to"}
+
+// reportFilterFlags are the filters every report endpoint takes besides the
+// window (Api\V3\Support\ReportFilter), in its order: the Analyze pages'
+// filters. A server refuses one it does not know with a 422 naming it.
+var reportFilterFlags = []string{
+	"aff_campaign_id", "aff_network_id", "ppc_account_id", "ppc_network_id", "landing_page_id", "country_id",
+	"text_ad_id", "region_id", "isp_id", "browser_id", "platform_id", "device_type",
+	"method_of_promotion", "show", "keyword", "ip", "referer",
+}
+
+// reportShowValues are the Analyze pages' "show" menu (ReportFilter::SHOW).
+var reportShowValues = []string{"all", "real", "filtered", "filtered_bot", "leads"}
+
+// promotionMethods are ReportFilter::METHODS_OF_PROMOTION.
+var promotionMethods = []string{"directlink", "landingpage"}
+
+// collectReportParams gathers the shared window and filter flags used across
+// report subcommands; a flag the command does not have reads its configured
+// default, if any.
 func collectReportParams(cmd *cobra.Command) map[string]string {
 	params := map[string]string{}
-	flags := []string{"period", "time_from", "time_to",
-		"aff_campaign_id", "ppc_account_id", "aff_network_id",
-		"ppc_network_id", "landing_page_id", "country_id"}
-	for _, f := range flags {
+	for _, f := range append(append([]string{}, reportWindowFlags...), reportFilterFlags...) {
 		if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
 			params[f] = v
 		}
@@ -26,15 +56,34 @@ func collectReportParams(cmd *cobra.Command) map[string]string {
 }
 
 func addReportFilters(cmd *cobra.Command) {
-	cmd.Flags().StringP("period", "p", "", "Period: today, yesterday, last7, last30, last90")
-	cmd.Flags().String("time_from", "", "Start timestamp (unix)")
-	cmd.Flags().String("time_to", "", "End timestamp (unix)")
+	cmd.Flags().StringP("period", "p", "", "Period")
+	enumFlag(cmd, "period", newEnum(reportPeriods))
+	cmd.Flags().String("time_from", "", timeFromHelp)
+	cmd.Flags().String("time_to", "", timeToHelp)
+	addReportFilterFlags(cmd)
+}
+
+// addReportFilterFlags registers reportFilterFlags on a report command.
+func addReportFilterFlags(cmd *cobra.Command) {
 	cmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
 	cmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
 	cmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
-	cmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")
+	cmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID, or none for the clicks with no traffic source")
 	cmd.Flags().String("landing_page_id", "", "Filter by landing page ID")
 	cmd.Flags().String("country_id", "", "Filter by country ID")
+	cmd.Flags().String("text_ad_id", "", "Filter by text ad ID")
+	cmd.Flags().String("region_id", "", "Filter by region ID (the id of a `--breakdown region` row)")
+	cmd.Flags().String("isp_id", "", "Filter by ISP/carrier ID (the id of a `--breakdown isp` row)")
+	cmd.Flags().String("browser_id", "", "Filter by browser ID (the id of a `--breakdown browser` row)")
+	cmd.Flags().String("platform_id", "", "Filter by platform (OS) ID (the id of a `--breakdown platform` row)")
+	cmd.Flags().String("device_type", "", "Filter by device type ID: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (the ids of `--breakdown device_type` rows)")
+	cmd.Flags().String("method_of_promotion", "", "Only direct-link clicks or only landing-page clicks: {values}")
+	enumFlag(cmd, "method_of_promotion", newEnum(promotionMethods))
+	cmd.Flags().String("show", "", "Which clicks count (default all): {values}; real = not filtered, filtered_bot = filtered as bots, leads = converted")
+	enumFlag(cmd, "show", newEnum(reportShowValues))
+	cmd.Flags().String("keyword", "", "Only clicks whose keyword contains this text (case-insensitive)")
+	cmd.Flags().String("ip", "", "Only clicks from this one IP address, IPv4 or IPv6")
+	cmd.Flags().String("referer", "", "Only clicks whose referring URL contains this text (case-insensitive)")
 }
 
 var reportSummaryCmd = &cobra.Command{
@@ -47,13 +96,7 @@ var reportSummaryCmd = &cobra.Command{
 		}
 		params := collectReportParams(cmd)
 		if len(profiles) > 0 {
-			profileData, errorsOut, err := fetchMultiProfileObjects("reports/summary", params, profiles)
-			if err != nil {
-				return err
-			}
-			payload := buildMultiProfilePayload(profileData, aggregateNumericFields(profileData), errorsOut)
-			render(payload)
-			return nil
+			return runMultiProfileSummary(params, profiles)
 		}
 
 		c, err := api.NewFromConfig()
@@ -73,6 +116,11 @@ var reportBreakdownCmd = &cobra.Command{
 	Use:   "breakdown",
 	Short: "Get stats broken down by a dimension (campaign, traffic source, country, landing page, etc.)",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// A --having the filter cannot read is refused before any request.
+		having, _ := cmd.Flags().GetString("having")
+		if _, _, _, _, err := havingFilter(having); err != nil {
+			return err
+		}
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
@@ -120,9 +168,81 @@ var reportBreakdownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(applyBreakdownFilters(cmd, data))
+		filtered, err := applyBreakdownFilters(cmd, data)
+		if err != nil {
+			return err
+		}
+		render(filtered)
+		note := breakdownMoreRowsNote(data, params, "")
+		if note != "" && breakdownFiltersSet(cmd) {
+			note += " --min-clicks, --min-cost, --zero-leads and --having filter only the rows read."
+		}
+		noteForPeople(cmd, note)
 		return nil
 	},
+}
+
+// breakdownDefaultLimit is the rows a breakdown page holds when the request names no limit.
+const breakdownDefaultLimit = 50
+
+// noteForPeople prints note on stderr under a table, CSV or --quiet. --json and --ndjson carry the flag the note
+// explains (`truncated`), and keep stderr for errors, as they do `masked`.
+func noteForPeople(cmd *cobra.Command, note string) {
+	if note == "" || jsonOutput || ndjsonOutput {
+		return
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), note)
+}
+
+// breakdownMoreRowsNote is the note under one page of a breakdown with rows after it, naming the flags that read
+// them; "" for the last page. A server from before `truncated` cannot say, so a page it filled to the limit may have
+// rows after it. ranked names how the command ordered the page's rows, if not as the server did.
+func breakdownMoreRowsNote(data []byte, params map[string]string, ranked string) string {
+	var resp struct {
+		Data      []json.RawMessage `json:"data"`
+		Truncated *bool             `json:"truncated"`
+		Limit     *int              `json:"limit"`
+		Offset    *int              `json:"offset"`
+	}
+	if json.Unmarshal(data, &resp) != nil {
+		return ""
+	}
+	limit, offset := breakdownDefaultLimit, 0
+	if n, err := strconv.Atoi(params["limit"]); err == nil {
+		limit = n
+	}
+	if n, err := strconv.Atoi(params["offset"]); err == nil {
+		offset = n
+	}
+	if resp.Limit != nil {
+		limit = *resp.Limit
+	}
+	if resp.Offset != nil {
+		offset = *resp.Offset
+	}
+	var lead string
+	switch {
+	case resp.Truncated != nil && *resp.Truncated:
+		lead = "Note: more rows remain after rows %d-%d%s;"
+	case resp.Truncated == nil && len(resp.Data) > 0 && len(resp.Data) >= limit:
+		lead = "Note: this server does not say whether rows remain after rows %d-%d%s;"
+	default:
+		return ""
+	}
+	note := fmt.Sprintf(lead, offset+1, offset+len(resp.Data), ranked) + fmt.Sprintf(" --offset %d reads the next page", offset+len(resp.Data))
+	if limit < breakdownPageSize {
+		note += fmt.Sprintf(" (--limit takes up to %d)", breakdownPageSize)
+	}
+	return note + "."
+}
+
+// breakdownFiltersSet says whether a client-side breakdown filter (applyBreakdownFilters) is set.
+func breakdownFiltersSet(cmd *cobra.Command) bool {
+	minClicks, _ := cmd.Flags().GetFloat64("min-clicks")
+	minCost, _ := cmd.Flags().GetFloat64("min-cost")
+	zeroLeads, _ := cmd.Flags().GetBool("zero-leads")
+	having, _ := cmd.Flags().GetString("having")
+	return minClicks != 0 || minCost != 0 || zeroLeads || strings.TrimSpace(having) != ""
 }
 
 var reportTimeseriesCmd = &cobra.Command{
@@ -145,8 +265,65 @@ var reportTimeseriesCmd = &cobra.Command{
 			return err
 		}
 		render(data)
+		if w := timeseriesTruncationWarning(data, params["interval"]); w != "" {
+			fmt.Fprintln(cmd.ErrOrStderr(), w)
+		}
 		return nil
 	},
+}
+
+// timeseriesMaxRows is the bucket cap of servers that predate the
+// `truncated` flag: from one of those, exactly this many buckets may be a cut.
+const timeseriesMaxRows = 2000
+
+// timeseriesTruncationWarning returns a stderr warning when a timeseries
+// response was cut at the server's bucket cap (or, from a server too old to
+// say, may have been), else "". Buckets run oldest first, so a cut drops the
+// most recent ones.
+func timeseriesTruncationWarning(data []byte, interval string) string {
+	resp, ok := timeseriesTailOf(data)
+	if !ok || resp.Buckets == 0 {
+		return ""
+	}
+	limit := timeseriesMaxRows
+	if resp.Limit != nil && *resp.Limit > 0 {
+		limit = *resp.Limit
+	}
+	last := "the last bucket returned"
+	if p, ok := resp.Last["period"].(string); ok && p != "" {
+		last = p
+	}
+
+	var lead string
+	switch {
+	case resp.Truncated != nil && *resp.Truncated:
+		lead = fmt.Sprintf("Warning: the series was cut at the server's %d-bucket limit; buckets after %s are missing.", limit, last)
+	case resp.Truncated == nil && resp.Buckets >= timeseriesMaxRows:
+		lead = fmt.Sprintf("Warning: %d buckets is this server's limit and it does not report truncation; buckets after %s may be missing.", resp.Buckets, last)
+	default:
+		return ""
+	}
+
+	hint := "Narrow --time-from/--time-to (or use a shorter --period)"
+	if coarser := coarserIntervals(interval); coarser != "" {
+		hint += ", or use --interval " + coarser + ", which the server buckets into fewer rows"
+	}
+	return lead + "\nHint: " + hint + "."
+}
+
+// coarserIntervals lists the intervals above interval (the server default is
+// day), joined for a hint; "" for month.
+func coarserIntervals(interval string) string {
+	order := []string{"hour", "day", "week", "month"}
+	if interval == "" {
+		interval = "day"
+	}
+	for i, name := range order {
+		if name == interval {
+			return strings.Join(order[i+1:], "|")
+		}
+	}
+	return "week|month"
 }
 
 var reportWeekpartCmd = &cobra.Command{
@@ -198,25 +375,29 @@ func init() {
 	addMultiProfileFlags(reportSummaryCmd)
 
 	addReportFilters(reportBreakdownCmd)
-	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension: campaign, aff_network, ppc_account, ppc_network, landing_page (alias: lp), keyword, country, city, browser, platform, device, isp, text_ad")
+	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension (rows are one per stored value; clicks without one, e.g. no referer, are in `report summary` only)")
+	enumFlag(reportBreakdownCmd, "breakdown", dimensionEnum(breakdownDimensions))
 	reportBreakdownCmd.Flags().String("group-by", "", "Alias for --breakdown (matches `analytics --group-by`)")
-	reportBreakdownCmd.Flags().StringP("sort", "s", "", "Sort by: total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate")
-	reportBreakdownCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
+	enumFlag(reportBreakdownCmd, "group-by", dimensionEnum(breakdownDimensions))
+	reportBreakdownCmd.Flags().StringP("sort", "s", "", "Sort by")
+	enumFlag(reportBreakdownCmd, "sort", metricEnum(breakdownSorts))
+	reportBreakdownCmd.Flags().String("sort_dir", "", "Sort direction")
+	enumFlag(reportBreakdownCmd, "sort_dir", sortDirEnum())
 	reportBreakdownCmd.Flags().StringP("limit", "l", "", "Max results")
 	reportBreakdownCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	reportBreakdownCmd.Flags().Float64("min-clicks", 0, "Only rows with at least N clicks")
 	reportBreakdownCmd.Flags().Float64("min-cost", 0, "Only rows with at least $N cost")
 	reportBreakdownCmd.Flags().Bool("zero-leads", false, "Only rows with cost > 0 and zero conversions (pure waste)")
-	reportBreakdownCmd.Flags().String("having", "", "Post-filter rows: FIELD OP VALUE (e.g. 'total_leads=0', 'roi<0')")
+	reportBreakdownCmd.Flags().String("having", "", "Post-filter rows: FIELD OP NUMBER, FIELD a metric column or its alias, OP one of >= <= != = > < (e.g. 'total_leads=0', 'roi<0')")
 
 	addReportFilters(reportTimeseriesCmd)
 	reportTimeseriesCmd.Flags().StringP("interval", "i", "", "Interval: hour, day, week, month")
 
 	addReportFilters(reportDaypartCmd)
-	addSortFlags(reportDaypartCmd, "Sort by: hour_of_day, clicks, conversions, revenue, cost, profit, roi, epc, conv_rate, cpa, avg_cpc (friendly aliases ok)")
+	addSortFlags(reportDaypartCmd, daypartSorts)
 
 	addReportFilters(reportWeekpartCmd)
-	addSortFlags(reportWeekpartCmd, "Sort by: day_of_week, clicks, conversions, revenue, cost, profit, roi, epc, conv_rate (friendly aliases ok)")
+	addSortFlags(reportWeekpartCmd, weekpartSorts)
 
 	reportCmd.AddCommand(reportSummaryCmd, reportBreakdownCmd, reportTimeseriesCmd, reportDaypartCmd, reportWeekpartCmd)
 	rootCmd.AddCommand(reportCmd)

@@ -1,11 +1,14 @@
 <?php
 
 declare(strict_types=1);
-include_once(__DIR__ . '/202-config/connect.php');
-include_once(__DIR__ . '/202-config/DeviceDetect.php');
-include_once(__DIR__ . '/vendor/autoload.php');
 
-use UAParser\Parser;
+use Prosper202\User\SignInLog;
+use Prosper202\User\SignInNotCompleted;
+use Prosper202\User\SignInOutcome;
+use Prosper202\User\SignInRecord;
+
+include_once(__DIR__ . '/202-config/connect.php');
+include_once(__DIR__ . '/vendor/autoload.php');
 
 prosper_log('login', 'Request received with method ' . ($_SERVER['REQUEST_METHOD'] ?? 'UNKNOWN') . ' from IP ' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
 
@@ -24,22 +27,14 @@ if (!is_installed()) {
     exit;
 }
 
-$detect = new DeviceDetect();
-$parser = Parser::create();
-$userAgent = $detect->getUserAgent();
-if ($userAgent === null || $userAgent === '') {
-    $userAgent = 'Unknown/1.0';
-}
-$result = $parser->parse($userAgent);
-
 function logged_in_redirect($safe_context = false)
 {
 	prosper_log('login', 'User already authenticated, preparing redirect.');
 
-	// Honor the redirect parameter if present — only allow local paths to prevent open redirect
+	// A page on this install only; PHP decoded it once, as each link encodes it once.
 	if (isset($_GET['redirect'])) {
-		$target = urldecode((string) $_GET['redirect']);
-		if ($target !== '' && $target[0] === '/') {
+		$target = \Prosper202\Http\SignInReturn::path((string) $_GET['redirect']);
+		if ($target !== null) {
 			prosper_log('login', 'Redirecting authenticated user to ' . $target);
 			header('location: ' . $target);
 			exit;
@@ -101,10 +96,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
+	// A right password whose sign-in a write then failed: logged apart from a
+	// failure, so the throttle does not count a database hiccup as a guess.
+	$sign_in_not_completed = false;
+	$not_completed_message = 'Your sign-in could not be completed. Please try again in a moment.';
+
 	$login_result = null;
 	if (!$error) {
 		try {
 			$login_result = AUTH::authenticate($username, $password, $db);
+		} catch (SignInNotCompleted $exception) {
+			$error['user'] = $not_completed_message;
+			$sign_in_not_completed = true;
+			prosper_log('login', 'Sign-in of username ' . $username . ' not completed: ' . $exception->getMessage());
 		} catch (RuntimeException $exception) {
 			$error['user'] = 'We were unable to process your login. Please try again later.';
 			prosper_log('login', 'Login exception for username ' . $username . ': ' . $exception->getMessage());
@@ -123,61 +127,46 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$slack->push('failed_login', ['username' => $username, 'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
 	}
 
-	// Don't record throttled/CSRF-rejected attempts: no credentials were checked,
-	// and logging them would extend the rolling window and keep a legitimate user
-	// locked out indefinitely.
-	$login_success = empty($error) ? 1 : 0;
-	$should_log_attempt = !$rate_limited && $csrf_ok;
-	$login_log_stmt = $should_log_attempt
-		? $db->prepare('INSERT INTO 202_users_log (user_name, user_pass, ip_address, login_time, login_success, login_error, login_server, login_session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-		: false;
-	if ($login_log_stmt) {
-		$login_error_serialized = serialize($error);
-		$login_server_serialized = AUTH::login_audit_snapshot();
-		$login_session_serialized = ''; // never persist session contents (API keys, tokens) at rest
-		$redacted_password = '[filtered]';
-		$ip_address = $login_ip; // same client IP the throttle keys on, so counts line up
-		$login_time = time();
-		$login_log_stmt->bind_param(
-			'sssiisss',
-			$username,
-			$redacted_password,
-			$ip_address,
-			$login_time,
-			$login_success,
-			$login_error_serialized,
-			$login_server_serialized,
-			$login_session_serialized
-		);
-		$login_log_stmt->execute();
-		$login_log_stmt->close();
-	} elseif ($should_log_attempt) {
-		prosper_log('login', 'Unable to prepare login log statement: ' . $db->error);
-	}
-
+	// Before the attempt is logged, so a sign-in that stops here logs as not
+	// completed rather than as passed.
 	if (empty($error) && $user_row) {
 		AUTH::delete_old_auth_hash();
 
-		$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0';
-		$ip_id = (int) INDEXES::get_ip_id($ip);
-		$survey_data = getSurveyData($user_row['install_hash']);
-		$modal_status = ($survey_data['modal'] ?? false) ? 0 : 1;
-		$vip_perks_status = ($survey_data['vip_perks'] ?? false) ? 1 : 0;
+		[$modal_status, $vip_perks_status] = SignInRecord::surveyFlags(getSurveyData($user_row['install_hash']));
 
-		$update_stmt = $db->prepare('UPDATE 202_users SET user_last_login_ip_id = ?, modal_status = ?, vip_perks_status = ? WHERE user_id = ?');
-		if ($update_stmt) {
-			$user_id = (int) $user_row['user_id'];
-			$update_stmt->bind_param('iiii', $ip_id, $modal_status, $vip_perks_status, $user_id);
-			$update_stmt->execute();
-			$update_stmt->close();
+		try {
+			SignInRecord::on($db)->record((int) $user_row['user_id'], $login_ip, $modal_status, $vip_perks_status);
+
+			$mod_sql = "SHOW COLUMNS FROM 202_landing_pages LIKE 'leave_behind_page_url'";
+			$mod_row = memcache_mysql_fetch_assoc($mod_sql);
+			$user_row['user_mods_lb'] = ($mod_row && (int) ($user_row['user_mods_lb'] ?? 0) === 1) ? 1 : 0;
+
+			// Its owner lookup throws before the session is written.
+			AUTH::begin_user_session($user_row);
+			$_SESSION['user_mods_lb'] = $user_row['user_mods_lb'];
+		} catch (\Throwable $exception) {
+			$error['user'] = $not_completed_message;
+			$sign_in_not_completed = true;
+			prosper_log('login', 'Sign-in of user_id ' . (int) $user_row['user_id'] . ' not completed: ' . $exception->getMessage());
 		}
+	}
 
-		$mod_sql = "SHOW COLUMNS FROM 202_landing_pages LIKE 'leave_behind_page_url'";
-		$mod_row = memcache_mysql_fetch_assoc($mod_sql);
-		$user_row['user_mods_lb'] = ($mod_row && (int) ($user_row['user_mods_lb'] ?? 0) === 1) ? 1 : 0;
+	// Don't record throttled/CSRF-rejected attempts: no credentials were checked,
+	// and logging them would extend the rolling window and keep a legitimate user
+	// locked out indefinitely.
+	if (!$rate_limited && $csrf_ok) {
+		$login_outcome = $sign_in_not_completed
+			? SignInOutcome::NotCompleted
+			: (empty($error) ? SignInOutcome::Passed : SignInOutcome::Failed);
+		try {
+			// $login_ip: the address the throttle keys on, so its counts line up.
+			SignInLog::on($db)->append($username, $login_ip, $login_outcome, $error, AUTH::login_audit_snapshot());
+		} catch (\Throwable $exception) {
+			prosper_log('login', 'Unable to write login log row: ' . $exception->getMessage());
+		}
+	}
 
-		AUTH::begin_user_session($user_row);
-		$_SESSION['user_mods_lb'] = $user_row['user_mods_lb'];
+	if (empty($error) && $user_row) {
 		prosper_log('login', 'Login succeeded for user_id ' . (int) $user_row['user_id']);
 
 		if (isset($_POST['remember_me'])) {
@@ -190,72 +179,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$html['user_name'] = htmlentities($username, ENT_QUOTES, 'UTF-8');
 }
 
-info_top(); ?>
-<div class="row">
-	<div class="main col-xs-4">
-		<center><img src="202-img/prosper202.png"></center>
-		<form class="form-signin form-horizontal" role="form" method="post" action="">
+info_top(['title' => 'Sign in - Prosper202 ClickServer', 'ads' => true]);
+echo p202_standalone_card('Sign in', 'to your Prosper202 ClickServer'); ?>
+		<?php if (isset($error['user'])) { ?>
+			<div class="alert alert-danger p202-flash" role="alert" id="login-error"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><?php echo htmlspecialchars(trim((string) $error['user']), ENT_QUOTES, 'UTF-8'); ?></div></div>
+		<?php } ?>
+		<form method="post" action="" id="login-form">
 			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-			<div class="form-group <?php if (isset($error['user'])) echo "has-error"; ?>">
-				<?php if (isset($error['user'])) { ?>
-					<div class="tooltip right in login_tooltip">
-						<div class="tooltip-arrow"></div>
-						<div class="tooltip-inner"><?php echo $error['user']; ?></div>
-					</div>
-				<?php } ?>
-					<input type="text" class="form-control first" name="user_name" placeholder="Username" autocomplete="username">
-					<input type="password" class="form-control middle" name="user_pass" placeholder="Password" autocomplete="current-password">
-				<label class="form-control last">
-					<input type="checkbox" name="remember_me"> Remember me
-				</label>
-				<a href="<?php echo get_absolute_url(); ?>202-lost-pass.php" class="text-info forgot-text">I forgot my password/username</a>
-				<button class="btn btn-lg btn-p202 btn-block" type="submit">Sign in</button>
+			<div class="mb-3">
+				<label class="form-label" for="user_name">Username</label>
+				<input type="text" class="form-control" id="user_name" name="user_name" value="<?php echo $html['user_name'] ?? ''; ?>" autocomplete="username" autocapitalize="none" spellcheck="false" required<?php echo isset($html['user_name']) ? '' : ' autofocus'; ?>>
 			</div>
+			<div class="mb-3">
+				<label class="form-label" for="user_pass">Password</label>
+				<input type="password" class="form-control" id="user_pass" name="user_pass" autocomplete="current-password" required<?php echo isset($html['user_name']) ? ' autofocus' : ''; ?>>
+			</div>
+			<div class="form-check mb-3">
+				<input class="form-check-input" type="checkbox" id="remember_me" name="remember_me">
+				<label class="form-check-label" for="remember_me">Keep me signed in on this browser</label>
+			</div>
+			<button class="btn btn-primary w-100" type="submit">Sign in</button>
 		</form>
+		<p class="mt-3 mb-0 text-center small"><a href="<?php echo htmlspecialchars(get_absolute_url(), ENT_QUOTES, 'UTF-8'); ?>202-lost-pass.php">Forgot your password or username?</a></p>
+<?php echo p202_standalone_card_end(); ?>
 		<!-- P202_CS_Login_Page_288x200 -->
-		<div id='div-gpt-ad-1398648278789-0' style='width:288px; height:200px;'>
-			<script type='text/javascript'>
+		<div class="p202-standalone__ad" id="div-gpt-ad-1398648278789-0">
+			<script>
 				googletag.cmd.push(function() {
 					googletag.display('div-gpt-ad-1398648278789-0');
 				});
 			</script>
 		</div>
-	</div>
-</div>
-</div>
-
-<?php if ($result->ua->family == "IE") { ?>
-	<script type="text/javascript">
-		$(window).load(function() {
-			$('#browser_modal').modal({
-				backdrop: 'static',
-				show: true,
-			})
-		});
-	</script>
-	<!-- Browser detect modal-->
-	<div class="modal fade" id="browser_modal">
-		<div class="modal-dialog">
-			<div class="modal-content">
-				<div class="modal-header">
-					<button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
-					<h4 class="modal-title">Internet Explorer Detected</h4>
-				</div>
-				<div class="modal-body">
-					<p>Internet Explorer is not supported by Prosper202 version 1.8 and more.</p>
-					<p>Recommended browsers:</p>
-					<p>
-						<a href="http://www.google.com/chrome/" target="_blank">Google Chrome <img src="../202-img/chrome.png"></a>
-						<a href="http://www.mozilla.org/en-US/firefox/new/‎" target="_blank">Mozilla Firefox <img src="../202-img/firefox.png"></a>
-						<a href="http://www.apple.com/safari" target="_blank">Safari (Mac OS X) <img src="../202-img/safari.png"></a>
-					</p>
-				</div>
-				<div class="modal-footer">
-					<button type="button" class="btn btn-default" data-dismiss="modal">Got it!</button>
-				</div>
-			</div><!-- /.modal-content -->
-		</div><!-- /.modal-dialog -->
-	</div><!-- /.modal -->
-<?php }
-
-info_bottom(); ?>
+<?php info_bottom();

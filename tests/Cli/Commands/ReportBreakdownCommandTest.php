@@ -51,7 +51,7 @@ class ReportBreakdownCommandTest extends TestCase
     public function testHasSortDirOptionWithDefaultDesc(): void
     {
         $def = $this->command->getDefinition();
-        $opt = $def->getOption('sort_dir');
+        $opt = $def->getOption('sort-dir');
 
         $this->assertSame('DESC', $opt->getDefault());
         $this->assertTrue($opt->isValueRequired());
@@ -82,64 +82,64 @@ class ReportBreakdownCommandTest extends TestCase
     public function testHasTimeFromOption(): void
     {
         $def = $this->command->getDefinition();
-        $this->assertTrue($def->hasOption('time_from'));
-        $opt = $def->getOption('time_from');
+        $this->assertTrue($def->hasOption('time-from'));
+        $opt = $def->getOption('time-from');
         $this->assertTrue($opt->isValueRequired());
     }
 
     public function testHasTimeToOption(): void
     {
         $def = $this->command->getDefinition();
-        $this->assertTrue($def->hasOption('time_to'));
-        $opt = $def->getOption('time_to');
+        $this->assertTrue($def->hasOption('time-to'));
+        $opt = $def->getOption('time-to');
         $this->assertTrue($opt->isValueRequired());
     }
 
     public function testHasCampaignFilterOption(): void
     {
         $def = $this->command->getDefinition();
-        $this->assertTrue($def->hasOption('aff_campaign_id'));
-        $opt = $def->getOption('aff_campaign_id');
+        $this->assertTrue($def->hasOption('aff-campaign-id'));
+        $opt = $def->getOption('aff-campaign-id');
         $this->assertTrue($opt->isValueRequired());
     }
 
     public function testHasPpcAccountFilterOption(): void
     {
         $def = $this->command->getDefinition();
-        $this->assertTrue($def->hasOption('ppc_account_id'));
-        $opt = $def->getOption('ppc_account_id');
+        $this->assertTrue($def->hasOption('ppc-account-id'));
+        $opt = $def->getOption('ppc-account-id');
         $this->assertTrue($opt->isValueRequired());
     }
 
     public function testHasAffNetworkFilterOption(): void
     {
         $def = $this->command->getDefinition();
-        $this->assertTrue($def->hasOption('aff_network_id'));
-        $opt = $def->getOption('aff_network_id');
+        $this->assertTrue($def->hasOption('aff-network-id'));
+        $opt = $def->getOption('aff-network-id');
         $this->assertTrue($opt->isValueRequired());
     }
 
     public function testHasPpcNetworkFilterOption(): void
     {
         $def = $this->command->getDefinition();
-        $this->assertTrue($def->hasOption('ppc_network_id'));
-        $opt = $def->getOption('ppc_network_id');
+        $this->assertTrue($def->hasOption('ppc-network-id'));
+        $opt = $def->getOption('ppc-network-id');
         $this->assertTrue($opt->isValueRequired());
     }
 
     public function testHasLandingPageFilterOption(): void
     {
         $def = $this->command->getDefinition();
-        $this->assertTrue($def->hasOption('landing_page_id'));
-        $opt = $def->getOption('landing_page_id');
+        $this->assertTrue($def->hasOption('landing-page-id'));
+        $opt = $def->getOption('landing-page-id');
         $this->assertTrue($opt->isValueRequired());
     }
 
     public function testHasCountryFilterOption(): void
     {
         $def = $this->command->getDefinition();
-        $this->assertTrue($def->hasOption('country_id'));
-        $opt = $def->getOption('country_id');
+        $this->assertTrue($def->hasOption('country-id'));
+        $opt = $def->getOption('country-id');
         $this->assertTrue($opt->isValueRequired());
     }
 
@@ -186,14 +186,35 @@ class ReportBreakdownCommandTest extends TestCase
         $this->assertStringContainsString('roi', $desc);
     }
 
+    /**
+     * A page with rows after it says so under the table, naming the
+     * --offset of the next page; the last page says nothing.
+     */
+    public function testAPageWithRowsAfterItNamesTheNextOffset(): void
+    {
+        $page = static fn (int $rows, array $flags): array => ['data' => array_fill(0, $rows, ['id' => 1])] + $flags;
+
+        self::assertSame(
+            'Note: more rows remain after rows 1-50; --offset 50 reads the next page (--limit takes up to 500).',
+            ReportBreakdownCommand::moreRowsNote($page(50, ['truncated' => true, 'limit' => 50, 'offset' => 0]))
+        );
+        self::assertSame(
+            'Note: more rows remain after rows 501-1000; --offset 1000 reads the next page.',
+            ReportBreakdownCommand::moreRowsNote($page(500, ['truncated' => true, 'limit' => 500, 'offset' => 500]))
+        );
+        $last = $page(50, ['truncated' => false, 'limit' => 50, 'offset' => 0]);
+        self::assertNull(ReportBreakdownCommand::moreRowsNote($last));
+        self::assertNull(ReportBreakdownCommand::moreRowsNote($page(50, [])));
+    }
+
     public function testAllFilterOptionsHaveNoDefault(): void
     {
         $def = $this->command->getDefinition();
         $filterOptions = [
-            'period', 'time_from', 'time_to',
-            'aff_campaign_id', 'ppc_account_id',
-            'aff_network_id', 'ppc_network_id',
-            'landing_page_id', 'country_id',
+            'period', 'time-from', 'time-to',
+            'aff-campaign-id', 'ppc-account-id',
+            'aff-network-id', 'ppc-network-id',
+            'landing-page-id', 'country-id',
         ];
 
         foreach ($filterOptions as $optName) {
@@ -234,7 +255,7 @@ class ReportDaypartCommandTest extends TestCase
     public function testHasSortDirOptionWithDefaultAsc(): void
     {
         $def = $this->command->getDefinition();
-        $opt = $def->getOption('sort_dir');
+        $opt = $def->getOption('sort-dir');
 
         $this->assertSame('ASC', $opt->getDefault());
         $this->assertTrue($opt->isValueRequired());
@@ -243,7 +264,7 @@ class ReportDaypartCommandTest extends TestCase
     public function testHasSharedReportFilters(): void
     {
         $def = $this->command->getDefinition();
-        foreach (['period', 'time_from', 'time_to', 'aff_campaign_id', 'ppc_account_id', 'aff_network_id', 'ppc_network_id', 'landing_page_id', 'country_id'] as $opt) {
+        foreach (['period', 'time-from', 'time-to', 'aff-campaign-id', 'ppc-account-id', 'aff-network-id', 'ppc-network-id', 'landing-page-id', 'country-id'] as $opt) {
             $this->assertTrue($def->hasOption($opt), "Missing expected option: $opt");
             $this->assertTrue($def->getOption($opt)->isValueRequired(), "Option $opt should require a value");
         }
@@ -295,7 +316,7 @@ class ReportWeekpartCommandTest extends TestCase
     public function testHasSortDirOptionWithDefaultAsc(): void
     {
         $def = $this->command->getDefinition();
-        $opt = $def->getOption('sort_dir');
+        $opt = $def->getOption('sort-dir');
 
         $this->assertSame('ASC', $opt->getDefault());
         $this->assertTrue($opt->isValueRequired());
@@ -304,7 +325,7 @@ class ReportWeekpartCommandTest extends TestCase
     public function testHasSharedReportFilters(): void
     {
         $def = $this->command->getDefinition();
-        foreach (['period', 'time_from', 'time_to', 'aff_campaign_id', 'ppc_account_id', 'aff_network_id', 'ppc_network_id', 'landing_page_id', 'country_id'] as $opt) {
+        foreach (['period', 'time-from', 'time-to', 'aff-campaign-id', 'ppc-account-id', 'aff-network-id', 'ppc-network-id', 'landing-page-id', 'country-id'] as $opt) {
             $this->assertTrue($def->hasOption($opt), "Missing expected option: $opt");
             $this->assertTrue($def->getOption($opt)->isValueRequired(), "Option $opt should require a value");
         }

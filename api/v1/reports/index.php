@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 include_once(substr(__DIR__, 0,-15) . '/202-config.php'); 
+// Goes on when the database is out of reach: it answers the outage in JSON.
+$p202OutageFallback = true;
 include_once(substr(__DIR__, 0,-15) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-15) . '/api/v1/functions.php');
 
@@ -9,7 +11,9 @@ $data = [];
 
 if ($_SERVER['REQUEST_METHOD'] === "GET") {
     if (!isset($db)) {
-        $data = ['msg' => 'Database connection is unavailable', 'error' => true, 'status' => 500];
+        // The outage in the status too: a client reads that before the body.
+        http_response_code(503);
+        $data = ['msg' => 'Database connection is unavailable', 'error' => true, 'status' => 503];
     } else {
         $data = getStats($db, $_GET);
     }
@@ -24,6 +28,4 @@ array_walk_recursive($data, function(&$val): void {
 });
 
 
-$json = str_replace('\\/', '/', json_encode($data));
-
-print_r(pretty_json($json));
+echo legacy_api_json($data);

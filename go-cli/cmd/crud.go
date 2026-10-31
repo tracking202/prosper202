@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"p202/internal/api"
 	"p202/internal/metrics"
@@ -19,10 +21,45 @@ import (
 type crudField struct {
 	Name     string
 	Desc     string
-	Required bool
+	Required bool // the controller requires it on create (TestCRUDFlagsMatchTheirControllers holds the two together)
 	QueryKey string
 	Aliases  []string
+	Enum     []string // the values the field takes (the controller's 'allowed'); nil: not a fixed set
+	// Clearable: `update --<name> ""` sends the empty value, which clears
+	// the field (what the setup page does when the box is emptied). Any
+	// other field refuses an empty value (empty_flags.go).
+	Clearable bool
+	// Date: the controller declares 'format' => 'date' (a DATE column). The
+	// value must be a day written YYYY-MM-DD, checked before a request; a
+	// Clearable date's "" goes as JSON null, the one clear a DATE takes —
+	// the server refuses "" (it was a 500 under strict SQL mode).
+	// TestCRUDFlagsMatchTheirControllers holds Date to the controller.
+	Date bool
 }
+
+// crudDateLayout is the form a Date field takes: the server's
+// Controller::isDate(), a real calendar day in the years a DATE holds.
+const crudDateLayout = "2006-01-02"
+
+// crudDateValue checks a Date field's flag value and returns what the body
+// carries for it: the day as given, or nil (JSON null) for the clear.
+func crudDateValue(f crudField, v string, update bool) (interface{}, error) {
+	if v == "" && f.Clearable && update {
+		return nil, nil
+	}
+	day, err := time.Parse(crudDateLayout, v)
+	if err != nil || day.Year() < 1000 || day.Format(crudDateLayout) != v {
+		e := validationError("--%s must be a date written YYYY-MM-DD, a day that exists (e.g. 2026-11-27): %q", f.Name, v)
+		if f.Clearable && update {
+			return nil, e.WithHint("Or pass --%s \"\" to clear it.", f.Name)
+		}
+		return nil, e
+	}
+	return v, nil
+}
+
+// forecastEventRecurrences are ForecastEventsController's recurrence values.
+var forecastEventRecurrences = []string{"none", "monthly", "yearly", "custom"}
 
 type crudEntity struct {
 	Name          string
@@ -31,8 +68,20 @@ type crudEntity struct {
 	Endpoint      string
 	Fields        []crudField
 	ListParams    []crudField
-	IDField       string // internal primary-key field (e.g. aff_campaign_id)
-	PublicIDField string // public-facing id field (e.g. aff_campaign_id_public)
+	IDField       string   // internal primary-key field (e.g. aff_campaign_id)
+	PublicIDField string   // public-facing id field (e.g. aff_campaign_id_public)
+	URLFields     []string // URL fields `list --url-contains` searches; none means no such flag
+	StatsGroupBy  string   // reports/breakdown dimension `list --with-stats` merges by IDField; "" means no such flag
+	// Check refuses what the entity's Setup page refuses and the API takes.
+	// value(name) is the field as the record will hold it: the body's, else
+	// on an update the stored record's (read once, when first asked), else
+	// "". An update runs it only when the body sets one of CheckFields, so an
+	// edit of anything else is not refused for what the record already holds.
+	Check       func(value func(name string) (string, error)) error
+	CheckFields []string
+	// ExampleFields are optional fields the create example gives too (the
+	// link Check asks for).
+	ExampleFields []string
 }
 
 // resolvePublicID treats id as a public id and returns the matching internal id
@@ -79,6 +128,11 @@ func getWithPublicFallback(c *api.Client, entity crudEntity, id string, forcePub
 	data, err := c.Get(entity.Endpoint+"/"+id, nil)
 	if err != nil && isNotFoundErr(err) {
 		if internal := resolvePublicID(c, entity, id); internal != "" {
+			// Said, not silent: public ids are short (the setup pages' rand-
+			// id-rand), so a mistyped internal id can be some other row's
+			// public id, and the caller must be able to tell which it got.
+			fmt.Fprintf(os.Stderr, "No %s has id %s; showing %s %s, whose public %s is %s.\n",
+				entity.Name, id, entity.Name, internal, entity.PublicIDField, id)
 			return c.Get(entity.Endpoint+"/"+internal, nil)
 		}
 	}
@@ -95,25 +149,242 @@ func isNotFoundErr(err error) bool {
 	return false
 }
 
-// deleteArgsValidator allows zero positional args when --ids is set, else one.
-func deleteArgsValidator(cmd *cobra.Command, args []string) error {
-	if ids, _ := cmd.Flags().GetString("ids"); strings.TrimSpace(ids) != "" {
-		return cobra.MaximumNArgs(0)(cmd, args)
+// deleteArgsValidatorN returns a cobra Args validator for delete commands whose
+// deletable id is preceded by `base` fixed positional args (0 for flat
+// resources, 1 for nested ones like rotator rules): with --ids set the id list
+// replaces the positional id, so exactly `base` args are allowed; otherwise
+// base+1.
+func deleteArgsValidatorN(base int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if ids, _ := cmd.Flags().GetString("ids"); strings.TrimSpace(ids) != "" {
+			return cobra.ExactArgs(base)(cmd, args)
+		}
+		return cobra.ExactArgs(base+1)(cmd, args)
 	}
-	return cobra.ExactArgs(1)(cmd, args)
+}
+
+// deleteDryRunFlagDesc is the shared help text for --dry-run on every delete
+// command, so the contract reads identically across the whole CLI.
+const deleteDryRunFlagDesc = "Preview what the delete would remove (record + cascade counts) without deleting"
+
+// registerDeleteFlags attaches the flag set every bulk-capable delete shares:
+// --force to skip the confirmation prompt, --ids for bulk deletes, and
+// --dry-run for a preview. noun names the entity in the --ids help.
+//
+// Every delete command goes through this or registerSingleDeleteFlags —
+// hand-rolling the set is how one of them silently loses --dry-run, which
+// bulkOrSingleDelete reads with GetBool and cannot distinguish from false.
+// DeleteFlagCoverageTest enforces that mechanically.
+func registerDeleteFlags(cmd *cobra.Command, noun string) {
+	cmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	cmd.Flags().String("ids", "", "Comma-separated "+noun+" IDs to delete in bulk")
+	cmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+}
+
+// registerSingleDeleteFlags is the same contract for a delete addressed by a
+// parent plus one key, which takes no --ids.
+func registerSingleDeleteFlags(cmd *cobra.Command) {
+	cmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	cmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+}
+
+// registerIdempotencyKeyFlag attaches --idempotency-key to a create command.
+func registerIdempotencyKeyFlag(cmd *cobra.Command) {
+	cmd.Flags().String("idempotency-key", "", "Retry-safe create: the server records the response under this key and replays it on a retry with the same key and payload instead of creating a duplicate")
+}
+
+// renderDeletePreviews fetches the server's dry-run preview for each id and
+// renders them. Previews are read-only, so no confirmation is needed.
+func renderDeletePreviews(c *api.Client, endpoint string, ids []string) error {
+	if len(ids) == 1 {
+		data, err := c.DeletePreview(endpoint + "/" + ids[0])
+		if err != nil {
+			return withDryRunHint(err)
+		}
+		render(data)
+		return nil
+	}
+
+	previews := make([]interface{}, 0, len(ids))
+	failed := 0
+	for _, id := range ids {
+		data, err := c.DeletePreview(endpoint + "/" + id)
+		if err != nil {
+			if refused := licenceRefusal(err); refused != nil {
+				// Every remaining id would meet the same 402: stop, and report
+				// it as the licence refusal (exit 6, the trial hint).
+				return fmt.Errorf("previewing the delete of %s/%s (%d of %d previewed before it; the rest not attempted): %w",
+					endpoint, id, len(previews), len(ids), refused)
+			}
+			failed++
+			fmt.Fprintf(os.Stderr, "Failed to preview delete for %s: %v\n", id, withDryRunHint(err))
+			continue
+		}
+		obj, perr := parseDataObject(data)
+		if perr != nil {
+			failed++
+			fmt.Fprintf(os.Stderr, "Failed to parse preview for %s: %v\n", id, perr)
+			continue
+		}
+		previews = append(previews, obj)
+	}
+	encoded, err := json.Marshal(map[string]interface{}{"data": previews})
+	if err != nil {
+		// Rendering nil prints nothing, and with failed == 0 the command
+		// would exit 0 having shown the user no previews at all.
+		return fmt.Errorf("encoding delete previews: %w", err)
+	}
+	render(encoded)
+	if failed > 0 {
+		return partialFailureError("failed to preview %d of %d deletes", failed, len(ids))
+	}
+	return nil
+}
+
+// stageDeletes records each delete as a staged change (global --staged mode)
+// and renders the change envelopes. Staging is a proposal, not a deletion,
+// so no confirmation is asked; the delete happens when someone runs
+// `p202 change apply <change_id>`.
+func stageDeletes(c *api.Client, endpoint string, ids []string) error {
+	if len(ids) == 1 {
+		data, err := c.DeleteReturning(endpoint + "/" + ids[0])
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	}
+
+	changes := make([]interface{}, 0, len(ids))
+	changeIDs := make([]string, 0, len(ids)) // named in a stop, which renders no envelopes
+	failed := 0
+	for _, id := range ids {
+		data, err := c.DeleteReturning(endpoint + "/" + id)
+		if err != nil {
+			if refused := licenceRefusal(err); refused != nil {
+				// Every remaining id would meet the same 402: stop with the
+				// licence refusal, naming the proposals already staged.
+				staged := ""
+				if len(changeIDs) > 0 {
+					staged = " as " + strings.Join(changeIDs, ", ")
+				}
+				return fmt.Errorf("staging the delete of %s/%s (%d of %d staged before it%s; the rest not attempted): %w",
+					endpoint, id, len(changes), len(ids), staged, refused)
+			}
+			failed++
+			fmt.Fprintf(os.Stderr, "Failed to stage delete for %s: %v\n", id, err)
+			continue
+		}
+		obj, perr := parseDataObject(data)
+		if perr != nil {
+			failed++
+			fmt.Fprintf(os.Stderr, "Failed to parse staged change for %s: %v\n", id, perr)
+			continue
+		}
+		changes = append(changes, obj)
+		if cid, _ := obj["change_id"].(string); cid != "" {
+			changeIDs = append(changeIDs, cid)
+		}
+	}
+	encoded, err := json.Marshal(map[string]interface{}{"data": changes})
+	if err != nil {
+		// The change ids are the only way to apply these proposals; losing
+		// them silently would strand the whole batch.
+		return fmt.Errorf("encoding staged changes: %w", err)
+	}
+	render(encoded)
+	if failed > 0 {
+		return partialFailureError("failed to stage %d of %d deletes", failed, len(ids))
+	}
+	return nil
+}
+
+// withDryRunHint adds the recovery step for servers that predate dry-run
+// support (their 400/422 mentions dry_run) while leaving other errors as-is.
+func withDryRunHint(err error) error {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && (apiErr.Status == 400 || apiErr.Status == 422) && strings.Contains(strings.ToLower(apiErr.Message), "dry_run") {
+		return withHint(err, "This server or endpoint has no delete preview (`p202 system version`; capabilities lists features.delete_dry_run). Drop --dry-run to perform the delete.")
+	}
+	return err
 }
 
 // bulkOrSingleDelete deletes one id (positional) or many (--ids), honoring
 // --force, against endpoint/<id>. Shared so every delete has the same bulk
 // semantics. noun is used in confirmation and summary messages.
+
+// deleteArgsValidator allows zero positional args when --ids is set, else one.
+var deleteArgsValidator = deleteArgsValidatorN(0)
+
+// deleteSpec describes what varies between the CLI's delete commands: the URL
+// for one id, and the wording. Everything else — id validation, the --ids bulk
+// path, confirmation, partial-failure accounting, which stream each message
+// goes to — is shared in runBulkOrSingleDelete. These used to be five
+// hand-rolled copies, and the copies are exactly where the mechanics drifted
+// (prompts on stdout, unvalidated ids); the wording is the only part that was
+// ever meant to differ.
+type deleteSpec struct {
+	endpoint    string // collection path; one record is endpoint + "/" + id
+	noun        string // singular, e.g. "rotator"
+	plural      string // bulk prompts and summaries, e.g. "rotators"
+	cascadeOne  string // single-confirm suffix, e.g. " and all its rules"
+	cascadeMany string // bulk-confirm suffix, e.g. " and all their rules"
+	context     string // parent-resource suffix, e.g. " from rotator 7"
+	// idsHintText overrides the --ids recovery hint for commands whose ids are
+	// not discoverable via a plain `<entity> list` (rotator rules, for example).
+	idsHintText string
+	// verb and past name the act in the prompt and the summary, "delete" and
+	// "deleted" when empty. An LTV customer is erased, not deleted (its
+	// personal data goes, its revenue stays), and the question the person
+	// answers has to say which.
+	verb, past string
+	// explain, when set, adds the recovery step to a delete the server
+	// refused (a company with customers attached is merged, not deleted).
+	explain func(error) error
+}
+
+func (s deleteSpec) verbs() (string, string) {
+	if s.verb == "" {
+		return "delete", "deleted"
+	}
+	return s.verb, s.past
+}
+
+func (s deleteSpec) explained(err error) error {
+	if err == nil || s.explain == nil {
+		return err
+	}
+	return s.explain(err)
+}
+
+// idsHint returns the recovery hint shown when --ids resolves to nothing.
+func (s deleteSpec) idsHint() string {
+	if s.idsHintText != "" {
+		return s.idsHintText
+	}
+	return "Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`)."
+}
+
+// bulkOrSingleDelete is the flat-resource convenience wrapper around
+// runBulkOrSingleDelete for callers with no special wording.
 func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
+	return runBulkOrSingleDelete(cmd, cmd.Flags().Args(), deleteSpec{
+		endpoint: endpoint,
+		noun:     noun,
+		plural:   noun + "s",
+	})
+}
+
+// runBulkOrSingleDelete deletes one id (from args) or many (--ids), honoring
+// --force. Prompts and cancellations go to stderr so piped stdout stays data.
+func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) error {
 	c, err := api.NewFromConfig()
 	if err != nil {
 		return err
 	}
 	force, _ := cmd.Flags().GetBool("force")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	idsFlag, _ := cmd.Flags().GetString("ids")
-	args := cmd.Flags().Args()
 
 	if strings.TrimSpace(idsFlag) != "" {
 		ids, perr := parseIDList(idsFlag)
@@ -121,39 +392,256 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 			return perr
 		}
 		if len(ids) == 0 {
-			return fmt.Errorf("--ids requires at least one ID")
+			return validationError("--ids requires at least one ID").WithHint("%s", spec.idsHint())
 		}
-		if !force && !confirmPrompt("Delete %d %ss?", len(ids), noun) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
+		if dryRun {
+			return renderDeletePreviews(c, spec.endpoint, ids)
+		}
+		if api.StagedMode() {
+			return stageDeletes(c, spec.endpoint, ids)
+		}
+		verb, past := spec.verbs()
+		if !force {
+			ok, err := confirmAction(cmd, "%s %d %s%s%s?", capitalize(verb), len(ids), spec.plural, spec.cascadeMany, spec.context)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 		deleted, failed := 0, 0
 		for _, id := range ids {
-			if err := c.Delete(endpoint + "/" + id); err != nil {
+			if err := c.Delete(spec.endpoint + "/" + id); err != nil {
+				if refused := licenceRefusal(err); refused != nil {
+					// Every remaining id would meet the same 402: stop, and
+					// report it as the licence refusal (exit 6, the trial hint).
+					return fmt.Errorf("deleting %s %s%s (%d of %d deleted before it; the rest not attempted): %w",
+						spec.noun, id, spec.context, deleted, len(ids), refused)
+				}
 				failed++
-				fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", noun, id, err)
+				fmt.Fprintf(os.Stderr, "Failed to %s %s %s%s: %v\n", verb, spec.noun, id, spec.context, err)
+				if spec.explain != nil {
+					if hint := hintFor(spec.explained(err)); hint != "" {
+						fmt.Fprintf(os.Stderr, "  Hint: %s\n", hint)
+					}
+				}
 				continue
 			}
 			deleted++
 		}
-		output.Success("Deleted %d of %d %ss.", deleted, len(ids), noun)
+		output.Success("%s %d of %d %s%s.", capitalize(past), deleted, len(ids), spec.plural, spec.context)
 		if failed > 0 {
-			return partialFailureError("failed to delete %d %ss", failed, noun)
+			return partialFailureError("failed to %s %d %s", verb, failed, spec.plural)
 		}
 		return nil
 	}
 
 	if len(args) != 1 {
-		return fmt.Errorf("provide a single id or use --ids")
+		return validationError("provide a single id or use --ids").WithHint("Pass one id as the argument, or several with --ids 12,13,14.")
 	}
-	if !force && !confirmPrompt("Delete %s %s?", noun, args[0]) {
-		fmt.Fprintln(os.Stderr, "Cancelled.")
-		return nil
-	}
-	if err := c.Delete(endpoint + "/" + args[0]); err != nil {
+	// Validate before previewing or staging: a preview is still a DELETE
+	// request, so a blank or non-numeric id must not reach the server on any
+	// of these paths.
+	id, err := validateID(args[0])
+	if err != nil {
 		return err
 	}
-	output.Success("%s %s deleted.", capitalize(noun), args[0])
+	if dryRun {
+		return spec.explained(renderDeletePreviews(c, spec.endpoint, []string{id}))
+	}
+	if api.StagedMode() {
+		return stageDeletes(c, spec.endpoint, []string{id})
+	}
+	verb, past := spec.verbs()
+	if !force {
+		ok, err := confirmAction(cmd, "%s %s %s%s%s?", capitalize(verb), spec.noun, id, spec.cascadeOne, spec.context)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
+		}
+	}
+	if err := c.Delete(spec.endpoint + "/" + id); err != nil {
+		return spec.explained(err)
+	}
+	output.Success("%s %s %s%s.", capitalize(spec.noun), id, past, spec.context)
+	return nil
+}
+
+// linkTokens are the tokens a tracking link carries after t202id
+// (Prosper202\Click\TrackingLinkVariables::BUILT_IN), in its order.
+var linkTokens = []string{"c1", "c2", "c3", "c4", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "t202ref", "t202b", "t202kw"}
+
+// registerLinkTokenFlags gives a command that prints tracking links a flag
+// per token, as Get Links has a box per token: the value (usually the
+// traffic source's macro, e.g. --t202kw '{keyword}') is written into the
+// link as given.
+func registerLinkTokenFlags(cmd *cobra.Command) {
+	for _, token := range linkTokens {
+		cmd.Flags().String(token, "", "Value for "+token+" in the link, as given (e.g. your traffic source's macro); default: the traffic source's own variable")
+	}
+}
+
+// linkTokenParams are the token flags the caller set, as query parameters,
+// held to the server's rule (TrackingLinkVariables::problem) before any
+// request: create-with-url would otherwise create the tracker and then fail
+// on its link, and a retry of that creates a second one. The value is trimmed
+// as the server trims it; a flag left unset is the token's default.
+func linkTokenParams(cmd *cobra.Command) (map[string]string, error) {
+	params := map[string]string{}
+	for _, token := range linkTokens {
+		raw, _ := cmd.Flags().GetString(token)
+		if raw == "" {
+			continue
+		}
+		v := strings.Trim(raw, " \t\n\r\x00\x0b")
+		if v == "" {
+			return nil, validationError("--%s was given no value", token).
+				WithHint("Omit --%s for the traffic source's own variable, or give the value to write into the link.", token)
+		}
+		if strings.ContainsAny(v, "&#?") || strings.IndexFunc(v, func(r rune) bool { return r <= ' ' || r == 0x7f }) >= 0 {
+			return nil, validationError("--%s %q cannot go into a link: it must not contain &, #, ?, spaces or control characters, because it is written into the link as given", token, raw).
+				WithHint("Give the traffic source's macro itself, e.g. --t202kw '{keyword}'; the source substitutes it when it sends the click.")
+		}
+		if len(v) > 255 {
+			return nil, validationError("--%s is %d bytes; a link token takes at most 255", token, len(v))
+		}
+		params[token] = v
+	}
+	return params, nil
+}
+
+// idSources names the command that lists each kind of id a flag takes, so a
+// flag's help says where its value comes from instead of leaving an agent
+// to guess (and to try a public id from a tracking link).
+var idSources = map[string]string{
+	"aff_campaign_id": "p202 campaign list",
+	"aff_network_id":  "p202 aff-network list",
+	"ppc_network_id":  "p202 ppc-network list",
+	"ppc_account_id":  "p202 ppc-account list",
+	"landing_page_id": "p202 landing-page list",
+	"text_ad_id":      "p202 text-ad list",
+	"rotator_id":      "p202 rotator list",
+}
+
+// withIDSource adds the list command an id comes from to an id flag's help,
+// unless the help already names a command.
+func withIDSource(name, desc string) string {
+	if src, ok := idSources[name]; ok && !strings.Contains(desc, "p202 ") {
+		return desc + " (from `" + src + "`)"
+	}
+	return desc
+}
+
+// crudCreateExample is a create with every required flag, the ids marked
+// with the command that lists them.
+func crudCreateExample(entity crudEntity) string {
+	line := "  p202 " + entity.Name + " create"
+	for _, f := range entity.Fields {
+		if !f.Required && !containsString(entity.ExampleFields, f.Name) {
+			continue
+		}
+		value := "<" + strings.TrimPrefix(strings.TrimPrefix(f.Name, "aff_"), "ppc_") + ">"
+		if src, ok := idSources[f.Name]; ok {
+			value = "<id from " + src + ">"
+		} else if f.Enum != nil {
+			value = f.Enum[0]
+		}
+		line += " --" + strings.ReplaceAll(f.Name, "_", "-") + " " + value
+	}
+	return line + " --json"
+}
+
+// crudUpdateExample changes one field; the others are left as they are.
+func crudUpdateExample(entity crudEntity) string {
+	if len(entity.Fields) == 0 {
+		return ""
+	}
+	f := entity.Fields[0]
+	value := "<new value>"
+	if f.Enum != nil {
+		value = f.Enum[0]
+	}
+	return "  p202 " + entity.Name + " update <id from p202 " + entity.Name + " list> --" + strings.ReplaceAll(f.Name, "_", "-") + " " + value + " --json\n" +
+		"  (only the flags given are sent; the rest of the " + entity.Name + " is unchanged)"
+}
+
+// requireCRUDFields refuses a create missing a field the controller
+// requires, before any request: the server would answer 422 for it anyway,
+// after a round trip, and the hint here can say where the value comes from.
+// Every missing flag is named at once, so a caller fixes them in one retry
+// rather than one per run.
+func requireCRUDFields(entity crudEntity, body map[string]string) error {
+	var missing, sources []string
+	for _, f := range entity.Fields {
+		if f.Required && body[f.Name] == "" {
+			missing = append(missing, "--"+f.Name)
+			if src, ok := idSources[f.Name]; ok {
+				sources = append(sources, "--"+f.Name+" takes an id from `"+src+"`")
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	msg := "required flag " + missing[0] + " is missing"
+	if len(missing) > 1 {
+		msg = "required flags " + strings.Join(missing, ", ") + " are missing"
+	}
+	hint := fmt.Sprintf("`p202 %s create --help` shows an example with every required flag.", entity.Name)
+	if len(sources) > 0 {
+		hint = strings.Join(sources, "; ") + ". " + hint
+	}
+	return validationError("%s", msg).WithHint("%s", hint)
+}
+
+func bodySetsAny(body map[string]interface{}, names []string) bool {
+	for _, name := range names {
+		if _, ok := body[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// landingPageTypes are Setup › Landing Pages' two kinds of page: simple (0)
+// and advanced (1).
+var landingPageTypes = []string{"0", "1"}
+
+// textAdTypes are Setup › Text Ads' two kinds of ad: one a campaign's links
+// offer (0) and one an advanced landing page's links offer (1).
+var textAdTypes = []string{"0", "1"}
+
+// checkTextAdLink is Setup › Text Ads' rule: a campaign's ad names its
+// campaign, an advanced landing page's ad its page. The API takes 0 for
+// either link whatever the type, and Get Links never offers an ad that
+// names neither, so that ad was saved with a 201 and could not be used.
+func checkTextAdLink(value func(name string) (string, error)) error {
+	typ, err := value("text_ad_type")
+	if err != nil {
+		return err
+	}
+	field, refusal, hint := "aff_campaign_id",
+		"a campaign's text ad (--text-ad-type 0, the default) needs --aff-campaign-id, the campaign whose links offer it",
+		"Take the id from `p202 campaign list`. An advanced landing page's ad is --text-ad-type 1 with --landing-page-id instead."
+	if typ == "1" {
+		field, refusal, hint = "landing_page_id",
+			"an advanced landing page's text ad (--text-ad-type 1) needs --landing-page-id, the advanced landing page whose links offer it",
+			"Take the id of an advanced page (landing_page_type 1) from `p202 landing-page list`. A campaign's ad is --text-ad-type 0 with --aff-campaign-id instead."
+	}
+	id, err := value(field)
+	if err != nil {
+		return err
+	}
+	// A value that is not a whole number is the API's to refuse, naming it.
+	n, perr := strconv.Atoi(strings.TrimSpace(id))
+	if id == "" || (perr == nil && n == 0) {
+		return validationError("%s", refusal).WithHint("%s", hint)
+	}
 	return nil
 }
 
@@ -245,7 +733,7 @@ func parseDataArray(data []byte) ([]map[string]interface{}, error) {
 	}
 	rawItems, ok := parsed["data"].([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("response did not include a data array")
+		return nil, withHint(fmt.Errorf("response did not include a data array"), "The server returned an unexpected shape; check the API version with `p202 system version` and that the URL points at the API root.")
 	}
 	items := make([]map[string]interface{}, 0, len(rawItems))
 	for _, raw := range rawItems {
@@ -256,6 +744,23 @@ func parseDataArray(data []byte) ([]map[string]interface{}, error) {
 		items = append(items, obj)
 	}
 	return items, nil
+}
+
+// stagedChangeID reports the server-issued change id when data is the 202
+// staged-change envelope a write returns under --staged, rather than the
+// created record. Compound commands (create something, then use it) must stop
+// there: nothing exists yet, so the follow-up step would operate on a record
+// that is still a proposal.
+func stagedChangeID(data []byte) (string, bool) {
+	obj, err := parseDataObject(data)
+	if err != nil {
+		return "", false
+	}
+	id, _ := obj["change_id"].(string)
+	if !strings.HasPrefix(id, "chg_") {
+		return "", false
+	}
+	return id, true
 }
 
 func extractIntField(obj map[string]interface{}, keys ...string) (int, bool) {
@@ -271,6 +776,10 @@ func extractIntField(obj map[string]interface{}, keys ...string) (int, bool) {
 			return v, true
 		case int64:
 			return int(v), true
+		case json.Number: // decoded with UseNumber
+			if parsed, err := strconv.Atoi(v.String()); err == nil {
+				return parsed, true
+			}
 		case string:
 			if parsed, err := strconv.Atoi(v); err == nil {
 				return parsed, true
@@ -290,17 +799,48 @@ func cloneMutableFields(source map[string]interface{}, fields []crudField) map[s
 	return out
 }
 
+// requireID rejects a blank positional id. Interpolating one produced a request
+// against the collection endpoint itself (DELETE users/) rather than against a
+// record — a very different operation from the one the user asked for.
+func requireID(raw string) (string, error) {
+	id := strings.TrimSpace(raw)
+	if id == "" {
+		return "", validationError("an ID is required")
+	}
+	return id, nil
+}
+
+// validateID additionally enforces, for a single positional id, the same numeric
+// rule parseIDList applies to every id in --ids. Used by the mutating commands;
+// `get` uses requireID instead because it also accepts public ids.
+func validateID(raw string) (string, error) {
+	id, err := requireID(raw)
+	if err != nil {
+		return "", err
+	}
+	if _, err := strconv.Atoi(id); err != nil {
+		return "", validationError("invalid ID %q: must be a numeric value", id)
+	}
+	return id, nil
+}
+
 func parseIDList(raw string) ([]string, error) {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	seen := map[string]bool{}
 	for _, part := range parts {
 		id := strings.TrimSpace(part)
-		if id == "" || seen[id] {
+		if id == "" {
 			continue
 		}
-		if _, err := strconv.Atoi(id); err != nil {
-			return nil, fmt.Errorf("invalid ID %q: must be a numeric value", id)
+		n, err := strconv.Atoi(id)
+		if err != nil {
+			return nil, validationError("invalid ID %q: must be a numeric value", id).WithHint("Use the internal numeric id from the matching `... list`; public ids from tracking links need --public where supported.")
+		}
+		// Canonical form, so "007" matches the API's 7 in callers that compare ids.
+		id = strconv.Itoa(n)
+		if seen[id] {
+			continue
 		}
 		seen[id] = true
 		out = append(out, id)
@@ -387,6 +927,33 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("list", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
+			urlContains := ""
+			if len(entity.URLFields) > 0 {
+				urlContains, _ = cmd.Flags().GetString("url-contains")
+			}
+			var statsParams map[string]string
+			minClicks := 0
+			if entity.StatsGroupBy != "" {
+				var err error
+				if statsParams, minClicks, err = listStatsParams(cmd, entity); err != nil {
+					return err
+				}
+			}
+			// Client-side filters read every page, so paging flags make no sense with them.
+			clientFilter := ""
+			if urlContains != "" {
+				clientFilter = "--url-contains"
+			} else if minClicks > 0 {
+				clientFilter = "--min-clicks"
+			}
+			if clientFilter != "" {
+				for _, paging := range []string{"page", "limit", "offset"} {
+					if cmd.Flags().Changed(paging) {
+						return validationError("%s searches every page, so it cannot be combined with --%s", clientFilter, paging).
+							WithHint("Drop --page/--limit/--offset; every match is returned.")
+					}
+				}
+			}
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -413,9 +980,12 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 			}
 			allRows, _ := cmd.Flags().GetBool("all")
+			if clientFilter != "" {
+				allRows = true
+			}
 			resolveNames, _ := cmd.Flags().GetBool("resolve-names")
 			if resolveNames && !envFlagEnabled("CLI_ENABLE_RESOLVE_NAMES", true) {
-				return fmt.Errorf("--resolve-names is disabled (set CLI_ENABLE_RESOLVE_NAMES=1 to enable)")
+				return validationError("--resolve-names is disabled").WithHint("Set CLI_ENABLE_RESOLVE_NAMES=1 in the environment to enable it, or drop the flag.")
 			}
 
 			if allRows {
@@ -423,12 +993,26 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				if urlContains != "" {
+					matched := make([]map[string]interface{}, 0, len(rows))
+					for _, row := range rows {
+						if rowMatchesURL(row, entity.URLFields, urlContains) {
+							matched = append(matched, row)
+						}
+					}
+					rows = matched
+				}
+				if statsParams != nil {
+					if rows, err = addListStats(c, entity, rows, statsParams, minClicks); err != nil {
+						return err
+					}
+				}
 				if resolveNames {
 					if err := resolveForeignKeyNames(c, rows); err != nil {
 						return err
 					}
 				}
-				encoded, _ := json.Marshal(map[string]interface{}{
+				encoded, err := json.Marshal(map[string]interface{}{
 					"data": rows,
 					"pagination": map[string]interface{}{
 						"total":  len(rows),
@@ -436,6 +1020,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 						"offset": 0,
 					},
 				})
+				if err != nil {
+					return fmt.Errorf("encoding output: %w", err)
+				}
 				render(encoded)
 				return nil
 			}
@@ -453,13 +1040,20 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if resolveNames {
+			if resolveNames || statsParams != nil {
 				rows, err := parseDataArray(data)
 				if err != nil {
 					return err
 				}
-				if err := resolveForeignKeyNames(c, rows); err != nil {
-					return err
+				if statsParams != nil {
+					if rows, err = addListStats(c, entity, rows, statsParams, 0); err != nil {
+						return err
+					}
+				}
+				if resolveNames {
+					if err := resolveForeignKeyNames(c, rows); err != nil {
+						return err
+					}
 				}
 				var parsed map[string]interface{}
 				resp := map[string]interface{}{"data": rows}
@@ -468,7 +1062,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 						resp["pagination"] = pg
 					}
 				}
-				data, _ = json.Marshal(resp)
+				if data, err = json.Marshal(resp); err != nil {
+					return fmt.Errorf("encoding output: %w", err)
+				}
 			}
 			render(data)
 			return nil
@@ -479,8 +1075,17 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	listCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	listCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 	listCmd.Flags().Bool("resolve-names", false, "Resolve foreign key IDs to names")
+	if len(entity.URLFields) > 0 {
+		listCmd.Flags().String("url-contains", "", fmt.Sprintf("Only %s with a URL containing this text (case-insensitive; searches every page; fields: %s)", entity.Name+"s", strings.Join(entity.URLFields, ", ")))
+	}
+	if entity.StatsGroupBy != "" {
+		registerListStatsFlags(listCmd, entity)
+	}
 	for _, p := range entity.ListParams {
-		listCmd.Flags().String(p.Name, "", p.Desc)
+		listCmd.Flags().String(p.Name, "", withIDSource(p.Name, p.Desc))
+		if p.Enum != nil {
+			enumFlag(listCmd, p.Name, newEnum(p.Enum))
+		}
 		for _, alias := range p.Aliases {
 			listCmd.Flags().String(alias, "", p.Desc+" (legacy alias)")
 			_ = listCmd.Flags().MarkHidden(alias)
@@ -500,8 +1105,12 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			id, err := requireID(args[0])
+			if err != nil {
+				return err
+			}
 			forcePublic, _ := cmd.Flags().GetBool("public")
-			data, err := getWithPublicFallback(c, entity, args[0], forcePublic)
+			data, err := getWithPublicFallback(c, entity, id, forcePublic)
 			if err != nil {
 				return err
 			}
@@ -515,60 +1124,39 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 
 	// create
 	createCmd := &cobra.Command{
-		Use:   "create",
-		Short: fmt.Sprintf("Create a new %s", entity.Name),
+		Use:     "create",
+		Short:   fmt.Sprintf("Create a new %s", entity.Name),
+		Example: crudCreateExample(entity),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("create", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			c, err := api.NewFromConfig()
-			if err != nil {
-				return err
-			}
 			body := map[string]string{}
 			for _, f := range entity.Fields {
 				if v := getStringFlagOrDefault(cmd, "crud", f.Name); v != "" {
 					body[f.Name] = v
 				}
 			}
-			for _, f := range entity.Fields {
-				if f.Required && body[f.Name] == "" {
-					return fmt.Errorf("required flag --%s is missing", f.Name)
-				}
-			}
-			data, err := c.Post(entity.Endpoint, body)
-			if err != nil {
+			if err := requireCRUDFields(entity, body); err != nil {
 				return err
 			}
-			render(data)
-			return nil
-		},
-	}
-	for _, f := range entity.Fields {
-		createCmd.Flags().String(f.Name, "", f.Desc)
-	}
-
-	// update
-	updateCmd := &cobra.Command{
-		Use:   "update <id>",
-		Short: fmt.Sprintf("Update a %s", entity.Name),
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
-			done := metrics.Timer("update", entity.Endpoint)
-			defer func() { done(retErr == nil, errString(retErr)) }()
+			for _, f := range entity.Fields {
+				if v, ok := body[f.Name]; ok && f.Date {
+					if _, err := crudDateValue(f, v, false); err != nil {
+						return err
+					}
+				}
+			}
+			if entity.Check != nil {
+				if err := entity.Check(func(name string) (string, error) { return body[name], nil }); err != nil {
+					return err
+				}
+			}
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
 			}
-			body := map[string]string{}
-			for _, f := range entity.Fields {
-				if v, _ := cmd.Flags().GetString(f.Name); v != "" {
-					body[f.Name] = v
-				}
-			}
-			if len(body) == 0 {
-				return fmt.Errorf("no fields specified; pass at least one flag to update")
-			}
-			data, err := c.Put(entity.Endpoint+"/"+args[0], body)
+			idemKey, _ := cmd.Flags().GetString("idempotency-key")
+			data, err := c.PostIdempotent(entity.Endpoint, body, idemKey)
 			if err != nil {
 				return err
 			}
@@ -577,227 +1165,305 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		},
 	}
 	for _, f := range entity.Fields {
-		updateCmd.Flags().String(f.Name, "", f.Desc)
+		desc := withIDSource(f.Name, f.Desc)
+		if f.Required {
+			desc += " (required)"
+		}
+		createCmd.Flags().String(f.Name, "", desc)
+		if f.Enum != nil {
+			enumFlag(createCmd, f.Name, newEnum(f.Enum))
+		}
+	}
+	registerIdempotencyKeyFlag(createCmd)
+
+	// update
+	updateCmd := &cobra.Command{
+		Use:     "update <id>",
+		Short:   fmt.Sprintf("Update a %s", entity.Name),
+		Example: crudUpdateExample(entity),
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			done := metrics.Timer("update", entity.Endpoint)
+			defer func() { done(retErr == nil, errString(retErr)) }()
+			body := map[string]interface{}{}
+			for _, f := range entity.Fields {
+				// Changed, not "non-empty": a Clearable field given "" is a
+				// deliberate clear, and every other field refuses "" before
+				// this runs (refuseEmptyStringFlags).
+				if !cmd.Flags().Changed(f.Name) {
+					continue
+				}
+				v, _ := cmd.Flags().GetString(f.Name)
+				if !f.Date {
+					body[f.Name] = v
+					continue
+				}
+				day, err := crudDateValue(f, v, true)
+				if err != nil {
+					return err
+				}
+				body[f.Name] = day
+			}
+			if len(body) == 0 {
+				return validationError("no fields specified; pass at least one flag to update")
+			}
+			id, err := validateID(args[0])
+			if err != nil {
+				return err
+			}
+			var c *api.Client
+			connect := func() (*api.Client, error) {
+				if c == nil {
+					var err error
+					if c, err = api.NewFromConfig(); err != nil {
+						return nil, err
+					}
+				}
+				return c, nil
+			}
+			if entity.Check != nil && bodySetsAny(body, entity.CheckFields) {
+				var stored map[string]interface{}
+				value := func(name string) (string, error) {
+					if v, ok := body[name]; ok {
+						s, _ := v.(string)
+						return s, nil
+					}
+					if stored == nil {
+						cl, err := connect()
+						if err != nil {
+							return "", err
+						}
+						data, err := cl.Get(entity.Endpoint+"/"+id, nil)
+						if err != nil {
+							return "", err
+						}
+						if stored, err = parseDataObject(data); err != nil {
+							return "", fmt.Errorf("reading %s %s: %w", entity.Name, id, err)
+						}
+					}
+					v, ok := stored[name]
+					if !ok {
+						// "" would read as "none" and decide the check.
+						return "", fmt.Errorf("%s %s as the API answered it has no %s, so this update cannot be checked", entity.Name, id, name)
+					}
+					return scalarString(v), nil
+				}
+				if err := entity.Check(value); err != nil {
+					return err
+				}
+			}
+			if _, err := connect(); err != nil {
+				return err
+			}
+			data, err := c.Put(entity.Endpoint+"/"+id, body)
+			if err != nil {
+				return err
+			}
+			render(data)
+			return nil
+		},
+	}
+	for _, f := range entity.Fields {
+		desc := withIDSource(f.Name, f.Desc)
+		if f.Clearable {
+			desc += " (\"\" clears it)"
+		}
+		updateCmd.Flags().String(f.Name, "", desc)
+		if f.Enum != nil {
+			enumFlag(updateCmd, f.Name, newEnum(f.Enum))
+		}
+		if f.Clearable {
+			allowEmpty(updateCmd, f.Name)
+		}
 	}
 
 	// delete
 	deleteCmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: fmt.Sprintf("Delete a %s", entity.Name),
-		Args: func(cmd *cobra.Command, args []string) error {
-			idsFlag, _ := cmd.Flags().GetString("ids")
-			if strings.TrimSpace(idsFlag) != "" {
-				return cobra.MaximumNArgs(0)(cmd, args)
-			}
-			return cobra.ExactArgs(1)(cmd, args)
-		},
+		Args:  deleteArgsValidator,
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("delete", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			c, err := api.NewFromConfig()
-			if err != nil {
-				return err
-			}
-			idsFlag, _ := cmd.Flags().GetString("ids")
-			if strings.TrimSpace(idsFlag) != "" {
-				idList, parseErr := parseIDList(idsFlag)
-				if parseErr != nil {
-					return parseErr
-				}
-				if len(idList) == 0 {
-					return fmt.Errorf("--ids requires at least one ID")
-				}
-
-				force, _ := cmd.Flags().GetBool("force")
-				if !force && !confirmPrompt("Delete %d %s?", len(idList), entity.Plural) {
-					fmt.Println("Cancelled.")
-					return nil
-				}
-
-				deleted := 0
-				failed := 0
-				for _, id := range idList {
-					if err := c.Delete(entity.Endpoint + "/" + id); err != nil {
-						failed++
-						fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", entity.Name, id, err)
-						continue
-					}
-					deleted++
-				}
-				output.Success("Deleted %d of %d %s.", deleted, len(idList), entity.Plural)
-				if failed > 0 {
-					return partialFailureError("failed to delete %d %s", failed, entity.Plural)
-				}
-				return nil
-			}
-
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %s %s?", entity.Name, args[0]) {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-			if err := c.Delete(entity.Endpoint + "/" + args[0]); err != nil {
-				return err
-			}
-			output.Success("%s %s deleted.", capitalize(entity.Name), args[0])
-			return nil
+			return runBulkOrSingleDelete(cmd, args, deleteSpec{
+				endpoint: entity.Endpoint,
+				noun:     entity.Name,
+				plural:   entity.Plural,
+			})
 		},
 	}
-	deleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	deleteCmd.Flags().String("ids", "", "Comma-separated IDs to delete in bulk")
+	registerDeleteFlags(deleteCmd, entity.Name)
 
 	parentCmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 	rootCmd.AddCommand(parentCmd)
 	return parentCmd
 }
 
+// crudEntities are the entities registerCRUD builds commands for.
+// TestCRUDFlagsMatchTheirControllers reads each one's API controller:
+// every flag must be a field the controller writes, and Required must be
+// what the controller requires, because the API drops an unknown field
+// without a word — five flags here once reported success and saved nothing.
+var crudEntities = []crudEntity{
+	{
+		Name:          "campaign",
+		Plural:        "campaigns (affiliate offers with URLs, payouts, and postback settings)",
+		Endpoint:      "campaigns",
+		IDField:       "aff_campaign_id",
+		PublicIDField: "aff_campaign_id_public",
+		URLFields:     campaignURLFields,
+		StatsGroupBy:  "campaign",
+		Fields: []crudField{
+			{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
+			{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
+			{Name: "aff_campaign_url_2", Desc: "Offer URL 2 (used with --aff-campaign-rotate 1)", Clearable: true},
+			{Name: "aff_campaign_url_3", Desc: "Offer URL 3", Clearable: true},
+			{Name: "aff_campaign_url_4", Desc: "Offer URL 4", Clearable: true},
+			{Name: "aff_campaign_url_5", Desc: "Offer URL 5", Clearable: true},
+			{Name: "aff_campaign_payout", Desc: "Default payout", Required: true},
+			{Name: "aff_campaign_currency", Desc: "Currency code (e.g. USD)"},
+			{Name: "aff_campaign_foreign_payout", Desc: "Foreign currency payout"},
+			{Name: "aff_network_id", Desc: "Category (affiliate network) id, from `p202 aff-network list`", Required: true},
+			{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (1) or not (0)", Enum: binaryValues},
+			{Name: "aff_campaign_rotate", Desc: "Enable rotation (1) or not (0)", Enum: binaryValues},
+			{Name: "payout_mode", Desc: "How conversions set a click's value, replace (latest payout, default) or accumulate (sum)", Enum: []string{"replace", "accumulate"}},
+			{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)", Enum: binaryValues},
+			{Name: "app_registration_id", Desc: "The Android app registration this campaign's store links install (`p202 app list --platform android`; 0 unlinks). An install of another app on its click is foreign_click"},
+			{Name: "attribution_model_id", Desc: "The attribution model this campaign's conversions are credited with, overriding the account default (`p202 attribution model list`; 0 returns it to the default)"},
+		},
+		ListParams: []crudField{
+			{
+				Name:     "aff_network_id",
+				QueryKey: "filter[aff_network_id]",
+				Desc:     "Filter by affiliate network ID",
+				Aliases:  []string{"filter[aff_network_id]"},
+			},
+		},
+	},
+	{
+		Name:     "aff-network",
+		Aliases:  []string{"category"},
+		Plural:   "categories (affiliate networks)",
+		Endpoint: "aff-networks",
+		Fields: []crudField{
+			{Name: "aff_network_name", Desc: "Network name", Required: true},
+			{Name: "dni_network_id", Desc: "DNI network ID"},
+		},
+	},
+	{
+		Name:     "ppc-network",
+		Aliases:  []string{"traffic-network"},
+		Plural:   "traffic source networks (PPC networks)",
+		Endpoint: "ppc-networks",
+		Fields: []crudField{
+			{Name: "ppc_network_name", Desc: "Network name", Required: true},
+		},
+	},
+	{
+		Name:     "ppc-account",
+		Aliases:  []string{"traffic-source"},
+		Plural:   "traffic sources (PPC accounts)",
+		Endpoint: "ppc-accounts",
+		Fields: []crudField{
+			{Name: "ppc_account_name", Desc: "Account name", Required: true},
+			{Name: "ppc_network_id", Desc: "PPC network ID", Required: true},
+			{Name: "ppc_account_default", Desc: "Set as default account (1) or not (0)", Enum: binaryValues},
+		},
+		ListParams: []crudField{
+			{Name: "ppc_network_id", QueryKey: "filter[ppc_network_id]", Desc: "Filter by PPC network ID"},
+		},
+	},
+	{
+		Name:          "tracker",
+		Plural:        "trackers (tracking links that tie a traffic source to a campaign and landing page)",
+		Endpoint:      "trackers",
+		IDField:       "tracker_id",
+		PublicIDField: "tracker_id_public",
+		Fields: []crudField{
+			{Name: "aff_campaign_id", Desc: "Campaign ID (from `p202 campaign list`); 0 for a link to a redirector (--rotator-id) or an advanced landing page", Required: true},
+			{Name: "ppc_account_id", Desc: "PPC account ID"},
+			{Name: "text_ad_id", Desc: "Text ad ID"},
+			{Name: "landing_page_id", Desc: "Landing page ID"},
+			{Name: "rotator_id", Desc: "Rotator ID"},
+			{Name: "click_cpc", Desc: "Cost per click, 0-99.99999; on update, makes the tracker CPC and clears its cost per action"},
+			{Name: "click_cpa", Desc: "Cost per action, 0-99.99999; on update, makes the tracker CPA and clears its cost per click. Not with --click-cpc"},
+			{Name: "click_cloaking", Desc: "Cloaking: 1 on, 0 off, -1 use the campaign's setting", Enum: []string{"-1", "0", "1"}},
+			{Name: "tracker_id_public", Desc: "Public tracker ID"},
+		},
+		ListParams: []crudField{
+			{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
+			{Name: "ppc_account_id", QueryKey: "filter[ppc_account_id]", Desc: "Filter by PPC account ID"},
+			{Name: "landing_page_id", QueryKey: "filter[landing_page_id]", Desc: "Filter by landing page ID"},
+			{Name: "rotator_id", QueryKey: "filter[rotator_id]", Desc: "Filter by rotator ID"},
+		},
+	},
+	{
+		Name:          "landing-page",
+		Plural:        "landing pages (pre-sell pages visitors see before the offer)",
+		Endpoint:      "landing-pages",
+		IDField:       "landing_page_id",
+		PublicIDField: "landing_page_id_public",
+		URLFields:     []string{"landing_page_url", "leave_behind_page_url"},
+		Fields: []crudField{
+			{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
+			{Name: "aff_campaign_id", Desc: "Campaign ID (from `p202 campaign list`); 0 for an advanced landing page (--landing-page-type 1), which promotes several offers", Required: true},
+			{Name: "landing_page_nickname", Desc: "Landing page nickname", Required: true},
+			{Name: "leave_behind_page_url", Desc: "Leave-behind page URL", Clearable: true},
+			{Name: "landing_page_type", Desc: "Landing page type: 0 simple (one campaign), 1 advanced (several offers; --aff-campaign-id 0)", Enum: landingPageTypes},
+		},
+		ListParams: []crudField{
+			{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
+		},
+	},
+	{
+		Name:     "text-ad",
+		Plural:   "text ads (ad creatives with headline, description, and display URL)",
+		Endpoint: "text-ads",
+		Fields: []crudField{
+			{Name: "text_ad_name", Desc: "Text ad name, up to 100 characters", Required: true},
+			{Name: "text_ad_headline", Desc: "Headline, up to 100 characters", Required: true},
+			{Name: "text_ad_description", Desc: "Description text, up to 100 characters", Required: true},
+			{Name: "text_ad_display_url", Desc: "Display URL, up to 100 characters", Required: true},
+			{Name: "aff_campaign_id", Desc: "Campaign the ad is for (--text-ad-type 0)"},
+			{Name: "landing_page_id", Desc: "Advanced landing page the ad is for (--text-ad-type 1)"},
+			{Name: "text_ad_type", Desc: "0 a campaign's ad (default; needs --aff-campaign-id), 1 an advanced landing page's (needs --landing-page-id)", Enum: textAdTypes},
+		},
+		ListParams: []crudField{
+			{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
+		},
+		Check:         checkTextAdLink,
+		CheckFields:   []string{"text_ad_type", "aff_campaign_id", "landing_page_id"},
+		ExampleFields: []string{"aff_campaign_id"},
+	},
+	{
+		Name: "forecast-event",
+		// No "event" alias: `p202 event` is the web-events command, which
+		// shadowed it, so the alias the help advertised never resolved
+		// here (TestEveryAliasResolvesToItsOwnCommand).
+		Plural:   "forecast events (holidays, promotions, anomalies that affect forecasting)",
+		Endpoint: "forecast-events",
+		Fields: []crudField{
+			{Name: "event_name", Desc: "Event name (e.g. 'Black Friday', 'Server Outage')", Required: true},
+			{Name: "event_date", Desc: "Event date (YYYY-MM-DD)", Required: true, Date: true},
+			{Name: "end_date", Desc: "End date for multi-day events (YYYY-MM-DD)", Clearable: true, Date: true},
+			{Name: "recurrence", Desc: "Recurrence", Enum: forecastEventRecurrences},
+			{Name: "impact_type", Desc: "Impact type", Enum: []string{"boost", "suppress", "neutral"}},
+			{Name: "expected_impact_pct", Desc: "Expected impact percentage (e.g. +200 for 3x boost, -50 for half)"},
+			{Name: "lead_days", Desc: "Days before event that impact ramps up"},
+			{Name: "lag_days", Desc: "Days after event that impact decays"},
+			{Name: "tags", Desc: "Comma-separated tags (e.g. 'us-holidays,retail')", Clearable: true},
+			{Name: "notes", Desc: "Freeform notes", Clearable: true},
+		},
+		ListParams: []crudField{
+			{Name: "event_name", QueryKey: "filter[event_name]", Desc: "Filter by event name"},
+			{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type", Enum: forecastEventRecurrences},
+			{Name: "tags", QueryKey: "filter[tags]", Desc: "Filter by tag"},
+		},
+	},
+}
+
 func init() {
-	entities := []crudEntity{
-		{
-			Name:     "campaign",
-			Plural:   "campaigns (affiliate offers with URLs, payouts, and postback settings)",
-			Endpoint: "campaigns",
-			Fields: []crudField{
-				{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
-				{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
-				{Name: "aff_campaign_url_2", Desc: "Offer URL 2"},
-				{Name: "aff_campaign_url_3", Desc: "Offer URL 3"},
-				{Name: "aff_campaign_url_4", Desc: "Offer URL 4"},
-				{Name: "aff_campaign_url_5", Desc: "Offer URL 5"},
-				{Name: "aff_campaign_cpc", Desc: "Cost per click"},
-				{Name: "aff_campaign_payout", Desc: "Default payout"},
-				{Name: "aff_campaign_currency", Desc: "Currency code (e.g. USD)"},
-				{Name: "aff_campaign_foreign_payout", Desc: "Foreign currency payout"},
-				{Name: "aff_network_id", Desc: "Affiliate network ID"},
-				{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (0 or 1)"},
-				{Name: "aff_campaign_rotate", Desc: "Enable rotation (0 or 1)"},
-				{Name: "aff_campaign_postback_url", Desc: "Postback URL"},
-				{Name: "aff_campaign_postback_append", Desc: "Postback append string"},
-			},
-			ListParams: []crudField{
-				{
-					Name:     "aff_network_id",
-					QueryKey: "filter[aff_network_id]",
-					Desc:     "Filter by affiliate network ID",
-					Aliases:  []string{"filter[aff_network_id]"},
-				},
-			},
-		},
-		{
-			Name:     "aff-network",
-			Aliases:  []string{"category"},
-			Plural:   "categories (affiliate networks)",
-			Endpoint: "aff-networks",
-			Fields: []crudField{
-				{Name: "aff_network_name", Desc: "Network name", Required: true},
-				{Name: "dni_network_id", Desc: "DNI network ID"},
-				{Name: "aff_network_postback_url", Desc: "Postback URL"},
-				{Name: "aff_network_postback_append", Desc: "Postback append string"},
-			},
-		},
-		{
-			Name:     "ppc-network",
-			Aliases:  []string{"traffic-network"},
-			Plural:   "traffic source networks (PPC networks)",
-			Endpoint: "ppc-networks",
-			Fields: []crudField{
-				{Name: "ppc_network_name", Desc: "Network name", Required: true},
-			},
-		},
-		{
-			Name:     "ppc-account",
-			Aliases:  []string{"traffic-source"},
-			Plural:   "traffic sources (PPC accounts)",
-			Endpoint: "ppc-accounts",
-			Fields: []crudField{
-				{Name: "ppc_account_name", Desc: "Account name", Required: true},
-				{Name: "ppc_network_id", Desc: "PPC network ID", Required: true},
-				{Name: "ppc_account_default", Desc: "Set as default account (0 or 1)"},
-			},
-			ListParams: []crudField{
-				{Name: "ppc_network_id", QueryKey: "filter[ppc_network_id]", Desc: "Filter by PPC network ID"},
-			},
-		},
-		{
-			Name:     "tracker",
-			Plural:   "trackers (tracking links that tie a traffic source to a campaign and landing page)",
-			Endpoint: "trackers",
-			IDField:  "tracker_id",
-			PublicIDField: "tracker_id_public",
-			Fields: []crudField{
-				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
-				{Name: "ppc_account_id", Desc: "PPC account ID"},
-				{Name: "text_ad_id", Desc: "Text ad ID"},
-				{Name: "landing_page_id", Desc: "Landing page ID"},
-				{Name: "rotator_id", Desc: "Rotator ID"},
-				{Name: "click_cpc", Desc: "Cost per click"},
-				{Name: "click_cpa", Desc: "Cost per action"},
-				{Name: "click_cloaking", Desc: "Enable cloaking (0 or 1)"},
-				{Name: "tracker_id_public", Desc: "Public tracker ID"},
-			},
-			ListParams: []crudField{
-				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
-				{Name: "ppc_account_id", QueryKey: "filter[ppc_account_id]", Desc: "Filter by PPC account ID"},
-				{Name: "landing_page_id", QueryKey: "filter[landing_page_id]", Desc: "Filter by landing page ID"},
-				{Name: "rotator_id", QueryKey: "filter[rotator_id]", Desc: "Filter by rotator ID"},
-			},
-		},
-		{
-			Name:     "landing-page",
-			Plural:   "landing pages (pre-sell pages visitors see before the offer)",
-			Endpoint: "landing-pages",
-			Fields: []crudField{
-				{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
-				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
-				{Name: "landing_page_nickname", Desc: "Landing page nickname"},
-				{Name: "leave_behind_page_url", Desc: "Leave-behind page URL"},
-				{Name: "landing_page_type", Desc: "Landing page type (integer)"},
-			},
-			ListParams: []crudField{
-				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
-			},
-		},
-		{
-			Name:     "text-ad",
-			Plural:   "text ads (ad creatives with headline, description, and display URL)",
-			Endpoint: "text-ads",
-			Fields: []crudField{
-				{Name: "text_ad_name", Desc: "Text ad name", Required: true},
-				{Name: "text_ad_headline", Desc: "Headline"},
-				{Name: "text_ad_description", Desc: "Description text"},
-				{Name: "text_ad_display_url", Desc: "Display URL"},
-				{Name: "aff_campaign_id", Desc: "Campaign ID"},
-				{Name: "landing_page_id", Desc: "Landing page ID"},
-				{Name: "text_ad_type", Desc: "Text ad type (integer)"},
-			},
-			ListParams: []crudField{
-				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
-			},
-		},
-		{
-			Name:     "forecast-event",
-			Aliases:  []string{"event"},
-			Plural:   "forecast events (holidays, promotions, anomalies that affect forecasting)",
-			Endpoint: "forecast-events",
-			Fields: []crudField{
-				{Name: "event_name", Desc: "Event name (e.g. 'Black Friday', 'Server Outage')", Required: true},
-				{Name: "event_date", Desc: "Event date (YYYY-MM-DD)", Required: true},
-				{Name: "end_date", Desc: "End date for multi-day events (YYYY-MM-DD)"},
-				{Name: "recurrence", Desc: "Recurrence: none, monthly, yearly, custom"},
-				{Name: "impact_type", Desc: "Impact type: boost, suppress, neutral"},
-				{Name: "expected_impact_pct", Desc: "Expected impact percentage (e.g. +200 for 3x boost, -50 for half)"},
-				{Name: "lead_days", Desc: "Days before event that impact ramps up"},
-				{Name: "lag_days", Desc: "Days after event that impact decays"},
-				{Name: "tags", Desc: "Comma-separated tags (e.g. 'us-holidays,retail')"},
-				{Name: "notes", Desc: "Freeform notes"},
-			},
-			ListParams: []crudField{
-				{Name: "event_name", QueryKey: "filter[event_name]", Desc: "Filter by event name"},
-				{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type"},
-				{Name: "tags", QueryKey: "filter[tags]", Desc: "Filter by tag"},
-			},
-		},
-	}
+	entities := crudEntities
 
 	var trackerCmd *cobra.Command
 	var campaignCmd *cobra.Command
@@ -805,6 +1471,16 @@ func init() {
 	var campaignEntity crudEntity
 	for _, e := range entities {
 		cmd := registerCRUD(e)
+		// The Setup section's code and per-source settings (setup_code.go,
+		// traffic_source_settings.go).
+		switch e.Name {
+		case "landing-page":
+			cmd.AddCommand(newLandingPageCodeCmd(e))
+		case "ppc-network":
+			cmd.AddCommand(newPpcNetworkVariableCmd())
+		case "ppc-account":
+			cmd.AddCommand(newPpcAccountPixelCmd())
+		}
 		if e.Name == "tracker" {
 			trackerCmd = cmd
 			trackerEntity = e
@@ -843,7 +1519,8 @@ func init() {
 					payload["aff_campaign_name"] = name + " (Clone)"
 				}
 
-				clonedData, err := c.Post("campaigns", payload)
+				idemKey, _ := cmd.Flags().GetString("idempotency-key")
+				clonedData, err := c.PostIdempotent("campaigns", payload, idemKey)
 				if err != nil {
 					return err
 				}
@@ -852,7 +1529,9 @@ func init() {
 			},
 		}
 		cloneCmd.Flags().String("name", "", "Optional name override for the cloned campaign")
-		campaignCmd.AddCommand(cloneCmd)
+		registerIdempotencyKeyFlag(cloneCmd)
+		campaignCmd.AddCommand(cloneCmd, newCampaignReplaceURLCmd())
+		campaignCmd.AddCommand(newCampaignCheckURLsCmd())
 	}
 
 	if trackerCmd != nil {
@@ -864,15 +1543,19 @@ func init() {
 				"automatically.",
 			Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
+				tokens, err := linkTokenParams(cmd)
+				if err != nil {
+					return err
+				}
 				c, err := api.NewFromConfig()
 				if err != nil {
 					return err
 				}
 				id := args[0]
-				data, err := c.Get("trackers/"+id+"/url", nil)
+				data, err := c.Get("trackers/"+id+"/url", tokens)
 				if err != nil && isNotFoundErr(err) {
 					if internal := resolvePublicID(c, trackerEntity, id); internal != "" {
-						data, err = c.Get("trackers/"+internal+"/url", nil)
+						data, err = c.Get("trackers/"+internal+"/url", tokens)
 					}
 				}
 				if err != nil {
@@ -886,26 +1569,39 @@ func init() {
 			Use:   "create-with-url",
 			Short: "Create a tracker and return its tracking URL",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				c, err := api.NewFromConfig()
-				if err != nil {
-					return err
-				}
-
 				body := map[string]string{}
 				for _, f := range trackerEntity.Fields {
 					if v, _ := cmd.Flags().GetString(f.Name); v != "" {
 						body[f.Name] = v
 					}
 				}
-				for _, f := range trackerEntity.Fields {
-					if f.Required && body[f.Name] == "" {
-						return fmt.Errorf("required flag --%s is missing", f.Name)
-					}
+				if err := requireCRUDFields(trackerEntity, body); err != nil {
+					return err
 				}
-
-				createdData, err := c.Post("trackers", body)
+				tokens, err := linkTokenParams(cmd)
 				if err != nil {
 					return err
+				}
+				c, err := api.NewFromConfig()
+				if err != nil {
+					return err
+				}
+
+				idemKey, _ := cmd.Flags().GetString("idempotency-key")
+				createdData, err := c.PostIdempotent("trackers", body, idemKey)
+				if err != nil {
+					return err
+				}
+				if changeID, staged := stagedChangeID(createdData); staged {
+					// The tracker is a proposal, so it has no tracking URL
+					// yet. Report the change instead of failing on a
+					// tracker_id that was never going to be there.
+					render(createdData)
+					output.Success(
+						"Staged the tracker create as %s. Apply it with `p202 change apply %s`, "+
+							"then `p202 tracker get-url <id>` for the tracking URL.",
+						changeID, changeID)
+					return nil
 				}
 				createdObj, err := parseDataObject(createdData)
 				if err != nil {
@@ -913,12 +1609,15 @@ func init() {
 				}
 				trackerID, ok := extractIntField(createdObj, "tracker_id", "id")
 				if !ok {
-					return fmt.Errorf("tracker create response did not include tracker_id")
+					return validationError("tracker create response did not include tracker_id").
+						WithHint("Run `p202 tracker create` and `p202 tracker get-url <id>` separately to see which step fails.")
 				}
 
-				urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), nil)
+				urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), tokens)
 				if err != nil {
-					return err
+					// The tracker exists now: running create-with-url again
+					// would make a second one.
+					return withHint(err, "The tracker was created (tracker_id %d); do not re-run create-with-url. Run `p202 tracker get-url %d` for its link.", trackerID, trackerID)
 				}
 				urlObj, err := parseDataObject(urlData)
 				if err != nil {
@@ -929,19 +1628,36 @@ func init() {
 					"tracker":      createdObj,
 					"tracking_url": urlObj,
 				}
-				encoded, _ := json.Marshal(out)
+				encoded, err := json.Marshal(out)
+				if err != nil {
+					return fmt.Errorf("encoding output: %w", err)
+				}
 				render(encoded)
 				return nil
 			},
 		}
 		for _, f := range trackerEntity.Fields {
 			createWithURLCmd.Flags().String(f.Name, "", f.Desc)
+			if f.Enum != nil {
+				enumFlag(createWithURLCmd, f.Name, newEnum(f.Enum))
+			}
 		}
+		registerIdempotencyKeyFlag(createWithURLCmd)
+		registerLinkTokenFlags(createWithURLCmd)
+		registerLinkTokenFlags(getURLCmd)
 
 		bulkURLsCmd := &cobra.Command{
 			Use:   "bulk-urls",
 			Short: "Fetch tracking URLs for multiple trackers",
 			RunE: func(cmd *cobra.Command, args []string) error {
+				tokens, err := linkTokenParams(cmd)
+				if err != nil {
+					return err
+				}
+				concurrency, _ := cmd.Flags().GetInt("concurrency")
+				if concurrency < 1 {
+					return validationError("--concurrency must be at least 1")
+				}
 				c, err := api.NewFromConfig()
 				if err != nil {
 					return err
@@ -976,10 +1692,6 @@ func init() {
 					return nil
 				}
 
-				concurrency, _ := cmd.Flags().GetInt("concurrency")
-				if concurrency < 1 {
-					return fmt.Errorf("--concurrency must be at least 1")
-				}
 				if concurrency > len(trackers) {
 					concurrency = len(trackers)
 				}
@@ -988,7 +1700,11 @@ func init() {
 					index int
 					row   map[string]interface{}
 					err   error
+					// skipped: not asked, because a request before it met the
+					// licence refusal, which every later one would meet too.
+					skipped bool
 				}
+				var refusedOnce atomic.Bool
 
 				jobs := make(chan int, len(trackers))
 				results := make(chan bulkResult, len(trackers))
@@ -997,6 +1713,10 @@ func init() {
 				worker := func() {
 					defer wg.Done()
 					for index := range jobs {
+						if refusedOnce.Load() {
+							results <- bulkResult{index: index, skipped: true}
+							continue
+						}
 						tracker := trackers[index]
 						trackerID, ok := extractIntField(tracker, "tracker_id", "id")
 						if !ok {
@@ -1004,8 +1724,11 @@ func init() {
 							continue
 						}
 
-						urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), nil)
+						urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), tokens)
 						if err != nil {
+							if licenceRefusal(err) != nil {
+								refusedOnce.Store(true)
+							}
 							results <- bulkResult{index: index, err: err}
 							continue
 						}
@@ -1040,16 +1763,64 @@ func init() {
 					close(results)
 				}()
 
-				ordered := make([]map[string]interface{}, len(trackers))
+				// Report per-tracker failures and keep the rows that succeeded,
+				// matching how the bulk deletes account for partial failure.
+				// Returning on the first error discarded every row already
+				// fetched, so one transient 500 threw away the whole listing.
+				indexed := make([]map[string]interface{}, len(trackers))
+				failed, fetched, notFetched := 0, 0, 0
+				var refused error
 				for result := range results {
-					if result.err != nil {
-						return result.err
+					if result.skipped {
+						notFetched++
+						continue
 					}
-					ordered[result.index] = result.row
+					if r := licenceRefusal(result.err); r != nil {
+						if refused == nil {
+							refused = r
+						}
+						notFetched++
+						continue
+					}
+					if result.err != nil {
+						failed++
+						fmt.Fprintf(os.Stderr, "Failed to fetch URL for tracker at row %d: %v\n", result.index+1, result.err)
+						continue
+					}
+					indexed[result.index] = result.row
+					fetched++
+				}
+				if refused != nil && failed == 0 {
+					// Every remaining tracker would meet the same 402: report
+					// it as the licence refusal (exit 6, the trial hint), with
+					// nothing on stdout, as the bulk deletes do.
+					return fmt.Errorf("fetching tracker URLs (%d of %d fetched before it; the rest not attempted): %w",
+						fetched, len(trackers), refused)
+				}
+				// Other failures too: the refusal is not every failure's cause
+				// (licenceRefusal's rule), so the rows fetched are kept and the
+				// run ends as a partial failure that names both.
+
+				// Drop the gaps left by failed rows rather than emitting nulls.
+				ordered := make([]map[string]interface{}, 0, len(trackers)-failed)
+				for _, row := range indexed {
+					if row != nil {
+						ordered = append(ordered, row)
+					}
 				}
 
-				encoded, _ := json.Marshal(map[string]interface{}{"data": ordered})
+				encoded, err := json.Marshal(map[string]interface{}{"data": ordered})
+				if err != nil {
+					return fmt.Errorf("encoding tracker URLs: %w", err)
+				}
 				render(encoded)
+				if failed > 0 && refused != nil {
+					return partialFailureError("failed to fetch %d of %d tracker URLs, and %d were not fetched after a licence refusal: %v",
+						failed, len(trackers), notFetched, refused)
+				}
+				if failed > 0 {
+					return partialFailureError("failed to fetch %d of %d tracker URLs", failed, len(trackers))
+				}
 				return nil
 			},
 		}
@@ -1059,6 +1830,7 @@ func init() {
 		bulkURLsCmd.Flags().StringP("limit", "l", "", "Max results")
 		bulkURLsCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 		bulkURLsCmd.Flags().Int("concurrency", 5, "Number of concurrent URL fetches")
+		registerLinkTokenFlags(bulkURLsCmd)
 
 		trackerCmd.AddCommand(getURLCmd, createWithURLCmd, bulkURLsCmd)
 	}

@@ -9,24 +9,54 @@ Manage users, roles, API keys, and preferences.
 | `GET` | `/users` | Admin | List all users |
 | `GET` | `/users/{id}` | Self or Admin | Get user details |
 | `POST` | `/users` | Admin | Create a user |
-| `PUT` | `/users/{id}` | Self or Admin | Update a user |
-| `DELETE` | `/users/{id}` | Admin | Soft-delete a user |
+| `PUT` | `/users/{id}` | Self, or a user you may manage | Update a user |
+| `DELETE` | `/users/{id}` | Super user | Soft-delete a user (never user 1 or yourself) |
+
+### Who may act on whom
+
+The API keeps the rules of **Account › User management**. *Admin* means the
+Admin or Super user role; only the Super user role carries the
+`add_edit_delete_admin` permission.
+
+- **Your own account**: your email, name and password are always yours to
+  change; changing your own password needs `current_password` as well (see
+  [User Fields](#user-fields)). Your preferences, your API keys and your time
+  zone are Personal Settings', and need the `access_to_personal_settings`
+  permission, as the page does (it shows a user without it only their email
+  and password); the Campaign manager, optimizer, viewer and Publisher roles
+  do not carry it. Your username and active flag are the Users page's and
+  need a user you may manage, even when it is you.
+- **Another user's account** needs Admin, and:
+  - only user 1 acts on user 1 (the Super user account the installer
+    created), whether to read its keys and preferences or to change them;
+  - an account holding the Admin or Super user role is acted on only by a
+    Super user — an Admin cannot change another Admin, nor its own roles.
+- **Roles**: Super user (role 1) is never granted; Admin (role 2) is granted
+  only by a Super user; user 1's roles are fixed.
+- **Removing a user** needs the Super user role, and never removes user 1 or
+  the caller. A browser the user is signed in on is signed out at its next
+  request, as for a user switched off.
+
+A refusal is `403` with the rule in `message`. Before these rules, an Admin
+key could grant itself Super user, mint a full-access key for user 1 and set
+user 1's password; `tests/Api/V3/UserManagementRulesInstanceTest.php` drives
+each refusal against a running instance.
 
 ## Role Endpoints
 
 | Method | Path | Auth | Description |
 | ------ | ---- | ---- | ----------- |
 | `GET` | `/users/roles` | Any Authenticated | List all available roles |
-| `POST` | `/users/{id}/roles` | Admin | Assign a role to a user |
-| `DELETE` | `/users/{id}/roles/{roleId}` | Admin | Remove a role from a user |
+| `POST` | `/users/{id}/roles` | Admin, under the [rules above](#who-may-act-on-whom) | Assign a role to a user (`role_id`: a positive whole number; 2 needs a Super user, 1 is never granted) |
+| `DELETE` | `/users/{id}/roles/{roleId}` | Admin, under the [rules above](#who-may-act-on-whom) | Remove a role from a user |
 
 ## API Key Endpoints
 
 | Method | Path | Auth | Description |
 | ------ | ---- | ---- | ----------- |
-| `GET` | `/users/{id}/api-keys` | Self or Admin | List API keys (masked) |
-| `POST` | `/users/{id}/api-keys` | Self or Admin | Generate a new API key |
-| `DELETE` | `/users/{id}/api-keys/{keyId}` | Self or Admin | Delete an API key |
+| `GET` | `/users/{id}/api-keys` | Self with `access_to_personal_settings`, or a user you may manage | List API keys (masked) |
+| `POST` | `/users/{id}/api-keys` | Self with `access_to_personal_settings`, or a user you may manage | Generate a new API key |
+| `DELETE` | `/users/{id}/api-keys/{keyId}` | Self with `access_to_personal_settings`, or a user you may manage | Delete an API key |
 
 API keys are masked after the first 8 characters in list responses. The full key is only returned once, at creation time.
 
@@ -34,30 +64,232 @@ API keys are masked after the first 8 characters in list responses. The full key
 
 | Method | Path | Auth | Description |
 | ------ | ---- | ---- | ----------- |
-| `GET` | `/users/{id}/preferences` | Self or Admin | Get user preferences |
-| `PUT` | `/users/{id}/preferences` | Self or Admin | Update preferences |
+| `GET` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Get user preferences (an integration secret only as whether one is stored, never the secret) |
+| `PUT` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Update preferences |
+
+## Click Filter Endpoints
+
+Personal settings › **Click filtering**: which clicks are marked filtered
+(recorded and redirected, shown under Filtered clicks, left out of Real
+clicks). The page and these routes check every value with the same rule.
+Every route asks what the preferences ask: your own with
+`access_to_personal_settings`, or a user you may manage. The writes can be
+staged (`?staged=1`).
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `GET` | `/users/{id}/click-filter` | The checks, the repeat window, the address list (`entries`) and `limits` |
+| `PUT` | `/users/{id}/click-filter` | Change any of `sign_in_addresses`, `crawler_ranges`, `repeat_visits`, `repeat_window` |
+| `POST` | `/users/{id}/click-filter/entries` | Add an entry: `address`, `action` (`count` or `filter`), `note` (201) |
+| `PUT` | `/users/{id}/click-filter/entries/{entryId}` | Change an entry's `address`, `action` or `note` |
+| `DELETE` | `/users/{id}/click-filter/entries/{entryId}` | Remove an entry (`?dry_run=1` previews it) |
+| `GET` | `/users/{id}/click-filter/test?ip=203.0.113.7` | Would a click from this address be filtered, and by which rule? Records nothing |
+
+**The checks**, in the order they are asked, each only when the one before
+did not filter, and all on by default:
+
+| Field | Filters a click |
+| ----- | --------------- |
+| `sign_in_addresses` | from an address a user of this install last signed in from (your own clicks) |
+| `crawler_ranges` | from the built-in Google, Yahoo, Microsoft, Level 3 and PSI ranges (IPv4) |
+| `repeat_visits` | from an address that clicked already within `repeat_window` |
+
+`repeat_window` is `1h`, `6h`, `24h` (the default) or `7d`. `24h` is the
+check as it always was: an address is remembered until the daily cleanup
+removes it once it is a day old, so a repeat is filtered for a day to two
+after the first click (longer without a cron job). The other windows are
+exact; `7d` keeps the account's addresses for a week. The first click is
+always counted. Under privacy the remembered address is the masked one
+(/24, /48), so neighbours in one block are one visitor
+([Privacy](#privacy-user_pref_privacy)).
+
+**The address list** holds up to 500 entries, each an IPv4 or IPv6 address
+or a CIDR block (`203.0.113.7`, `203.0.113.0/24`, `2001:db8::/32`), at most
+/8 (IPv4) or /16 (IPv6) wide. `count` means always counted and beats every
+check; `filter` means always filtered and beats the checks above. When a
+click falls in several entries, a `count` entry wins, then the narrowest
+block. A block is written where it starts (`203.0.113.7/24` is refused,
+naming `203.0.113.0/24`), an IPv4 address as IPv4 (`::ffff:203.0.113.7` is
+refused, naming `203.0.113.7`; a click that arrives that way is matched as
+IPv4), and the same block twice is a 409 naming the entry. An entry is
+compared with the address the click arrives from, before privacy masks it.
+That address is the one the click path records, which a forwarding header
+can claim (behind no proxy, a visitor chooses it), so keep `count` for
+addresses you trust.
+
+**Bot detection** (the visitor's browser, `click_bot`) is separate and always
+filters; the test does not cover it. The test asks the sign-in check of the
+account's own last sign-in address only, so it never says where another user
+of the install signed in from; a click from another user's address is still
+filtered.
+
+A change applies to clicks from then on. An account that never changes
+anything is filtered exactly as before 1.9.79. GET's body can be sent back
+to PUT whole: `entries` and `limits` are accepted unchanged and refused
+changed. Each filtered click records which rule filtered it, served as
+`filter_reason` on [GET /clicks](09-clicks.md#why-a-click-is-filtered).
+
+```bash
+curl -s "$P202/api/v3/users/1/click-filter/test?ip=198.51.100.7" -H "Authorization: Bearer $KEY"
+# {"data":{"ip":"198.51.100.7","filtered":false,"reason":null,"entry":null,
+#   "explanation":"Counted: no rule filters it. Its next click before the daily cleanup would be filtered as a repeat visit.",
+#   "checks":{"filter_list":null,"sign_in_address":{"enabled":true,"matches":false},
+#             "crawler_range":{"enabled":true,"matches":false},
+#             "repeat_visit":{"enabled":true,"window":"24h","matches":false}}, ...}}
+```
 
 ## User Fields
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `user_name` | string | Yes | Username (unique) |
-| `user_email` | string | Yes | Email address (validated) |
-| `user_pass` | string | Yes (create) | Password (min 8 characters, hashed server-side) |
-| `user_fname` | string | No | First name |
-| `user_lname` | string | No | Last name |
-| `user_timezone` | string | No | Timezone (default: UTC) |
-| `user_active` | integer | No | Active status (1 = active, 0 = inactive, default: 1) |
+| `user_name` | string | Yes | Username, 1-50 characters; another account's (in any case) is `409`. Changing it on `PUT` renames the account, as the Users page does: it needs a user you may manage, even when that is you |
+| `user_email` | string | Yes | Email address, at most 100 characters; another account's is `422` |
+| `user_pass` | string | Yes (create) | Password, 8-72 characters (bcrypt reads only the first 72 bytes), hashed server-side. On an update, every remember-me key the user holds is deleted in the same write, so no browser kept signed in ("Keep me signed in") signs in with a cookie from before the new password, and every browser signed in as the user is signed out at its next request; a key or session that cannot be ended leaves the old password and answers `500` |
+| `current_password` | string | When you change your **own** `user_pass` | Your present password, as Personal settings asks for it: a key that is not the password must not be enough to take over the sign-in. Missing or wrong is `422` naming `current_password`. A Super user or Admin resetting another user's password does not send it |
+| `user_fname` | string | No | First name, at most 50 characters |
+| `user_lname` | string | No | Last name, at most 50 characters |
+| `user_timezone` | string | No | A PHP time zone name such as `America/New_York`, as Personal settings offers them (default: UTC); anything else is `422` |
+| `user_active` | integer | No | `1` can sign in and use its API keys (default), `0` cannot: its keys answer `401`, and a browser it is signed in on is signed out at its next request, also one that makes no request until the user is `1` again. Every remember-me key the user holds is deleted in the same write, so no browser kept signed in signs back in when the user is `1` again; a key that cannot be deleted leaves the user as they were and answers `500`. Any other value is `422` rather than read as `0` |
 
 ## Preference Fields
 
-| Field | Type | Description |
-| ----- | ---- | ----------- |
-| `user_tracking_domain` | string | Custom tracking domain |
-| `user_account_currency` | string | 3-letter currency code |
-| `user_slack_incoming_webhook` | string | Slack webhook URL for notifications |
-| `user_daily_email` | string | Daily email digest (`on` or `off`) |
-| `ipqs_api_key` | string | IPQualityScore API key for fraud detection |
+`PUT /users/{id}/preferences` takes any subset of these. Each value is held to
+the rule of the settings page that owns it, before anything is written; a key
+not in this table is refused with `422` naming it rather than dropped, and a
+free-text value given as `""` clears it. `GET` returns the whole preferences
+row, and never an integration secret: each one is answered as whether one is
+stored, `"cb_key": {"stored": true}` (or `false`). Those are the ClickBank,
+JVZoo, Zaxaa and IPQS keys, the Slack webhook, the RevContent id and secret,
+the Landing Page Optimizer's `lpo_site_key` and `lpo_bridge_config`, and the
+PayKickstart IPN secret keys (`GET /system/integrations` says how many). A
+column is served as stored only once it is on the list of columns that hold
+no credential (`Prosper202\User\ServedPreferences`), so a new one is a secret
+until someone decides otherwise.
+
+A body `GET` answered can be sent back whole. Each key it holds that is not
+in the table below (`user_id`, `cb_verified`, the report filters, …) is
+read-only: accepted with the value `GET` gave it and refused with any other. A secret's
+`{"stored": …}` sent back as `GET` gave it keeps the secret; any other object
+is refused naming the field, so `{"stored": false}` does not remove one (send
+`""`), and to change one send the new secret as a string. A body of nothing
+but unchanged keys is `422` (`No valid fields to update`).
+
+| Field | Values | Set on |
+| ----- | ------ | ------ |
+| `user_tracking_domain` | host such as `track.example.com`; `""` (what the installer leaves) builds a page's links on the address the page was opened on, and what is sent elsewhere on the server's own name ([FAQ](../tutorials-and-guides/11-frequently-asked-questions-faq.md#does-the-installer-set-my-tracking-domain)) | Personal settings |
+| `user_daily_email` | hour `00`-`23`, or `""` for never; **no effect since 1.9.79**, when Tracking202 switched the hosted daily email report off. Still accepted and stored, so existing scripts are not refused | nowhere (Personal settings until 1.9.79) |
+| `user_keyword_searched_or_bidded` | `searched`, `bidded` | Personal settings |
+| `user_pref_referer_data` | `browser`, `t202ref` | Personal settings |
+| `user_pref_dynamic_bid` | `0` (cost from the tracker), `1` (from the `t202b` parameter: a bid from 0 to 99.99, or the tracker's CPC for any other) | Personal settings |
+| `user_pref_privacy` | `disabled`, `eu`, `all` (see [Privacy](#privacy-user_pref_privacy) below) | Personal settings |
+| `user_pref_same_ip_fallback` | `1` (a pixel that names no click credits your latest click from the visitor's IP address), `0` (it credits none); see [Same-IP fallback](#same-ip-fallback-user_pref_same_ip_fallback) below | Personal settings |
+| `user_pref_cloak_referer` | `origin`, `never` | Personal settings |
+| `user_pref_ad_settings` | `show_all`, `hide_login`, `hide_all` | Personal settings |
+| `user_account_currency` | a supported 3-letter code | Personal settings: **re-prices every campaign's payout** into it through the exchange-rate service, in the same transaction as the rest of the request; `502` and nothing written when the service gives no rate |
+| `user_pref_time_predefined` | `today`, `yesterday`, `last7`, `last14`, `last30`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` | report pages |
+| `user_pref_limit` | `10`, `25`, `50`, `75`, `100`, `150`, `200` | report pages |
+| `user_cpc_or_cpv` | `cpc`, `cpv` | report pages |
+| `chart_time_range` | `hours`, `days` | Overview chart (kept in `202_charts`, where the chart reads it) |
+| `user_slack_incoming_webhook` | an `https://` URL at a public address, or `""`: the URL Integrations saves, refused when it names a private, loopback, link-local or metadata address, a local name, a user name or a fragment (`P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php` admits the operator's own network). Each notice is checked again when it is sent and gives up after 2 seconds | Integrations |
+| `ipqs_api_key`, `cb_key`, `zaxaa_api_signature` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
+| `jvzoo_ipn_secret_key` | the JVZIPN secret key both JVZoo URLs are verified with, stored trimmed: up to 250 characters of text (a line break, a control character or bytes that are not UTF-8 are refused, since no notification would verify with them), or `""` | Integrations |
+| `paykickstart_ipn_secret_keys` | the keys PayKickstart's product IPN is verified with, one for each PayKickstart campaign, separated by commas, spaces or new lines: at most 20, each 8 to 128 letters, digits and punctuation other than the comma. The list **replaces** every stored key (none can be read back), so send them all; `""` removes them. A key that is not one is refused by its place in the list (`Key 2 is 5 characters long; …`), never by its text | Integrations |
+| `user_ltv_customer_cparam` | `0` (off), `1`-`4` (c1-c4) | LTV › Settings |
+| `user_ltv_personalization_fields` | comma list of `first_name`, `last_name`, `company`, `city`, `country`, `cf:<field_key>`, `rec:next_offer` | LTV › Settings |
+| `user_ltv_score_weights` | `volume:N,time:N,scroll:N,video:N,recency:N` summing to 100, or `""` for the defaults | LTV › Settings |
+| `user_ltv_rec_fatigue` | `times,days` such as `3,21`, `0` for off, `""` for the defaults | LTV › Settings |
+
+### Privacy (`user_pref_privacy`)
+
+Which visitors are held back: no tracking cookies, and their address stored
+masked — an IPv4 address keeps its /24 (`203.0.113.0`), an IPv6 one its /48.
+That covers every row that keeps a visitor's address: the click, the
+conversion's `ip`, the app intakes' `remote_ip` (Android installs and Apple
+postbacks), and the error log the click path writes. And every cookie the
+tracking links set: the click cookies on the tracker's site, the ones the
+landing-page script sets on your page (`tracking202subid`,
+`tracking202outbound`, `tracking202pci` and the personalization token), and
+the `p202vid` visitor cookie, which a visitor held back is neither given nor
+read for (see [Visitor identity](../features/visitor-identity.md)).
+
+- `disabled`: nobody.
+- `all`: every visitor.
+- `eu` ("Enabled for European Traffic"): every visitor GeoIP does not place
+  outside Europe and outside the European Union. That is the EU, the EEA
+  (Norway, Iceland, Liechtenstein), Switzerland, the United Kingdom and the
+  rest of Europe, France's overseas departments — and anyone GeoIP cannot
+  place at all: a private or reserved address, a block allocated after the
+  bundled database was built (it is GeoLite2 of 2018-07-03), or every visitor
+  when the GeoIP library is missing. Holding back for more visitors than the
+  EU's is deliberate: the GDPR applies across the EEA, the UK and Switzerland
+  have laws of the same shape, and masking more costs a report precision,
+  never a visitor privacy.
+
+A new account starts at `eu`: every account made from 1.9.79 on, on a new
+install and on an upgraded one, whichever way it is made (the installer,
+Settings › Users, `POST /users`, `p202 user create`). An account made before
+keeps the setting it had, which is `disabled` unless someone changed it: an
+account started there until 1.9.79.
+
+Which setting applies: the stricter of the install's (the first account's,
+user 1) and the setting of the account the visitor's click belongs to — the
+account that owns the tracker, landing page, campaign or click the request
+names, and for the app intakes the account that owns the app (an
+unregistered app's postback answers to the install's alone). A value that
+cannot be read counts as `all`. Tracking links read the install's alone
+before this release, so an account's own setting held back nobody unless the
+install's did too. So an account added to an upgraded install holds back its
+own visitors from Europe even while the first account is `disabled`; set it
+to `disabled` to track them in full. And on a new install the first account's
+`eu` holds back every account's: under it, no account's setting can track a
+European visitor in full.
+
+What the mask changes downstream. The duplicate-click filter remembers
+addresses for a day, and under privacy it can only remember the masked one,
+so two visitors in one /24 within a day count as one and the second click is
+filtered. The "don't count my own clicks" filter compares the address a click
+arrived from with the address you signed in from (stored as it arrived; it is
+an operator's record, like the sign-in log), so your own clicks are filtered
+under every setting and nobody else in your /24 is. `off.php` reached with
+no click and no cookie (always the case for a visitor held back, who has
+none) falls back to the visitor's last click by address; under privacy that
+address names a /24, so a click is taken only when it is the one click from
+that block in the look-back window, and with two or more none is, and the
+miss is logged, rather than taking whichever neighbour clicked last. A
+conversion pixel makes no guess by address for a visitor held back (the
+[same-IP fallback](#same-ip-fallback-user_pref_same_ip_fallback) below):
+pass the subid in the pixel to credit every one. Rate limits on the public
+endpoints key on the connection's address as it arrived and are not
+affected.
+
+### Same-IP fallback (`user_pref_same_ip_fallback`)
+
+Personal settings › Advanced › **Match conversions by IP address**. When a
+conversion pixel (`gpx.php`, `upx.php`, `px.php`) names no click, neither by
+a subid nor by a tracking cookie, `1` credits the account's latest click from
+the visitor's IP address in the last 30 days, and `0` credits none. It is a
+guess: behind iCloud Private Relay on iPhones and behind a mobile network's
+shared addresses many visitors arrive from one address, and the latest of
+them takes the sale. Every conversion it finds is recorded with
+`match_method` `same_ip` ([Conversions](10-conversions.md#how-each-conversions-click-was-found)),
+so `GET /conversions?match_method=same_ip` lists them.
+
+- **Default.** An account made from 1.9.79 on starts at `0`, the first
+  account of a new install included. Every account that existed before the
+  1.9.79 upgrade is set to `1`, which is how its pixels converted until then.
+  To stop the guesses on such an account, choose Off on that page or send
+  `{"user_pref_same_ip_fallback": 0}` here.
+- **Never for a visitor who is given no `p202vid` cookie**
+  ([Visitor identity](../features/visitor-identity.md#consent)): one the
+  privacy setting holds back, one whose pixel request carries a
+  `p202_consent` other than `1`, and one on a campaign whose
+  `identity_signals` is `0`.
+- **Whose clicks.** The account whose campaign the pixel names: `px.php`'s
+  `acip`, and `cid` on `gpx.php` and `upx.php` (the advanced pixel). A
+  `gpx.php` or `upx.php` request with no `cid` (the simple pixel, and the
+  universal pixel's script) is the account's when only one account of the
+  install has campaigns; on an install where several have, it guesses
+  nothing and logs why. A `cid` that names no campaign guesses nothing.
 
 ## Examples
 
@@ -91,16 +323,65 @@ Response (full key shown only once):
   "data": {
     "api_key": "p202_a1b2c3d4e5f6g7h8i9j0...",
     "user_id": 1,
+    "scope": "*",
     "created_at": 1709942400
   }
 }
 ```
 
-### Assign Admin Role
+### Generate a Scoped API Key
+
+Pass `scope` (a comma-separated string or an array of tokens) to attenuate
+the key — see [API Key Scopes](00-api-integrations.md#api-key-scopes) for
+the grammar and enforcement rules. A read-only key for a reporting agent:
 
 ```bash
-curl -X POST https://your-domain.com/api/v3/users/1/roles \
+curl -X POST https://your-domain.com/api/v3/users/1/api-keys \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{ "role_id": 1 }'
+  -d '{"scope": "read"}'
 ```
+
+Rules enforced at creation:
+
+- Unknown tokens are rejected with `422` (a typo must not mint a key that
+  silently denies everything).
+- A scoped key cannot mint a key broader than itself (`403`), and must name
+  an explicit scope for any key it creates (`422` otherwise) — defaulting to
+  full access would be a silent escalation.
+- On a pre-1.9.75 schema without the `scope` column, requesting a scope
+  returns `409` pointing at the upgrade.
+
+`GET /users/{id}/api-keys` returns each key's `scope` alongside the masked
+key (keys without one show `*`).
+
+### Assign a Role
+
+Make user 7 a Campaign manager (role 3; `GET /users/roles` lists them):
+
+```bash
+curl -X POST https://your-domain.com/api/v3/users/7/roles \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "role_id": 3 }'
+```
+
+### Change Your Own Password
+
+```bash
+curl -X PUT https://your-domain.com/api/v3/users/1 \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "user_pass": "a-new-password", "current_password": "the-old-one" }'
+```
+
+`p202 user update <id> --current-password --set-password` reads both without
+echo, at a terminal or as two lines of piped stdin (current first).
+
+A new password, set here, on Personal settings, on Account › Users or through
+the reset link, deletes every remember-me key of the user and signs out every
+browser signed in as them at its next request: a browser kept signed in, a
+copy of its cookie, or a session someone already has, has to sign in with the
+new password. Personal settings keeps the browser making the change signed
+in; an admin's change keeps the admin's. A rehash of the same password as the
+user signs in is not a change and ends nothing.

@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -39,7 +41,7 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 		selectedModes++
 	}
 	if selectedModes > 1 {
-		return nil, fmt.Errorf("use only one of --all-profiles, --profiles, or --group")
+		return nil, validationError("use only one of --all-profiles, --profiles, or --group")
 	}
 	if selectedModes == 0 {
 		return nil, nil
@@ -57,7 +59,7 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 	if allProfiles {
 		names := cfg.ProfileNames()
 		if len(names) == 0 {
-			return nil, fmt.Errorf("no profiles configured")
+			return nil, validationError("no profiles configured").WithHint("Add one with `p202 config add-profile <name> --url <url> --key <key>`.")
 		}
 		return names, nil
 	}
@@ -65,7 +67,7 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 	if groupTag != "" {
 		matches := cfg.ResolveGroup(groupTag)
 		if len(matches) == 0 {
-			return nil, fmt.Errorf("no profiles found for group %q", groupTag)
+			return nil, validationError("no profiles found for group %q", groupTag).WithHint("Tag profiles with `p202 config tag-profile <profile> %s`; `p202 config list-profiles` shows current tags.", groupTag)
 		}
 		return matches, nil
 	}
@@ -79,21 +81,24 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 			continue
 		}
 		if !available[name] {
-			return nil, fmt.Errorf("profile %q not found", name)
+			return nil, validationError("profile %q not found", name).WithHint("`p202 config list-profiles` shows configured profiles; add one with `p202 config add-profile <name> --url <url> --key <key>`.")
 		}
 		seen[name] = true
 		profiles = append(profiles, name)
 	}
 	if len(profiles) == 0 {
-		return nil, fmt.Errorf("--profiles requires at least one valid profile name")
+		return nil, validationError("--profiles requires at least one valid profile name").WithHint("Comma-separate names from `p202 config list-profiles`, e.g. --profiles prod,staging.")
 	}
 	sort.Strings(profiles)
 	return profiles, nil
 }
 
-func fetchMultiProfileObjects(endpoint string, params map[string]string, profiles []string) (map[string]map[string]interface{}, []string, error) {
+// fetchMultiProfileObjects reads endpoint's `data` object from each profile,
+// its numbers kept as the server wrote them (json.Number). A profile whose
+// answer check refuses is a failed profile, named in the errors.
+func fetchMultiProfileObjects(endpoint string, params map[string]string, profiles []string, check func(map[string]interface{}) error) (map[string]map[string]interface{}, []string, error) {
 	results := map[string]map[string]interface{}{}
-	errorsOut := make([]string, 0)
+	var failures []multiProfileFetch
 	ch := make(chan multiProfileFetch, len(profiles))
 	var wg sync.WaitGroup
 
@@ -113,9 +118,18 @@ func fetchMultiProfileObjects(endpoint string, params map[string]string, profile
 				ch <- multiProfileFetch{profile: profile, err: err}
 				return
 			}
-			obj, err := parseDataObject(data)
+			// A masked profile's totals are hidden, not zero: it is a failed
+			// profile, named, not a quiet hole in the sum.
+			if maskedFigures(data) {
+				ch <- multiProfileFetch{profile: profile, err: errMaskedFigures("Summing across profiles")}
+				return
+			}
+			obj, err := parseDataObjectNumbers(data)
+			if err == nil && check != nil {
+				err = check(obj)
+			}
 			if err != nil {
-				ch <- multiProfileFetch{profile: profile, err: err}
+				ch <- multiProfileFetch{profile: profile, err: notASummary(profile, err)}
 				return
 			}
 			ch <- multiProfileFetch{profile: profile, data: obj}
@@ -127,79 +141,123 @@ func fetchMultiProfileObjects(endpoint string, params map[string]string, profile
 
 	for result := range ch {
 		if result.err != nil {
-			errorsOut = append(errorsOut, fmt.Sprintf("%s: %v", result.profile, result.err))
+			failures = append(failures, result)
 			continue
 		}
 		results[result.profile] = result.data
 	}
 
-	sort.Strings(errorsOut)
+	// By profile, not by arrival: which failure is named first, and which
+	// one the error below unwraps to, must not change between two runs.
+	sort.Slice(failures, func(i, j int) bool { return failures[i].profile < failures[j].profile })
+	errorsOut := make([]string, 0, len(failures))
+	rawErrors := make([]error, 0, len(failures))
+	for _, f := range failures {
+		errorsOut = append(errorsOut, fmt.Sprintf("%s: %v", f.profile, f.err))
+		rawErrors = append(rawErrors, f.err)
+	}
 	if len(results) == 0 && len(errorsOut) > 0 {
-		return nil, errorsOut, fmt.Errorf("all profile requests failed")
+		if refused := licenceRefusal(rawErrors...); refused != nil {
+			// Keep the licence category (exit 6, the trial hint) when every
+			// profile was refused for it, instead of a generic failure.
+			return nil, errorsOut, fmt.Errorf("all profile requests failed: %w", refused)
+		}
+		failed := &allProfilesFailed{msg: "all profile requests failed: " + strings.Join(errorsOut, "; ")}
+		if oneKindOfFailure(rawErrors) {
+			failed.cause = rawErrors[0]
+		}
+		return nil, errorsOut, failed
 	}
 	return results, errorsOut, nil
 }
 
-func aggregateNumericFields(rows map[string]map[string]interface{}) map[string]interface{} {
-	aggregate := map[string]interface{}{}
-	keys := map[string]bool{}
-	for _, row := range rows {
-		for key := range row {
-			keys[key] = true
+// oneKindOfFailure reports whether every error would be answered alike: the
+// same category, exit code and hint, as Execute resolves them. Only then may
+// the failure of every profile take one's category and hint (every server
+// unreachable is a network failure); a 422 beside a profile with no URL,
+// both exit 1, is not one kind, nor a refused key beside a masked one.
+func oneKindOfFailure(errs []error) bool {
+	for _, e := range errs[1:] {
+		if api.ErrorCategory(e) != api.ErrorCategory(errs[0]) ||
+			exitCodeForError(e) != exitCodeForError(errs[0]) ||
+			hintFor(e) != hintFor(errs[0]) {
+			return false
 		}
 	}
-
-	keyList := make([]string, 0, len(keys))
-	for key := range keys {
-		keyList = append(keyList, key)
-	}
-	sort.Strings(keyList)
-
-	for _, key := range keyList {
-		total := 0.0
-		seenNumeric := false
-		for _, row := range rows {
-			val, ok := parseFloat(row[key])
-			if !ok {
-				continue
-			}
-			total += val
-			seenNumeric = true
-		}
-		if seenNumeric {
-			aggregate[key] = total
-		}
-	}
-
-	return aggregate
+	return true
 }
 
-func parseFloat(v interface{}) (float64, bool) {
-	switch val := v.(type) {
-	case float64:
-		return val, true
-	case float32:
-		return float64(val), true
-	case int:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case string:
-		trimmed := strings.TrimSpace(val)
-		if trimmed == "" {
-			return 0, false
-		}
-		parsed, err := strconv.ParseFloat(trimmed, 64)
-		if err != nil {
-			return 0, false
-		}
-		return parsed, true
-	default:
-		return 0, false
+// notASummary is a profile whose answer cannot be read as a summary: a
+// failed profile, and the server's failure. The hint names no profile, so
+// two such failures are one kind.
+func notASummary(profile string, err error) *CLIError {
+	return &CLIError{
+		Category: "server", ExitCode: ExitServer, Cause: err,
+		Message: fmt.Sprintf("the server's answer is not a summary: %v (`p202 report summary --profile %s --json` shows it)", err, profile),
+		Hint:    "Read the server's raw answer with the `p202 report summary --profile <name> --json` the message names; a proxy in front of it may have answered instead.",
 	}
 }
 
-func buildMultiProfilePayload(profileData map[string]map[string]interface{}, aggregated map[string]interface{}, errorsOut []string) []byte {
+// allProfilesFailed names every profile's failure and, when they are all of
+// one kind, unwraps to the first so its category and hint stand.
+type allProfilesFailed struct {
+	msg   string
+	cause error
+}
+
+func (e *allProfilesFailed) Error() string { return e.msg }
+func (e *allProfilesFailed) Unwrap() error { return e.cause }
+
+// parseDataObjectNumbers is parseDataObject with every number a json.Number,
+// so a total is computed from the digits the server sent.
+func parseDataObjectNumbers(data []byte) (map[string]interface{}, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var parsed map[string]interface{}
+	if err := dec.Decode(&parsed); err != nil {
+		return nil, err
+	}
+	// One JSON value and nothing after it, as json.Unmarshal reads one.
+	var more json.RawMessage
+	if err := dec.Decode(&more); err != io.EOF {
+		return nil, fmt.Errorf("the response has more after its JSON value")
+	}
+	if obj, ok := parsed["data"].(map[string]interface{}); ok {
+		return obj, nil
+	}
+	return parsed, nil
+}
+
+// runMultiProfileSummary is `report summary` and `dashboard` across
+// profiles: each profile's row, then the TOTAL. What the TOTAL leaves out,
+// and the profiles that failed, are in `meta` and `errors` under --json and
+// on stderr otherwise.
+func runMultiProfileSummary(params map[string]string, profiles []string) error {
+	profileData, errorsOut, err := fetchMultiProfileObjects("reports/summary", params, profiles, checkSummaryRow)
+	if err != nil {
+		return err
+	}
+	total, err := totalSummaries(profileData)
+	if err != nil {
+		return err
+	}
+	payload, err := buildMultiProfilePayload(profileData, total, errorsOut)
+	if err != nil {
+		return err
+	}
+	render(payload)
+	if !jsonOutput {
+		for _, e := range errorsOut {
+			fmt.Fprintf(os.Stderr, "Warning: the TOTAL leaves out a profile that failed: %s\n", e)
+		}
+		for _, w := range total.warnings() {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+	return nil
+}
+
+func buildMultiProfilePayload(profileData map[string]map[string]interface{}, total summaryTotal, errorsOut []string) ([]byte, error) {
 	names := make([]string, 0, len(profileData))
 	for name := range profileData {
 		names = append(names, name)
@@ -215,17 +273,25 @@ func buildMultiProfilePayload(profileData map[string]map[string]interface{}, agg
 		profiles[name] = cloneMap(profileData[name])
 	}
 
-	totalRow := cloneMap(aggregated)
+	totalRow := cloneMap(total.row)
 	totalRow["profile"] = "TOTAL"
 	rows = append(rows, totalRow)
 
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"data":       rows,
 		"profiles":   profiles,
-		"aggregated": aggregated,
+		"aggregated": total.row,
 		"errors":     errorsOut,
+		"meta": map[string]interface{}{
+			"currencies":   total.currencies,
+			"not_totalled": total.notTotalled,
+			"warnings":     total.warnings(),
+		},
 	})
-	return payload
+	if err != nil {
+		return nil, fmt.Errorf("encoding output: %w", err)
+	}
+	return payload, nil
 }
 
 func addMultiProfileFlags(cmd *cobra.Command) {

@@ -1,6 +1,12 @@
 services:
   web:
-    build: .
+    build:
+      context: .
+      # base = runtime only, no baked-in code: this stack bind-mounts the
+      # checkout below, so building the full app stage would only slow dev
+      # rebuilds. Coolify/production builds use the default (app) stage — see
+      # docker-compose.coolify.yaml.
+      target: base
     ports:
       - "8000:80"
     volumes:

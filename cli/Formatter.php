@@ -12,7 +12,11 @@ class Formatter
     public static function output(OutputInterface $output, array $data, bool $json = false): void
     {
         if ($json) {
-            $output->writeln(json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            if ($encoded === false) {
+                throw new \RuntimeException('Failed to encode output as JSON: ' . json_last_error_msg());
+            }
+            $output->writeln($encoded);
             return;
         }
 

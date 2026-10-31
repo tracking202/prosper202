@@ -10,7 +10,7 @@ import (
 
 // countryNames maps ISO 3166-1 alpha-2 codes to the country name. The rotator
 // criteria value format is "Name(CC)", so --country US builds "United States(US)".
-// Covers the common affiliate geos; use raw --criteria_json for anything absent.
+// Covers the common affiliate geos; use raw --criteria-json for anything absent.
 var countryNames = map[string]string{
 	"US": "United States", "CA": "Canada", "GB": "United Kingdom", "AU": "Australia",
 	"NZ": "New Zealand", "IE": "Ireland", "NL": "Netherlands", "DE": "Germany",
@@ -63,8 +63,7 @@ var rotatorCriteriaValuesCmd = &cobra.Command{
 			rows = append(rows, map[string]interface{}{"code": code, "name": name, "value": value})
 		}
 		sort.Slice(rows, func(i, j int) bool { return rows[i]["name"].(string) < rows[j]["name"].(string) })
-		render(rowsToJSON(rows))
-		return nil
+		return renderRows(rows)
 	},
 }
 

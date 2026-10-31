@@ -88,6 +88,18 @@ class INSTALL
         $seeder->seed();
         $seeder->seedVersion($php_version);
 
+        // The Android install-token key (plan §5.1). The 1.9.75 rung mints it
+        // for upgraded installs; a fresh install never runs a rung, so it is
+        // minted here too, by the same idempotent statement. A failure aborts
+        // the install: a deployment without the key cannot attribute an
+        // Android install.
+        \Api\V3\Apps\Android\InstallTokenKey::ensure($db);
+
+        // The install's id, which names its API state directory: a new one
+        // for every install, so a database installed again under the same
+        // name does not read its predecessor's state (InstallId).
+        \Prosper202\Database\InstallId::ensure($db);
+
         // Add publisher IDs to all existing users
         createPublisherIds();
     }

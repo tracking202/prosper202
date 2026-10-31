@@ -1,0 +1,99 @@
+# Committed PHPStan configuration.
+#
+# `phpstan.neon` stays gitignored for local overrides; this .dist file is what
+# CI runs, so the repo's custom rules actually execute. PHPStan prefers
+# phpstan.neon when present and falls back to this.
+#
+# customRulesetUsed disables PHPStan's built-in rule set on purpose. This job
+# exists to enforce the "Error patterns to avoid" list in CLAUDE.md across a
+# large legacy codebase, not to hold that codebase to a type-coverage level.
+# Every rule below maps to a numbered pattern and has cost someone a real bug.
+includes:
+    - phpstan-baseline.neon
+
+parameters:
+    level: 0
+    customRulesetUsed: true
+    phpVersion: 80300
+    bootstrapFiles:
+        - phpstan-legacy-stubs.php
+    paths:
+        - api
+        - 202-config
+        - 202-account
+        - 202-cronjobs
+        - cli
+        - tracking202
+        # The public postback receivers. They are the only callers of
+        # PostbackEndpoint::serve() that run outside the API router, so
+        # without them a change to that signature (or to a protocol's
+        # constructor) leaves the analysis green and the endpoints fatal on
+        # the first device postback.
+        - .well-known
+    excludePaths:
+        analyseAndScan:
+            - vendor (?)
+            - node_modules (?)
+
+    # Inline @phpstan-ignore comments predate this config and reference rules
+    # it does not register; an unmatched one is not a failure here.
+    reportUnmatchedIgnoredErrors: false
+
+    # Symbol resolution is not what this job checks. Large parts of the legacy
+    # codebase are procedural includes with no autoloadable symbols, and the
+    # analysis must not depend on which optional packages happen to be
+    # installed — a missing dev dependency would otherwise bury the custom
+    # rule findings this job exists to surface.
+    ignoreErrors:
+        - identifier: class.notFound
+        - identifier: class.noParent
+        - identifier: method.notFound
+        - identifier: staticMethod.notFound
+        - identifier: function.notFound
+        - identifier: includeOnce.fileNotFound
+        - identifier: include.fileNotFound
+
+rules:
+    # CLAUDE.md #1 — unchecked return values after fallible calls.
+    - Prosper202\PHPStan\Rules\ForbidDirectMysqliStmtCallRule
+    - Prosper202\PHPStan\Rules\UncheckedTransactionBoundaryRule
+    # CLAUDE.md #4 — silent data loss on malformed input.
+    - Prosper202\PHPStan\Rules\ForbidSilentJsonDecodeRule
+    # …and a request parameter tested by truthiness: empty('0') is true, so
+    # LTV's period=0 answered over the default window and GET
+    # /conversions?campaign_id=0 with every campaign's conversions.
+    - Prosper202\PHPStan\Rules\ForbidFalsyRequestParamTestRule
+    # …and a query parameter cast to a number: (int) 'abc' is 0, and a clamp
+    # made limit=abc one row and limit=1000 500 that read as all of them.
+    - Prosper202\PHPStan\Rules\ForbidNumericCastOfRequestParamRule
+    # …and a request value cast to a flag: (bool) 'false' is true, so a sync
+    # job sent force_update "false" overwrote the target's differing records.
+    - Prosper202\PHPStan\Rules\ForbidBoolCastOfRequestParamRule
+    # CLAUDE.md #5 — inconsistent security patterns across similar operations.
+    - Prosper202\PHPStan\Rules\ForbidDirectPasswordHashRule
+    # CLAUDE.md #7 — bind_param type string mismatches.
+    - Prosper202\PHPStan\Rules\BindParamArityRule
+    # CLAUDE.md #8 — assumed closure, reference, and capture semantics.
+    - Prosper202\PHPStan\Rules\ForbidArrowFnByRefCaptureRule
+    # …and its write half: a captured copy handed to a by-reference
+    # parameter, so the callee's report is discarded. UpdateController
+    # answered 200 to another account's campaign id this way.
+    - Prosper202\PHPStan\Rules\ForbidByRefArgumentFromCaptureRule
+    # CLAUDE.md "Verify your assumptions" — a check that cannot fail is not a
+    # check. `assertSame('verified-only', 'verified-only')` stood in for the
+    # attribution report suite's only test of the verified-only default.
+    #
+    # The code this rule targets lives in tests/, which is deliberately NOT in
+    # `paths` above and cannot be added here: analysing tests/ reports 14
+    # pre-existing findings (8 from the other rules, 6 from PHPStan's own
+    # level-0 checks) in files this change does not own, plus — whenever dev
+    # dependencies are not installed — 84 non-ignorable "extends unknown class
+    # PHPUnit\Framework\TestCase" errors, one per suite. So registration alone
+    # would leave this rule looking at nothing.
+    # tests/Api/V3/VacuousAssertionRuleTest.php runs THIS config over tests/
+    # and fails on this identifier alone; that test is what gives the rule its
+    # reach, and registering it here is what makes the test's run real.
+    - Prosper202\PHPStan\Rules\VacuousAssertionRule
+    # CLAUDE.md #23 — versions compared as text. `$logs['version'] >= $version`
+    # listed 1.9.8's release notes as new on the 1-click upgrade page.
+    - Prosper202\PHPStan\Rules\ForbidVersionRelationalCompareRule

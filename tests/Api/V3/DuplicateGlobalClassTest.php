@@ -1,0 +1,105 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Api\V3;
+
+use Tests\Support\SourceScan;
+use Tests\TestCase;
+
+/**
+ * A class name declared more than once in the global namespace is a hazard
+ * PHP will not warn about until it is too late:
+ *
+ *  - If two declarations ever load in the same request, PHP fatals with
+ *    "Cannot redeclare class". Neither INDEXES copy guarded itself with
+ *    class_exists(); both relied on include paths staying disjoint forever.
+ *  - The copies drift. INDEXES::get_country_id() took ($name, $code) in one
+ *    file and ($db, $name, $code) in the other, so a call written for one was
+ *    an ArgumentCountError under the other.
+ *  - It blinds static analysis. PHPStan resolves the name to whichever copy
+ *    it sees first and then reports every call against the others as an arity
+ *    error — nine false positives that hid behind a baseline until someone
+ *    traced them.
+ *
+ * The known duplicates are allowlisted below with what makes each tolerable.
+ * This test exists to stop the list from growing.
+ */
+final class DuplicateGlobalClassTest extends TestCase
+{
+    /**
+     * @var array<string, string> class name => why it is tolerated for now
+     */
+    private const KNOWN_DUPLICATES = [
+        // Alternate copies of one config file (live, sample, and two build
+        // templates). Exactly one is ever loaded.
+        'DB' => 'config file templates; only one is ever included',
+        // Full and slim dataengine implementations.
+        'DataEngine' => 'full and slim implementations',
+    ];
+
+    /** @return array<string, string[]> global class name => files declaring it */
+    private function globalClassDeclarations(): array
+    {
+        $found = [];
+        // Tests are included: a test that declares a global stub class collides
+        // with the real one just as any other file would.
+        foreach (SourceScan::phpFiles(includeTests: true) as $path => $source) {
+            // Namespaced classes cannot collide with global ones.
+            if (preg_match('/^\s*namespace\s+[^;{\s]+/m', $source) === 1) {
+                continue;
+            }
+            if (SourceScan::countMatches('/^\s*(?:final\s+|abstract\s+)?class\s+([A-Za-z_]\w*)/m', $source, $path, $matches) < 1) {
+                continue;
+            }
+            foreach ($matches[1] as $class) {
+                $found[$class][] = $path;
+            }
+        }
+
+        return $found;
+    }
+
+    public function testTheScannerFindsGlobalClassesAtAll(): void
+    {
+        // Without this a broken scan would make the test below vacuous.
+        $this->assertGreaterThan(20, count($this->globalClassDeclarations()));
+    }
+
+    public function testNoNewGlobalClassIsDeclaredTwice(): void
+    {
+        $unexpected = [];
+        foreach ($this->globalClassDeclarations() as $class => $files) {
+            if (count($files) < 2 || array_key_exists($class, self::KNOWN_DUPLICATES)) {
+                continue;
+            }
+            $unexpected[$class] = $files;
+        }
+
+        $this->assertSame([], $unexpected, sprintf(
+            "These global classes are declared in more than one file:\n%s\n"
+            . 'Two declarations reachable from one request is a fatal redeclare, and copies drift '
+            . 'into incompatible signatures. Give the class a namespace, or extract it to a single '
+            . 'file both callers include.',
+            implode("\n", array_map(
+                static fn(string $c, array $f): string => "  $c: " . implode(', ', $f),
+                array_keys($unexpected),
+                $unexpected
+            ))
+        ));
+    }
+
+    public function testTheKnownDuplicatesAreStillDuplicated(): void
+    {
+        // If one is cleaned up, drop it from the allowlist rather than
+        // leaving a stale exemption that would hide a future collision.
+        $declarations = $this->globalClassDeclarations();
+        foreach (array_keys(self::KNOWN_DUPLICATES) as $class) {
+            $this->assertGreaterThan(
+                1,
+                count($declarations[$class] ?? []),
+                "$class is no longer declared twice — remove it from KNOWN_DUPLICATES."
+            );
+        }
+    }
+}

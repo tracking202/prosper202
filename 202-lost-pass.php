@@ -17,14 +17,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 	$mysql['user_email'] = $db->real_escape_string((string)$_POST['user_email']);
 
 	$user_sql = "SELECT user_id FROM 202_users WHERE user_name='" . $mysql['user_name'] . "' AND user_email='" . $mysql['user_email'] . "'";
-	$user_result = _mysqli_query($user_sql, $db);
-	$user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
+	$user_result = _mysqli_query($db, $user_sql);
+    $user_row = null;
+    if ($user_result === false) {
+        // Said before anything is known of the account, so it tells nobody
+        // whether one matches; read as no row, the page promised an email
+        // that was never sent.
+        $error['user'] = 'Your request could not be processed just now. Please try again in a moment.';
+    } else {
+        $user_row = p202FetchRow($user_result, $user_sql);
+    }
 
 	// Always report success regardless of whether the account exists. Revealing
 	// "invalid username/email combination" lets an attacker enumerate which
 	// usernames and emails are registered. Only actually issue a reset when the
 	// account matches.
-	$success = true;
+    $success = $error === [];
 
 	if ($user_row) {
 
@@ -42,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 							SET 		user_pass_key='" . $mysql['user_pass_key'] . "',
 										user_pass_time='" . $mysql['user_pass_time'] . "'
 							WHERE		user_id='" . $mysql['user_id'] . "'";
-		$update_result = _mysqli_query($update_sql, $db);
+		$update_result = _mysqli_query($db, $update_sql);
 
 		// If the key never persisted, do not mail a dead reset link. Log it
 		// server-side but keep the generic success message (below) so the
@@ -56,33 +64,56 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 		if (filter_var($to, FILTER_VALIDATE_EMAIL) === false) {
 			$to = '';
 		}
-		$server_name = str_replace(["\r", "\n"], '', (string) ($_SERVER['SERVER_NAME'] ?? ''));
-		// Match the scheme the request came in on so the reset link isn't downgraded to http.
-		$scheme = getSecureStatus() ? 'https' : 'http';
-		// get_absolute_url() is '' on root installs, so ensure a leading slash or
-		// the link becomes "https://example.com202-pass-reset.php" (unusable).
-		$base_path = get_absolute_url();
-		if ($base_path === '' || $base_path[0] !== '/') {
-			$base_path = '/' . $base_path;
-		}
-		$reset_url = $scheme . '://' . $server_name . $base_path . '202-pass-reset.php?key=' . $user_pass_key;
-		$subject = "[Prosper202 on " . $server_name . "] Password Reset";
-
-		$message = "
+		// The link goes to this install's stored address, never the request's
+		// Host: the email reaches the account's owner, and the Host is the
+		// requester's to choose (PasswordResetLink). With no stored address the
+		// email carries the key and the page, without a link.
+        // A failed read, or a failed fetch, sends the email without a link
+        // rather than not at all: the key was stored, and the page answers as
+        // it does for every request.
+        $domain_result = _mysqli_query($db, "SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1");
+        $domain_row = $domain_result instanceof mysqli_result ? $domain_result->fetch_assoc() : false;
+        if ($domain_row === false) {
+            prosper_log('lost-pass', 'Reading the install\'s address failed, so the reset email carries no link: ' . $db->error);
+            $domain_row = null;
+        }
+		$base = \Prosper202\User\PasswordResetLink::base((string) ($domain_row['user_tracking_domain'] ?? ''), $_SERVER, __DIR__);
+		$page = \Prosper202\User\PasswordResetLink::PAGE . '?key=' . $user_pass_key;
+		$html_user = htmlentities((string) $_POST['user_name'], ENT_QUOTES, 'UTF-8');
+		$header = '';
+		if ($base !== null) {
+			$site = rtrim($base, '/');
+			$host = \Prosper202\User\PasswordResetLink::host($base);
+			$reset_url = $base . $page;
+			$subject = "[Prosper202 on " . $host . "] Password Reset";
+			$message = "
 <p>Someone has asked to reset the password for the following site and username.</p>
 
-<p><a href=\"" . $scheme . "://" . $server_name . "\">" . $scheme . "://" . $server_name . "</a></p>
+<p><a href=\"" . htmlspecialchars($site, ENT_QUOTES, 'UTF-8') . "\">" . htmlspecialchars($site, ENT_QUOTES, 'UTF-8') . "</a></p>
 
-<p>Username: " . htmlentities((string) $_POST['user_name'], ENT_QUOTES, 'UTF-8') . "</p>
+<p>Username: " . $html_user . "</p>
 
 <p>To reset your password visit the following address, otherwise just ignore this email and nothing will happen.</p>
 
-<p><a href=\"" . $reset_url . "\">" . $reset_url . "</a></p>";
+<p><a href=\"" . htmlspecialchars($reset_url, ENT_QUOTES, 'UTF-8') . "\">" . htmlspecialchars($reset_url, ENT_QUOTES, 'UTF-8') . "</a></p>";
+			if ($host !== '') {
+				$from = "prosper202@" . $host;
+				$header .= "From: Prosper202<" . $from . "> \r\n";
+				$header .= "Reply-To: " . $from . " \r\n";
+			}
+		} else {
+			prosper_log('lost-pass', 'No tracking domain is set (My Account > Settings), so the reset email names the page instead of linking to it.');
+			$subject = "[Prosper202] Password Reset";
+			$message = "
+<p>Someone has asked to reset the password for the following username on your Prosper202.</p>
 
-		$from = "prosper202@" . $server_name;
+<p>Username: " . $html_user . "</p>
 
-		$header = "From: Prosper202<" . $from . "> \r\n";
-		$header .= "Reply-To: " . $from . " \r\n";
+<p>To reset your password, open the following page on your Prosper202, at the address you sign in at; otherwise just ignore this email and nothing will happen.</p>
+
+<p>" . htmlspecialchars($page, ENT_QUOTES, 'UTF-8') . "</p>";
+		}
+
 		$header .=  "To: " . $to . " \r\n";
 		$header .= "Content-Type: text/html; charset=\"iso-8859-1\" \r\n";
 		$header .= "Content-Transfer-Encoding: 8bit \r\n";
@@ -103,33 +134,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 
 
 
-<?php info_top(); ?>
+<?php info_top(['title' => 'Reset your password - Prosper202 ClickServer']);
 
-<?php if ($success == true) { ?>
-
-	<center><small>An email has been sent with a link where you can change your password.</small></center>
-
-<?php } else { ?>
-	<div class="row">
-		<div class="main col-xs-4">
-			<center><img src="202-img/prosper202.png"></center>
-			<center><span class="infotext">Please enter your username and e-mail address.<br />You will receive a new password via e-mail to <a href="<?php echo get_absolute_url(); ?>202-login.php">login</a> with.</span></center>
-			<form class="form-signin form-horizontal" role="form" method="post" action="">
-				<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-				<div class="form-group <?php if (isset($error['user'])) echo "has-error"; ?>">
-					<?php if (isset($error['user'])) { ?>
-						<div class="tooltip right in login_tooltip">
-							<div class="tooltip-arrow"></div>
-							<div class="tooltip-inner"><?php echo $error['user']; ?></div>
-						</div>
-					<?php } ?>
-					<input type="text" class="form-control first" name="user_name" placeholder="Username">
-					<input type="text" class="form-control last" name="user_email" placeholder="Email">
-					<p></p>
-					<button class="btn btn-lg btn-p202 btn-block" type="submit">Get New Password <span class="fui-arrow-right pull-right"></span></button>
-				</div>
-			</form>
+if ($success == true) {
+	echo p202_standalone_card('Check your email', 'If that username and email match an account, a link to choose a new password is on its way. It works for three days.'); ?>
+	<p class="mb-0"><a class="btn btn-secondary w-100" href="<?php echo htmlspecialchars(get_absolute_url(), ENT_QUOTES, 'UTF-8'); ?>202-login.php">Back to sign in</a></p>
+<?php echo p202_standalone_card_end();
+} else {
+	echo p202_standalone_card('Reset your password', 'Enter your username and the email address on your account. We will email you a link to choose a new password.'); ?>
+	<?php if (isset($error['user'])) { ?>
+		<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><?php echo htmlspecialchars(trim((string) $error['user']), ENT_QUOTES, 'UTF-8'); ?></div></div>
+	<?php } ?>
+	<form method="post" action="" id="lost-pass-form">
+		<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
+		<div class="mb-3">
+			<label class="form-label" for="user_name">Username</label>
+			<input type="text" class="form-control" id="user_name" name="user_name" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
 		</div>
-	</div>
-<?php } ?>
-<?php info_bottom(); ?>
+		<div class="mb-3">
+			<label class="form-label" for="user_email">Email</label>
+			<input type="email" class="form-control" id="user_email" name="user_email" autocomplete="email" required>
+		</div>
+		<button class="btn btn-primary w-100" type="submit">Email me a reset link</button>
+	</form>
+	<p class="mt-3 mb-0 text-center small"><a href="<?php echo htmlspecialchars(get_absolute_url(), ENT_QUOTES, 'UTF-8'); ?>202-login.php">Back to sign in</a></p>
+<?php echo p202_standalone_card_end();
+}
+info_bottom();

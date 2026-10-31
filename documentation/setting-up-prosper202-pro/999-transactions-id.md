@@ -1,5 +1,15 @@
 # Transactions ID
 
+> **Funnels are now goals.** One campaign can pay for every step of a funnel:
+> give it a goal per step — an opt-in, a sale, an upsell — on
+> Setup › Campaigns (the campaign's **Goals** panel), set its **When a click
+> converts more than once** to **Add them up**, and have each step's
+> postback or pixel carry its event: `gpb.php?subid=[[subid]]&event=sale&amount=[[payout]]&txid=[[transaction_id]]`.
+> Each step is its own conversion on the click, with its own payout, shown
+> in the click's breakdown, and the traffic source can be told about each
+> one. No campaign copies are needed. See [web events](../api/23-events.md).
+> The recipe below still works exactly as it always has.
+
 If you're interested in tracking more than one conversion where there are upsells through a funnel type setup, then this new feature applies to you.
 
 ## Funnel Tracking

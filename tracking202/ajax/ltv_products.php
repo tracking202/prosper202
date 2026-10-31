@@ -4,6 +4,12 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
+
+// Draw the window ltv.php drew, not whatever the stored one says by now: a
+// second tab may have stored another (ReportView). ltv.js sends the view
+// with every request under tracking202/ajax/.
+require_once(substr(__DIR__, 0, -17) . '/202-config/functions-report-prefs.php');
+$reportView = p202_report_view_begin();
 AUTH::set_timezone($_SESSION['user_timezone']);
 
 /**
@@ -14,8 +20,10 @@ AUTH::set_timezone($_SESSION['user_timezone']);
  */
 
 $userId = (int) $_SESSION['user_id'];
-$action = (string) ($_POST['action'] ?? '');
-$offset = max(0, (int) ($_POST['offset'] ?? 0));
+$action = $_POST['action'] ?? '';
+if (!is_string($action)) {
+    $action = '?'; // a list names no action: the switch below says "Unknown action."
+}
 $limit = 50;
 
 require_once __DIR__ . '/ltv_ui.php';
@@ -28,23 +36,31 @@ $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_products.php';
 $notice = null;
 $error = null;
 
+// What to show is read first: a request naming a page or a row nobody can
+// name runs no action either.
+$offset = p202_ltv_posted_or(fn (): int => p202_ltv_posted_offset($_POST['offset'] ?? null), 0, $error);
+$editId = p202_ltv_posted_or(fn (): int => p202_ltv_posted_id_or_none(
+    $_POST['edit'] ?? null,
+    'Pick the product to edit from the list.'
+), 0, $error);
+
 try {
     $conn = new \Prosper202\Database\Connection($db);
 
-    if ($action !== '') {
+    if ($action !== '' && $error === null) {
         if (!AUTH::check_csrf_token()) {
             $error = 'Your session token was invalid — please try again.';
         } else {
             try {
                 switch ($action) {
                     case 'save_product':
-                        $productId = (int) ($_POST['product_id'] ?? 0);
-                        $name = trim((string) ($_POST['product_name'] ?? ''));
-                        $sku = trim((string) ($_POST['product_sku'] ?? ''));
-                        $priceRaw = trim((string) ($_POST['product_price'] ?? ''));
-                        if ($productId <= 0) {
-                            throw new \RuntimeException('Product not found.');
-                        }
+                        $productId = p202_ltv_posted_id(
+                            $_POST['product_id'] ?? null,
+                            'Pick the product to edit from the list.'
+                        );
+                        $name = trim(p202_ltv_posted_text($_POST['product_name'] ?? null, 'product_name'));
+                        $sku = trim(p202_ltv_posted_text($_POST['product_sku'] ?? null, 'product_sku'));
+                        $priceRaw = trim(p202_ltv_posted_text($_POST['product_price'] ?? null, 'product_price'));
                         if ($name === '') {
                             throw new \RuntimeException('Product name must not be empty.');
                         }
@@ -82,7 +98,10 @@ try {
                         break;
 
                     case 'delete_product':
-                        $productId = (int) ($_POST['product_id'] ?? 0);
+                        $productId = p202_ltv_posted_id(
+                            $_POST['product_id'] ?? null,
+                            'Pick the product to delete from the list.'
+                        );
                         $check = $conn->prepareRead(
                             'SELECT COUNT(*) AS c FROM 202_revenue_line_items WHERE product_id = ? AND user_id = ?'
                         );
@@ -153,7 +172,10 @@ try {
 }
 
 $csrfToken = (string) ($_SESSION['token'] ?? '');
-$editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['product_id'] ?? 0) : (int) ($_POST['edit'] ?? 0);
+if ($error !== null && $action === 'save_product') {
+    // The row a refused save named stays open, when it names one exactly.
+    $editId = \Prosper202\Http\PostedId::read($_POST['product_id'] ?? null) ?? 0;
+}
 ?>
 
 <?php echo p202_ltv_ui_styles(); ?>
@@ -168,8 +190,8 @@ $editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['produ
 
 <?php echo p202_ltv_card_open('Product Catalog',
     number_format($totalProducts) . ' product(s) — created automatically from order line items'); ?>
-    <div class="ltv-table-wrap">
-        <table class="ltv-table ltv-table-hover">
+    <div class="p202-table-wrap">
+        <table class="table p202-table table-hover">
             <thead>
                 <tr>
                     <th>Product</th>
@@ -186,7 +208,7 @@ $editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['produ
             <tbody>
                 <?php if ($products === []) { ?>
                     <tr><td colspan="9">
-                        <?php echo p202_ltv_empty('fa-shopping-cart', 'No products yet',
+                        <?php echo p202_ltv_empty('bi-cart', 'No products yet',
                             'They appear automatically when conversions or API revenue include line items.'); ?>
                     </td></tr>
                 <?php } ?>
@@ -199,36 +221,36 @@ $editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['produ
                             <input type="hidden" name="token" value="<?php echo $esc($csrfToken); ?>" />
                             <input type="hidden" name="action" value="save_product" />
                             <input type="hidden" name="product_id" value="<?php echo $productId; ?>" />
-                            <input type="text" class="ltv-input ltv-input-sm" name="product_name" maxlength="255"
+                            <input type="text" class="form-control form-control-sm" name="product_name" maxlength="255"
                                 value="<?php echo $esc($product['name'] ?? ''); ?>">
                         </td>
-                        <td><input type="text" class="ltv-input ltv-input-sm" name="product_sku" maxlength="191"
+                        <td><input type="text" class="form-control form-control-sm" name="product_sku" maxlength="191"
                                 value="<?php echo $esc($product['sku'] ?? ''); ?>"></td>
-                        <td><?php echo $esc($product['external_product_id'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></td>
-                        <td class="num"><input type="text" class="ltv-input ltv-input-sm" name="product_price" size="8" style="width: 90px;"
+                        <td><?php echo $esc($product['external_product_id'] ?? '') ?: '<span class="text-secondary">—</span>'; ?></td>
+                        <td class="num"><input type="text" class="form-control form-control-sm" name="product_price" size="8" style="width: 90px;"
                                 value="<?php echo ($product['price'] ?? null) !== null ? $esc($product['price']) : ''; ?>"></td>
                         <td class="num"><?php echo number_format((int) ($product['orders'] ?? 0)); ?></td>
                         <td class="num"><?php echo number_format((float) ($product['units'] ?? 0)); ?></td>
                         <td class="num">$<?php echo $money($product['revenue'] ?? 0); ?></td>
                         <td><?php echo $when($product['created_at'] ?? 0); ?></td>
                         <td class="num" style="white-space: nowrap;">
-                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-primary" onclick="ltvProductSave(<?php echo $productId; ?>);">Save</button>
-                            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvProductsReload();">Cancel</button>
+                            <button type="button" class="btn btn-sm btn-primary" onclick="ltvProductSave(<?php echo $productId; ?>);">Save</button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="ltvProductsReload();">Cancel</button>
                         </td>
                     </tr>
                 <?php } else { ?>
                     <tr>
-                        <td class="ltv-strong"><?php echo $esc($product['name'] ?? ''); ?></td>
-                        <td><?php echo $esc($product['sku'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></td>
-                        <td><?php echo $esc($product['external_product_id'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></td>
-                        <td class="num"><?php echo ($product['price'] ?? null) !== null ? '$' . $money($product['price']) : '<span class="ltv-dim">—</span>'; ?></td>
+                        <td class="fw-bold"><?php echo $esc($product['name'] ?? ''); ?></td>
+                        <td><?php echo $esc($product['sku'] ?? '') ?: '<span class="text-secondary">—</span>'; ?></td>
+                        <td><?php echo $esc($product['external_product_id'] ?? '') ?: '<span class="text-secondary">—</span>'; ?></td>
+                        <td class="num"><?php echo ($product['price'] ?? null) !== null ? '$' . $money($product['price']) : '<span class="text-secondary">—</span>'; ?></td>
                         <td class="num"><?php echo number_format((int) ($product['orders'] ?? 0)); ?></td>
                         <td class="num"><?php echo number_format((float) ($product['units'] ?? 0)); ?></td>
-                        <td class="num ltv-strong">$<?php echo $money($product['revenue'] ?? 0); ?></td>
+                        <td class="num fw-bold">$<?php echo $money($product['revenue'] ?? 0); ?></td>
                         <td><?php echo $when($product['created_at'] ?? 0); ?></td>
                         <td class="num" style="white-space: nowrap;">
-                            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvProductEdit(<?php echo $productId; ?>);"><i class="fa fa-pencil"></i> Edit</button>
-                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-danger" onclick="ltvProductDelete(<?php echo $productId; ?>);">Delete</button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="ltvProductEdit(<?php echo $productId; ?>);"><i class="bi bi-pencil"></i> Edit</button>
+                            <button type="button" class="btn btn-sm btn-outline-danger" onclick="ltvProductDelete(<?php echo $productId; ?>);">Delete</button>
                         </td>
                     </tr>
                 <?php } ?>

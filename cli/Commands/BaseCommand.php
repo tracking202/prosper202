@@ -8,10 +8,13 @@ use P202Cli\ApiClient;
 use P202Cli\ApiException;
 use P202Cli\Config;
 use P202Cli\Formatter;
+use P202Cli\OptionName;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Question\ConfirmationQuestion;
+use Symfony\Component\Console\Question\Question;
 
 /**
  * Base command that provides shared infrastructure:
@@ -46,6 +49,89 @@ abstract class BaseCommand extends Command
     protected function render(OutputInterface $output, array $data, InputInterface $input): void
     {
         Formatter::output($output, $data, $this->isJson($input));
+    }
+
+    /**
+     * Shared confirm-or-force gate for destructive commands.
+     *
+     * Validates client configuration BEFORE prompting, so an unconfigured
+     * user is never asked to confirm a deletion the tool cannot perform.
+     * $action is the verb phrase, e.g. "delete campaign #3".
+     */
+    protected function confirmDestructive(InputInterface $input, OutputInterface $output, string $action): bool
+    {
+        $this->client();
+
+        if ($input->hasOption('force') && $input->getOption('force')) {
+            return true;
+        }
+
+        $helper = $this->getHelper('question');
+        $question = new ConfirmationQuestion("Are you sure you want to {$action}? [y/N] ", false);
+        if (!$helper->ask($input, $output, $question)) {
+            $output->writeln('<comment>Cancelled.</comment>');
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * The given options for the named API fields, keyed by the field: each
+     * field is read from its kebab-case option (OptionName::of()), and one
+     * the command does not declare, or that was not given, is left out.
+     *
+     * @param list<string> $fields
+     * @return array<string, mixed>
+     */
+    protected function collectOptions(InputInterface $input, array $fields): array
+    {
+        $params = [];
+        foreach ($fields as $field) {
+            $option = OptionName::of($field);
+            if ($input->hasOption($option)) {
+                $value = $input->getOption($option);
+                if ($value !== null) {
+                    $params[$field] = $value;
+                }
+            }
+        }
+        return $params;
+    }
+
+    /**
+     * Decode a JSON option strictly. Returns null when the option was not
+     * provided; malformed JSON or a scalar (which the server would silently
+     * drop) is an explicit error, never silently discarded.
+     */
+    protected function decodeJsonOption(InputInterface $input, string $name): ?array
+    {
+        $raw = $input->getOption($name);
+        if ($raw === null) {
+            return null;
+        }
+
+        $decoded = json_decode((string)$raw, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new \RuntimeException('Invalid JSON in ' . OptionName::flag($name) . ': ' . json_last_error_msg());
+        }
+        if (!is_array($decoded)) {
+            throw new \RuntimeException(OptionName::flag($name) . ' must be a JSON array or object');
+        }
+        return $decoded;
+    }
+
+    /**
+     * Prompt for a secret without echoing it (keeps credentials out of shell
+     * history and ps output). Returns null if nothing was entered.
+     */
+    protected function promptHiddenSecret(InputInterface $input, OutputInterface $output, string $prompt): ?string
+    {
+        $helper = $this->getHelper('question');
+        $question = new Question($prompt);
+        $question->setHidden(true);
+        $question->setHiddenFallback(false);
+        $value = $helper->ask($input, $output, $question);
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     /**
