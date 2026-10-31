@@ -105,16 +105,18 @@ func TestClickFilterSetSendsOnlyWhatIsGiven(t *testing.T) {
 
 func TestClickFilterRefusesBadInputBeforeAnyRequest(t *testing.T) {
 	for name, args := range map[string][]string{
-		"set with nothing":     {"click-filter", "set"},
-		"a window not offered": {"click-filter", "set", "--repeat-window", "2h"},
-		"a switch not 0 or 1":  {"click-filter", "set", "--crawler-ranges", "yes"},
-		"add without action":   {"click-filter", "list", "add", "203.0.113.7"},
-		"add a word":           {"click-filter", "list", "add", "office", "--action", "count"},
-		"an unknown action":    {"click-filter", "list", "add", "203.0.113.7", "--action", "allow"},
-		"test a block":         {"click-filter", "test", "203.0.113.0/24"},
-		"test a word":          {"click-filter", "test", "localhost"},
-		"a user id not an id":  {"click-filter", "get", "--user-id", "7x"},
-		"update with nothing":  {"click-filter", "list", "update", "3"},
+		"set with nothing":       {"click-filter", "set"},
+		"a window not offered":   {"click-filter", "set", "--repeat-window", "2h"},
+		"a switch not 0 or 1":    {"click-filter", "set", "--crawler-ranges", "yes"},
+		"add without action":     {"click-filter", "list", "add", "203.0.113.7"},
+		"add a word":             {"click-filter", "list", "add", "office", "--action", "count"},
+		"an unknown action":      {"click-filter", "list", "add", "203.0.113.7", "--action", "allow"},
+		"test a block":           {"click-filter", "test", "203.0.113.0/24"},
+		"test a word":            {"click-filter", "test", "localhost"},
+		"a user id not an id":    {"click-filter", "get", "--user-id", "7x"},
+		"update with nothing":    {"click-filter", "list", "update", "3"},
+		"remove an id and --ids": {"click-filter", "list", "remove", "3", "--ids", "4,5", "--force"},
+		"remove with no id":      {"click-filter", "list", "remove", "--force"},
 	} {
 		fake, _, err := clickFilterRun(t, append(args, "--json")...)
 		if err == nil {

@@ -207,7 +207,7 @@ var clickFilterListUpdateCmd = &cobra.Command{
 var clickFilterListRemoveCmd = &cobra.Command{
 	Use:   "remove [entry-id]",
 	Short: "Remove an entry; its addresses are filtered by the other rules again",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  deleteArgsValidator,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 1 {
 			if _, err := validateID(args[0]); err != nil {
