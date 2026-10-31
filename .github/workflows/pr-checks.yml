@@ -115,6 +115,23 @@ jobs:
       - name: composer.lock matches composer.json
         run: composer validate --no-check-publish --no-check-all
 
+  # Each pull request adds its changelog entries as a fragment under
+  # changelogs.d/, folded into changelogs.txt and changelogs.json at release.
+  # When every pull request appended to the same lines of those two files,
+  # each merge made every other open pull request conflict.
+  changelog:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Every changelog fragment can be folded in
+        run: python3 -I scripts/changelog.py check
+      - name: Entries come as fragments, not edits of the two files
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 -I scripts/changelog.py guard "origin/$BASE_REF"
+
   # Flags are written in kebab-case everywhere; snake_case is an accepted alias.
   flag-spelling:
     runs-on: ubuntu-24.04
