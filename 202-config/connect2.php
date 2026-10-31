@@ -455,42 +455,39 @@ class FILTER
 {
 
     /**
-     * Whether to record this click as filtered (1) or not (0).
+     * Whether to record this click as filtered, and why: the account's rules
+     * (Prosper202\Click\Filter\ClickFilterDecision), its settings and the
+     * list entry the click's address falls in read once
+     * (ClickPathFilterRules, which answers the defaults on any error rather
+     * than fail the click). With the defaults the checks below run as they
+     * always did: the sign-in addresses, then the crawler ranges, then the
+     * repeat visit.
      *
-     * The sign-in and netrange checks compare the address the click arrived
-     * from (VisitorIp), read here rather than handed in: a caller that
-     * passed the address the click path stores — masked under privacy —
-     * would match no sign-in and no netrange. Every caller passed one
-     * argument more before; StoredVisitorIpSourceTest holds them to four.
+     * The sign-in and netrange checks, and the list, compare the address the
+     * click arrived from (VisitorIp), read here rather than handed in: a
+     * caller that passed the address the click path stores — masked under
+     * privacy — would match no sign-in and no netrange.
+     * StoredVisitorIpSourceTest holds every caller to three arguments.
      *
      * @param int|string $ip_id the click's stored address row (masked under
      *        privacy): what the duplicate check keeps, the only one it may
      */
-    public static function startFilter($db, $click_id, $ip_id, $user_id)
+    public static function verdict($db, $ip_id, $user_id): \Prosper202\Click\Filter\ClickFilterVerdict
     {
         $arrived = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
+        [$settings, $entry] = \Prosper202\Click\Filter\ClickPathFilterRules::forClick(
+            new \Prosper202\Database\Connection($db),
+            (int) $user_id,
+            $arrived
+        );
 
-        // we only do the other checks, if the first ones have failed.
-        // we will return the variable filter, if the $filter returns TRUE, when the click is inserted and recorded we will insert the new click already inserted,
-        // what was lagign this query is before it would insert a click, then scan it and then update the click, the updating later on was lagging, now we will just insert and it will not stop the clicks from being redirected becuase of a slow update.
-
-        // check the user
-        $filter = FILTER::checkUserIP($db, $arrived);
-        if ($filter == false) {
-
-            // check the netrange
-            $filter = FILTER::checkNetrange($click_id, $arrived);
-            if ($filter == false) {
-
-                $filter = FILTER::checkLastIps($db, $user_id, $ip_id);
-            }
-        }
-
-        if ($filter == true) {
-            return 1;
-        } else {
-            return 0;
-        }
+        return \Prosper202\Click\Filter\ClickFilterDecision::decide(
+            $settings,
+            $entry,
+            static fn (): bool => (bool) FILTER::checkUserIP($db, $arrived),
+            static fn (): bool => FILTER::checkNetrange(0, $arrived),
+            static fn (?int $within): bool => FILTER::checkLastIps($db, $user_id, $ip_id, $within),
+        );
     }
 
     /**
@@ -511,73 +508,10 @@ class FILTER
         return \Prosper202\Click\SignedInFromAddress::any(new \Prosper202\Database\Connection($db), $address);
     }
 
-    public static function checkNetrange($click_id, $ip)
+    /** The built-in crawler ranges (CrawlerRanges, which the API's address test asks too). */
+    public static function checkNetrange($click_id, $ip): bool
     {
-        $ip_address = ip2long(is_string($ip) ? $ip : $ip->address);
-
-        // check each netrange
-        /* google1 */
-        if (($ip_address >= 1208926208) and ($ip_address <= 1208942591)) {
-            return true;
-        }
-        /* google2 */
-        if (($ip_address >= 3512041472) and ($ip_address <= 3512074239)) {
-            return true;
-        }
-        /* google3 */
-        if (($ip_address >= 1123631104) and ($ip_address <= 1123639295)) {
-            return true;
-        }
-        /* Google4 */
-        if (($ip_address >= 1089052672) and ($ip_address <= 1089060863)) {
-            return true;
-        }
-        /* google5 */
-        if (($ip_address >= -782925824) and ($ip_address <= -782893057)) {
-            return true;
-        }
-
-        /* level 3 communications */
-        if (($ip_address >= 1094189056) and ($ip_address <= 1094451199)) {
-            return true;
-        }
-
-        /* yahoo1 */
-        if (($ip_address >= 3515031552) and ($ip_address <= 3515039743)) {
-            return true;
-        }
-        /* Yahoo2 */
-        if (($ip_address >= 3633393664) and ($ip_address <= 3633397759)) {
-            return true;
-        }
-        /* Yahoo3 */
-        if (($ip_address >= 3640418304) and ($ip_address <= 3640426495)) {
-            return true;
-        }
-        /* Yahoo4 */
-        if (($ip_address >= 1209925632) and ($ip_address <= 1209991167)) {
-            return true;
-        }
-        /* Yahoo5 */
-        if (($ip_address >= 1241907200) and ($ip_address <= 1241972735)) {
-            return true;
-        }
-
-        /* Performance Systems International Inc. */
-        if (($ip_address >= 637534208) and ($ip_address <= 654311423)) {
-            return true;
-        }
-        /* Microsoft */
-        if (($ip_address >= 3475898368) and ($ip_address <= 3475963903)) {
-            return true;
-        }
-        /* MSN */
-        if (($ip_address >= 1093926912) and ($ip_address <= 1094189055)) {
-            return true;
-        }
-
-        // if it was none of theses, return false
-        return false;
+        return \Prosper202\Click\Filter\CrawlerRanges::contains(is_string($ip) ? $ip : (string) $ip->address);
     }
 
     // this will filter out a click if it the IP WAS RECORDED, for a particular user within the last 24 hours, if it existed before, filter out this click.
@@ -591,11 +525,20 @@ class FILTER
     // is the only one privacy lets it keep. Unlike checkUserIP, whose other
     // side is an operator's unmasked record, there is nothing unmasked here
     // to compare before the mask.
-    public static function checkLastIps($db, $user_id, $ip_id)
+    //
+    // $within is the account's repeat window in seconds (ClickFilterSettings::
+    // repeatWithin()); null, the default, is the daily cleanup's, so any row
+    // still there counts, as it always did.
+    public static function checkLastIps($db, $user_id, $ip_id, ?int $within = null): bool
     {
         $conn = new \Prosper202\Database\Connection($db);
-        $stmt = $conn->prepareWrite('SELECT 1 FROM 202_last_ips WHERE user_id = ? AND ip_id = ? LIMIT 1');
-        $conn->bind($stmt, 'ii', [(int) $user_id, (int) $ip_id]);
+        if ($within === null) {
+            $stmt = $conn->prepareWrite('SELECT 1 FROM 202_last_ips WHERE user_id = ? AND ip_id = ? LIMIT 1');
+            $conn->bind($stmt, 'ii', [(int) $user_id, (int) $ip_id]);
+        } else {
+            $stmt = $conn->prepareWrite('SELECT 1 FROM 202_last_ips WHERE user_id = ? AND ip_id = ? AND time >= ? LIMIT 1');
+            $conn->bind($stmt, 'iii', [(int) $user_id, (int) $ip_id, time() - $within]);
+        }
         if ($conn->fetchOne($stmt) !== null) {
             // if this ip has been seen within the last 24 hours, filter it out.
             return true;

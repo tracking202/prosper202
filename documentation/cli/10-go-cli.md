@@ -134,6 +134,11 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | `p202 ppc-account pixel list\|create\|update\|delete` | The pixels a traffic source account fires on a conversion, with a Postback's correction URL (Setup > Traffic Sources) |
 | `p202 click list` | List clicks; `--follow` streams new ones as they arrive (the Spy page) |
 | `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key) and how its click was found (`matched_by`), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |
+| `p202 click get <id>` | One click; a filtered one says why in `filter_reason` (`sign_in_address`, `crawler_range`, `repeat_visit`, `filter_list` with `filter_entry_id`, `bot`; `null` before 1.9.79). `click list --filter-reason` lists the clicks one rule filtered |
+| `p202 click-filter get` | The click filter (Personal Settings › Click filtering): its three checks, the repeat window and the address list. Every `click-filter` command acts on the key's own account, `--user-id` on another you may manage |
+| `p202 click-filter set` | `--sign-in-addresses`, `--crawler-ranges`, `--repeat-visits` (`1`/`0`) and `--repeat-window` (`1h`, `6h`, `24h`, `7d`); only what is given changes |
+| `p202 click-filter list [add <address> \| update <entry-id> \| remove <entry-id>]` | The address list: `add 203.0.113.0/24 --action filter\|count --note "..."`; `remove` takes `--dry-run`, `--force` and `--ids` |
+| `p202 click-filter test <ip>` | Would a click from this address be filtered, and by which rule? Each check's answer too; records nothing |
 | `p202 click update-cpc` | Set what past clicks cost (the UI's Update CPC): `--from`/`--to` days in the account's time zone, `--cpc`, optional id filters and `--method-of-promotion`; counts first, asks, then writes only the clicks it counted. See [Update CPC, subids and revenue reports](#update-cpc-subids-and-revenue-reports) |
 | `p202 conversion mark-subids <file\|->` | Mark clicks converted from a subid list, one per line (the UI's Update Subids); once per click, safe to repeat |
 | `p202 conversion delete-subids <file\|->` | Clear the conversions of a subid list (the UI's Delete Subids); previews, asks (`--force`), `--dry-run` |
@@ -551,6 +556,13 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   source rather than making a second one. A delete removes that one record,
   as its Setup page does: a traffic source's accounts and a category's
   campaigns stay, and the tool's description says so.
+- `click_filter_get`, `click_filter_update`, `click_filter_test`,
+  `click_filter_list_add` and `click_filter_list_remove` read and change the
+  click filter of the key's own account (`p202 click-filter`), and
+  `settings_get` reads the account's settings (`p202 user prefs get`, a
+  secret only as whether one is stored). The hosted server below does not
+  offer these: its connections do not reach account settings. `click_get`
+  says why a click was filtered (`filter_reason`) on both.
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.

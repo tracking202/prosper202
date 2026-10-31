@@ -3,6 +3,7 @@
 declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 require_once __DIR__ . '/../202-config/functions-account-ui.php';
+require_once __DIR__ . '/../202-config/functions-click-filter-ui.php';
 
 AUTH::require_user();
 
@@ -53,8 +54,8 @@ if (!empty($user_row['url']))
 // Account/key settings require the same permission that gates their UI; reject
 // forged requests from users who lack it (the password-change flow is excluded
 // because every user may change their own password).
-$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key'];
-$personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key'];
+$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry'];
+$personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key', 'test_click_filter'];
 $wantsPersonalSettingsAction = false;
 foreach ($personalSettingsPost as $personalSettingsAction) {
 	if (isset($_POST[$personalSettingsAction])) {
@@ -501,6 +502,11 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 	}
 }
 
+// ─── Click filtering ─────────────────────────────────────────────────
+// The card's forms (functions-click-filter-ui.php): saved and redirected, or refused in place.
+$clickFilterPost = $canPersonal ? p202_click_filter_post($db, (int) $_SESSION['user_id'], $_POST) : ['errors' => [], 'form' => [], 'flashes' => []];
+$pageFlashes = array_merge($pageFlashes, $clickFilterPost['flashes']);
+
 if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_api_key'] == '1') {
 
 	// The ClickServers page's empty state posts here and asks to go back
@@ -782,6 +788,10 @@ if ($canPersonal) {
 	}
 }
 
+// The click filter as stored, and an address test asked of it.
+$clickFilterView = $canPersonal ? p202_click_filter_view($db, (int) $_SESSION['user_id'], $_GET) : null;
+$pageFlashes = array_merge($pageFlashes, $clickFilterView['flashes'] ?? []);
+
 /** A key shown as its first and last four characters around a mask. */
 $maskKey = static fn (string $key): string => strlen($key) > 12
 	? substr($key, 0, 4) . str_repeat("\u{2022}", 20) . substr($key, -4)
@@ -830,6 +840,7 @@ template_top('Personal Settings');
 <?php if ($canPersonal) { ?>
 	<nav class="nav p202-tabs p202-tabs--compact" aria-label="Personal settings sections">
 		<a class="nav-link" href="#profile">Profile</a>
+        <a class="nav-link" href="#click-filtering">Click filtering</a>
 		<a class="nav-link" href="#currency">Currency</a>
 		<a class="nav-link" href="#api-keys">API keys</a>
 		<a class="nav-link" href="#customer-key">Customer key</a>
@@ -970,6 +981,10 @@ echo p202_account_render_flashes($extraFlashes);
 				</form>
 			</div>
 		</section>
+
+        <?php if ($clickFilterView !== null && $clickFilterView['filter'] !== null) {
+            echo p202_click_filter_card($clickFilterView['filter'], $clickFilterView['test'], $clickFilterView['errors'] + $clickFilterPost['errors'], $clickFilterPost['form'], is_string($_GET['test_ip'] ?? null) ? $_GET['test_ip'] : '');
+        } ?>
 
 		<?php if ($canPersonal) { ?>
 			<section class="p202-panel mt-4" id="currency">

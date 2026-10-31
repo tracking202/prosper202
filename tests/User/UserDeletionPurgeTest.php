@@ -217,6 +217,7 @@ final class UserDeletionPurgeTest extends TestCase
         '202_clicks_variable' => 'the traffic record: clicks are kept',
         '202_clicks_rotator' => 'the traffic record: clicks are kept',
         '202_click_latest_visits' => 'the traffic record: clicks are kept',
+        '202_clicks_filter_reason' => 'the traffic record: clicks are kept, and why each filtered one is',
         '202_cpa_trackers' => 'the traffic record: clicks are kept',
         '202_google' => 'the traffic record: clicks are kept',
         '202_bing' => 'the traffic record: clicks are kept',

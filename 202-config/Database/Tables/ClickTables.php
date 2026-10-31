@@ -32,6 +32,7 @@ final class ClickTables
             self::clicksTotal(),
             self::clickLatestVisits(),
             self::reClickBackfill(),
+            self::clicksFilterReason(),
         ];
     }
 
@@ -263,6 +264,27 @@ final class ClickTables
                 `skipped_clicks` bigint(20) unsigned NOT NULL DEFAULT '0',
                 `last_skipped_click_id` bigint(20) unsigned DEFAULT NULL,
                 PRIMARY KEY (`backfill_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Why a filtered click is filtered (Prosper202\Click\Filter\ClickFilterVerdict):
+     * one row per filtered click recorded from 1.9.79 on, written by
+     * MysqlClickRepository and deleted with the click (ClickRetention). A
+     * filtered click without one was recorded before, or is a bot, which
+     * 202_clicks.click_bot says. entry_id is the list entry of a filter_list
+     * click, 0 for the others.
+     */
+    public static function clicksFilterReason(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICKS_FILTER_REASON,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICKS_FILTER_REASON . "` (
+                `click_id` bigint(20) unsigned NOT NULL,
+                `filter_reason` varchar(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `entry_id` int(10) unsigned NOT NULL DEFAULT '0',
+                PRIMARY KEY (`click_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
