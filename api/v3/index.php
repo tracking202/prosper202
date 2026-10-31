@@ -634,6 +634,9 @@ try {
             static function () use ($auth): void {
                 $auth->requireScope('ltv:read');
             },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_campaign_data');
+            },
         ]);
 
         // ── LTV: CRM + inbound integration writes (ltv:write) ──────────
@@ -661,6 +664,19 @@ try {
             $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
             $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct(PathId::of($ctx), $payload));
             $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct(PathId::of($ctx))));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:write');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_setup_section');
+            },
+        ]);
+
+        // ── LTV Settings writes (ltv:write): fields, webhooks, integrations
+        // hold secrets, so they ask what Account › API Integrations asks.
+        $router->group('/ltv', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\LtvController::class;
             $r->post('/fields',                   fn() => ['_status' => 201] + $crud($cls)->createField($payload));
             $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField(PathId::of($ctx), $payload));
             $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField(PathId::of($ctx))));
@@ -672,6 +688,9 @@ try {
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:write');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_api_integrations');
             },
         ]);
 
@@ -1324,8 +1343,8 @@ try {
             PathId::of($ctx, 'campaignId')
         ), \Api\V3\Support\CampaignFigures::GOAL));
         // The LTV deletes make no authorization check inside their handlers:
-        // the group's ltv:write middleware, run from the main match before
-        // this router is consulted, is their only one.
+        // the groups' ltv:write scope and role-permission middleware, run from
+        // the main match before this router is consulted, are their only ones.
         $previewRouter->group('/ltv', function (Router $r) use ($crud) {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->delete('/customers/{id}',                   fn($ctx) => $crud($cls)->deleteCustomerPreview(PathId::of($ctx)));

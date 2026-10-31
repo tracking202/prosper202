@@ -4,6 +4,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_campaign_data'); // LTV shows customers' revenue
 
 /**
  * JSON type-ahead search behind the merge picker modal (ltv_merge_modal.php).
