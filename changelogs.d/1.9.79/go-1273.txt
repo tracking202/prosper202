@@ -1,1 +1,0 @@
--- Changed: Building the Go CLI from source now needs Go 1.27.3, which carries Go's latest security fixes (crypto/x509, crypto/tls, net/http and others); release binaries are built with it.
