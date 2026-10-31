@@ -8,9 +8,12 @@ final class CronGateTest extends TestCase
 {
     public function test_cron_gates_profile_on_consent(): void
     {
-        $src = file_get_contents(__DIR__ . '/../../202-cronjobs/sync-messaging.php');
-        $this->assertStringContainsString('ConsentPolicy::analyticsAllowed', $src);
-        $this->assertStringContainsString('OfferProfile::compute', $src);
+        // Both cron entry points deliver through deliverPendingExclusive(),
+        // which refreshes the consent-gated profile under the delivery lock.
+        $src = file_get_contents(__DIR__ . '/../../202-config/Messaging/MessagingService.class.php');
+        $this->assertMatchesRegularExpression('/self::refreshProfiles\(\$db\);\s*return self::deliverPending\(/', $src);
+        $refresh = substr($src, (int) strpos($src, 'public static function refreshProfiles'));
+        $this->assertMatchesRegularExpression('/ConsentPolicy::analyticsAllowed\(\$db, \$userId\)\)\s*\{\s*continue;.*OfferProfile::compute/s', $refresh);
     }
 
     /**

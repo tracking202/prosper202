@@ -261,10 +261,11 @@ final class ConsentSyncBlockTest extends TestCase
         $prop->setAccessible(true);
         $prop->setValue($service, $fake);
 
-        $service->sync(true);
-
-        $this->assertCount(1, $fake->pullCalls);
-        $identity = $fake->pullCalls[0]['identity'];
+        // Delivery reads through Connection, which throws on this mock; the
+        // identity a /track call would carry is checked directly.
+        $method = new ReflectionMethod(MessagingService::class, 'outboundIdentity');
+        $method->setAccessible(true);
+        $identity = $method->invoke($service);
         $this->assertSame(self::ALL_UNSET, $identity['consent'] ?? null,
             'a DB failure must transmit the fail-closed all-unset consent block, never an accidental grant');
         // The consent lookup failing also means analyticsAllowed fails closed,

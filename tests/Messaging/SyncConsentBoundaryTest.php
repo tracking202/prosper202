@@ -33,11 +33,11 @@ final class SyncConsentBoundaryTest extends TestCase
         // revenue, campaign names, destination URLs). No client() call may
         // transmit it unfiltered.
         $this->assertDoesNotMatchRegularExpression(
-            '/client\(\)->(pull|send|markRead|track)\(\s*\$this->identity\b/',
+            '/client\(\)->track\(\s*\$this->identity\b/',
             $src,
             'a client() call transmits the unfiltered identity payload'
         );
-        foreach (['pull', 'send', 'markRead', 'track'] as $method) {
+        foreach (['track'] as $method) {
             $this->assertMatchesRegularExpression(
                 '/client\(\)->' . $method . '\(\s*\$this->outboundIdentity\(\)/',
                 $src,

@@ -4,15 +4,26 @@ use PHPUnit\Framework\TestCase;
 
 final class MigrationColumnsTest extends TestCase
 {
-    public function test_upgrade_sql_adds_all_consent_columns(): void
+    /**
+     * The 1.9.78 -> 1.9.79 step reconciles 202_users_pref and
+     * 202_messaging_events from the installer's definitions, so the consent
+     * columns must be in those definitions and both tables in that step.
+     */
+    public function test_upgrade_reconciles_the_consent_columns(): void
     {
-        $sql = file_get_contents(__DIR__ . '/../../202-config/functions-upgrade.php');
+        $upgrade = file_get_contents(__DIR__ . '/../../202-config/functions-upgrade.php');
+        $step = substr($upgrade, (int) strpos($upgrade, "if ($prosper202_version == '1.9.78')"));
+        $step = substr($step, 0, (int) strpos($step, "version='1.9.79'"));
+        $this->assertStringContainsString('UserTables::usersPref()', $step);
+        $this->assertStringContainsString('CoreTables::messagingEvents()', $step);
+
+        $sql = file_get_contents(__DIR__ . '/../../202-config/Database/Tables/UserTables.php');
         foreach ([
             'analytics_consent', 'analytics_consent_at', 'analytics_consent_source',
             'email_marketing_consent', 'email_marketing_consent_at',
             'eu_consent_prompt_seen', 'analytics_geo_is_eu',
         ] as $col) {
-            $this->assertStringContainsString($col, $sql, "upgrade missing column $col");
+            $this->assertStringContainsString($col, $sql, "installer 202_users_pref missing column $col");
         }
     }
 

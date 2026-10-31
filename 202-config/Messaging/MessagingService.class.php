@@ -242,7 +242,10 @@ class MessagingService
      */
     private function consentExport(): array
     {
-        return $this->consentExport ??= ConsentPolicy::exportForSync($this->db, $this->userId);
+        if ($this->consentExport === null) {
+            $this->consentExport = ConsentPolicy::exportForSync($this->db, $this->userId);
+        }
+        return $this->consentExport;
     }
 
     /**
