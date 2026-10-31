@@ -66,17 +66,17 @@ final class OfferProfile
      * Each query checks its return value; on any failure the partial-safe
      * defaults are returned (never throws).
      */
-    /** Whether the last compute() had a read fail (its figures are then partial). */
-    private static bool $readFailed = false;
+    /** The first read failure of the last compute() (its figures are then partial), or null. */
+    private static ?string $readFailed = null;
 
-    public static function lastComputeFailed(): bool
+    public static function lastComputeFailed(): ?string
     {
         return self::$readFailed;
     }
 
     public static function compute(mysqli $db, int $userId, int $now): array
     {
-        self::$readFailed = false;
+        self::$readFailed = null;
         $since = $now - 30 * 86400;
         $out = [
             'clicks_30d'=>0,'conversions_30d'=>0,'income_30d'=>0.0,'cost_30d'=>0.0,'net_30d'=>0.0,
@@ -205,8 +205,7 @@ final class OfferProfile
                 'uses_ltv'             => ((int) ($summary['customers'] ?? 0)) > 0,
             ];
         } catch (\Throwable $e) {
-            self::$readFailed = true;
-            error_log('[OfferProfile] ltv aggregates unavailable: ' . $e->getMessage());
+            self::$readFailed ??= 'LTV aggregates: ' . $e->getMessage();
         }
 
         // --- LPO activation flag ---
@@ -232,8 +231,7 @@ final class OfferProfile
             $conn->bind($stmt, $types, $values);
             return $conn->fetchOne($stmt);
         } catch (\Throwable $e) {
-            self::$readFailed = true;
-            error_log('[OfferProfile] read failed: ' . $e->getMessage());
+            self::$readFailed ??= $e->getMessage();
             return null;
         }
     }
@@ -251,8 +249,7 @@ final class OfferProfile
             $conn->bind($stmt, $types, $values);
             return array_values($conn->fetchAll($stmt));
         } catch (\Throwable $e) {
-            self::$readFailed = true;
-            error_log('[OfferProfile] read failed: ' . $e->getMessage());
+            self::$readFailed ??= $e->getMessage();
             return [];
         }
     }

@@ -410,9 +410,10 @@ class MessagingService
                     continue;
                 }
                 $profile = OfferProfile::compute($db, $userId, $now);
-                if (OfferProfile::lastComputeFailed()) {
+                $readFailed = OfferProfile::lastComputeFailed();
+                if ($readFailed !== null) {
                     // Partial figures would overwrite a good profile with zeros.
-                    error_log("Analytics profile refresh: user {$userId} kept the last profile; a read failed");
+                    error_log("Analytics profile refresh: user {$userId} kept the last profile: {$readFailed}");
                     continue;
                 }
                 // Unchanged since the last run: nothing to mark for delivery.
