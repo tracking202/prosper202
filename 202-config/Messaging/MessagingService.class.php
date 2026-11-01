@@ -718,28 +718,32 @@ class MessagingService
 
     /**
      * Whether this event was recorded at or after $since (Y-m-d H:i:s), with
-     * exactly this metadata when given. A failed read answers true, so a
-     * once-a-day event is skipped rather than duplicated.
+     * exactly this metadata when given.
      *
      * @param array<string,mixed>|null $metadata
      */
     public function hasEventSince(string $name, string $since, ?array $metadata = null): bool
     {
+        // Metadata is compared in PHP, decoded, so no JSON cast is involved. A
+        // failed read is not "already recorded": it is logged and answers false.
         try {
-            $sql = 'SELECT id FROM 202_messaging_events WHERE user_id = ? AND event_name = ? AND occurred_at >= ?';
-            $types = 'iss';
-            $params = [$this->userId, $name, $since];
-            if ($metadata !== null) {
-                $sql .= ' AND metadata = CAST(? AS JSON)';
-                $types .= 's';
-                $params[] = (string) json_encode($metadata);
+            $stmt = $this->conn->prepareRead(
+                'SELECT metadata FROM 202_messaging_events WHERE user_id = ? AND event_name = ? AND occurred_at >= ?'
+            );
+            $this->conn->bind($stmt, 'iss', [$this->userId, $name, $since]);
+            foreach ($this->conn->fetchAll($stmt) as $row) {
+                if ($metadata === null) {
+                    return true;
+                }
+                $stored = json_decode((string) ($row['metadata'] ?? ''), true);
+                if (is_array($stored) && $stored == $metadata) {
+                    return true;
+                }
             }
-            $stmt = $this->conn->prepareRead($sql . ' LIMIT 1');
-            $this->conn->bind($stmt, $types, $params);
-            return $this->conn->fetchOne($stmt) !== null;
+            return false;
         } catch (Throwable $e) {
             error_log('MessagingService: hasEventSince failed: ' . $e->getMessage());
-            return true;
+            return false;
         }
     }
 

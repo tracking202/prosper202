@@ -66,7 +66,7 @@ final class ApiUsage
      * successful write.
      */
     /**
-     * @param callable(): string $clientKind read only for a consented user (it may query)
+     * @param callable(): string $clientKind read only for a successful request (it may query)
      */
     public static function record(mysqli $db, int $userId, callable $clientKind, string $method, string $path, int $status, bool $preview): void
     {
@@ -75,12 +75,14 @@ final class ApiUsage
         }
         try {
             $milestone = $preview ? null : self::milestoneFor($method, $path);
-            // api_used once a day: after the first request of the day a
-            // per-user, per-day APCu key lets a request with no milestone skip
-            // every query. Keyed by the User-Agent's kind (the AI connector
-            // and other API keys share a key; telling them apart needs a query).
-            $bucket = str_starts_with((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 'p202-cli/') ? 'cli' : 'other';
-            $dayKey = 'p202_api_used:' . $userId . ':' . $bucket . ':' . date('Y-m-d');
+            // api_used once a day per client: after the first request of the
+            // day an APCu key (namespaced by install) lets a request with no
+            // milestone skip the consent and event queries. The CLI is told
+            // by its User-Agent; anything else asks $clientKind (one key read).
+            $client = str_starts_with((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 'p202-cli/')
+                ? self::CLIENT_CLI
+                : $clientKind();
+            $dayKey = 'p202_api_used:' . md5(dirname(__DIR__, 2)) . ':' . $userId . ':' . $client . ':' . date('Y-m-d');
             $apcu = function_exists('apcu_fetch') && (bool) ini_get('apc.enabled');
             if ($milestone === null && $apcu && apcu_fetch($dayKey) !== false) {
                 return;
@@ -88,7 +90,6 @@ final class ApiUsage
             if (!ConsentPolicy::analyticsAllowed($db, $userId)) {
                 return;
             }
-            $client = $clientKind();
             $service = new MessagingService($db, $userId, []);
             $meta = ['client' => $client];
             if (!$service->hasEventSince('api_used', date('Y-m-d 00:00:00'), $meta)) {

@@ -20,25 +20,6 @@ final class ConsentSyncFakeClient extends MessagingClient
 {
     /** @var array<int,array{identity:array,attributes:array,events:array,consent:?array}> */
     public array $trackCalls = [];
-    /** @var array<int,array{identity:array,cursor:?string}> */
-    public array $pullCalls = [];
-
-    public function pull(array $identity, ?string $cursor): ?array
-    {
-        $this->pullCalls[] = ['identity' => $identity, 'cursor' => $cursor];
-        return ['conversations' => [], 'cursor' => 'cur-1'];
-    }
-
-    public function send(array $identity, ?string $conversationExternalId, string $body, string $clientToken): ?array
-    {
-        return null;
-    }
-
-    public function markRead(array $identity, array $externalIds): ?array
-    {
-        return ['ok' => true];
-    }
-
     public function track(array $identity, array $attributes, array $events, ?array $consent = null): ?array
     {
         $this->trackCalls[] = ['identity' => $identity, 'attributes' => $attributes, 'events' => $events, 'consent' => $consent];
@@ -47,6 +28,8 @@ final class ConsentSyncFakeClient extends MessagingClient
 }
 
 /**
+ * @group integration
+ *
  * DB-gated behavioral verification of the consent substrate: EU geo
  * persistence, prompt flow, tier'd event writes, denial purge, and the
  * spec §9 sync boundary (only essential rows/no snapshot for non-consented
@@ -101,8 +84,6 @@ final class ConsentSyncIntegrationTest extends TestCase
             CoreTables::messagingEvents(),
             CoreTables::messagingAttributes(),
             CoreTables::messagingSync(),
-            CoreTables::messagingConversations(),
-            CoreTables::messagingMessages(),
         ] as $definition) {
             if ($db->query('DROP TABLE IF EXISTS `' . $definition->tableName . '`') === false
                 || $db->query($definition->createStatement) === false) {
@@ -129,8 +110,7 @@ final class ConsentSyncIntegrationTest extends TestCase
             $this->markTestSkipped(self::$skipReason);
         }
         $db = self::$db;
-        foreach (['202_messaging_events', '202_messaging_attributes', '202_messaging_sync',
-                  '202_messaging_messages', '202_messaging_conversations', '202_users_pref'] as $table) {
+        foreach (['202_messaging_events', '202_messaging_attributes', '202_messaging_sync', '202_users_pref'] as $table) {
             $this->assertNotFalse($db->query("DELETE FROM `{$table}`"), "cleanup of {$table} failed: " . $db->error);
         }
         $this->assertNotFalse(
@@ -283,7 +263,7 @@ final class ConsentSyncIntegrationTest extends TestCase
         $service->recordEvent('page_viewed', ['path' => '/x'], 'analytics');
         $service->updateAttributes(['clicks_30d' => 9]); // dirty analytics snapshot
 
-        $this->assertTrue($service->sync(true));
+        $this->assertSame(MessagingService::SYNC_SENT, $service->sync(true));
 
         $this->assertCount(1, $fake->trackCalls);
         $track = $fake->trackCalls[0];
@@ -299,9 +279,6 @@ final class ConsentSyncIntegrationTest extends TestCase
             'the /track consent block must travel even when analytics is held');
         $this->assertSame('unset', $track['identity']['consent']['analytics'] ?? null,
             'identity.consent must travel even when attributes are stripped');
-        $this->assertCount(1, $fake->pullCalls);
-        $this->assertArrayNotHasKey('attributes', $fake->pullCalls[0]['identity'],
-            'pull identity re-transmitted the profile — the revocation leak the review flagged');
 
         // Local state: essential delivered, analytics kept local and pending.
         $rows = $this->eventRows();
@@ -327,7 +304,7 @@ final class ConsentSyncIntegrationTest extends TestCase
         $service->recordEvent('page_viewed', ['path' => '/x'], 'analytics');
         $service->updateAttributes(['clicks_30d' => 9]);
 
-        $this->assertTrue($service->sync(true));
+        $this->assertSame(MessagingService::SYNC_SENT, $service->sync(true));
 
         $this->assertCount(1, $fake->trackCalls);
         $track = $fake->trackCalls[0];
@@ -343,5 +320,34 @@ final class ConsentSyncIntegrationTest extends TestCase
         $rows = $this->eventRows();
         $this->assertSame([['login', 'essential', 'sent'], ['page_viewed', 'analytics', 'sent']],
             array_map('array_values', $rows));
+    }
+
+    public function test_a_denial_after_the_rows_were_read_stops_the_analytics_rows(): void
+    {
+        $db = self::$db;
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, false));
+
+        $service = $this->service(['install_hash' => 'h', 'api_key' => 'k', 'user_id' => self::USER_ID]);
+        $fake = $this->injectFakeClient($service);
+        $service->recordEvent('login', null, 'essential');
+        $service->recordEvent('page_viewed', ['path' => '/x'], 'analytics');
+
+        // The instance has decided "allowed"; the denial lands before the send.
+        $allowed = new ReflectionMethod(MessagingService::class, 'analyticsSyncAllowed');
+        $allowed->setAccessible(true);
+        $this->assertTrue($allowed->invoke($service));
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'));
+
+        $this->assertSame(MessagingService::SYNC_SENT, $service->sync(true));
+        $this->assertCount(1, $fake->trackCalls);
+        $this->assertSame(['login'], array_column($fake->trackCalls[0]['events'], 'name'),
+            'rows read before a denial must not be sent');
+        $this->assertSame([], $fake->trackCalls[0]['attributes']);
+    }
+
+    public function test_an_unknown_location_holds_analytics(): void
+    {
+        // The seeded row has no location yet: held, essential only.
+        $this->assertFalse(ConsentPolicy::analyticsAllowed(self::$db, self::USER_ID));
     }
 }

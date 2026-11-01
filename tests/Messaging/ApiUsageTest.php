@@ -38,7 +38,7 @@ final class ApiUsageTest extends TestCase
     {
         $db = $this->createMock(mysqli::class);
         $db->expects($this->never())->method('prepare');
-        $kind = function (): string { $this->fail('the client kind is read only for a consented user'); };
+        $kind = function (): string { $this->fail('the client kind is read only for a successful request'); };
         ApiUsage::record($db, 7, $kind, 'POST', '/campaigns', 422, false);
         ApiUsage::record($db, 0, $kind, 'POST', '/campaigns', 201, false);
         $this->addToAssertionCount(1);
