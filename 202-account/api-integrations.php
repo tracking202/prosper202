@@ -20,6 +20,7 @@ use Prosper202\Setup\SavedSecret;
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 include_once(str_repeat("../", 1) . '202-config/clickserver_api_management.php');
 require_once __DIR__ . '/../202-config/functions-account-ui.php';
+require_once __DIR__ . '/../202-config/Messaging/Analytics.class.php';
 
 AUTH::require_user();
 
@@ -274,6 +275,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$config = ['post_key' => $keyField, 'field_name' => $keyField, 'error_key' => $keyError,
 			'error_message' => $keyEmpty, 'slack_event' => $keyField . '_updated'];
 		$keyOutcome = processApiKeyUpdate($config, $error, $keyChanged, $user_row, $slack, $username, $db);
+		if ($keyOutcome !== null && $keyOutcome !== 'kept') {
+			Analytics::event('integration_configured', ['integration' => $keyAnchor], 'analytics');
+		}
 		if ($keyOutcome !== null) {
 			p202_account_flash('ok', $keyOutcome === 'kept' ? 'Nothing changed: your saved ' . $keyLabel . ' is kept.'
 				: 'Your ' . $keyLabel . ' was saved.');
@@ -315,6 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 		if ($jvzooKey !== null) {
 			sendSlackNotification($slack, 'jvzoo_secret_key_updated', $username, $jvzooOld, $jvzooKey);
+			Analytics::event('integration_configured', ['integration' => 'jvzoo'], 'analytics');
 			p202_account_flash('ok', 'Your JVZoo secret key was saved.');
 			p202_account_redirect('202-account/api-integrations.php#jvzoo');
 		}
@@ -351,6 +356,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$pkBefore = PayKickstartKeys::serialize($pkOld);
 			$pkAfter = PayKickstartKeys::serialize($pkKeys);
 			sendSlackNotification($slack, 'paykickstart_ipn_keys_updated', $username, $pkBefore, $pkAfter);
+			if ($pkAction === 'add') {
+				Analytics::event('integration_configured', ['integration' => 'paykickstart'], 'analytics');
+			}
 			$pkCount = count($pkKeys) === 1 ? '1 key is stored' : count($pkKeys) . ' keys are stored';
 			$pkDone = $pkAction === 'add' ? 'Your PayKickstart IPN secret key was saved' : 'The key was removed';
 			p202_account_flash('ok', $pkDone . '; ' . $pkCount . '.');
@@ -429,6 +437,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				// status and config writes could otherwise cache active-with-
 				// stale-config for 3 minutes (no t202ctx until TTL expiry)
 				lpo_ctx_pref_cache_bust($lpo_user_id);
+
+				// Milestone event after pairComplete() succeeded and pairing state
+				// is persisted. Analytics tier → self-gates on consent; Analytics
+				// swallows its own failures — never blocks the redirect.
+				require_once dirname(__DIR__) . '/202-config/Messaging/Analytics.class.php';
+				Analytics::event('lpo_paired', [], 'analytics');
+
 				header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?lpo=connected#lpo');
 				die();
 			}

@@ -88,12 +88,24 @@ if ($attributes === null && $eventName === null && $flush === null) {
     exit;
 }
 
+// Page attributes and events are analytics-tier: without analytics consent
+// they are not recorded at all (a flush still delivers essential rows).
+require_once dirname(__DIR__, 3) . '/202-config/Messaging/ConsentPolicy.class.php';
+if (($attributes !== null || $eventName !== null) && !ConsentPolicy::analyticsAllowed($db, $userId)) {
+    $attributes = null;
+    $eventName = null;
+    if ($flush === null) {
+        echo json_encode(['ok' => true, 'recorded' => false, 'reason' => 'analytics_not_consented']);
+        exit;
+    }
+}
+
 try {
     if ($attributes !== null) {
         $service->updateAttributes($attributes);
     }
     if ($eventName !== null) {
-        $service->recordEvent($eventName, $metadata);
+        $service->recordEvent($eventName, $metadata, 'analytics');
     }
 } catch (\Throwable $e) {
     error_log('Prosper202 analytics: user ' . $userId . ' could not be recorded: ' . $e->getMessage());

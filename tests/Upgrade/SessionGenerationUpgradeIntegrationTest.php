@@ -133,7 +133,7 @@ final class SessionGenerationUpgradeIntegrationTest extends TestCase
 
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
-        self::assertSame('1.9.79', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
+        self::assertSame('1.9.80', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
         self::assertTheInstallersColumn($generation());
         self::assertSame($fresh, self::shape(), 'the upgraded table is the installed one');
         $at = self::$db->query('SELECT user_session_generation FROM 202_users WHERE user_id = ' . self::EXISTING);

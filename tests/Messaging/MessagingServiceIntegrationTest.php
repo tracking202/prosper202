@@ -165,7 +165,7 @@ final class MessagingServiceIntegrationTest extends TestCase
             {
             }
 
-            public function track(array $identity, array $attributes, array $events): ?array
+            public function track(array $identity, array $attributes, array $events, ?array $consent = null): ?array
             {
                 ($this->onTrack)($attributes);
                 return ['ok' => true];
@@ -229,6 +229,10 @@ final class MessagingServiceIntegrationTest extends TestCase
         $portal = LocalHttpRecorder::start();
         try {
             define('MESSAGING_API_URL', $portal->url() . '/api/v3/messaging');
+            // The profile refresh logs that this scratch database has no report tables.
+            $log = tempnam(sys_get_temp_dir(), 'p202-messaging-cron-');
+            $this->assertIsString($log);
+            ini_set('error_log', $log);
             $db = $this->connect();
             $this->seedUsers($db);
             $service = new \MessagingService($db, 1, (array) \MessagingService::identityFor($db, 1));
@@ -263,6 +267,10 @@ final class MessagingServiceIntegrationTest extends TestCase
         $portal = LocalHttpRecorder::start();
         try {
             define('MESSAGING_API_URL', $portal->url() . '/api/v3/messaging');
+            // The profile refresh logs that this scratch database has no report tables.
+            $log = tempnam(sys_get_temp_dir(), 'p202-messaging-cron-');
+            $this->assertIsString($log);
+            ini_set('error_log', $log);
             $db = $this->connect();
             $this->seedUsers($db);
             (new \MessagingService($db, 1, []))->recordEvent('created_tracker');
@@ -360,7 +368,7 @@ final class MessagingServiceIntegrationTest extends TestCase
         // A scratch database another suite installed carries foreign keys
         // onto 202_users; they do not concern these tables' rows.
         $this->assertTrue($db->query('SET FOREIGN_KEY_CHECKS = 0'));
-        foreach ([UserTables::users(), CoreTables::messagingSync(), CoreTables::messagingEvents(), CoreTables::messagingAttributes()] as $definition) {
+        foreach ([UserTables::users(), UserTables::usersPref(), CoreTables::messagingSync(), CoreTables::messagingEvents(), CoreTables::messagingAttributes()] as $definition) {
             $this->assertTrue($db->query('DROP TABLE IF EXISTS `' . $definition->tableName . '`'));
             $this->assertTrue($db->query($definition->createStatement));
         }

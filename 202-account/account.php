@@ -4,6 +4,7 @@ declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 require_once __DIR__ . '/../202-config/functions-account-ui.php';
 require_once __DIR__ . '/../202-config/functions-click-filter-ui.php';
+require_once dirname(__DIR__) . '/202-config/Messaging/ConsentPolicy.class.php';
 
 AUTH::require_user();
 
@@ -344,6 +345,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 					//set the  session's user_timezone
 					$_SESSION['user_timezone'] = $postedTimezone;
+					// Consent toggles go through ConsentPolicy only, and only when the
+					// form showed them; a failure must not break the settings save.
+					// A box left as the page showed it records nothing, so saving
+					// the page never turns a default into an explicit choice.
+					if (!empty($_POST['consent_form'])) {
+						$consentUserId = (int) $_SESSION['user_id'];
+						foreach (['analytics' => 'analytics_consent', 'email_marketing' => 'email_marketing_consent'] as $consentFlag => $consentField) {
+							$consentNow = !empty($_POST[$consentField]);
+							if ($consentNow === (($_POST[$consentField . '_shown'] ?? '') === '1')) {
+								continue;
+							}
+							if (!ConsentPolicy::record($db, $consentUserId, $consentFlag, $consentNow ? 'granted' : 'denied', 'settings')) {
+								error_log('[Consent] failed to record ' . $consentFlag . ' consent for user ' . $consentUserId);
+								$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your other settings are saved, but your Data & communication choice could not be. Try again.'];
+							}
+						}
+					}
 					//try to set non expiring cache for values that are used in redirects
 					if (!empty($memcacheWorking)) {
 						$tid = $mysql['user_id'];
@@ -973,6 +991,31 @@ echo p202_account_render_flashes($extraFlashes);
 								</div>
 							</div>
 						</details>
+
+						<?php
+						// State comes from ConsentPolicy (the only consent reader), so
+						// 'unset' shows the effective default rather than the raw column.
+						$analyticsChecked = ConsentPolicy::analyticsAllowed($db, (int) $_SESSION['user_id']) ? ' checked' : '';
+						$emailChecked = ConsentPolicy::emailMarketingAllowed($db, (int) $_SESSION['user_id']) ? ' checked' : '';
+						?>
+						<fieldset class="mb-3" id="data-consent">
+							<legend class="form-label">Data &amp; communication</legend>
+							<input type="hidden" name="consent_form" value="1">
+							<input type="hidden" name="analytics_consent_shown" value="<?php echo $analyticsChecked !== '' ? '1' : '0'; ?>">
+							<input type="hidden" name="email_marketing_consent_shown" value="<?php echo $emailChecked !== '' ? '1' : '0'; ?>">
+							<div class="form-check">
+								<input class="form-check-input" type="checkbox" name="analytics_consent" id="analytics_consent" value="1"<?php echo $analyticsChecked; ?>>
+								<label class="form-check-label" for="analytics_consent"><strong>Product analytics &amp; personalized help</strong>: lets us surface workflow tips and match
+									you with specially-sourced, higher-paying offers relevant to what you promote. Your usage data,
+									including traffic stats, revenue numbers, and campaign names and destination links, is sent to
+									Prosper202. We never share it with third parties. <a href="<?php echo get_absolute_url(); ?>202-account/disclosure.php" target="_blank" rel="noopener">Learn more</a>.</label>
+							</div>
+							<div class="form-check">
+								<input class="form-check-input" type="checkbox" name="email_marketing_consent" id="email_marketing_consent" value="1"<?php echo $emailChecked; ?>>
+								<label class="form-check-label" for="email_marketing_consent"><strong>Money-making offers &amp; tips by email</strong>: occasional emails about higher-paying
+									offers and workflow improvements. You can unsubscribe anytime.</label>
+							</div>
+						</fieldset>
 					<?php } ?>
 
 					<div class="p202-form-actions">

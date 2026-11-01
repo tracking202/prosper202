@@ -319,6 +319,13 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
         record_mysql_error($db, 'the transaction for tracker creation', $e->getMessage());
     }
 
+	// Milestone event on create only (edits delete + re-insert; must not emit).
+	// Analytics tier → self-gates on consent; failures log + swallow.
+	if (empty($_POST['edit_tracker'])) {
+		require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
+		Analytics::event('tracker_created', [], 'analytics');
+	}
+
 	$parsed_url = [];
 	if (!empty($landing_page_row['landing_page_url'])) {
 		$parsed_url = parse_url((string) $landing_page_row['landing_page_url']);

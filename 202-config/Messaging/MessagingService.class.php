@@ -6,6 +6,8 @@ use Prosper202\Cron\CronLock;
 use Prosper202\Database\Connection;
 
 include_once(__DIR__ . '/MessagingClient.class.php');
+include_once(__DIR__ . '/ConsentPolicy.class.php');
+include_once(__DIR__ . '/OfferProfile.class.php');
 
 /**
  * MessagingService
@@ -58,6 +60,10 @@ class MessagingService
     /** @var array<string,mixed> */
     private array $identity;
     private ?MessagingClient $client = null;
+    /** Consent decision for this instance (one lookup per sync). */
+    private ?bool $analyticsSyncAllowed = null;
+    /** @var array<string,string|null>|null Consent export for this instance. */
+    private ?array $consentExport = null;
 
     /**
      * @param array<string,mixed> $identity Identity payload for the portal.
@@ -210,6 +216,60 @@ class MessagingService
         return $this->client ??= new MessagingClient();
     }
 
+    /**
+     * Whether analytics-tier data may leave the install for this user,
+     * checked at delivery so a revocation stops rows queued earlier. Fails
+     * closed: any lookup failure is "not allowed".
+     */
+    private function analyticsSyncAllowed(): bool
+    {
+        if ($this->analyticsSyncAllowed === null) {
+            try {
+                $this->analyticsSyncAllowed = ConsentPolicy::analyticsAllowed($this->db, $this->userId);
+            } catch (Throwable $e) {
+                error_log('MessagingService: consent lookup failed, failing closed: ' . $e->getMessage());
+                $this->analyticsSyncAllowed = false;
+            }
+        }
+        return $this->analyticsSyncAllowed;
+    }
+
+    /**
+     * The consent block sent with every delivery, for every user (a denied
+     * user's denial must reach the portal). Never throws; all-unset on failure.
+     *
+     * @return array<string,string|null>
+     */
+    private function consentExport(): array
+    {
+        if ($this->consentExport === null) {
+            $this->consentExport = ConsentPolicy::exportForSync($this->db, $this->userId);
+        }
+        return $this->consentExport;
+    }
+
+    /**
+     * The identity as sent: the attribute snapshot is analytics-tier, so it
+     * is left out for a user without analytics consent; consent always rides.
+     *
+     * @return array<string,mixed>
+     */
+    private function outboundIdentity(): array
+    {
+        $identity = $this->identity;
+        if (!$this->analyticsSyncAllowed()) {
+            unset($identity['attributes']);
+        }
+        $identity['consent'] = $this->consentExport();
+        return $identity;
+    }
+
+    /** A changed attribute snapshot this user may deliver (analytics consent). */
+    private function attributesPending(): bool
+    {
+        return $this->analyticsSyncAllowed() && $this->areAttributesDirty();
+    }
+
     // ---------------------------------------------------------------------
     // Delivery
     // ---------------------------------------------------------------------
@@ -241,7 +301,7 @@ class MessagingService
             $sent = false;
             for ($batch = 0; $batch < $maxBatches; $batch++) {
                 $events = $this->pendingEvents();
-                $attributesDirty = $this->areAttributesDirty();
+                $attributesDirty = $this->attributesPending();
                 if ($events === [] && !$attributesDirty) {
                     return $sent ? self::SYNC_SENT : self::SYNC_IDLE;
                 }
@@ -258,7 +318,7 @@ class MessagingService
                 $sent = true;
             }
 
-            return $this->pendingEvents() === [] && !$this->areAttributesDirty() ? self::SYNC_SENT : self::SYNC_MORE;
+            return $this->pendingEvents() === [] && !$this->attributesPending() ? self::SYNC_SENT : self::SYNC_MORE;
         } catch (Throwable $e) {
             error_log('MessagingService: sync for user ' . $this->userId . ' failed: ' . $e->getMessage());
         }
@@ -317,7 +377,56 @@ class MessagingService
             return null;
         }
 
+        self::refreshProfiles($db);
+
         return self::deliverPending($db, $maxBatchesPerUser, $maxConsecutiveFailures);
+    }
+
+    /**
+     * Recompute the offer/volume profile (OfferProfile) of every active user
+     * with analytics consent, and record first_click_received once. A user
+     * without consent is skipped (nothing computed or written); one user's
+     * failure never stops the run or the delivery after it.
+     */
+    public static function refreshProfiles(mysqli $db, ?int $now = null): void
+    {
+        $now ??= time();
+        try {
+            $conn = new Connection($db);
+            $stmt = $conn->prepareRead('SELECT user_id FROM 202_users WHERE user_active = 1 AND user_deleted = 0 ORDER BY user_id ASC');
+            $userIds = array_map(static fn (array $row): int => (int) $row['user_id'], $conn->fetchAll($stmt));
+        } catch (Throwable $e) {
+            error_log('Analytics profile refresh: users could not be listed: ' . $e->getMessage());
+            return;
+        }
+
+        foreach ($userIds as $userId) {
+            try {
+                if (!ConsentPolicy::analyticsAllowed($db, $userId)) {
+                    continue;
+                }
+                $service = self::forUser($userId, $db);
+                if ($service === null) {
+                    continue;
+                }
+                $profile = OfferProfile::compute($db, $userId, $now);
+                $readFailed = OfferProfile::lastComputeFailed();
+                if ($readFailed !== null) {
+                    // Partial figures would overwrite a good profile with zeros.
+                    error_log("Analytics profile refresh: user {$userId} kept the last profile: {$readFailed}");
+                    continue;
+                }
+                // Unchanged since the last run: nothing to mark for delivery.
+                if (array_intersect_key($service->getAttributes(), $profile) != $profile) {
+                    $service->updateAttributes($profile);
+                }
+                if (($profile['first_click_at'] ?? null) !== null && !$service->hasEvent('first_click_received')) {
+                    $service->recordEvent('first_click_received', ['first_click_at' => (int) $profile['first_click_at']], 'analytics');
+                }
+            } catch (Throwable $e) {
+                error_log("Analytics profile refresh failed for user {$userId}: " . $e->getMessage());
+            }
+        }
     }
 
     /**
@@ -398,7 +507,19 @@ class MessagingService
     // ---------------------------------------------------------------------
 
     /**
+     * Can this value be stored as an attribute? Scalars, null and arrays (the
+     * offer profile is nested); objects and resources are not.
+     *
+     * @param mixed $value
+     */
+    public static function isPersistableAttributeValue($value): bool
+    {
+        return is_scalar($value) || $value === null || is_array($value);
+    }
+
+    /**
      * Merge custom attributes into the stored snapshot and mark it for delivery.
+     * Values may be nested arrays; the snapshot is one JSON document.
      *
      * @param array<string,mixed> $attributes
      * @throws \Prosper202\Database\Exceptions\QueryException
@@ -410,10 +531,11 @@ class MessagingService
         }
 
         $current = $this->getAttributes();
-        // Scalars only — nested structures are not part of the contract.
         foreach ($attributes as $key => $value) {
-            if (is_scalar($value) || $value === null) {
+            if (self::isPersistableAttributeValue($value)) {
                 $current[(string) $key] = $value;
+            } else {
+                error_log("MessagingService: updateAttributes rejected non-persistable value for key '{$key}' (" . gettype($value) . ')');
             }
         }
 
@@ -439,12 +561,18 @@ class MessagingService
      * Record a behavioural event for delivery to the portal.
      *
      * @param array<string,mixed>|null $metadata
+     * @param string $tier 'essential' (always delivered) or 'analytics' (consent-gated)
      * @throws \Prosper202\Database\Exceptions\QueryException
      */
-    public function recordEvent(string $name, ?array $metadata = null): void
+    public function recordEvent(string $name, ?array $metadata = null, string $tier = 'analytics'): void
     {
         $name = trim($name);
         if ($name === '') {
+            return;
+        }
+        // An unknown tier is refused, never stored as either tier.
+        if (!in_array($tier, ['essential', 'analytics'], true)) {
+            error_log("MessagingService: recordEvent rejected unknown tier '{$tier}' for event '{$name}'");
             return;
         }
 
@@ -461,27 +589,30 @@ class MessagingService
         $now   = date('Y-m-d H:i:s');
         $stmt  = $this->conn->prepareWrite(
             "INSERT INTO 202_messaging_events
-                (user_id, event_name, metadata, occurred_at, client_token, delivery_status)
-             VALUES (?, ?, ?, ?, ?, 'pending')"
+                (user_id, event_name, metadata, occurred_at, client_token, delivery_status, tier)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?)"
         );
-        $this->conn->bind($stmt, 'issss', [$this->userId, $name, $metaJson, $now, $token]);
+        $this->conn->bind($stmt, 'isssss', [$this->userId, $name, $metaJson, $now, $token, $tier]);
         $this->conn->executeInsert($stmt);
     }
 
     /**
      * The events waiting for delivery, oldest first, at most BATCH_SIZE a call.
+     * Without analytics consent only essential-tier rows; analytics rows stay
+     * local (and a denial purges them, ConsentPolicy::record()).
      *
-     * @return list<array{_local_id: int, name: string, metadata: mixed, occurred_at: string, client_token: string}>
+     * @return list<array{_local_id: int, name: string, metadata: mixed, occurred_at: string, client_token: string, tier: string}>
      * @throws \Prosper202\Database\Exceptions\QueryException
      */
     private function pendingEvents(): array
     {
         $stmt = $this->conn->prepareRead(
-            "SELECT id, event_name, metadata, occurred_at, client_token
+            "SELECT id, event_name, metadata, occurred_at, client_token, tier
                FROM 202_messaging_events
               WHERE user_id = ? AND delivery_status = 'pending'
-                AND sync_attempts < ?
-              ORDER BY id ASC
+                AND sync_attempts < ?"
+            . ($this->analyticsSyncAllowed() ? '' : " AND tier = 'essential'")
+            . " ORDER BY id ASC
               LIMIT ?"
         );
         $this->conn->bind($stmt, 'iii', [$this->userId, self::MAX_PUSH_ATTEMPTS, self::BATCH_SIZE]);
@@ -499,6 +630,7 @@ class MessagingService
                 'metadata'     => $metadata,
                 'occurred_at'  => (string) $row['occurred_at'],
                 'client_token' => (string) $row['client_token'],
+                'tier'         => (string) $row['tier'],
             ];
         }
 
@@ -520,8 +652,38 @@ class MessagingService
             return $e;
         }, $events);
 
+        // Consent read again, uncached, right before sending: rows selected
+        // before a denial that landed since are not sent (the denial purged them).
+        // The consent block is read again too, so a denial or an unsubscribe
+        // since this instance first read it travels with this delivery.
+        $this->consentExport = null;
+        if ($this->analyticsSyncAllowed()) {
+            try {
+                $stillAllowed = ConsentPolicy::analyticsAllowed($this->db, $this->userId);
+            } catch (Throwable $e) {
+                $stillAllowed = false;
+            }
+            if (!$stillAllowed) {
+                $this->analyticsSyncAllowed = false;
+                $events = array_values(array_filter($events, static fn (array $e): bool => ($e['tier'] ?? '') === 'essential'));
+                $payloadEvents = array_map(static function (array $e): array {
+                    unset($e['_local_id']);
+                    return $e;
+                }, $events);
+                $attributesDirty = false;
+                if ($events === []) {
+                    return true;
+                }
+            }
+        }
+
         [$attributes, $attributesVersion] = $this->attributeSnapshot();
-        $response = $this->client()->track($this->identity, $attributes, $payloadEvents);
+        if (!$this->analyticsSyncAllowed()) {
+            // Analytics-tier: never sent without consent; the dirty flag stays
+            // so a later grant delivers a fresh snapshot.
+            $attributes = [];
+        }
+        $response = $this->client()->track($this->outboundIdentity(), $attributes, $payloadEvents, $this->consentExport());
 
         if ($response === null) {
             // Bump attempts so poison events eventually stop being retried.
@@ -539,6 +701,78 @@ class MessagingService
         }
 
         return true;
+    }
+
+    /**
+     * Has an event with this name ever been recorded for this user? For
+     * one-shot events; a failed read answers true so it never duplicates one.
+     */
+    public function hasEvent(string $name): bool
+    {
+        try {
+            $stmt = $this->conn->prepareRead('SELECT id FROM 202_messaging_events WHERE user_id = ? AND event_name = ? LIMIT 1');
+            $this->conn->bind($stmt, 'is', [$this->userId, $name]);
+            return $this->conn->fetchOne($stmt) !== null;
+        } catch (Throwable $e) {
+            error_log('MessagingService: hasEvent failed: ' . $e->getMessage());
+            return true;
+        }
+    }
+
+    /**
+     * Whether this event was recorded at or after $since (Y-m-d H:i:s), with
+     * exactly this metadata when given.
+     *
+     * @param array<string,mixed>|null $metadata
+     */
+    public function hasEventSince(string $name, string $since, ?array $metadata = null): bool
+    {
+        // Metadata is compared in PHP, decoded, so no JSON cast is involved. A
+        // failed read is not "already recorded": it is logged and answers false.
+        try {
+            $stmt = $this->conn->prepareRead(
+                'SELECT metadata FROM 202_messaging_events WHERE user_id = ? AND event_name = ? AND occurred_at >= ?'
+            );
+            $this->conn->bind($stmt, 'iss', [$this->userId, $name, $since]);
+            foreach ($this->conn->fetchAll($stmt) as $row) {
+                if ($metadata === null) {
+                    return true;
+                }
+                $stored = json_decode((string) ($row['metadata'] ?? ''), true);
+                if (is_array($stored) && $stored == $metadata) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Throwable $e) {
+            error_log('MessagingService: hasEventSince failed: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Remove analytics-tier data that has not left the install: undelivered
+     * analytics events and the whole attribute snapshot (all analytics-tier).
+     * Called by ConsentPolicy::record() on a denial. False when a delete failed.
+     */
+    public static function purgeAnalyticsData(mysqli $db, int $userId): bool
+    {
+        $conn = new Connection($db);
+        $ok = true;
+        foreach ([
+            "DELETE FROM 202_messaging_events WHERE user_id = ? AND tier = 'analytics' AND delivery_status != 'sent'",
+            'DELETE FROM 202_messaging_attributes WHERE user_id = ?',
+        ] as $sql) {
+            try {
+                $stmt = $conn->prepareWrite($sql);
+                $conn->bind($stmt, 'i', [$userId]);
+                $conn->executeUpdate($stmt);
+            } catch (Throwable $e) {
+                error_log('MessagingService: analytics purge failed: ' . $e->getMessage());
+                $ok = false;
+            }
+        }
+        return $ok;
     }
 
     private function incrementEventAttempts(int $eventId): void

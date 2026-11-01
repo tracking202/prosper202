@@ -299,12 +299,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// together or not at all (see the helper in functions-account-ui.php).
 		$saved = false;
 		$gone = false;
+		$savedUserId = 0;
 		try {
 			// Every account starts with its default attribution model (plan
 			// §6.4), written in the account's own transaction so a new user
 			// never commits without one.
 			$conn = new \Prosper202\Database\Connection($db);
-			p202_account_save_user($conn, $editing === true ? (int) $mysql['form_user_id'] : null, $userSet, (int) $mysql['user_role'],
+			$savedUserId = p202_account_save_user($conn, $editing === true ? (int) $mysql['form_user_id'] : null, $userSet, (int) $mysql['user_role'],
 				static fn (int $newUserId): int => \Prosper202\Attribution\DefaultModel::ensureFor($conn, $newUserId));
 			$saved = true;
 		} catch (DomainException $missing) {
@@ -327,6 +328,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$slack->push('user_management_user', ['user' => $username, 'type' => 'Updated', 'username' => $_POST['user_name'], 'role' => $role]);
 				} else {
 					$slack->push('user_management_user', ['user' => $username, 'type' => 'Created', 'username' => $_POST['user_name'], 'role' => $role]);
+				}
+			}
+
+			// Essential-tier lifecycle event for the NEW account, recorded on that
+			// user (the Analytics facade would attach it to the creating admin).
+			if ($editing !== true && $savedUserId > 0) {
+				try {
+					require_once dirname(__DIR__) . '/202-config/Messaging/MessagingService.class.php';
+					(new MessagingService($db, $savedUserId, []))->recordEvent('account_created', [], 'essential');
+				} catch (Throwable $analytics_e) {
+					error_log('[Analytics] account_created event failed: ' . $analytics_e->getMessage());
 				}
 			}
 

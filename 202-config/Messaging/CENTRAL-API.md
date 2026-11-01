@@ -62,7 +62,16 @@ targeting.
     "registered_at": 1700000000,
     "attributes": {
       "plan": "pro",
-      "monthly_clicks": 18204
+      "clicks_30d": 18204,
+      "offers": [ { "name": "…", "url": "…", "payout": 38.0 } ],
+      "ltv": { "mrr": 546.0, "customers": 32 }
+    },
+    "consent": {
+      "analytics":          "granted",
+      "analytics_source":   "settings",
+      "analytics_at":       "2026-07-16 16:09:24",
+      "email_marketing":    "granted",
+      "email_marketing_at": "2026-07-16 09:48:05"
     }
   }
 }
@@ -76,10 +85,30 @@ targeting.
 | `user_email`   | `202_users.user_email`                   | Targeting                            |
 | `registered_at`| `202_users.user_time_register` (unix seconds) | Cohort targeting (e.g. "new users") |
 | `attributes`   | `202_messaging_attributes` snapshot      | **Custom attributes for segmentation** |
+| `consent`      | `202_users_pref` via `ConsentPolicy::exportForSync()` | **Consent bookkeeping** (see below) |
+
+`attributes` is the latest snapshot of the user's segmentation profile: the offer/volume
+profile computed by the sync cron (`OfferProfile::compute()` — 30-day volumes, per-offer
+detail, account-level LTV aggregates, feature flags) merged with any custom attributes set
+by page JavaScript via `Prosper202Messenger('update', {...})` (see *Client JavaScript API*
+below). Values may be **nested objects and arrays** (e.g. `offers[]`, `ltv`, `device_mix`);
+store them as JSON, not flat key/value pairs.
+
+**Consent-driven variance:** the attribute snapshot is analytics-tier data. For users who
+have not granted analytics consent, the client **omits `identity.attributes` entirely**.
+Treat a missing `attributes` key as "no consent", not as an empty profile — and never wipe
+a previously-stored profile because a request arrived without one.
+
+`consent` is attached for **all** users — including analytics-denied ones — because the
+server must know a user is denied. Semantics: each flag is `granted|denied|unset`;
+anything other than an explicit `email_marketing: "granted"` (including a missing
+`consent` object from an older client) means **no marketing email** to that user.
+Analytics consent and email consent are independent flags.
 
 Only an active, undeleted user has an identity
 (`MessagingService::identityFor()`, which the chat pass request is built from
-too). If `api_key`/`install_hash` do not validate, respond `401`.
+too). If `api_key`/`install_hash` do not validate, respond `401`. The client degrades
+gracefully (shows cached data, no error to the user).
 
 ---
 
@@ -94,16 +123,24 @@ snapshot plus several events.
 ```json
 {
   "identity": { ... },
+  "consent": {
+    "analytics":          "granted",
+    "analytics_source":   "settings",
+    "analytics_at":       "2026-07-16 16:09:24",
+    "email_marketing":    "granted",
+    "email_marketing_at": "2026-07-16 09:48:05"
+  },
   "attributes": {
     "plan": "pro",
-    "monthly_clicks": 18204
+    "clicks_30d": 18204
   },
   "events": [
     {
-      "name": "created_tracker",
+      "name": "tracker_created",
       "metadata": { "tracker_id": 42, "source": "google" },
       "occurred_at": "2026-06-16 07:05:00",
-      "client_token": "uuid for idempotency"
+      "client_token": "uuid for idempotency",
+      "tier": "analytics"
     }
   ]
 }
@@ -115,9 +152,22 @@ snapshot plus several events.
 { "ok": true }
 ```
 
-- `attributes` mirrors `identity.attributes`.
-- Each event has a `client_token`; treat a repeated token as idempotent so a
-  retry does not double-count.
+- `attributes` mirrors what is sent inside `identity.attributes`; it is included here too
+  so a dedicated flush can update the central profile even when no message is pulled.
+  For non-consented users the client sends `{}` — treat that as "no update", never as an
+  instruction to clear the stored profile.
+- `consent` is the same block as `identity.consent` (top-level here per the receiver
+  contract); store the latest values. Tolerate its absence (older clients) and fail closed:
+  no explicit `email_marketing: "granted"` means no marketing email.
+- Every event carries `tier`: `"essential"` (operational/lifecycle — arrives for all users;
+  usable for support and account operations) or `"analytics"` (behavioural — arrives only
+  for consented users; usable for segmentation and marketing). Store it; never treat an
+  unrecognized tier as `essential`, and never feed essential-only users into marketing
+  segmentation.
+- Each event has a `client_token`; treat repeated tokens as idempotent so retries do not
+  double-count.
+- The central server stores attributes on the user profile and records events on a
+  timeline, both usable to define audiences for broadcasts.
 - The client calls `/track` only when an event is pending or the attribute
   snapshot changed since the last delivery, at most once per
   `MESSAGING_SYNC_THROTTLE` seconds (default 20) per user from a page, and
