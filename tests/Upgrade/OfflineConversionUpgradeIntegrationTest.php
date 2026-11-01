@@ -119,7 +119,7 @@ final class OfflineConversionUpgradeIntegrationTest extends TestCase
         self::assertSame('RETURNED true', $out, $err);
         $version = self::$db->query('SELECT version FROM 202_version');
         self::assertInstanceOf(\mysqli_result::class, $version, self::$db->error);
-        self::assertSame(['1.9.79'], $version->fetch_row());
+        self::assertSame(['1.9.80'], $version->fetch_row());
         foreach (self::TABLES as $table) {
             self::assertSame(self::$installed[$table], self::created($table), "the upgraded $table is the installed one");
         }
