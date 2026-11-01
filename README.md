@@ -23,7 +23,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - **Click Filtering You Control** — Personal Settings › Click filtering switches each filter check on or off, sets the repeat-click window (1 hour to 7 days), and keeps an always-count / always-filter list of addresses or CIDR blocks; test an address to see which rule would apply (also `p202 click-filter` and `/api/v3/users/{id}/click-filter`). Bot detection always applies.
 - **Fraud Prevention** — Sentinel Traffic Quality Enforcer (T.Q.E.) redirects potentially fraudulent traffic away from your landing pages.
 - **Landing Page Personalization** — Dynamically display ISP, device, postal code, geo location, keyword, UTM variables, browser, OS, and more on your landing pages.
-- **GeoIP Database Panel** — Account › Settings shows the build date and age of the GeoLite2 City database every location lookup reads, and keeps it current from your own free MaxMind GeoLite account ([MaxMind guide](documentation/tutorials-and-guides/08-maxmind-integrations.md)).
+- **GeoIP Database Panel** — Account › Settings shows the build date and age of the GeoLite2 City database every location lookup reads, and keeps it current from your own free MaxMind GeoLite account ([MaxMind guide](https://prosper.tracking202.com/documentation/tutorials-and-guides/maxmind-integrations)).
 - **Device Detection** — Automatically detect device types and models for full insights into mobile-targeted campaigns.
 - **Multi-Currency & Timezone** — Automatically convert payouts into your local currency and display reports in your local timezone.
 - **Offline Conversions for Google Ads and Microsoft Advertising** — Clicks keep their GCLID, GBRAID, WBRAID, MSCLKID, FBCLID and TTCLID, and UTM values. Setup › Offline Conversions writes your conversions as Google Ads' offline conversion import file (Data Manager, or the classic Uploads template) or Microsoft Advertising's, with a conversion name per campaign, each conversion's time, value, currency and order id, and Google's consent columns. Only conversions whose click was named, not guessed from an IP address, are sent. Download a file, or give the platform a private URL it fetches on a schedule; the API (`GET /conversions/offline-export`) and `p202 conversion offline-export` write the same file ([guide](documentation/features/offline-conversions.md)).
@@ -347,7 +347,7 @@ conversions takes one to two minutes). The upgrade keeps running on the server:
 wait a few minutes and reload the page, which sends you to sign in once it has
 finished. What changed in each release is in [`changelogs.txt`](changelogs.txt);
 the step-by-step guide is
-[Upgrading Prosper202](documentation/tutorials-and-guides/05-upgrading-prosper202.md).
+[Upgrading Prosper202](https://prosper.tracking202.com/documentation/tutorials-and-guides/upgrading).
 
 ## API v3
 
@@ -391,8 +391,8 @@ bin/p202 rotator:create --name "My Rotator"
 ### Go CLI (`go-cli/`)
 
 A single static binary for humans and AI agents. Every command has a table
-view for people and `--json` / `--csv` / `--ndjson` for scripts. Full
-reference: [Go CLI (p202)](documentation/cli/10-go-cli.md).
+view for people and `--json` / `--csv` / `--ndjson` for scripts. Command
+reference: [p202 CLI reference](https://prosper.tracking202.com/documentation/cli/); guide: [Go CLI (p202)](documentation/cli/10-go-cli.md).
 
 **1. Set up once**
 
@@ -523,9 +523,9 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
 
 Claude Desktop and Cursor take the same command in their MCP settings.
 
-**Hosted AI apps** (claude.ai and others) add `https://mcp.tracking202.com/mcp` as a connector, then sign in and approve the connection on your own install (1.9.78 or later, served over HTTPS), choosing read only, propose changes, or read and change. The connection is an API key under My Account › Personal Settings › API keys; remove it there to disconnect. The hosted connector needs a ClickServer Pro licence.
+**Hosted AI apps** (claude.ai and others) add `https://mcp.tracking202.com/mcp` as a connector, then sign in and approve the connection on your own install (1.9.78 or later, served over HTTPS), choosing read only, propose changes, or read and change. The connection is an API key under My Account › Personal Settings › API keys; remove it there to disconnect. The hosted connector needs a [ClickServer Pro](https://prosper.tracking202.com/pro/) licence.
 
-Tools, limits and what the hosted connector records: [MCP Server](documentation/cli/10-go-cli.md#mcp-server-ai-assistants).
+Overview: [Prosper202 for AI assistants](https://prosper.tracking202.com/ai/); command reference: [p202 mcp](https://prosper.tracking202.com/documentation/cli/mcp); tools, limits and what the hosted connector records: [MCP Server](documentation/cli/10-go-cli.md#mcp-server-ai-assistants).
 
 ## Development Setup
 
@@ -600,9 +600,10 @@ process — versioning, tagging, CI, local builds, and troubleshooting — see
 
 ## Documentation and support
 
-- User, API and CLI guides: [`documentation/`](documentation/) ([introduction](documentation/00-introduction.md))
+- Website: [prosper.tracking202.com](https://prosper.tracking202.com/)
+- User, API and CLI guides: [Documentation](https://prosper.tracking202.com/documentation/) ([introduction](https://prosper.tracking202.com/documentation/introduction)); source in [`documentation/`](documentation/)
 - API reference: [`docs/openapi.yaml`](docs/openapi.yaml); CLI references: [`docs/cli.md`](docs/cli.md), [`docs/cli-agent.md`](docs/cli-agent.md)
-- Help and paid support plans: [Help and Support](documentation/tutorials-and-guides/06-help-and-support.md)
+- Help and paid support plans: [Help and Support](https://prosper.tracking202.com/documentation/tutorials-and-guides/help-and-support)
 
 ## License
 
