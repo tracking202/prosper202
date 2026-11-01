@@ -4622,10 +4622,6 @@ class UPGRADE
                 \Prosper202\Database\Tables\UserTables::clickFilterSettings(),
                 \Prosper202\Database\Tables\UserTables::clickFilterEntries(),
                 \Prosper202\Database\Tables\ClickTables::clicksFilterReason(),
-                // Product-analytics consent: 202_users_pref's consent flags (in
-                // usersPref() above) and the essential/analytics tier on queued
-                // events, which existing rows take as 'analytics'.
-                \Prosper202\Database\Tables\CoreTables::messagingEvents(),
             ], [], ['202_users_pref' => ['user_pref_privacy']]);
 
             // The licence answers this install cached on disk before 1.9.79,
@@ -4648,10 +4644,35 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.79', '>')) {
+        if ($prosper202_version == '1.9.79') {
 
-            $prosper202_version = '1.9.79';
+            // Product-analytics consent: 202_users_pref's consent flags and the
+            // EU/UK location (in usersPref()), and 202_messaging_events' tier
+            // (existing rows take 'analytics') and its user/event/time key.
+            // A schema change for 1.9.80 belongs in this block, reconciled
+            // before the version is written.
+            $step_ok = _upgrade_measurement_tables([
+                \Prosper202\Database\Tables\UserTables::usersPref(),
+                \Prosper202\Database\Tables\CoreTables::messagingEvents(),
+            ]);
+
+            if ($step_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
+                    $prosper202_version = '1.9.80';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.80; '
+                        . 'leaving version at 1.9.79 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: a table of the 1.9.80 step could not be reconciled (202_users_pref,'
+                    . ' 202_messaging_events); leaving version at 1.9.79 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.80', '>')) {
+
+            $prosper202_version = '1.9.80';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

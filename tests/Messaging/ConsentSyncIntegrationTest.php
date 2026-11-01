@@ -12,22 +12,6 @@ require_once __DIR__ . '/../../202-config/Messaging/MessagingService.class.php';
 require_once __DIR__ . '/../../202-config/Messaging/Analytics.class.php';
 
 /**
- * Captures every wire call instead of talking to my.tracking202.com, so the
- * consent boundary can be asserted on the exact payloads that would have
- * been transmitted.
- */
-final class ConsentSyncFakeClient extends MessagingClient
-{
-    /** @var array<int,array{identity:array,attributes:array,events:array,consent:?array}> */
-    public array $trackCalls = [];
-    public function track(array $identity, array $attributes, array $events, ?array $consent = null): ?array
-    {
-        $this->trackCalls[] = ['identity' => $identity, 'attributes' => $attributes, 'events' => $events, 'consent' => $consent];
-        return ['ok' => true];
-    }
-}
-
-/**
  * @group integration
  *
  * DB-gated behavioral verification of the consent substrate: EU geo
@@ -349,5 +333,21 @@ final class ConsentSyncIntegrationTest extends TestCase
     {
         // The seeded row has no location yet: held, essential only.
         $this->assertFalse(ConsentPolicy::analyticsAllowed(self::$db, self::USER_ID));
+    }
+}
+
+/**
+ * Captures every wire call instead of talking to my.tracking202.com, so the
+ * consent boundary can be asserted on the exact payloads that would have
+ * been transmitted.
+ */
+final class ConsentSyncFakeClient extends MessagingClient
+{
+    /** @var array<int,array{identity:array,attributes:array,events:array,consent:?array}> */
+    public array $trackCalls = [];
+    public function track(array $identity, array $attributes, array $events, ?array $consent = null): ?array
+    {
+        $this->trackCalls[] = ['identity' => $identity, 'attributes' => $attributes, 'events' => $events, 'consent' => $consent];
+        return ['ok' => true];
     }
 }
