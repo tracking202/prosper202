@@ -123,9 +123,10 @@ if ($usedCachedRedirect == true) {
 			// the install token expands empty (plan §5.1).
 			$new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
 
-			// c1-c4, gclid and the UTM values as sent, or p202<name> for one not sent
+			// c1-c4, the ad click ids and the UTM values as sent, or p202<name> for one not sent
 			$cachedTokens = [
-				'c1', 'c2', 'c3', 'c4', 'gclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+                'c1', 'c2', 'c3', 'c4', 'gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid',
+                'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
 			];
 			foreach ($cachedTokens as $token) {
 				$sent = ClickRequest::text($_GET, $token);
@@ -240,9 +241,12 @@ for ($i = 1; $i <= 4; $i++) {
 	$mysql[$custom . '_id'] = $db->real_escape_string((string)$custom_id); //save it
 }
 
-// Raw: the writer binds it, so an escaped value was stored with its backslashes.
-$gclid = ClickRequest::text($_GET, 'gclid');
-$mysql['gclid'] = $gclid;
+// The ad platforms' click ids (ClickRecord::AD_CLICK_IDS). Raw: the
+// writer binds them, so an escaped value was stored with its backslashes.
+$adClickIds = ClickRequest::adClickIds($_GET);
+foreach ($adClickIds as $adClickIdName => $adClickId) {
+    $mysql[$adClickIdName] = $adClickId;
+}
 
 $custom_var_ids = [];
 
@@ -340,10 +344,11 @@ $user_id = $tracker_row['user_id'];
 if ($clickIsBot) {
 	$mysql['click_filtered'] = '1';
 } else {
-	// Initialize click_id as 0 for the filter (will be updated after insert)
-	$click_id_temp = 0;
-	$click_filtered = FILTER::startFilter($db, $click_id_temp, $ip_id, $user_id);
-	$mysql['click_filtered'] = $db->real_escape_string((string)$click_filtered);
+	// Why it is filtered goes with the click (202_clicks_filter_reason).
+	$clickFilter = FILTER::verdict($db, $ip_id, $user_id);
+	$mysql['click_filtered'] = (string) $clickFilter->flag();
+	$mysql['click_filter_reason'] = (string) $clickFilter->reason;
+	$mysql['click_filter_entry_id'] = $clickFilter->filtered ? (string) ($clickFilter->entryId ?? 0) : '0';
 }
 
 
@@ -390,7 +395,7 @@ $redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $clic
     'c2' => $clickCustom['c2'],
     'c3' => $clickCustom['c3'],
     'c4' => $clickCustom['c4'],
-    'gclid' => ClickRecord::storedGclid($gclid),
+    ...ClickRecord::storedAdClickIds($adClickIds),
     // As stored: a value past the columns' 350 bytes is sent as cut.
     'utm_source' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_source),
     'utm_medium' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_medium),

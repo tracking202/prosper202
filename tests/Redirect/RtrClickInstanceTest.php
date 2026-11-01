@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Redirect;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\InstancePrivacy;
 
 /**
  * rtr.php over HTTP, against a running instance: P202_BASE (default
@@ -39,9 +40,15 @@ final class RtrClickInstanceTest extends TestCase
     /** @var array<string, int> */
     private static array $ids = [];
     private static string $tracker = '';
+    /** The install's privacy setting before the run, put back after. */
+    private static ?string $privacy = null;
 
     public static function setUpBeforeClass(): void
     {
+        // The Agent Evals job runs this suite on composer's --no-dev
+        // autoloader, which maps no Tests\ class
+        // (InstanceSuitesLoadWithoutTheDevAutoloaderTest).
+        require_once __DIR__ . '/../Support/InstancePrivacy.php';
         self::$base = rtrim((string) (getenv('P202_BASE') ?: 'http://localhost:8000'), '/');
         [$status] = self::request(self::$base . '/api/v3/system/health');
         if ($status === 0) {
@@ -56,6 +63,8 @@ final class RtrClickInstanceTest extends TestCase
 
         $run = self::$run = 'rtr' . bin2hex(random_bytes(4));
         try {
+            // A re-click is found by the click cookie this runner is given.
+            self::$privacy = InstancePrivacy::trackInFull(self::$base, self::$key);
             $network = self::$ids['network'] = self::create(
                 'aff-networks',
                 ['aff_network_name' => "$run network"],
@@ -66,14 +75,19 @@ final class RtrClickInstanceTest extends TestCase
                 'aff_campaign_url' => "https://offer.example/$run?s=[[subid]]&kw=[[t202kw]]&c1=[[c1]]&c4=[[c4]]",
                 'aff_campaign_payout' => '2.5', 'aff_network_id' => $network,
             ], 'aff_campaign_id');
-            $source = self::create('ppc-networks', ['ppc_network_name' => "$run source"], 'ppc_network_id');
+            $source = self::$ids['source'] = self::create(
+                'ppc-networks',
+                ['ppc_network_name' => "$run source"],
+                'ppc_network_id'
+            );
             self::$ids['account'] = self::create('ppc-accounts', [
                 'ppc_account_name' => "$run account", 'ppc_network_id' => $source,
             ], 'ppc_account_id');
             // The rule and its redirect must have different ids, or a swap of
             // the two reads the same. Their tables count apart, but a fresh
-            // install starts them level: then a redirect-less rule takes a
-            // rule id, and the redirector is built again.
+            // install starts them level: then a rule with two redirects takes
+            // one rule id and two redirect ids, and the redirector is built
+            // again.
             for ($attempt = 1;; $attempt++) {
                 self::$ids['rotator'] = self::create('rotators', [
                     'name' => "$run redirector $attempt", 'default_campaign' => self::$ids['campaign'],
@@ -100,7 +114,14 @@ final class RtrClickInstanceTest extends TestCase
                 if ($attempt === 3) {
                     throw new \RuntimeException('The rule and its redirect kept the same id: ' . self::$ids['rule']);
                 }
-                self::createRow('rotators/' . self::$ids['rotator'] . '/rules', ['rule_name' => "$run spare"], 200);
+                self::createRow('rotators/' . self::$ids['rotator'] . '/rules', [
+                    'rule_name' => "$run spare", 'splittest' => 1,
+                    'criteria' => [['type' => 'ip', 'statement' => 'is', 'value' => '192.0.2.1']],
+                    'redirects' => [
+                        ['redirect_url' => 'https://spare.example/a', 'weight' => 50],
+                        ['redirect_url' => 'https://spare.example/b', 'weight' => 50],
+                    ],
+                ], 200);
             }
             $tracker = self::createRow('trackers', [
                 'aff_campaign_id' => 0, 'rotator_id' => self::$ids['rotator'],
@@ -112,6 +133,13 @@ final class RtrClickInstanceTest extends TestCase
             }
         } catch (\RuntimeException $e) {
             self::$setupError = $e->getMessage();
+        }
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        if (self::$privacy !== null) {
+            InstancePrivacy::restore(self::$base, self::$key, self::$privacy);
         }
     }
 
@@ -231,14 +259,16 @@ final class RtrClickInstanceTest extends TestCase
      * another (LastClickFromAddress: the latest by address, whichever link
      * made it). Here the visitor's last click is an uncloaked one, with no
      * public id (stored as 0), and the re-clicks go through a cloaked
-     * redirector: the first is handed a public id of its own, the next keeps
-     * it, and every visit is the one click, with its first keyword and the
-     * latest visit's values. The writer's own test hands recordReClick() a
-     * record it built; this is rtr.php's wiring of it, read back through
-     * cl.php (the offer URL the click now holds) and GET /clicks/{id}.
-     * 202_clicks has no key on click_id, so each visit is a row of its own
-     * there (as REPLACE made it), and GET /clicks/{id} answers the latest:
-     * the third visit's campaign.
+     * redirector of another traffic source account at another cost: the
+     * first is handed a public id of its own, the next keeps it, and every
+     * visit is the one click, with its first visit's traffic source, cost
+     * and keyword, the c2 no re-click brought, and the latest visit's other
+     * values. The writer's own test hands recordReClick() a record it built;
+     * this is rtr.php's wiring of it, read back through cl.php (the offer
+     * URL the click now holds) and GET /clicks/{id}. 202_clicks has no key
+     * on click_id, so each visit is a row of its own there (as REPLACE made
+     * it), and GET /clicks/{id} answers the latest: the third visit's
+     * campaign.
      */
     public function testAReClickRewritesTheVisitorsLastClick(): void
     {
@@ -256,15 +286,18 @@ final class RtrClickInstanceTest extends TestCase
             'criteria' => [['type' => 'ip', 'statement' => 'is_not', 'value' => '192.0.2.1']],
             'redirects' => [['redirect_campaign' => $campaign, 'weight' => 100, 'name' => "$run cloaked"]],
         ], 200);
+        $linkAccount = self::create('ppc-accounts', [
+            'ppc_account_name' => "$run cloaked account", 'ppc_network_id' => self::$ids['source'],
+        ], 'ppc_account_id');
         $tracker = (string) (self::createRow('trackers', [
             'aff_campaign_id' => 0, 'rotator_id' => $rotator,
-            'ppc_account_id' => self::$ids['account'], 'click_cpc' => '0.1',
+            'ppc_account_id' => $linkAccount, 'click_cpc' => '0.1',
         ])['tracker_id_public'] ?? '');
         self::assertNotSame('', $tracker, 'the tracker create answered a tracker_id_public');
 
         [$status, $headers, $body] = self::request(
             self::$base . '/tracking202/redirect/rtr.php?' . http_build_query([
-                't202id' => self::$tracker, 't202kw' => "kw-$run", 'c1' => "first-$run",
+                't202id' => self::$tracker, 't202kw' => "kw-$run", 'c1' => "first-$run", 'c2' => "c2-$run",
             ]),
             [CURLOPT_USERAGENT => self::UA]
         );
@@ -276,9 +309,9 @@ final class RtrClickInstanceTest extends TestCase
         );
         $clickId = (int) $plain[1];
 
-        // The re-clicks a second after the first visit: two visits of one
-        // click in one second share a time, and nothing orders them once an
-        // exit has written its route on every row (LatestVisit says so).
+        // The re-clicks a second after the first visit, so it keeps a row of
+        // its own: a re-click in the second of a row the click has rewrites
+        // that row (MysqlClickRepository::writeVisitRows()).
         $first = time();
         while (time() === $first) {
             usleep(20000);
@@ -287,13 +320,13 @@ final class RtrClickInstanceTest extends TestCase
         $third = self::cloakedClick(['t202id' => $tracker, 'lpr' => '1', 't202kw' => "y-$run", 'c1' => "third-$run"]);
 
         self::assertSame(
-            [$clickId, "kw-$run", "second-$run", '0.1', $clickId, $second['pci'], "kw-$run", "third-$run", '0.1'],
+            [$clickId, "kw-$run", "second-$run", '0.37', $clickId, $second['pci'], "kw-$run", "third-$run", '0.37'],
             [
                 $second['click'], $second['kw'], $second['c1'], $second['cpc'],
                 $third['click'], $third['pci'], $third['kw'], $third['c1'], $third['cpc'],
             ],
             'each re-click is the first click, with its keyword, the visit\'s c1, the public id handed out first,'
-                . ' and the cost of the visit, not the first visit\'s 0.37'
+                . ' and the first visit\'s cost, 0.37, not the link\'s 0.1'
         );
 
         // The click's cookie names the campaign of its latest visit: pci.php
@@ -316,18 +349,23 @@ final class RtrClickInstanceTest extends TestCase
         self::assertSame(200, $status, $answer);
         $click = json_decode($answer, true)['data'] ?? null;
         self::assertIsArray($click, $answer);
-        $actual = [];
-        foreach (['click_id_public', 'aff_campaign_id', 'rotator_id', 'click_cloaking', 'keyword', 'c1'] as $field) {
-            $actual[$field] = array_key_exists($field, $click) ? $click[$field] : '(not served)';
-        }
-        self::assertSame([
+        $expected = [
             'click_id_public' => (int) $second['pci'],
             'aff_campaign_id' => $campaign,
             'rotator_id' => $rotator,
             'click_cloaking' => 1,
+            'ppc_account_id' => self::$ids['account'],
+            'click_cpc' => 0.37,
             'keyword' => "kw-$run",
             'c1' => "third-$run",
-        ], $actual, $answer);
+            'c2' => "c2-$run",
+        ];
+        $actual = [];
+        foreach (array_keys($expected) as $field) {
+            $actual[$field] = array_key_exists($field, $click) ? $click[$field] : '(not served)';
+        }
+        self::assertSame($expected, $actual, 'the first visit\'s source and cost, not the link\'s ' . $linkAccount
+            . ' at 0.1; the c2 no re-click brought: ' . $answer);
         self::assertStringContainsString(
             "c1=third-$run",
             (string) ($click['outbound'] ?? ''),
@@ -340,7 +378,7 @@ final class RtrClickInstanceTest extends TestCase
         // with the latest visit's values. Last: each records the click's exit,
         // which rewrites the outbound link read above.
         $latest = '~/cloaked\?s=' . $clickId . '&amp;kw=kw-' . $run
-            . '&amp;c1=third-' . $run . '&amp;cpc=0\.1&amp;end~';
+            . '&amp;c1=third-' . $run . '&amp;cpc=0\.37&amp;end~';
         $acip = self::read("campaigns/$campaign")['aff_campaign_id_public'] ?? '';
         [$status, $headers, $page] = self::request(
             self::$base . '/tracking202/redirect/off.php?acip=' . $acip . '&pci=' . $second['pci']

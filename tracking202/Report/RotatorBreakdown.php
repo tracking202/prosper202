@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Tracking202\Report;
 
 use mysqli;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\UserPrefFilters;
+use Prosper202\Rotator\RuleOrder;
 
 /**
  * The figures of Overview › Rotator Breakdown: each of an account's
@@ -64,10 +66,11 @@ final class RotatorBreakdown
             return [];
         }
 
+        $ruleOrder = RuleOrder::orderBy('ru');
         $stmt = $this->conn->prepareRead(
             'SELECT ru.id, ru.rotator_id, ru.rule_name FROM 202_rotator_rules ru'
             . ' INNER JOIN 202_rotators ro ON ro.id = ru.rotator_id'
-            . ' WHERE ro.user_id = ? ORDER BY ru.id ASC'
+            . ' WHERE ro.user_id = ? ' . $ruleOrder
         );
         $this->conn->bind($stmt, 'i', [$userId]);
         $rulesByRotator = [];
@@ -77,17 +80,20 @@ final class RotatorBreakdown
 
         // One pass over the window: every click of the account that went
         // through one of its rotators, by the rotator and the rule it
-        // matched (0: no rule matched, the rotator's default).
+        // matched (0: no rule matched, the rotator's default). A re-clicked
+        // click counts once, at its latest visit, under the route it holds.
         $stmt = $this->conn->prepareRead(
-            'SELECT cr.rotator_id, cr.rule_id,'
+            'SELECT counted.rotator_id, counted.rule_id, counted.clicks, counted.leads, counted.income, counted.cost'
+            . ' FROM (SELECT c.user_id, cr.rotator_id, cr.rule_id,'
             . ' COUNT(*) AS clicks, SUM(c.click_lead) AS leads,'
             . ' SUM(c.click_payout * c.click_lead) AS income, SUM(c.click_cpc) AS cost'
             . ' FROM 202_clicks AS c'
             . ' INNER JOIN 202_clicks_rotator AS cr ON cr.click_id = c.click_id'
-            . ' INNER JOIN 202_rotators AS ro ON ro.id = cr.rotator_id AND ro.user_id = c.user_id'
             . ' WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ?'
+            . ' AND ' . LatestVisit::isLatest('c')
             . UserPrefFilters::showFilter($show, 'c.')
-            . ' GROUP BY cr.rotator_id, cr.rule_id'
+            . ' GROUP BY c.user_id, cr.rotator_id, cr.rule_id) AS counted'
+            . ' INNER JOIN 202_rotators AS ro ON ro.id = counted.rotator_id AND ro.user_id = counted.user_id'
         );
         $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
         $byRule = [];

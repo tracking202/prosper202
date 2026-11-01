@@ -44,7 +44,7 @@ final class AiConnect
         'aff-networks', 'text-ads', 'rotators', 'clicks', 'conversions', 'staged-changes',
     ];
     public const WRITE_AREAS = [
-        'campaigns', 'trackers', 'landing-pages', 'ppc-networks', 'ppc-accounts', 'aff-networks',
+        'campaigns', 'trackers', 'landing-pages', 'ppc-networks', 'ppc-accounts', 'aff-networks', 'text-ads', 'rotators',
     ];
 
     /**
@@ -95,10 +95,11 @@ final class AiConnect
      *
      * install is the address the person gave the MCP server; the page holds
      * it to its own (sameInstall()), so another install cannot bounce a
-     * person here with its own approval link. client_domain is set only for
-     * an app whose identity the MCP server verified (a client ID metadata
-     * document on that domain); client_name alone is what the app calls
-     * itself. redirect_host is where the MCP server hands the connection.
+     * person here with its own approval link. The MCP server sets
+     * client_domain only for an app it verified (a client ID metadata
+     * document on that domain), but nothing signs the link, so anyone can
+     * write one naming any app: the page shows both names as the link's
+     * claim. redirect_host is where the MCP server hands the connection.
      *
      * @param array<string, mixed> $params
      * @return array{state: string, code_challenge: string, client_name: string, client_domain: string,
@@ -194,6 +195,58 @@ final class AiConnect
         return implode(',', $tokens);
     }
 
+    /** Each access as the approval page names it. */
+    public const ACCESS_LABELS = [
+        'read' => 'Read only',
+        'propose' => 'Read, and propose changes',
+        'write' => 'Read and change',
+    ];
+
+    /**
+     * The least access whose key passes a check for $scope, or null when no
+     * connection's key can (users, system, sync, or an area the tools do not
+     * change). A connection keeps the scope it was minted with, so one
+     * approved before an area joined these lists is refused there until it
+     * is approved again.
+     */
+    public static function accessCovering(string $scope): ?string
+    {
+        foreach (self::ACCESSES as $access) {
+            if (Auth::scopesSatisfy(explode(',', (string) self::scopeFor($access)), $scope)) {
+                return $access;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The access to choose when approving a connection again so that its new
+     * key passes a check for $scope and keeps what its key ($keyScopes) may
+     * do now: accessCovering(), or the key's own access when that is more.
+     * Null when no connection's key can pass.
+     *
+     * @param string[] $keyScopes
+     */
+    public static function accessToApprove(string $scope, array $keyScopes): ?string
+    {
+        $covering = self::accessCovering($scope);
+        if ($covering === null) {
+            return null;
+        }
+        $held = 'read';
+        foreach ($keyScopes as $token) {
+            if ($token === 'write' || str_ends_with($token, ':write')) {
+                $held = 'write';
+                break;
+            }
+            if ($token === 'stage' || str_ends_with($token, ':stage')) {
+                $held = 'propose';
+            }
+        }
+        $rank = array_flip(self::ACCESSES);
+        return $rank[$held] > $rank[$covering] ? $held : $covering;
+    }
+
     /** The access a stored scope was minted for, or null when it is none of the three. */
     public static function accessFor(string $scope): ?string
     {
@@ -232,11 +285,20 @@ final class AiConnect
         return hash('sha256', strtolower(trim($key)));
     }
 
+    /** How every connection's label begins; nothing else writes a key's label. */
+    public const LABEL_PREFIX = 'AI: ';
+
     /** The key's label in Account › API keys. */
     public static function label(string $clientName): string
     {
         $host = (string) parse_url(self::relayOrigin(), PHP_URL_HOST);
-        return mb_substr('AI: ' . $clientName . ' via ' . $host, 0, 100);
+        return mb_substr(self::LABEL_PREFIX . $clientName . ' via ' . $host, 0, 100);
+    }
+
+    /** Whether a key's stored label is one label() wrote: the key is a connection's. */
+    public static function isConnectionLabel(?string $label): bool
+    {
+        return $label !== null && str_starts_with($label, self::LABEL_PREFIX);
     }
 
     /** Records an approval and returns its one-time code. */
@@ -376,12 +438,15 @@ final class AiConnect
         if ($userName === null) {
             return $refuse(400, 'invalid_grant', 'The user who approved can no longer sign in to this install.');
         }
-        // The CLI gate's own verdict for this user: unknown lets them through,
-        // as it does for the CLI, and no key exists until it has answered.
-        if (!(new CapabilitiesController($db, $userId))->cliAccess()) {
-            return $refuse(402, 'licence', 'Connecting an AI assistant needs a Prosper202 ClickServer Pro licence on '
+        // The CLI gate's own verdict for this user, the grace period
+        // included, and no key exists until it has answered.
+        $licenceGate = new CapabilitiesController($db, $userId);
+        if (!$licenceGate->cliAccess()) {
+            return $refuse(402, 'licence', $licenceGate->cliRefusal(
+                'Connecting an AI assistant needs a Prosper202 ClickServer Pro licence on '
                 . 'this install\'s ClickServer API key. Start a Pro trial or subscription at '
-                . 'https://my.tracking202.com/api/customers/subscriptions/support');
+                . 'https://my.tracking202.com/api/customers/subscriptions/support'
+            ));
         }
 
         $licenceKey = CapabilitiesController::licenceKeyFor($db, $userId);

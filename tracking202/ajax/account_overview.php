@@ -174,6 +174,7 @@ if ($canSee) {
 // A failed read throws (DataEngine::collectRows()): the tables are replaced
 // by a notice rather than drawn empty, which would read as no traffic.
 try {
+    $de->prepareAccountOverview((int) $from, (int) $to);
 	$lpsData = $de->getReportData('LpOverview', $from, $to, $cpv);
 	$campaignsData = $de->getReportData('campaignOverview', $from, $to, $cpv);
 	$slpDirectLinkPerPPC = $de->getReportData('slp_direct_link_per_ppc', $from, $to, $cpv);

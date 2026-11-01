@@ -20,7 +20,8 @@ use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 
 /**
- * Forbids casting a query parameter to a number in the API.
+ * Forbids casting a request parameter to a number: in the API, and in the
+ * pages outside it.
  *
  * CLAUDE.md #4: the lists read `max(1, min(500, (int) ($params['limit'] ??
  * 50)))`. (int) keeps a string's leading digits and makes anything else 0,
@@ -30,11 +31,17 @@ use PHPStan\Rules\RuleErrorBuilder;
  * whole number is read with Api\V3\Support\QueryInt::param() or required(),
  * which answer a 422 naming the parameter and its range.
  *
- * Reported, in files under the tree's `api/` directory: (int), (integer),
- * (float), (double), intval() and floatval() of an element of $params or
- * $queryParams (the router's names for the query string) or of a request
- * superglobal ($_GET, $_POST, $_REQUEST, $_COOKIE), at any depth and with or
- * without a `?? default` after it.
+ * The pages had the same cast: LTV Settings' Delete read `webhook_id` with
+ * (int), so `12abc` deleted webhook 12, one of the account's own and not the
+ * one named. An id there is read with Prosper202\Http\PostedId::read() and
+ * anything else refused in the page's own words; the pages that predate this
+ * are listed in phpstan-baseline.neon by count, and the counts only shrink.
+ *
+ * Reported: (int), (integer), (float), (double), intval() and floatval() of
+ * an element of a request superglobal ($_GET, $_POST, $_REQUEST, $_COOKIE)
+ * anywhere, and, in files under the tree's `api/` directory, of $params or
+ * $queryParams (the router's names for the query string; elsewhere the names
+ * say nothing), at any depth and with or without a `?? default` after it.
  *
  * Not reported: an element of $payload. The decoded body has the same
  * problem, but the CRUD hooks receive the body under that name after the base
@@ -48,8 +55,11 @@ use PHPStan\Rules\RuleErrorBuilder;
  */
 final class ForbidNumericCastOfRequestParamRule implements Rule
 {
-    /** Variables that hold a request's query string or raw input. */
-    private const REQUEST_ARRAYS = ['params', 'queryParams', '_GET', '_POST', '_REQUEST', '_COOKIE'];
+    /** Variables that hold a request's input wherever they are read. */
+    private const SUPERGLOBALS = ['_GET', '_POST', '_REQUEST', '_COOKIE'];
+
+    /** The router's names for the query string, read only in api/. */
+    private const API_ARRAYS = ['params', 'queryParams'];
 
     public function getNodeType(): string
     {
@@ -59,11 +69,12 @@ final class ForbidNumericCastOfRequestParamRule implements Rule
     public function processNode(Node $node, Scope $scope): array
     {
         $cast = self::castOf($node);
-        if ($cast === null || !self::inApiTree($scope->getFile())) {
+        if ($cast === null) {
             return [];
         }
+        $inApi = self::inApiTree($scope->getFile());
         [$subject, $how] = $cast;
-        $name = self::requestParameter($subject);
+        $name = self::requestParameter($subject, $inApi ? [...self::API_ARRAYS, ...self::SUPERGLOBALS] : self::SUPERGLOBALS);
         if ($name === null) {
             return [];
         }
@@ -71,8 +82,11 @@ final class ForbidNumericCastOfRequestParamRule implements Rule
         return [
             RuleErrorBuilder::message(sprintf(
                 'Request parameter %s is read with %s, which makes "abc" 0 and "12abc" 12. '
-                . 'Read it with Api\V3\Support\QueryInt::param() or required(), which answer a 422 '
-                . 'naming the parameter and its range. (CLAUDE.md #4)',
+                . ($inApi
+                    ? 'Read it with Api\V3\Support\QueryInt::param() or required(), which answer a 422 '
+                        . 'naming the parameter and its range. (CLAUDE.md #4)'
+                    : 'Read it exactly (an id with Prosper202\Http\PostedId::read()) and refuse '
+                        . 'anything else in the page\'s own words. (CLAUDE.md #4)'),
                 $name,
                 $how
             ))
@@ -102,10 +116,12 @@ final class ForbidNumericCastOfRequestParamRule implements Rule
     }
 
     /**
-     * "$params['limit']" when the expression is an element of a request
-     * array (through `?? default`), else null.
+     * "$params['limit']" when the expression is an element of one of
+     * $arrays (through `?? default`), else null.
+     *
+     * @param list<string> $arrays
      */
-    private static function requestParameter(Expr $expr): ?string
+    private static function requestParameter(Expr $expr, array $arrays): ?string
     {
         while ($expr instanceof Coalesce) {
             $expr = $expr->left;
@@ -120,7 +136,7 @@ final class ForbidNumericCastOfRequestParamRule implements Rule
             $keys[] = $dim instanceof String_ ? "['" . $dim->value . "']" : ($dim instanceof LNumber ? '[' . $dim->value . ']' : '[…]');
             $root = $root->var;
         }
-        if (!$root instanceof Variable || !is_string($root->name) || !in_array($root->name, self::REQUEST_ARRAYS, true)) {
+        if (!$root instanceof Variable || !is_string($root->name) || !in_array($root->name, $arrays, true)) {
             return null;
         }
 

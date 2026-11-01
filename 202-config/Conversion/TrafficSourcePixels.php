@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace Prosper202\Conversion;
 
+use Prosper202\Click\AdClickIdColumns;
+use Prosper202\Click\FirstVisit;
 use Prosper202\Database\Connection;
+use Prosper202\Notifications\PostbackResult;
+use Prosper202\Notifications\PostbackSender;
 
 /**
  * Telling a click's traffic source about a conversion: the one sender for
@@ -26,7 +30,7 @@ use Prosper202\Database\Connection;
  */
 final class TrafficSourcePixels
 {
-    public const POSTBACK_USER_AGENT = \Prosper202\Notifications\PostbackSender::USER_AGENT;
+    public const POSTBACK_USER_AGENT = PostbackSender::USER_AGENT;
 
     /**
      * Every token replaceTokens() fills, in the order it fills them, as
@@ -36,7 +40,8 @@ final class TrafficSourcePixels
      */
     private const TOKENS = [
         'c1' => ['c1'], 'c2' => ['c2'], 'c3' => ['c3'], 'c4' => ['c4'],
-        't202pubid' => ['t202pubid'], 'gclid' => ['gclid'], 'msclkid' => ['msclkid'], 'fbclid' => ['fbclid'],
+        't202pubid' => ['t202pubid'], 'gclid' => ['gclid'], 'gbraid' => ['gbraid'], 'wbraid' => ['wbraid'],
+        'ttclid' => ['ttclid'], 'msclkid' => ['msclkid'], 'fbclid' => ['fbclid'],
         'utm_source' => ['utm_source'], 'utm_medium' => ['utm_medium'], 'utm_campaign' => ['utm_campaign'],
         'utm_term' => ['utm_term'], 'utm_content' => ['utm_content'],
         'subid' => ['subid'], 't202kw' => ['t202kw'], 'payout' => ['payout'], 'random' => ['random'],
@@ -108,9 +113,10 @@ final class TrafficSourcePixels
      * outbox, which the worker sends with retries.
      *
      * @param array<string, scalar|null> $tokens
-     * @param (callable(string): bool)|null $fetch Performs a type-4 GET and
-     *        says whether it succeeded (a 2xx or 3xx status); defaults to
-     *        curl with the postback user agent. Injected by tests.
+     * @param (callable(string): (bool|PostbackResult))|null $fetch Performs a
+     *        type-4 GET and says whether it succeeded (a 2xx or 3xx status);
+     *        defaults to PostbackSender, which refuses an address it does not
+     *        call. Injected by tests.
      * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
     public static function fire(Connection $conn, int $ppcAccountId, array $tokens, ?callable $fetch = null, bool $browser = true, bool $server = true): array
@@ -121,7 +127,8 @@ final class TrafficSourcePixels
         }
 
         $stmt = $conn->prepareRead(
-            'SELECT pixel_code, pixel_type_id FROM 202_ppc_account_pixels WHERE ppc_account_id = ? ORDER BY pixel_id'
+            'SELECT pixel_id, pixel_code, pixel_type_id
+             FROM 202_ppc_account_pixels WHERE ppc_account_id = ? ORDER BY pixel_id'
         );
         $conn->bind($stmt, 'i', [$ppcAccountId]);
         $pixels = $conn->fetchAll($stmt);
@@ -129,8 +136,9 @@ final class TrafficSourcePixels
         // The one server-to-server sender, shared with the notification
         // outbox's worker (PR 5): it answers whether the network heard us
         // (a status, not a body — an empty 200 and a failure both read as
-        // ''), and refuses anything but http(s), redirects included.
-        $fetch ??= \Prosper202\Notifications\PostbackSender::fetch(...);
+        // ''), and refuses anything but http(s) to a public address,
+        // redirects included.
+        $fetch ??= (new PostbackSender())->send(...);
 
         foreach ($pixels as $pixel) {
             $type = (int) $pixel['pixel_type_id'];
@@ -174,9 +182,13 @@ final class TrafficSourcePixels
                             break;
                         }
                         $out['server_calls']++;
-                        if (!$fetch($url)) {
+                        $result = PostbackResult::of($fetch($url));
+                        if (!$result->isDelivered()) {
                             $out['server_failures']++;
-                            error_log('traffic source postback failed for ppc account ' . $ppcAccountId . ': ' . $url);
+                            // The host only: a postback's path and query can carry the network's key.
+                            error_log('traffic source postback ' . ($result->isRefused() ? 'refused' : 'failed')
+                                . ' for pixel ' . (int) ($pixel['pixel_id'] ?? 0) . ' of ppc account ' . $ppcAccountId
+                                . ' (' . PostbackSender::origin($url) . '): ' . $result->reason);
                         }
                         break;
                 }
@@ -190,7 +202,10 @@ final class TrafficSourcePixels
     /**
      * The click-level tokens gpb.php and upx.php send (subid, the c1-c4
      * values, keyword, click ids, UTM values, CPC, referrer), plus the
-     * click's traffic source. Null when the click is not this user's.
+     * click's traffic source. The source and the CPC are the click's first
+     * visit's (FirstVisit): a re-click keeps the source the visitor came
+     * from. A traffic source account of another account is no source (0).
+     * Null when the click is not this user's.
      *
      * $inTransaction reads through the write connection: the notification
      * outbox resolves a postback inside the transaction that records the
@@ -201,9 +216,10 @@ final class TrafficSourcePixels
     public static function clickTokens(Connection $conn, int $userId, int $clickId, bool $inTransaction = false): ?array
     {
         $sql =
-            'SELECT c.click_id, c.ppc_account_id, c.click_cpc, c1.c1, c2.c2, c3.c3, c4.c4, kw.keyword, g.gclid,
+            'SELECT c.click_id, pa.ppc_account_id, c.click_cpc, c1.c1, c2.c2, c3.c3, c4.c4, kw.keyword, g.gclid,
                     us.utm_source, um.utm_medium, uca.utm_campaign, ut.utm_term, uco.utm_content, su.site_url_address
-             FROM 202_clicks AS c
+             FROM ' . FirstVisit::of('?') . ' AS c
+             LEFT JOIN 202_ppc_accounts AS pa ON (pa.ppc_account_id = c.ppc_account_id AND pa.user_id = c.user_id)
              LEFT JOIN 202_clicks_tracking AS ct ON ct.click_id = c.click_id
              LEFT JOIN 202_clicks_advance AS ca ON ca.click_id = c.click_id
              LEFT JOIN 202_google AS g ON g.click_id = c.click_id
@@ -219,7 +235,7 @@ final class TrafficSourcePixels
              LEFT JOIN 202_keywords AS kw ON kw.keyword_id = ca.keyword_id
              LEFT JOIN 202_clicks_site AS cs ON cs.click_id = c.click_id
              LEFT JOIN 202_site_urls AS su ON su.site_url_id = cs.click_referer_site_url_id
-             WHERE c.click_id = ? AND c.user_id = ?
+             WHERE c.user_id = ?
              LIMIT 1';
         $stmt = $inTransaction ? $conn->prepareWrite($sql) : $conn->prepareRead($sql);
         $conn->bind($stmt, 'ii', [$clickId, $userId]);
@@ -228,6 +244,7 @@ final class TrafficSourcePixels
             return null;
         }
         $cpc = (string) ($row['click_cpc'] ?? '0');
+        $adClickIds = AdClickIdColumns::of($conn, $clickId);
 
         return [
             'ppc_account_id' => (int) ($row['ppc_account_id'] ?? 0),
@@ -239,6 +256,11 @@ final class TrafficSourcePixels
                 'c3' => (string) ($row['c3'] ?? ''),
                 'c4' => (string) ($row['c4'] ?? ''),
                 'gclid' => (string) ($row['gclid'] ?? ''),
+                'gbraid' => $adClickIds['gbraid'],
+                'wbraid' => $adClickIds['wbraid'],
+                'ttclid' => $adClickIds['ttclid'],
+                'msclkid' => $adClickIds['msclkid'],
+                'fbclid' => $adClickIds['fbclid'],
                 'utm_source' => (string) ($row['utm_source'] ?? ''),
                 'utm_medium' => (string) ($row['utm_medium'] ?? ''),
                 'utm_campaign' => (string) ($row['utm_campaign'] ?? ''),

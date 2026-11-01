@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"p202/internal/api"
@@ -95,20 +96,7 @@ var reportSummaryCmd = &cobra.Command{
 		}
 		params := collectReportParams(cmd)
 		if len(profiles) > 0 {
-			profileData, errorsOut, err := fetchMultiProfileObjects("reports/summary", params, profiles)
-			if err != nil {
-				return err
-			}
-			aggregated, err := aggregateNumericFields(profileData)
-			if err != nil {
-				return err
-			}
-			payload, err := buildMultiProfilePayload(profileData, aggregated, errorsOut)
-			if err != nil {
-				return err
-			}
-			render(payload)
-			return nil
+			return runMultiProfileSummary(params, profiles)
 		}
 
 		c, err := api.NewFromConfig()
@@ -185,8 +173,76 @@ var reportBreakdownCmd = &cobra.Command{
 			return err
 		}
 		render(filtered)
+		note := breakdownMoreRowsNote(data, params, "")
+		if note != "" && breakdownFiltersSet(cmd) {
+			note += " --min-clicks, --min-cost, --zero-leads and --having filter only the rows read."
+		}
+		noteForPeople(cmd, note)
 		return nil
 	},
+}
+
+// breakdownDefaultLimit is the rows a breakdown page holds when the request names no limit.
+const breakdownDefaultLimit = 50
+
+// noteForPeople prints note on stderr under a table, CSV or --quiet. --json and --ndjson carry the flag the note
+// explains (`truncated`), and keep stderr for errors, as they do `masked`.
+func noteForPeople(cmd *cobra.Command, note string) {
+	if note == "" || jsonOutput || ndjsonOutput {
+		return
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), note)
+}
+
+// breakdownMoreRowsNote is the note under one page of a breakdown with rows after it, naming the flags that read
+// them; "" for the last page. A server from before `truncated` cannot say, so a page it filled to the limit may have
+// rows after it. ranked names how the command ordered the page's rows, if not as the server did.
+func breakdownMoreRowsNote(data []byte, params map[string]string, ranked string) string {
+	var resp struct {
+		Data      []json.RawMessage `json:"data"`
+		Truncated *bool             `json:"truncated"`
+		Limit     *int              `json:"limit"`
+		Offset    *int              `json:"offset"`
+	}
+	if json.Unmarshal(data, &resp) != nil {
+		return ""
+	}
+	limit, offset := breakdownDefaultLimit, 0
+	if n, err := strconv.Atoi(params["limit"]); err == nil {
+		limit = n
+	}
+	if n, err := strconv.Atoi(params["offset"]); err == nil {
+		offset = n
+	}
+	if resp.Limit != nil {
+		limit = *resp.Limit
+	}
+	if resp.Offset != nil {
+		offset = *resp.Offset
+	}
+	var lead string
+	switch {
+	case resp.Truncated != nil && *resp.Truncated:
+		lead = "Note: more rows remain after rows %d-%d%s;"
+	case resp.Truncated == nil && len(resp.Data) > 0 && len(resp.Data) >= limit:
+		lead = "Note: this server does not say whether rows remain after rows %d-%d%s;"
+	default:
+		return ""
+	}
+	note := fmt.Sprintf(lead, offset+1, offset+len(resp.Data), ranked) + fmt.Sprintf(" --offset %d reads the next page", offset+len(resp.Data))
+	if limit < breakdownPageSize {
+		note += fmt.Sprintf(" (--limit takes up to %d)", breakdownPageSize)
+	}
+	return note + "."
+}
+
+// breakdownFiltersSet says whether a client-side breakdown filter (applyBreakdownFilters) is set.
+func breakdownFiltersSet(cmd *cobra.Command) bool {
+	minClicks, _ := cmd.Flags().GetFloat64("min-clicks")
+	minCost, _ := cmd.Flags().GetFloat64("min-cost")
+	zeroLeads, _ := cmd.Flags().GetBool("zero-leads")
+	having, _ := cmd.Flags().GetString("having")
+	return minClicks != 0 || minCost != 0 || zeroLeads || strings.TrimSpace(having) != ""
 }
 
 var reportTimeseriesCmd = &cobra.Command{
@@ -225,12 +281,8 @@ const timeseriesMaxRows = 2000
 // say, may have been), else "". Buckets run oldest first, so a cut drops the
 // most recent ones.
 func timeseriesTruncationWarning(data []byte, interval string) string {
-	var resp struct {
-		Data      []map[string]interface{} `json:"data"`
-		Truncated *bool                    `json:"truncated"`
-		Limit     *int                     `json:"limit"`
-	}
-	if json.Unmarshal(data, &resp) != nil || len(resp.Data) == 0 {
+	resp, ok := timeseriesTailOf(data)
+	if !ok || resp.Buckets == 0 {
 		return ""
 	}
 	limit := timeseriesMaxRows
@@ -238,7 +290,7 @@ func timeseriesTruncationWarning(data []byte, interval string) string {
 		limit = *resp.Limit
 	}
 	last := "the last bucket returned"
-	if p, ok := resp.Data[len(resp.Data)-1]["period"].(string); ok && p != "" {
+	if p, ok := resp.Last["period"].(string); ok && p != "" {
 		last = p
 	}
 
@@ -246,8 +298,8 @@ func timeseriesTruncationWarning(data []byte, interval string) string {
 	switch {
 	case resp.Truncated != nil && *resp.Truncated:
 		lead = fmt.Sprintf("Warning: the series was cut at the server's %d-bucket limit; buckets after %s are missing.", limit, last)
-	case resp.Truncated == nil && len(resp.Data) >= timeseriesMaxRows:
-		lead = fmt.Sprintf("Warning: %d buckets is this server's limit and it does not report truncation; buckets after %s may be missing.", len(resp.Data), last)
+	case resp.Truncated == nil && resp.Buckets >= timeseriesMaxRows:
+		lead = fmt.Sprintf("Warning: %d buckets is this server's limit and it does not report truncation; buckets after %s may be missing.", resp.Buckets, last)
 	default:
 		return ""
 	}

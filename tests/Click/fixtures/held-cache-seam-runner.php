@@ -33,6 +33,12 @@
 
 declare(strict_types=1);
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 [, $scenario, $clickId, $host, $lookup] = $argv + [null, 'commit', '0', 'held.example', 'click'];
 $clickId = (int) $clickId;
 
@@ -151,9 +157,9 @@ try {
 echo json_encode([
     'url' => $url,
     'answered' => $answered,
-    'url_key' => md5('url-id' . $url . systemHash()),
+    'url_key' => md5('url-id' . $url . \Prosper202\Repository\LookupRepositoryFactory::cacheNamespace()),
     'domain_key' => md5('domain-id' . \Prosper202\Repository\Mysql\MysqlLocationRepository::storedDomainHost((string) $url)
-        . systemHash()),
+        . \Prosper202\Repository\LookupRepositoryFactory::cacheNamespace()),
     'cached_by_then' => $cachedByThen,
     'cached' => $cache->written,
     'failure' => $failure,

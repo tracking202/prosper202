@@ -9,6 +9,7 @@ use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\LedgerIntegrityException;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\PayoutMode;
 use Prosper202\Conversion\Ledger\ReversalException;
@@ -67,7 +68,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $total = (int) ($this->conn->fetchOne($countStmt)['total'] ?? 0);
 
         $sql = "SELECT cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
-                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
+                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted, cl.match_method,
                 ac.aff_campaign_name
             FROM 202_conversion_logs cl
             LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id AND ac.user_id = cl.user_id
@@ -88,7 +89,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     public function findById(int $id, int $userId): ?array
     {
         $sql = "SELECT cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
-                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
+                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted, cl.match_method,
                 ac.aff_campaign_name
             FROM 202_conversion_logs cl
             LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id AND ac.user_id = cl.user_id
@@ -100,10 +101,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         return $this->conn->fetchOne($stmt);
     }
 
-    public function create(int $userId, array $data): int
+    public function create(int $userId, array $data, MatchMethod $matchedBy): int
     {
         $data['source'] ??= ConversionSource::API->value;
-        $result = $this->record($userId, $data);
+        $result = $this->record($userId, $data, $matchedBy);
 
         if (!$result['clickFound']) {
             throw new ClickNotFoundException('Click not found or not owned by user');
@@ -116,8 +117,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * Single owner of the transactional conversion write used by every ingestion
      * path (the V3 API, the static pixel and postback endpoints, both uploads).
      *
-     * In one transaction it: locks the source click (SELECT ... FOR UPDATE) so
-     * concurrent and retried requests serialise; carries a pre-ledger click's
+     * In one transaction it: locks the source click (MysqlConversionLedger::clickTransaction())
+     * so concurrent and retried requests serialise, and reads the visit the
+     * conversion credits, the click's latest; carries a pre-ledger click's
      * value into the ledger (MysqlConversionLedger::ensureManaged); decides the
      * row's dedupe key and answers a replay as a duplicate; inserts the ledger
      * row; runs the caller's click-side update (CPA cost, the filtered flag —
@@ -152,11 +154,16 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        conversion.recorded) — both for rows that are not new sales, such
      *        as upload lines,
      *        conv_time, campaign_id, click_time, and the legacy columns
-     *        time_difference, ip, pixel_type, user_agent.
+     *        time_difference, ip, pixel_type, user_agent; legacy_time_difference
+     *        (true = store time_difference as the pixels' text, from the
+     *        credited visit's time: legacyTimeDifference()).
      *        LTV keys (all optional): customer_id, customer_ref +
      *        customer_ref_type, customer_crm, items; ltv_requires_customer
      *        (true = refuse items or customer_crm when no customer resolves,
      *        rather than record the conversion without them).
+     * @param MatchMethod $matchedBy how the caller found the click (stored as
+     *        match_method). Required, with no default: a path that does not
+     *        say how it found its click would record a guess as a match.
      * @param (callable(int $clickId, float $payout): void)|null $clickSideUpdate
      *        Runs inside the transaction after the insert. It must not write
      *        click_lead or click_payout (ClickValueWritersTest enforces it):
@@ -170,26 +177,44 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * @throws ReversalException when a reversal names no row, or a different reversal of that row is on file
      * @throws LtvDataWithoutCustomer when ltv_requires_customer is set and items or customer_crm have no customer
      */
-    public function record(int $userId, array $data, ?callable $clickSideUpdate = null): array
+    public function record(int $userId, array $data, MatchMethod $matchedBy, ?callable $clickSideUpdate = null): array
     {
-        $prepared = $this->prepareRecord($data);
-        $work = fn (): array => $this->recordLocked($userId, $prepared, $clickSideUpdate);
+        $prepared = $this->prepareRecord($data, $matchedBy);
+        $ledger = new MysqlConversionLedger($this->conn);
+        // The click's lock opens the transaction, so what is read after it
+        // is current without locking it (clickTransaction()).
+        $work = fn (): array => $ledger->clickTransaction(
+            (int) $prepared['clickId'],
+            $userId,
+            fn (?array $click): array => $this->recordLocked($userId, $prepared, $clickSideUpdate, $click)
+        );
 
         // Unique-key upserts on 202_customer_aliases under concurrency make a
         // deadlock reachable, not theoretical. The transaction callback is a
         // pure function of its arguments, so one full retry is safe.
         try {
-            $result = $this->conn->transaction($work);
+            $result = $work();
         } catch (Throwable $e) {
             if (!self::isRetryableLockError($e)) {
                 throw $e;
             }
-            $result = $this->conn->transaction($work);
+            $result = $work();
         }
 
         $this->afterRecordCommit($userId, $prepared, $result);
 
         return $result;
+    }
+
+    /**
+     * The time from a click to its conversion as the legacy pixels store it
+     * in time_difference: "D days, H hours, M min and S sec".
+     */
+    public static function legacyTimeDifference(int $clickTime, int $convTime): string
+    {
+        $diff = (new \DateTime('@' . max(0, $clickTime)))->diff(new \DateTime('@' . max(0, $convTime)));
+
+        return $diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec';
     }
 
     /**
@@ -206,17 +231,20 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *
      * Lock order: the caller may hold its own locks, but must take them before
      * this call locks the click and never lock anything after it that another
-     * record() path locks before the click.
+     * record() path locks before the click. The click's lock comes before the
+     * transaction's first plain read, or it is refused
+     * (MysqlConversionLedger::lockClick()).
      *
      * @param array<string, mixed> $data as record()
      * @return array<string, mixed> as record(), plus '_prepared' for afterRecordCommit()
      * @throws ReversalException
      */
-    public function recordInTransaction(int $userId, array $data): array
+    public function recordInTransaction(int $userId, array $data, MatchMethod $matchedBy): array
     {
-        return $this->conn->joinTransaction(function () use ($userId, $data): array {
-            $prepared = $this->prepareRecord($data);
-            $result = $this->recordLocked($userId, $prepared, null);
+        return $this->conn->joinTransaction(function () use ($userId, $data, $matchedBy): array {
+            $prepared = $this->prepareRecord($data, $matchedBy);
+            $click = (new MysqlConversionLedger($this->conn))->lockClick((int) $prepared['clickId'], $userId);
+            $result = $this->recordLocked($userId, $prepared, null, $click);
             $result['_prepared'] = $prepared;
 
             return $result;
@@ -246,7 +274,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * @param array<string, mixed> $data
      * @return array<string, mixed>
      */
-    private function prepareRecord(array $data): array
+    private function prepareRecord(array $data, MatchMethod $matchedBy): array
     {
         $clickId = (int) ($data['click_id'] ?? 0);
         if ($clickId <= 0) {
@@ -292,17 +320,22 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             'source' => $source,
             'payable' => $payable,
             'wantsReversal' => $wantsReversal,
+            'matchedBy' => $matchedBy,
         ];
     }
 
     /**
      * The transactional body of record(): runs inside a transaction someone
-     * else opened.
+     * else opened, which holds the source click's lock so concurrent and
+     * retried requests serialise there. $click is the click as the lock
+     * read it (clickTransaction() or lockClick()): the conversion credits
+     * its latest visit.
      *
      * @param array<string, mixed> $prepared from prepareRecord()
+     * @param array<string, mixed>|null $click
      * @return array<string, mixed>
      */
-    private function recordLocked(int $userId, array $prepared, ?callable $clickSideUpdate): array
+    private function recordLocked(int $userId, array $prepared, ?callable $clickSideUpdate, ?array $click): array
     {
         $clickId = (int) $prepared['clickId'];
         $transactionId = $prepared['transactionId'];
@@ -314,14 +347,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $source = $prepared['source'];
         $payable = (bool) $prepared['payable'];
         $wantsReversal = (bool) $prepared['wantsReversal'];
+        /** @var MatchMethod $matchedBy */
+        $matchedBy = $prepared['matchedBy'];
         $ledger = new MysqlConversionLedger($this->conn);
-
-        // Lock the source click so concurrent/retried requests serialise here.
-        $clickStmt = $this->conn->prepareWrite(
-            'SELECT click_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
-        );
-        $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
-        $click = $this->conn->fetchOne($clickStmt);
 
         if ($click === null) {
             return ['convId' => 0, 'duplicate' => false, 'clickFound' => false, 'customerId' => null];
@@ -419,9 +447,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         // One conversion per click for id-less pixels and postbacks. This
-        // is the authoritative check: it reads click_lead from the row
-        // locked FOR UPDATE above, so a second id-less request waits on
-        // the first's commit and then sees click_lead = 1.
+        // is the authoritative check: it reads whether any visit is a lead
+        // after the click's lock, which opened record()'s transaction
+        // (clickTransaction()), so a second id-less request waits on the
+        // first's commit and then sees the lead.
         $oncePerClick = !empty($data['once_per_click'])
             || (!empty($data['once_per_click_unkeyed']) && $keyedByOwnRow);
         if ($oncePerClick && (int) ($click['click_lead'] ?? 0) === 1) {
@@ -430,7 +459,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         // A click converted before the ledger holds its value only in its
         // cache; carry it into the ledger before this row changes it.
-        $ledger->ensureManaged($click, $userId);
+        $ledger->ensureManaged($clickId, $userId);
 
         if ($reverses !== null) {
             $amountUnits = -abs($explicitPayout ?? Amount::toUnits((string) $reverses['click_payout']));
@@ -486,7 +515,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // default value" — silently dropping the conversion. Always include them,
         // using the caller's value when supplied and a sensible default otherwise.
         $legacyDefaults = [
-            'time_difference' => (string) max(0, $convTime - $clickTime),
+            'time_difference' => !empty($data['legacy_time_difference'])
+                ? self::legacyTimeDifference($clickTime, $convTime)
+                : (string) max(0, $convTime - $clickTime),
             'ip' => '',
             'pixel_type' => 0,
             'user_agent' => '',
@@ -504,8 +535,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $sourceRef = SourceRef::conversion((int) $reverses['conv_id']);
         }
         $eventName = isset($data['event_name']) && $data['event_name'] !== '' ? (string) $data['event_name'] : null;
-        array_push($columns, 'source', 'source_ref', 'event_name', 'payable', 'reverses_conv_id', 'dedupe_key');
-        $types .= 'sssiis';
+        array_push($columns, 'source', 'source_ref', 'event_name', 'payable', 'reverses_conv_id', 'dedupe_key', 'match_method');
+        $types .= 'sssiiss';
         array_push(
             $values,
             $source->value,
@@ -513,13 +544,17 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $eventName,
             $payable ? 1 : 0,
             $reverses !== null ? (int) $reverses['conv_id'] : null,
-            $dedupeKey
+            $dedupeKey,
+            $matchedBy->value
         );
 
-        $placeholders = rtrim(str_repeat('?, ', count($values)), ', ');
-        $stmt = $this->conn->prepareWrite(
-            'INSERT INTO 202_conversion_logs (' . implode(', ', $columns) . ', deleted) VALUES (' . $placeholders . ', 0)'
-        );
+        $insert = static fn (array $columns): string => 'INSERT INTO 202_conversion_logs (' . implode(', ', $columns)
+            . ', deleted) VALUES (' . rtrim(str_repeat('?, ', count($columns)), ', ') . ', 0)';
+        [$stmt, $named] = MatchMethod::prepareInsert($this->conn, $insert($columns), $insert(array_slice($columns, 0, -1)));
+        if (!$named) {
+            $types = substr($types, 0, -1);
+            $values = array_slice($values, 0, -1);
+        }
         $this->conn->bind($stmt, $types, $values);
         $convId = $this->conn->executeInsert($stmt);
         if ($convId <= 0) {
@@ -709,7 +744,20 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      */
     public function softDelete(int $id, int $userId): void
     {
-        $work = fn (): ?int => $this->softDeleteLocked($id, $userId);
+        // The click is found before the transaction, so its lock is the
+        // transaction's first statement and what it reads after is current
+        // (MysqlConversionLedger::lockClick()). A conversion's click never
+        // changes; softDeleteLocked() checks it under the lock.
+        $find = $this->conn->prepareWrite(
+            'SELECT click_id FROM 202_conversion_logs WHERE conv_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($find, 'ii', [$id, $userId]);
+        $found = $this->conn->fetchOne($find);
+        if ($found === null) {
+            return;
+        }
+        $clickId = (int) $found['click_id'];
+        $work = fn (): ?int => $this->softDeleteLocked($id, $userId, $clickId);
 
         try {
             $touched = $this->conn->transaction($work);
@@ -725,17 +773,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     }
 
     /**
-     * softDelete() inside a transaction the caller holds (see
-     * recordInTransaction() for why and for the lock order). Returns the
-     * click whose value changed, or null when nothing was deleted; once the
-     * caller has committed, it hands that to refreshClickReport().
-     */
-    public function softDeleteInTransaction(int $id, int $userId): ?int
-    {
-        return $this->conn->joinTransaction(fn (): ?int => $this->softDeleteLocked($id, $userId));
-    }
-
-    /**
      * The goals engine retires a goal row with nothing in its place (a
      * re-evaluation under which the outcome is no longer reached): the row
      * is soft-deleted exactly as softDelete() does — click recomputed, MTA
@@ -745,7 +782,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * may undo) from one an operator made (which it must not). A row that is
      * already deleted is left exactly as it is, unmarked, and null returned.
      *
-     * Inside a transaction the caller holds (see recordInTransaction()).
+     * Inside a transaction the caller holds (see recordInTransaction()),
+     * whose first lock is the row's click: the row is read before the lock,
+     * so lockClick() refuses a caller that did not lock it first.
      * Returns the click whose value changed, or null.
      */
     public function retireGoalRowInTransaction(int $convId, int $userId, SupersededReason $reason): ?int
@@ -755,9 +794,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         return $this->conn->joinTransaction(function () use ($convId, $userId, $reason): ?int {
-            $this->assertGoalRow($convId, $userId);
+            $row = $this->assertGoalRow($convId, $userId);
 
-            return $this->softDeleteLocked($convId, $userId, $reason);
+            return $this->softDeleteLocked($convId, $userId, (int) $row['click_id'], $reason);
         });
     }
 
@@ -785,8 +824,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * key is what guarantees there is no second row for the outcome to
      * conflict with; the key check is what ties this row to it.
      *
-     * Inside a transaction the caller holds; lock order click, then
-     * conversion, as on every path here. Returns the click whose value may
+     * Inside a transaction the caller holds, which has locked the click
+     * first: the row is read before the lock, so lockClick() refuses
+     * anything else. Lock order click, then conversion, as on every path
+     * here. Returns the click whose value may
      * have changed (for refreshClickReport() after commit), or null when
      * nothing was written.
      *
@@ -810,11 +851,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             );
         }
 
-        $clickStmt = $this->conn->prepareWrite(
-            'SELECT click_id, aff_campaign_id FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
-        );
-        $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
-        $click = $this->conn->fetchOne($clickStmt);
+        $ledger = new MysqlConversionLedger($this->conn);
+        $click = $ledger->lockClick($clickId, $userId);
         if ($click === null) {
             throw new LedgerIntegrityException('conversion ' . $convId . ' names click ' . $clickId . ', which does not exist');
         }
@@ -872,7 +910,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             return null; // counting as the ledger decides: nothing was retired
         }
 
-        $ledger = new MysqlConversionLedger($this->conn);
         $ledger->recompute($clickId, (int) $click['aff_campaign_id'], $userId);
         $ledger->enqueue([$convId], 'counted_state');
 
@@ -907,7 +944,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
     /**
      * Post-commit: refresh the report row of a click whose value a caller's
-     * committed transaction changed (softDeleteInTransaction(), or a goal
+     * committed transaction changed (retireGoalRowInTransaction(), or a goal
      * row superseded through MysqlConversionLedger).
      */
     public function refreshClickReport(int $clickId): void
@@ -916,36 +953,22 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     }
 
     /**
+     * $clickId is the conversion's click, found by the caller: lock order is
+     * click, then conversion, on every path that writes both (record() locks
+     * the click first), and the click's lock comes before the transaction's
+     * first plain read.
+     *
      * @param SupersededReason|null $engineMark the goals engine's reason, written with the deletion
      *        (retireGoalRowInTransaction()); null for every other delete
      */
-    private function softDeleteLocked(int $id, int $userId, ?SupersededReason $engineMark = null): ?int
+    private function softDeleteLocked(int $id, int $userId, int $clickId, ?SupersededReason $engineMark = null): ?int
     {
         $ledger = new MysqlConversionLedger($this->conn);
-
-        // Lock order is click, then conversion, on every path that writes
-        // both (record() locks the click first), so find the click before
-        // taking any lock.
-        $findStmt = $this->conn->prepareWrite(
-            'SELECT click_id FROM 202_conversion_logs WHERE conv_id = ? AND user_id = ? LIMIT 1'
-        );
-        $this->conn->bind($findStmt, 'ii', [$id, $userId]);
-        $found = $this->conn->fetchOne($findStmt);
-        if ($found === null) {
-            return null;
-        }
-        $clickId = (int) $found['click_id'];
-
-        $clickStmt = $this->conn->prepareWrite(
-            'SELECT click_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks
-             WHERE click_id = ? LIMIT 1 FOR UPDATE'
-        );
-        $this->conn->bind($clickStmt, 'i', [$clickId]);
-        $click = $this->conn->fetchOne($clickStmt);
+        $click = $ledger->lockClick($clickId);
 
         // Lock the conversion row so concurrent deletes serialize here.
         $convStmt = $this->conn->prepareWrite(
-            'SELECT conv_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs
+            'SELECT conv_id, click_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs
              WHERE conv_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
         );
         $this->conn->bind($convStmt, 'ii', [$id, $userId]);
@@ -955,11 +978,17 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             // historical silent-no-op semantics of this method).
             return null;
         }
+        if ((int) $conv['click_id'] !== $clickId) {
+            throw new LedgerIntegrityException(
+                'conversion ' . $id . ' is click ' . (int) $conv['click_id'] . '\'s, not click ' . $clickId
+                    . '\'s, whose lock was taken for it'
+            );
+        }
 
         if ($click !== null) {
             // A pre-ledger click keeps the value only its cache knows;
             // carry it in first so deleting an old row cannot zero it.
-            $ledger->ensureManaged($click, $userId);
+            $ledger->ensureManaged($clickId, $userId);
         }
 
         if ($engineMark === null) {
@@ -1059,17 +1088,19 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *
      * Post-commit and best-effort: the write has landed, so a failure here
      * must not read as a failed write (CLAUDE.md #13). It is logged with the
-     * click id, and the next change to the click re-rolls it.
+     * click id and the step that failed, and the click's hour is queued for
+     * the cron job to roll up again (ClickRollupSql::queueRetry()): a failed
+     * rollup leaves the report row as it was, and a failed removal of the
+     * earlier visits' rows leaves them beside the latest visit's, so the
+     * click counts once per visit until then.
      */
     private function refreshReportRollup(int $clickId): void
     {
         try {
-            $stmt = $this->conn->prepareWrite(
-                ClickRollupSql::forClick('202_dataengine', $clickId)
-            );
-            $this->conn->executeUpdate($stmt);
+            ClickRollupSql::rollUpClick($this->conn, $clickId);
         } catch (Throwable $e) {
-            error_log('conversion ledger: click ' . $clickId . ' changed but its report row was not refreshed: ' . $e->getMessage());
+            error_log('conversion ledger: click ' . $clickId . ' changed but its report row was not refreshed: '
+                . $e->getMessage() . '; ' . ClickRollupSql::queueRetry($this->conn, $clickId));
         }
     }
 
@@ -1247,18 +1278,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             if ($clickId <= 0) {
                 continue;
             }
-            $work = function () use ($clickId, $userId, $ledger): bool {
-                $clickStmt = $this->conn->prepareWrite(
-                    'SELECT click_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks
-                     WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
-                );
-                $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
-                $click = $this->conn->fetchOne($clickStmt);
+            $work = function (?array $click) use ($clickId, $userId, $ledger): bool {
                 if ($click === null) {
                     return false;
                 }
 
-                $ledger->ensureManaged($click, $userId);
+                $ledger->ensureManaged($clickId, $userId);
 
                 $rowsStmt = $this->conn->prepareWrite(
                     'SELECT conv_id, customer_id FROM 202_conversion_logs
@@ -1288,12 +1313,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             };
 
             try {
-                $ok = $this->conn->transaction($work);
+                $ok = $ledger->clickTransaction($clickId, $userId, $work);
             } catch (Throwable $e) {
                 if (!self::isRetryableLockError($e)) {
                     throw $e;
                 }
-                $ok = $this->conn->transaction($work);
+                $ok = $ledger->clickTransaction($clickId, $userId, $work);
             }
             if ($ok) {
                 $cleared++;

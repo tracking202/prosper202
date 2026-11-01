@@ -141,11 +141,13 @@ module.exports = {
       async run(ctx) {
         const { app, ui, db, expect, state } = ctx;
         const before = db.value('SELECT user_daily_email FROM 202_users_pref WHERE user_id=' + state.owner);
+        db.write("UPDATE 202_users_pref SET user_daily_email='05' WHERE user_id=" + state.owner);
         await app.goto('/202-account/account.php');
-        await ui.select('#user_daily_email', '06');
+        // The hosted daily email was switched off on 2026-10-29.
+        expect.notOk(await ui.exists('#user_daily_email'), 'there is no daily email report setting');
         await app.submit('#profile button[type="submit"]');
         expect.match(await app.messages(), /Your settings are saved\./, 'it says it saved');
-        expect.eq(db.value('SELECT user_daily_email FROM 202_users_pref WHERE user_id=' + state.owner), '06', 'the daily email hour is stored');
+        expect.eq(db.value('SELECT user_daily_email FROM 202_users_pref WHERE user_id=' + state.owner), '05', 'and leaves the stored daily email hour as it was');
         db.write("UPDATE 202_users_pref SET user_daily_email='" + before + "' WHERE user_id=" + state.owner);
       },
     },
@@ -236,6 +238,65 @@ module.exports = {
     },
 
     {
+      name: 'API integrations: a PayKickstart IPN key is added from its disclosure, never shown back, and removed only when confirmed',
+      async run(ctx) {
+        const { app, ui, db, expect, state } = ctx;
+        const stored = () => db.value("SELECT IFNULL(paykickstart_ipn_secret_keys, '') FROM 202_users_pref WHERE user_id=" + state.owner);
+        const before = stored();
+        db.write('UPDATE 202_users_pref SET paykickstart_ipn_secret_keys=NULL WHERE user_id=' + state.owner);
+        try {
+          await app.goto('/202-account/api-integrations.php');
+          expect.ok(!(await ui.page.$eval('#paykickstart details.p202-disclosure', (d) => d.open)), 'the key form starts closed');
+          await ui.click('#paykickstart summary');
+          await ui.fill({ '#paykickstart_ipn_secret_key': 'u6-browser-pk-KEY1' });
+          await app.submit('#paykickstart .p202-disclosure button[type="submit"]');
+          expect.match(await app.messages(), /PayKickstart IPN secret key was saved; 1 key is stored/, 'saving says so');
+          expect.eq(stored(), 'u6-browser-pk-KEY1', 'and stores it');
+          expect.ok(!(await ui.page.content()).includes('u6-browser-pk-KEY1'), 'the page never shows the key back');
+          expect.match(await ui.page.textContent('#paykickstart'), /Key ending …KEY1/, 'it lists the key by its last characters');
+
+          const remove = '#paykickstart button:has-text("remove")';
+          const said = await app.confirmAnd('dismiss', remove);
+          expect.match(said, /Remove this key\?/, 'removing asks first', said || '(no dialog)');
+          expect.eq(stored(), 'u6-browser-pk-KEY1', 'saying no keeps it');
+          await app.confirmAnd('accept', remove);
+          expect.eq(stored(), '', 'saying yes removes it');
+        } finally {
+          db.write('UPDATE 202_users_pref SET paykickstart_ipn_secret_keys=' + (before === '' ? 'NULL' : "'" + before.replace(/'/g, "''") + "'")
+            + ' WHERE user_id=' + state.owner);
+        }
+      },
+    },
+
+    {
+      name: 'API integrations: JVZoo shows an affiliate URL and a vendor URL, and saves its key trimmed from its disclosure',
+      async run(ctx) {
+        const { app, ui, db, expect, state } = ctx;
+        const stored = () => db.value("SELECT IFNULL(jvzoo_ipn_secret_key, '') FROM 202_users_pref WHERE user_id=" + state.owner);
+        const before = stored();
+        db.write('UPDATE 202_users_pref SET jvzoo_ipn_secret_key=NULL WHERE user_id=' + state.owner);
+        try {
+          await app.goto('/202-account/api-integrations.php');
+          const copies = await ui.page.$$eval('#jvzoo [data-p202-copy]', (els) => els.map((el) => el.getAttribute('data-p202-copy')));
+          expect.eq(copies.length, 2, 'two URLs to copy');
+          expect.match(copies[0] || '', /\/tracking202\/static\/jvzoo\.php\?role=affiliate$/, 'the affiliate\'s first');
+          expect.match(copies[1] || '', /\/tracking202\/static\/jvzoo\.php\?role=vendor$/, 'the vendor\'s second');
+          expect.match(await ui.page.textContent('#jvzoo .p202-pill'), /Not connected/, 'no key, not connected');
+          expect.ok(!(await ui.page.$eval('#jvzoo details.p202-disclosure', (d) => d.open)), 'the key form starts closed');
+          await ui.click('#jvzoo summary');
+          await ui.fill({ '#jvzoo_ipn_secret_key': '  u6-browser-JVZIPN-key  ' });
+          await app.submit('#jvzoo .p202-disclosure button[type="submit"]');
+          expect.match(await app.messages(), /Your JVZoo secret key was saved/, 'saving says so');
+          expect.eq(stored(), 'u6-browser-JVZIPN-key', 'and stores it trimmed, as the endpoint signs with it');
+          expect.match(await ui.page.textContent('#jvzoo .p202-pill'), /Connected/, 'connected once a key is stored');
+        } finally {
+          db.write('UPDATE 202_users_pref SET jvzoo_ipn_secret_key=' + (before === '' ? 'NULL' : "'" + before.replace(/'/g, "''") + "'")
+            + ' WHERE user_id=' + state.owner);
+        }
+      },
+    },
+
+    {
       name: 'API integrations: a key saves from its disclosure; a DNI network is removed only when confirmed',
       async run(ctx) {
         const { app, ui, db, expect, state } = ctx;
@@ -276,7 +337,7 @@ module.exports = {
       name: "Settings: AutoCron after the page's own cron ping, said where the switch is",
       async run(ctx) {
         const { db, expect, state, withSession } = ctx;
-        const unneeded = /Your own cron job ran in the last five minutes/;
+        const unneeded = /A cron job ran on this install in the last five minutes, so AutoCron may not be needed/;
         const original = db.value('SELECT auto_cron FROM 202_users_pref WHERE user_id=' + state.owner);
         // Viewports where the page is longer than the screen, so landing on
         // #autocron scrolls past the top of the page (at 1280x1000 it does not).
@@ -331,6 +392,15 @@ module.exports = {
             await app.submit('#autocron button[type="submit"]');
             expect.match(await app.messages(), unneeded, at + 'a cron job that ran leaves AutoCron off, and says so');
             await inView('the refusal');
+
+            // Anyone can open the cron's address, so the record is no proof:
+            // the owner may say the run was not their cron job's.
+            const anyway = '#autocron_no_own_job_form button[type="submit"]';
+            expect.ok(await ui.visible(anyway), at + 'and offers to turn it on anyway');
+            await app.submit(anyway);
+            const answered = await app.messages();
+            expect.notMatch(answered, unneeded, at + "the owner's word is taken");
+            expect.ok(answered !== '', at + 'the switch says what the service answered', answered);
           });
         }
         db.write("UPDATE 202_users_pref SET auto_cron='" + original + "' WHERE user_id=" + state.owner);
@@ -359,6 +429,49 @@ module.exports = {
     },
 
     {
+      name: 'Settings: the GeoIP database panel gives the file\'s age, never sends a stored key back, and Remove asks first',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        const key = 'browserPass_0123456789abcdef_mmk';
+        db.write('DELETE FROM 202_geoip_refresh');
+        await app.goto('/202-account/administration.php');
+        const panel = await ui.page.evaluate(() => {
+          const p = document.querySelector('#geoip');
+          return p ? p.innerText : null;
+        });
+        expect.ok(panel !== null, 'the GeoIP database panel is on Settings');
+        expect.match(panel || '', /Built\s+[A-Z][a-z]{2} \d{1,2}, \d{4} · [\d,]+ days ago/, 'it gives the build date and the age', panel);
+        expect.ok(await ui.page.evaluate(() => document.querySelector('#geoip details.p202-disclosure').open),
+          'with no account stored, the set-up form is open');
+
+        await ui.fill({ '#geoip_account_id': '424242', '#geoip_license_key': key });
+        await app.submit('#geoip button[type="submit"]:has-text("Save")');
+        expect.match(await app.messages(), /Saved\. The cron job refreshes the GeoIP database/, 'saving says so');
+        expect.eq(db.value('SELECT account_id FROM 202_geoip_refresh WHERE refresh_id=1'), '424242', 'and stores the account ID');
+        // The shell scrolls to #geoip smoothly: waited for, not read at load.
+        await ui.untilInPage(() => {
+          const y = document.getElementById('geoip').getBoundingClientRect().y;
+          return y >= 0 && y < 120;
+        }, undefined, { describe: 'the redirect to land on #geoip', timeout: 5000 }).catch(() => {});
+        const seen = await ui.page.evaluate(() => {
+          const f = document.querySelector('[data-p202-flashes]');
+          const r = f ? f.getBoundingClientRect() : null;
+          return { inPanel: !!(f && f.closest('#geoip')), inView: !!r && r.y >= 0 && r.y + r.height <= window.innerHeight };
+        });
+        expect.ok(seen.inPanel && seen.inView, 'the message is in the GeoIP panel, in view', JSON.stringify(seen));
+        expect.eq(await ui.page.inputValue('#geoip_license_key'), '', 'the licence key box is empty: a stored key is never sent back');
+        expect.ok(!(await ui.page.content()).includes(key), 'and the page carries the key nowhere');
+
+        const asked = await app.confirmAnd('dismiss', '#geoip button:has-text("Remove the account")');
+        expect.match(asked || '', /Remove the MaxMind account ID and licence key\?/, 'Remove the account asks first', asked || '(no dialog)');
+        expect.eq(db.value('SELECT license_key FROM 202_geoip_refresh WHERE refresh_id=1'), key, 'saying no keeps the key');
+        await app.confirmAnd('accept', '#geoip button:has-text("Remove the account")');
+        expect.match(await app.messages(), /were removed, so the GeoIP database is no longer refreshed/, 'saying yes removes it, and says so');
+        expect.eq(db.value("SELECT CONCAT(account_id, license_key) FROM 202_geoip_refresh WHERE refresh_id=1"), '', 'both are cleared');
+      },
+    },
+
+    {
       name: 'Home: the getting started card can be dismissed, per browser',
       async run(ctx) {
         const { app, ui, expect } = ctx;
@@ -374,6 +487,32 @@ module.exports = {
         await ui.ready();
         expect.notOk(await ui.visible('#p202-getting-started'), 'and it stays hidden');
         await ui.page.evaluate(() => { try { localStorage.removeItem('p202_getting_started_dismissed'); } catch (e) { /* ignore */ } });
+      },
+    },
+
+    {
+      name: 'AI connect: the approval page shows what the link says as the link\'s words, and vouches for none of it',
+      async run(ctx) {
+        const { app, ui, expect } = ctx;
+        const query = new URLSearchParams({
+          state: 'a'.repeat(43) + '.' + 'B'.repeat(43),
+          code_challenge: 'c'.repeat(43),
+          code_challenge_method: 'S256',
+          client_name: 'Claude',
+          client_domain: 'claude.ai',
+          redirect_host: 'claude.ai',
+          install: ctx.config.base + '/',
+          redirect_uri: 'https://mcp.tracking202.com/callback',
+        });
+        await app.goto('/202-account/connect-ai.php?' + query);
+        // What a person reads: rendered and visible, not the source.
+        const text = await ui.page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+        expect.ok(text.includes('calls itself \u201cClaude\u201d (claude.ai)'), 'the name and site are the link\'s');
+        expect.ok(text.includes("The app's name and site are what the link says; this page cannot check them."),
+          'and the page says it cannot check them');
+        expect.ok(text.includes('Whoever started the connection gets the access you choose'), 'and who gets the access');
+        expect.notOk(/verif/i.test(text), 'nothing on the page says verified');
+        expect.ok(await ui.page.isVisible('form[method="post"] button[type="submit"]'), 'the approval form is offered');
       },
     },
 

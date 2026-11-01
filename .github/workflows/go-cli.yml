@@ -17,11 +17,15 @@ on:
       - 'api/v3/Support/AiConnect.php'
       - '202-config/Click/TrackingLinkVariables.php'
       - '202-config/User/PreferenceRules.php'
+      - '202-config/Click/Filter/**'
       - 'docs/cli-agent.md'
       - 'tracking202/_config/sub-menu.php'
       - 'tracking202/_config/top.php'
       - '202-config/template.php'
       - 'tests/fixtures/agent-eval/cases/**'
+      - 'tests/fixtures/summary-totals/**'
+      - '202-config/Database/Tables/MiscTables.php'
+      - 'tests/fixtures/rotator-criterion-values.json'
       - 'documentation/tools--resources/999-common-network-subid-parameters.md'
   pull_request:
     paths:
@@ -35,11 +39,15 @@ on:
       - 'api/v3/Support/AiConnect.php'
       - '202-config/Click/TrackingLinkVariables.php'
       - '202-config/User/PreferenceRules.php'
+      - '202-config/Click/Filter/**'
       - 'docs/cli-agent.md'
       - 'tracking202/_config/sub-menu.php'
       - 'tracking202/_config/top.php'
       - '202-config/template.php'
       - 'tests/fixtures/agent-eval/cases/**'
+      - 'tests/fixtures/summary-totals/**'
+      - '202-config/Database/Tables/MiscTables.php'
+      - 'tests/fixtures/rotator-criterion-values.json'
       - 'documentation/tools--resources/999-common-network-subid-parameters.md'
 
 jobs:
@@ -55,7 +63,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'   # matches go-cli/go.mod
+          go-version: '1.27.3'   # matches go-cli/go.mod
           cache-dependency-path: go-cli/go.sum
 
       - name: Check formatting
@@ -79,16 +87,17 @@ jobs:
       # The same source built for js/wasm is the hosted MCP relay's engine
       # (`p202 mcp call` per tool call, inside a Cloudflare Worker). Nobody
       # builds it locally, so it rots unless CI does: vet it, run the tests
-      # that hold its entry check and tool mapping under Node, and build it.
+      # that hold its entry check, tool mapping and value bounds under Node,
+      # and build it.
       - name: js/wasm vet, tests and build
         run: |
           GOOS=js GOARCH=wasm go vet ./...
           GOOS=js GOARCH=wasm go test -count=1 \
             -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
-            -run 'TestHostedRunTakesToolCallsOnly|TestHostedSearchAnswersCompactJSON|TestHostedSearchErrorsReachTheRelayAsJSON|TestMCPToolArgv|TestMCPCatalogBuilds|TestMCPToolPositionalsMatchCommands' ./cmd/
+            -run 'TestHostedRunTakesToolCallsOnly|TestHostedEngineOmitsEveryPage|TestHostedEngineBoundsWhatACallDecodes|TestHostedSearchAnswersCompactJSON|TestHostedSearchErrorsReachTheRelayAsJSON|TestHostedScopeRefusalSaysConnectAgain|TestMCPToolArgv|TestMCPCatalogBuilds|TestMCPToolPositionalsMatchCommands' ./cmd/
           GOOS=js GOARCH=wasm go test -count=1 \
             -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
-            -run 'TestHostedRequestsRefuseRedirectsAndWaitLess' ./internal/api/
+            -run 'TestHostedRequestsRefuseRedirectsAndWaitLess|TestJSONValuesOver|FuzzJSONValuesOverBoundsEveryDecoder|TestAnswerBound|TestAnswerTooManyValuesReadsTheWholeChain|TestBound|TestAnswerBodiesAreReadOnlyByReadAnswer' ./internal/api/
           GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/p202.wasm" .
           ls -l "$RUNNER_TEMP/p202.wasm"
 
@@ -101,7 +110,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version: '1.27.3'
           cache-dependency-path: go-cli/go.sum
 
       # Configured in go-cli/.golangci.yml to report dropped errors
@@ -111,5 +120,8 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.5.0
+          version: v2.15.0
+          # Built with the Go setup-go installed: a prebuilt binary built with
+          # an older Go cannot read go1.27 export data.
+          install-mode: goinstall
           working-directory: go-cli

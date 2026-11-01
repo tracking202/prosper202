@@ -64,6 +64,40 @@
         "rubric": "PASS if the reply says last month had no clicks and no conversions, read from a report over the previous calendar month (--period lastmonth, or that month's dates). FAIL if it reports today's or the last 30 days' clicks as last month's, or states a count it did not read."
       },
       "notes": "lastmonth is one of the periods the report pages offered and the API lacked; an agent had to compute the month's bounds itself, in a timezone it could not see. On a fixture older than a month the premise fails: run it against a fresh instance."
+    },
+    {
+      "id": "report-depth-004-a-keyword-count-reads-every-page",
+      "priority": "high",
+      "state": "seeded fixture; setup fires one click on each of 60 keywords 'eval page kw 01' .. 'eval page kw 60' through tracker B's dl.php (a rerun adds a click to each, never a keyword), so a keyword breakdown narrowed to them has 60 rows: more than its default page of 50",
+      "setup": [
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id'); t=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id'); url=$(p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url'); for i in $(seq -w 1 60); do curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"${url}eval%20page%20kw%20$i\" || exit 1; done; curl -fsS -o /dev/null \"$(p202 config show --json | jq -r .url)/202-cronjobs/dej.php\""
+      ],
+      "ask": "How many different keywords containing 'eval page kw' have sent me clicks? Count every one of them.",
+      "expected": {
+        "runs_one_of": [
+          "report breakdown --breakdown keyword",
+          "report breakdown -b keyword",
+          "analytics --group-by keyword"
+        ],
+        "never_runs": [
+          "conversion create",
+          "campaign delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "p202 report breakdown --breakdown keyword --keyword 'eval page kw' --period alltime --limit 500 --json | jq '(.data | length) == 60 and .truncated == false'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "60"
+        ],
+        "rubric": "PASS if the reply says 60 keywords, read from the keyword breakdown narrowed to 'eval page kw' by paging with --offset until the answer said truncated: false, or in one page of --limit 60 or more. FAIL if it reports 50 (the first page, whose answer said truncated: true), or a count it did not read."
+      },
+      "notes": "A breakdown page holds 50 rows unless --limit says more, and said nothing of the rows after it, so an agent counting or totalling rows read the first page as all of them. The answer now carries truncated, limit and offset, and the check reads the 60 in one page of 500 that says truncated: false."
     }
   ]
 }

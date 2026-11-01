@@ -8,6 +8,7 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\HttpException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
@@ -16,6 +17,7 @@ use Prosper202\Report\AccountZone;
 use Prosper202\User\CurrencyChange;
 use Prosper202\User\ExchangeRates;
 use Prosper202\User\PreferenceRules;
+use Prosper202\User\ServedPreferences;
 
 class UsersController
 {
@@ -247,12 +249,15 @@ class UsersController
         $binds = [];
         $types = '';
 
+        $switchesOff = false;
         foreach ($this->profileFields($payload, $id) as $f => [$t, $value]) {
             $sets[] = "$f = ?";
             $binds[] = $value;
             $types .= $t;
+            $switchesOff = $switchesOff || ($f === 'user_active' && !\Prosper202\User\UserStanding::isActive($value));
         }
 
+        $changesPassword = false;
         if (array_key_exists('user_pass', $payload) && $payload['user_pass'] !== '') {
             $password = $payload['user_pass'];
             if (!is_string($password)) {
@@ -265,6 +270,7 @@ class UsersController
             $sets[] = 'user_pass = ?';
             $binds[] = \hash_user_pass($password);
             $types .= 's';
+            $changesPassword = true;
         }
 
         if (empty($sets)) {
@@ -274,12 +280,30 @@ class UsersController
         $binds[] = $id;
         $types .= 'i';
 
-        $stmt = $this->prepare('UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?');
-        $this->bind($stmt, $types, ...$binds);
-        $this->execute($stmt, 'Update failed');
-        $stmt->close();
+        // Switched off, or given a new password, the user's remember-me keys
+        // and open sessions end in the same transaction: a browser kept
+        // signed in must not sign back in when the user is switched on again,
+        // nor a stolen cookie or session outlive the password (RememberMeKeys,
+        // SessionGeneration).
+        $revokes = $switchesOff || $changesPassword;
+        $this->transaction(function () use ($sets, $types, $binds, $id, $revokes): void {
+            $stmt = $this->prepare('UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?');
+            $this->bind($stmt, $types, ...$binds);
+            $this->execute($stmt, 'Update failed');
+            $stmt->close();
+            if ($revokes) {
+                \Prosper202\User\RememberMeKeys::revokeAll(new Connection($this->db), $id);
+                \Prosper202\User\SessionGeneration::bump(new Connection($this->db), $id);
+            }
+        });
 
-        return $this->get($id);
+        // Committed: only the read-back remains, and its failure is not a
+        // failed update.
+        try {
+            return $this->get($id);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('user', $e);
+        }
     }
 
     /**
@@ -811,7 +835,14 @@ class UsersController
 
     // --- Preferences ---
 
+    /** The row as it is served: a secret only as whether one is stored (ServedPreferences). */
     public function getPreferences(int $userId): array
+    {
+        return ['data' => ServedPreferences::serve($this->preferencesRow($userId))];
+    }
+
+    /** @return array<string, mixed> the row as stored, secrets included: never served */
+    private function preferencesRow(int $userId): array
     {
         $stmt = $this->prepare('SELECT * FROM 202_users_pref WHERE user_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $userId);
@@ -850,7 +881,7 @@ class UsersController
             $row['chart_time_range'] = $chartRow['chart_time_range'];
         }
 
-        return ['data' => $row];
+        return $row;
     }
 
     /**
@@ -872,7 +903,7 @@ class UsersController
     public function accountCurrency(int $userId): string
     {
         try {
-            $preferences = $this->getPreferences($userId)['data'];
+            $preferences = $this->preferencesRow($userId);
         } catch (\Throwable) {
             return self::DEFAULT_CURRENCY;
         }
@@ -900,7 +931,10 @@ class UsersController
     /**
      * Write preferences, each held to the rule of the page that owns it
      * (Prosper202\User\PreferenceRules). A key that is not a preference this
-     * endpoint writes is refused by name rather than dropped.
+     * endpoint writes is refused by name rather than dropped, unless GET
+     * answers it: a GET body comes back whole, its other keys accepted with
+     * the value GET gave them and a secret's `{"stored": …}` keeping the
+     * secret (ServedPreferences::withoutEchoes()).
      *
      * Side effects the pages have, kept here:
      * - `user_account_currency` re-prices the account's campaigns into the
@@ -924,14 +958,23 @@ class UsersController
     {
         // PreferenceRules::validate() refuses them too; refused here first,
         // before anything is read, like every other body.
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, PreferenceRules::columns(), 'the preferences this endpoint writes');
-        $current = $this->getPreferences($userId)['data'];
+        \Api\V3\Support\PayloadKeys::refuseUnknown(
+            $payload,
+            array_values(array_unique([...PreferenceRules::columns(), ...ServedPreferences::columns()])),
+            'the preferences this endpoint writes or GET answers'
+        );
+        $current = $this->preferencesRow($userId);
         if ($payload === []) {
             throw new ValidationException('No valid fields to update');
         }
-        [$clean, $errors] = PreferenceRules::validate($payload, self::SUPPORTED_CURRENCIES);
+        [$writes, $echoErrors] = ServedPreferences::withoutEchoes($payload, ServedPreferences::serve($current));
+        [$clean, $errors] = PreferenceRules::validate($writes, self::SUPPORTED_CURRENCIES);
+        $errors += $echoErrors;
         if ($errors !== []) {
             throw new ValidationException('Validation failed', $errors);
+        }
+        if ($clean === []) {
+            throw new NothingToUpdateException('No valid fields to update: every key holds what GET answers for it');
         }
 
         $conn = new Connection($this->db);

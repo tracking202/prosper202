@@ -28,10 +28,20 @@ class ShellAccessCache
     public const int DENIAL_TTL_SECONDS = 300;
 
     /**
-     * How long a result is kept for readStale(), the shell's fallback while
-     * ClickServer is unreachable; prune() drops anything older.
+     * The grace period: while ClickServer gives no answer, a key is licensed
+     * only if its last answer was a yes given within this (validWithinGrace).
      */
-    public const int STALE_TTL_SECONDS = 30 * 86400;
+    public const int GRACE_SECONDS = 30 * 86400;
+
+    /** The questions a LicenceAnswerStore records an answer to. */
+    public const string QUESTION_VALID = 'valid';
+    public const string QUESTION_PAID = 'paid';
+
+    /**
+     * How long a result is kept for readStale(); prune() drops anything
+     * older. The grace period reads the durable record, not these files.
+     */
+    public const int STALE_TTL_SECONDS = self::GRACE_SECONDS;
 
     /**
      * How long a claim on asking ClickServer about a key is honoured by the
@@ -93,12 +103,137 @@ class ShellAccessCache
     }
 
     /**
-     * Last known result within STALE_TTL_SECONDS, for fallback when
-     * revalidation is impossible (ClickServer unreachable).
+     * Last known result within STALE_TTL_SECONDS, a yes or a no. A gate
+     * with no answer asks validWithinGrace() instead.
      */
     public static function readStale(string $key): ?bool
     {
         return self::read($key, self::STALE_TTL_SECONDS);
+    }
+
+    /**
+     * Whether $key is licensed while ClickServer gives no answer: the durable
+     * record's last answer to this cache's question (a valid key here, a paid
+     * licence in CliAccessCache) was a yes, given at most GRACE_SECONDS ago.
+     * With nothing recorded for the key yet (an install upgraded from before
+     * the record), or a record that cannot be read (its table not made yet),
+     * this cache's own last answer within the same window decides instead.
+     * Never checked, last answered no, or answered longer ago is not
+     * licensed. Every licence gate asks this, so the rule can be replaced
+     * here alone.
+     */
+    public static function validWithinGrace(?LicenceAnswerStore $answers, string $key, ?int $now = null): bool
+    {
+        if ($key === '') {
+            return false;
+        }
+        if ($answers === null) {
+            error_log(static::class . ': no licence answer record to read; the cached answer decides');
+            return static::readStale($key) === true;
+        }
+        try {
+            $last = $answers->lastAnswer(hash('sha256', $key), static::licenceQuestion());
+        } catch (\Throwable $e) {
+            error_log(static::class . ': ' . $e->getMessage() . '; the cached answer decides');
+            return static::readStale($key) === true;
+        }
+        if ($last === null) {
+            return static::readStale($key) === true;
+        }
+        [$yes, $at] = $last;
+        $now ??= time();
+        return $yes && $at <= $now && $now - $at <= self::GRACE_SECONDS;
+    }
+
+    /**
+     * Record ClickServer's answer for $key: in this cache, and in the
+     * durable record the grace period reads. A record that cannot be written
+     * is logged; the answer still decides this request.
+     */
+    public static function recordAnswer(?LicenceAnswerStore $answers, string $key, bool $yes): void
+    {
+        static::write($key, $yes);
+        if ($key === '') {
+            return;
+        }
+        if ($answers === null) {
+            error_log(static::class . ': no licence answer record to write; the grace period will not see this answer');
+            return;
+        }
+        try {
+            $answers->saveAnswer(hash('sha256', $key), static::licenceQuestion(), $yes, time());
+        } catch (\Throwable $e) {
+            error_log(static::class . ': ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Record a whole licence answer from ClickServerKeyValidator: the key's
+     * validity here, its paid licence in CliAccessCache when the answer says.
+     * No answer (null) records nothing. Every path that confirms a key calls
+     * this or recordAnswer() (KeyEntryRecordsTheAnswerTest).
+     *
+     * @param array{valid: bool, paid: ?bool}|null $licence
+     */
+    public static function recordLicence(?LicenceAnswerStore $answers, string $key, ?array $licence): void
+    {
+        if ($licence === null) {
+            return;
+        }
+        ShellAccessCache::recordAnswer($answers, $key, $licence['valid']);
+        if ($licence['paid'] !== null) {
+            CliAccessCache::recordAnswer($answers, $key, $licence['paid']);
+        }
+    }
+
+    /**
+     * Copy this cache's answers younger than GRACE_SECONDS into the durable
+     * record: each entry's name is its key's SHA-256 and its mtime is when
+     * the answer came, so nothing is invented. An answer the record already
+     * holds from that time or later is kept. For the upgrade to 1.9.79, whose
+     * record starts empty. Returns how many were copied; a failed write throws.
+     */
+    public static function seedAnswers(LicenceAnswerStore $answers, ?int $now = null): int
+    {
+        $dir = static::dir();
+        if ($dir === null) {
+            return 0;
+        }
+        $entries = glob($dir . '/*.cache');
+        if ($entries === false) {
+            error_log(static::class . ': could not list ' . $dir . '; no cached answer was copied');
+            return 0;
+        }
+        $now ??= time();
+        $copied = 0;
+        foreach ($entries as $entry) {
+            if (
+                preg_match('/^([0-9a-f]{64})\.cache$/D', basename($entry), $name) !== 1
+                || is_link($entry)
+                || fileowner($entry) !== static::processUserId()
+            ) {
+                continue;
+            }
+            $at = filemtime($entry);
+            $content = @file_get_contents($entry);
+            $fresh = $at !== false && $at <= $now && $now - $at <= self::GRACE_SECONDS;
+            if (!$fresh || !in_array($content, ['0', '1'], true)) {
+                continue;
+            }
+            $held = $answers->lastAnswer($name[1], static::licenceQuestion());
+            if ($held !== null && $held[1] >= $at) {
+                continue;
+            }
+            $answers->saveAnswer($name[1], static::licenceQuestion(), $content === '1', $at);
+            $copied++;
+        }
+        return $copied;
+    }
+
+    /** The question this cache's answers are to. */
+    protected static function licenceQuestion(): string
+    {
+        return self::QUESTION_VALID;
     }
 
     public static function write(string $key, bool $valid): void
@@ -119,7 +254,7 @@ class ShellAccessCache
 
     /**
      * Record that the last check of this key got no usable answer, so the
-     * next UNKNOWN_TTL_SECONDS of requests use the last verdict (readStale)
+     * next UNKNOWN_TTL_SECONDS of requests fall back on validWithinGrace()
      * instead of each asking ClickServer again. No verdict is written.
      */
     public static function markUnknown(string $key): void
@@ -152,10 +287,8 @@ class ShellAccessCache
      * Drop entries and hold-off markers older than $olderThanSeconds. The web
      * sign-in writes an entry for every key a user submits and nothing else
      * removes one, so write() calls this now and then. The default is the
-     * stale window, not the fresh one: readStale() serves an entry up to
-     * STALE_TTL_SECONDS old while ClickServer is unreachable, and a sweep
-     * that took those would refuse a licensed shell during the outage it
-     * exists for. Returns how many files went.
+     * stale window (readStale()), not the fresh one. Returns how many files
+     * went.
      */
     public static function prune(int $olderThanSeconds = self::STALE_TTL_SECONDS): int
     {

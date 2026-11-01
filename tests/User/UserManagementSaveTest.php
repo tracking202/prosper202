@@ -29,6 +29,21 @@ final class UserManagementSaveTest extends TestCase
         require_once dirname(__DIR__, 2) . '/202-config/functions-account-ui.php';
     }
 
+    /**
+     * A database holding user 9, which an edit locks; the edit sets a
+     * password, so it counts the user's session generation up (one row) and
+     * reads the new one.
+     */
+    private static function editable(): FakeMysqliConnection
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows('FOR UPDATE', [['user_id' => 9]]);
+        $db->whenQueryContainsAffectedRows('user_session_generation + 1', 1);
+        $db->whenQueryContainsReturnRows(\Prosper202\User\SessionGeneration::READ, [['user_session_generation' => 1]]);
+
+        return $db;
+    }
+
     public function testACreateWritesTheUserItsPreferencesAndItsRoleAndCommitsOnce(): void
     {
         $db = new FakeMysqliConnection();
@@ -78,14 +93,20 @@ final class UserManagementSaveTest extends TestCase
 
     public function testAnEditReplacesTheRoleOfAUserWhoIsStillThere(): void
     {
-        $db = new FakeMysqliConnection();
-        $db->whenQueryContainsReturnRows('FOR UPDATE', [['user_id' => 9]]);
+        $db = self::editable();
         $id = p202_account_save_user(new Connection($db), 9, self::USER, 4);
 
         self::assertSame(9, $id);
-        $order = array_map(static fn ($s): string => strtok($s->sql, ' ') . ' ' . (preg_match('/`(202_\w+)`/', $s->sql, $m) ? $m[1] : ''), $db->statements);
-        self::assertSame(['SELECT 202_users', 'UPDATE 202_users', 'DELETE 202_user_role', 'INSERT 202_user_role'], $order,
-            'lock the user, write it, and replace its role, so a user with no role row gets one');
+        $order = array_map(static fn ($s): string => strtok($s->sql, ' ') . ' ' . (preg_match('/`?(202_\w+)`?/', $s->sql, $m) ? $m[1] : ''), $db->statements);
+        self::assertSame(
+            ['SELECT 202_users', 'UPDATE 202_users', 'DELETE 202_auth_keys', 'UPDATE 202_users', 'SELECT 202_users',
+                'DELETE 202_user_role', 'INSERT 202_user_role'],
+            $order,
+            'lock the user, write it, delete its remember-me keys and end its sessions (the edit sets a password),'
+            . ' and replace its role, so a user with no role row gets one'
+        );
+        self::assertSame([9], $db->statementsContaining(\Prosper202\User\RememberMeKeys::REVOKE_ALL)[0]->boundValues);
+        self::assertSame([9], $db->statementsContaining(\Prosper202\User\SessionGeneration::BUMP)[0]->boundValues);
         $update = $db->statementsContaining('UPDATE `202_users` SET')[0];
         self::assertStringEndsWith('WHERE `user_id` = ? AND `user_deleted` != 1', $update->sql, 'a removed user is not written');
         self::assertSame(9, $update->boundValues[count($update->boundValues) - 1]);
@@ -145,8 +166,7 @@ final class UserManagementSaveTest extends TestCase
         self::assertTrue($db->rollbackCalled, 'the account was rolled back with it');
         self::assertFalse($db->commitCalled);
 
-        $db = new FakeMysqliConnection();
-        $db->whenQueryContainsReturnRows('FOR UPDATE', [['user_id' => 9]]);
+        $db = self::editable();
         $called = false;
         p202_account_save_user(new Connection($db), 9, self::USER, 4, static function () use (&$called): void {
             $called = true;

@@ -36,7 +36,7 @@ final class ClickRecordBuilder
 
     /**
      * A redirector click (rtr.php): its route from rotator_id, rule_id and
-     * rule_redirect_id, and no gclid, UTM or variable rows.
+     * rule_redirect_id, and no ad click id, UTM or variable rows.
      *
      * @param array<string, mixed> $mysql
      * @throws InvalidArgumentException naming the key whose value its column cannot hold
@@ -90,6 +90,11 @@ final class ClickRecordBuilder
             recordsCampaignRows: $campaignRows,
             variableSetId: $campaignRows ? self::int($mysql, 'variable_set_id') : 0,
             gclid: $campaignRows ? ClickRecord::storedGclid(self::text($mysql, 'gclid')) : '',
+            gbraid: $campaignRows ? ClickRecord::storedGbraid(self::text($mysql, 'gbraid')) : '',
+            wbraid: $campaignRows ? ClickRecord::storedWbraid(self::text($mysql, 'wbraid')) : '',
+            ttclid: $campaignRows ? ClickRecord::storedTtclid(self::text($mysql, 'ttclid')) : '',
+            msclkid: $campaignRows ? ClickRecord::storedMsclkid(self::text($mysql, 'msclkid')) : '',
+            fbclid: $campaignRows ? ClickRecord::storedFbclid(self::text($mysql, 'fbclid')) : '',
             utmSourceId: $campaignRows ? self::int($mysql, 'utm_source_id') : 0,
             utmMediumId: $campaignRows ? self::int($mysql, 'utm_medium_id') : 0,
             utmCampaignId: $campaignRows ? self::int($mysql, 'utm_campaign_id') : 0,
@@ -106,6 +111,8 @@ final class ClickRecordBuilder
             clickRedirectSiteUrlId: self::int($mysql, 'click_redirect_site_url_id'),
             rotator: $route,
             identity: $identity,
+            clickFilterReason: self::text($mysql, 'click_filter_reason'),
+            clickFilterEntryId: self::int($mysql, 'click_filter_entry_id'),
         );
     }
 

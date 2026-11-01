@@ -7,6 +7,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/License/ClickServerKeyValidator.php';
 require_once __DIR__ . '/License/ShellAccessCache.php';
 require_once __DIR__ . '/License/CliAccessCache.php';
+require_once __DIR__ . '/License/LicenceAnswerStore.php';
+require_once __DIR__ . '/License/MysqlLicenceAnswerStore.php';
 
 /**
  * Password helper functions live here to avoid bootstrap order issues.
@@ -72,7 +74,7 @@ class AUTH
     // cookie) guessing the password toward a full account takeover.
     public const MAX_PASSWORD_REAUTH_FAILS = 5;
 
-    private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, up.user_id AS pref_user_id, up.user_slack_incoming_webhook FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted != 1 AND u.user_active = 1 LIMIT 1';
+    private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, u.user_session_generation, up.user_id AS pref_user_id, up.user_slack_incoming_webhook FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted = 0 AND u.user_active = 1 LIMIT 1';
     private static bool $passwordColumnChecked = false;
     private static bool $sessionHeartbeatRefreshed = false;
 
@@ -101,10 +103,39 @@ class AUTH
         self::updateSession([$key => $value]);
     }
 
+    /** Whether this request has tried its remember-me cookie (remember_me_on_logged_out()). */
+    private static bool $rememberMeTried = false;
+
+    /**
+     * The session's own claim to be signed in: a user, this browser's
+     * fingerprint and a request in the last 50000 seconds. Whether that user
+     * may still act is logged_in()'s question, which needs the user's row.
+     */
+    private static function sessionClaimsSignIn(): bool
+    {
+        $passed = isset($_SESSION['session_time']) ? time() - (int) $_SESSION['session_time'] : PHP_INT_MAX;
+
+        return isset($_SESSION['user_name'], $_SESSION['user_id'], $_SESSION['session_fingerprint'])
+            && hash_equals(self::session_fingerprint(), (string) $_SESSION['session_fingerprint'])
+            && $passed < 50000;
+    }
+
+    /**
+     * Whether this request is signed in: the session's own fields (user,
+     * fingerprint, under 50000 seconds since its last request), and the
+     * user's row, read this request, active and not deleted
+     * (sessionUserStands()). The row is read because nothing else ends a
+     * session: its time is refreshed on every request, so a user switched off
+     * or removed kept every page for as long as they kept using the browser.
+     */
     public static function logged_in()
     {
-        $session_time_passed = isset($_SESSION['session_time']) ? time() - $_SESSION['session_time'] : PHP_INT_MAX;
-        if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and hash_equals(self::session_fingerprint(), (string) $_SESSION['session_fingerprint']) and ($session_time_passed < 50000)) {
+        if (self::sessionClaimsSignIn()) {
+            // connect.php's User, when it read this session's user.
+            $read = $GLOBALS['userObj'] ?? null;
+            if (!self::sessionUserStands($read instanceof \User ? $read : null)) {
+                return false;
+            }
             if (!self::$sessionHeartbeatRefreshed) {
                 self::writeSessionValue('session_time', time());
                 self::$sessionHeartbeatRefreshed = true;
@@ -113,6 +144,217 @@ class AUTH
         } else {
             return false;
         }
+    }
+
+    /**
+     * connect.php, once it has read the session's user (new User()): a
+     * session whose user may no longer act, or which began before the user's
+     * password changed (sessionUserStands()), is ended there, before the page
+     * reads anything from it, so no page shows or acts on it whether or not
+     * it asks for a sign-in. Nothing is read here: where connect.php read no
+     * row (the install, key and upgrade pages, which sign nobody in, or a
+     * database with no 202_users yet), logged_in() reads it for itself.
+     */
+    public static function endSessionIfItsUserCannotAct(?\User $user): void
+    {
+        if (!isset($_SESSION['user_id']) && !isset($_SESSION['user_own_id'])) {
+            return;
+        }
+        $userId = self::sessionUserId();
+        if ($userId !== null && $user?->standingOf($userId) === null) {
+            return;
+        }
+        self::sessionUserStands($user);
+    }
+
+    /**
+     * Whether the session's user may act (UserStanding), and the session began
+     * at the user's current generation (SessionGeneration), from the row $read
+     * (connect.php's User) holds for this request or, when it holds none for
+     * this user, from the database now; never from an answer kept from an
+     * earlier request, which would outlive the switch-off it is there to see.
+     * A session whose user may not act is ended, and so is one from before a
+     * new password, a switch-off or a removal. A read that fails throws: it is
+     * neither "may act" nor "signed out".
+     */
+    private static function sessionUserStands(?\User $read): bool
+    {
+        $userId = self::sessionUserId();
+        if ($userId === null) {
+            self::endSession(null);
+            return false;
+        }
+        $standing = $read?->standingOf($userId);
+        $generation = $read?->generationOf($userId);
+        if ($standing === null) {
+            [$standing, $generation] = \Prosper202\User\UserStanding::readWithGeneration(
+                DB::getInstance()->getConnection(),
+                $userId
+            );
+        }
+        if (!$standing->canAct()) {
+            self::endSession($userId);
+            return false;
+        }
+        // The change that counted the generation up revoked the user's keys
+        // in its own transaction; keys made since are a later sign-in's.
+        if ($generation !== null && self::sessionGeneration() !== $generation) {
+            self::endSession(null);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * The generation this session began at; 0 for a session from before
+     * 1.9.79, which holds none (every user is at 0 until a change), and -1,
+     * which no row holds, for a value no sign-in wrote.
+     */
+    private static function sessionGeneration(): int
+    {
+        $held = $_SESSION['user_session_generation'] ?? 0;
+
+        return is_int($held) && $held >= 0 ? $held : -1;
+    }
+
+    /**
+     * This browser changed its own password (Personal settings): it keeps its
+     * session by taking the generation the change counted up to, which every
+     * other session of the user does not hold. After the commit, in the same
+     * request.
+     */
+    public static function keepSessionAfterPasswordChange(int $generation): void
+    {
+        $writer = static function () use ($generation): void {
+            $_SESSION['user_session_generation'] = $generation;
+        };
+        if (function_exists('withWritableSession')) {
+            withWritableSession($writer);
+        } else {
+            $writer();
+        }
+    }
+
+    /**
+     * The user the session is signed in as. begin_user_session() sets
+     * user_id and user_own_id to the same id; a session where either is
+     * missing, is not a positive whole number, or they differ is not one it
+     * made, and names nobody.
+     */
+    private static function sessionUserId(): ?int
+    {
+        $userId = filter_var($_SESSION['user_id'] ?? null, FILTER_VALIDATE_INT);
+        $ownId = filter_var($_SESSION['user_own_id'] ?? null, FILTER_VALIDATE_INT);
+        if (!is_int($userId) || $userId <= 0 || $ownId !== $userId) {
+            return null;
+        }
+
+        return $userId;
+    }
+
+    /**
+     * End this request's session, for a user who may no longer act, as the
+     * sign-out does and more: the session's data and id are replaced by a
+     * signed-out visitor's (a new id, and a new anti-CSRF token so a sign-in
+     * form drawn by this request can be posted), the remember-me cookie is
+     * cleared, and every remember-me key the user holds is revoked, so a
+     * browser kept signed in does not sign back in when the user is switched
+     * on again. $revokeFor is null for a session that names nobody.
+     */
+    private static function endSession(?int $revokeFor): void
+    {
+        $writer = static function (): void {
+            $_SESSION = [];
+            if (session_status() === PHP_SESSION_ACTIVE && !headers_sent()) {
+                session_regenerate_id(true);
+            }
+            $_SESSION['token'] = self::mintCsrfToken();
+        };
+        if (function_exists('withWritableSession')) {
+            withWritableSession($writer);
+        } else {
+            $writer();
+        }
+
+        self::forgetRememberMeCookie();
+
+        if ($revokeFor !== null) {
+            \Prosper202\User\RememberMeKeys::revokeAll(
+                new \Prosper202\Database\Connection(DB::getInstance()->getConnection()),
+                $revokeFor
+            );
+        }
+    }
+
+    /**
+     * Sign this browser out (202-account/signout.php, and Personal settings
+     * after too many wrong current passwords): the session destroyed, the
+     * remember-me cookie cleared, and the stored key that cookie names
+     * deleted, so a copy of the cookie signs nobody in. The sign-out kept the
+     * key, and a copied cookie went on signing in for up to 14 days.
+     *
+     * Only this browser's key: the user's other remembered browsers are other
+     * sign-ins, which this one did not end. Switching the user off ends them
+     * all.
+     *
+     * The session and the cookie end first, whatever the delete does: a
+     * delete that fails then throws, and the page answers with the database
+     * error page rather than a sign-out that reads as complete.
+     */
+    public static function signOut(): void
+    {
+        $named = \Prosper202\User\RememberMeKeys::namedBy($_COOKIE['remember_me'] ?? null);
+        $writer = static function (): void {
+            $_SESSION = [];
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_destroy();
+            }
+        };
+        if (function_exists('withWritableSession')) {
+            withWritableSession($writer);
+        } else {
+            $writer();
+        }
+        self::forgetRememberMeCookie();
+
+        if ($named !== null) {
+            \Prosper202\User\RememberMeKeys::revokeOne(
+                new \Prosper202\Database\Connection(DB::getInstance()->getConnection()),
+                $named[0],
+                $named[1]
+            );
+        }
+    }
+
+    /**
+     * Clear this browser's remember_me cookie, for the rest of the request
+     * too: at a sign-out, and once its key is deleted (a password change).
+     */
+    public static function forgetRememberMeCookie(): void
+    {
+        if (!isset($_COOKIE['remember_me'])) {
+            return;
+        }
+        unset($_COOKIE['remember_me']);
+        if (!headers_sent()) {
+            setcookie('remember_me', '', [
+                'expires' => 1,
+                'path' => '/',
+                'domain' => self::cookie_domain(),
+                'secure' => function_exists('getSecureStatus')
+                    ? getSecureStatus()
+                    : (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off'),
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+        }
+    }
+
+    /** A new session's anti-CSRF token: 128 bits from the CSPRNG. */
+    public static function mintCsrfToken(): string
+    {
+        return bin2hex(random_bytes(16));
     }
 
     public static function authenticate(string $username, string $password, \mysqli $db): array
@@ -308,6 +550,9 @@ class AUTH
             $_SESSION['user_timezone'] = $user_row['user_timezone'] ?? 'UTC';
             $_SESSION['user_mods_lb'] = $user_row['user_mods_lb'] ?? 0;
             $_SESSION['account_owner_id'] = $accountOwnerId;
+            // The generation the user is at; a later change counts it up, and
+            // connect.php ends a session still holding this one.
+            $_SESSION['user_session_generation'] = (int) ($user_row['user_session_generation'] ?? 0);
         };
 
         if (function_exists('withWritableSession')) {
@@ -337,6 +582,18 @@ class AUTH
     public static function require_user($auth_type = '', bool $requireLicense = true)
     {
         if (AUTH::logged_in_with_remember() == false) {
+            // A page's script (jQuery sends X-Requested-With; a browser marks
+            // fetch() Sec-Fetch-Dest: empty) treats a failed status as a
+            // failure; the sign-in page a redirect led to read as the answer,
+            // and was drawn into the panel that asked.
+            $byScript = strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest'
+                || strtolower((string) ($_SERVER['HTTP_SEC_FETCH_DEST'] ?? '')) === 'empty';
+            if ($byScript) {
+                http_response_code(401);
+                header('Content-Type: text/plain; charset=utf-8');
+                header('Cache-Control: no-store');
+                die('You are signed out. Sign in again, then reload the page.');
+            }
             if ($auth_type == "toolbar") {
                 self::writeSessionValue('toolbar', 'true');
             }
@@ -386,36 +643,47 @@ class AUTH
         }
 
         if (self::is_valid_api_key($user_api_key) == false || $user_api_key == '') {
-            header('location: ' . get_absolute_url() . 'api-key-required.php');
+            // The page says which: a key refused, or one that could not be checked.
+            $unconfirmed = self::$licenceUnconfirmed && $user_api_key !== '';
+            $page = 'api-key-required.php' . ($unconfirmed ? '?licence=unconfirmed' : '');
+            header('location: ' . get_absolute_url() . $page);
             die();
         }
     }
 
+    /** Whether the last is_valid_api_key() refused only because ClickServer gave no answer. */
+    private static bool $licenceUnconfirmed = false;
 
     //this checks if this api key is valid
     public static function is_valid_api_key($user_api_key)
     {
+        self::$licenceUnconfirmed = false;
 
         //only check once per session speed up ui
         if (isset($_SESSION['valid_key']) && $_SESSION['valid_key'] == true) {
             return true;
         }
 
-        $licence = \Prosper202\License\ClickServerKeyValidator::check($user_api_key);
-
-        // On network failure, don't punish the user — assume valid until next check
-        if ($licence === null) {
-            return true;
-        }
-        $keyIsValid = $licence['valid'];
+        $licence = static::askLicenceService((string) $user_api_key);
         // The caches are keyed by the key as the API reads it from 202_users,
         // trimmed; a caller handing in a padded key must land on the same entry.
         $cacheKey = trim((string) $user_api_key);
+        $answers = static::licenceAnswers();
+
+        // No answer: licensed only on a valid answer within the grace period.
+        if ($licence === null) {
+            if (\Prosper202\License\ShellAccessCache::validWithinGrace($answers, $cacheKey)) {
+                return true;
+            }
+            self::$licenceUnconfirmed = true;
+            return false;
+        }
+        $keyIsValid = $licence['valid'];
         // The same answer carries the CLI licence; record it so a verdict the
         // web app has already heard is not asked for again by the Go CLI gate,
         // and a key found invalid here stops a cached CLI allow at once.
         if ($licence['paid'] !== null) {
-            \Prosper202\License\CliAccessCache::write($cacheKey, $licence['paid']);
+            \Prosper202\License\CliAccessCache::recordAnswer($answers, $cacheKey, $licence['paid']);
         }
 
         if ($keyIsValid) {
@@ -428,13 +696,30 @@ class AUTH
             _mysqli_query($user_sql);
             self::writeSessionValue('valid_key', true);
             // Warm the CLI shell license cache so p202 shell works without its own round-trip.
-            \Prosper202\License\ShellAccessCache::write($cacheKey, true);
+            \Prosper202\License\ShellAccessCache::recordAnswer($answers, $cacheKey, true);
             return true;
         } else {
             // Deny the CLI shell immediately when the key is no longer valid.
-            \Prosper202\License\ShellAccessCache::write($cacheKey, false);
+            \Prosper202\License\ShellAccessCache::recordAnswer($answers, $cacheKey, false);
             return false;
         }
+    }
+
+    /**
+     * ClickServer's answer for a key: null when none came. A seam the
+     * licence gate's tests answer through.
+     *
+     * @return array{valid: bool, paid: ?bool}|null
+     */
+    protected static function askLicenceService(string $key): ?array
+    {
+        return \Prosper202\License\ClickServerKeyValidator::check($key);
+    }
+
+    /** The durable record of licence answers, in this install's database; null with no connection. */
+    protected static function licenceAnswers(): ?\Prosper202\License\LicenceAnswerStore
+    {
+        return \Prosper202\License\MysqlLicenceAnswerStore::ofThisInstall();
     }
 
 
@@ -528,9 +813,20 @@ class AUTH
         return self::$accountTimezones[$userId] = $zone;
     }
 
+    /**
+     * Sign this request in by its remember-me cookie, once a request at most.
+     * connect.php tries it before it reads the session's user, so the User
+     * every page uses (and the check of whether it may act) is the signed-in
+     * user's from the first request: tried later, by the page, the User had
+     * been read for nobody, and that request ran with no roles. A later call
+     * (the sign-in page, logged_in_with_remember()) reads nothing again and
+     * answers false. A session that already claims a sign-in is not replaced:
+     * connect.php reads its user and ends it if that user may not act.
+     */
     public static function remember_me_on_logged_out()
     {
-        if (isset($_COOKIE['remember_me']) && AUTH::logged_in() == false) {
+        if (!self::$rememberMeTried && isset($_COOKIE['remember_me']) && !self::sessionClaimsSignIn()) {
+            self::$rememberMeTried = true;
             $parts = explode('-', (string) $_COOKIE['remember_me']);
             if (count($parts) !== 3) {
                 return false;
@@ -575,7 +871,7 @@ class AUTH
                   	AND
                   	    2u.user_id = 2a.user_id
                     AND
-                        2u.user_deleted != 1
+                        2u.user_deleted = 0
 					AND
 						2u.user_active = 1
                 	LIMIT 1';

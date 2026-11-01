@@ -61,7 +61,7 @@ if (is_string($request)) {
                 $error = 'Choose what the assistant may do.';
             } else {
                 $userId = (int) $_SESSION['user_own_id'];
-                $store = new ServerStateStore();
+                $store = ServerStateStore::forInstall($db);
                 $challenge = $request['code_challenge'];
                 $code = AiConnect::approve($store, $userId, $scope, $challenge, $request['client_name']);
                 $query = ['code' => $code] + $query;
@@ -91,41 +91,41 @@ $relayHost = (string) parse_url(AiConnect::relayOrigin(), PHP_URL_HOST);
 // The three accesses, in the order shown; AiConnect::DEFAULT_ACCESS is checked.
 $accessChoices = [
     'read' => [
-        'Read only <span class="text-secondary">(recommended)</span>',
-        'It reads your campaigns, trackers, landing pages, traffic sources, rotators, reports, clicks and '
-            . 'conversions, as far as your role can, and changes nothing.',
+        $e(AiConnect::ACCESS_LABELS['read']) . ' <span class="text-secondary">(recommended)</span>',
+        'It reads your campaigns, trackers, landing pages, text ads, traffic sources, rotators, reports, clicks '
+            . 'and conversions, as far as your role can, and changes nothing.',
     ],
     'propose' => [
-        'Read, and propose changes',
-        'It reads the same. A change it makes to campaigns, trackers, landing pages, traffic sources or '
-            . 'categories waits as a proposal until you apply it with the p202 command line '
+        $e(AiConnect::ACCESS_LABELS['propose']),
+        'It reads the same. A change it makes to campaigns, trackers, landing pages, text ads, traffic sources, '
+            . 'categories or redirectors waits as a proposal until you apply it with the p202 command line '
             . '(<code>p202 change apply</code>).',
     ],
     'write' => [
-        'Read and change',
-        'It reads the same, and can change and delete campaigns, trackers, landing pages, traffic sources and '
-            . 'categories; deleting a tracker stops its links. Your AI app\'s approval prompt is then the only '
-            . 'check, so do not set it to always allow deletes.',
+        $e(AiConnect::ACCESS_LABELS['write']),
+        'It reads the same, and can change and delete campaigns, trackers, landing pages, text ads, traffic '
+            . 'sources, categories and redirectors; deleting a tracker stops its links. Your AI app\'s approval prompt is '
+            . 'then the only check, so do not set it to always allow deletes.',
     ],
 ];
 echo p202_standalone_card('Connect an AI assistant');
 ?>
+    <?php // The link's words: nothing signs them, so anyone can make a link that names any app. ?>
     <p>
-        Tracking202's MCP server (<?php echo $e($relayHost); ?>) says that
+        This link asks to connect an app that calls itself
+        <strong>&ldquo;<?php echo $e($request['client_name']); ?>&rdquo;</strong>
         <?php if ($request['client_domain'] !== '') { ?>
-        <strong><?php echo $e($request['client_name']); ?></strong>, verified there as
-        <strong><?php echo $e($request['client_domain']); ?></strong>,
-        <?php } else { ?>
-        an app calling itself <strong>&ldquo;<?php echo $e($request['client_name']); ?>&rdquo;</strong>
-        (a name it chose, not verified)
+        (<?php echo $e($request['client_domain']); ?>)
         <?php } ?>
-        asks to use this Prosper202 as <strong><?php echo $e($userName); ?></strong>, and that the connection
-        is handed to <strong><?php echo $e($request['redirect_host']); ?></strong>.
+        to this Prosper202 as <strong><?php echo $e($userName); ?></strong>, through Tracking202's MCP server
+        (<?php echo $e($relayHost); ?>), which hands the connection to
+        <strong><?php echo $e($request['redirect_host']); ?></strong>. The app's name and site are what the
+        link says; this page cannot check them.
     </p>
     <p class="small text-secondary">
-        Allow it only if you started connecting this app yourself, just now, in this browser: the connection
-        completes only in the browser that started it. Whatever you choose, it cannot see or change users,
-        API keys or this install's settings.
+        Allow it only if you started connecting this app yourself, just now. Whoever started the connection
+        gets the access you choose: a link someone sent you connects their app to your account. Whatever you
+        choose, it cannot see or change users, API keys or this install's settings.
     </p>
 <?php if ($error !== '') { ?>
     <div class="alert alert-danger p202-flash" role="alert">

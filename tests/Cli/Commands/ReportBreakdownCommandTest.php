@@ -186,6 +186,27 @@ class ReportBreakdownCommandTest extends TestCase
         $this->assertStringContainsString('roi', $desc);
     }
 
+    /**
+     * A page with rows after it says so under the table, naming the
+     * --offset of the next page; the last page says nothing.
+     */
+    public function testAPageWithRowsAfterItNamesTheNextOffset(): void
+    {
+        $page = static fn (int $rows, array $flags): array => ['data' => array_fill(0, $rows, ['id' => 1])] + $flags;
+
+        self::assertSame(
+            'Note: more rows remain after rows 1-50; --offset 50 reads the next page (--limit takes up to 500).',
+            ReportBreakdownCommand::moreRowsNote($page(50, ['truncated' => true, 'limit' => 50, 'offset' => 0]))
+        );
+        self::assertSame(
+            'Note: more rows remain after rows 501-1000; --offset 1000 reads the next page.',
+            ReportBreakdownCommand::moreRowsNote($page(500, ['truncated' => true, 'limit' => 500, 'offset' => 500]))
+        );
+        $last = $page(50, ['truncated' => false, 'limit' => 50, 'offset' => 0]);
+        self::assertNull(ReportBreakdownCommand::moreRowsNote($last));
+        self::assertNull(ReportBreakdownCommand::moreRowsNote($page(50, [])));
+    }
+
     public function testAllFilterOptionsHaveNoDefault(): void
     {
         $def = $this->command->getDefinition();

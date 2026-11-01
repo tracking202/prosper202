@@ -3,6 +3,7 @@
 declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 require_once __DIR__ . '/../202-config/functions-account-ui.php';
+require_once __DIR__ . '/../202-config/functions-click-filter-ui.php';
 
 AUTH::require_user();
 
@@ -53,8 +54,8 @@ if (!empty($user_row['url']))
 // Account/key settings require the same permission that gates their UI; reject
 // forged requests from users who lack it (the password-change flow is excluded
 // because every user may change their own password).
-$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key'];
-$personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key'];
+$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry'];
+$personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key', 'test_click_filter'];
 $wantsPersonalSettingsAction = false;
 foreach ($personalSettingsPost as $personalSettingsAction) {
 	if (isset($_POST[$personalSettingsAction])) {
@@ -219,16 +220,16 @@ $user_row = p202FetchRow($user_result, $user_sql) ?? [];
 $currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
 
 /** The choices each preference offers, value => label; the form renders these and the handler admits only these. */
-$dailyEmailChoices = ['' => 'Never'];
-for ($hour = 0; $hour < 24; $hour++) {
-	$dailyEmailChoices[sprintf('%02d', $hour)] = date('g A', mktime($hour, 0, 0, 1, 1, 2000));
-}
 $keywordChoices = ['searched' => 'Pickup Searched Keyword', 'bidded' => 'Pickup Bidded Keyword'];
 $bidChoices = ['0' => 'Pickup Bid from setup data', '1' => 'Pickup Bid dynamically from t202b variable'];
 $refererChoices = ['browser' => 'Pickup Referer from browser', 't202ref' => 'Pickup Referer from t202ref variable'];
 $privacyChoices = ['disabled' => 'Disabled', 'eu' => 'Enabled for European Traffic', 'all' => 'Enabled for All Traffic'];
 $privacyHelp = 'Which visitors get no tracking cookies and a masked address. European traffic is anyone'
     . ' the location lookup does not place outside Europe.';
+$sameIpChoices = ['0' => 'Off: only a subid or a cookie finds the click', '1' => 'On: guess the click from the IP address'];
+$sameIpHelp = 'When a pixel names no click, credit your latest click from the visitor\'s IP address in the last 30'
+    . ' days. A guess: on iPhones (iCloud Private Relay) and mobile networks many visitors share an address. Never'
+    . ' for a visitor your privacy setting holds back. Conversions it finds read Same IP.';
 $cloakChoices = ['origin' => 'Show Prosper202 Domain', 'never' => 'Show Blank Referer'];
 $adChoices = ['show_all' => 'Show All Ads', 'hide_login' => 'Hide Ads On Login Screen', 'hide_all' => 'Hide All Ads'];
 
@@ -273,9 +274,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			if (!\Prosper202\Report\AccountZone::isZone($postedTimezone)) {
 				$error['user_timezone'] = 'Choose a time zone from the list.';
 			}
-			if (!array_key_exists((string)($_POST['user_daily_email'] ?? ''), $dailyEmailChoices)) {
-				$error['user_daily_email'] = 'Choose when the daily email is sent, or Never.';
-			}
 			if (!array_key_exists((string)($_POST['user_keyword_searched_or_bidded'] ?? ''), $keywordChoices)) {
 				$error['user_keyword_searched_or_bidded'] = 'You must select your keyword preference.';
 			}
@@ -288,6 +286,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			if (!array_key_exists((string)($_POST['user_pref_privacy'] ?? ''), $privacyChoices)) {
 				$error['user_pref_privacy'] = 'You must select your privacy setting.';
 			}
+			if (!array_key_exists((string)($_POST['user_pref_same_ip_fallback'] ?? ''), $sameIpChoices)) {
+				$error['user_pref_same_ip_fallback'] = 'Choose whether a pixel may guess the click from the IP address.';
+			}
 			if (!array_key_exists((string)($_POST['cloak_referer'] ?? ''), $cloakChoices)) {
 				$error['cloak_referer'] = 'You must select how cloaked links show the referer.';
 			}
@@ -299,7 +300,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$mysql['user_timezone'] = $db->real_escape_string($postedTimezone);
-				$mysql['user_daily_email'] = $db->real_escape_string((string)$_POST['user_daily_email']);
 				$mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string((string)$_POST['user_keyword_searched_or_bidded']);
 				$mysql['user_referer'] = $db->real_escape_string((string)$_POST['user_referer']);
 				$mysql['cloak_referer'] = $db->real_escape_string((string)$_POST['cloak_referer']);
@@ -325,7 +325,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					'user_pref_dynamic_bid' => (int)$_POST['user_bid'],
 					'user_pref_ad_settings' => (string)$_POST['user_pref_ad_settings'],
 					'user_pref_privacy' => (string)$_POST['user_pref_privacy'],
-					'user_daily_email' => (string)$_POST['user_daily_email'],
+					'user_pref_same_ip_fallback' => (string)$_POST['user_pref_same_ip_fallback'] === '1' ? 1 : 0,
 				];
 
 				// The account row and the preferences row are one save: both
@@ -344,14 +344,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 					//set the  session's user_timezone
 					$_SESSION['user_timezone'] = $postedTimezone;
-					// The daily email is the install owner's: daily-email.php
-					// sends user 1's campaigns to user 1's address, and the
-					// hosted service keeps one schedule per install. Another
-					// user's save re-registered it at their own hour and zone.
-					if ((int) $_SESSION['user_id'] === 1) {
-						p202_account_register_daily_email($mysql['user_daily_email'], $postedTimezone, $user_row['install_hash'] ?? '');
-					}
-
 					//try to set non expiring cache for values that are used in redirects
 					if (!empty($memcacheWorking)) {
 						$tid = $mysql['user_id'];
@@ -465,7 +457,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		// Refused: say it under the field, and keep what was typed.
 		$profileErrors = $error;
-		foreach (['user_email', 'user_timezone', 'user_daily_email', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
+		foreach (['user_email', 'user_timezone', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
 			if (isset($_POST[$profileField])) {
 				$profileForm[$profileField] = (string)$_POST[$profileField];
 			}
@@ -509,6 +501,11 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 		$pageFlashes[] = ['kind' => 'bad', 'text' => 'The account currency could not be saved, and no campaign was re-priced; try again.'];
 	}
 }
+
+// ─── Click filtering ─────────────────────────────────────────────────
+// The card's forms (functions-click-filter-ui.php): saved and redirected, or refused in place.
+$clickFilterPost = $canPersonal ? p202_click_filter_post($db, (int) $_SESSION['user_id'], $_POST) : ['errors' => [], 'form' => [], 'flashes' => []];
+$pageFlashes = array_merge($pageFlashes, $clickFilterPost['flashes']);
 
 if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_api_key'] == '1') {
 
@@ -706,12 +703,8 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 			// toward an account takeover.
 			$_SESSION['pw_change_fails'] = (int) ($_SESSION['pw_change_fails'] ?? 0) + 1;
 			if ($_SESSION['pw_change_fails'] >= AUTH::MAX_PASSWORD_REAUTH_FAILS) {
-				session_destroy();
-				$secure = function_exists('getSecureStatus')
-					? getSecureStatus()
-					: (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
-				setcookie('remember_me', '', ['expires' => 1, 'path' => '/', 'domain' => AUTH::cookie_domain(), 'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax']);
-				unset($_COOKIE['remember_me']);
+				// As the sign-out: this browser's remember-me key goes too.
+				AUTH::signOut();
 				header('location: ' . get_absolute_url() . '202-login.php');
 				exit;
 			}
@@ -727,20 +720,31 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 		$new_hash = hash_user_pass($newPass);
 		$passSaved = false;
         $passError = '';
+        $generation = null;
         try {
-            $passConn = new \Prosper202\Database\Connection($db);
-            $update_stmt = $passConn->prepareWrite('UPDATE 202_users SET user_pass = ? WHERE user_id = ?');
-            $passConn->bind($update_stmt, 'si', [$new_hash, (int) ($_SESSION['user_own_id'] ?? 0)]);
-            $passConn->executeUpdate($update_stmt);
+            // The password, every remember-me key of the user (this
+            // browser's too: a stolen cookie is a copy of one) and every
+            // session of theirs, in one transaction.
+            $generation = \Prosper202\User\PasswordChange::store(
+                new \Prosper202\Database\Connection($db),
+                (int) ($_SESSION['user_own_id'] ?? 0),
+                $new_hash,
+                false
+            );
             $passSaved = true;
-        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+        } catch (\RuntimeException | \mysqli_sql_exception $e) {
             $passError = p202FailedQueryMessage(0, $e->getMessage());
         }
 		if (!$passSaved) {
             prosper_log('account', 'Failed to update password: ' . $passError);
 			$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your password could not be changed. Your old password still works; try again.'];
 		} else {
-			p202_account_flash('ok', 'Your password is changed.');
+			// This session goes on, at the generation the change made; every
+			// other one ends at its next request. Its key is gone with the
+			// rest: the cookie would only be refused.
+			AUTH::keepSessionAfterPasswordChange((int) $generation);
+			AUTH::forgetRememberMeCookie();
+			p202_account_flash('ok', 'Your password is changed. Every other browser signed in as you is signed out, and needs it to sign in again; this one stays signed in.');
 			p202_account_redirect('202-account/account.php#password');
 		}
 	}
@@ -784,6 +788,10 @@ if ($canPersonal) {
 	}
 }
 
+// The click filter as stored, and an address test asked of it.
+$clickFilterView = $canPersonal ? p202_click_filter_view($db, (int) $_SESSION['user_id'], $_GET) : null;
+$pageFlashes = array_merge($pageFlashes, $clickFilterView['flashes'] ?? []);
+
 /** A key shown as its first and last four characters around a mask. */
 $maskKey = static fn (string $key): string => strlen($key) > 12
 	? substr($key, 0, 4) . str_repeat("\u{2022}", 20) . substr($key, -4)
@@ -816,7 +824,7 @@ if (!\Prosper202\Report\AccountZone::isZone($currentTimezone)) {
 	array_unshift($timezoneOptions, $currentTimezone);
 }
 
-$profileAdvancedErrors = array_intersect_key($profileErrors, array_flip(['user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']));
+$profileAdvancedErrors = array_intersect_key($profileErrors, array_flip(['user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']));
 
 template_top('Personal Settings');
 ?>
@@ -832,6 +840,7 @@ template_top('Personal Settings');
 <?php if ($canPersonal) { ?>
 	<nav class="nav p202-tabs p202-tabs--compact" aria-label="Personal settings sections">
 		<a class="nav-link" href="#profile">Profile</a>
+        <a class="nav-link" href="#click-filtering">Click filtering</a>
 		<a class="nav-link" href="#currency">Currency</a>
 		<a class="nav-link" href="#api-keys">API keys</a>
 		<a class="nav-link" href="#customer-key">Customer key</a>
@@ -871,7 +880,7 @@ echo p202_account_render_flashes($extraFlashes);
 					<div class="mb-3">
 						<label class="form-label" for="user_email">Email <span class="text-danger">*</span></label>
 						<input type="email" class="form-control<?php echo p202_account_invalid($profileErrors, 'user_email'); ?>" id="user_email" name="user_email" required autocomplete="email" value="<?php echo $e($profileValue('user_email', 'user_email')); ?>">
-						<div class="form-text">Password resets and the daily report go here.</div>
+						<div class="form-text">Password resets go here.</div>
 						<?php echo p202_account_field_error($profileErrors, 'user_email'); ?>
 					</div>
 
@@ -893,18 +902,10 @@ echo p202_account_render_flashes($extraFlashes);
 								<div class="form-text">Every report's days start and end in this zone.</div>
 								<?php echo p202_account_field_error($profileErrors, 'user_timezone'); ?>
 							</div>
-							<div class="col-md-5">
-								<label class="form-label" for="user_daily_email">Daily email report</label>
-								<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_daily_email'); ?>" id="user_daily_email" name="user_daily_email">
-									<?php echo $renderOptions($dailyEmailChoices, $profileValue('user_daily_email', 'user_daily_email')); ?>
-								</select>
-								<div class="form-text">Yesterday's numbers, sent at this hour in your time zone.</div>
-								<?php echo p202_account_field_error($profileErrors, 'user_daily_email'); ?>
-							</div>
 						</div>
 
 						<details class="p202-disclosure mb-3" data-p202-remember="account-profile-advanced"<?php echo $profileAdvancedErrors ? ' open' : ''; ?>>
-							<summary>Advanced <span class="p202-disclosure__hint">keyword, cost, referer, privacy, ads, tracking domain</span></summary>
+							<summary>Advanced <span class="p202-disclosure__hint">keyword, cost, referer, privacy, IP matching, ads, tracking domain</span></summary>
 							<div class="p202-disclosure__body">
 								<div class="row g-3">
 									<div class="col-md-6">
@@ -940,6 +941,14 @@ echo p202_account_render_flashes($extraFlashes);
 										<?php echo p202_account_field_error($profileErrors, 'user_pref_privacy'); ?>
 									</div>
 									<div class="col-md-6">
+										<label class="form-label" for="user_pref_same_ip_fallback">Match conversions by IP address</label>
+										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_pref_same_ip_fallback'); ?>" name="user_pref_same_ip_fallback" id="user_pref_same_ip_fallback">
+											<?php echo $renderOptions($sameIpChoices, $profileValue('user_pref_same_ip_fallback', 'user_pref_same_ip_fallback')); ?>
+										</select>
+										<div class="form-text"><?php echo $e($sameIpHelp); ?></div>
+										<?php echo p202_account_field_error($profileErrors, 'user_pref_same_ip_fallback'); ?>
+									</div>
+									<div class="col-md-6">
 										<label class="form-label" for="cloak_referer">Cloaked referer</label>
 										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'cloak_referer'); ?>" name="cloak_referer" id="cloak_referer">
 											<?php echo $renderOptions($cloakChoices, $profileValue('cloak_referer', 'user_pref_cloak_referer')); ?>
@@ -958,7 +967,7 @@ echo p202_account_render_flashes($extraFlashes);
 									<div class="col-12">
 										<label class="form-label" for="user_tracking_domain">Tracking domain</label>
 										<input type="text" class="form-control<?php echo p202_account_invalid($profileErrors, 'user_tracking_domain'); ?>" id="user_tracking_domain" name="user_tracking_domain" placeholder="<?php echo $e(\Prosper202\Http\RequestHost::fromServer($_SERVER) ?? ''); ?>" value="<?php echo $e($profileValue('user_tracking_domain', 'user_tracking_domain')); ?>">
-										<div class="form-text">Leave empty to build tracking links on this install's own domain.</div>
+										<div class="form-text">Leave empty to build tracking links on this install's own domain. Start it with https:// or http:// to choose the links' scheme; without one they use the scheme you reach Prosper202 on.</div>
 										<?php echo p202_account_field_error($profileErrors, 'user_tracking_domain'); ?>
 									</div>
 								</div>
@@ -972,6 +981,10 @@ echo p202_account_render_flashes($extraFlashes);
 				</form>
 			</div>
 		</section>
+
+        <?php if ($clickFilterView !== null && $clickFilterView['filter'] !== null) {
+            echo p202_click_filter_card($clickFilterView['filter'], $clickFilterView['test'], $clickFilterView['errors'] + $clickFilterPost['errors'], $clickFilterPost['form'], is_string($_GET['test_ip'] ?? null) ? $_GET['test_ip'] : '');
+        } ?>
 
 		<?php if ($canPersonal) { ?>
 			<section class="p202-panel mt-4" id="currency">

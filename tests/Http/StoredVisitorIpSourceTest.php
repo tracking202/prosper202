@@ -32,10 +32,10 @@ use Tests\Support\SourceScan;
  * The other direction too: the click filter compares the address a click
  * ARRIVED from with the operator's sign-in address, which is stored as it
  * arrived; comparing the stored, masked one, it matched nobody under privacy
- * and the owner's own clicks were counted. FILTER::startFilter() reads the
- * arrived address itself now, and every call passes the four arguments it
- * takes — a call still handing it an address, the old fifth argument, would
- * shift the user id into the address's place.
+ * and the owner's own clicks were counted. FILTER::verdict() reads the
+ * arrived address itself now, and every call passes the three arguments it
+ * takes — a call still handing it an address would shift the user id into
+ * the address's place.
  */
 final class StoredVisitorIpSourceTest extends TestCase
 {
@@ -46,10 +46,10 @@ final class StoredVisitorIpSourceTest extends TestCase
 
     /** @var array<string, array<string, string>> file => allowed value => why */
     private const ALLOWED = [
-        'tracking202/static/cb202.php' => [
-            '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'ClickBank\'s INS notification: the address is'
-                . ' ClickBank\'s server, never a visitor\'s, and connect.php (this endpoint\'s bootstrap)'
-                . ' has no privacy state',
+        '202-config/PaymentNotification/Processor.php' => [
+            '$request->senderAddress' => 'a payment provider\'s notification (PayKickstart\'s IPN, JVZoo\'s'
+                . ' JVZIPN, ClickBank\'s INS): the address is the provider\'s server, never a visitor\'s'
+                . ' (InboundRequest::fromGlobals()), and connect.php, the endpoints\' bootstrap, has no privacy state',
         ],
         '202-config/functions-shared.php' => [
             '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'record_mysql_error() off the click path'
@@ -92,10 +92,11 @@ final class StoredVisitorIpSourceTest extends TestCase
 
         // dl.php, rtr.php, the two landing-page recorders and the error log
         // store a click address; gpb, gpx, upx, pb, px and cb202 a
-        // conversion's; off.php, px.php, gpx.php, upx.php and rtr.php look
-        // a visitor's last click up by it; the sign-in, the operator pages'
-        // error log and the index's decorator are listed.
-        self::assertGreaterThanOrEqual(20, $read, 'the scan finds the storage and lookup sites');
+        // conversion's; off.php, rtr.php and the pixels' same-IP fallback
+        // (p202SameIpFallbackClick()) look a visitor's last click up by it;
+        // the sign-in, the operator pages' error log and the index's
+        // decorator are listed.
+        self::assertGreaterThanOrEqual(18, $read, 'the scan finds the storage and lookup sites');
         self::assertSame([], $problems, "A visitor address is stored or looked up without the privacy mask:\n  "
             . implode("\n  ", $problems)
             . "\nPass p202StoredVisitorIp(): the VisitorIp address, masked when trackingEnabled() is false"
@@ -136,16 +137,20 @@ final class StoredVisitorIpSourceTest extends TestCase
     {
         $calls = [];
         foreach (SourceScan::phpFiles() as $path => $source) {
-            foreach (CallArgs::calls($source, ['startFilter']) as $call) {
-                $calls[] = [$path, $call['line'], count($call['args'])];
+            foreach (CallArgs::calls($source, ['startFilter', 'verdict']) as $call) {
+                // FILTER::verdict(), and the startFilter() it replaced, by any receiver.
+                if ($call['name'] === 'startfilter' || strtolower($call['receiver']) === 'filter') {
+                    $calls[] = [$path, $call['line'], count($call['args']), $call['name']];
+                }
             }
         }
 
         // dl.php, rtr.php and the two landing-page recorders.
         self::assertGreaterThanOrEqual(4, count($calls), 'the scan finds the click filter\'s callers');
-        foreach ($calls as [$path, $line, $count]) {
-            self::assertSame(4, $count, "$path:$line calls FILTER::startFilter() with $count arguments. It takes"
-                . ' ($db, $click_id, $ip_id, $user_id) and reads the address the click arrived from itself; an'
+        foreach ($calls as [$path, $line, $count, $name]) {
+            self::assertSame('verdict', $name, "$path:$line calls FILTER::startFilter(), which FILTER::verdict() replaced");
+            self::assertSame(3, $count, "$path:$line calls FILTER::verdict() with $count arguments. It takes"
+                . ' ($db, $ip_id, $user_id) and reads the address the click arrived from itself; an'
                 . ' address handed in would land where the user id goes.');
         }
     }
@@ -195,7 +200,8 @@ final class StoredVisitorIpSourceTest extends TestCase
                 }
             }
         }
-        self::assertGreaterThanOrEqual(5, $calls, 'the scan found the pixels\' and redirects\' lookups');
+        // off.php, rtr.php and the pixels' (p202SameIpFallbackClick()).
+        self::assertGreaterThanOrEqual(3, $calls, 'the scan found the pixels\' and redirects\' lookups');
         self::assertSame([], $wrong, 'Pass !trackingEnabled() as LastClickFromAddress::find()\'s $masked.');
     }
 

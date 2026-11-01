@@ -6,6 +6,7 @@ namespace Tests\Apps\Android;
 
 use Api\V3\Apps\Android\InstallEventsIntake;
 use Api\V3\Apps\Android\InstallIntake;
+use Api\V3\Apps\Android\MissingInstallKey;
 use Api\V3\Apps\Android\PendingClickSettler;
 use Api\V3\Controllers\AppRegistrationsController;
 use Api\V3\Controllers\AppReportController;
@@ -113,6 +114,36 @@ final class AbuseLimitsIntegrationTest extends TestCase
         self::limits('ctit_min_seconds = 100');
         (new PendingClickSettler(self::$db, fn (): int => $this->clock))->run();
         self::assertSame(['attributed', '61', 'short'], [self::installRow(self::U1)['match_state'], (string) self::installRow(self::U1)['ctit_seconds'], self::installRow(self::U1)['ctit_flag']]);
+    }
+
+    /**
+     * The key is read before the settle's transaction (inside it, the read
+     * would come before the click's lock, which is then refused). A key that
+     * does not read stops only an install that still needs it, with the
+     * read's own error, and leaves it pending; one settled meanwhile is
+     * passed over.
+     */
+    public function testAKeyThatDoesNotReadStopsOnlyAPendingInstall(): void
+    {
+        $this->install(self::body(self::U1, 'p202=' . self::tokenFor(500)));
+        $this->click(500);
+        $id = (int) self::installRow(self::U1)['install_row_id'];
+        $settler = new PendingClickSettler(self::$db, fn (): int => $this->clock);
+        self::assertTrue(self::$db->query('RENAME TABLE 202_deployment_secrets TO p202_test_secrets_away'));
+        try {
+            try {
+                $settler->settleOne($id);
+                self::fail('a pending install needs the key');
+            } catch (\RuntimeException $e) {
+                self::assertNotInstanceOf(MissingInstallKey::class, $e, 'the read\'s own failure, not "no key"');
+                self::assertStringContainsString('install-token key lookup failed', $e->getMessage());
+            }
+            self::assertSame('pending_click', self::installRow(self::U1)['match_state'], 'and it stays pending');
+            self::assertTrue(self::$db->query("UPDATE 202_app_installs SET match_state = 'attributed' WHERE install_row_id = $id"));
+            self::assertNull($settler->settleOne($id), 'one settled meanwhile needs no key');
+        } finally {
+            self::$db->query('RENAME TABLE p202_test_secrets_away TO 202_deployment_secrets');
+        }
     }
 
     public function testTheRegistrationsInstallCapRefusesWithRetryAfterAndStoresNothing(): void

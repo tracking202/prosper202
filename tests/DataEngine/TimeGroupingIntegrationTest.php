@@ -6,6 +6,8 @@ namespace Tests\DataEngine;
 
 use Api\V3\Controllers\ReportsController;
 use PHPUnit\Framework\TestCase;
+use Prosper202\DataEngine\MetricsSql;
+use Prosper202\Report\LocalTime;
 
 /**
  * The report pages group clicks by the account's own clock — its hours,
@@ -38,6 +40,8 @@ final class TimeGroupingIntegrationTest extends TestCase
 {
     private const int NEW_YORK = 6201;
     private const int KOLKATA = 6202;
+    private const int LOS_ANGELES = 6203;
+    private const int LORD_HOWE = 6204;
 
     /** user => [zone, the clicks' UTC instants] */
     private const array CLICKS = [
@@ -55,6 +59,31 @@ final class TimeGroupingIntegrationTest extends TestCase
             '2026-10-06T18:45:00Z', // Wed 7 Oct 00:15 IST
             '2026-02-28T18:40:00Z', // Sun 1 Mar 00:10 IST, a month and a weekday later than UTC
             '2026-09-07T10:00:00Z', // Mon 7 Sep 15:30 IST: the same day of the month as 7 Oct
+        ]],
+        self::LOS_ANGELES => ['America/Los_Angeles', [
+            '1970-01-01T00:00:00Z', // Signed local seconds before the local epoch.
+            '2026-01-01T07:59:59Z', // Outside the account's 2026 window.
+            '2026-01-01T08:00:00Z',
+            '2026-01-01T08:15:00Z',
+            '2026-01-01T08:45:00Z', // A partial report hour must retain only matching clicks.
+            '2026-03-08T09:59:59Z',
+            '2026-03-08T10:00:00Z', // The spring-forward boundary.
+            '2026-07-01T06:59:59Z',
+            '2026-07-01T07:00:00Z', // Local midnight within a UTC day.
+            '2026-07-01T07:10:00Z',
+            '2026-07-01T07:50:00Z',
+            '2026-11-01T08:30:00Z',
+            '2026-11-01T09:30:00Z', // Repeated local 1:30 am.
+            '2027-01-01T07:59:59Z',
+            '2027-01-01T08:00:00Z', // Outside the account's 2026 window.
+        ]],
+        self::LORD_HOWE => ['Australia/Lord_Howe', [
+            '2026-04-04T14:45:00Z',
+            '2026-04-04T15:15:00Z', // Repeated 1:45 am after a half-hour shift.
+            '2026-06-30T13:15:00Z',
+            '2026-06-30T13:45:00Z', // Local midnight splits one UTC hour.
+            '2026-10-03T15:15:00Z',
+            '2026-10-03T15:45:00Z', // Half-hour spring-forward transition.
         ]],
     ];
 
@@ -99,6 +128,10 @@ final class TimeGroupingIntegrationTest extends TestCase
         if (!self::$db instanceof \mysqli || self::$db->connect_errno) {
             self::markTestSkipped('No database connection available.');
         }
+        $database = self::$db->query('SELECT DATABASE()');
+        if (!$database instanceof \mysqli_result || $database->fetch_row()[0] !== $dbName) {
+            self::fail('The app did not connect to the configured scratch database; no fixtures were written.');
+        }
         $check = self::$db->query("SHOW TABLES LIKE '202_dataengine'");
         if (!$check instanceof \mysqli_result) {
             self::fail('Could not probe for 202_dataengine: ' . self::$db->error);
@@ -122,7 +155,10 @@ final class TimeGroupingIntegrationTest extends TestCase
                 self::q("INSERT INTO 202_dataengine SET user_id = $user, click_id = " . (620100 + ++$n) . ", click_time = $t,"
                     . ' aff_campaign_id = 0, ppc_account_id = 0, landing_page_id = 0, keyword_id = 0, ip_id = 0,'
                     . ' click_referer_site_url_id = 0, device_id = 0, click_filtered = 0, click_bot = 0,'
-                    . ' click_lead = 0, clicks = 1, click_out = 1, leads = 0, payout = 0, income = 0, cost = 0');
+                    . ' clicks = 1, click_out = ' . ($n % 3 === 0 ? 0 : 1)
+                    . ', click_lead = ' . ($n % 2) . ', leads = ' . ($n % 2 === 0 ? 0 : 2)
+                    . ', payout = 0, income = ' . ($n % 2 === 0 ? '0' : '3.14159')
+                    . ', cost = ' . ($n % 3 === 0 ? '0' : '0.12345'));
             }
         }
     }
@@ -207,9 +243,14 @@ final class TimeGroupingIntegrationTest extends TestCase
     private static function expected(int $user, string $format): array
     {
         [$zone, $instants] = self::CLICKS[$user];
+        [$from, $to] = self::window($zone);
         $out = [];
         foreach ($instants as $utc) {
-            $label = (new \DateTimeImmutable($utc))->setTimezone(new \DateTimeZone($zone))->format($format);
+            $date = new \DateTimeImmutable($utc);
+            if ($date->getTimestamp() < $from || $date->getTimestamp() > $to) {
+                continue;
+            }
+            $label = $date->setTimezone(new \DateTimeZone($zone))->format($format);
             $out[$label] = ($out[$label] ?? 0) + 1;
         }
         ksort($out);
@@ -292,6 +333,61 @@ final class TimeGroupingIntegrationTest extends TestCase
         self::assertSame(['Mar 01, 2026', 'Sep 07, 2026', 'Oct 06, 2026', 'Oct 07, 2026'], $labels);
     }
 
+    public function testBreakdownMatchesPerClickGroupingForEveryMetricFilterAndSort(): void
+    {
+        $previousMode = self::$db->query('SELECT @@session.sql_mode')->fetch_row()[0];
+        self::q("SET SESSION sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES'");
+        try {
+            foreach (self::CLICKS as $user => [$zone]) {
+                self::signIn($user, $zone);
+                [$from, $to] = self::window($zone);
+                // Include a partial UTC hour and a sparse interval as well as the year.
+                $windows = [[$from, $to], [$from + 1801, $to - 1801], [$from + 123, $from + 456], [0, 86400]];
+                $orders = [
+                    'sort_breakdown_time_order asc',
+                    'sort_breakdown_time_order desc',
+                    'sort_breakdown_income desc',
+                ];
+                foreach (['hour', 'day', 'month', 'year'] as $granularity) {
+                    self::q("UPDATE 202_users_pref SET user_pref_breakdown='$granularity' WHERE user_id=$user");
+                    foreach (['all', 'leads'] as $show) {
+                        self::q("UPDATE 202_users_pref SET user_pref_show='$show' WHERE user_id=$user");
+                        foreach ($orders as $order) {
+                            $_POST = ['order' => $order];
+                            foreach ($windows as [$start, $end]) {
+                                $engine = new \DataEngine();
+                                $filters = $engine->getFilters();
+                                $format = match ($granularity) {
+                                    'hour' => '%b %d, %Y at %l%p',
+                                    'month' => '%b %Y',
+                                    'year' => '%Y',
+                                    default => '%b %d, %Y',
+                                };
+                                $sql = 'SELECT DATE_FORMAT(' . LocalTime::datetimeSql('click_time', $zone)
+                                    . ", '$format') AS click_time_from_disp," . MetricsSql::GROUPED_SELECT
+                                    . ' FROM 202_dataengine AS 2st ' . $filters['join']
+                                    . " WHERE 2st.user_id=$user AND click_time >= $start AND click_time <= $end"
+                                    . $filters['filter'] . ' GROUP BY click_time_from_disp'
+                                    . $engine->sortOrder('sort_breakdown_time_order asc');
+                                $collect = new \ReflectionMethod(\DataEngine::class, 'collectRows');
+                                $legacy = $collect->invoke($engine, $sql, false);
+                                $optimized = $engine->getReportData('breakdown', $start, $end, false);
+                                self::assertSame($legacy, $optimized, "$zone $granularity $show $order $start..$end");
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            self::q('SET SESSION sql_mode=' . "'" . self::$db->real_escape_string($previousMode) . "'");
+            foreach (array_keys(self::CLICKS) as $user) {
+                self::q('UPDATE 202_users_pref SET user_pref_show=\'all\', user_pref_breakdown=\'day\''
+                    . " WHERE user_id=$user");
+            }
+            $_POST = [];
+        }
+    }
+
     /**
      * The Overview chart: its categories are returnRanges()' points, which
      * start at the window's first day or hour on the account's clock, and a
@@ -352,5 +448,35 @@ final class TimeGroupingIntegrationTest extends TestCase
         $zone = self::$db->query('SELECT @@session.time_zone AS z');
         self::assertInstanceOf(\mysqli_result::class, $zone);
         self::assertSame('+07:00', $zone->fetch_assoc()['z'], 'constructing the engine set the connection zone for the rest of the request');
+    }
+
+    public function testFractionalTimezoneCampaignChartsKeepEveryMetricAndMissingLabels(): void
+    {
+        $user = self::KOLKATA;
+        self::signIn($user, 'Asia/Kolkata');
+        [$from, $to] = self::window('Asia/Kolkata');
+        // A removed campaign still has clicks; its missing label must not drop them.
+        self::q("UPDATE 202_dataengine SET aff_campaign_id=$user WHERE user_id=$user");
+        $metrics = ['clicks', 'click_out', 'ctr', 'leads', 'su_ratio', 'payout', 'epc', 'cpc',
+            'income', 'cost', 'net', 'roi', 'unknown'];
+        try {
+            foreach (['days', 'hours'] as $range) {
+                $period = returnRanges(new \DateTime('@' . $from), new \DateTime('@' . $to), $range);
+                $lines = [];
+                foreach (['0', (string) $user, '999999999'] as $campaign) {
+                    foreach ($metrics as $metric) {
+                        $lines[] = ['campaign_id' => $campaign, 'value_type' => $metric];
+                    }
+                }
+                $chart = (new \DataEngine())->getChart($from, $to, $lines, $range, 'M d', $period);
+                foreach (array_keys($metrics) as $index) {
+                    self::assertSame($chart['series'][$index]['data'], $chart['series'][13 + $index]['data']);
+                    self::assertSame(['0'], array_values(array_unique($chart['series'][26 + $index]['data'])));
+                }
+                self::assertContains(null, $chart['series'][5]['data'], 'payout stays NULL for a zero-lead group');
+            }
+        } finally {
+            self::q("UPDATE 202_dataengine SET aff_campaign_id=0 WHERE user_id=$user");
+        }
     }
 }

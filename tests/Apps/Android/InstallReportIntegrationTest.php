@@ -131,7 +131,7 @@ final class InstallReportIntegrationTest extends TestCase
         $l3Conv = (int) $l3['conversion_id'];
         // A network's reversal of that sale names it by transaction id.
         self::fixture("UPDATE 202_conversion_logs SET transaction_id = 'L3-TX' WHERE conv_id = $l3Conv");
-        $rev = $repo->record(1, ['click_id' => 100, 'transaction_id' => 'L3-TX', 'reversal' => true, 'source' => 'postback']);
+        $rev = $repo->record(1, ['click_id' => 100, 'transaction_id' => 'L3-TX', 'reversal' => true, 'source' => 'postback'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertSame($l3Conv, (int) $rev['reversesConvId']);
 
         $u2 = self::$db->query("SELECT o.conversion_id FROM 202_goal_outcomes o WHERE o.goal_id = {$this->installGoal} AND o.superseded_at IS NULL
@@ -189,6 +189,41 @@ final class InstallReportIntegrationTest extends TestCase
         $byDay = self::jsonRound($this->report(['platform' => 'android', 'group_by' => 'day']))['data']['groups'];
         self::assertSame([gmdate('Y-m-d', $this->clock)], array_column($byDay, 'date'));
         self::assertSame(2, $byDay[0]['installs']);
+    }
+
+    /**
+     * A redirector re-click gives U1's click another 202_clicks row, an hour
+     * on, on campaign 31, and records it as the latest visit: the install is
+     * one install, under the click's latest visit, in every grouping, the
+     * totals and the goal rows.
+     */
+    public function testAnInstallOnAReClickedClickCountsOnceUnderItsLatestVisit(): void
+    {
+        $this->seed();
+        $this->campaign(31, null);
+        $this->click(100, 31, 1, self::CLICK_TIME + 3600);
+        \Prosper202\Click\LatestVisit::refresh($this->conn, 100);
+
+        $byCampaign = self::jsonRound($this->report(['platform' => 'android', 'group_by' => 'campaign']))['data'];
+        $campaigns = [];
+        foreach ($byCampaign['groups'] as $g) {
+            $key = (string) ($g['aff_campaign_id'] ?? 'none');
+            $campaigns[$key] = [$g['received'], $g['installs'], $g['goals_reached']];
+        }
+        ksort($campaigns);
+        self::assertSame(
+            ['30' => [1, 1, 1], '31' => [1, 1, 3], 'none' => [2, 0, 0]],
+            $campaigns,
+            'U2 on campaign 30, U1 on 31 only'
+        );
+
+        $t = self::jsonRound($this->report(['platform' => 'android', 'group_by' => 'registration']))['data']['totals'];
+        self::assertSame([4, 2, 4], [$t['received'], $t['installs'], $t['goals_reached']]);
+        self::assertEqualsWithDelta(9.0, $t['revenue'], 0.00001);
+
+        $goals = $this->report(['platform' => 'android', 'group_by' => 'goal', 'registration_id' => '5']);
+        $installs = array_column(self::jsonRound($goals)['data']['groups'], 'installs', 'goal_name');
+        self::assertSame(['Level 3' => 1, 'Tutorial' => 1, 'install' => 2], array_sort_keys($installs));
     }
 
     public function testTheGoalRowsAreTheFunnel(): void

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Ltv;
 
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\Report\LocalTime;
 use RuntimeException;
@@ -24,6 +25,10 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
      * stopped a tracker naming another account's before the API checked
      * linked ids (229df10). Such a customer drops out of the breakdown, as a
      * click with no campaign does from GET /reports/breakdown.
+     *
+     * The first click is read at its latest visit (a redirector re-click's
+     * row; breakdown() asks for it), as the spend beside it is: once, under
+     * that visit's campaign, traffic source and landing page.
      */
     private const ACQUISITION_BREAKDOWNS = [
         'campaign' => [
@@ -208,8 +213,18 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
+        $rows = $this->conn->fetchAll($stmt);
 
-        return ['rows' => $this->conn->fetchAll($stmt), 'total' => $total];
+        // Numbers, as summary() answers them: mysqli hands DECIMAL back as a
+        // string ("54.12500").
+        foreach ($rows as &$row) {
+            foreach (['total_revenue', 'refunded_amount', 'mrr'] as $amount) {
+                $row[$amount] = (float) $row[$amount];
+            }
+        }
+        unset($row);
+
+        return ['rows' => $rows, 'total' => $total];
     }
 
     public function breakdown(LtvQuery $query, string $breakdownType, int $limit, int $offset): array
@@ -232,24 +247,26 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         // acquired customer, ltv_cac = revenue returned per ad dollar. The
         // spend subquery renders before the scope joins, so its binds come
         // first.
-        $spendWhere = 'user_id = ?';
+        $latest = LatestVisit::isLatest('ck');
+        $spendWhere = 'sc.user_id = ? AND '
+            . LatestVisit::isLatest('sc');
         $spendTypes = 'i';
         $spendBinds = [$query->userId];
         if ($query->timeFrom !== null) {
-            $spendWhere .= ' AND click_time >= ?';
+            $spendWhere .= ' AND sc.click_time >= ?';
             $spendTypes .= 'i';
             $spendBinds[] = $query->timeFrom;
         }
         if ($query->timeTo !== null) {
-            $spendWhere .= ' AND click_time <= ?';
+            $spendWhere .= ' AND sc.click_time <= ?';
             $spendTypes .= 'i';
             $spendBinds[] = $query->timeTo;
         }
         $spendJoin = "LEFT JOIN (
-                SELECT {$bd['spend_col']} AS dim_id, SUM(click_cpc) AS spend
-                FROM 202_clicks
+                SELECT sc.{$bd['spend_col']} AS dim_id, SUM(sc.click_cpc) AS spend
+                FROM 202_clicks sc
                 WHERE {$spendWhere}
-                GROUP BY {$bd['spend_col']}
+                GROUP BY sc.{$bd['spend_col']}
             ) sp ON sp.dim_id = {$bd['id']}";
 
         $sql = "SELECT
@@ -271,7 +288,7 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
             {$bd['join']}
             {$spendJoin}
             {$joins}
-            {$where}
+            {$where} AND {$latest}
             GROUP BY {$bd['id']}, {$bd['name']}, sp.spend
             ORDER BY total_revenue DESC, {$bd['id']} ASC
             LIMIT ? OFFSET ?";
@@ -282,7 +299,10 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
 
-        return $this->conn->fetchAll($stmt);
+        return array_map(static fn (array $row): array => LtvNumbers::integers(
+            LtvNumbers::decimals($row, ['total_revenue', 'avg_ltv', 'aov', 'repeat_rate', 'mrr', 'spend', 'cac', 'ltv_cac']),
+            ['customers', 'total_orders']
+        ), $this->conn->fetchAll($stmt));
     }
 
     /**
@@ -645,7 +665,11 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
 
-        return $this->conn->fetchAll($stmt);
+        // units is a sum of DECIMAL(12,3) quantities: a measure, 1.5 as well as 2.
+        return array_map(static fn (array $row): array => LtvNumbers::integers(
+            LtvNumbers::decimals($row, ['units', 'total_revenue', 'avg_revenue_per_customer', 'aov', 'repeat_rate', 'mrr']),
+            ['customers', 'orders']
+        ), $this->conn->fetchAll($stmt));
     }
 
     /**

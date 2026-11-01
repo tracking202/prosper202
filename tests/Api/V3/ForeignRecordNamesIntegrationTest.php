@@ -192,7 +192,7 @@ final class ForeignRecordNamesIntegrationTest extends TestCase
         if ($payout !== null) {
             $data['payout'] = $payout;
         }
-        $recorded = (new MysqlConversionRepository($this->conn()))->record(self::USER, $data);
+        $recorded = (new MysqlConversionRepository($this->conn()))->record(self::USER, $data, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertTrue($recorded['clickFound']);
 
         return self::rows('SELECT * FROM 202_conversion_logs WHERE conv_id = ' . (int) $recorded['convId'])[0];

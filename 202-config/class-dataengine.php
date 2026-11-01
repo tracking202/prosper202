@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\DataEngine\GroupedReportDefinition;
@@ -10,6 +11,7 @@ use Prosper202\DataEngine\HtmlReportFormatter;
 use Prosper202\DataEngine\ReportView;
 use Prosper202\DataEngine\MetricsSql;
 use Prosper202\DataEngine\ReportTotals;
+use Prosper202\DataEngine\ReportAggregation;
 use Prosper202\DataEngine\SortOrder;
 use Prosper202\DataEngine\UserPrefFilters;
 use Prosper202\Report\LocalTime;
@@ -41,6 +43,11 @@ class DataEngine
     private int $forDownload = 0;
 
     private ?HtmlReportFormatter $formatter = null;
+
+    private ?string $overviewTable = null;
+    private ?mysqli $overviewDb = null;
+    /** @var array{int, int}|null */
+    private ?array $overviewWindow = null;
 
     public function isDatabaseConnected(): bool
     {
@@ -96,6 +103,75 @@ class DataEngine
     public function setDisplay(): void
     {
         $this->forDownload = 0;
+    }
+
+    /**
+     * Read Account Overview's table metrics once for this request.
+     *
+     * Raw filter flags remain separate groups. A summed click_lead is nonzero
+     * exactly for a converted group, so the existing show-filter and S/U math
+     * both keep their meanings. The table is connection-local, never persistent.
+     * If temporary tables are unavailable, each reader uses its normal query.
+     */
+    public function prepareAccountOverview(int $from, int $to): void
+    {
+        if ($this->overviewTable !== null || !self::$db instanceof mysqli) {
+            return;
+        }
+        $db = self::$db;
+        $table = 'p202_overview_' . bin2hex(random_bytes(8));
+        $sql = "CREATE TEMPORARY TABLE `$table` ENGINE=InnoDB AS SELECT"
+            . ' 2st.user_id, 2st.aff_campaign_id, 2st.landing_page_id, 2st.ppc_account_id,'
+            . ' 2st.click_filtered, 2st.click_bot, MIN(2st.click_time) AS click_time,'
+            . ' SUM(2st.clicks) AS clicks, SUM(2st.click_out) AS click_out,'
+            . ' SUM(2st.click_lead) AS click_lead, SUM(2st.leads) AS leads,'
+            . ' SUM(2st.income) AS income, SUM(2st.cost) AS cost'
+            . ' FROM 202_dataengine AS 2st ' . $this->mysql['user_id_query']
+            . ' AND 2st.click_time >= ' . $from . ' AND 2st.click_time <= ' . $to
+            . ' GROUP BY 2st.user_id, 2st.aff_campaign_id, 2st.landing_page_id, 2st.ppc_account_id,'
+            . ' 2st.click_filtered, 2st.click_bot, 2st.click_lead';
+        try {
+            if ($db->query($sql) === false) {
+                throw new RuntimeException($db->error);
+            }
+            $this->overviewTable = $table;
+            $this->overviewDb = self::$db;
+            $this->overviewWindow = [$from, $to];
+        } catch (\mysqli_sql_exception | RuntimeException $error) {
+            error_log('Account Overview temporary aggregation unavailable: ' . $error->getMessage());
+            // CREATE ... SELECT can leave a temporary table when insertion fails.
+            try {
+                if ($db->query("DROP TEMPORARY TABLE IF EXISTS `$table`") === false) {
+                    error_log('Account Overview temporary-table cleanup failed: ' . $db->error);
+                }
+            } catch (\mysqli_sql_exception $cleanup) {
+                error_log('Account Overview temporary-table cleanup failed: ' . $cleanup->getMessage());
+            }
+        }
+    }
+
+    /** Drop request-local aggregation; closing its connection also drops it. */
+    public function __destruct()
+    {
+        if ($this->overviewTable !== null && $this->overviewDb instanceof mysqli) {
+            try {
+                if ($this->overviewDb->query("DROP TEMPORARY TABLE `{$this->overviewTable}`") === false) {
+                    error_log('Account Overview temporary-table cleanup failed: ' . $this->overviewDb->error);
+                }
+            } catch (\Throwable $error) {
+                error_log('Account Overview temporary-table cleanup failed: ' . $error->getMessage());
+            }
+        }
+    }
+
+    /** @param list<string> $dimensions IDs needed by this table's label joins. */
+    private function overviewSource($from, $to, array $dimensions, string $where): string
+    {
+        if ($this->overviewTable !== null && $this->overviewWindow === [(int) $from, (int) $to]) {
+            return " FROM (SELECT * FROM `{$this->overviewTable}` AS 2st " . $where . ') AS 2st ';
+        }
+
+        return ReportAggregation::byDimensions('2st', $dimensions, $where);
     }
 
     public function foundRows(): int
@@ -162,13 +238,18 @@ class DataEngine
      */
     private function groupedReportFrom(GroupedReportDefinition $definition, string $from, string $to, array $filters): string
     {
-        return ' FROM 202_dataengine as 2st '
-            . ($definition->includeFilterJoin ? $filters['join'] : '')
-            . $definition->joins
-            . $this->mysql['user_id_query']
+        $where = $this->mysql['user_id_query']
             . ' AND click_time >= ' . $from
             . ' AND click_time <= ' . $to
             . $filters['filter'];
+        if ($definition->aggregateBy !== [] && $filters['join'] === '') {
+            return ReportAggregation::byDimensions('2st', $definition->aggregateBy, $where)
+                . $definition->joins;
+        }
+
+        return ' FROM 202_dataengine as 2st '
+            . ($definition->includeFilterJoin ? $filters['join'] : '')
+            . $definition->joins . $where;
     }
 
     /**
@@ -301,7 +382,7 @@ class DataEngine
      *
      * @return list<array<string, string>>
      */
-    private function collectRows(string $sql, $cpv, string $rowMainKey = ''): array
+    private function collectRows(string $sql, $cpv, string $rowMainKey = '', bool $countGroups = false): array
     {
         $result = _mysqli_query($sql);
         if (!$result) {
@@ -311,8 +392,15 @@ class DataEngine
         }
 
         $data = [];
+        if ($countGroups) {
+            self::$found_rows = 0;
+        }
         $totals = new ReportTotals();
         while ($row = $result->fetch_assoc()) {
+            if ($countGroups) {
+                self::$found_rows = (int) $row['report_group_count'];
+                unset($row['report_group_count']);
+            }
             $data[] = $this->htmlFormat($row, $cpv, '', $rowMainKey);
             $totals->add($row);
         }
@@ -337,15 +425,19 @@ class DataEngine
         // runs of the same query, which moved rows between pages of a
         // paginated report (one row on two pages, another on none) and made
         // two downloads of the same report disagree.
-        $sql = 'SELECT ' . $definition->labelSelect . ',' . MetricsSql::GROUPED_SELECT
+        $sql = 'SELECT ' . $definition->labelSelect . ', COUNT(*) OVER () AS report_group_count,'
+            . MetricsSql::GROUPED_SELECT
             . $this->groupedReportFrom($definition, (string) $clickFrom, (string) $clickTo, $filters)
             . ' group by ' . $definition->groupBy
             . $this->sortOrder() . ', ' . $definition->groupBy
             . $filters['limit'];
 
-        $data = $this->collectRows($sql, $cpv);
-
-        self::$found_rows = $this->countReportGroups($definition, (string) $clickFrom, (string) $clickTo, $filters);
+        $data = $this->collectRows($sql, $cpv, '', true);
+        // An offset past the final row carries no window count. Count only
+        // that empty page; normal pages no longer rescan the click window.
+        if (count($data) === 1 && !empty($_POST['offset'])) {
+            self::$found_rows = $this->countReportGroups($definition, (string) $clickFrom, (string) $clickTo, $filters);
+        }
 
         return $data;
     }
@@ -387,6 +479,13 @@ class DataEngine
     public function doLpOverviewReport($clickFrom, $clickTo, $cpv)
     {
         $click_filtered = $this->getAccountOverviewFilters();
+        $source = $this->overviewSource(
+            $clickFrom,
+            $clickTo,
+            ['user_id', 'landing_page_id'],
+            $this->mysql['user_id_query'] . ' AND 2st.click_time >= ' . $clickFrom
+                . ' AND 2st.click_time <= ' . $clickTo . $click_filtered
+        );
 
         // Fix #3a: use the canonical metric SELECT list (MetricsSql::GROUPED_SELECT)
         // in place of the inline copy. The only join is 202_landing_pages which has
@@ -399,12 +498,9 @@ class DataEngine
         // The WHERE is its own statement, so the ON clause ends in the string
         // AccountScopedJoinTest reads.
         $sql = "select lp.landing_page_nickname,
-lp.landing_page_id," . MetricsSql::GROUPED_SELECT . "
-from 202_dataengine as 2st
+lp.landing_page_id," . MetricsSql::GROUPED_SELECT . $source . "
 LEFT OUTER JOIN 202_landing_pages AS lp ON (lp.landing_page_id = 2st.landing_page_id AND lp.user_id = 2st.user_id)";
-        $sql .= $this->mysql['user_id_query'] . "
-AND 2st.click_time >= " . $clickFrom . "
-AND 2st.click_time <= " . $clickTo . $click_filtered . "
+        $sql .= "
 group BY lp.landing_page_id
 ORDER BY lp.landing_page_id ASC";
 
@@ -414,6 +510,13 @@ ORDER BY lp.landing_page_id ASC";
     public function doCampaignOverviewReport($clickFrom, $clickTo, $cpv)
     {
         $click_filtered = $this->getAccountOverviewFilters();
+        $source = $this->overviewSource(
+            $clickFrom,
+            $clickTo,
+            ['user_id', 'aff_campaign_id'],
+            ' WHERE 2st.user_id = ' . $this->mysql['user_id'] . ' AND 2st.click_time >= ' . $clickFrom
+                . ' AND 2st.click_time <= ' . $clickTo . $click_filtered
+        );
 
         // Average payout is a figure of the clicks, income over leads, as in
         // every other table and the totals row under this one. It was the
@@ -423,13 +526,9 @@ ORDER BY lp.landing_page_id ASC";
         // Grouped by the campaign the join found, the account's or none
         // (CLAUDE.md #27).
         $sql = "SELECT 2ac.aff_campaign_id,
-             2ac.aff_campaign_name," . MetricsSql::GROUPED_SELECT . "
-             FROM 202_dataengine AS 2st
+             2ac.aff_campaign_name," . MetricsSql::GROUPED_SELECT . $source . "
              LEFT OUTER JOIN 202_aff_campaigns AS 2ac
                ON (2st.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2st.user_id)
-             WHERE 2st.user_id = " . $this->mysql['user_id'] . "
-AND 2st.click_time >= " . $clickFrom . "
-AND 2st.click_time <= " . $clickTo . $click_filtered . "
              GROUP BY 2ac.aff_campaign_id
              ORDER BY 2ac.aff_campaign_id ASC";
 
@@ -483,13 +582,16 @@ AND 2st.click_time <= " . $clickTo . $click_filtered . "
         // Fix #3a: use canonical metric SELECT. Joins are 202_landing_pages /
         // 202_aff_campaigns / 202_aff_networks — none carry income/cost/clicks,
         // so the 2st. prefix in GROUPED_SELECT is unambiguous.
-        $click_sql = "select" . $labelSelect . MetricsSql::GROUPED_SELECT . "
-        from 202_dataengine as 2st"
+        $source = $this->overviewSource(
+            $clickFrom,
+            $clickTo,
+            ['user_id', $select_by_id],
+            $this->mysql['user_id_query'] . $typeCondition
+                . ' AND 2st.click_time >= ' . $clickFrom . ' AND 2st.click_time <= ' . $clickTo
+        );
+        $click_sql = "select" . $labelSelect . MetricsSql::GROUPED_SELECT . $source
             . $labelJoins
-            . $this->mysql['user_id_query']
-            . $typeCondition . "
-        AND 2st.click_time >= '" . $clickFrom . "'
-        AND 2st.click_time <= '" . $clickTo . "'
+            . "
         group BY 2st." . $select_by_id . "
         ORDER BY 2st." . $select_by_id . " ASC";
 
@@ -511,24 +613,21 @@ AND 2st.click_time <= " . $clickTo . $click_filtered . "
         // click naming another account's source is still counted, unnamed.
         // The WHERE is its own statement, so the ON clause ends in the string
         // AccountScopedJoinTest reads.
+        $where = $this->mysql['user_id_query']
+            . " AND 2st.{$select_by_id} IN (" . implode(',', $ids) . ')'
+            . ' AND 2st.click_time >= ' . $clickFrom . ' AND 2st.click_time <= ' . $clickTo;
+        if ($type == 'alp') {
+            $where .= ' AND (2st.aff_campaign_id IS NULL OR 2st.aff_campaign_id = 0)';
+        }
+        $source = $this->overviewSource($clickFrom, $clickTo, ['user_id', $select_by_id, 'ppc_account_id'], $where);
         $ppc_sql = "select
             ppc_account_name,
             ppc_network_name,
             2st.ppc_account_id,
-            2st.{$select_by_id}," . MetricsSql::GROUPED_SELECT . "
-            from 202_dataengine as 2st
+            2st.{$select_by_id}," . MetricsSql::GROUPED_SELECT . $source . "
             LEFT JOIN 202_ppc_accounts ON (2st.ppc_account_id = 202_ppc_accounts.ppc_account_id AND 202_ppc_accounts.user_id = 2st.user_id)
             LEFT JOIN 202_ppc_networks ON (202_ppc_accounts.ppc_network_id = 202_ppc_networks.ppc_network_id AND 202_ppc_networks.user_id = 2st.user_id)";
-        $ppc_sql .= $this->mysql['user_id_query']
-            . " AND 2st.{$select_by_id} IN (" . implode(",", $ids) . ")";
-
-        if ($type == 'alp') {
-            $ppc_sql .= " AND (2st.aff_campaign_id IS NULL OR 2st.aff_campaign_id = 0)";
-        }
-
         $ppc_sql .= "
-            AND 2st.click_time >= '" . $clickFrom . "'
-            AND 2st.click_time <= '" . $clickTo . "'
             group BY 2st.{$select_by_id},2st.ppc_account_id
             ORDER BY 2st.ppc_account_id ASC;";
 
@@ -556,9 +655,14 @@ AND 2st.click_time <= " . $clickTo . $click_filtered . "
         };
 
         $filters = $this->getFilters();
+        $where = $this->mysql['user_id_query']
+            . " AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter'];
+        $source = $filters['join'] === ''
+            ? ReportAggregation::byHour($where, date_default_timezone_get())
+            : ' FROM 202_dataengine AS 2st ' . $filters['join'] . $where;
+
         $sql = "SELECT DATE_FORMAT(" . self::localClickTime() . ", '" . $label . "') as click_time_from_disp," . MetricsSql::GROUPED_SELECT
-            . " FROM 202_dataengine as 2st " . $filters['join'] . $this->mysql['user_id_query']
-            . " AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter']
+            . $source
             . " group by click_time_from_disp" . $this->sortOrder('sort_breakdown_time_order asc');
 
         return $this->collectRows($sql, $cpv);
@@ -570,10 +674,14 @@ AND 2st.click_time <= " . $clickTo . $click_filtered . "
         // The account's hour of the day. The labels are read from one row of
         // the hour, so the clock is worked out once a row, for the group.
         $local = self::localClickTime();
+        $where = $this->mysql['user_id_query']
+            . ' AND click_time >= ' . $clickFrom . ' AND click_time <= ' . $clickTo . $filters['filter'];
+        $source = $filters['join'] === ''
+            ? ReportAggregation::byHour($where, date_default_timezone_get())
+            : ' FROM 202_dataengine AS 2st ' . $filters['join'] . $where;
         $sql = "SELECT HOUR(" . $local . ") as hour_of_day, DATE_FORMAT(" . $local . ",'%l %p') as click_time_from_disp, DATE_FORMAT(" . $local . ",'%p') as ampm,"
             . MetricsSql::GROUPED_SELECT
-            . " FROM 202_dataengine as 2st " . $filters['join'] . $this->mysql['user_id_query']
-            . " AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter']
+            . $source
             . " group by hour_of_day " . $this->sortOrder('breakdown asc');
 
         return $this->collectRows($sql, $cpv);
@@ -584,10 +692,14 @@ AND 2st.click_time <= " . $clickTo . $click_filtered . "
         $filters = $this->getFilters();
         // The account's weekday, grouped by its name.
         $local = self::localClickTime();
+        $where = $this->mysql['user_id_query']
+            . ' AND click_time >= ' . $clickFrom . ' AND click_time <= ' . $clickTo . $filters['filter'];
+        $source = $filters['join'] === ''
+            ? ReportAggregation::byHour($where, date_default_timezone_get())
+            : ' FROM 202_dataengine AS 2st ' . $filters['join'] . $where;
         $sql = "SELECT DATE_FORMAT(" . $local . ",'%a') as click_time_from_disp, DATE_FORMAT(" . $local . ",'%w') as click_time_from_sort,"
             . MetricsSql::GROUPED_SELECT
-            . " FROM 202_dataengine as 2st " . $filters['join'] . $this->mysql['user_id_query']
-            . " AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter']
+            . $source
             . " group by click_time_from_disp  ORDER BY click_time_from_sort ASC";
 
         return $this->collectRows($sql, $cpv);
@@ -597,6 +709,11 @@ AND 2st.click_time <= " . $clickTo . $click_filtered . "
     {
         $filters = $this->getFilters();
         $data = [];
+        $where = $this->mysql['user_id_query'] . ' AND 2st.variable_set_id != 0 AND click_time >= ' . $clickFrom
+            . ' AND click_time <= ' . $clickTo . $filters['filter'];
+        $source = $filters['join'] === ''
+            ? ReportAggregation::byDimensions('2st', ['user_id', 'ppc_network_id'], $where)
+            : ' FROM 202_dataengine AS 2st ' . $filters['join'] . $where;
 
         // Fix #1: include $filters['join'] so keyword filter's 2k alias resolves.
         // Fix #3a: replace inline metric columns with MetricsSql::GROUPED_SELECT.
@@ -606,12 +723,9 @@ AND 2st.click_time <= " . $clickTo . $click_filtered . "
         // out of the report, as one naming a source that no longer exists did.
         $click_sql = " SELECT 2st.user_id,
         2st.ppc_network_id,
-        ppc_network_name," . MetricsSql::GROUPED_SELECT . "
-        FROM 202_dataengine as 2st
+        ppc_network_name," . MetricsSql::GROUPED_SELECT . $source . "
         JOIN 202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id AND 202_ppc_networks.user_id = 2st.user_id)";
-        $click_sql .= $filters['join']
-            . $this->mysql['user_id_query']
-            . " AND 2st.variable_set_id != 0 AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter'] . "
+        $click_sql .= "
         group by 2st.user_id, 2st.ppc_network_id" . $filters['limit'];
 
         $totals = new ReportTotals();
@@ -623,6 +737,20 @@ AND 2st.click_time <= " . $clickTo . $click_filtered . "
             $totals->add($click_row);
         }
         $data[] = $this->htmlFormat($totals->toArray(), $cpv, 'total');
+
+        // Probe at most 10,001 dictionary rows, rather than sorting a raw
+        // per-click variable-set ID when the dictionary is very large.
+        // This chooses a query plan; it never limits the reported values.
+        $mappingProbe = $this->reportQuery('SELECT variable_set_id FROM 202_variable_sets2 LIMIT 10000,1');
+        $variableSource = ' FROM 202_dataengine AS 2st ';
+        if ($mappingProbe->num_rows === 0 && $filters['join'] === '') {
+            $variableSource = ReportAggregation::byDimensions(
+                '2st',
+                ['user_id', 'ppc_network_id', 'variable_set_id'],
+                $where . ' AND EXISTS (SELECT 1 FROM 202_variable_sets2 AS mapped'
+                    . ' WHERE mapped.variable_set_id = 2st.variable_set_id)'
+            );
+        }
 
         // Fix #1: include $filters['join'] so keyword filter's 2k alias resolves.
         // Fix #3a: replace inline metric columns with MetricsSql::GROUPED_SELECT.
@@ -647,8 +775,7 @@ AND 2st.click_time <= " . $clickTo . $click_filtered . "
     2st.variable_set_id,
     variables,
     202_custom_variables.ppc_variable_id
-FROM
-    202_dataengine as 2st
+" . $variableSource . "
         JOIN
     202_variable_sets2 USING (variable_set_id)
         JOIN
@@ -658,9 +785,11 @@ FROM
         JOIN
     202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id AND 202_ppc_networks.user_id = 2st.user_id)
 ";
-        $click_sql .= $filters['join'] . $this->mysql['user_id_query'] . "
-        AND 2st.variable_set_id != 0
-        AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter'] . "
+        $click_sql .= $filters['join'];
+        if ($mappingProbe->num_rows !== 0 || $filters['join'] !== '') {
+            $click_sql .= $where;
+        }
+        $click_sql .= "
 group by 2st.ppc_network_id, 202_custom_variables.ppc_variable_id, variable
 ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variable";
 
@@ -746,7 +875,8 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
     }
 
     /**
-     * Roll a single click up into 202_dataengine so reports reflect it.
+     * Roll a single click up into 202_dataengine so reports reflect it: at
+     * its latest visit, its rows at earlier visits removed (ClickRollupSql).
      *
      * A request that names no click re-rolls none. It used to take "the
      * visitor's latest click": user 1's newest click in the last 24 hours from
@@ -773,10 +903,13 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
         // click_id can originate from a caller-supplied cookie/request value;
         // cast to int so it cannot break out of the WHERE clause.
-        $dsql = ClickRollupSql::forClick('202_dataengine', (int) $click_id);
-
-        if (!$db->query($dsql)) {
-            throw new QueryException(self::failedStep($db, 'rollup of click ' . (int) $click_id));
+        $clickId = (int) $click_id;
+        foreach (ClickRollupSql::forClick('202_dataengine', $clickId) as $step => $dsql) {
+            if (!$db->query($dsql)) {
+                $failure = self::failedStep($db, $step . ' of click ' . $clickId);
+                error_log('DataEngine click ' . $clickId . ': ' . ClickRollupSql::queueRetry(new Connection($db), $clickId));
+                throw new QueryException($failure);
+            }
         }
 
         return true;
@@ -822,7 +955,11 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
     }
 
     /**
-     * Roll up every click in a time window into the dataengine table.
+     * Roll up every click in a time window into the dataengine table: each
+     * click whose latest visit is in the window and meets $params, and the
+     * removal of those clicks' rows at earlier visits, in whatever hour they
+     * are (ClickRollupSql). A click whose latest visit is elsewhere is left
+     * as it is.
      */
     public function getSummary($start, $end, $params, $user_id = 1, $upgrade = false, $new = false)
     {
@@ -839,14 +976,14 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
         $table = $new ? '202_dataengine_new' : '202_dataengine';
 
-        $query = ClickRollupSql::insertSelect(
-            $table,
-            '2c.click_time >= ' . $from . "\nAND 2c.click_time <= " . $to . ' ' . $params
-        );
+        $where = '2c.click_time >= ' . $from . "\nAND 2c.click_time <= " . $to . ' ' . $params;
+        $query = ClickRollupSql::insertSelect($table, $where);
+        $removal = ClickRollupSql::deleteEarlierVisits($table, $where);
 
         $job = "WHERE time_from = '" . $from . "' AND time_to = '" . $to . "'";
         try {
             $this->doQuery($query, $from, $to, $upgrade, $new);
+            $this->doQuery($removal, $from, $to, $upgrade, $new);
         } catch (RuntimeException $e) {
             // Released, not finished: the next run takes the window again.
             if ($upgrade) {
@@ -871,7 +1008,7 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
                 );
             }
         }
-        return $query . "<br><br>";
+        return $query . "<br><br>" . $removal . "<br><br>";
     }
 
     public function doQuery($query, $from, $to, $upgrade = false, $new = false)
@@ -1089,12 +1226,6 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
                 $rangeFormat .= ", aff_campaign_name";
             }
 
-            $sqlObj = "SELECT" . $sqlSelectObj . $rangeFormat . " FROM 202_dataengine AS 2st ";
-
-            if ($campaign != '0') {
-                $sqlObj .= "LEFT JOIN 202_aff_campaigns AS 2ac ON 2ac.aff_campaign_id = 2st.aff_campaign_id AND 2ac.user_id = 2st.user_id ";
-            }
-
             // The account's clicks, as every other reader here scopes them
             // (user_id_query): the chart had no account condition at all, so
             // "Clicks (all)" summed every account's clicks in the window, and
@@ -1103,13 +1234,23 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
             // cast both so neither can break out of the clause regardless of
             // how the caller sourced them (from/to come from the request,
             // campaign from the stored chart config).
-            $sqlObj .= $this->mysql['user_id_query']
+            $where = $this->mysql['user_id_query']
                 . "AND 2st.click_time >= '" . (int) $from . "' AND 2st.click_time <= '" . (int) $to . "' ";
 
             if ($campaign != '0') {
-                $sqlObj .= "AND 2st.aff_campaign_id = '" . (int) $campaign . "' ";
+                $where .= "AND 2st.aff_campaign_id = '" . (int) $campaign . "' ";
             }
-            $sqlObj .= $click_filtered . " ";
+            $where .= $click_filtered . ' ';
+            $source = ReportAggregation::byHour(
+                $where,
+                date_default_timezone_get(),
+                $campaign != '0' ? ['user_id', 'aff_campaign_id'] : []
+            );
+            $sqlObj = 'SELECT' . $sqlSelectObj . $rangeFormat . $source;
+            if ($campaign != '0') {
+                $sqlObj .= ' LEFT JOIN 202_aff_campaigns AS 2ac'
+                    . ' ON 2ac.aff_campaign_id = 2st.aff_campaign_id AND 2ac.user_id = 2st.user_id ';
+            }
             $sqlObj .= "GROUP BY date_range;";
 
             // No recognized metrics selected: skip the query and let every

@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Prosper202\Attribution;
 
 /**
- * Sends one export to its webhook, safely (plan §6.3 "Exports", §7.1).
+ * Sends one export to its webhook, safely (plan §6.3 "Exports", §7.1), one
+ * LTV webhook delivery (Ltv\DeliverySender) and one Slack notice
+ * (Notifications\SlackWebhook, with a shorter timeout): all go through post().
  *
  * The URL is checked again here, at send time, by WebhookGuard — which
  * resolves the host and checks every address — and the connection is then
@@ -25,17 +27,23 @@ namespace Prosper202\Attribution;
  * the HMAC-SHA256 of "<X-P202-Timestamp>.<body>" under the export's secret.
  * A receiver recomputes it and refuses a timestamp more than a few minutes
  * old, which stops a captured request being replayed.
+ *
+ * @phpstan-type Posted array{
+ *     refused: string|null, strayed: string|null, pinned: string, status: int,
+ *     error: string|null, location: string|null, body: string
+ * }
  */
 final class WebhookSender
 {
     public const CONNECT_TIMEOUT = 5;
     public const TIMEOUT = 15;
-    /** Largest CSV sent as a webhook body; a larger export is downloaded instead. */
+    /** Largest body sent; a larger export is downloaded instead. */
     public const MAX_BODY_BYTES = 5 * 1024 * 1024;
     /** Response bytes read before the transfer is cut off. */
     public const MAX_RESPONSE_BYTES = 65536;
-    /** Response bytes kept for the error message. */
-    private const KEEP_RESPONSE_BYTES = 300;
+    /** Response bytes kept: an LTV delivery's log stores them; an export's error quotes the first 300 characters. */
+    private const KEEP_RESPONSE_BYTES = 1000;
+    private const MESSAGE_RESPONSE_CHARS = 300;
 
     private ?WebhookGuard $guard;
     /** @var callable(array<int, mixed>): array{status: int, error: string|null, primary_ip: string|null, location: string|null, body: string} */
@@ -68,14 +76,6 @@ final class WebhookSender
             return WebhookResult::failed(null, 'The export is ' . strlen($body) . ' bytes, more than the '
                 . self::MAX_BODY_BYTES . ' a webhook carries; download it instead.', false);
         }
-        try {
-            $this->guard ??= new WebhookGuard();
-            $target = $this->guard->check($url);
-        } catch (WebhookRefused $e) {
-            return WebhookResult::failed(null, 'Not sent: ' . $e->getMessage(), false);
-        } catch (\UnexpectedValueException $e) {
-            return WebhookResult::failed(null, 'Not sent: ' . $e->getMessage(), false);
-        }
 
         $timestamp ??= time();
         $headers = [
@@ -90,12 +90,15 @@ final class WebhookSender
             'Expect:',
         ];
 
-        $response = ($this->transport)(self::curlOptions($target, $body, $headers));
+        $response = $this->post($url, $body, $headers);
+        if ($response['refused'] !== null) {
+            return WebhookResult::failed(null, 'Not sent: ' . $response['refused'], false);
+        }
         $status = $response['status'];
 
-        if ($response['primary_ip'] !== null && $response['primary_ip'] !== '' && !self::sameAddress($response['primary_ip'], $target->pinned())) {
-            return WebhookResult::failed($status ?: null, 'The connection went to ' . $response['primary_ip']
-                . ' instead of the checked address ' . $target->pinned() . '; treated as not delivered.', false);
+        if ($response['strayed'] !== null) {
+            return WebhookResult::failed($status ?: null, 'The connection went to ' . $response['strayed']
+                . ' instead of the checked address ' . $response['pinned'] . '; treated as not delivered.', false);
         }
         if ($response['error'] !== null && $status === 0) {
             return WebhookResult::failed(null, 'Not delivered: ' . $response['error'], true);
@@ -109,7 +112,11 @@ final class WebhookSender
             return WebhookResult::delivered($status);
         }
 
-        $snippet = trim(mb_substr((string) preg_replace('/\s+/', ' ', $response['body']), 0, self::KEEP_RESPONSE_BYTES));
+        $snippet = trim(mb_substr(
+            (string) preg_replace('/\s+/', ' ', $response['body']),
+            0,
+            self::MESSAGE_RESPONSE_CHARS
+        ));
 
         return WebhookResult::failed(
             $status ?: null,
@@ -119,14 +126,75 @@ final class WebhookSender
     }
 
     /**
+     * POST a body to a webhook URL, the one way this server does it (an
+     * export through send(), an LTV delivery through Ltv\DeliverySender, a
+     * Slack notice through Notifications\SlackWebhook):
+     * WebhookGuard::check() at the moment of sending, the request made with
+     * curlOptions() (pinned, no proxy, https only, no redirects, TLS
+     * verified, timed out), at most MAX_BODY_BYTES sent and
+     * MAX_RESPONSE_BYTES read, and the address curl connected to compared
+     * with the pin. What the receiver's answer means is the caller's.
+     *
+     * refused is why nothing was sent; strayed is the address the
+     * connection went to when it was not the pinned one.
+     *
+     * @param list<string> $headers
+     * @param list<int> $ports the ports the URL may name (WebhookGuard::check()), any when empty
+     * @param int $timeout seconds the transfer may take, at most TIMEOUT (a Slack notice's is shorter)
+     * @return Posted
+     */
+    public function post(
+        string $url,
+        string $body,
+        array $headers,
+        array $ports = [],
+        int $timeout = self::TIMEOUT
+    ): array {
+        $none = [
+            'refused' => null, 'strayed' => null, 'pinned' => '', 'status' => 0,
+            'error' => null, 'location' => null, 'body' => '',
+        ];
+        if (strlen($body) > self::MAX_BODY_BYTES) {
+            return ['refused' => 'the body is ' . strlen($body) . ' bytes, more than the ' . self::MAX_BODY_BYTES
+                . ' a webhook carries'] + $none;
+        }
+        try {
+            $this->guard ??= new WebhookGuard();
+            $target = $this->guard->check($url, $ports);
+        } catch (WebhookRefused | \UnexpectedValueException $e) {
+            return ['refused' => $e->getMessage()] + $none;
+        }
+
+        $answer = ($this->transport)(self::curlOptions($target, $body, $headers, $timeout));
+        $connected = $answer['primary_ip'];
+
+        return [
+            'refused' => null,
+            'strayed' => $connected !== null && $connected !== '' && !self::sameAddress($connected, $target->pinned())
+                ? $connected
+                : null,
+            'pinned' => $target->pinned(),
+            'status' => $answer['status'],
+            'error' => $answer['error'],
+            'location' => $answer['location'],
+            'body' => $answer['body'],
+        ];
+    }
+
+    /**
      * Every curl option the delivery uses, from the checked target. Pure, so
      * a test can read exactly what the connection is allowed to do.
      *
      * @param list<string> $headers
+     * @param int $timeout seconds the transfer may take; it can only shorten TIMEOUT and CONNECT_TIMEOUT
      * @return array<int, mixed>
      */
-    public static function curlOptions(WebhookTarget $target, string $body, array $headers): array
-    {
+    public static function curlOptions(
+        WebhookTarget $target,
+        string $body,
+        array $headers,
+        int $timeout = self::TIMEOUT
+    ): array {
         $options = [
             CURLOPT_URL => $target->url,
             CURLOPT_POST => true,
@@ -140,8 +208,8 @@ final class WebhookSender
             CURLOPT_NOPROXY => '*',
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT,
-            CURLOPT_TIMEOUT => self::TIMEOUT,
+            CURLOPT_CONNECTTIMEOUT => max(1, min(self::CONNECT_TIMEOUT, $timeout)),
+            CURLOPT_TIMEOUT => max(1, min(self::TIMEOUT, $timeout)),
             CURLOPT_NOSIGNAL => true,
         ];
         $resolve = $target->resolveEntry();

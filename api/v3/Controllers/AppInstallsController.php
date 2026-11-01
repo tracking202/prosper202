@@ -15,6 +15,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\MysqliStatements;
 use Api\V3\Support\ResponseSanitizer;
+use Prosper202\Click\LatestVisit;
 
 /**
  * The operator's view of an Android registration's installs (plan §5.3,
@@ -42,7 +43,7 @@ final class AppInstallsController
         . 'utm_content, gclid, referrer_click_at, install_begin_at, referrer_click_server_at, install_begin_server_at, '
         . 'install_version, google_play_instant, app_version, sdk_version, os_version, integrity_mode, integrity_state, integrity_reason, '
         . 'integrity_attempts, integrity_next_at, integrity_checked_at, integrity_verdict, first_open_at, '
-        . 'ctit_seconds, ctit_flag, received_at, settled_at, remote_ip';
+        . 'ctit_seconds, ctit_flag, received_at, settled_at, settle_failures, settle_next_at, remote_ip';
 
     private const UNTRUSTED_FIELDS = [
         'referrer_raw', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid',
@@ -55,6 +56,7 @@ final class AppInstallsController
         'install_row_id', 'registration_id', 'click_id', 'conversion_id', 'trusted', 'referrer_click_at', 'install_begin_at',
         'referrer_click_server_at', 'install_begin_server_at', 'first_open_at', 'received_at', 'settled_at',
         'integrity_attempts', 'integrity_next_at', 'integrity_checked_at', 'ctit_seconds',
+        'settle_failures', 'settle_next_at',
     ];
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
@@ -187,11 +189,12 @@ final class AppInstallsController
         // The click's campaign links it to an app only when the campaign is
         // this account's: a tracker could name another account's before the
         // API checked linked ids (229df10), and that campaign's link says
-        // nothing about this account's apps (InstallIntake reads it the same).
+        // nothing about this account's apps. The campaign is the click's
+        // latest visit's (InstallIntake reads it the same).
         $stmt = $this->prepare(
-            'SELECT c.click_id, c.click_time, ac.app_registration_id FROM 202_clicks c
+            'SELECT c.click_id, c.click_time, ac.app_registration_id FROM ' . LatestVisit::of('?') . ' AS c
              LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
-             WHERE c.click_id = ? AND c.user_id = ? LIMIT 1'
+             WHERE c.user_id = ?'
         );
         $this->bind($stmt, 'ii', $clickId, $this->userId);
         $this->execute($stmt, 'Click lookup failed');

@@ -41,7 +41,7 @@ final class ServerStateStoreQuotaTest extends TestCase
 
     public function testARefusedRequestTakesNothingAndACostIsCountedWhole(): void
     {
-        $store = new ServerStateStore($this->dir, 'quota-test');
+        $store = new ServerStateStore($this->dir);
         self::assertNull($store->reserveQuota('b', 100, 60, 60));
         $wait = $store->reserveQuota('b', 100, 60, 60);
         self::assertIsInt($wait);
@@ -53,7 +53,7 @@ final class ServerStateStoreQuotaTest extends TestCase
 
     public function testBucketsAreKeptApartByTheirWholeName(): void
     {
-        $store = new ServerStateStore($this->dir, 'quota-test');
+        $store = new ServerStateStore($this->dir);
         // Names a slug would fold together: the file name carries a hash of the whole bucket.
         self::assertNull($store->reserveQuota('app-install-event-cap:r1:i23', 1, 60));
         self::assertNull($store->reserveQuota('app-install-event-cap:r12:i3', 1, 60));
@@ -63,7 +63,7 @@ final class ServerStateStoreQuotaTest extends TestCase
 
     public function testAnExpiredWindowStartsAgain(): void
     {
-        $store = new ServerStateStore($this->dir, 'quota-test');
+        $store = new ServerStateStore($this->dir);
         self::assertNull($store->reserveQuota('w', 1, 60));
         $file = glob($this->dir . '/rate_limits/w-*.json')[0] ?? null;
         self::assertIsString($file);
@@ -75,7 +75,7 @@ final class ServerStateStoreQuotaTest extends TestCase
 
     public function testARefundGivesBackToTheWindowItWasChargedToAndNeverBelowZero(): void
     {
-        $store = new ServerStateStore($this->dir, 'quota-test');
+        $store = new ServerStateStore($this->dir);
         $charge = $store->reserveQuotaWindow('r', 100, 60, 100);
         self::assertNull($charge['retry_after']);
         self::assertIsInt($store->reserveQuota('r', 100, 60, 1), 'full');
@@ -93,7 +93,7 @@ final class ServerStateStoreQuotaTest extends TestCase
 
     public function testARefundAfterItsWindowClosedGivesNothingToTheNextOne(): void
     {
-        $store = new ServerStateStore($this->dir, 'quota-test');
+        $store = new ServerStateStore($this->dir);
         $charge = $store->reserveQuotaWindow('n', 10, 60, 10);
         // The charge's window, moved a minute and a second into the past:
         // the next request opens a new one.
@@ -110,7 +110,7 @@ final class ServerStateStoreQuotaTest extends TestCase
 
     public function testARefundIsAsStrictAsTheCharge(): void
     {
-        $store = new ServerStateStore($this->dir, 'quota-test');
+        $store = new ServerStateStore($this->dir);
         $charge = $store->reserveQuotaWindow('s', 5, 60, 5);
         foreach (['{not json', (string) json_encode(['window_start' => $charge['window_start'], 'count' => -1])] as $corrupt) {
             file_put_contents($this->file('s'), $corrupt);
@@ -126,7 +126,7 @@ final class ServerStateStoreQuotaTest extends TestCase
     /** A bucket someone holds the lock of is live, however old its mtime reads. */
     public function testPruneLeavesABucketWhoseLockIsHeld(): void
     {
-        $store = new ServerStateStore($this->dir, 'quota-test');
+        $store = new ServerStateStore($this->dir);
         self::assertNull($store->reserveQuota('p', 5, 60));
         $file = $this->file('p');
         touch($file, time() - 7200);
@@ -166,7 +166,7 @@ final class ServerStateStoreQuotaTest extends TestCase
 
     public function testAStoreThatCannotAnswerThrows(): void
     {
-        $store = new ServerStateStore($this->dir, 'quota-test');
+        $store = new ServerStateStore($this->dir);
         self::assertNull($store->reserveQuota('c', 5, 60));
         $file = glob($this->dir . '/rate_limits/c-*.json')[0] ?? null;
         self::assertIsString($file);
@@ -184,7 +184,7 @@ final class ServerStateStoreQuotaTest extends TestCase
         $notADir = tempnam(sys_get_temp_dir(), 'p202-quota-file');
         self::assertIsString($notADir);
         try {
-            (new ServerStateStore($notADir, 'quota-test'))->reserveQuota('d', 5, 60);
+            (new ServerStateStore($notADir))->reserveQuota('d', 5, 60);
             self::fail('an unwritable store throws');
         } catch (\RuntimeException $e) {
             self::assertNotSame('', $e->getMessage());

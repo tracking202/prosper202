@@ -11,11 +11,11 @@ use Tests\TestCase;
  *
  * `Slack::getMessage()` returns `''` for a placeholder it does not know, and
  * `Slack::push()` turns `''` into `return false` — so a send with a name
- * nobody defined is a silent no-op. There is no exception, no log line, and
- * no difference in the calling code between "sent" and "there was nothing to
- * send": the installation has a webhook configured, the user performs the
- * action, and nothing arrives. The only symptom is the message a person
- * never sees.
+ * nobody defined sends nothing. There is no exception, and no difference in
+ * the calling code between "sent" and "there was nothing to send": the
+ * installation has a webhook configured, the user performs the action, and
+ * nothing arrives. push() logs it now, in a log nobody reads until they look
+ * for why a message never came.
  *
  * Three of these were in the tree when this was written — one added with the
  * mobile-apps page, two older — which is what a failure mode with no output

@@ -255,9 +255,10 @@ function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $us
  *   each kept in its list with its name even when the window has no click
  *   carrying it. Null lists nothing for the four (a test, or a page that
  *   offers none of them).
+ * @param bool $deferSeen  read only the selected labels now; choices are requested separately
  * @return array<string, array<string|int, string|array<string|int, string>>>
  */
-function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $userId, array $names, ?array $seen = null): array
+function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $userId, array $names, ?array $seen = null, bool $deferSeen = false): array
 {
     $rows = static function (string $sql, bool $scoped = true) use ($conn, $userId): array {
         $stmt = $conn->prepareRead($sql);
@@ -317,7 +318,11 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
     ];
     // Install-wide and unbounded: what this account's clicks carried.
     foreach (array_keys(P202_OVERVIEW_SEEN_LISTS) as $name) {
-        $queries[$name] = static fn () => $seen === null ? [] : p202_overview_seen_list(
+        $queries[$name] = static fn () => $seen === null ? [] : ($deferSeen ? p202_overview_seen_selected(
+            $conn,
+            $name,
+            (string) ($seen['values'][$name] ?? '')
+        ) : p202_overview_seen_list(
             $conn,
             $name,
             $seen['data_user_id'],
@@ -325,7 +330,7 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
             $seen['to'],
             (string) ($seen['values'][$name] ?? ''),
             $seen['limit'] ?? P202_OVERVIEW_SEEN_LIMIT
-        );
+        ));
     }
 
     $lists = [];
@@ -380,10 +385,13 @@ function p202_overview_seen_list_sql(string $name, bool $everyAccount, int $limi
     [$column, $lookup, $idColumn, $label] = P202_OVERVIEW_SEEN_LISTS[$name];
     $scope = $everyAccount ? 'd.user_id != 0' : 'd.user_id = ?';
 
-    return "SELECT d.$column AS id, MIN($label) AS label FROM 202_dataengine AS d"
-        . " JOIN $lookup ON ($idColumn = d.$column)"
+    // Keep the grouped rows first: lookup tables may contain far more values than this window.
+    return "SELECT seen.id AS id, $label AS label FROM ("
+        . "SELECT d.$column AS id, SUM(d.clicks) AS clicks FROM 202_dataengine AS d"
         . " WHERE $scope AND d.click_time >= ? AND d.click_time <= ?"
-        . " GROUP BY d.$column ORDER BY SUM(d.clicks) DESC, d.$column LIMIT " . max(1, $limit);
+        . " GROUP BY d.$column) AS seen"
+        . " STRAIGHT_JOIN $lookup ON ($idColumn = seen.id)"
+        . " ORDER BY seen.clicks DESC, seen.id LIMIT " . max(1, $limit);
 }
 
 /**
@@ -396,32 +404,94 @@ function p202_overview_seen_list_sql(string $name, bool $everyAccount, int $limi
  * filter in force is never shown as a bare number, and a window with no
  * clicks still shows what the report is filtered by.
  */
-function p202_overview_seen_list(\Prosper202\Database\Connection $conn, string $name, ?int $dataUserId, int $from, int $to, string $current = '', int $limit = P202_OVERVIEW_SEEN_LIMIT): array
-{
+function p202_overview_seen_list(
+    \Prosper202\Database\Connection $conn,
+    string $name,
+    ?int $dataUserId,
+    int $from,
+    int $to,
+    string $current = '',
+    int $limit = P202_OVERVIEW_SEEN_LIMIT,
+    ?\Prosper202\Report\FilterChoicesCache $cache = null
+): array {
     if (!isset(P202_OVERVIEW_SEEN_LISTS[$name])) {
         throw new InvalidArgumentException("p202_overview_seen_list(): '$name' is not a filter listed from the clicks");
     }
-    [, $lookup, $idColumn, $label] = P202_OVERVIEW_SEEN_LISTS[$name];
     $sql = p202_overview_seen_list_sql($name, $dataUserId === null, $limit);
     $params = $dataUserId === null ? [$from, $to] : [$dataUserId, $from, $to];
-    $stmt = $conn->prepareRead($sql);
-    $conn->bind($stmt, str_repeat('i', count($params)), $params);
-    $list = [];
-    foreach ($conn->fetchAll($stmt) as $row) {
-        $list[(string) $row['id']] = (string) $row['label'];
-    }
-
-    if ($current !== '' && !isset($list[$current]) && preg_match('/^[1-9]\d{0,18}$/', $current) === 1) {
-        $stmt = $conn->prepareRead("SELECT $label AS label FROM $lookup WHERE $idColumn = ?");
-        $conn->bind($stmt, 'i', [(int) $current]);
-        $row = $conn->fetchOne($stmt);
-        if ($row !== null) {
-            $list[$current] = (string) $row['label'];
+    $read = static function () use ($conn, $sql, $params): array {
+        $stmt = $conn->prepareRead($sql);
+        $conn->bind($stmt, str_repeat('i', count($params)), $params);
+        $list = [];
+        foreach ($conn->fetchAll($stmt) as $row) {
+            $list[(string) $row['id']] = (string) $row['label'];
         }
+
+        return $list;
+    };
+    $list = $cache === null ? $read() : $cache->remember($name, $dataUserId, $from, $to, $limit, $read);
+
+    if ($current !== '' && !isset($list[$current])) {
+        $list += p202_overview_seen_selected($conn, $name, $current);
     }
 
     uasort($list, static fn (string $a, string $b): int => strnatcasecmp($a, $b));
     return $list;
+}
+
+/**
+ * The current choice's label, without aggregating clicks for the other choices.
+ *
+ * @return array<int|string, string>
+ */
+function p202_overview_seen_selected(
+    \Prosper202\Database\Connection $conn,
+    string $name,
+    string $current
+): array {
+    if (!isset(P202_OVERVIEW_SEEN_LISTS[$name])) {
+        throw new InvalidArgumentException('Unknown report filter.');
+    }
+    if (preg_match('/^[1-9]\d{0,18}$/', $current) !== 1) {
+        return [];
+    }
+    [, $lookup, $idColumn, $label] = P202_OVERVIEW_SEEN_LISTS[$name];
+    $stmt = $conn->prepareRead("SELECT $label AS label FROM $lookup WHERE $idColumn = ?");
+    $conn->bind($stmt, 'i', [(int) $current]);
+    $row = $conn->fetchOne($stmt);
+
+    return $row === null ? [] : [$current => (string) $row['label']];
+}
+
+/**
+ * Validate one choices request. Its account scope always comes from the session.
+ *
+ * @param array<string, mixed> $query
+ * @return array{filter: string, from: int, to: int, current: string}
+ */
+function p202_overview_filter_choices_request(array $query): array
+{
+    $name = $query['filter'] ?? null;
+    if (!is_string($name) || !isset(P202_OVERVIEW_SEEN_LISTS[$name])) {
+        throw new InvalidArgumentException('Choose a valid report filter.');
+    }
+    $window = [];
+    foreach (['from', 'to'] as $key) {
+        $value = $query[$key] ?? null;
+        if ((!is_string($value) && !is_int($value)) || preg_match('/^\d{1,10}$/D', (string) $value) !== 1) {
+            throw new InvalidArgumentException('Choose a valid report date range.');
+        }
+        $window[$key] = (int) $value;
+    }
+    if ($window['from'] > $window['to']) {
+        throw new InvalidArgumentException('The report start must not be after its end.');
+    }
+    $current = $query['current'] ?? '';
+    if (!is_string($current) || preg_match('/^(?:|0|[1-9]\d{0,18})$/D', $current) !== 1) {
+        throw new InvalidArgumentException('Choose a valid current filter value.');
+    }
+
+    return ['filter' => $name, 'from' => $window['from'], 'to' => $window['to'], 'current' => $current];
 }
 
 /**
@@ -439,6 +509,7 @@ function p202_overview_seen_list(\Prosper202\Database\Connection $conn, string $
  *     names: list<string>,
  *     common?: list<string>,
  *     lists: array<string, mixed>,
+ *     choices_window?: array{from: int, to: int},
  *     state: array<string, mixed>,
  *     base: string,
  *     range?: bool,
@@ -496,6 +567,15 @@ function p202_overview_page(array $page): string
     }
     $common = $page['common'] ?? [];
     foreach ($filters as $i => $filter) {
+        if (isset(P202_OVERVIEW_SEEN_LISTS[$filter['name']], $page['choices_window']) && $errors === []) {
+            $filters[$i]['choices_url'] = rtrim($page['base'], '/') . '/tracking202/ajax/overview_filter_choices.php?'
+                . http_build_query([
+                    'filter' => $filter['name'],
+                    'from' => $page['choices_window']['from'],
+                    'to' => $page['choices_window']['to'],
+                    'current' => (string) $filter['value'],
+                ]);
+        }
         if (in_array($filter['name'], $common, true)) {
             $filters[$i]['advanced'] = false;
         }
@@ -587,8 +667,15 @@ function p202_overview_page(array $page): string
     }
     $html .= '</div></section>';
 
-    $html .= '<script src="' . $e(rtrim($page['base'], '/') . '/202-js/p202-overview.js') . '?v=' . $e(p202_overview_script_version()) . '" defer></script>';
+    $html .= p202_overview_choices_script($page['base']);
     return $html;
+}
+
+/** The shared report/optional-choice behavior, with a content-based cache buster. */
+function p202_overview_choices_script(string $base): string
+{
+    $url = rtrim($base, '/') . '/202-js/p202-overview.js?v=' . p202_overview_script_version();
+    return '<script src="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '" defer></script>';
 }
 
 /** A cache-busting version for p202-overview.js: its bytes, not a hand-kept number. */
@@ -786,12 +873,13 @@ function p202_overview_run(array $page): void
         // own window (the page's view is installed, so this is it), or from
         // the last day for Spy, whose window that is.
         $time = ($page['range'] ?? true) ? grab_timeframe() : ['from' => time() - 86400, 'to' => time()];
+        $page['choices_window'] = ['from' => (int) $time['from'], 'to' => (int) $time['to']];
         $page['lists'] = p202_overview_filter_lists($conn, $userId, $page['names'], [
             'data_user_id' => p202_overview_data_user_id(),
             'from' => (int) $time['from'],
             'to' => (int) $time['to'],
             'values' => $page['state']['values'],
-        ]);
+        ], true);
     } catch (RuntimeException $error) {
         error_log('Report page ' . (string) ($page['id'] ?? '?') . ': ' . $error->getMessage());
         template_top((string) ($page['page_title'] ?? $page['title']));

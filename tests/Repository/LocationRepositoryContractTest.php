@@ -145,6 +145,26 @@ final class LocationRepositoryContractTest extends TestCase
     }
 
     /**
+     * Only a leading `www.` names the same site; one inside a host is part
+     * of another host's name.
+     *
+     * @dataProvider implementations
+     */
+    public function testOnlyALeadingWwwIsTheSameDomain(LocationRepositoryInterface $repo): void
+    {
+        $plain = $repo->findOrCreateSiteDomain('https://example.com/');
+        self::assertSame($plain, $repo->findOrCreateSiteDomain('https://www.example.com/a'));
+        $others = [
+            'https://awww.example.com/' => 'https://aexample.com/',
+            'https://shop.www.example.com/' => 'https://shop.example.com/',
+            'https://www.www.example.com/' => 'https://example.com/',
+        ];
+        foreach ($others as $url => $other) {
+            self::assertNotSame($repo->findOrCreateSiteDomain($other), $repo->findOrCreateSiteDomain($url), $url);
+        }
+    }
+
+    /**
      * @dataProvider implementations
      */
     public function testFindOrCreateSiteUrlReturnsStableId(LocationRepositoryInterface $repo): void

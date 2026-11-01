@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Attribution;
 
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\Identity\IdentityGraph;
 
@@ -30,6 +31,13 @@ use Prosper202\Identity\IdentityGraph;
  * Clicks after the converting click are not part of its journey even when
  * they precede the conversion's arrival: the conversion happened through
  * the converting click, so nothing after it could have led to it.
+ *
+ * A click is one touch however many visits a redirector re-click gave it,
+ * at the time its visitor row holds (the first visit's: the graph keeps the
+ * time a click was first linked), and a bot when its latest visit is one,
+ * as the reports count it. The converting click is the last touch only,
+ * even when the conversion carries a later visit's time than its visitor
+ * row.
  *
  * Never IP, user agent or campaign: the old engine's journey was the
  * account's recent clicks on the same campaign, which is strangers' clicks.
@@ -60,21 +68,22 @@ final class JourneyBuilder
         $placeholders = implode(',', array_fill(0, count($keys), '?'));
         $from = max(0, $convTime - $lookbackDays * 86400);
         $stmt = $this->conn->prepareWrite(
-            "SELECT cv.click_id, cv.click_time
+            "SELECT DISTINCT cv.click_id, cv.click_time
              FROM 202_clicks_visitor cv
              JOIN 202_clicks c ON c.click_id = cv.click_id
              WHERE cv.user_id = ?
                AND cv.visitor_key IN ($placeholders)
                AND cv.click_time >= ?
                AND (cv.click_time < ? OR (cv.click_time = ? AND cv.click_id < ?))
-               AND c.click_bot = 0
+               AND cv.click_id <> ?
+               AND c.click_bot = 0 AND " . LatestVisit::isLatest('c') . "
              ORDER BY cv.click_time DESC, cv.click_id DESC
              LIMIT " . Journey::MAX_TOUCHES
         );
         $this->conn->bind(
             $stmt,
-            'i' . str_repeat('i', count($keys)) . 'iiii',
-            array_merge([$userId], $keys, [$from, $convClickTime, $convClickTime, $convClickId])
+            'i' . str_repeat('i', count($keys)) . 'iiiii',
+            array_merge([$userId], $keys, [$from, $convClickTime, $convClickTime, $convClickId, $convClickId])
         );
         $earlier = $this->conn->fetchAll($stmt);
 

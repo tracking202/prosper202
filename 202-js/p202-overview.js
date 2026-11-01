@@ -34,6 +34,7 @@
 
     var SPY_INTERVAL = 5000;
     var SPY_MAX_ROWS = 200;
+    var choicesLoading = new WeakSet();
 
     function escapeHtml(text) {
         return String(text).replace(/[&<>"']/g, function (c) {
@@ -43,12 +44,26 @@
 
     /* A failed request says what failed in place of the report, in the kit's
        flash, rather than leaving a skeleton that never resolves. */
-    function failure(panel, xhr) {
+    function failure(panel, xhr, subject) {
+        subject = subject || 'report';
         var status = xhr && xhr.status ? 'HTTP ' + xhr.status : 'no answer from the server';
+        var guidance = 'Reload the page and try again. If this continues, ask your administrator to check the server logs.';
+        if (xhr && xhr.status === 504) {
+            guidance = 'The server did not respond in time. '
+                + (subject === 'report' ? 'Try a shorter date range.' : 'Wait a moment and try again.');
+        } else if (xhr && (xhr.status === 502 || xhr.status === 503)) {
+            guidance = 'The server is temporarily unavailable. Try again shortly.';
+        } else if (xhr && xhr.status === 401) {
+            guidance = 'Your session may have expired. Sign in again and retry.';
+        } else if (xhr && xhr.status === 403) {
+            guidance = 'The request was not authorized. Reload the page and check your access.';
+        } else if (!xhr || !xhr.status) {
+            guidance = 'Check your connection and try again.';
+        }
         panel.setAttribute('aria-busy', 'false');
         panel.innerHTML = '<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i>'
-            + '<div class="p202-flash__body">The report could not be loaded (' + escapeHtml(status) + '). '
-            + 'Your session may have expired; reload the page and try again.</div></div>';
+            + '<div class="p202-flash__body">The ' + escapeHtml(subject) + ' could not be loaded (' + escapeHtml(status) + '). '
+            + guidance + '</div></div>';
     }
 
     /* What charts.php said when it refused or failed: its {"error": ...}
@@ -92,8 +107,115 @@
             .fail(function (xhr) {
                 panel.style.opacity = '';
                 failure(panel, xhr);
+            })
+            .always(function () {
+                Array.prototype.forEach.call(document.querySelectorAll('details[open]'), loadAdvancedChoices);
             });
     }
+
+    /* Read optional choices only in an expanded Advanced section, after the
+       report settles. Serial requests avoid four simultaneous click scans. */
+    function loadChoices(button) {
+        button.setAttribute('data-p202-choices-attempted', 'true');
+        var select = document.getElementById(button.getAttribute('aria-controls'));
+        var status = select && document.getElementById(select.id + '-choices-status');
+        if (!select || !status) {
+            return window.jQuery.Deferred().resolve().promise();
+        }
+        button.disabled = true;
+        button.textContent = 'Loading choices…';
+        select.setAttribute('aria-busy', 'true');
+        status.textContent = 'Loading choices for this date range…';
+        return window.jQuery.getJSON(button.getAttribute('data-p202-filter-choices'))
+            .done(function (data) {
+                if (!data || !Array.isArray(data.options) || data.options.some(function (option) {
+                    return !option || typeof option.value !== 'string' || typeof option.label !== 'string';
+                })) {
+                    retry('The choices could not be read. Try again.');
+                    return;
+                }
+                if (select.tagName === 'DATALIST') {
+                    // Updating suggestions must never overwrite text typed while waiting.
+                    select.textContent = '';
+                    data.options.forEach(function (option) {
+                        select.appendChild(new Option(option.label, option.value));
+                    });
+                } else {
+                    // The user may have cleared this filter while the request was running.
+                    var current = select.value;
+                    var selected = select.options[select.selectedIndex];
+                    var label = selected ? selected.text : current;
+                    Array.prototype.slice.call(select.options).forEach(function (option) {
+                        if (option.value !== '') {
+                            option.remove();
+                        }
+                    });
+                    data.options.forEach(function (option) {
+                        select.add(new Option(option.label, option.value));
+                    });
+                    if (current !== '' && !Array.prototype.some.call(select.options, function (option) {
+                        return option.value === current;
+                    })) {
+                        select.add(new Option(label, current));
+                    }
+                    select.value = current;
+                }
+                select.setAttribute('aria-busy', 'false');
+                button.hidden = true;
+                button.setAttribute('data-p202-choices-loaded', 'true');
+                status.textContent = data.options.length ? 'Choices loaded.' : 'No choices in this date range.';
+            })
+            .fail(function (xhr) {
+                retry(said(xhr));
+            });
+
+        function retry(message) {
+            button.disabled = false;
+            button.hidden = false;
+            button.textContent = 'Retry loading choices';
+            select.setAttribute('aria-busy', 'false');
+            status.textContent = message;
+        }
+    }
+
+    function loadAdvancedChoices(details) {
+        if (!details.open || choicesLoading.has(details)) {
+            return;
+        }
+        var button = details.querySelector('[data-p202-filter-choices]:not([data-p202-choices-attempted])');
+        if (!button) {
+            return;
+        }
+        var panel = document.querySelector('[data-p202-report]');
+        if (panel && panel.getAttribute('aria-busy') === 'true') {
+            var waiting = document.getElementById(button.getAttribute('aria-controls') + '-choices-status');
+            if (waiting) {
+                waiting.textContent = 'Choices will load when the report finishes.';
+            }
+            return;
+        }
+        choicesLoading.add(details);
+        loadChoices(button).always(function () {
+            choicesLoading.delete(details);
+            loadAdvancedChoices(details);
+        });
+    }
+
+    document.addEventListener('toggle', function (event) {
+        if (event.target.matches('details')) {
+            loadAdvancedChoices(event.target);
+        }
+    }, true);
+
+    document.addEventListener('click', function (event) {
+        var button = event.target.closest ? event.target.closest('[data-p202-filter-choices]') : null;
+        var details = button && button.closest('details');
+        if (details && !button.disabled) {
+            button.removeAttribute('data-p202-choices-attempted');
+            button.hidden = true;
+            loadAdvancedChoices(details);
+        }
+    });
 
     /* ── Charts ─────────────────────────────────────────────────────── */
 
@@ -313,6 +435,9 @@
                             failure(panel, xhr);
                         }
                     }
+                })
+                .always(function () {
+                    Array.prototype.forEach.call(document.querySelectorAll('details[open]'), loadAdvancedChoices);
                 });
         }
 
@@ -369,10 +494,7 @@
                     window.jQuery(body).html(xhr.responseText);
                     return;
                 }
-                body.innerHTML = '<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i>'
-                    + '<div class="p202-flash__body">The conversions could not be loaded ('
-                    + escapeHtml(xhr && xhr.status ? 'HTTP ' + xhr.status : 'no answer from the server')
-                    + '). Your session may have expired; reload the page and try again.</div></div>';
+                failure(body, xhr, 'conversions');
             });
     });
 
@@ -403,6 +525,7 @@
                     holder.remove();
                 });
         });
+        Array.prototype.forEach.call(document.querySelectorAll('details[open]'), loadAdvancedChoices);
     }
 
     if (document.readyState === 'loading') {

@@ -67,21 +67,15 @@ $user_id = $db->real_escape_string((string)$rotator_row['user_id']);
 p202ApplyOwnerPrivacy($rotator_row['user_id'] ?? null);
 $user_keyword_searched_or_bidded = $db->real_escape_string($rotator_row['user_keyword_searched_or_bidded']);
 
-//grab rules data
-$mysql['rotator_id'] = $db->real_escape_string((string)$rotator_row['rotator_id']);
-$rule_sql = "SELECT ru.id as rule_id
-			 FROM 202_rotator_rules AS ru
-			 WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'";
-$rule_row = foreach_memcache_mysql_fetch_assoc($db, $rule_sql);
+// The active rules, in the order they are tried (RuleOrder).
+$rule_row = \Prosper202\Rotator\RuleOrder::activeRules($db, (int) $rotator_row['rotator_id']);
 
 AUTH::set_timezone($rotator_row['user_timezone']);
 
 $ip_address = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
 
 if ($rotator_row['maxmind_isp'] == '1') {
-	$IspData = getIspData($ip_address);
-	$IspData = explode(',', (string) $IspData);
-	$IspData = $IspData[0];
+	$IspData = \Prosper202\Rotator\Criterion::visitorIsp((string) getIspData($ip_address));
 } else {
 	$IspData = null;
 }
@@ -152,9 +146,9 @@ foreach ($rule_row as $rule) {
 			break;
 		}
 
-		$values = explode(',', (string) $criteria['value']);
+		$values = \Prosper202\Rotator\Criterion::values($criteria['value']);
 
-		if (in_array('ALL', $values) || in_array('all', $values)) {
+		if (\Prosper202\Rotator\Criterion::matchesEveryone($values)) {
 			
 			$rotate[] = true;
 
@@ -503,10 +497,11 @@ if ($IspData != null) {
 if ($clickIsBot) {
 	$mysql['click_filtered'] = '1';
 } else {
-	// Initialize click_id as 0 for the filter (will be updated after insert)
-	$click_id_temp = 0;
-	$click_filtered = FILTER::startFilter($db, $click_id_temp, $ip_id, $user_id);
-$mysql['click_filtered'] = $db->real_escape_string((string)$click_filtered);
+	// Why it is filtered goes with the click (202_clicks_filter_reason).
+	$clickFilter = FILTER::verdict($db, $ip_id, $user_id);
+	$mysql['click_filtered'] = (string) $clickFilter->flag();
+	$mysql['click_filter_reason'] = (string) $clickFilter->reason;
+	$mysql['click_filter_entry_id'] = $clickFilter->filtered ? (string) ($clickFilter->entryId ?? 0) : '0';
 }
 
 $clickRepo = new \Prosper202\Click\MysqlClickRepository(\Prosper202\Repository\LookupRepositoryFactory::connection($db));
@@ -526,11 +521,19 @@ if (ClickRequest::string($_GET, 'lpr') !== '') {
 	);
 }
 if ($reClick !== null) {
-	// The click keeps its keyword. Its id belongs to an earlier click, so it
-	// is not noted for the redirect to sign (RecordedClicks).
-	$click_id = $reClick['click_id'];
-	$keyword_id = $reClick['keyword_id'];
-	$mysql['keyword_id'] = (string) $keyword_id;
+    // The click keeps its keyword, and the c1-c4 the re-click does not bring
+    // (an id of 0); recordReClick() stores its first visit's traffic source,
+    // cost and filtered and bot flags, not the link's or this visit's. Its id
+    // belongs to an earlier click, so it is not noted for the redirect to
+    // sign (RecordedClicks).
+    $click_id = $reClick['click_id'];
+    $keyword_id = $reClick['keyword_id'];
+    $mysql['keyword_id'] = (string) $keyword_id;
+    foreach (['c1' => $c1, 'c2' => $c2, 'c3' => $c3, 'c4' => $c4] as $rtrKey => $rtrValue) {
+        if ($rtrValue === '') {
+            $mysql[$rtrKey . '_id'] = '0';
+        }
+    }
 } else {
 	try {
 		$click_id = $clickRepo->allocateClickId();
@@ -643,13 +646,20 @@ $rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $use
 // database failure, and the uncaught handler logs it as one.
 $rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity);
 try {
-	// The site URL lookup caches the ids of the rows it inserts: held until
-	// the transaction commits, and dropped with a rollback.
-	p202WithHeldCacheWrites(static fn () => $reClick !== null
-		? $clickRepo->recordReClick($rtrClick, $rtrResolveRedirect)
-		: $clickRepo->recordClick($rtrClick, $rtrResolveRedirect));
+    // The site URL lookup caches the ids of the rows it inserts: held until
+    // the transaction commits, and dropped with a rollback.
+    $rtrRedirectAsBuilt = $redirect_site_url;
+    rtr_record_visit(
+        static fn () => p202WithHeldCacheWrites(static fn () => $reClick !== null
+            ? $clickRepo->recordReClick($rtrClick, $rtrResolveRedirect)
+            : $clickRepo->recordClick($rtrClick, $rtrResolveRedirect)),
+        $reClick !== null,
+        static function () use (&$redirect_site_url, $rtrRedirectAsBuilt): void {
+            $redirect_site_url = $rtrRedirectAsBuilt;
+        }
+    );
 } catch (\Throwable $rtrWriteError) {
-	record_mysql_error($db, 'recording rotator click ' . $mysql['click_id'], $rtrWriteError->getMessage());
+    record_mysql_error($db, 'recording rotator click ' . $mysql['click_id'], $rtrWriteError->getMessage());
 }
 
 	if ($rule['aff_campaign_id'] != null) {
@@ -670,8 +680,9 @@ try {
 	// Gated on an active Landing Page Optimizer pairing whose derived key is already cached
 	// in the lpo_bridge_config pref — installs paired before ctx_token
 	// support skip minting until 202-cronjobs/bridge_config.php backfills
-	// the key. All payload claims are already in scope: zero extra queries
-	// beyond the memcached pref row. Failure-open: ANY problem in this block
+    // the key. A new click's payload claims are already in scope: zero extra
+    // queries beyond the memcached pref row; a re-click's are read back from
+    // the click. Failure-open: ANY problem in this block
 	// (missing Landing Page Optimizer columns pre-upgrade, bad JSON, mint error) leaves the
 	// redirect exactly as it was.
 	$t202ctx_token = '';
@@ -704,10 +715,42 @@ try {
 				$t202ctx_state = json_decode((string)($t202ctx_pref['lpo_bridge_config'] ?? ''), true);
 				$t202ctx_key_hex = is_array($t202ctx_state) ? (string)($t202ctx_state['ctx_key'] ?? '') : '';
 				if (preg_match('/^[0-9a-f]{64}$/', $t202ctx_key_hex) === 1) {
+                    $t202ctx_click = [
+                        'acc' => (int) $ppc_account, 'kw' => $keyword,
+                        'c1' => $c1, 'c2' => $c2, 'c3' => $c3, 'c4' => $c4,
+                    ];
+                    if ($reClick !== null) {
+                        // The claims are the click's as stored: its first
+                        // visit's traffic source, its keyword, and the c1-c4
+                        // the re-click did not bring.
+                        $t202ctx_conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
+                        $t202ctx_read = $t202ctx_conn->prepareWrite(
+                            'SELECT c.ppc_account_id, kw.keyword, t1.c1, t2.c2, t3.c3, t4.c4 FROM '
+                                . \Prosper202\Click\LatestVisit::of('?') . ' AS c'
+                                . ' LEFT JOIN 202_clicks_advance AS a ON a.click_id = c.click_id'
+                                . ' LEFT JOIN 202_keywords AS kw ON kw.keyword_id = a.keyword_id'
+                                . ' LEFT JOIN 202_clicks_tracking AS t ON t.click_id = c.click_id'
+                                . ' LEFT JOIN 202_tracking_c1 AS t1 ON t1.c1_id = t.c1_id'
+                                . ' LEFT JOIN 202_tracking_c2 AS t2 ON t2.c2_id = t.c2_id'
+                                . ' LEFT JOIN 202_tracking_c3 AS t3 ON t3.c3_id = t.c3_id'
+                                . ' LEFT JOIN 202_tracking_c4 AS t4 ON t4.c4_id = t.c4_id'
+                                . ' WHERE c.user_id = ?'
+                        );
+                        $t202ctx_conn->bind($t202ctx_read, 'ii', [(int) $click_id, (int) $user_id]);
+                        $t202ctx_row = $t202ctx_conn->fetchOne($t202ctx_read);
+                        if ($t202ctx_row === null) {
+                            throw new \RuntimeException('Re-clicked click ' . (int) $click_id . ' has no row');
+                        }
+                        $t202ctx_click = ['acc' => (int) $t202ctx_row['ppc_account_id']];
+                        $t202ctx_columns = ['kw' => 'keyword', 'c1' => 'c1', 'c2' => 'c2', 'c3' => 'c3', 'c4' => 'c4'];
+                        foreach ($t202ctx_columns as $t202ctx_ck => $t202ctx_col) {
+                            $t202ctx_click[$t202ctx_ck] = (string) ($t202ctx_row[$t202ctx_col] ?? '');
+                        }
+                    }
 					$t202ctx_claims = ['v' => 1, 't' => time(), 'sid' => (string)$mysql['click_id']];
-					if ((int)$ppc_account > 0) {
-						$t202ctx_claims['acc'] = (int)$ppc_account;
-					}
+                    if ($t202ctx_click['acc'] > 0) {
+                        $t202ctx_claims['acc'] = $t202ctx_click['acc'];
+                    }
 					if ((int)$rule['aff_campaign_id'] > 0) {
 						$t202ctx_claims['cmp'] = (int)$rule['aff_campaign_id'];
 					}
@@ -715,14 +758,14 @@ try {
 					if ($t202ctx_lp_id > 0) {
 						$t202ctx_claims['lp'] = $t202ctx_lp_id;
 					}
-					if ((string)($t202ctx_pref['lpo_ctx_kw'] ?? '1') !== '0' && $keyword !== '') {
-						$t202ctx_claims['kw'] = $keyword;
-					}
-					foreach (['c1' => $c1, 'c2' => $c2, 'c3' => $c3, 'c4' => $c4] as $t202ctx_ck => $t202ctx_cv) {
-						if ($t202ctx_cv !== '') {
-							$t202ctx_claims[$t202ctx_ck] = $t202ctx_cv;
-						}
-					}
+                    if ((string)($t202ctx_pref['lpo_ctx_kw'] ?? '1') !== '0' && $t202ctx_click['kw'] !== '') {
+                        $t202ctx_claims['kw'] = $t202ctx_click['kw'];
+                    }
+                    foreach (['c1', 'c2', 'c3', 'c4'] as $t202ctx_ck) {
+                        if ($t202ctx_click[$t202ctx_ck] !== '') {
+                            $t202ctx_claims[$t202ctx_ck] = $t202ctx_click[$t202ctx_ck];
+                        }
+                    }
 					if ((string)$countryCode !== '') {
 						$t202ctx_claims['cc'] = (string)$countryCode;
 					}
@@ -756,4 +799,46 @@ try {
 	}
 	return $t202ctx_final_url;
 
+}
+
+/**
+ * The visit's write, and a re-click's again when it loses a deadlock, up to
+ * four tries in all, as two re-clicks of different clicks can on a
+ * partitioned 202_clicks: each locks its click
+ * (MysqlConversionLedger::clickTransaction()), which holds a gap in the current
+ * week's partition, and then inserts its row into the other's gap. The
+ * server rolls the loser back whole and $write's held cache writes are
+ * dropped with it, so nothing of a lost try stands; $reset puts back the
+ * redirect URL the try may have filled in, and $pause waits a jittered while
+ * that grows with each try, so two that deadlocked do not meet again at
+ * once. Measured with eight concurrent re-clickers of older clicks on 158
+ * partitions (MariaDB 10.11): one immediate retry lost 19 and 24 visits of
+ * 1,200 to another deadlock, four tries 3 and 2. The last failure is the
+ * caller's.
+ *
+ * @param (callable(int): void)|null $pause given the try that failed; null sleeps 5 to 30 ms times it
+ */
+function rtr_record_visit(callable $write, bool $reClick, callable $reset, ?callable $pause = null): void
+{
+    for ($try = 1;; $try++) {
+        try {
+            $write();
+
+            return;
+        } catch (\Throwable $e) {
+            if (
+                !$reClick
+                || $try >= 4
+                || !\Prosper202\Database\Connection::isMysqlError($e, 1213, 'Deadlock found')
+            ) {
+                throw $e;
+            }
+            $reset();
+            if ($pause === null) {
+                usleep(random_int(5_000, 30_000) * $try);
+            } else {
+                $pause($try);
+            }
+        }
+    }
 }

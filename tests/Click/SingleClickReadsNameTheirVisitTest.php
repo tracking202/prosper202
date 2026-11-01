@@ -12,13 +12,16 @@ use Tests\Support\SourceScan;
  * A read of one click's 202_clicks row says which visit it takes.
  *
  * A redirector re-click gives the click another 202_clicks row, at its own
- * visit's time, with that visit's campaign, payout, cost and traffic source,
- * so a read of one click with no order gets whichever row the database
- * returns first. LatestVisit holds the order that takes the latest: of() is
- * a derived table standing where the statement read `202_clicks`, orderBy()
- * the ORDER BY for a statement that joins 202_clicks_rotator. Every other
- * read of one click is listed in ANY_VISIT with why any visit's row may
- * answer it; the list only shrinks.
+ * visit's time, with that visit's campaign and payout, so a read of one
+ * click with no order gets whichever row the database returns first.
+ * LatestVisit holds the order that takes the latest, the visit a conversion
+ * credits: of() is a derived table standing where the statement read
+ * `202_clicks`, orderBy() the ORDER BY for a statement that joins
+ * 202_clicks_rotator, isLatest() the condition for a statement that reads
+ * many clicks' rows. FirstVisit::of() is the derived table of the first, the
+ * visit whose traffic source and cost a click keeps. Every other read of one
+ * click is listed in ANY_VISIT with why any visit's row may answer it; the
+ * list only shrinks.
  *
  * Read per statement as PHP assembles it (AssembledStrings: literals,
  * interpolations, heredocs, class constants such as TableRegistry::CLICKS,
@@ -38,18 +41,19 @@ use Tests\Support\SourceScan;
  *   (`LIMIT 0, 1`, `LIMIT 1 OFFSET`) anywhere in the statement. A table
  *   it cannot read with only a LIMIT 1 is any table's one row, not seen.
  *
- * It goes through LatestVisit when the alias of every bare 202_clicks it
- * reads is the first argument of a LatestVisit::orderBy() call among the
- * statement's own operands whose second argument is the alias of a
- * 202_clicks_rotator in the same statement, and every table it cannot read
- * is a LatestVisit::of() call standing where that table is. A statement
- * that reads through of() reads one click by construction.
+ * It names its visit when the alias of every bare 202_clicks it reads is
+ * the first argument of a LatestVisit::orderBy() call among the statement's
+ * own operands whose second argument is the alias of a 202_clicks_rotator in
+ * the same statement, or the argument of a LatestVisit::isLatest() call
+ * among them, and every table it cannot read is a LatestVisit::of() or
+ * FirstVisit::of() call standing where that table is. A statement that reads
+ * through of() reads one click by construction.
  *
  * What it does not read: a restriction appended in another statement
  * (`$sql .= ' AND c.click_id = ?'`) or handed to a builder. When this was
  * written nine SQL fragments carried one: ClickRollupSql::insertSelect()'s
- * re-derivation of one click (three callers; it writes a report row per
- * visit, keyed by click_id and click_time), the reports' subid filter
+ * re-derivation of one click (three callers; it writes the report row of the
+ * click's latest visit and removes its earlier visits' rows), the reports' subid filter
  * (four), and two API list filters on other tables. Nor does it
  * read one row taken in PHP from a statement with no LIMIT 1 and no
  * click_id restriction (a fetchOne() of a join from another table's row),
@@ -59,13 +63,27 @@ use Tests\Support\SourceScan;
  * The predicate is wider than "one click" where it cannot tell (LIMIT 1 over
  * an aggregate, an id list built at runtime): those are listed with why,
  * the loud direction. Writes of 202_clicks are ClickRowsWrittenOnlyByTheWriterTest's.
+ * Which visit a read should take is not read: a read of a source column
+ * through LatestVisit, or of a campaign through FirstVisit, is credited.
  */
 final class SingleClickReadsNameTheirVisitTest extends TestCase
 {
-    private const LATEST_VISIT = 'prosper202\click\latestvisit';
+    /** Each class whose calls name a visit => the visit its reads take. */
+    private const VISITS = [
+        'prosper202\click\latestvisit' => 'latest',
+        'prosper202\click\firstvisit' => 'first',
+    ];
 
-    /** What every conversion-side entry below shares. */
-    private const UNDECIDED = 'Which visit a conversion credits is undecided, raised with the maintainer separately; ';
+    /**
+     * file::function => [how many reads of one click it makes, the visit
+     * they take]: the reads that define a visit, which no call can name.
+     * The count is held exactly.
+     *
+     * @var array<string, array{int, string}>
+     */
+    private const DEFINES_A_VISIT = [
+        '202-config/Click/FirstVisit.php::of' => [1, 'first'],
+    ];
 
     /**
      * file::function ({main} outside any named function) => [how many reads
@@ -73,65 +91,17 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
      * The count is held exactly. Of a click's 202_clicks columns only
      * click_id and user_id agree across its visits: recordReClick() refuses
      * a click of another account, and nothing rewrites either; a re-click's
-     * row carries its own campaign, payout, cost, traffic source and time,
-     * and click_lead 0 until the ledger next recomputes the click.
+     * row carries its own campaign, payout and time (and, when written before
+     * 1.9.79, its own traffic source and cost, and click_lead 0 until the
+     * ledger next recomputes the click).
      *
      * @var array<string, array{int, string}>
      */
     private const ANY_VISIT = [
-        // Conversions, pixels and the ledger.
-        'tracking202/static/gpb.php::{main}' => [2, self::UNDECIDED . 'the postback\'s traffic source (ppc_account_id:'
-            . ' whose pixels fire), and the campaign, payout, CPC, lead flag and click time it records.'],
-        'tracking202/static/gpx.php::{main}' => [1, self::UNDECIDED . 'the pixel\'s campaign, lead flag and click'
-            . ' time.'],
-        'tracking202/static/upx.php::{main}' => [2, self::UNDECIDED . 'as gpb.php: the campaign, payout, CPC, lead'
-            . ' flag and click time, and the traffic source whose pixels fire.'],
-        '202-config/static-endpoint-helpers.php::p202RecordLegacyConversion' => [1, self::UNDECIDED . 'a px/pb/cb202'
-            . ' conversion\'s campaign (and its campaign_mismatch refusal), payout, lead flag and click time.'],
-        '202-config/Conversion/MysqlConversionRepository.php::recordLocked' => [1, self::UNDECIDED . 'the'
-            . ' conversion\'s campaign and with it the campaign\'s terms, the click payout, lead flag and time,'
-            . ' read under the click\'s lock.'],
-        '202-config/Conversion/MysqlConversionRepository.php::reviveGoalRowLocked' => [1, self::UNDECIDED
-            . 'the campaign the click is recomputed under when a goal row is revived.'],
-        '202-config/Conversion/MysqlConversionRepository.php::softDeleteLocked' => [1, self::UNDECIDED . 'the'
-            . ' pre-ledger baseline carried in before the deletion (campaign, payout, time, lead flag) and the'
-            . ' campaign the click is recomputed under.'],
-        '202-config/Conversion/MysqlConversionRepository.php::clearClicks' => [1, self::UNDECIDED . 'as'
-            . ' softDeleteLocked(), for each click a subid list or a category reset clears.'],
-        '202-config/Conversion/Ledger/MysqlConversionLedger.php::lockGoalRowsClick' => [1, self::UNDECIDED
-            . 'the campaign the click is recomputed under when a goal row is superseded.'],
-        '202-config/Conversion/Ledger/ClickBreakdown.php::forClick' => [1, self::UNDECIDED . 'shown, not written:'
-            . ' the campaign whose terms explain the click\'s ledger, and its payout, lead flag and time; it has to'
-            . ' show the visit the ledger credits.'],
-        '202-config/Conversion/TrafficSourcePixels.php::clickTokens' => [1, self::UNDECIDED . 'which traffic'
-            . ' source\'s pixels and postbacks announce a conversion (ppc_account_id), and the CPC token they carry.'],
-        '202-config/Attribution/ConversionBackfill.php::run' => [1, self::UNDECIDED . 'the baseline row a pre-ledger'
-            . ' lead is given: its campaign, payout, time and lead flag.'],
-        '202-config/Update/SubidBatch.php::ownedClicks' => [1, self::UNDECIDED . 'a subid upload\'s preview of'
-            . ' whether each click already converted (click_lead, an id list read at runtime); the mark itself is'
-            . ' recordLocked()\'s.'],
-        // Goals, identity and installs.
-        '202-config/Goals/GoalEngine.php::clickSubject' => [1, self::UNDECIDED . 'a click subject\'s anchor time and'
-            . ' the campaign whose goal set and payouts apply.'],
-        '202-config/Goals/GoalEngine.php::installSubject' => [1, self::UNDECIDED . 'an install\'s click anchor time'
-            . ' and the campaign whose payouts apply (one row of a join from the install, LIMIT 1).'],
-        '202-config/Goals/GoalEngine.php::current' => [1, self::UNDECIDED . 'as installSubject(), re-read under the'
-            . ' install\'s lock. Its comment says a click\'s time and campaign are never rewritten; a re-click adds'
-            . ' a row with its own, and an exit rewrites the campaign of rows not yet a lead.'],
-        '202-config/Goals/GoalEngine.php::clickCampaignGoals' => [1, self::UNDECIDED . 'the campaign whose goals an'
-            . ' install evaluates beyond its registration\'s (one row of a join from the install, LIMIT 1).'],
-        '202-config/Goals/WebEvents.php::click' => [1, self::UNDECIDED . 'an event\'s account, the campaign whose'
-            . ' goals evaluate it, and the click time.'],
-        '202-config/Goals/WebEvents.php::clickForVisitor' => [1, self::UNDECIDED . 'which of a visitor\'s clicks an'
-            . ' event goes to, and its campaign: the newest matching row by click_time, which under the campaign'
-            . ' filter can be an earlier visit of a click re-clicked elsewhere.'],
-        '202-config/Identity/ClickIdentity.php::attachToStoredClick' => [1, self::UNDECIDED . 'whether a converting'
-            . ' click is linked to its customer (its campaign\'s identity setting), and the time it is linked at.'],
-        'api/v3/Apps/Android/InstallIntake.php::classifyWithClick' => [1, self::UNDECIDED . 'an install\'s'
-            . ' attribution: the click\'s campaign and the app it links, its owner and time, under the click\'s'
-            . ' lock.'],
-        'api/v3/Controllers/AppInstallsController.php::installToken' => [1, self::UNDECIDED . 'whether the click\'s'
-            . ' campaign links another app, refused before a token is minted; read as InstallIntake reads it.'],
+        // The ledger's click lock.
+        '202-config/Conversion/Ledger/MysqlConversionLedger.php::lockClickRow' => [1, 'The lock: it selects click_id,'
+            . ' which agrees across visits, from the click\'s first row in the click_id index (LIMIT 1 FOR UPDATE),'
+            . ' the row every ledger writer locks; the visit is read through LatestVisit after it.'],
         // Shown only.
         '202-account/administration.php::p202_admin_scheduled_deletion' => [1, 'Shown only: the day of the click'
             . ' an earlier version\'s scheduled deletion names by id (the newest at or below it, LIMIT 1). The'
@@ -143,21 +113,34 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         // Every visit's row.
         '202-config/Click/MysqlClickRepository.php::accountsClickFirstTime' => [1, 'Reads every visit\'s row'
             . ' (fetchAll): each must be the account\'s, and the earliest time is the click\'s first.'],
+        '202-config/Click/MysqlClickRepository.php::repairVisits' => [1, 'Reads every visit\'s row (fetchAll):'
+            . ' their accounts must agree, and their times name the rows the backfill rewrites.'],
+        '202-config/Click/MysqlClickRepository.php::writeVisitRows' => [1, 'COUNT(*) of the click\'s rows in the'
+            . ' second of the visit being written: whichever they are, they are the rows that visit rewrites.'],
+        '202-config/Click/LatestVisit.php::refresh' => [1, 'MAX(click_time) over every visit\'s row: the latest'
+            . ' visit\'s time is what it records.'],
         '202-config/Report/RollupDirty.php::summedHours' => [1, 'DISTINCT over every visit\'s row of the clicks an'
             . ' id list built at runtime names: each visit\'s hour is marked.'],
         '202-config/Report/RollupDirty.php::clickCost' => [1, 'DISTINCT over every visit\'s row (an INSERT … SELECT):'
             . ' each visit\'s hour is marked.'],
         '202-config/Report/RollupDirty.php::clickOfAnyAccount' => [1, 'DISTINCT user_id and click_id over every'
             . ' visit\'s row (an INSERT … SELECT); both agree across visits.'],
+        '202-config/static-endpoint-helpers.php::p202ClickVisitedCampaign' => [1, 'pb.php\'s campaign check, with'
+            . ' or without an event: whether any visit of the click, of its account, was on the campaign the'
+            . ' postback names, where the sale was made before a re-click moved the visitor on. The conversion and'
+            . ' the goals credit the latest visit, read through LatestVisit::of().'],
         '202-config/Conversion/RevenueUploadImporter.php::preview' => [1, 'Which ids are the account\'s clicks:'
             . ' click_id under user_id, both of which agree across visits, from an id list read at runtime.'],
         '202-config/Ltv/MysqlRecommendationRepository.php::engagedCampaignInterest' => [1, 'The LIMIT 1 takes the'
-            . ' top campaign of an aggregate over every visit (COUNT and MAX(click_time) per campaign), not a'
-            . ' visit.'],
+            . ' top campaign of an aggregate over each click\'s latest visit (LatestVisit::isLatest() on the'
+            . ' derived table), not a visit.'],
+        '202-config/Goals/WebEvents.php::clickForVisitor' => [1, 'Only when 202_click_latest_visits is missing'
+            . ' (LatestVisit::tableMissing(), deployed before the 1.9.79 upgrade): no click has a record, so every'
+            . ' visit is a latest visit, as isLatest() reads a click with none; the read beside it names the latest.'],
     ];
 
     /** How many reads ANY_VISIT holds. Lower it when one goes. */
-    private const CEILING = 33;
+    private const CEILING = 15;
 
     /**
      * A table reference: after FROM, a JOIN or a comma; its name, and its
@@ -191,20 +174,35 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
     private const ONE_ROW = '/\bLIMIT\s+(?:0\s*,\s*)?1\b(?!\s*,)/i';
 
     /**
-     * Files that read one click through LatestVisit, with how many such reads
-     * each makes at least: the redirect path's, which the scan has to credit.
+     * Files that read one click through a visit's class, with the visit and
+     * how many such reads each makes at least: the redirect path's and the
+     * conversions', which the scan has to credit in each shape they use.
+     *
+     * @var array<string, array<string, int>>
      */
-    private const THROUGH_LATEST_VISIT = [
-        '202-config/Click/ClickPathReads.php' => 1,
-        '202-config/Click/LatestVisit.php' => 1,
-        '202-config/connect2.php' => 2,
-        'api/v3/Controllers/ClicksController.php' => 1,
-        'tracking202/redirect/off.php' => 1,
-        'tracking202/redirect/offrtr.php' => 2,
-        'tracking202/redirect/pci.php' => 1,
+    private const THROUGH_A_VISIT = [
+        '202-config/Click/ClickPathReads.php' => ['latest' => 1],
+        '202-config/Click/LatestVisit.php' => ['latest' => 1],
+        '202-config/connect2.php' => ['latest' => 2],
+        'api/v3/Controllers/ClicksController.php' => ['latest' => 1],
+        'tracking202/redirect/off.php' => ['latest' => 1],
+        'tracking202/redirect/offrtr.php' => ['latest' => 2],
+        'tracking202/redirect/pci.php' => ['latest' => 1],
+        // of(), bound and inline, and orderBy() in a statement read by id.
+        '202-config/static-endpoint-helpers.php' => ['latest' => 3, 'first' => 1],
+        '202-config/Conversion/Ledger/MysqlConversionLedger.php' => ['latest' => 2],
+        '202-config/Conversion/TrafficSourcePixels.php' => ['first' => 1],
+        // of() alone, with no click id in the statement around it.
+        '202-config/Click/MysqlClickRepository.php' => ['first' => 1],
+        '202-config/Click/LastClickFromAddress.php' => ['first' => 1],
+        // orderBy() over a join from the install.
+        '202-config/Goals/GoalEngine.php' => ['latest' => 3],
+        // isLatest() over a list of clicks, and over a join with LIMIT 1.
+        '202-config/Update/SubidBatch.php' => ['latest' => 1],
+        '202-config/Goals/WebEvents.php' => ['latest' => 2],
     ];
 
-    /** @var array<string, list<array{line: int, function: string, latest: bool, sql: string}>>|null */
+    /** @var array<string, list<array{line: int, function: string, visit: string, sql: string}>>|null */
     private static ?array $tree = null;
 
     public function testEveryReadOfOneClickNamesItsVisitOrIsListed(): void
@@ -212,7 +210,9 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         $unlisted = [];
         foreach (self::tree() as $path => $reads) {
             foreach ($reads as $read) {
-                if (!$read['latest'] && !isset(self::ANY_VISIT[$path . '::' . $read['function']])) {
+                $site = $path . '::' . $read['function'];
+                $listed = isset(self::ANY_VISIT[$site]) || isset(self::DEFINES_A_VISIT[$site]);
+                if ($read['visit'] === 'any' && !$listed) {
                     $unlisted[] = "$path:{$read['line']} ({$read['function']}) {$read['sql']}";
                 }
             }
@@ -221,8 +221,26 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         self::assertSame([], $unlisted, "These read one click's 202_clicks row and take whichever visit the"
             . " database returns first:\n  " . implode("\n  ", $unlisted)
             . "\nRead the click's latest visit through Prosper202\\Click\\LatestVisit, in the statement itself"
-            . ' (of() where it reads 202_clicks, or orderBy() naming the 202_clicks alias and a 202_clicks_rotator'
-            . ' joined on the click), or list the function in ANY_VISIT with why any visit may answer.');
+            . ' (of() where it reads 202_clicks, orderBy() naming the 202_clicks alias and a 202_clicks_rotator'
+            . ' joined on the click, or isLatest() naming the alias), its first through FirstVisit::of() (a traffic'
+            . ' source or cost), or list the function in ANY_VISIT with why any visit may answer.');
+    }
+
+    public function testEachDefinitionOfAVisitMakesTheReadsItWeighs(): void
+    {
+        $found = array_fill_keys(array_keys(self::DEFINES_A_VISIT), 0);
+        foreach (self::tree() as $path => $reads) {
+            foreach ($reads as $read) {
+                $site = $path . '::' . $read['function'];
+                if (isset($found[$site])) {
+                    $found[$site]++;
+                }
+            }
+        }
+        $expected = array_map(static fn (array $entry): int => $entry[0], self::DEFINES_A_VISIT);
+
+        self::assertSame($expected, $found, 'A definition of a visit reads one click exactly as often as it is'
+            . ' weighed: a second read there is not the definition.');
     }
 
     public function testEachListedFunctionMakesTheReadsItWeighs(): void
@@ -258,14 +276,19 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         self::assertSame(self::CEILING, $count, 'one went: lower CEILING to ' . $count);
     }
 
-    /** The reads that do go through LatestVisit are found, so a scan that reads nothing cannot pass. */
-    public function testTheScanCreditsTheReadsThatGoThroughLatestVisit(): void
+    /** The reads that do go through a visit's class are found, so a scan that reads nothing cannot pass. */
+    public function testTheScanCreditsTheReadsThatGoThroughAVisit(): void
     {
         $missing = [];
-        foreach (self::THROUGH_LATEST_VISIT as $path => $least) {
-            $found = count(array_filter(self::tree()[$path] ?? [], static fn (array $read): bool => $read['latest']));
-            if ($found < $least) {
-                $missing[] = "$path: $found read(s) through LatestVisit, at least $least expected";
+        foreach (self::THROUGH_A_VISIT as $path => $visits) {
+            foreach ($visits as $visit => $least) {
+                $found = count(array_filter(
+                    self::tree()[$path] ?? [],
+                    static fn (array $read): bool => in_array($visit, explode(' ', $read['visit']), true)
+                ));
+                if ($found < $least) {
+                    $missing[] = "$path: $found read(s) of the $visit visit, at least $least expected";
+                }
             }
         }
 
@@ -274,13 +297,13 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
 
     /**
      * @dataProvider spellings
-     * @param list<string> $expected "line function any|latest" for each read of one click
+     * @param list<string> $expected "line function visit" for each read of one click: any, latest, first, or
+     *        "latest first" for a statement that reads both
      */
     public function testTheScanReadsEachSpelling(string $source, array $expected): void
     {
         self::assertSame($expected, array_map(
-            static fn (array $read): string => $read['line'] . ' ' . $read['function'] . ' '
-                . ($read['latest'] ? 'latest' : 'any'),
+            static fn (array $read): string => $read['line'] . ' ' . $read['function'] . ' ' . $read['visit'],
             self::reads($source)
         ));
     }
@@ -337,6 +360,10 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             . ' ON c.click_id = l.click_id SET l.campaign_id = c.aff_campaign_id WHERE c.click_id = ?'));
         yield 'read by a delete' => $any($q('DELETE o FROM 202_identity_observations o JOIN 202_clicks c'
             . ' ON c.click_id = o.click_id WHERE c.click_id = ?'));
+        yield 'read by a multi-table delete, first after FROM' => $any($q('DELETE de FROM 202_clicks AS c'
+            . ' STRAIGHT_JOIN 202_dataengine AS de ON de.click_id = c.click_id WHERE c.click_id = ?'));
+        yield 'a multi-table delete from 202_clicks' => $none($q('DELETE c FROM 202_clicks AS c'
+            . ' JOIN 202_users AS u ON u.user_id = c.user_id WHERE c.click_id = ?'));
         yield 'a heredoc, at its first line' => [
             "<?php\n\$s = <<<SQL\n    SELECT click_payout\n    FROM 202_clicks\n"
                 . "    WHERE click_id = {\$id}\n    SQL;\n",
@@ -421,6 +448,42 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
                 . " . LatestVisit::of('?') . ')';",
             ['3 {main} any'],
         ];
+        $first = "<?php\nuse Prosper202\\Click\\FirstVisit;\nuse Prosper202\\Click\\LatestVisit;\n";
+        yield 'the first visit beside a bare read' => [
+            $first . "\$s = 'SELECT d.x FROM ' . FirstVisit::of('?')"
+                . " . ' AS f JOIN 202_clicks d ON d.click_id = f.click_id';",
+            ['4 {main} any'],
+        ];
+        yield 'the first visit of another class of that name' => [
+            "<?php\n\$s = 'SELECT c.ppc_account_id FROM ' . \\Other\\FirstVisit::of('?')"
+                . " . ' AS c WHERE c.click_id = ?';",
+            ['2 {main} any'],
+        ];
+        $list = "'SELECT c.click_lead FROM 202_clicks AS c WHERE c.click_id IN (' . implode(',', \$ids) . ') AND '";
+        yield 'isLatest naming another alias' => [$use . "\$s = $list . LatestVisit::isLatest('x');", ['3 {main} any']];
+        yield 'isLatest of another class of that name' => [
+            "<?php\n\$s = $list . \\Other\\LatestVisit::isLatest('c');",
+            ['2 {main} any'],
+        ];
+        yield 'isLatest under NOT' => [$use . "\$s = $list . 'NOT ' . LatestVisit::isLatest('c');", ['3 {main} any']];
+        yield 'isLatest under !' => [$use . "\$s = $list . '!' . LatestVisit::isLatest('c');", ['3 {main} any']];
+        yield 'isLatest or another condition' => [
+            $use . "\$s = $list . LatestVisit::isLatest('c') . ' OR c.click_lead = 1';",
+            ['3 {main} any'],
+        ];
+        yield 'isLatest in parentheses with an OR' => [
+            $use . "\$s = $list . '(c.click_lead = 1 OR ' . LatestVisit::isLatest('c') . ')';",
+            ['3 {main} any'],
+        ];
+        yield 'isLatest in an AND inside an OR' => [
+            $use . "\$s = $list . '(c.click_lead = 1 OR (c.click_time > 0 AND ' . LatestVisit::isLatest('c') . '))';",
+            ['3 {main} any'],
+        ];
+        yield 'isLatest beside a second, unordered read' => [
+            $use . "\$s = 'SELECT c.click_lead FROM 202_clicks AS c JOIN 202_clicks AS d ON d.click_id = c.click_id"
+                . " WHERE c.click_id = ? AND ' . LatestVisit::isLatest('c');",
+            ['3 {main} any'],
+        ];
 
         // Through LatestVisit.
         yield 'ordered' => [$use . "\$s = $joined . LatestVisit::orderBy('c', 'r') . ' LIMIT 1';", ['3 {main} latest']];
@@ -454,6 +517,35 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             $use . "\$s = \"SELECT 2c.x FROM \" . LatestVisit::of(\$id)"
                 . " . \" AS 2c WHERE 2c.click_id = '\" . \$id . \"'\";",
             ['3 {main} latest'],
+        ];
+        yield 'isLatest naming the alias' => [$use . "\$s = $list . LatestVisit::isLatest('c');", ['3 {main} latest']];
+        yield 'isLatest in parentheses, ANDed' => [
+            $use . "\$s = $list . '(c.click_time > 0 AND ' . LatestVisit::isLatest('c') . ') AND c.user_id = 1';",
+            ['3 {main} latest'],
+        ];
+        yield 'isLatest over a join, one row' => [
+            $use . "\$s = 'SELECT c.aff_campaign_id FROM 202_identity_observations AS o JOIN 202_clicks AS c"
+                . " ON c.click_id = o.click_id WHERE o.signal_hash = ? AND ' . LatestVisit::isLatest('c')"
+                . " . ' ORDER BY c.click_time DESC LIMIT 1';",
+            ['3 {main} latest'],
+        ];
+        yield 'the first visit, bound' => [
+            $first . "\$s = 'SELECT c.ppc_account_id FROM ' . FirstVisit::of('?') . ' AS c WHERE c.user_id = ?';",
+            ['4 {main} first'],
+        ];
+        yield 'the first visit, nothing around it' => [
+            $first . "\$s = 'SELECT fv.ppc_account_id, fv.click_cpc FROM ' . FirstVisit::of('?') . ' AS fv';",
+            ['4 {main} first'],
+        ];
+        yield 'the first visit, fully qualified, the id in the statement' => [
+            "<?php\n\$s = 'SELECT c.click_cpc FROM ' . \\Prosper202\\Click\\FirstVisit::of(\$id) . ' AS c';",
+            ['2 {main} first'],
+        ];
+        yield 'the first visit beside the latest' => [
+            $first . "\$s = 'SELECT c.aff_campaign_id, f.ppc_account_id FROM 202_clicks_tracking AS t'"
+                . " . ' LEFT JOIN ' . LatestVisit::of(\$id) . ' AS c USING (click_id)'"
+                . " . ' LEFT JOIN ' . FirstVisit::of(\$id) . ' AS f USING (click_id) WHERE c.click_id = ' . \$id;",
+            ['4 {main} latest first'],
         ];
         yield 'self:: in LatestVisit' => [
             "<?php\nnamespace Prosper202\\Click;\nfinal class LatestVisit\n{\n"
@@ -499,7 +591,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         );
     }
 
-    /** @return array<string, list<array{line: int, function: string, latest: bool, sql: string}>> */
+    /** @return array<string, list<array{line: int, function: string, visit: string, sql: string}>> */
     private static function tree(): array
     {
         if (self::$tree === null) {
@@ -522,7 +614,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         foreach (self::tree() as $path => $reads) {
             foreach ($reads as $read) {
                 $site = $path . '::' . $read['function'];
-                if (!$read['latest'] && isset($lines[$site])) {
+                if ($read['visit'] === 'any' && isset($lines[$site])) {
                     $lines[$site][] = $read['line'];
                 }
             }
@@ -533,10 +625,11 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
 
     /**
      * Each statement in $source that reads one click's 202_clicks row: its
-     * line, the function it is in, whether it reads the latest visit, and
-     * its text (white space folded, `…` for a part the scan cannot read).
+     * line, the function it is in, the visit it names (any, latest, first,
+     * or "latest first"), and its text (white space folded, `…` for a part
+     * the scan cannot read).
      *
-     * @return list<array{line: int, function: string, latest: bool, sql: string}>
+     * @return list<array{line: int, function: string, visit: string, sql: string}>
      */
     public static function reads(string $source): array
     {
@@ -551,7 +644,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             $found[] = [
                 'line' => $line,
                 'function' => self::functionAt($functions, $line),
-                'latest' => $verdict,
+                'visit' => $verdict,
                 'sql' => self::folded($text),
             ];
         }
@@ -561,16 +654,107 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
 
     /**
      * Null when $text does not read one click's 202_clicks row; otherwise
-     * whether it reads the latest visit.
+     * the visit it names: any, or the visits its reads take.
      *
      * @param list<array{class: string, method: string, args: list<string|null>, offset: int}> $calls
      */
-    private static function verdict(string $text, array $calls): ?bool
+    private static function verdict(string $text, array $calls): ?string
+    {
+        ['clicks' => $clicks, 'routes' => $routes, 'unread' => $unread] = self::tablesRead($text);
+        if ($clicks === [] && $unread === []) {
+            return null;
+        }
+
+        $ordered = [];
+        $derived = [];
+        $visits = [];
+        $sameClick = self::sameClick($text);
+        foreach ($calls as $call) {
+            $visit = self::VISITS[strtolower($call['class'])] ?? null;
+            if ($visit === null) {
+                continue;
+            }
+            $method = strtolower($call['method']);
+            [$clickAlias, $routeAlias] = [$call['args'][0] ?? null, $call['args'][1] ?? null];
+            if (
+                $visit === 'latest'
+                && $method === 'orderby'
+                && in_array($routeAlias, $routes, true)
+                && $clickAlias !== null
+                && $routeAlias !== null
+                && ($sameClick[$clickAlias] ?? $clickAlias) === ($sameClick[$routeAlias] ?? $routeAlias)
+            ) {
+                $ordered[] = $clickAlias;
+                $visits[$visit] = true;
+            } elseif (
+                $visit === 'latest'
+                && $method === 'islatest'
+                && in_array($clickAlias, $clicks, true)
+                && self::isConjunct($text, $call['offset'])
+            ) {
+                $ordered[] = $clickAlias;
+                $visits[$visit] = true;
+            } elseif ($method === 'of') {
+                $derived[$call['offset']] = $visit;
+            }
+        }
+        $byId = preg_match(self::BY_ID, $text) === 1;
+        $reads = ($clicks !== [] && ($byId || preg_match(self::ONE_ROW, $text) === 1))
+            || ($unread !== [] && $byId)
+            || ($unread !== [] && array_diff($unread, array_keys($derived)) === []);
+        if (!$reads) {
+            return null;
+        }
+        if (array_diff($clicks, $ordered) !== [] || array_diff($unread, array_keys($derived)) !== []) {
+            return 'any';
+        }
+        foreach ($unread as $offset) {
+            $visits[$derived[$offset]] = true;
+        }
+
+        return implode(' ', array_keys(array_filter(
+            ['latest' => isset($visits['latest']), 'first' => isset($visits['first'])]
+        )));
+    }
+
+    /**
+     * Whether $text reads one click's 202_clicks row (the statements this
+     * test holds), whatever visit it names.
+     *
+     * @param list<array{class: string, method: string, args: list<string|null>, offset: int}> $calls
+     */
+    public static function readsOneClick(string $text, array $calls): bool
+    {
+        return self::verdict($text, $calls) !== null;
+    }
+
+    /**
+     * The tables $text reads: the alias of each bare 202_clicks (never a
+     * DELETE's target), of each 202_clicks_rotator, and the offset just past
+     * the read part of each table it cannot read whose name could begin
+     * `202_clicks`.
+     *
+     * @return array{clicks: list<string>, routes: list<string>, unread: list<int>}
+     */
+    public static function tablesRead(string $text): array
     {
         if (preg_match_all(self::TABLE_REF, $text, $refs, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) === false) {
             throw new \RuntimeException('Reading a statement failed: ' . preg_last_error_msg());
         }
         $isDelete = preg_match('/\A\s*DELETE\b/i', $text) === 1;
+        // A multi-table DELETE (`DELETE de FROM a JOIN b AS de`) removes from
+        // the tables it names before FROM, read here by alias; a single-table
+        // one (`DELETE FROM t`) from the table after FROM.
+        $targets = [];
+        if (
+            $isDelete
+            && preg_match('/\A\s*DELETE\s+(?:(?:LOW_PRIORITY|QUICK|IGNORE)\s+)*(?!FROM\b)([\w`.,\s]+?)\s+FROM\b/i', $text, $m) === 1
+        ) {
+            foreach (explode(',', $m[1]) as $target) {
+                $parts = explode('.', str_replace('`', '', trim($target)));
+                $targets[] = strtolower((string) end($parts));
+            }
+        }
         $clicks = [];
         $routes = [];
         $unread = [];
@@ -579,7 +763,9 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             $keyword = strtolower($ref['kw'][0]);
             $name = $ref['name'][0];
             $alias = isset($ref['alias']) && $ref['alias'][1] >= 0 ? $ref['alias'][0] : $name;
-            $deleted = $isDelete && $keyword === 'from' && $firstFrom;
+            $deleted = $targets === []
+                ? $isDelete && $keyword === 'from' && $firstFrom
+                : in_array(strtolower($alias), $targets, true);
             if ($keyword === 'from') {
                 $firstFrom = false;
             }
@@ -594,40 +780,54 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
                 }
             }
         }
-        if ($clicks === [] && $unread === []) {
-            return null;
+
+        return ['clicks' => $clicks, 'routes' => $routes, 'unread' => $unread];
+    }
+
+    /**
+     * Whether the condition at $offset (the one character standing for a
+     * call) is one of the conditions its statement ANDs: right after WHERE,
+     * ON or AND, and no OR, XOR or || in any group around it, up to the
+     * whole statement. Under NOT or beside an OR it does not narrow the rows
+     * to the latest visit (`AND NOT isLatest()` takes every visit but it).
+     * An OR anywhere in a group around it is refused, whatever it joins: the
+     * loud direction.
+     */
+    public static function isConjunct(string $text, int $offset): bool
+    {
+        if (preg_match('/(?<![\w`])(?:AND|WHERE|ON)\s*\z/i', substr($text, 0, $offset)) !== 1) {
+            return false;
+        }
+        $depths = [];
+        $depth = 0;
+        $length = strlen($text);
+        for ($i = 0; $i < $length; $i++) {
+            if ($text[$i] === ')') {
+                $depth--;
+            }
+            $depths[$i] = $depth;
+            if ($text[$i] === '(') {
+                $depth++;
+            }
+        }
+        for ($level = $depths[$offset]; $level >= 0; $level--) {
+            [$from, $to] = [$offset, $offset];
+            while ($from > 0 && $depths[$from - 1] >= $level) {
+                $from--;
+            }
+            while ($to < $length - 1 && $depths[$to + 1] >= $level) {
+                $to++;
+            }
+            $group = '';
+            for ($i = $from; $i <= $to; $i++) {
+                $group .= $depths[$i] === $level ? $text[$i] : ' ';
+            }
+            if (preg_match('/(?<![\w`])(?:OR|XOR)(?![\w`])|\|\|/i', $group) === 1) {
+                return false;
+            }
         }
 
-        $ordered = [];
-        $derived = [];
-        $sameClick = self::sameClick($text);
-        foreach ($calls as $call) {
-            if (strtolower($call['class']) !== self::LATEST_VISIT) {
-                continue;
-            }
-            $method = strtolower($call['method']);
-            [$clickAlias, $routeAlias] = [$call['args'][0] ?? null, $call['args'][1] ?? null];
-            if (
-                $method === 'orderby'
-                && in_array($routeAlias, $routes, true)
-                && $clickAlias !== null
-                && $routeAlias !== null
-                && ($sameClick[$clickAlias] ?? $clickAlias) === ($sameClick[$routeAlias] ?? $routeAlias)
-            ) {
-                $ordered[] = $clickAlias;
-            } elseif ($method === 'of') {
-                $derived[] = $call['offset'];
-            }
-        }
-        $byId = preg_match(self::BY_ID, $text) === 1;
-        $reads = ($clicks !== [] && ($byId || preg_match(self::ONE_ROW, $text) === 1))
-            || ($unread !== [] && $byId)
-            || ($unread !== [] && array_diff($unread, $derived) === []);
-        if (!$reads) {
-            return null;
-        }
-
-        return array_diff($clicks, $ordered) === [] && array_diff($unread, $derived) === [];
+        return true;
     }
 
     /**
@@ -664,7 +864,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
      *
      * @return list<array{string, int, int}> name, first line, last line
      */
-    private static function functionRanges(string $source): array
+    public static function functionRanges(string $source): array
     {
         $tokens = array_values(array_filter(
             \PhpToken::tokenize($source),
@@ -710,7 +910,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
      *
      * @param list<array{string, int, int}> $ranges
      */
-    private static function functionAt(array $ranges, int $line): string
+    public static function functionAt(array $ranges, int $line): string
     {
         $name = '{main}';
         foreach ($ranges as [$function, $first, $last]) {
@@ -722,7 +922,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         return $name;
     }
 
-    private static function folded(string $sql): string
+    public static function folded(string $sql): string
     {
         $folded = trim((string) preg_replace('/\s+/', ' ', str_replace(AssembledStrings::UNREAD, '…', $sql)));
 

@@ -50,6 +50,8 @@ if [ -z "$P202_API_KEY" ]; then
 fi
 # shellcheck source=tests/live/guard.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
+# shellcheck source=tests/live/loopback-postbacks.sh
+. "$(dirname "${BASH_SOURCE[0]}")/loopback-postbacks.sh"
 p202_require_scratch_db "$DB" || exit 2
 for bin in python3 openssl curl; do
     command -v "$bin" > /dev/null || { echo "$bin is required" >&2; exit 2; }
@@ -176,6 +178,7 @@ OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 
 FAKE_PID=
 cleanup() {
+  p202_restore_postbacks
   [ -n "$FAKE_PID" ] && kill "$FAKE_PID" 2> /dev/null
   mysql_q "$DB" <<SQL
 SET SESSION sql_mode='';
@@ -195,6 +198,12 @@ SQL
 }
 cleanup
 trap cleanup EXIT
+# The traffic source posts back to this machine (loopback-postbacks.sh).
+p202_allow_loopback_postbacks || exit 2
+# Installs are matched to clicks this pass records from this machine.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" "$OWNER" || exit 2
 
 for _ in 1 2 3; do
     code=$(curl -s -o /dev/null -D "$OUT/probe" -w '%{http_code}' "$BASE/api/v3/apps/installs")

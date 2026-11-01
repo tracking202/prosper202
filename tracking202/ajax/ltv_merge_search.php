@@ -4,6 +4,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_campaign_data'); // LTV shows customers' revenue
 
 /**
  * JSON type-ahead search behind the merge picker modal (ltv_merge_modal.php).
@@ -14,10 +15,26 @@ AUTH::require_user();
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
 
+require_once __DIR__ . '/ltv_helpers.php';
+
 $userId = (int) $_SESSION['user_id'];
-$entity = (string) ($_POST['entity'] ?? 'customer');
-$q = trim((string) ($_POST['q'] ?? ''));
-$exclude = (int) ($_POST['exclude'] ?? 0);
+
+// What the dialog sends, read exactly: anything else is answered as refused
+// (422, with the sentence the dialog shows), never as "no matches".
+try {
+    $entity = p202_ltv_posted_choice(
+        $_POST['entity'] ?? null,
+        ['customer' => 'customer', 'company' => 'company'],
+        'customer',
+        'The merge dialog searches customers or companies.'
+    );
+    $q = trim(p202_ltv_posted_text($_POST['q'] ?? null, 'q'));
+    $exclude = p202_ltv_posted_id($_POST['exclude'] ?? null, 'Pick the record to merge into from the list.');
+} catch (\RuntimeException $refused) {
+    http_response_code(422);
+    echo json_encode(['results' => [], 'error' => $refused->getMessage()]);
+    return;
+}
 
 $results = [];
 

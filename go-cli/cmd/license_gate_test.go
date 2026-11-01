@@ -43,6 +43,29 @@ func TestCliExplainsProLicenceRefusal(t *testing.T) {
 	}
 }
 
+// A refusal because the install could not confirm its licence points at
+// reaching Tracking202, not at buying a trial the user may already have.
+func TestCliExplainsAnUnconfirmedLicence(t *testing.T) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(402)
+		w.Write([]byte(`{"error":true,"status":402,"category":"licence","message":"This install's licence could not be checked with Tracking202. Make sure this server can reach my.tracking202.com over HTTPS; Pro features come back once it can. For help, contact support@tracking202.com or the support chat."}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("user", "list")
+	if err == nil || !strings.Contains(err.Error(), "could not be checked") {
+		t.Fatalf("want the unconfirmed-licence refusal, got %v", err)
+	}
+	if h := hintFor(err); !strings.Contains(h, "my.tracking202.com over HTTPS") || !strings.Contains(h, "support@tracking202.com") || strings.Contains(h, "Pro trial") {
+		t.Errorf("hint %q should point at reaching Tracking202, not at a trial", h)
+	}
+	if got := exitCodeForError(err); got != ExitLicence {
+		t.Errorf("exit code = %d, want %d (ExitLicence)", got, ExitLicence)
+	}
+}
+
 // licenceServer answers the handshake and refuses everything else with the
 // install's 402 envelope; hits counts the refused requests.
 func licenceServer(t *testing.T, hits *int) *httptest.Server {

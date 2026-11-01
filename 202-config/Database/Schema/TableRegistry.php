@@ -40,6 +40,8 @@ final class TableRegistry
     public const string ROLE_PERMISSION = '202_role_permission';
     public const string API_KEYS = '202_api_keys';
     public const string AUTH_KEYS = '202_auth_keys';
+    public const string CLICK_FILTER_SETTINGS = '202_click_filter_settings';
+    public const string CLICK_FILTER_ENTRIES = '202_click_filter_entries';
     public const string USER_DATA_FEEDBACK = 'user_data_feedback';
 
     // Click tables
@@ -53,6 +55,9 @@ final class TableRegistry
     public const string CLICKS_VARIABLE = '202_clicks_variable';
     public const string CLICKS_ROTATOR = '202_clicks_rotator';
     public const string CLICKS_TOTAL = '202_clicks_total';
+    public const string CLICK_LATEST_VISITS = '202_click_latest_visits';
+    public const string RECLICK_BACKFILL = '202_reclick_backfill';
+    public const string CLICKS_FILTER_REASON = '202_clicks_filter_reason';
 
     // Tracking tables
     public const string TRACKING_C1 = '202_tracking_c1';
@@ -104,10 +109,14 @@ final class TableRegistry
     public const string CONVERSION_UPLOADS = '202_conversion_uploads';
     public const string NOTIFICATION_PENDING = '202_notification_pending';
     public const string NOTIFICATION_CORRECTION_URLS = '202_notification_correction_urls';
+    public const string OFFLINE_CONVERSION_FEEDS = '202_offline_conversion_feeds';
+    public const string OFFLINE_CONVERSION_NAMES = '202_offline_conversion_names';
 
     // Deployment-wide secrets (SecretTables): owned by the installation, not
     // by any user
     public const string DEPLOYMENT_SECRETS = '202_deployment_secrets';
+    public const string GEOIP_REFRESH = '202_geoip_refresh';
+    public const string LICENCE_ANSWERS = '202_licence_answers';
 
     // Identity graph (IdentityTables)
     public const string IDENTITY_KEYS = '202_identity_keys';

@@ -28,6 +28,13 @@ Prosper202 — PHP 8.3 self-hosted campaign tracking and marketing analytics pla
   names free of `/` (`release/1.9.77` would not match). Agent Evals and the
   upgrade-equals-install check run on pushes to master only, so the PR is
   where they run for a version branch: read them there before merging.
+- **A PR's changelog entries go in a fragment, never into the two files**:
+  `changelogs.d/<version>/<any-name>.txt`, written as changelogs.txt writes
+  them, with an optional `app:` line for changelogs.json
+  (`changelogs.d/README.md`). The release folds them in (RELEASING.md, step 2).
+  Every PR appending to the same lines made each merge conflict every other
+  open PR; the `changelog` check in pr-checks.yml refuses a PR that adds
+  entries to the files directly. Rewording an entry already there is fine.
 
 ## Error patterns to avoid
 
@@ -134,11 +141,32 @@ tried again. Whoever reads the result reads the status, not the prose: an
 endpoint another process calls answers its failure in the status
 (`DataEngineHourAnswersItsFailureTest`).
 
+A verdict is a status line too. The Claude Code Review workflow's schema
+offered FINDINGS or CLEAN, and three reviews in a row (the re-click work, its
+restore into 1.9.79 and the ledger lock) answered CLEAN, 0 findings, while
+their own reports said they had not finished: two ended with their agents
+still running in the background, which a headless run does not wait for, and
+one could not read a diff too long for one `gh pr diff` answer. Both review
+workflows' schemas now carry `complete`, and an unfinished run answers NOT
+FINISHED and fails its check; the agents run in the foreground, and the
+diff is a file the job writes with git, since GitHub's diff endpoint refuses
+a PR of more than 300 files (1.9.78's release PR had 481). A result type with
+no way to say "this did not run" will say something else.
+
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.
 
 ### 3. Ordering dependencies — using values before they're initialized
 Config constants, DB connections, and other resources must be initialized before use. Example: checking `defined('SOME_CONSTANT')` before the file that defines it is loaded guarantees false. Trace the initialization order when adding code that depends on global state.
+
+A sign-in is initialization too. connect.php read the session's user, the
+roles every page asks, before the page tried the remember-me cookie that
+signs a closed browser back in, so on the cookie's first request the User
+was nobody's and the Super user was refused Account › Users (found in a live
+pass). Whatever builds an object from the session has to run after
+everything that can still change who the session is: the cookie is tried
+in connect.php before the read now, and `SessionSignInPathsTest` holds the
+order.
 
 ### 4. Silent data loss on malformed input
 Never use `json_decode(...) ?? []` or similar fallbacks that silently discard bad input. Malformed JSON, invalid formats, and parse failures must produce explicit errors. The user needs to know their input was rejected, not silently ignored.
@@ -207,6 +235,18 @@ the body under that name after the base class validated it, so the name
 cannot say whether a value was read — a hand-read body field is still the
 author's to read with `QueryInt` (`StrictIntegerBodyFieldsTest` holds the
 ones that exist).
+
+The pages cast the same way, and an id is where it bites: LTV Settings'
+Delete read `webhook_id` with `(int)`, so `12abc` deleted webhook 12, one of
+the account's own and not the one named. The rule now reads the request
+superglobals everywhere; an id a page posts is read with
+`Prosper202\Http\PostedId::read()` and anything else refused in the page's
+words. The 22 pages that still cast (48 sites) are listed by count in
+`phpstan-baseline.neon`, and the counts only shrink: Customer LTV's other
+pages left it next, where Companies' merge had read `12abc` as company 12,
+and read through `ltv_helpers.php`'s `p202_ltv_posted_*()`. A cast of a value
+copied out of `$_POST` first is not seen, nor `(string)` of one, which reads
+a list (`name[]=`) as "Array".
 
 The same drop lived one level down. With every top-level key refused, the
 objects and lists inside a body were still read by hand, for the keys the
@@ -299,6 +339,62 @@ kept reading and writing with every key they held, under their role.
 `ApiKeyAuthPathScopeTest` now holds every authentication path to refusing a
 deactivated user (and `DeactivatedUserKeyInstanceTest` proves it over HTTP).
 When a state means "this person may not act", list every way a person acts.
+
+That list missed the one every browser uses: a session already signed in.
+The sign-in asked the row once and the session kept the answer, refreshing
+its own time on every request, so a user switched off or removed kept every
+page, AJAX endpoint and form for as long as they kept clicking (measured
+live: a switched-off Admin minted a REST API key). A session is a cached
+"may act" (#11), and its expiry is not a re-check. connect.php now reads the
+user's standing with the role and ends a session whose user may not act
+before any page runs, `AUTH::logged_in()` asks it of any session it is
+handed, and the sign-in, the cookie and the session ask one rule
+(`UserStanding`); `SessionSignInPathsTest` holds the bootstrap's check, who
+opens a session and who writes its identity, and
+`SessionEndsWithUserIntegrationTest` executes the refusal and the agreement.
+When a check runs at sign-in, ask what carries its answer afterwards.
+
+The remember-me key carries it past both. The sign-out cleared the cookie
+and kept the stored key, so a copy of the cookie signed in for 14 days; the
+switch-off revoked a user's keys only when one of their sessions was next
+refused, so a remembered browser that stayed idle signed back in once the
+user was switched on again (both measured live). A credential that can
+start a sign-in again is deleted by the act that ends the sign-in, not at
+its next use: `AUTH::signOut()` deletes the key its cookie names, and every
+write that switches a user off deletes all of theirs in its transaction
+(`RememberMeKeys`); `RememberMeKeysRevokedTest` holds every writer of
+`user_active`/`user_deleted` and every sign-out to that.
+
+A new password is the same act, and it was missed one fix later: the owner
+of a stolen cookie changes the password to lock the thief out, and the
+cookie went on signing in (measured live). Every writer of `user_pass`
+deletes the keys in its transaction now. One writer is not a change: the
+sign-in stores the password it has just verified again under a newer hash,
+and deleting there would sign every remembered browser out whenever the
+algorithm moves. A scan cannot tell those two apart, so the test lists each
+writer as one or the other and holds them to opposite answers. When a
+predicate decides what a write means, ask whether every write of the column
+means it.
+
+A row's change stamp is the same sweep over its writers. Every write of a
+customer's company set `updated_at` but the LTV maintenance job's link, so a
+customer it attached answered the time of its last save on `GET
+/ltv/customers/{id}`, with nothing wrong in any one file.
+`CustomerWritesStampUpdatedAtTest` holds every write of `202_customers` to
+setting it; the other tables that keep `updated_at` are not held, and some
+of their writers do not (a model's default cleared, an app's icon stored).
+Writing a stamped row means writing its stamp.
+
+And a session is a credential the password does not reach: revoking the
+keys left every browser already signed in signed in, so whoever had used a
+stolen cookie kept that session through the owner's new password (measured
+live). Ending something that holds no state on the server needs state to
+compare: each session holds the user's session generation from its
+sign-in, every change that ends sign-ins counts the row's up in its
+transaction, and connect.php compares the two in the read it already makes.
+A counter, not a time, so no same-second race and no clock to skew.
+`RememberMeKeysRevokedTest` holds every key-revoking writer to counting it
+up, the rehash to not, and every write of the column to `+ 1`.
 
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
@@ -430,7 +526,14 @@ Two amplifiers, both of which turned this from a blip into a breach:
   directory and its database; the first fix named the database alone, and
   fell back to the shared namespace wherever the database settings were not
   in scope (found by review) — a fallback is a namespace too
-  (`SystemHashNamesTheDatabaseTest`).
+  (`SystemHashNamesTheDatabaseTest`). A namespace is also a claim about
+  when: the click path's ids are cached for 30 days, and an upgrade can
+  change which rows stand or what a lookup answers, so the namespace carries
+  the code's version too (`LookupRepositoryFactory::cacheNamespace()`) and
+  each upgrade starts cold. The fix gave it to the lookup ids alone, and the
+  user-agent parse and the bot-range verdict, this code's answers kept 30
+  days, stayed on the bare install hash (found by review);
+  `CacheKeyNamespaceTest` now lists every key on it with why.
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not
@@ -449,6 +552,23 @@ every other read of the key with what it decides. When a flag's *absence*
 is the common case, find every reader and check they agree on what absence
 means; a notice-silencing rewrite preserves whichever meaning was there.
 
+A switch whose absence has a meaning needs a second answer for a value it
+cannot read. `p202_consent` withheld the visitor's signals only for `0`, so
+`false`, `off`, `00` and a list gave consent, while `campaignAllows()` twenty
+lines below read anything but `1` as off: #5 inside one class. Present, it
+gives consent only as `1` now, on the tracking link and on the landing page
+(`IdentitySignalsTest`, `identity-landing.spec.js`). The landing script then
+read the parameter by its exact name, and PHP files `p202.consent`,
+`p202 consent`, `p202[consent` and `p202_consent[]` under it, so each was a
+refusal to the tracker and consent to the script (found by review). A second
+reader of a request value reads it as the first one's parser does, and a
+claim that it does is a test, not a scratch run: `LandingConsentReaderTest`
+runs the shipped reader and link decorator under node and holds them to
+`parse_str()` on 45 spellings (found by review: the first claim could not be
+run again). Its first draft defined the decorator outside the reader's scope,
+and the decorator's own `catch` took the ReferenceError, so every link read
+as left alone; only the comparison with PHP said so.
+
 State found where this install's own state would be is the same question.
 `ServerStateStore` renamed the pre-1.9.75 shared temp directory into a new
 instance's place, on the theory that it was that instance's pre-upgrade
@@ -456,6 +576,23 @@ state; nothing in it says whose it is, so another install's idempotency
 record replayed here and its staged DELETE was listed to apply against this
 database. Data whose owner cannot be shown resolves to "not ours": leave it,
 and say how the owner carries it over.
+
+The name the store took instead had the same flaw one level down. A
+database's host and name name a slot, and a database dropped and installed
+again in it is another install in the same slot: the new install read the
+old one's directory as its own, every create sent under an Idempotency-Key
+the old install had answered was answered 201 with nothing created, and the
+old install's staged DELETE of campaign 1 deleted the new install's campaign
+1 (measured live). The install's id, minted with its schema (`InstallId`),
+names the directory now, and `StateStoresNameTheInstallTest` holds every
+store the served tree builds to `ServerStateStore::forInstall()`. Before
+keying state on where something lives, ask what can replace it there. The
+fix named the default directory and left `P202_SERVER_STATE_DIR` used as
+named — the directory the Coolify stack sets, on the deployments that
+reinstall most — so the bug stayed there; each install has a directory of
+its own inside it now, and the same test holds the store to never writing
+the operator's directory bare. A fix to a default reaches every setting that
+replaces it, or it is #5 again.
 
 ### 12. A guard is only as good as the layer that delivers the input
 The server rejected an explicitly empty API-key scope. It never fired, because
@@ -581,6 +718,14 @@ now the stored tracking domain (`PasswordResetLink`), with no link at all
 when none is stored. Before taking a host, a scheme or a path from the
 request, ask who will follow the URL.
 
+A claim shown to a person is the same split. The AI-connect consent page
+said an app was "verified there as claude.ai" of a domain the approval link
+carried, and nothing signs that link: anyone could start a connection of
+their own and send a signed-in owner a link naming Claude, and the owner's
+Allow gave the access to whoever started it. The page shows the name and
+site as the link's words now, and says who gets the access
+(`AiConnectTest::testTheApprovalPageVouchesForNothingTheLinkSays`).
+
 A fallback names an address too, and the same question decides it.
 `getTrackingDomain()` fell back to `SERVER_NAME` and `SERVER_PORT` — where the
 server listens, which behind a reverse proxy or a published container port
@@ -593,6 +738,19 @@ handed back to the requester takes the host the requester used
 on takes the stored domain or the server's own name
 (`p202TrackingBaseUrl()`). `RequestHostSourceTest` lists every
 `getTrackingDomain()` caller with why its URL goes back to the requester.
+
+The scheme is part of the same address, and Get Links chose it alone: every
+direct and redirector link was `'http://' . getTrackingDomain() . …`, so an
+install served over HTTPS handed Safari and the ad platforms a plain-http hop
+while `p202 tracker get-url` gave the same tracker an https:// link, and the
+Postback and API integrations pages took the scheme from the request alone,
+never from a domain saved as `https://…`. A link the operator pastes is built
+on `p202TrackingBaseForResponse()`, the API's rule (`TrackingBaseLookup`): the
+scheme the domain is saved with, else the request's. `HandBuiltLinkSchemeTest`
+refuses a URL built on a hard-coded `http://` and lists every scheme chosen by
+hand (a ternary between http and https, or one as a default); it cannot see a
+scheme assembled from parts or set by an `if`. When two surfaces hand out one
+URL, they call one builder, and a test compares their answers to one request.
 
 A path in a directory anyone can write is a claim of the same kind: the
 name says whose it is, and anyone could have made it. The API state store's
@@ -1058,7 +1216,11 @@ The name is the whole heuristic: a version held in `$v` or `$latest` is not
 seen, so a comparison of values that came out of `202_version`, a feed or a
 `changelog()` entry needs `version_compare()` whatever it is called. Equality
 is not covered either, and is not safe in general: `"1.9" == "1.90"` is true,
-because both are numeric strings.
+because both are numeric strings. And `!==` is not a direction:
+`SchemaVersion` answered "needs an upgrade" for any stored version that was
+not the code's, so files rolled back behind their database sent the operator
+to `upgrade.php`, which cannot mend that (found by review). Older and newer
+are `version_compare()`'s to say (`SchemaVersionIntegrationTest`).
 
 ### 24. A validation in a hydration path fails the batch, not the record
 `ExportWebhook`'s constructor ran the SSRF guard. That constructor is also the
@@ -1194,6 +1356,16 @@ UPDATE` of its own columns), and the test is a row another writer has
 touched. `ClickRowsWrittenOnlyByTheWriterTest` holds a click's rows to one
 writer, `MysqlClickRepository`.
 
+A second writer owes what the first one does after its write, not only the
+columns. Every API change of a subscription's status queued
+`subscription.changed`; the hourly sweep wrote `past_due` and `canceled`
+with no event, so a subscriber never heard that a subscription lapsed. The
+sweep queues it now, in its own transaction, and only for a change that took
+effect in the last 7 days: an announcement made late about the past is
+bounded by when the thing happened, or an upgrade's backlog becomes 30,000
+events ahead of every live one. `SubscriptionWritesAreAnnouncedTest` lists
+every statement that writes `202_subscriptions` with who announces it.
+
 A "none" that is also a lookup key finds every row that has none. A direct
 link's click without cloaking is stored with public id 0, and off.php looked
 the visitor's last click up by its public id: `click_id_public = '0'` matched
@@ -1218,7 +1390,11 @@ own page had just sent, on installs with no cron job at all, and the tile,
 that did not exist. The ping is marked (`Prosper202\Cron\CronRun`), the one
 write is a scheduler's, and `PagePingIsNotACronRunTest` lists every file that
 names the table with what it reads. When a record answers "did X happen",
-list who else writes it.
+list who else writes it. A scheduler is still anyone: the cron's address
+needs no sign-in, so a stranger requesting it once a minute kept Settings
+refusing AutoCron. A record anyone can write is advice, never a gate:
+Settings now says why it left AutoCron off and takes the owner's word that
+the run was not their cron job's (`tests/live/autocron-switch.sh`).
 
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
@@ -1259,6 +1435,11 @@ carried the first visit's `[[cpc]]`). `LatestVisit` holds the order, and
 `202_clicks` row to it or to a listed reason; the conversion, pixel, goal
 and install reads are listed until it is decided which visit a conversion
 credits. Only `click_id` and `user_id` are the same on every visit's row.
+A read of many clicks counts each once only where every alias of
+`202_clicks` it sums is ANDed with `LatestVisit::isLatest()`; about thirty
+were converted by hand, and `ClickRowCountsTakeTheLatestVisitTest` now holds
+every `SUM`, `COUNT` and `AVG` over the table to it or to a listed function
+(a count that is per visit by design).
 
 ### 27. A stored id is a claim about ownership that nothing re-checked
 A click names its campaign, traffic source and landing page by id; a
@@ -1337,6 +1518,40 @@ redirector) comes back 0 where the joined row is another account's, the
 "none" a tracker naming nothing always gave, so every consumer already reads
 it. The read is where the account is decided: a writer handed an id another
 account's read produced cannot tell it apart from its own.
+
+The write that names its row by id is the same claim, made by the request.
+Setup › Traffic Sources renamed a source with `UPDATE 202_ppc_networks SET
+user_id = <session>, … WHERE ppc_network_id = <posted id>`: no check at all,
+and the SET moved the source into the renamer's account (measured live: a
+Campaign manager of another account took user 1's source, and user 1's API
+answered 404 for it). Its siblings checked ownership in one statement and
+wrote by id alone in the next, right only while both name the same id on
+every path. `AccountScopedWriteTest` holds every UPDATE and DELETE in the
+served pages and endpoints to `user_id = <the account>` in its own WHERE,
+or, for a table owned through its parent, to a listed check that runs first.
+It reads SQL only: a write a page makes through a class it calls is the
+class's to tie, and a user id is trusted by its name.
+
+Closing the write leaves what already went through it. The sources the
+rename took stay in the taker's account, and the sign they leave, a traffic
+source account whose user is not its source's, is also what the API wrote
+before 1.9.77 for an account put on a source an admin set up for a user. A
+sign with two origins is a report, not a repair: `TrafficSourceOwners` lists
+each source with what tells the origins apart (whether its own user has
+accounts on it, which was saved first) and moves one only on an admin's
+say-so, never in the upgrade. When a fix closes a hole, ask what the hole left
+behind, and what else leaves the same rows.
+
+And run each repair to its fixed point. The move changes one id's owner, so
+a source both users' accounts named was listed again wherever it went, and
+the Settings notice that reports it never went away (measured live): a row
+shared by two owners has no owner a move can give it. The split gives each
+other owner a copy, and `TrafficSourceSplitIntegrationTest` holds both marks
+no move clears (`owner_has_accounts`, `several_users`) to a report that no
+longer lists the source after the split. A copy is a new id with readers of its own: the report rows are
+re-derived (#31), and what the old id's dependants recorded (a click's custom
+variable values name the source's variables) stays with the old id, which is
+said where the split is offered.
 
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 17305ee made the API answer money as numbers rather than mysqli's decimal
@@ -1475,7 +1690,7 @@ from, find the other half. Rows already stale in an install heal only when
 they are re-rolled; nothing re-rolls them by itself.
 
 ### 32. A shortcut that returns early skips the work the old path did after
-Every rollup is one `INSERT … SELECT` (`ClickRollupSql`), and
+Every rollup is an `INSERT … SELECT` (`ClickRollupSql`), and
 `DataEngine::doQuery()` returns at once when the query answers `true`. The
 rows were right; but `doSummary()`, the code that return skips, was also
 where a rebuild window in `202_dataengine_job` was marked done. `getSummary()` still marked the window `processing` before the query,
@@ -1567,6 +1782,178 @@ the same rows sent again under it stored the committed hundred twice. Once
 anything may stand, every row is answered and the answer kept under the
 key; a commit the server did not confirm is `unconfirmed`, never
 `retryable`.
+
+### 35. A cleanup chosen by another row than its write removes what nothing replaces
+A click has one report row, at its latest visit, so a rollup writes the
+latest visit's row and deletes the click's rows at earlier visits. The first
+version chose what to delete by the earlier visit: a rebuild of an hour that
+held a re-click's first visit and not its latest deleted the click's row
+there and wrote none, since the latest visit was outside the window, and the
+click was gone from every report until something rolled up its latest hour
+(measured). A write and the cleanup that goes with it are one claim, "this
+row replaces those", and both have to select by the same predicate:
+`ClickRollupSql::deleteEarlierVisits()` takes the insert's own condition and
+`LatestVisit::isLatest()`, so a window that writes nothing of a click removes
+nothing of it. Ask of every "write, then remove the rest" whether the rest is
+chosen by what was written or by something that also holds when nothing was.
+
+The predicate's cost is the other half. "No visit of this click is later"
+was first a `NOT EXISTS` over `202_clicks` by `click_id`. Installs partition
+that table weekly by `click_time`, and a lookup by a column outside the
+partition key is one probe per partition (158 on the measured install): a
+30-day report went from about 1 s to over 80 s. The latest visit is now
+recorded in `202_click_latest_visits` and read by its primary key (about
+2 s). The same layout decided the cleanup's join order: left to the server,
+the delete began from the records and read every recorded click's rows, and
+an hour's rebuild took 6 s rather than 0.1 s, so the order is fixed with
+`STRAIGHT_JOIN`. Time a query on a partitioned table on the layout the
+installer makes, not on the unpartitioned tables a test creates.
+
+A table the upgrade makes is also a table the code reads before the upgrade
+has run: the files are deployed first, and the click path does not wait for
+the upgrade. Every per-click rollup in that window failed on the missing
+table and was logged and dropped, and nothing re-rolls a click whose rollup
+failed, so the window's clicks were missing from every report for good. A
+failed rollup now queues its hour for the cron job
+(`ClickRollupSql::queueRetry()`), which runs nothing while an upgrade is
+needed and rolls the hour up once it has run. When a change adds a table, trace each of its readers
+through the window between deploy and upgrade, and give each a path that
+converges once the table exists.
+
+A read converges by itself, and still has to say why it failed. The API's
+report reads of the new table answered 500 "Internal server error" in the
+window, the legacy reports "Database error", and `/system/health` answered
+healthy (measured: four v3 routes and the legacy reports; the click and
+conversion paths queued and lost nothing). A failure that would answer a
+bare 5xx while the schema is not the code's version now answers 503 naming
+the upgrade (`Bootstrap::pendingUpgrade()`,
+`UpgradePendingAnswerServedIntegrationTest`). The first draft put that in
+the dispatcher's last catches and called it every 5xx: the Android intake,
+the Apple receiver and an `AuthException` answered from ways out of their
+own (found by review). A claim about every answer is a list of the ways
+out, read from the code: `ServerFailureAnswersAreListedTest` lists each
+answer that can be a 5xx with what it says in the window, and a committed
+write keeps its 500 (#13).
+The walk the upgrade starts has the same question one level down: a click
+whose repair always fails held back every click after it, for good (#24's
+batch); one that has failed for an hour of runs is stepped over, counted
+and named (`ReClickBackfill`, `tests/live/reclick-backfill-cron.sh` through
+the real cron job). The first draft counted every failure, so an hour of
+lock waits on one click, a read-only server or a lost connection stepped it
+over for good (found by review): a decision that cannot be undone counts only
+the failures that are the click's, and an errno it can name as the
+moment's (`ReClickBackfill::MOMENT_ERRNOS`) counts in none. That fix still
+counted whatever it could not name, a type error or a wrapper that dropped
+the errno, and started the hour at the first failure of any kind, so ten
+minutes of the click's own errors after two hours of lock waits stepped it
+over (found by review): what counts is shown to be the click's (a server
+errno that is not the moment's, a value its rows hold that reads wrong), and
+the hour starts at the first of those. An error of the install is not the
+click's either: a revoked permission or a missing table fails every click
+alike, and counting it stepped one over an hour for good
+(`ReClickBackfill::INSTALL_ERRNOS`, found by review). A click stopped only by
+errors that count in none is never stepped over, and the progress note says
+so rather than promising the step-over a count of 0 never reaches.
+
+### 36. A lock does not move the snapshot
+The ledger's click lock read the click's values with the locking read itself,
+which answers the row as it is. Re-click crediting split it: lock the first
+row, then a plain `SELECT` of the latest visit. Under REPEATABLE READ a plain
+read answers from the transaction's snapshot, which begins at its first plain
+read, not at the lock or at `BEGIN` (measured on MariaDB 10.11: neither a
+locking read, an INSERT, an `INSERT … SELECT` nor a SELECT naming no table
+starts one). A caller that read first (a delete reads the conversion to find
+its click, the goals engine its own rows) read the click as it was before a
+re-click committed while it waited, and valued the conversion under the
+previous visit's campaign (found by review, reproduced with two connections).
+
+The first fix read the click with share locks, which made that one read
+current and left every other read after the lock as stale as before: the
+conversions the recompute reads (`loadRows()`; the click was left
+`click_lead = 0` under a counted $9 sale), the reversals a delete voids (left
+standing, a $10 refund of a sale that is gone), the revenue generation a void
+is keyed by (a revived conversion's void was dropped as a repeat, and the
+customer kept $10 of a deleted conversion), and the lead `ensureManaged()`
+carries in (a second baseline, and the delete failed on the duplicate key).
+Locking one read is a fix for one read. What makes every read after a lock
+current is a snapshot younger than the lock, so the lock comes before the
+transaction's first plain read: the delete finds its click before its
+transaction begins, the goals engine and the install paths lock the install
+row and then the click first, and the install settlers read their key
+outside. `Connection` notes each transaction's first plain read
+(`snapshotTaken()`), and `lockClick()` refuses a click asked for after it and
+reads a click locked first again without a second lock.
+`LedgerReadsAfterTheLockIntegrationTest` holds a click's lock, writes, and has
+a child process delete while it waits: each of the four failed against the
+code before.
+
+The share locks were their own lesson: a locking read locks whatever its plan
+scans. On re-clicks they held the gaps two re-clicks insert into (468 of 1,200
+visits lost to deadlocks, against 0 to 3 without); the lead read's plan went
+through the `click_lead` index, whose lock covered every lead in the
+partition; and a join to `202_clicks_rotator` held its gap on a click with no
+route row, so every new redirector click's route waited for the conversion's
+commit. Measure a locking read on the path it runs on, joins included.
+
+Lock order is the other half, and a statement that only reads can hold one:
+under REPEATABLE READ an `INSERT … SELECT` share-locks the rows it reads, in
+its join order. The traffic source repair locked the source and then the
+accounts naming it; a click's rollup share-locks the click's account and then
+that account's source, and the two deadlocked on the first try (measured;
+`TrafficSourceOwnersIntegrationTest` holds it). Before adding a lock, list the
+statements that lock the same tables, rollups and other `INSERT … SELECT`
+copies included, and take the rows in their order or lock fewer of them. A
+re-check under the lock covers the window after the plan, not the one before
+it: the repair compared its rows with the plan it had made a moment earlier
+in the same request, while the operator had been shown a report read minutes
+before (and the CLI's `--all` sent `{"all": true}`, which moved whatever the
+server's own reading named). A confirmation carries what was shown, and the
+server compares with that (`owner_user_id`, `repair_to_user_id`).
+
+What the refusal does not see: a statement run on the raw handle
+(`writeConnection()`), which Connection never classifies; a read
+`isPlainRead()` does not recognise from its text (it knows `SELECT` and
+`WITH` with a `FROM` and no locking clause at the end), which leaves the
+snapshot unnoted and the lock allowed, the silent direction; a lock other
+than a click's, where "lock, then read" needs the same question asked by
+hand; and a SELECT the server answers without a snapshot (information_schema
+on MariaDB), which it counts as one, the loud direction. The record of a
+lock held (`holdLock()`) is the transaction's own, not the server's: it
+trusts that a callback never carries on past a lock error (#34, held by its
+check) and that `ROLLBACK TO SAVEPOINT` keeps the row locks taken after the
+savepoint, as InnoDB documents (not measured on MariaDB). And the refusal
+moves a contract onto callers: `supersedeGoalRow()`,
+`retireGoalRowInTransaction()` and `reviveGoalRowInTransaction()` read their
+row before they lock, so each works only for a caller that locked the click
+first, and a transaction that asks for a second click after reading is
+refused with a `LogicException`, never served stale. Before relying on "the
+reads after the lock see what it holds", find the transaction's first read,
+not the lock.
+
+### 37. A row a batch skips is the first row of the next batch
+The company-linking sweep took 2,000 of an account's customers with a
+company string and no company, in no order, and skipped those whose string
+`canonicalName()` reduces to nothing (a tab, a no-break space). A skip wrote
+nothing, so the next run's select answered the same 2,000 first, and an
+account with more than 2,000 of them never had another customer linked —
+each run a success that linked 0. The skip was right; what it left was the
+select's answer for next time. Every row a batch takes has to leave the
+batch's selection — written to what the select excludes (here `''`, a
+"none" every reader of the column already had, #25), or walked past by a
+cursor on the key the select orders by — and a row the batch cannot act on
+for a reason it does not know is an error, not a skip (an entity id of 0
+was skipped the same way and would have been taken again forever, #11). Ask
+of every `continue` in a loop over a `LIMIT`ed read: does the next run's
+read take this row again, and what waits behind it?
+
+A cursor is a claim about an index, and the server may not share it.
+`WHERE user_id = ? AND company_id IS NULL AND customer_id > ? ORDER BY
+customer_id` has `(user_id, company_id)` to serve it, primary key implied;
+MariaDB 10.11 chose `merged_into` instead — `merged_into_customer_id IS
+NULL` is true of nearly every customer of every account, and that index
+also yields id order — and read 102,000 rows to return 2,000 (measured).
+The select names its index. Read the plan a cursor gets (`ANALYZE`, not
+`EXPLAIN`) on a table holding other accounts' rows before calling it cheap.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
@@ -1962,6 +2349,42 @@ Three habits, in order of how often they would have helped:
   behaviour change reads as verified fact to the next reviewer. Before claiming
   an optimization is invisible, construct the input where the shortcut and the
   full computation could disagree and run both.
+  Filter lists have a second trap: joining labels before grouping clicks
+  repeats lookup work per click, even when only 300 choices are returned.
+  Grouping first needs the account/date scope intact, and missing lookup ids
+  removed before LIMIT. Keep id-grouped lists distinct from name-grouped
+  suggestions, which merge ids sharing a name. SeenFilterListsIntegrationTest
+  compares answers and actual MariaDB lookup counts for the shared id-list builder.
+  Optional menus must also stay out of the initial page request:
+  ReportReadFailureIntegrationTest locks the click table while rendering the
+  page. Advanced choices load on expansion after the report settles. Their
+  cache keys include database, account, exact window, dimension and limit;
+  cache only the base choices, then add the current selection per request.
+  Calendar preaggregation has a similar boundary: a UTC hour fits within one
+  local calendar hour only if the zone's offsets and transitions align to whole
+  hours. A half-hour midnight or DST change can split it. Keep the per-click
+  calculation when that condition does not hold. TimeGroupingIntegrationTest
+  compares the two report calculations, including every displayed metric,
+  clipped windows, sparse data, account scope, filters and DST boundaries.
+  For dimension reports, preserve the final name grouping after aggregating
+  IDs: duplicate names and missing labels can collapse several IDs into one
+  displayed row. The pager must count those final groups, not distinct IDs.
+  ReportIntegrationTest checks duplicate/missing browser labels, empty pages
+  and that a normal page does not make a second count scan. Account Overview's
+  temporary aggregate must retain user IDs and raw show-filter flags, including
+  converted/nonconverted groups; OverviewTablesIntegrationTest locks raw clicks
+  after preparation and compares all tables for each Show mode, then checks
+  cleanup. Temporary-table permission is optional: failure must retain working
+  individual reads. Avoid aggregating potentially unique IDs before another
+  large grouping; the custom-variable dictionary probe selects a plan, never
+  a reporting cutoff (VariableReportIntegrationTest). Keep rotator accounting
+  on raw clicks, and do not preaggregate transaction/goal ledger parts.
+
+- **An HTTP failure needs guidance for the status received.** A generic report
+  failure suggested an expired session for HTTP 504, sending a query timeout
+  toward sign-in troubleshooting. ReportRequestFailureTest executes the page
+  script's report, Spy and conversion failure handlers for timeout, server,
+  authorization and connection failures; a session hint belongs to HTTP 401.
 
 - **Answering a reviewer is reporting.** A P2 was declined here with "the
   1-click pages only call `upgrade_databases()` once the feed advertises a

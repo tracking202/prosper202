@@ -116,13 +116,36 @@ if (!function_exists('_upgrade_query')) {
     }
 }
 
+if (!function_exists('_upgrade_seed_licence_answers')) {
+    /**
+     * Copy the licence answers cached on disk within the grace period into
+     * 202_licence_answers (ShellAccessCache::seedAnswers()), for the 1.9.79
+     * rung. Best effort: a failure is logged and never stops the upgrade.
+     */
+    function _upgrade_seed_licence_answers(): void
+    {
+        global $db;
+
+        try {
+            $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
+            $answers = new \Prosper202\License\MysqlLicenceAnswerStore($conn);
+            \Prosper202\License\ShellAccessCache::seedAnswers($answers);
+            \Prosper202\License\CliAccessCache::seedAnswers($answers);
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade: the cached licence answers could not be copied: ' . $e->getMessage());
+        }
+    }
+}
+
 if (!function_exists('_upgrade_conversion_ledger_columns')) {
     /**
      * The ledger columns _upgrade_conversion_ledger() adds to
      * 202_conversion_logs, in the order it adds them. ConversionTables
      * declares them in the same order after customer_id, so an upgraded
      * table and a fresh one list them alike. dedupe_key is added nullable
-     * here and made NOT NULL once every row holds a key.
+     * here and made NOT NULL once every row holds a key. match_method came
+     * with 1.9.79, last, so a table any earlier step made gets it here too,
+     * every row it holds reading 'unknown'.
      *
      * @return array<int, array{0: string, 1: string}> [column, definition]
      */
@@ -137,6 +160,7 @@ if (!function_exists('_upgrade_conversion_ledger_columns')) {
             ['superseded_by', '`superseded_by` int(11) unsigned DEFAULT NULL'],
             ['superseded_reason', '`superseded_reason` varchar(16) DEFAULT NULL'],
             ['dedupe_key', '`dedupe_key` varchar(320) COLLATE utf8mb4_bin DEFAULT NULL'],
+            ['match_method', "`match_method` varchar(16) NOT NULL DEFAULT 'unknown'"],
         ];
     }
 }
@@ -218,6 +242,12 @@ if (!function_exists('_upgrade_conversion_ledger')) {
             $columns[$column] = 'YES';
         }
 
+        // A dedupe_key that is already NOT NULL holds a key on every row, so
+        // the backfill (rows with none) has nothing to touch: a later step
+        // that reconciles this table again (1.9.79's match_method) is spared
+        // a walk of every row.
+        $backfilled = ($columns['dedupe_key'] ?? 'YES') === 'NO';
+
         // Backfill in primary-key ranges. One statement over the whole table
         // holds a row lock on every row it has passed until it commits, so a
         // write to an old conversion (a delete, a payout change) waited for
@@ -225,28 +255,30 @@ if (!function_exists('_upgrade_conversion_ledger')) {
         // innodb_lock_wait_timeout. A range of 50,000 commits in about a
         // second. Each range touches only rows with no key yet, so a re-run
         // resumes; the final pass takes rows written past the range read.
-        $bounds = _upgrade_query('SELECT MIN(`conv_id`) AS lo, MAX(`conv_id`) AS hi FROM `202_conversion_logs`');
-        $range = $bounds instanceof \mysqli_result ? $bounds->fetch_assoc() : null;
-        if (!is_array($range)) {
-            error_log('Prosper202 upgrade: could not read the conv_id range of 202_conversion_logs;'
-                . ' the ledger step will retry.');
-            return false;
-        }
-        $bounds->free();
-        $hi = (int) ($range['hi'] ?? 0);
-        $chunk = 50000;
-        for ($from = (int) ($range['lo'] ?? 0); $range['lo'] !== null && $from <= $hi; $from += $chunk) {
-            $to = min($hi, $from + $chunk - 1);
-            $range_sql = _upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` BETWEEN ' . $from . ' AND ' . $to;
-            if (_upgrade_query($range_sql) === false) {
-                error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns;'
+        if (!$backfilled) {
+            $bounds = _upgrade_query('SELECT MIN(`conv_id`) AS lo, MAX(`conv_id`) AS hi FROM `202_conversion_logs`');
+            $range = $bounds instanceof \mysqli_result ? $bounds->fetch_assoc() : null;
+            if (!is_array($range)) {
+                error_log('Prosper202 upgrade: could not read the conv_id range of 202_conversion_logs;'
                     . ' the ledger step will retry.');
                 return false;
             }
-        }
-        if (_upgrade_query(_upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` > ' . $hi) === false) {
-            error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns; the ledger step will retry.');
-            return false;
+            $bounds->free();
+            $hi = (int) ($range['hi'] ?? 0);
+            $chunk = 50000;
+            for ($from = (int) ($range['lo'] ?? 0); $range['lo'] !== null && $from <= $hi; $from += $chunk) {
+                $to = min($hi, $from + $chunk - 1);
+                $range_sql = _upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` BETWEEN ' . $from . ' AND ' . $to;
+                if (_upgrade_query($range_sql) === false) {
+                    error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns;'
+                        . ' the ledger step will retry.');
+                    return false;
+                }
+            }
+            if (_upgrade_query(_upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` > ' . $hi) === false) {
+                error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns; the ledger step will retry.');
+                return false;
+            }
         }
 
         if (($columns['dedupe_key'] ?? 'YES') === 'YES') {
@@ -472,6 +504,89 @@ if (!function_exists('_upgrade_conversion_ledger_probe')) {
     }
 }
 
+if (!function_exists('_upgrade_reclick_backfill_mark')) {
+    /**
+     * ReClickBackfill's marker: the newest click, read by a statement of its
+     * own (a plain read, which locks nothing), then the marker written with
+     * it. Read inside an INSERT ... SELECT, 202_clicks would be read under
+     * shared locks, the gap after the newest click among them, where every
+     * new click goes.
+     */
+    function _upgrade_reclick_backfill_mark(): bool
+    {
+        $newest = _upgrade_query(\Prosper202\Click\ReClickBackfill::NEWEST_CLICK_SQL);
+        if (!$newest instanceof \mysqli_result) {
+            return false;
+        }
+        $row = $newest->fetch_assoc();
+        $id = is_array($row) ? ($row['newest'] ?? null) : null;
+        if (!is_int($id) && !(is_string($id) && preg_match('/\A\d+\z/', $id) === 1)) {
+            return false;
+        }
+
+        return _upgrade_query(\Prosper202\Click\ReClickBackfill::markSql((int) $id)) !== false;
+    }
+}
+
+if (!function_exists('_upgrade_same_ip_fallback')) {
+    /**
+     * 202_users_pref.user_pref_same_ip_fallback (Prosper202\Conversion\
+     * SameIpFallback): whether a pixel that names no click may credit the
+     * account's latest click from the visitor's address. Its DEFAULT, off, is
+     * an account made from 1.9.79 on; every account already here converted
+     * that way, so the column arrives on for each, in the one statement that
+     * adds it, and then takes the installer's DEFAULT.
+     *
+     * Run before the reconciler meets the table, which would add the column
+     * with that DEFAULT, off for everyone: on whichever step reconciles it
+     * first (the 1.9.76 step, on an install older than 1.9.77). Probed first,
+     * so a re-run after a failure finishes what is left and a column already
+     * there keeps every value it holds.
+     */
+    function _upgrade_same_ip_fallback(): bool
+    {
+        $table = _upgrade_query("SHOW TABLES LIKE '202\\_users\\_pref'");
+        if (!$table instanceof \mysqli_result) {
+            error_log('Prosper202 upgrade: could not read whether 202_users_pref exists; the same-IP fallback'
+                . ' setting will be added on the next run.');
+            return false;
+        }
+        $exists = $table->num_rows > 0;
+        $table->free();
+        if (!$exists) {
+            // Made below from the installer's definition, with no account in it.
+            return true;
+        }
+        $defaults = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_users_pref`', 'Field', 'Default');
+        if ($defaults === null) {
+            error_log('Prosper202 upgrade: could not read the columns of 202_users_pref; the same-IP fallback'
+                . ' setting will be added on the next run.');
+            return false;
+        }
+        if (!array_key_exists('user_pref_same_ip_fallback', $defaults)) {
+            // The installer's column (UserTables::usersPref()), DEFAULT on.
+            $add = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_same_ip_fallback` tinyint(1) NOT NULL DEFAULT '1'"
+                . ' AFTER `user_pref_dynamic_bid`';
+            if (_upgrade_query($add) === false) {
+                error_log('Prosper202 upgrade: failed to add 202_users_pref.user_pref_same_ip_fallback; it will be'
+                    . ' added on the next run.');
+                return false;
+            }
+            $defaults['user_pref_same_ip_fallback'] = '1';
+        }
+        if ($defaults['user_pref_same_ip_fallback'] !== '0') {
+            $off = "ALTER TABLE `202_users_pref` ALTER COLUMN `user_pref_same_ip_fallback` SET DEFAULT '0'";
+            if (_upgrade_query($off) === false) {
+                error_log('Prosper202 upgrade: failed to make the same-IP fallback off for new accounts'
+                    . ' (202_users_pref.user_pref_same_ip_fallback); the next run retries.');
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_measurement_tables')) {
     /**
      * Create the measurement tables — the app registry and the Apple
@@ -499,13 +614,22 @@ if (!function_exists('_upgrade_measurement_tables')) {
      * statement) fails the step like a failed CREATE: the version stays,
      * and the next run drops what is left.
      *
+     * $defaults are the columns whose DEFAULT the step changes, by table:
+     * the reconciler leaves a column that is there with the default it was
+     * added with, so each named one is set to the DEFAULT its definition
+     * declares (SchemaReconciler::defaultStatement()), which rewrites no row.
+     * The table must be one of $definitions; anything that cannot be set
+     * fails the step.
+     *
      * @param  array<int, \Prosper202\Database\Schema\SchemaDefinition> $definitions
      * @param  list<string> $retirements
+     * @param  array<string, list<string>> $defaults table => its columns
      * @return bool True when every table exists and matches its definition,
-     *         and every retired table is gone. False leaves the version
-     *         where it is, so the next run retries the whole step.
+     *         every named default is set, every marker is written and every
+     *         retired table is gone. False leaves the version where it is,
+     *         so the next run retries the whole step.
      */
-    function _upgrade_measurement_tables(array $definitions, array $retirements = []): bool
+    function _upgrade_measurement_tables(array $definitions, array $retirements = [], array $defaults = []): bool
     {
         $reconciler = new \Prosper202\Database\SchemaReconciler(
             static function (string $sql) {
@@ -526,6 +650,18 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
         }
 
+        // The same-IP fallback setting arrives on for the accounts already
+        // there, before the reconciler would add it off for them
+        // (_upgrade_same_ip_fallback()).
+        foreach ($definitions as $definition) {
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::USERS_PREF) {
+                if (!_upgrade_same_ip_fallback()) {
+                    return false;
+                }
+                break;
+            }
+        }
+
         $ok = true;
         foreach ($definitions as $definition) {
             if (_upgrade_query($definition->createStatement) === false) {
@@ -538,16 +674,48 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
         }
 
+        if ($ok) {
+            foreach ($defaults as $table => $columns) {
+                $owner = null;
+                foreach ($definitions as $definition) {
+                    if ($definition->tableName === $table) {
+                        $owner = $definition;
+                        break;
+                    }
+                }
+                foreach ($columns as $column) {
+                    $statement = null;
+                    $why = $owner === null ? ' (the step converges no such table)' : '';
+                    if ($owner !== null) {
+                        try {
+                            $statement = \Prosper202\Database\SchemaReconciler::defaultStatement($owner, $column);
+                        } catch (\RuntimeException $e) {
+                            $why = ' (' . $e->getMessage() . ')';
+                        }
+                    }
+                    if ($statement === null || _upgrade_query($statement) === false) {
+                        $ok = false;
+                        error_log('Prosper202 upgrade: failed to set the default of ' . $table . '.' . $column . $why);
+                    }
+                }
+            }
+        }
+
         // The Android install-token key (plan §5.1), minted by the same
         // idempotent statement the installer runs, once its table exists.
         // An existing key is never replaced: links already in circulation
-        // keep verifying.
+        // keep verifying. The install's id beside it, the same way: it names
+        // the API state directory (Prosper202\Database\InstallId).
         if ($ok) {
             foreach ($definitions as $definition) {
                 if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::DEPLOYMENT_SECRETS) {
                     if (_upgrade_query(\Api\V3\Apps\Android\InstallTokenKey::mintStatement()) === false) {
                         $ok = false;
                         error_log('Prosper202 upgrade: failed to mint the Android install-token key');
+                    }
+                    if (_upgrade_query(\Prosper202\Database\InstallId::mintStatement()) === false) {
+                        $ok = false;
+                        error_log('Prosper202 upgrade: failed to mint the install id');
                     }
                     break;
                 }
@@ -569,6 +737,21 @@ if (!function_exists('_upgrade_measurement_tables')) {
                         $ok = false;
                         error_log('Prosper202 upgrade: failed to mark the pre-upgrade conversions'
                             . ' for the attribution backfill');
+                    }
+                    break;
+                }
+            }
+        }
+
+        // The clicks re-clicked before 1.9.79 (Prosper202\Click\ReClickBackfill),
+        // the same way: the marker here, the walk from the cron.
+        if ($ok) {
+            foreach ($definitions as $definition) {
+                if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::RECLICK_BACKFILL) {
+                    if (!_upgrade_reclick_backfill_mark()) {
+                        $ok = false;
+                        error_log('Prosper202 upgrade: failed to mark the clicks re-clicked before 1.9.79'
+                            . ' for their backfill');
                     }
                     break;
                 }
@@ -2398,6 +2581,16 @@ class UPGRADE
             $sql = "RENAME TABLE 202_dataengine_new TO 202_dataengine";
             $result = _upgrade_query($sql);
 
+            // The rebuild below reads 202_click_latest_visits (LatestVisit),
+            // which the 1.9.79 step converges: an install upgrading from
+            // before 1.9.5 reaches this first, and without it the rebuild
+            // failed here on every run. Empty, it reads every visit as
+            // latest, as the rebuild did when this step was written.
+            $sql = \Prosper202\Database\Tables\ClickTables::clickLatestVisits()->createStatement;
+            if (_upgrade_query($sql) === false) {
+                error_log('Prosper202 upgrade: failed to create 202_click_latest_visits, which the 1.9.5 rebuild below reads');
+            }
+
             $de = new DataEngine();
             // PHPStan resolves DataEngine to the slim stub (see note above); the full class
             // loaded here exposes getSummary(), which runs the dataengine rebuild for its side
@@ -2513,12 +2706,6 @@ class UPGRADE
 
             $sql = "ALTER TABLE 202_users_pref ADD COLUMN `user_daily_email` char(2) NOT NULL DEFAULT '07'";
             $result = _upgrade_query($sql);
-
-            $sql = "SELECT user_timezone, install_hash, user_daily_email FROM 202_users LEFT JOIN 202_users_pref USING (user_id) WHERE user_id = 1";
-            $result = _upgrade_query($sql);
-            $row = $result->fetch_assoc();
-
-            registerDailyEmail($row['user_daily_email'], $row['user_timezone'], $row['install_hash']);
 
             $sql = "ALTER TABLE 202_keywords CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
             $result = _upgrade_query($sql);
@@ -4368,10 +4555,99 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.78', '>')) {
+        if ($prosper202_version == '1.9.78') {
 
-            $prosper202_version = '1.9.78';
+            // A re-clicked click counts once, at its latest visit, which
+            // 202_click_latest_visits records (Prosper202\Click\LatestVisit).
+            // The clicks re-clicked before 1.9.79 have no record, and rows
+            // written by an older rule: the step marks the newest click, and
+            // the cron walks the clicks up to it (Prosper202\Click\ReClickBackfill).
+            //
+            // An account created from 1.9.79 on starts with privacy 'eu'
+            // (Enabled for European Traffic): 202_users_pref's privacy column
+            // takes the installer's DEFAULT, and every account already there
+            // keeps its own value.
+            //
+            // A schema change for 1.9.79 belongs in this block, reconciled
+            // before the version is written.
+            //
+            // 202_rotator_rules gains position, the order a redirector's
+            // rules are tried in (Prosper202\Rotator\RuleOrder); every rule
+            // holds 0 until its rule set is saved, which keeps the id order.
+            // How each conversion's click was found (Conversion\Ledger\
+            // MatchMethod): 202_conversion_logs.match_method, and the same on
+            // 202_goal_events for the outcomes an event reaches. Every row
+            // already there takes the default, 'unknown'.
+            // The same-IP fallback becomes an account's setting
+            // (202_users_pref.user_pref_same_ip_fallback): on for every
+            // account already here, off for an account made from now on
+            // (_upgrade_same_ip_fallback()).
+            $step_ok = _upgrade_measurement_tables([
+                \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
+                \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // 202_google gains gbraid, wbraid, ttclid, msclkid and fbclid
+                // (Prosper202\Click\ClickRecord).
+                \Prosper202\Database\Tables\TrackingTables::google(),
+                // 202_users_pref gains paykickstart_ipn_secret_keys, the keys
+                // PayKickstart's product IPN is verified with (PayKickstartKeys).
+                \Prosper202\Database\Tables\UserTables::usersPref(),
+                \Prosper202\Database\Tables\RotatorTables::rotatorRules(),
+                \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
+                \Prosper202\Database\Tables\GoalTables::goalEvents(),
+                // The GeoIP database refresh's credentials and last run (Prosper202\GeoIp).
+                \Prosper202\Database\Tables\SecretTables::geoipRefresh(),
+                // The offline conversion files' fetch URLs and conversion
+                // names (Prosper202\OfflineConversion).
+                \Prosper202\Database\Tables\ConversionTables::offlineConversionFeeds(),
+                \Prosper202\Database\Tables\ConversionTables::offlineConversionNames(),
+                // The pending-click settler's queue: settle_failures, settle_next_at and settle_due.
+                \Prosper202\Database\Tables\AppTables::appInstalls(),
+                // Mints the install's id there, which names the API state directory.
+                \Prosper202\Database\Tables\SecretTables::deploymentSecrets(),
+                // The attribution worker's queue of identity merges: the requeue_* columns and requeue_due.
+                \Prosper202\Database\Tables\IdentityTables::identityMerges(),
+                // 202_users gains user_session_generation, which a new
+                // password, a switch-off or a removal counts up so that
+                // connect.php ends the user's other sessions
+                // (Prosper202\User\SessionGeneration). 0 for everyone, which
+                // a session from before the upgrade, holding none, reads as.
+                \Prosper202\Database\Tables\UserTables::users(),
+                // The last licence answer per key, which the grace period reads
+                // while Tracking202 cannot be reached (ShellAccessCache::validWithinGrace()).
+                \Prosper202\Database\Tables\SecretTables::licenceAnswers(),
+                // The click filter's settings and address list per account,
+                // and why each filtered click is filtered
+                // (Prosper202\Click\Filter). No row is the defaults, which
+                // filter as before.
+                \Prosper202\Database\Tables\UserTables::clickFilterSettings(),
+                \Prosper202\Database\Tables\UserTables::clickFilterEntries(),
+                \Prosper202\Database\Tables\ClickTables::clicksFilterReason(),
+            ], [], ['202_users_pref' => ['user_pref_privacy']]);
+
+            // The licence answers this install cached on disk before 1.9.79,
+            // copied into 202_licence_answers so the grace period has them.
+            if ($step_ok) {
+                _upgrade_seed_licence_answers();
+            }
+
+            if ($step_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.79'") !== false) {
+                    $prosper202_version = '1.9.79';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.79; '
+                        . 'leaving version at 1.9.78 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: a table of the 1.9.79 step could not be reconciled (the list above),'
+                    . ' the new accounts\' privacy default set or the re-click backfill marked; leaving version'
+                    . ' at 1.9.78 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.79', '>')) {
+
+            $prosper202_version = '1.9.79';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

@@ -110,6 +110,22 @@ final class FakeMysqliConnection extends mysqli
         return $stmt;
     }
 
+    /**
+     * A plain query registered with whenQueryContainsReturnRows() answers its
+     * rows; any other is mysqli's own query() on this unconnected fake, which
+     * throws, as every query() here did before.
+     */
+    #[\ReturnTypeWillChange]
+    public function query(string $query, int $result_mode = MYSQLI_STORE_RESULT): mysqli_result|bool
+    {
+        $rows = $this->resolveRows($query);
+        if ($rows === null) {
+            return parent::query($query, $result_mode);
+        }
+
+        return new FakeMysqliResult($rows);
+    }
+
     public function begin_transaction(int $flags = 0, ?string $name = null): bool
     {
         $this->beginTransactionCalled = true;

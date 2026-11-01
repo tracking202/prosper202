@@ -12,10 +12,12 @@ on:
     paths:
       - '**.sh'
       - '.github/workflows/**'
+      - 'scripts/changelog.py'
   pull_request:
     paths:
       - '**.sh'
       - '.github/workflows/**'
+      - 'scripts/changelog.py'
 
 jobs:
   shellcheck:
@@ -85,17 +87,16 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version: '1.27.3'
           cache-dependency-path: go-cli/go.sum
 
       # The binary only. golangci-lint-action@v7 always runs the linter and
       # has no install-only input (v6 did; I wrote it from memory and
-      # actionlint caught it), so use golangci's own install script, which
-      # fetches a prebuilt binary and has no Go-version constraint.
+      # actionlint caught it), so install the binary here.
       - name: Install golangci-lint
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-            | sh -s -- -b "$(go env GOPATH)/bin" v2.5.0
+          # go install, so it is built with this job's Go and reads its export data.
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/golangci-lint" --version
 
@@ -119,6 +120,11 @@ jobs:
       # selected nothing and reported skips that read like a run.
       - name: Run verify-ladder tests
         run: ./scripts/tests/verify-ladder.test.sh
+
+      # Fragments only stop the conflicts if the release can fold them in
+      # exactly and the guard refuses a pull request that edits the files.
+      - name: Run changelog tests
+        run: ./scripts/tests/changelog.test.sh
 
   actionlint:
     name: actionlint

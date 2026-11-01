@@ -62,7 +62,7 @@ try {
 
 try {
     $engine = new GoalEngine(new Connection($db));
-    $result = $engine->ingest($input['user_id'], $engine->clickSubject($input['user_id'], $input['click_id']), $events);
+    $result = $engine->ingest($input['user_id'], $engine->clickSubject($input['user_id'], $input['click_id']), $events, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 } catch (GoalEngineException $e) {
     $fail(3, $e->reason, $e->getMessage());
 }

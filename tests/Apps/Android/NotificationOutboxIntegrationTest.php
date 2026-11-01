@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Tests\Apps\Android;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\NotificationOutbox;
+use Prosper202\Notifications\PostbackSender;
 
 /**
  * The outbox's delivery unit and its once-per-outcome table, against a real
@@ -26,6 +28,8 @@ final class NotificationOutboxIntegrationTest extends TestCase
     private const OLD = 1000;
     private const NEW = 2000;
     private const FIX = 'https://ts.example/fix?v=[[p202_goal_value]]&was=[[p202_previous_value]]&k=[[p202_notification]]';
+    private const LOOPBACK = 'not sent: 127.0.0.1, which is a loopback address.'
+        . ' Postbacks are only sent to public addresses.';
 
     private function outboxWith(callable $fetch, ?string $correctionUrl = null): NotificationOutbox
     {
@@ -116,6 +120,88 @@ final class NotificationOutboxIntegrationTest extends TestCase
         self::assertSame(1, count(array_keys($calls, 'https://a.example/1', true)));
         self::assertSame(NotificationOutbox::MAX_ATTEMPTS, count(array_keys($calls, 'https://b.example/2', true)));
         self::assertSame(['sent', 'failed'], array_column(self::$db->query('SELECT status FROM 202_notification_pending ORDER BY destination')->fetch_all(MYSQLI_ASSOC), 'status'));
+    }
+
+    /**
+     * A URL the sender refuses (an address it never calls) fails at once,
+     * with the reason, and is never tried again; the pixel's other URL, and
+     * the rest of the batch, are sent as ever (CLAUDE.md #24). The log line
+     * names the pixel and the host, not the query, which can carry a key.
+     */
+    public function testARefusedUrlFailsAtOnceWithItsReasonAndAloneAndIsNeverTriedAgain(): void
+    {
+        $this->click(100);
+        self::pixels([90 => 'http://127.0.0.1:9/pb?key=SECRET&s=[[subid]] https://b.example/pb?s=[[subid]]']);
+        $this->queue(self::OLD);
+        $calls = [];
+        $sender = new PostbackSender(
+            new WebhookGuard(static fn (string $host): array => $host === 'b.example' ? ['93.184.216.34'] : [], ''),
+            static function (array $options) use (&$calls): array {
+                $calls[] = $options[CURLOPT_URL];
+
+                return ['status' => 200, 'error' => null, 'primary_ip' => '93.184.216.34', 'redirect_url' => null];
+            }
+        );
+        $outbox = $this->outboxWith($sender->send(...));
+        $log = (string) tempnam(sys_get_temp_dir(), 'p202-outbox-log');
+        $previous = ini_set('error_log', $log);
+        try {
+            self::assertSame(['sent' => 1, 'failed' => 1, 'retrying' => 0], $outbox->sendDue(10));
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+        self::assertSame(['https://b.example/pb?s=100'], $calls, 'the refused URL never reached curl');
+        $rows = self::rows(self::OLD);
+        self::assertSame(['failed', '1'], [$rows[0]['status'], (string) $rows[0]['attempts']], 'failed at once');
+        self::assertSame(self::LOOPBACK, $rows[0]['last_error']);
+        self::assertSame(['sent', null], [$rows[1]['status'], $rows[1]['last_error']]);
+
+        $logged = (string) file_get_contents($log);
+        unlink($log);
+        self::assertStringContainsString('traffic source postback refused for pixel 90 (notification ', $logged);
+        self::assertStringContainsString('http://127.0.0.1:9): ' . self::LOOPBACK, $logged);
+        self::assertStringNotContainsString('SECRET', $logged);
+
+        $this->clock += NotificationOutbox::backoff(NotificationOutbox::MAX_ATTEMPTS);
+        $again = $outbox->sendDue(10);
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0], $again, 'a refusal is final');
+        self::assertCount(1, $calls);
+    }
+
+    /**
+     * The outbox every caller builds (no sender handed in) sends through
+     * PostbackSender: an internal address and the metadata address are
+     * refused there, unconnected, and recorded.
+     */
+    public function testTheOutboxAsBuiltRefusesInternalAddresses(): void
+    {
+        $this->click(100);
+        self::pixels([90 => 'http://127.0.0.1:9/pb?s=[[subid]] http://169.254.169.254/latest/meta-data/?s=[[subid]]']);
+        $this->queue(self::OLD);
+        $log = (string) tempnam(sys_get_temp_dir(), 'p202-outbox-log');
+        $previous = ini_set('error_log', $log);
+        try {
+            $sent = (new NotificationOutbox(new Connection(self::$db), fn (): int => $this->clock))->sendDue(10);
+        } finally {
+            ini_set('error_log', (string) $previous);
+            unlink($log);
+        }
+        self::assertSame(['sent' => 0, 'failed' => 2, 'retrying' => 0], $sent);
+        $metadata = 'not sent: 169.254.169.254, which is a link-local address, where cloud metadata services answer.'
+            . ' Postbacks are only sent to public addresses.';
+        self::assertSame(
+            [['failed', self::LOOPBACK], ['failed', $metadata]],
+            array_map(static fn (array $r): array => [$r['status'], $r['last_error']], self::rows(self::OLD))
+        );
+    }
+
+    /** @return list<array<string, mixed>> a conversion's rows, by destination */
+    private static function rows(int $convId): array
+    {
+        return self::$db->query(
+            "SELECT destination, status, attempts, last_error FROM 202_notification_pending
+             WHERE conv_id = $convId ORDER BY destination"
+        )->fetch_all(MYSQLI_ASSOC);
     }
 
     /**

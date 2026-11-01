@@ -75,7 +75,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 										`aff_network_name`='" . $mysql['aff_network_name'] . "',
 										`aff_network_time`='" . $mysql['aff_network_time'] . "'";
 		if ($editing == true) {
-			$aff_network_sql .= "WHERE `aff_network_id`='" . $mysql['aff_network_id'] . "'";
+			$aff_network_sql .= "WHERE `aff_network_id`='" . $mysql['aff_network_id'] . "'"
+                . " AND `user_id`='" . $mysql['user_id'] . "'";
 		}
 		$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
 

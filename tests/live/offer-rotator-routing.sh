@@ -83,6 +83,10 @@ OPERA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
 
 TAG="or-pass $(date +%s)"
 U="https://example.com/or-$(date +%s)"
+# The routing is read off clicks recorded from this machine.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" || exit 2
 
 say "setup: a campaign, three landing pages, a rotator with four rules ($TAG)"
 must "$(api POST /aff-networks "{\"aff_network_name\":\"$TAG\"}")" "category"
@@ -105,7 +109,10 @@ RT=$(field "d['data']['id']")
 must "$(api POST "/rotators/$RT/rules" "{\"rule_name\":\"$TAG weighted\",\"splittest\":1,\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Firefox\"}],\"redirects\":[{\"redirect_url\":\"$U/zero\",\"weight\":0,\"name\":\"zero\"},{\"redirect_lp\":$LP_RULE,\"weight\":100,\"name\":\"all\"}]}")" "weighted rule"
 must "$(api POST "/rotators/$RT/rules" "{\"rule_name\":\"$TAG even\",\"splittest\":1,\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Chrome\"}],\"redirects\":[{\"redirect_url\":\"$U/one\",\"weight\":50,\"name\":\"one\"},{\"redirect_url\":\"$U/two\",\"weight\":50,\"name\":\"two\"}]}")" "even rule"
 must "$(api POST "/rotators/$RT/rules" "{\"rule_name\":\"$TAG lp\",\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Safari\"}],\"redirects\":[{\"redirect_lp\":$LP_RULE,\"weight\":100,\"name\":\"lp\"}]}")" "landing page rule"
-must "$(api POST "/rotators/$RT/rules" "{\"rule_name\":\"$TAG unweighted\",\"splittest\":1,\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Edge\"}],\"redirects\":[{\"redirect_url\":\"$U/first\",\"weight\":0,\"name\":\"first\"},{\"redirect_url\":\"$U/second\",\"weight\":0,\"name\":\"second\"}]}")" "unweighted rule"
+# The API refuses a split test whose every weight is 0, as the page does;
+# an older write stored them, so the weights are set to 0 by hand.
+must "$(api POST "/rotators/$RT/rules" "{\"rule_name\":\"$TAG unweighted\",\"splittest\":1,\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Edge\"}],\"redirects\":[{\"redirect_url\":\"$U/first\",\"weight\":1,\"name\":\"first\"},{\"redirect_url\":\"$U/second\",\"weight\":1,\"name\":\"second\"}]}")" "unweighted rule"
+Q "UPDATE 202_rotator_rules_redirects rr JOIN 202_rotator_rules r ON r.id = rr.rule_id SET rr.weight = '0' WHERE r.rotator_id = $RT AND r.rule_name = '$TAG unweighted'"
 # Opera: one redirect, to a rotating campaign that moves to another account
 # below (as a rule saved before ownership was checked could name one).
 must "$(api POST /campaigns "{\"aff_campaign_name\":\"$TAG moved\",\"aff_campaign_url\":\"$U/moved\",\"aff_campaign_url_2\":\"$U/moved-2\",\"aff_campaign_rotate\":1,\"aff_campaign_payout\":\"5\",\"aff_network_id\":$NET}")" "campaign that moves"

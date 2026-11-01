@@ -69,7 +69,6 @@ final class AccountScopedJoinTest extends TestCase
     // Why a site in HARMLESS cannot cross accounts. Each names the writer
     // that makes it so; when that writer changes, so must the entry.
 
-    private const SAME_CLICK = 'one click\'s own rows, joined on the click\'s id: they are written with the click, by the same redirect, so they are its account\'s';
     private const LATEST_VISIT = 'one click\'s own rows by its id (`?` or its digits, checked), ordered to its'
         . ' latest visit: the derived table stands where the statement read `202_clicks` as its driving row, and'
         . ' the click\'s owner is what its callers check (p202ClickOwner() returns it, offrtr.php compares it with'
@@ -86,6 +85,9 @@ final class AccountScopedJoinTest extends TestCase
     private const DIRTY_MARKS = 'marks the hours a changed click or conversion sits in, for whichever account owns them: the account read is the row\'s own (its journey meta row by conv_id, the credit\'s model by model_id), and it is the one marked';
     private const RUNTIME_CHECKED = 'built per dimension at runtime; testRuntimeBuiltSqlIsTied() runs the builder for every dimension and scans what it returns';
     private const JOIN_REWRITE = 'str_replace() arguments that turn dimensionJoin()\'s INNER JOIN into a LEFT JOIN for the group report; the join itself is testRuntimeBuiltSqlIsTied()\'s';
+    private const GROUP_LEAVES = 'the group report\'s innermost groups, a derived table: its WHERE is'
+        . ' filtered()\'s, which begins `de.user_id = ?` with the account, and its joins are dimensionJoin()\'s,'
+        . ' which testRuntimeBuiltSqlIsTied() runs';
     private const NOT_SQL = 'an exception message ("has no name join"), not SQL';
     private const CALLER_SCOPE = 'the caller\'s click scope over 202_dataengine (the report\'s own user filter); the rows it selects are one click\'s conversions';
     private const INSTALL_REGISTRATION = 'an install\'s registration: InstallIntake::insert() writes registration_id and user_id together from one registration, and no statement updates either';
@@ -109,8 +111,29 @@ final class AccountScopedJoinTest extends TestCase
     private const AUTH_KEY = 'the comma join\'s WHERE ties it: `2u.user_id = 2a.user_id`, with `2a.user_id` the signed-in account';
     private const LEDGER_PARTS = 'the counted conversion rows of the report\'s own clicks: LedgerReportSql::partsTable() selects `lp.click_id IN (SELECT s.click_id FROM 202_dataengine s WHERE <the report\'s owner condition and window>)`, its goal join is tied, and a conversion is recorded only on its own account\'s click';
     private const DATA_SCOPE = 'ranks an install-wide region or ISP by the clicks the report reads: `2st.user_id = ` the integer DataScope::userId() returns, or every account\'s for the session that sees every campaign (DataScope); it names nothing an account owns';
+    private const REPORT_AGGREGATE_SCOPE = 'ReportAggregation retains the caller-built account/date/filter WHERE; '
+        . 'ReportIntegrationTest and LegacyReportAccountScopeIntegrationTest execute its account-scoped readers, '
+        . 'and testReportAggregationKeepsTheCallersScopeBeforeLabelJoins() checks both output aliases';
     private const INSTALL_LICENCE_KEY = 'the install\'s licence key, read across the users of one install on purpose: the lowest active user on the requesting user\'s install_hash that holds a key, as AUTH::determineAccountOwnerId() resolves it for the web app; the key only asks my.tracking202.com whether the install is licensed for the Go CLI, and nothing of that row is answered to the caller';
     private const UPGRADE = 'an upgrade or migration step over every account\'s rows: it serves nothing on one account\'s behalf';
+    private const OWNERSHIP_REPORT = 'finds, on purpose, the traffic sources whose accounts are another user\'s'
+        . ' (`pa.user_id <> pn.user_id`): the install-wide report GET /system/traffic-source-owners serves only to an'
+        . ' Admin with access_to_settings (TrafficSourceOwnersRoutesTest), and the repair moves a source only to a user'
+        . ' its accounts name';
+    private const FIRST_VISIT = 'one click\'s own rows by its id (`?` or its digits, checked), ordered to its'
+        . ' first visit, standing where the statement read `202_clicks` as its driving row; each caller ties it to'
+        . ' an account: `fv.user_id = ?` (LastClickFromAddress::find()), `c.user_id = ?`'
+        . ' (TrafficSourcePixels::clickTokens()), the click locked and every row of it one account\'s'
+        . ' (MysqlClickRepository::firstVisitArrival(), after recordReClick()\'s lockClick($clickId, $userId) and'
+        . ' accountsClickFirstTime(), or repairVisits()\'s count of the accounts), `fv.user_id = ` the owner of'
+        . ' the click\'s latest visit, the account the conversion is recorded for (p202ClickSourceSql(), for'
+        . ' gpb.php and upx.php)';
+    private const ROLLUP_TABLE = 'the rollup table the caller names (202_dataengine, or 202_dataengine_new in the'
+        . ' upgrade), tied in the same ON (`de.user_id = 2c.user_id`): the scan cannot read a table name to check it'
+        . ' against';
+    private const ENGAGEMENT_LATEST = 'the subquery\'s WHERE is `cu2.user_id = ?`, the account; its runtime part is'
+        . ' LatestVisit::isLatest(\'c\'), a NOT EXISTS over the click\'s own record in 202_click_latest_visits, which'
+        . ' has no account';
 
     /**
      * Category (b): reads that join an account-owned table without tying
@@ -121,6 +144,18 @@ final class AccountScopedJoinTest extends TestCase
      * @var array<string, array<string, string>>
      */
     private const HARMLESS = [
+        '202-config/DataEngine/ReportAggregation.php' => [
+            'subquery without a WHERE | 202_dataengine | 202_dataengine' => self::REPORT_AGGREGATE_SCOPE,
+            'subquery with runtime text before its WHERE | 202_dataengine | '
+                . '($groups === [] ? \'\' : \' GROUP BY \' . implode(\', \', $groups))' => self::REPORT_AGGREGATE_SCOPE,
+        ],
+        '202-config/class-dataengine.php' => [
+            'subquery table built at runtime | {{$this->overviewTable}} | '
+                . 'SELECT * FROM {{{$this->overviewTable}}} AS `2st` {$where} ) AS `2st`' =>
+                'the connection-local table was populated with this engine\'s DataScope and exact window, '
+                . 'retains user_id, and is filtered again; OverviewTablesIntegrationTest checks every Show mode, '
+                . 'reuse and cleanup',
+        ],
         '202-config/Attribution/AttributionReports.php' => [
             'no user_id tie | 202_clicks | c.click_id = cr.click_id {$joins}' => self::JOURNEY_TOUCH,
             'no user_id tie | 202_conversion_logs | cl.conv_id = cr.conv_id' => self::CREDIT_CONVERSION,
@@ -154,9 +189,15 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/Click/ClickRetention.php' => [
             'no user_id tie | 202_clicks | n.click_id = c.click_id AND n.click_time >= ?' => self::RETENTION_SKIP,
         ],
+        '202-config/Click/FirstVisit.php' => [
+            'no user_id tie | 202_clicks | fv.click_id = {{$clickId}}' => self::FIRST_VISIT,
+        ],
         '202-config/Click/LatestVisit.php' => [
             'condition built at runtime | 202_clicks | lv.click_id = {{$clickId}}'
                 . ' {self::orderBy(\'lv\', \'lvr\')}' => self::LATEST_VISIT,
+            'no user_id tie | 202_clicks | lead_visit.click_id = {$clicks}.click_id AND lead_visit.user_id ='
+                . ' {$clicks}.user_id AND lead_visit.click_lead = 1' => 'anyVisitIsLead(): tied, to the caller\'s'
+                . ' row\'s own user_id, which the scan reads as an interpolation; it reads only that click\'s rows',
         ],
         '202-config/Conversion/Ledger/LedgerReportSql.php' => [
             'alias built at runtime | 202_conversion_logs | $t' => self::SAME_CLICK_CONVERSIONS,
@@ -165,12 +206,22 @@ final class AccountScopedJoinTest extends TestCase
             'subquery with runtime text before its WHERE | 202_conversion_logs | $goalId' => self::SAME_CLICK_CONVERSIONS,
             'condition built at runtime | 202_dataengine | {$clickScope}' => self::CALLER_SCOPE,
         ],
+        '202-config/DataEngine/ClickRollupSql.php' => [
+            'table built at runtime | $table | click_id ) STRAIGHT_JOIN {$table} AS de ON ( de.click_id = `2c`.'
+                => self::ROLLUP_TABLE,
+            'table built at runtime | $table | click_id ) STRAIGHT_JOIN {$table} AS de ON ( de.click_id = `2c`. #2'
+                => self::ROLLUP_TABLE,
+            'no user_id tie | 202_clicks | `2c`.click_id = lv.click_id' => 'deleteEarlierVisitsOfClick(): the'
+                . ' click\'s rows from its record in 202_click_latest_visits, which has no account; the click is the'
+                . ' one the caller rolls up, and the rollup table is tied to its rows\' account',
+        ],
         '202-config/Goals/GoalEngine.php' => [
             'no user_id tie | 202_clicks | c.click_id = i.click_id' => self::INSTALL_CLICK,
             'no user_id tie | 202_clicks | c.click_id = s.subject_id' => self::SUBJECT_CLICK,
         ],
         '202-config/Goals/WebEvents.php' => [
             'no user_id tie | 202_clicks | c.click_id = o.click_id' => self::WHERE_UNREAD,
+            'no user_id tie | 202_clicks | c.click_id = o.click_id #2' => self::WHERE_UNREAD,
         ],
         '202-config/Ltv/MysqlCustomerCrmRepository.php' => [
             'no user_id tie | 202_customer_fields | f.field_id = v.field_id' => self::FIELD_OF_VALUE,
@@ -184,6 +235,11 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_revenue_events | re.event_id = li.event_id {{$customerJoin}} {{$pcWhereClause}}' => self::EVENT_LINES,
             'condition built at runtime | 202_products | p.product_id = pc.product_id {{$mrrSubquery}}' => self::LTV_PRODUCTS,
             'alias built at runtime | 202_customer_field_values | {$alias}' => self::CUSTOMER_FIELD_FILTER,
+        ],
+        '202-config/Ltv/MysqlEngagementRepository.php' => [
+            'condition built at runtime | 202_customers | cu2.user_id = ? AND cu2.company IS NOT NULL AND'
+                . ' cu2.company <> \'\' AND cu2.merged_into_customer_id IS NULL AND {LatestVisit::isLatest(\'c\')}'
+                => self::ENGAGEMENT_LATEST,
         ],
         '202-config/Ltv/MysqlPersonalizationRepository.php' => [
             'no user_id tie | 202_customer_field_values | v.field_id = f.field_id AND v.customer_id = ?' => self::FIELD_VALUES_OF_OWN_FIELD,
@@ -211,6 +267,9 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/ReportSummaryForm.class.php' => [
             'table built at runtime | \\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope) | LEFT OUTER JOIN {\\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope)} AS lcp ON ( `2c`.click_id = lcp.' => self::LEDGER_PARTS,
         ],
+        '202-config/Setup/TrafficSourceOwners.php' => [
+            'no user_id tie | 202_ppc_networks | pn.ppc_network_id = pa.ppc_network_id' => self::OWNERSHIP_REPORT,
+        ],
         '202-config/Update/SubidBatch.php' => [
             'no user_id tie | 202_conversion_logs | cl.click_id = c.click_id AND cl.deleted = 0' => self::SAME_CLICK_CONVERSIONS,
             'no user_id tie | 202_conversion_logs | cl.click_id = c.click_id AND cl.deleted = 0 #2' => self::SAME_CLICK_CONVERSIONS,
@@ -220,7 +279,10 @@ final class AccountScopedJoinTest extends TestCase
             'comma join | 202_users | SELECT * FROM 202_auth_keys `2a` , 202_users `2u` WHERE `2a`.expires > UNIX_TIMESTAMP' => self::AUTH_KEY,
         ],
         '202-config/functions-ui-overview.php' => [
-            'table built at runtime | $lookup | AS d JOIN {$lookup} ON ( {$idColumn} = d.{$column} ) WHERE {$scope}' => self::RUNTIME_CHECKED,
+            'condition built at runtime | 202_dataengine | {$scope}'
+                . ' AND d.click_time >= ? AND d.click_time <= ?' => self::RUNTIME_CHECKED,
+            'table built at runtime | $lookup | AS seen STRAIGHT_JOIN {$lookup}'
+                . ' ON ( {$idColumn} = seen.id ) ORDER BY' => self::RUNTIME_CHECKED,
         ],
         '202-config/functions-upgrade.php' => [
             'no user_id tie | 202_conversion_logs | transaction_id IS NOT NULL' => self::UPGRADE,
@@ -228,11 +290,6 @@ final class AccountScopedJoinTest extends TestCase
         ],
         '202-config/migrations/run_ltv_backfill.php' => [
             'no user_id tie | 202_revenue_events | re.conv_id = cl.conv_id' => self::UPGRADE,
-        ],
-        '202-cronjobs/ltv_maintenance.php' => [
-            'no user_id tie | 202_subscriptions | customer_id IN ( {{$in}} )' => self::CUSTOMER_ROWS,
-            'no user_id tie | 202_revenue_events | customer_id BETWEEN {{$start}} AND {{$end}}' => self::CUSTOMER_ROWS,
-            'no user_id tie | 202_subscriptions | customer_id BETWEEN {{$start}} AND {{$end}}' => self::CUSTOMER_ROWS,
         ],
         'api/v3/Apps/Android/InstallIntake.php' => [
             'no user_id tie | 202_app_registrations | r.registration_id = i.registration_id' => self::INSTALL_REGISTRATION,
@@ -267,12 +324,20 @@ final class AccountScopedJoinTest extends TestCase
         ],
         'api/v3/Controllers/ReportsController.php' => [
             'no table after JOIN | ? | INNER JOIN' => self::JOIN_REWRITE,
+            'subquery with runtime text before its WHERE | 202_dataengine'
+                . ' | implode("\n ", $joins)' => self::GROUP_LEAVES,
             'no table after JOIN | ? | LEFT JOIN' => self::JOIN_REWRITE,
             'table built at runtime | {$bd[\'table\']} | INNER JOIN {{$bd[\'table\']}} ref ON {$on}' => self::RUNTIME_CHECKED,
         ],
         'tracking202/Report/ReportPrefsStore.php' => [
-            'condition built at runtime | 202_dataengine | `2st`.region_id = r.region_id AND {($dataUserId === null ? \'2st.user_id != 0\' : \'2st.user_id = \'.$dataUserId)} AND `2st`.click_time >= ? AND `2st`.click_time <= ?' => self::DATA_SCOPE,
-            'condition built at runtime | 202_dataengine | `2st`.isp_id = i.isp_id AND {($dataUserId === null ? \'2st.user_id != 0\' : \'2st.user_id = \'.$dataUserId)} AND `2st`.click_time >= ? AND `2st`.click_time <= ?' => self::DATA_SCOPE,
+            'condition built at runtime | 202_dataengine | {$scope} AND `2st`.click_time >= ? '
+                . 'AND `2st`.click_time <= ? AND `2st`.{$column} IN ( {$marks} )' => self::DATA_SCOPE,
+        ],
+        'tracking202/Report/RotatorBreakdown.php' => [
+            'condition built at runtime | 202_clicks | c.user_id = ? AND c.click_time >= ? '
+                . 'AND c.click_time <= ? AND {LatestVisit::isLatest(\'c\')} {UserPrefFilters::showFilter($show, \'c.\')}' =>
+                'the bound account and window precede the Show filter, which only appends AND conditions; '
+                . 'counted.user_id is tied to the rotator\'s owner; RotatorBreakdownIntegrationTest checks foreign IDs',
         ],
         'tracking202/ajax/click_history.php' => [
             'no user_id tie | 202_conversion_logs | cvl.click_id = `2c`.click_id' => self::SAME_CLICK_CONVERSIONS,
@@ -282,12 +347,6 @@ final class AccountScopedJoinTest extends TestCase
         ],
         'tracking202/redirect/off.php' => [
             'no user_id tie | 202_clicks | `2c`.click_id = `2cr`.click_id' => self::OFFER_CLICK,
-        ],
-        'tracking202/static/gpb.php' => [
-            'USING without user_id | 202_clicks | ) LEFT JOIN `202_clicks` AS `2c` USING ( `click_id` ) LEFT JOIN `202_tracking_c1` AS' => self::SAME_CLICK,
-        ],
-        'tracking202/static/upx.php' => [
-            'USING without user_id | 202_clicks | ) LEFT JOIN `202_clicks` AS `2c` USING ( `click_id` ) LEFT JOIN `202_tracking_c1` AS' => self::SAME_CLICK,
         ],
     ];
 
@@ -473,18 +532,50 @@ final class AccountScopedJoinTest extends TestCase
         self::assertGreaterThanOrEqual(20, $checked, 'the account dimensions of all three builders were read');
 
         // The Overview's lists drawn from the clicks: every lookup they join
-        // must be install-wide, so the scan finds no account table in any.
+        // must be install-wide; only the grouped click subquery reads an account table.
         require_once dirname(__DIR__, 2) . '/202-config/functions-ui-overview.php';
         $lists = 0;
         foreach (array_keys(P202_OVERVIEW_SEEN_LISTS) as $name) {
             foreach ([false, true] as $everyAccount) {
                 $sql = p202_overview_seen_list_sql($name, $everyAccount);
-                self::assertSame([], SqlJoinScan::findings($sql, [], self::accountTables()), "p202_overview_seen_list_sql('$name') joins a table an account owns: tie it, or keep it off this list");
-                self::assertStringContainsString(' JOIN ', $sql, "p202_overview_seen_list_sql('$name') was read");
+                $scope = $everyAccount ? 'd.user_id != 0' : 'd.user_id = ?';
+                self::assertStringContainsString($scope, $sql);
+                // The explicit all-account scope is intentional; check its other reads as a tenant scope.
+                $scanned = $everyAccount ? str_replace($scope, 'd.user_id = ?', $sql) : $sql;
+                self::assertSame(
+                    1,
+                    $this->assertTied($scanned, "p202_overview_seen_list_sql('$name')"),
+                    'only the scoped click subquery reads an account-owned table'
+                );
+                self::assertStringContainsString(' STRAIGHT_JOIN ', $sql, "p202_overview_seen_list_sql('$name') was read");
                 $lists++;
             }
         }
         self::assertGreaterThanOrEqual(8, $lists, 'every seen list was read');
+    }
+
+    public function testReportAggregationKeepsTheCallersScopeBeforeLabelJoins(): void
+    {
+        foreach (['2st', '2c'] as $alias) {
+            $where = ' WHERE 2st.user_id = ? AND 2st.click_time >= ? AND 2st.click_time <= ?';
+            $source = \Prosper202\DataEngine\ReportAggregation::byDimensions(
+                '2st',
+                ['user_id', 'aff_campaign_id'],
+                $where,
+                resultAlias: $alias
+            );
+            $sql = "SELECT $alias.clicks" . $source . ' LEFT JOIN 202_aff_campaigns ac'
+                . " ON ac.aff_campaign_id=$alias.aff_campaign_id AND ac.user_id=$alias.user_id";
+            self::assertStringContainsString($where . ' GROUP BY', $sql);
+            self::assertGreaterThan(0, $this->assertTied($sql, $alias));
+        }
+        $where = ' WHERE 2st.user_id = ? AND 2st.click_time >= ? AND 2st.click_time <= ?';
+        $source = \Prosper202\DataEngine\ReportAggregation::byHour($where, 'Asia/Kolkata');
+        self::assertStringContainsString($where . ') AS 2st', $source);
+        self::assertGreaterThan(
+            0,
+            $this->assertTied('SELECT clicks' . $source, 'fractional timezone fallback')
+        );
     }
 
     /** @return int how many account-table reads the SQL holds, all tied */

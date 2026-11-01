@@ -12,6 +12,11 @@ use Api\V3\Support\PayloadKeys;
 use Prosper202\Click\ClickRetention;
 use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Database\Connection;
+use Prosper202\GeoIp\CityDatabase;
+use Prosper202\GeoIp\RefreshStore;
+use Prosper202\PaymentNotification\JVZoo\JVZooKey;
+use Prosper202\PaymentNotification\JVZoo\JVZooRole;
+use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 use Prosper202\User\SignInOutcome;
 
 /**
@@ -76,14 +81,18 @@ final class AdministrationController
      * The integrations that receive a notification at a URL of this
      * install, as the Integrations page lists them: key => [name, what the
      * page calls the URL, the script, the preference holding its secret
-     * (null: it needs none)].
+     * (null: it needs none), the URL's query when it has one]. JVZoo has two
+     * URLs, one for each role, verified with the same key (JVZooRole).
      */
     private const INTEGRATIONS = [
         'clickbank' => ['ClickBank', 'INS URL', 'tracking202/static/cb202.php', 'cb_key'],
-        'jvzoo' => ['JVZoo', 'IPN URL', 'tracking202/static/jvzoo.php', 'jvzoo_ipn_secret_key'],
+        'jvzoo' => ['JVZoo', 'Affiliate IPN URL', JVZooRole::SCRIPT, JVZooKey::COLUMN, 'role=affiliate'],
+        'jvzoo_vendor' => ['JVZoo', 'Vendor JVZIPN URL', JVZooRole::SCRIPT, JVZooKey::COLUMN, 'role=vendor'],
         'zaxaa' => ['Zaxaa', 'ZPN URL', 'tracking202/static/zpn.php', 'zaxaa_api_signature'],
         'slack' => ['Slack', 'Prosper202 webhook', 'tracking202/static/slack.php', 'user_slack_incoming_webhook'],
-        'paykickstart' => ['PayKickstart', 'IPN URL', 'tracking202/static/paykickstart.php', null],
+        'paykickstart' => [
+            'PayKickstart', 'IPN URL', 'tracking202/static/paykickstart.php', 'paykickstart_ipn_secret_keys',
+        ],
     ];
 
     private readonly Connection $conn;
@@ -97,7 +106,8 @@ final class AdministrationController
 
     /**
      * The page's tiles (clicks recorded, database size, cron last ran,
-     * DataEngine conversion) and its System and PHP limits panels.
+     * DataEngine conversion), its System and PHP limits panels, and its GeoIP
+     * database panel.
      *
      * @return array{data: array<string, mixed>}
      */
@@ -127,6 +137,9 @@ final class AdministrationController
             $total = (int) ($engine['total'] ?? 0);
             $done = (int) ($engine['done'] ?? 0);
             $lastRun = $cron === null ? null : (int) $cron['last_execution_time'];
+            $now = time();
+            $geoip = CityDatabase::status(CityDatabase::PATH, $now);
+            $geoipRefresh = (new RefreshStore($this->conn))->read();
 
             return ['data' => [
                 'version' => $code,
@@ -156,6 +169,11 @@ final class AdministrationController
                     'minutes_left' => max(0, $total - $done),
                 ],
                 'keyword_preference' => $keyword === null ? null : (string) $keyword['user_keyword_searched_or_bidded'],
+                // The file location lookups read, from its own metadata, and
+                // its refresh: whether each MaxMind credential is stored, never
+                // the credential.
+                'geoip_database' => $geoip->toArray(),
+                'geoip_refresh' => $geoipRefresh->toArray($geoip, $now),
             ]];
         });
     }
@@ -462,9 +480,14 @@ final class AdministrationController
         } elseif ($marker !== null) {
             // An id an earlier version scheduled: the day of the click it
             // names (the newest at or below it, which the deletion keeps),
-            // and the clicks below it.
+            // and the clicks below it, each once however many visits a
+            // re-click gave it, as ClickRetention counts them.
             $at = $this->one('SELECT click_time FROM 202_clicks WHERE click_id <= ? ORDER BY click_id DESC LIMIT 1', 'i', [$marker]);
-            $remaining = $this->one('SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id < ?', 'i', [$marker]);
+            $remaining = $this->one(
+                'SELECT COUNT(DISTINCT click_id) AS n FROM 202_clicks WHERE click_id < ?',
+                'i',
+                [$marker]
+            );
             $scheduled = [
                 'before' => $at === null ? null : (new \DateTimeImmutable('@' . (int) $at['click_time']))
                     ->setTimezone($this->accountZone())->format('Y-m-d'),
@@ -657,23 +680,37 @@ final class AdministrationController
             $domain = $this->one('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = ? LIMIT 1', 'i', [self::INSTALL_OWNER]);
             $base = TrackingBaseUrl::buildForResponse((string) ($domain['user_tracking_domain'] ?? ''), $server ?? $_SERVER, dirname(__DIR__, 3));
             $prefs = $this->one(
-                'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_incoming_webhook
+                'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_incoming_webhook,
+                        paykickstart_ipn_secret_keys
                  FROM 202_users_pref WHERE user_id = ? LIMIT 1',
                 'i',
                 [$this->userId]
             ) ?? [];
 
             $list = [];
-            foreach (self::INTEGRATIONS as $key => [$name, $label, $script, $secret]) {
+            foreach (self::INTEGRATIONS as $key => $integration) {
+                [$name, $label, $script, $secret] = $integration;
+                $query = $integration[4] ?? '';
                 $entry = [
                     'integration' => $key,
                     'name' => $name,
                     'label' => $label,
-                    'url' => $base . $script,
+                    'url' => $base . $script . ($query !== '' ? '?' . $query : ''),
                     'secret_stored' => $secret === null ? null : trim((string) ($prefs[$secret] ?? '')) !== '',
                 ];
                 if ($key === 'clickbank') {
                     $entry['verified'] = (int) ($prefs['cb_verified'] ?? 0) === 1;
+                }
+                if ($secret === JVZooKey::COLUMN) {
+                    // The key the endpoint signs with: one it cannot use is not stored.
+                    $jvzooKey = $prefs[$secret] ?? null;
+                    $entry['secret_stored'] = JVZooKey::stored(is_string($jvzooKey) ? $jvzooKey : null) !== null;
+                }
+                if ($key === 'paykickstart') {
+                    // One key for each PayKickstart campaign; never the keys.
+                    $keys = $prefs['paykickstart_ipn_secret_keys'] ?? null;
+                    $entry['keys_stored'] = count(PayKickstartKeys::stored(is_string($keys) ? $keys : null)['keys']);
+                    $entry['secret_stored'] = $entry['keys_stored'] > 0;
                 }
                 $list[] = $entry;
             }

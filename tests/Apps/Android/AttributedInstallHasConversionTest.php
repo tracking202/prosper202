@@ -22,7 +22,8 @@ use Tests\Support\SqlLiteralText;
  *    is called only from inside a transaction: the intake's record() (run
  *    by `$this->conn->transaction($work)`) and the settler's $work.
  *    The Play Integrity worker settles through the same method, in its own
- *    transaction, and its other writes touch only the integrity_* columns.
+ *    transaction, and its other writes touch only the integrity_* columns;
+ *    the pending-click settler's other writes, only its queue's settle_*.
  *    settle() applies the `require` gate before it writes anything, so no
  *    caller can attribute an install whose verdict has not passed. The one
  *    other match_state write is UnverifiableInstalls' retirement of an
@@ -46,6 +47,7 @@ final class AttributedInstallHasConversionTest extends TestCase
         'api/v3/Apps/Android/Integrity/IntegrityVerifier.php' => ['update'],
         'api/v3/Apps/Android/Integrity/UnverifiableInstalls.php' => ['update'],
         'api/v3/Apps/Android/OrphanedPendingClicks.php' => ['update'],
+        'api/v3/Apps/Android/PendingClickSettler.php' => ['update'],
         'api/v3/Apps/AppDataPurge.php' => ['delete'],
     ];
 
@@ -110,6 +112,18 @@ final class AttributedInstallHasConversionTest extends TestCase
             preg_match_all('/(?:^|,)\s*([a-z_]+)\s*=/', $set, $columns);
             foreach ($columns[1] as $column) {
                 self::assertStringStartsWith('integrity_', $column, 'the integrity worker sets ' . $column . ' directly: ' . $set);
+            }
+        }
+
+        // The pending-click settler writes its queue's columns directly, and
+        // the match state only through settle().
+        $settler = $tree['api/v3/Apps/Android/PendingClickSettler.php'];
+        preg_match_all('/UPDATE\s+202_app_installs\s+SET\s+([^;]*?)\s+WHERE/i', $settler, $m);
+        self::assertCount(2, $m[1], 'the next turn of an install still waiting, and a failure counted');
+        foreach ($m[1] as $set) {
+            preg_match_all('/(?:^|,)\s*([a-z_]+)\s*=/', $set, $columns);
+            foreach ($columns[1] as $column) {
+                self::assertStringStartsWith('settle_', $column, 'the settler sets ' . $column . ' directly: ' . $set);
             }
         }
 
@@ -190,11 +204,11 @@ final class AttributedInstallHasConversionTest extends TestCase
         self::assertMatchesRegularExpression('/\$work = fn \(\): array => \$this->record\(/', $intake);
         self::assertStringContainsString('$this->conn->transaction($work)', $intake);
         $settler = (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/Apps/Android/PendingClickSettler.php');
-        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId\): array \{.*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $settler);
+        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId, \$key, \$keyFailure\): array \{.*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $settler);
         $verifier = (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/Apps/Android/Integrity/IntegrityVerifier.php');
         // The row is locked by the read both reclassification paths share.
-        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId, \$attempt, \$outcome\): array \{.*LockedInstall::read\(\$this->conn, \$installRowId\).*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $verifier);
-        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId\): array \{.*LockedInstall::read\(\$this->conn, \$installRowId\).*->intake->settle\(/s', $settler);
+        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId, \$attempt, \$outcome, \$key, \$keyFailure\): array \{.*LockedInstall::read\(\$this->conn, \$installRowId\).*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $verifier);
+        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId, \$key, \$keyFailure\): array \{.*LockedInstall::read\(\$this->conn, \$installRowId\).*->intake->settle\(/s', $settler);
         self::assertMatchesRegularExpression('/WHERE i\.install_row_id = \? LIMIT 1 FOR UPDATE\'?$/', \Api\V3\Apps\Android\LockedInstall::SQL, 'and that read locks the install row');
     }
 

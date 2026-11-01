@@ -85,6 +85,17 @@ lets the outbox grow, and the backlog is processed once it is fixed.
 - A database error (a missing table, a lost connection) stops the run and
   leaves every row untouched, so nothing is charged a backoff for the
   engine's failure.
+- An identity merge takes its turn (`202_identity_merges.requeue_retry_at`):
+  a run takes the merges never tried first, then those whose retry is due.
+  A merge whose re-queue fails, for whatever reason, is recorded on its row
+  (`requeue_failures`, `requeue_error`) and passed, so the merges after it,
+  the outbox and the rollup still run; it is tried again on the next run,
+  then after a minute, doubling to an hour. Only a failure the merge's own
+  data determines ends its retries: a merged person with more visitor keys
+  than one statement can name (65,533) is retired (`requeue_retired_at`),
+  since a person's keys are never removed. A lock wait or deadlock with the
+  ledger, a lost connection or a missing table is retried for as long as it
+  lasts. `--retry-now` makes failed and retired merges due again.
 - A stored model definition that no longer validates is marked
   `invalid` with the reason; the other models keep computing.
 - The report rollup never answers differently from the full computation: an

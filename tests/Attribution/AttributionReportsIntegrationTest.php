@@ -381,12 +381,12 @@ final class AttributionReportsIntegrationTest extends TestCase
         $this->visit(71, time() - 3600, self::cookie('rev'));
         $sale = $this->convert(71, '10', 'R-1');
         $postback = ['source' => 'postback'];
-        $this->ledger->record(1, $postback + ['click_id' => 71, 'transaction_id' => 'R-1', 'payout' => '-4']);
+        $this->ledger->record(1, $postback + ['click_id' => 71, 'transaction_id' => 'R-1', 'payout' => '-4'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         $reversal = (int) self::scalar("SELECT conv_id FROM 202_conversion_logs WHERE reverses_conv_id = $sale");
         self::assertGreaterThan(0, $reversal, 'the reversal was recorded against the sale');
         $this->click(72, 7, time() - 1800, '0.10');
         $gone = $this->convert(72, '3', 'R-2');
-        $this->ledger->record(1, $postback + ['click_id' => 72, 'transaction_id' => 'R-2', 'reversal' => true]);
+        $this->ledger->record(1, $postback + ['click_id' => 72, 'transaction_id' => 'R-2', 'reversal' => true], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         $this->addModel('Linear', ModelType::LINEAR);
         $this->work();
         $api = new AttributionController(self::$db, 1);

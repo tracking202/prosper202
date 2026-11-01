@@ -4,6 +4,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_campaign_data'); // LTV shows customers' revenue
 
 // Draw the window ltv.php drew, not whatever the stored one says by now: a
 // second tab may have stored another (ReportView). ltv.js sends the view
@@ -20,7 +21,6 @@ $timeFrom = (int) $time['from'];
 $timeTo = (int) $time['to'];
 $userId = (int) $_SESSION['user_id'];
 
-$offset = max(0, (int) ($_POST['offset'] ?? 0));
 $limit = 50;
 
 $allowedDimensions = [
@@ -30,19 +30,29 @@ $allowedDimensions = [
     'product' => 'Product',
     'abm' => 'Company (ABM)',
 ];
-$by = isset($_POST['ltv_by']) && isset($allowedDimensions[(string) $_POST['ltv_by']])
-    ? (string) $_POST['ltv_by']
-    : 'campaign';
-
-$search = trim((string) ($_POST['q'] ?? ''));
 $segments = ['' => 'All customers', 'repeat' => 'Repeat buyers', 'subscribers' => 'Active subscribers', 'at_risk' => 'At risk (past-due subs)'];
-$segment = isset($_POST['segment']) && array_key_exists((string) $_POST['segment'], $segments)
-    ? (string) $_POST['segment']
-    : '';
 
 require_once __DIR__ . '/ltv_ui.php';
 $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
+
+// A page, grouping or segment the report does not have is said, and shown as
+// the report's default, where it was shown so without a word.
+$error = null;
+$offset = p202_ltv_posted_or(fn (): int => p202_ltv_posted_offset($_POST['offset'] ?? null), 0, $error);
+$by = p202_ltv_posted_or(fn (): string => p202_ltv_posted_choice(
+    $_POST['ltv_by'] ?? null,
+    $allowedDimensions,
+    'campaign',
+    'Pick what to group LTV by from the list.'
+), 'campaign', $error);
+$search = p202_ltv_posted_or(fn (): string => trim(p202_ltv_posted_text($_POST['q'] ?? null, 'q')), '', $error);
+$segment = p202_ltv_posted_or(fn (): string => p202_ltv_posted_choice(
+    $_POST['segment'] ?? null,
+    $segments,
+    '',
+    'Pick a segment from the list.'
+), '', $error);
 
 try {
     $conn = new \Prosper202\Database\Connection($db);
@@ -78,6 +88,10 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
 
 <?php echo p202_ltv_ui_styles(); ?>
 <?php echo p202_ltv_tabs('report'); ?>
+
+<?php if ($error !== null) { ?>
+    <?php echo p202_ltv_flash('error', $esc($error)); ?>
+<?php } ?>
 
 <?php if ($totalCustomers === 0) { ?>
     <?php echo p202_ltv_flash(

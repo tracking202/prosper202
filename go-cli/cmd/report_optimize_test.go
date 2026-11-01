@@ -167,7 +167,7 @@ func losersServer(t *testing.T, models string, attr func(q url.Values) (int, str
 			w.Write([]byte(models))
 		case strings.Contains(r.URL.Path, "/campaigns/"): // the payout `losers` reads when --aff-campaign-id is set
 			w.WriteHeader(200)
-			w.Write([]byte(`{"data":{"aff_campaign_payout":"0"}}`))
+			w.Write([]byte(`{"data":{"aff_campaign_payout":0}}`))
 		case strings.HasSuffix(r.URL.Path, "/attribution/models/4"):
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"model_id":4,"model_name":"First touch","model_type":"first_touch","status":"active"}}`))
@@ -943,7 +943,7 @@ func payoutServer(t *testing.T, classic string, campaigns *int, calls *[]url.Val
 		case strings.Contains(r.URL.Path, "/campaigns/"):
 			*campaigns++
 			w.WriteHeader(200)
-			w.Write([]byte(`{"data":{"aff_campaign_payout":"160"}}`))
+			w.Write([]byte(`{"data":{"aff_campaign_payout":160}}`))
 		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
 			*calls = append(*calls, r.URL.Query())
 			w.WriteHeader(200)
@@ -1037,8 +1037,8 @@ func TestPayoutCountsEverySaleWithTheLastTouchModel(t *testing.T) {
 		t.Errorf("stderr should say a row was dropped once its sales were counted: %q", stderr)
 	}
 	r := rows["One-Off"]
-	if r == nil || r["bucket"] != "CUT" || toFloat(r["sales"]) != 6 || toFloat(r["total_net"]) != -140 {
-		t.Errorf("One-Off: want CUT on 6 sales, total_net 6 × 60 − 500 = -140; got %v", r)
+	if r == nil || r["bucket"] != "CUT" || toFloat(r["sales"]) != 6 || toFloat(r["payout_net"]) != -140 || r["total_net"] != "-100.00" {
+		t.Errorf("One-Off: want CUT on 6 sales, payout_net 6 × 60 − 500 = -140, total_net the breakdown's -100.00; got %v", r)
 	}
 	if !strings.Contains(fmt.Sprint(r["reason"]), "breakeven $3.60") {
 		t.Errorf("break-even is 60 × 6/100 = $3.60: %v", r["reason"])
@@ -1050,8 +1050,8 @@ func TestPayoutCountsEverySaleWithTheLastTouchModel(t *testing.T) {
 		t.Fatalf("winners should read the converting rows that lose per converted click too: %v", calls)
 	}
 	r = rows["Repeat Buyers"]
-	if r == nil || toFloat(r["sales"]) != 10 || toFloat(r["total_net"]) != 100 {
-		t.Errorf("Repeat Buyers: want a winner on 10 sales, total_net +100; got %v", rows)
+	if r == nil || toFloat(r["sales"]) != 10 || toFloat(r["payout_net"]) != 100 {
+		t.Errorf("Repeat Buyers: want a winner on 10 sales, payout_net +100; got %v", rows)
 	}
 	if _, listed := rows["One-Off"]; listed {
 		t.Errorf("One-Off loses money on its 6 sales too: %v", rows)
@@ -1079,7 +1079,7 @@ func TestWinnersCountSalesWithoutAFirstTouchModel(t *testing.T) {
 	if r := rows["Repeat Buyers"]; r == nil || r["bucket"] != "SCALE" || toFloat(r["sales"]) != 10 {
 		t.Errorf("Repeat Buyers: 10 sales × 60 − 500 = +100, SCALE; got %v", rows)
 	}
-	if r := rows["Even"]; r == nil || r["bucket"] != "SCALE" || toFloat(r["total_net"]) != 120 {
+	if r := rows["Even"]; r == nil || r["bucket"] != "SCALE" || toFloat(r["payout_net"]) != 120 {
 		t.Errorf("Even: break-even per converted click (5 × 60 = 300), 7 sales make +120, SCALE; got %v", rows)
 	}
 	if !strings.Contains(stderr, "closer check skipped: no active First touch model") {
@@ -1220,7 +1220,8 @@ func TestTriageRefusesABadPayoutBeforeAnyRequest(t *testing.T) {
 }
 
 // --payout values every sale the command reports: a row profitable at that payout is a winner even when the
-// campaign's recorded income puts it at a loss, and its total_net is conversions × payout − cost.
+// campaign's recorded income puts it at a loss, and its payout_net is conversions × payout − cost (total_net stays the
+// breakdown's).
 func TestWinnersPayoutValuesEachSaleAtThePayout(t *testing.T) {
 	const newsletter = `{"data":[
 	{"id":"11","name":"Newsletter","total_clicks":"400","total_leads":"10","total_cost":"300.00","total_net":"-50.00"}]}`
@@ -1233,8 +1234,9 @@ func TestWinnersPayoutValuesEachSaleAtThePayout(t *testing.T) {
 	if !ok || r["bucket"] != "SCALE" {
 		t.Fatalf("at $60 a sale Newsletter makes $300, so it is SCALE: %v", rows)
 	}
-	if toFloat(r["total_net"]) != 300 || toFloat(r["payout"]) != 60 {
-		t.Errorf("total_net = %v, payout = %v; want 10 × 60 − 300 = 300 and the payout it was valued at", r["total_net"], r["payout"])
+	if toFloat(r["payout_net"]) != 300 || toFloat(r["payout"]) != 60 || r["total_net"] != "-50.00" {
+		t.Errorf("payout_net = %v, payout = %v, total_net = %v; want 10 × 60 − 300 = 300, the payout it was valued at, "+
+			"and the breakdown's -50.00", r["payout_net"], r["payout"], r["total_net"])
 	}
 	if campaigns != 0 {
 		t.Errorf("--payout must not read a campaign's payout; read %d", campaigns)

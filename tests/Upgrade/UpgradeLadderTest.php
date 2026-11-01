@@ -7,6 +7,7 @@ namespace Tests\Upgrade;
 use Prosper202\Database\Schema\SchemaBuilder;
 use Prosper202\Database\SchemaReconciler;
 use Prosper202\Database\Tables\AppTables;
+use Prosper202\Database\Tables\UserTables;
 use Tests\TestCase;
 
 /**
@@ -21,8 +22,8 @@ use Tests\TestCase;
  */
 final class UpgradeLadderTest extends TestCase
 {
-    private const CURRENT_VERSION = '1.9.78';
-    private const PRIOR_VERSION = '1.9.77';
+    private const CURRENT_VERSION = '1.9.79';
+    private const PRIOR_VERSION = '1.9.78';
 
     /**
      * The step that reconciles 202_users_pref and drops the chat cache:
@@ -2636,6 +2637,46 @@ final class UpgradeLadderTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         SchemaReconciler::planChanges($definition, [], []);
+    }
+
+    public function testADefaultIsSetToTheOneItsDefinitionDeclaresAndNothingElse(): void
+    {
+        $this->assertSame(
+            "ALTER TABLE `202_users_pref` ALTER COLUMN `user_pref_privacy` SET DEFAULT 'eu'",
+            SchemaReconciler::defaultStatement(UserTables::usersPref(), 'user_pref_privacy')
+        );
+
+        $definition = SchemaBuilder::fromRawSql(
+            '202_reconciler_probe',
+            "CREATE TABLE IF NOT EXISTS `202_reconciler_probe` (
+                `id` int(10) unsigned NOT NULL,
+                `plain` varchar(20) NOT NULL DEFAULT 'a b',
+                `nullable` varchar(20) DEFAULT NULL,
+                `none` varchar(20) NOT NULL,
+                `number` int(10) NOT NULL DEFAULT 0,
+                `quoted` varchar(20) NOT NULL DEFAULT 'it''s',
+                `escaped` varchar(20) NOT NULL DEFAULT 'a\\\\b',
+                `commented` varchar(20) NOT NULL DEFAULT 'x' COMMENT 'not the DEFAULT \\'y\\''
+            ) ENGINE=InnoDB"
+        );
+        $this->assertSame(
+            "ALTER TABLE `202_reconciler_probe` ALTER COLUMN `plain` SET DEFAULT 'a b'",
+            SchemaReconciler::defaultStatement($definition, 'plain')
+        );
+        // Each of these refused rather than read as some other default. The
+        // assertions sit outside the try: PHPUnit's failure is a
+        // RuntimeException too, and the catch would take it.
+        foreach (['nullable', 'none', 'number', 'quoted', 'escaped', 'commented', 'absent', 'PLAIN'] as $column) {
+            $answered = null;
+            $refusal = '';
+            try {
+                $answered = SchemaReconciler::defaultStatement($definition, $column);
+            } catch (\RuntimeException $e) {
+                $refusal = $e->getMessage();
+            }
+            $this->assertNull($answered, "$column: answered " . (string) $answered);
+            $this->assertStringContainsString($column, $refusal);
+        }
     }
 
     /**

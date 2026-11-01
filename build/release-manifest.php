@@ -94,6 +94,7 @@ return [
         'phpunit.ci.xml',
         'phpunit.xml',
         'scripts',              // lint and pattern-check scripts
+        'changelogs.d',         // changelog fragments, folded into changelogs.txt at release
 
         // CI, containers and deployment from source.
         '.github',

@@ -16,6 +16,7 @@ use Api\V3\Support\QueryInt;
 use Api\V3\Support\RequestFlag;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
+use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\LtvQuery;
 use Prosper202\Ltv\MysqlCompanyRepository;
@@ -28,11 +29,11 @@ use Prosper202\Ltv\MysqlCustomerRepository;
 use Prosper202\Ltv\MysqlIntegrationRepository;
 use Prosper202\Ltv\RecordNotFoundException;
 use Prosper202\Ltv\MysqlLtvRepository;
+use Prosper202\Ltv\LtvNumbers;
 use Prosper202\Ltv\MysqlSubscriptionRepository;
 use Prosper202\Ltv\MysqlWebhookRepository;
 use Prosper202\Ltv\RevenueReplay;
 use Prosper202\Ltv\SubscriptionNotFoundException;
-use Prosper202\Validation\OutboundUrlException;
 
 /**
  * /ltv endpoints: realized + predictive LTV reads, customer CRM management,
@@ -128,7 +129,23 @@ class LtvController
             throw new NotFoundException('Customer not found');
         }
 
-        return ['data' => $customer];
+        return ['data' => self::presentCustomer($customer)];
+    }
+
+    /**
+     * custom_fields is an object keyed by field. With no value it is PHP's
+     * empty array, which JSON writes as [], a list.
+     *
+     * @param array<string, mixed> $customer
+     * @return array<string, mixed>
+     */
+    private static function presentCustomer(array $customer): array
+    {
+        if ($customer['custom_fields'] === []) {
+            $customer['custom_fields'] = new \stdClass();
+        }
+
+        return $customer;
     }
 
     public function breakdown(array $params): array
@@ -168,13 +185,13 @@ class LtvController
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
             $stmt = $this->conn->prepareRead(
-                'SELECT product_id, external_product_id, sku, name, price, currency, created_at, updated_at
+                'SELECT ' . self::PRODUCT_COLUMNS . '
                  FROM 202_products WHERE user_id = ?
                  ORDER BY product_id DESC LIMIT ? OFFSET ?'
             );
             $this->conn->bind($stmt, 'iii', [$this->userId, $limit, $offset]);
 
-            return ['data' => $this->conn->fetchAll($stmt)];
+            return ['data' => array_map(self::presentProduct(...), $this->conn->fetchAll($stmt))];
         });
     }
 
@@ -926,8 +943,20 @@ class LtvController
     {
         $stmt = $this->conn->prepareRead('SELECT ' . self::PRODUCT_COLUMNS . ' FROM 202_products WHERE product_id = ? AND user_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'ii', [$productId, $this->userId]);
+        $product = $this->conn->fetchOne($stmt);
 
-        return $this->conn->fetchOne($stmt);
+        return $product === null ? null : self::presentProduct($product);
+    }
+
+    /**
+     * A catalog product with its price a number, or null when it has none.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function presentProduct(array $row): array
+    {
+        return LtvNumbers::decimals($row, ['price']);
     }
 
     private function productLineItems(int $productId): int
@@ -1087,7 +1116,7 @@ class LtvController
         $result = $this->wrap(function () use ($url, $events, $payload): array {
             try {
                 return $this->webhooks->create($this->userId, $url, $events);
-            } catch (OutboundUrlException $e) {
+            } catch (WebhookRefused $e) {
                 // The URL guard's refusal is the caller's to fix, named by
                 // the field it was sent in; wrap() takes an exception it does
                 // not know for the server's.
@@ -1167,6 +1196,50 @@ class LtvController
                     'max_attempts' => MysqlWebhookRepository::MAX_ATTEMPTS,
                 ],
             ];
+        });
+    }
+
+    /**
+     * Revive a webhook: `status` "active" (the one state a caller sets; the
+     * server marks a webhook dead) makes a dead one active again with its
+     * id, URL and secret. `requeue` (a flag, default true) sends every
+     * delivery it did not deliver from the last 7 days: again for the one
+     * that killed it and those held while it was dead, and those still
+     * pending with their failure count back at 0; false holds the pending
+     * ones too (MysqlWebhookRepository::revive()). A cron run still sending
+     * after the revival's wait is a 409. An active webhook is left as it is
+     * (`revived` false).
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function updateWebhook(int $webhookId, array $payload): array
+    {
+        PayloadKeys::refuseUnknown($payload, ['status', 'requeue'], 'a webhook update');
+        if (!array_key_exists('status', $payload)) {
+            throw new ValidationException('status is required', [
+                'status' => 'Send "active" to revive a dead webhook',
+            ]);
+        }
+        if ($payload['status'] !== 'active') {
+            throw new ValidationException('Invalid status', [
+                'status' => 'must be "active", which revives a dead webhook: the server alone marks one dead,'
+                    . ' and DELETE /ltv/webhooks/{id} removes one',
+            ]);
+        }
+        $requeue = RequestFlag::param($payload, 'requeue', true);
+
+        return $this->wrap(function () use ($webhookId, $requeue): array {
+            try {
+                $revival = $this->webhooks->revive($this->userId, $webhookId, $requeue, time());
+            } catch (RecordNotFoundException) {
+                throw new NotFoundException('Webhook not found');
+            }
+            $webhook = $this->webhooks->get($this->userId, $webhookId);
+            if ($webhook === null) {
+                throw new NotFoundException('Webhook not found');
+            }
+
+            return ['data' => $webhook + $revival + ['requeue' => $requeue]];
         });
     }
 
@@ -1398,7 +1471,7 @@ class LtvController
                 'action' => 'erase',
                 'resource' => 'ltv-customers',
                 'mode' => 'anonymize',
-                'record' => $customer,
+                'record' => self::presentCustomer($customer),
                 'effect' => 'Erases the customer\'s personal data in one transaction: first_name, last_name, email, '
                     . 'phone, company, address_line1, address_line2, city, region, postal_code and country are '
                     . 'cleared, the company link is removed, primary_ref becomes erased:' . $customerId

@@ -95,6 +95,7 @@ A legacy PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 lis
 - [Multi-touch Attribution Engine](features/advanced-attribution-engine.md)
 - [The Prosper202 UI Standard](features/ui-standard.md)
 - [Visitor identity](features/visitor-identity.md) — how clicks are linked to one person, with first-party signals only
+- [Offline conversions for Google Ads and Microsoft Advertising](features/offline-conversions.md) — the import files, which conversions they send, and fetch URLs the platforms read on a schedule
 - [Measurement rewrite plan](features/measurement-rewrite-plan.md) — app measurement (iOS and Android), goals, the conversion ledger and multi-touch attribution: the design, what was built, and the release gate
 
 ### Partnering With Us
@@ -106,5 +107,6 @@ A legacy PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 lis
 ### Tools & Resources
 
 - [Resources](tools--resources/00-resources.md)
+- [Adaptive manual click deletion](tools--resources/adaptive-click-deletion.md)
 - [Common Network SubID Parameters](tools--resources/999-common-network-subid-parameters.md)
 

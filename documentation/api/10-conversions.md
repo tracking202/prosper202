@@ -8,6 +8,10 @@ List, inspect, manually create, and delete conversions.
 | ------ | ---- | ----------- |
 | `GET` | `/conversions` | List conversions (paginated) |
 | `GET` | `/conversions/{id}` | Get conversion details |
+| `GET` | `/conversions/match-methods` | Each campaign's conversions by how their click was found ([below](#how-each-conversions-click-was-found)) |
+| `GET` | `/conversions/offline-export` | The conversions as Google Ads' or Microsoft Advertising's offline conversion import CSV ([below](#offline-conversion-files)) |
+| `GET` | `/conversions/offline-export/summary` | What that file holds, and why each other conversion is left out |
+| `GET` | `/offline-conversions/{key}` | A fetch URL made on Setup › Offline Conversions: the file, with no API key |
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
 | `GET` | `/conversions/postback-code` | The conversion pixels and postback URLs Setup › Postback / Pixel shows ([Setup API](27-setup.md)) |
@@ -26,10 +30,11 @@ uploading a revenue report — the UI's Update section — are in the
 | `time_from` | string | — | Start, inclusive: unix seconds, a date (`2026-10-01`, from its first second in the account's timezone) or a time with its offset (`2026-10-01T09:30:00Z`) |
 | `time_to` | string | — | End, inclusive: the same forms; a date runs through its last second |
 | `click_id` | integer | — | Only this click's conversions |
-| `source` | string | — | Only conversions this source produced (`pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline`) |
+| `source` | string | — | Only conversions this source produced (`pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `app_install`, `goal`, `legacy_baseline`) |
+| `match_method` | string | — | Only conversions whose click was found this way (`click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown`; [below](#how-each-conversions-click-was-found)) |
 | `goal` | integer | — | Only this goal's outcomes, under every version of it |
 
-A filter value that cannot be read — `click_id=7x`, an unknown `source`, a
+A filter value that cannot be read — `click_id=7x`, an unknown `source` or `match_method`, a
 `goal` or `campaign_id` that is not a positive id (`campaign_id=0` included,
 which used to list every campaign's conversions) — is a `422` naming the
 field, never ignored. Deleted conversions are not listed; `GET /clicks/{id}/conversions`
@@ -37,12 +42,143 @@ shows them, with whether each row counts toward the click.
 
 ## Response Fields
 
-`conv_id`, `click_id`, `transaction_id`, `campaign_id`, `click_payout`, `user_id`, `click_time`, `conv_time`, `deleted`, `aff_campaign_name`, and the row's provenance in the ledger: `source`, `source_ref` (`goal:<id>:<version>`, `batch:<upload>`, `conv:<the conversion a reversal reverses>`, `apikey:<digest of the key that wrote it>`), `event_name`, `payable`, `reverses_conv_id`, `superseded_by`, `superseded_reason`, and for a goal row its `goal_id` and `goal_version`.
+`conv_id`, `click_id`, `transaction_id`, `campaign_id`, `click_payout`, `user_id`, `click_time`, `conv_time`, `deleted`, `aff_campaign_name`, and the row's provenance in the ledger: `source`, `source_ref` (`goal:<id>:<version>`, `batch:<upload>`, `conv:<the conversion a reversal reverses>`, `apikey:<digest of the key that wrote it>`), `match_method` (how its click was found), `event_name`, `payable`, `reverses_conv_id`, `superseded_by`, `superseded_reason`, and for a goal row its `goal_id` and `goal_version`.
 
 A conversion created through this API records `source: "api"` and names the
 key that wrote it in `source_ref` as a truncated SHA-256 digest of the key, so
 the click breakdown can say which key it was without anyone reading the key
-back.
+back. Its `match_method` is `click_id`: the body named the click.
+
+## How each conversion's click was found
+
+`source` says what sent a conversion; `match_method` says how the click it
+credits was found, so a guess never reads as a match. Since 1.9.79 every
+conversion stores one:
+
+| `match_method` | The click was found by | Paths |
+| -------------- | ---------------------- | ----- |
+| `click_id` | the request naming it | a `subid`/`sid` on `gpx.php`, `upx.php`, `gpb.php` and `pb.php`; ClickBank's tracking code (`cb202.php`); `POST /conversions` and `POST /events`; a line of Update Subids or of a revenue upload; an app install's signed token, and the goals its events reach |
+| `cookie` | a tracking cookie in the visitor's browser | `gpx.php` and `upx.php` with no subid (the campaign's `tracking202subid_a_<cid>` cookie, then `tracking202subid`); `px.php` |
+| `visitor_id` | the landing-page script's own visitor id (`p202lpid`), on the click it was last seen on | `p202.track()` events (`event.php`) |
+| `same_ip` | nothing naming a click: the account's latest click from the visitor's address in the last 30 days, a guess, made only for an account with the [same-IP fallback](14-users.md#same-ip-fallback-user_pref_same_ip_fallback) on and a visitor the privacy setting does not hold back | `gpx.php`, `upx.php` and `px.php` with neither a subid nor a cookie |
+| `unknown` | not recorded | a conversion recorded before 1.9.79, the `legacy_baseline` row that carries a pre-ledger value, and a goal reached by an event stored before 1.9.79 |
+
+A goal's conversion carries the method of the event that reached it, whenever
+the row is written (a replay or a re-evaluation writes rows for events stored
+earlier); a reversal carries its own request's. A retry of a conversion
+already recorded changes nothing, its method included. `unknown` is the one
+spelling for "not recorded": it is the column's default, so every row from
+before 1.9.79 holds it, and no reader takes it for a match.
+
+`GET /conversions?match_method=same_ip` lists the guesses, and
+`GET /clicks/{id}/conversions` gives each row's `match_method` with its
+label. `GET /conversions/match-methods` counts them per campaign:
+
+| Parameter | Description |
+| --------- | ----------- |
+| `campaign_id` | Only this campaign (a positive id, or a `422`) |
+| `period` | A named window of conversion times (`today`, `last7`, `last30`, `thismonth`, `alltime`, …) |
+| `time_from`, `time_to` | Conversion-time bounds, as on the list; with `period`, both apply |
+
+```json
+{
+  "data": [
+    {"campaign_id": 3, "campaign_name": "Summer offer", "match_method": "click_id", "match_method_label": "Click id",
+     "conversions": 40, "counted": 38, "income": 190.0},
+    {"campaign_id": 3, "campaign_name": "Summer offer", "match_method": "same_ip", "match_method_label": "Same IP",
+     "conversions": 6, "counted": 6, "income": 30.0}
+  ],
+  "totals": [
+    {"match_method": "click_id", "match_method_label": "Click id", "conversions": 40, "counted": 38, "income": 190.0},
+    {"match_method": "cookie", "match_method_label": "Cookie", "conversions": 0, "counted": 0, "income": 0.0}
+  ],
+  "match_methods": ["click_id", "cookie", "visitor_id", "same_ip", "unknown"]
+}
+```
+
+One row per campaign and method that has conversions; `totals` lists every
+method over the campaigns `data` covers (every campaign, or the one
+`campaign_id` names; shortened above). `conversions` counts the live
+conversions that are not reversals, `counted` those that count toward their
+click's value, and `income` what the counting rows add up to, reversals
+netted (a reversal is under its own request's method). A role without access
+to campaign data gets the three figures as `null` and `masked: true`. Group
+Overview's **Match method** level shows the same split by click time, with
+each group's clicks and cost.
+
+## Offline conversion files
+
+`GET /conversions/offline-export?format=google` answers the account's
+conversions as an ad platform's offline conversion import file (`text/csv`),
+the one Setup › Offline Conversions downloads and its fetch URLs serve. The
+[offline conversions guide](../features/offline-conversions.md) says what
+each platform's file holds, where to upload it, and how to have the platform
+fetch it on a schedule.
+
+| Parameter | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `format` | string | required | `google` (Google Ads Data Manager: `Google Click ID`, `GBRAID`, `WBRAID`), `google_uploads` (Google's Conversions › Uploads template: a `Parameters:TimeZone=` line, `Google Click ID`) or `microsoft` (Microsoft Advertising: `Parameters:TimeZone=+0000`, `Microsoft Click ID`) |
+| `days` | integer | 90 | Conversions from the last this many days, by conversion time (1 to 90) |
+| `campaign_id` | integer | — | Only this campaign's conversions |
+| `conversion_name` | string | — | Every line under this name, whatever its campaign's |
+| `ad_user_data`, `ad_personalization` | string | empty | Google's consent columns, the same on every line: `granted` or `denied`. Refused for `microsoft` |
+
+A conversion is a line when all of these hold, and is counted in the summary
+under the first that does not:
+
+1. it counts now: not deleted, not refunded in full, not replaced by a later
+   conversion on its click, payable (`not_counted`); a partial refund is
+   netted from its value;
+2. its click was named: `match_method` `click_id` or `cookie`. A click found
+   by the landing page's visitor id (`visitor_id`), guessed from the visitor's
+   address (`same_ip`) or recorded before 1.9.79 (`match_unknown`) would teach
+   the platform's bidding clicks the conversion may not have come from;
+3. the click came with an id the platform issues (`no_click_id`; for
+   `google_uploads`, a click with only a gbraid or wbraid is
+   `gbraid_wbraid_only`), in the form the platform issues
+   (`malformed_click_id`: an msclkid is 32 hexadecimal digits, as Microsoft
+   documents it; Google documents no form for its ids, which are held to
+   base64url characters);
+4. the click is at most 90 days old (`click_too_old`), before the conversion
+   (`before_click`), this account's (`not_accounts_click`) and at least 6
+   hours old (`click_too_recent`: a later fetch whose window still covers it
+   sends it);
+5. its value is not negative (`negative_value`), and it has a conversion name:
+   its campaign's or the account's, set on the Setup page, or `conversion_name`
+   (`no_conversion_name`);
+6. a Microsoft file stops at Microsoft's 100,000 rows an upload, newest first
+   (`over_row_limit`).
+
+Each line's `Conversion Time` is the conversion's in the account's time zone
+with the offset in force at that instant (`2026-10-27T02:22:48-04:00`), or in
+UTC for Microsoft, whose time zones are its own names. Both platforms count
+one conversion per click and second, whatever its Order ID (Google's click
+is the line's gclid, or in a `google` file its gbraid or wbraid when it has
+no gclid; Microsoft's the msclkid), so of two conversions on one click in one
+second, the one recorded first keeps its time and the other is sent at the
+next second no conversion on that click holds, the same second on every
+download ([the guide](../features/offline-conversions.md#the-files) says
+when it moves). `Conversion Value` is
+the amount the conversion counts for, as the ledger records it in the
+account's currency (`Conversion Currency`), three decimals for Microsoft.
+`Order ID` is `P202-` and the conversion's id: the same on every download, so
+Google counts a conversion uploaded twice once. A refund or deletion after a
+platform has a conversion is not sent to it; adjust it in the platform.
+
+The answer's `X-P202-Rows` and `X-P202-Left-Out` headers count the lines and
+the conversions left out. `GET /conversions/offline-export/summary` takes the
+same parameters and answers the counts: `conversions` in the window (a
+reversal is not one), `rows`, `left_out` by reason (every reason listed),
+`left_out_total`, and each reason's sentence under `reasons`. Both need the
+`access_to_campaign_data` permission: the file carries every value. An
+unknown parameter, or a value not listed, is a 422 naming it.
+
+`GET /offline-conversions/{key}` is a fetch URL made on the Setup page, which
+shows it once and keeps only its key's hash. It takes no API key: the 43
+characters of the key are the credential. It serves the URL's file (its
+format, window, conversion name and consent columns), and answers `404` to a
+key of the wrong shape, an unknown, replaced or deleted key, and the key of a
+deactivated account or of a role that no longer reads campaign data, alike.
 
 ## Create Conversion
 
@@ -98,6 +234,26 @@ click's plain conversion) is refused with `409`, naming it in
 `Idempotency-Key` sent with it is not spent. A different sale needs its own
 `transaction_id`. A `409` without `details` is about the `Idempotency-Key`
 instead: a request holding it is still in flight, or one did not finish.
+
+### A click a redirector link re-clicked
+
+A click a visitor came back to through a redirector link has a row for each
+visit ([Clicks](09-clicks.md#a-click-a-redirector-link-re-clicked)). A
+conversion on it is credited to its latest visit: `campaign_id` is the
+campaign that visit was on, whose payout mode applies and whose payout is
+the default, and `click_time` is that visit's. Before
+1.9.79 it took whichever visit the database read first, usually the first.
+The same holds for the pixels and postbacks, Update Subids, revenue uploads,
+goals and app installs, and `GET /clicks/{id}/conversions` shows the latest
+visit's value.
+
+The per-campaign postback (`pb.php?acip=…&subid=…`, with or without `event=`)
+accepts a click any of whose visits was on the campaign it names, when that
+campaign is the click's account's, and credits the latest visit: the network
+posts back for the offer it sold, which may be on any visit of the click.
+Before 1.9.79 only the campaign of the visit the database read first was
+accepted. Any other click is answered `404` "Unknown subid for this
+campaign", as before.
 
 ### Line items need a customer
 

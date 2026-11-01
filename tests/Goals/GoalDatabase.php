@@ -70,7 +70,7 @@ trait GoalDatabase
             self::markTestSkipped('No test database configured (set P202_TEST_DB_HOST).');
         }
         foreach ([
-            '202_conversion_logs', '202_clicks', '202_clicks_spy', '202_aff_campaigns', '202_attribution_pending', '202_dataengine',
+            '202_conversion_logs', '202_clicks', '202_clicks_spy', '202_click_latest_visits', '202_aff_campaigns', '202_attribution_pending', '202_dataengine',
             '202_goals', '202_goal_versions', '202_campaign_goals', '202_goal_subjects', '202_goal_events', '202_goal_progress',
             '202_goal_outcomes', '202_app_registrations', '202_app_skan_encodings', '202_app_skan_encoding_history', '202_app_postbacks',
         ] as $t) {
@@ -147,7 +147,7 @@ trait GoalDatabase
             $e->eventId, $e->name, $e->occurredAt, $this->clock, $e->properties, $e->revenue, $e->revenueTrusted, $e->transactionId
         ), $events);
 
-        return $this->engine->ingest(1, $this->engine->clickSubject(1, $clickId), $stamped);
+        return $this->engine->ingest(1, $this->engine->clickSubject(1, $clickId), $stamped, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
     }
 
     /** @return array{lead: int, payout: string} */

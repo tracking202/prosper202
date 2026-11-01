@@ -7,7 +7,8 @@
 # through the shared writer, with the gate, the scoping and the de-duplication
 # that come with it.
 #
-# The endpoints are public, so no login is needed. Clicks and a campaign are
+# The endpoints are public, so no login is needed; P202_API_KEY sets the
+# account's privacy for the run (privacy.sh). Clicks and a campaign are
 # seeded straight into the scratch database, because a redirect through
 # dl.php would need a tracker and a network as well and the click row is all
 # these endpoints read.
@@ -40,6 +41,10 @@ eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; f
 # they cannot collide with anything the instance created itself.
 USER_ID=$(Q "SELECT user_id FROM 202_users ORDER BY user_id LIMIT 1")
 [ -n "$USER_ID" ] || { echo "no user in $DB" >&2; exit 2; }
+# The pixels read the click cookie and store the visitor's address.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "${P202_API_KEY:-}" "$USER_ID" || exit 2
 NOW=$(date +%s)
 CLICK_A=910000001; CLICK_B=910000002; CLICK_C=910000003; CLICK_D=910000004; CLICK_E=910000005; CLICK_F=910000006; CLICK_G=910000007
 ACIP=987654321
@@ -81,6 +86,7 @@ lead()   { Q "SELECT click_lead FROM 202_clicks WHERE click_id=$1"; }
 payout() { Q "SELECT click_payout FROM 202_clicks WHERE click_id=$1"; }
 ptype()  { Q "SELECT GROUP_CONCAT(DISTINCT pixel_type) FROM 202_conversion_logs WHERE click_id=$1"; }
 txids()  { Q "SELECT GROUP_CONCAT(COALESCE(transaction_id,'-') ORDER BY conv_id) FROM 202_conversion_logs WHERE click_id=$1"; }
+method() { Q "SELECT GROUP_CONCAT(DISTINCT match_method) FROM 202_conversion_logs WHERE click_id=$1"; }
 
 say "px.php: the per-campaign pixel records a row from the cookie"
 curl -sS -o /dev/null -w '%{http_code}\n' -b "tracking202subid=$CLICK_A" "$BASE/tracking202/static/px.php?acip=$ACIP" > "$OUT/px1"
@@ -88,6 +94,7 @@ eq "$(cat "$OUT/px1")" 200 "pixel answers 200"
 eq "$(rows $CLICK_A)" 1 "one conversion row written"
 eq "$(lead $CLICK_A)" 1 "click flagged as a lead"
 eq "$(ptype $CLICK_A)" 1 "row carries pixel_type 1 (image pixel)"
+eq "$(method $CLICK_A)" cookie "and says the cookie named its click"
 eq "$(payout $CLICK_A)" 7.50000 "click payout kept at the campaign payout (pixel carries no amount)"
 curl -sS -o /dev/null -b "tracking202subid=$CLICK_A" "$BASE/tracking202/static/px.php?acip=$ACIP"
 eq "$(rows $CLICK_A)" 1 "a second fire of the same pixel adds no row (one conversion per click without an id)"
@@ -113,6 +120,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/tracking202/static/pb.php?acip=
 eq "$(cat "$OUT/pb1")" 200 "postback answers 200"
 eq "$(rows $CLICK_B)" 1 "one row for ORDER-1"
 eq "$(ptype $CLICK_B)" 2 "row carries pixel_type 2 (postback)"
+eq "$(method $CLICK_B)" click_id "and says the subid named its click"
 curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_B&txid=ORDER-1"
 eq "$(rows $CLICK_B)" 1 "replaying ORDER-1 adds no row"
 curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_B&txid=ORDER-2"
@@ -153,11 +161,13 @@ eq "$(rows $CLICK_F)" 1 "the retry adds no row (one conversion per click without
 curl -sS -o /dev/null "$BASE/tracking202/static/gpb.php?subid=$CLICK_F&txid=GPB-2"
 eq "$(rows $CLICK_F)" 2 "a postback that carries a transaction id is still a second sale on the click"
 eq "$(txids $CLICK_F)" "-,GPB-2" "the id-less row and the GPB-2 row, nothing else"
+eq "$(method $CLICK_F)" click_id "both say the subid named the click"
 
 say "upx.php: a reloaded universal pixel without a transaction id records one conversion"
 curl -sS -o /dev/null "$BASE/tracking202/static/upx.php?subid=$CLICK_G"
 eq "$(rows $CLICK_G)" 1 "one conversion row written"
 eq "$(ptype $CLICK_G)" 3 "row carries pixel_type 3 (universal pixel)"
+eq "$(method $CLICK_G)" click_id "and says the subid named its click"
 curl -sS -o /dev/null "$BASE/tracking202/static/upx.php?subid=$CLICK_G"
 eq "$(rows $CLICK_G)" 1 "the reload adds no row"
 curl -sS -o /dev/null "$BASE/tracking202/static/upx.php?subid=$CLICK_G&txid=UPX-2"
@@ -165,13 +175,13 @@ eq "$(rows $CLICK_G)" 2 "a pixel that carries a transaction id is still a second
 
 say "cb202.php: one row per ClickBank receipt, payout from the order total"
 CBKEY="livepasskey123"
-mysql_q "$DB" -e "UPDATE 202_users_pref SET cb_key='$CBKEY' WHERE user_id=1"
+mysql_q "$DB" -e "UPDATE 202_users_pref SET cb_key='$CBKEY' WHERE user_id=$USER_ID"
 cb_post() { # $1 receipt, $2 click, $3 amount, $4 type
   php -r '
     [$key,$receipt,$click,$amount,$type] = array_slice($argv,1);
     $order = json_encode(["transactionType"=>$type,"receipt"=>$receipt,"trackingCodes"=>[$click],"totalAccountAmount"=>$amount]);
     $iv = random_bytes(16);
-    $enc = openssl_encrypt($order,"AES-128-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
+    $enc = openssl_encrypt($order,"AES-256-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
     echo json_encode(["notification"=>base64_encode($enc),"iv"=>base64_encode($iv)]);
   ' "$CBKEY" "$1" "$2" "$3" "$4" > "$OUT/cb.json"
   curl -sS -o "$OUT/cb.out" -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$OUT/cb.json" "$BASE/tracking202/static/cb202.php"
@@ -184,24 +194,25 @@ eq "$(cb_post RCPT-A $CLICK_D 49.95 SALE)" 200 "the same receipt again answers 2
 eq "$(rows $CLICK_D)" 1 "a repeated INS delivery of one sale adds no row"
 eq "$(cb_post RCPT-B $CLICK_D 10.00 SALE)" 200 "a second receipt answers 200"
 eq "$(rows $CLICK_D)" 2 "a second sale on the click is a second row"
+eq "$(method $CLICK_D)" click_id "ClickBank's tracking code named the click"
 eq "$(cb_post RCPT-X 910099999 5.00 SALE)" 404 "a sale naming an unknown click is a 404, not a silent 200"
-grep -q 'Unknown tracking code' "$OUT/cb.out" && ok "the 404 names the cause" || bad "the 404 names the cause"
+grep -q 'There is no click' "$OUT/cb.out" && ok "the 404 names the cause" || bad "the 404 names the cause"
 eq "$(cb_post RCPT-F $CLICK_E 5.00 SALE)" 404 "a sale naming another account's click is a 404 (scoped to the key's account)"
 eq "$(rows $CLICK_E)" 0 "and nothing was written in the other account"
 eq "$(cb_post RCPT-G $CLICK_D.9 5.00 SALE)" 400 "a fractional tracking code is a 400"
 eq "$(cb_post '' $CLICK_D 5.00 SALE)" 400 "a sale without a receipt is a 400"
-grep -q 'Missing receipt' "$OUT/cb.out" && ok "the 400 names the missing receipt" || bad "the 400 names the missing receipt"
+grep -q 'carries no receipt' "$OUT/cb.out" && ok "the 400 names the missing receipt" || bad "the 400 names the missing receipt"
 php -r '
   $key="'"$CBKEY"'"; $iv=random_bytes(16);
   $order=json_encode(["transactionType"=>"SALE","receipt"=>"RCPT-H","trackingCodes"=>["'"$CLICK_D"'"]]);
-  $enc=openssl_encrypt($order,"AES-128-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
+  $enc=openssl_encrypt($order,"AES-256-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
   echo json_encode(["notification"=>base64_encode($enc),"iv"=>base64_encode($iv)]);' > "$OUT/cbnototal.json"
 eq "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$OUT/cbnototal.json" "$BASE/tracking202/static/cb202.php")" 400 "a sale with no total at all is a 400, not a zero-value sale"
 eq "$(rows $CLICK_D)" 2 "and neither wrote anything"
 php -r '
   $key="'"$CBKEY"'"; $iv=random_bytes(16);
   $order=json_encode(["transactionType"=>"SALE","receipt"=>"RCPT-Z","trackingCodes"=>["'"$CLICK_D"'"],"totalAccountAmount"=>"lots"]);
-  $enc=openssl_encrypt($order,"AES-128-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
+  $enc=openssl_encrypt($order,"AES-256-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
   echo json_encode(["notification"=>base64_encode($enc),"iv"=>base64_encode($iv)]);' > "$OUT/cbbad.json"
 eq "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$OUT/cbbad.json" "$BASE/tracking202/static/cb202.php")" 400 "a non-numeric order total is a 400, not a zero-value sale"
 eq "$(rows $CLICK_D)" 2 "and it wrote nothing"

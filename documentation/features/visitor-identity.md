@@ -61,7 +61,9 @@ with the old key. Clicks already linked stay linked.
 
 One switch turns all of it off:
 
-- `p202_consent=0` on a tracking link;
+- `p202_consent=0` on a tracking link. Present, anything but `1` refuses
+  (`false`, `off`, an empty value), on the tracking link and on the landing
+  page alike;
 - `p202.consent(false)` on a landing page (remembered, and sent on every
   pageview and followed link); `p202.consent(true)` turns it back on. The
   pageview is sent once the page's scripts have run, so a consent tool that
@@ -75,9 +77,16 @@ is a journey of one.
 
 The privacy setting ([`user_pref_privacy`](../api/14-users.md#privacy-user_pref_privacy))
 withholds the `p202vid` cookie too: a visitor it holds back is neither given
-one nor read for one, as they are given no click cookie. The landing-page id
+one nor read for one, as they are given no click cookie. A new account starts
+at `eu` (since 1.9.79), so while it is there its visitors from Europe, and
+every visitor GeoIP cannot place, get none. The landing-page id
 and a signed customer id still link that visitor's clicks. `p202.track()` ([web events](../api/23-events.md)) finds
 the visitor's click by the landing-page id alone, so it sends nothing either.
+
+A visitor given no `p202vid`, held back by the privacy setting or by any
+switch above, is not matched to a click by IP address either: a conversion
+pixel that names no click guesses none for them, whatever the account's
+[same-IP fallback](../api/14-users.md#same-ip-fallback-user_pref_same_ip_fallback).
 
 ## Limits
 

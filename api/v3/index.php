@@ -16,12 +16,14 @@ use Api\V3\Auth;
 use Api\V3\AuthException;
 use Api\V3\Bootstrap;
 use Api\V3\HttpException;
+use Api\V3\InsufficientScopeException;
 use Api\V3\RequestContext;
 use Api\V3\Router;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PathId;
+use Api\V3\Support\ScopeRefusal;
 use Api\V3\Support\ServerStateStore;
 
 // ─── Security headers ────────────────────────────────────────────────
@@ -105,13 +107,33 @@ if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D
         // Nothing was committed (every write is one transaction that rolled
         // back), so a 5xx is the truthful answer and the SDK's retry is safe.
         error_log('p202 android intake: ' . $androidError->getMessage());
-        Bootstrap::errorResponse('The install could not be recorded; retry later', 500);
+        $pending = Bootstrap::pendingUpgrade($db);
+        if ($pending !== null) {
+            header('Retry-After: 300');
+        }
+        Bootstrap::errorResponse(
+            $pending ?? 'The install could not be recorded; retry later',
+            $pending !== null ? 503 : 500
+        );
         exit;
     }
     foreach ($androidResult['headers'] ?? [] as $androidHeader => $androidValue) {
         header($androidHeader . ': ' . $androidValue);
     }
     Bootstrap::jsonResponse($androidResult['body'], $androidResult['status']);
+    exit;
+}
+
+// ─── An offline conversion file's fetch URL (pre-auth) ───────────────
+// GET /offline-conversions/{key}, which Google Ads or Microsoft
+// Advertising fetch on a schedule: the key in the path is the credential
+// (Prosper202\OfflineConversion\FeedStore). Every refusal is the same 404
+// (OfflineConversionsController::serveFeed()), and the soft rate limit keys
+// on the TCP peer, never on a header the sender chooses (CLAUDE.md #16).
+if ($path === '/offline-conversions' || str_starts_with($path, '/offline-conversions/')) {
+    $feedMethod = \Api\V3\Apps\PublicIntake::preflight(0, ['GET']);
+    \Api\V3\Apps\PublicIntake::rateLimit('offline-conversions', 60, 60);
+    \Api\V3\Controllers\OfflineConversionsController::serveFeed($db, substr($path, strlen('/offline-conversions/')), $queryParams, $feedMethod);
     exit;
 }
 
@@ -176,10 +198,21 @@ try {
         exit;
     }
 
-    // Unauthenticated health probe
+    // Unauthenticated health probe. A stale, missing or unreadable GeoIP
+    // database is a warning, never a status other than healthy: liveness
+    // checks restart a container on that, and a new container has the same
+    // file. Only its state and date are said here, not its path.
     if ($path === '/system/health' && $method === 'GET') {
+        $geoip = \Prosper202\GeoIp\CityDatabase::status();
+        $geoipWarning = $geoip->warning();
         Bootstrap::jsonResponse([
-            'data' => ['status' => 'healthy', 'timestamp' => time(), 'api_version' => 'v3'],
+            'data' => [
+                'status' => 'healthy',
+                'timestamp' => time(),
+                'api_version' => 'v3',
+                'geoip_database' => $geoip->healthFields(),
+                'warnings' => $geoipWarning === null ? [] : [$geoipWarning],
+            ],
         ]);
         exit;
     }
@@ -213,7 +246,7 @@ try {
         // budget is refused before the work unless its code is a live one).
         // The budget check reads only the presented code; the body goes
         // whole to ConnectController::token, which refuses unknown keys.
-        $connectStore = new ServerStateStore();
+        $connectStore = ServerStateStore::forInstall($db);
         $presentedCode = is_array($payload) ? ($payload['code'] ?? null) : null;
         [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::tokenWithFailureBudget(
             $connectStore,
@@ -281,7 +314,7 @@ try {
     }
 
     // Lightweight fixed-window rate limits for high-impact operations.
-    $stateStore = new ServerStateStore();
+    $stateStore = ServerStateStore::forInstall($db);
     $bucketKey = 'user:' . $userId;
     $limit = null;
     $windowSeconds = 60;
@@ -312,21 +345,25 @@ try {
     // Pro-only Go CLI: requests from the Go CLI need this install's ClickServer
     // key to belong to an active Prosper202 ClickServer subscription (trials
     // count). /capabilities, the API root and three diagnostic reads stay
-    // open, so the CLI can explain the refusal (isCliGateExempt). Fails open
-    // when my.tracking202.com can't be reached (see
-    // CapabilitiesController::cliAccess). The PHP bin/p202 CLI is not gated.
+    // open, so the CLI can explain the refusal (isCliGateExempt). When
+    // my.tracking202.com can't be reached, a paid answer within the grace
+    // period still counts (see CapabilitiesController::cliAccess). The PHP
+    // bin/p202 CLI is not gated.
     // The check keys on the User-Agent the Go CLI sends — a licensing prompt,
     // not an access control (see isGoCliUserAgent) — and runs after the rate
     // limiter above, so a burst that is refused there never reaches
     // my.tracking202.com on a cold cache.
+    $licenceGate = new \Api\V3\Controllers\CapabilitiesController($db, $userId);
     if (\Api\V3\Controllers\CapabilitiesController::isGoCliUserAgent((string)($_SERVER['HTTP_USER_AGENT'] ?? ''))
         && !\Api\V3\Controllers\CapabilitiesController::isCliGateExempt($method, $path)
-        && !(new \Api\V3\Controllers\CapabilitiesController($db, $userId))->cliAccess()) {
+        && !$licenceGate->cliAccess()) {
         Bootstrap::errorResponse(
-            'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install\'s '
-            . 'ClickServer API key. Start a Pro trial or subscription at '
-            . 'https://my.tracking202.com/api/customers/subscriptions/support; an install with no '
-            . 'ClickServer API key yet enters one on its api-key-required.php page first.',
+            $licenceGate->cliRefusal(
+                'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install\'s '
+                . 'ClickServer API key. Start a Pro trial or subscription at '
+                . 'https://my.tracking202.com/api/customers/subscriptions/support; an install with no '
+                . 'ClickServer API key yet enters one on its api-key-required.php page first.'
+            ),
             402,
             ['category' => 'licence']
         );
@@ -483,6 +520,7 @@ try {
         };
         $recordMoney = \Api\V3\Support\CampaignFigures::RECORD;
         $reportFigures = \Api\V3\Support\CampaignFigures::REPORT;
+        $matchFigures = \Api\V3\Support\CampaignFigures::MATCH_METHODS;
 
         // ── Clicks (read-only) ───────────────────────────────────────────
         $router->get('/clicks', fn() => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams), $recordMoney));
@@ -505,9 +543,21 @@ try {
         $updateSection = static function () use ($auth, $db): void {
             $auth->requirePermission($db, 'access_to_update_section');
         };
-        $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney) {
+        // The offline conversion import files (Setup › Offline Conversions):
+        // every conversion's value, which a role without campaign data is
+        // not shown, and a CSV that cannot be masked as the JSON reads are,
+        // so the role is refused. Before /{id}, which would read the segment
+        // as an id.
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\OfflineConversionsController::class;
+            $r->get('/offline-export', fn() => $crud($cls)->export($queryParams));
+            $r->get('/offline-export/summary', fn() => $crud($cls)->summary($queryParams));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_campaign_data'); }]);
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
+            // Before /{id}, which would read the segment as an id.
+            $r->get('/match-methods', fn() => $campaignFigures($crud($cls)->matchMethods($queryParams), $matchFigures));
             $r->get('/{id}',   fn($ctx) => $campaignFigures($crud($cls)->get(PathId::of($ctx)), $recordMoney));
         });
         $router->group('/conversions', function (Router $r) use ($crud, $idempotent, $payload) {
@@ -577,6 +627,20 @@ try {
             $r->get('/companies',      fn() => $crud($cls)->listCompanies($queryParams));
             $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
             $r->get('/fields',         fn() => $crud($cls)->fieldsList());
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:read');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_campaign_data');
+            },
+        ]);
+
+        // ── LTV Settings reads (ltv:read): webhook URLs, delivery logs and
+        // integrations' stored config are Account › API Integrations' to read,
+        // as they are to change.
+        $router->group('/ltv', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\LtvController::class;
             $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
             $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries(PathId::of($ctx), $queryParams));
             $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
@@ -584,9 +648,15 @@ try {
             static function () use ($auth): void {
                 $auth->requireScope('ltv:read');
             },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_campaign_data');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_api_integrations');
+            },
         ]);
 
-        // ── LTV: CRM + inbound integration writes (ltv:write) ──────────
+        // ── LTV: CRM writes (ltv:write) ──────────
         $router->group('/ltv', function (Router $r) use ($crud, $payload) {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->post('/customers',                fn() => ['_status' => 201] + $crud($cls)->upsertCustomer($payload));
@@ -594,12 +664,28 @@ try {
             $r->post('/customers/{id}/merge',     fn($ctx) => $crud($cls)->mergeCustomer(PathId::of($ctx), $payload));
             $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer(PathId::of($ctx))));
             $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias(PathId::of($ctx), $payload));
-            $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression(PathId::of($ctx), $payload));
             $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomerAlias(PathId::of($ctx), PathId::of($ctx, 'aliasId'))));
             $r->post('/companies',                fn() => ['_status' => 201] + $crud($cls)->createCompany($payload));
             $r->patch('/companies/{id}',          fn($ctx) => $crud($cls)->patchCompany(PathId::of($ctx), $payload));
             $r->post('/companies/{id}/merge',     fn($ctx) => $crud($cls)->mergeCompany(PathId::of($ctx), $payload));
             $r->delete('/companies/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCompany(PathId::of($ctx))));
+            $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
+            $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct(PathId::of($ctx), $payload));
+            $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct(PathId::of($ctx))));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:write');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_setup_section');
+            },
+        ]);
+
+        // ── LTV: incoming data (ltv:write): revenue, events, subscriptions
+        // an integration sends; it asks the read permission, not Setup's.
+        $router->group('/ltv', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\LtvController::class;
+            $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression(PathId::of($ctx), $payload));
             $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
             $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
             $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
@@ -608,19 +694,33 @@ try {
             // space, '/', '?'): decode it, or such a subscription could
             // never be found here.
             $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent(rawurldecode((string)$ctx['ref']), $payload));
-            $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
-            $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct(PathId::of($ctx), $payload));
-            $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct(PathId::of($ctx))));
+        }, [
+            static function () use ($auth): void {
+                $auth->requireScope('ltv:write');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_campaign_data');
+            },
+        ]);
+
+        // ── LTV Settings writes (ltv:write): fields, webhooks, integrations
+        // hold secrets, so they ask what Account › API Integrations asks.
+        $router->group('/ltv', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\LtvController::class;
             $r->post('/fields',                   fn() => ['_status' => 201] + $crud($cls)->createField($payload));
             $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField(PathId::of($ctx), $payload));
             $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField(PathId::of($ctx))));
             $r->post('/webhooks',                 fn() => ['_status' => 201] + $crud($cls)->createWebhook($payload));
+            $r->put('/webhooks/{id}', fn($ctx) => $crud($cls)->updateWebhook(PathId::of($ctx), $payload));
             $r->delete('/webhooks/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteWebhook(PathId::of($ctx))));
             $r->post('/integrations',             fn() => ['_status' => 201] + $crud($cls)->createIntegration($payload));
             $r->delete('/integrations/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->deleteIntegration(PathId::of($ctx))));
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:write');
+            },
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_api_integrations');
             },
         ]);
 
@@ -710,10 +810,16 @@ try {
             $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get(PathId::of($ctx)));
             $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules(PathId::of($ctx)));
         }, [$setupSection]);
-        $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $payload, $rotators) {
+        // A rule set that leaves out a rule removes it: the page's save asks
+        // for remove_rotator_rule then (ajax/rotator.php), and so does this.
+        $mayRemoveRules = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'remove_rotator_rule');
+        };
+        $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $payload, $queryParams, $rotators, $mayRemoveRules) {
             $r->post('',                       fn() => ['_status' => 201] + $idempotent('rotators', $payload, fn() => $crud($rotators)->create($payload)));
             $r->put('/{id}',                   fn($ctx) => $crud($rotators)->update(PathId::of($ctx), $payload));
             $r->post('/{id}/rules',            fn($ctx) => $idempotent('rotators/' . PathId::of($ctx) . '/rules', $payload, fn() => $crud($rotators)->createRule(PathId::of($ctx), $payload)));
+            $r->put('/{id}/rules',             fn($ctx) => $crud($rotators)->setRules(PathId::of($ctx), $payload, writeDryRunRequested($queryParams), $mayRemoveRules));
             $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($rotators)->updateRule(PathId::of($ctx), PathId::of($ctx, 'ruleId'), $payload));
         }, [$setupSection]);
         $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
@@ -1017,7 +1123,7 @@ try {
         $router->post('/events', fn() => $idempotent('events', $payload, fn() => $crud(\Api\V3\Controllers\EventsController::class)->create($payload)));
 
         // ── Users (admin-gated writes, self-or-admin for reads) ──────────
-        $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload) {
+        $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload, $queryParams) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
 
             $r->get('/roles', fn() => $make()->listRoles());
@@ -1100,7 +1206,7 @@ try {
 
             // Preferences (Personal settings: yours with the page's
             // permission, or a user you may manage; they hold the account's
-            // integration secrets)
+            // integration secrets, which GET answers only as stored or not)
             $r->get('/{id}/preferences', function ($ctx) use ($auth, $make, $db) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
                 return $make()->getPreferences(PathId::of($ctx));
@@ -1108,6 +1214,36 @@ try {
             $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
                 return $make()->updatePreferences(PathId::of($ctx), $payload);
+            });
+
+            // Click filtering (Personal settings' card, asked the same way):
+            // the switches, the address list, and a test of one address
+            // (?ip=), a read.
+            $filter = fn() => new \Api\V3\Controllers\ClickFilterController($db);
+            $r->get('/{id}/click-filter', function ($ctx) use ($auth, $filter, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->get(PathId::of($ctx));
+            });
+            $r->put('/{id}/click-filter', function ($ctx) use ($auth, $filter, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->update(PathId::of($ctx), $payload);
+            });
+            $r->post('/{id}/click-filter/entries', function ($ctx) use ($auth, $filter, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->addEntry(PathId::of($ctx), $payload);
+            });
+            $r->put('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->updateEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'), $payload);
+            });
+            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $filter()->deleteEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'));
+                return null;
+            });
+            $r->get('/{id}/click-filter/test', function ($ctx) use ($auth, $filter, $queryParams, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $filter()->test(PathId::of($ctx), $queryParams);
             });
         });
 
@@ -1156,6 +1292,20 @@ try {
             $r->get('/integrations', fn() => $crud(\Api\V3\Controllers\AdministrationController::class)->integrations());
         }, [$auth->requireAdmin(...), $integrationsPage]);
 
+        // ── Traffic sources another user's accounts name ─────────────────
+        // What Setup › Traffic Sources' rename could leave before 1.9.79, and
+        // the repair and split an operator runs on it. Gated as the install
+        // settings above (it names every user's sources); a repair or split
+        // also asks that the caller may act on each user it changes
+        // (TrafficSourceOwnersController). Not stageable, and no preview: the
+        // GET is what a repair or split would do.
+        $router->group('/system', function (Router $r) use ($db, $auth, $payload) {
+            $make = fn() => new \Api\V3\Controllers\TrafficSourceOwnersController($db, $auth);
+            $r->get('/traffic-source-owners', fn() => $make()->report());
+            $r->post('/traffic-source-owners/repair', fn() => $make()->repair($payload));
+            $r->post('/traffic-source-owners/split', fn() => $make()->split($payload));
+        }, [$auth->requireAdmin(...), $settingsPage]);
+
         // ── API root ─────────────────────────────────────────────────────
         $router->get('/', fn() => [
             'api' => 'Prosper202 API v3',
@@ -1182,7 +1332,7 @@ try {
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'events'        => '/events',
                 'users'         => '/users',
-                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations}',
+                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
                 'changes'       => '/changes/{entity}',
                 'audit'         => '/audit/sync-jobs',
@@ -1253,8 +1403,8 @@ try {
             PathId::of($ctx, 'campaignId')
         ), \Api\V3\Support\CampaignFigures::GOAL));
         // The LTV deletes make no authorization check inside their handlers:
-        // the group's ltv:write middleware, run from the main match before
-        // this router is consulted, is their only one.
+        // the groups' ltv:write scope and role-permission middleware, run from
+        // the main match before this router is consulted, are their only ones.
         $previewRouter->group('/ltv', function (Router $r) use ($crud) {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->delete('/customers/{id}',                   fn($ctx) => $crud($cls)->deleteCustomerPreview(PathId::of($ctx)));
@@ -1278,6 +1428,13 @@ try {
             $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
                 $auth->requireMayChangeRoles($db, PathId::of($ctx), null);
                 return $make()->removeRolePreview(PathId::of($ctx), PathId::of($ctx, 'roleId'));
+            });
+            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return (new \Api\V3\Controllers\ClickFilterController($db))->deleteEntryPreview(
+                    PathId::of($ctx),
+                    PathId::of($ctx, 'entryId')
+                );
             });
         });
 
@@ -1308,6 +1465,7 @@ try {
         $r->post('/uploads', $writePreview);
     });
     $writePreviewRouter->post('/system/retention/delete-before', $writePreview);
+    $writePreviewRouter->put('/rotators/{id}/rules', $writePreview);
     // ── Staged writes ───────────────────────────────────────────────
     // `?staged=1` on an operator-surface write records it as a proposal
     // (server-issued change id) instead of executing it; a person applies
@@ -1348,6 +1506,7 @@ try {
         $r->put('/{id}', $stageable);
         $r->delete('/{id}', $stageable);
         $r->post('/{id}/rules', $stageable);
+        $r->put('/{id}/rules', $stageable);
         $r->put('/{id}/rules/{ruleId}', $stageable);
         $r->delete('/{id}/rules/{ruleId}', $stageable);
     });
@@ -1390,6 +1549,10 @@ try {
         $r->delete('/{id}/api-keys/{keyId}', $stageable);
         $r->post('/{id}/identity-key/rotate', $stageable);
         $r->put('/{id}/preferences', $stageable);
+        $r->put('/{id}/click-filter', $stageable);
+        $r->post('/{id}/click-filter/entries', $stageable);
+        $r->put('/{id}/click-filter/entries/{entryId}', $stageable);
+        $r->delete('/{id}/click-filter/entries/{entryId}', $stageable);
     });
 
     $stagedChanges = fn() => new \Api\V3\Controllers\StagedChangesController($stateStore, $auth);
@@ -1425,6 +1588,12 @@ try {
     if ($match === null) {
         Bootstrap::errorResponse('Not found', 404);
         exit;
+    }
+    // A PATCH reaches every PUT route (Router::match), and a rule set is
+    // replaced whole: a PATCH naming one rule would remove the others.
+    if ($method === 'PATCH' && preg_match('#^/rotators/[^/]+/rules$#', $path) === 1) {
+        throw new HttpException('A rule set is replaced whole: send it with PUT, listing every rule the redirector is to have. '
+            . 'PUT /rotators/{id}/rules/{ruleId} changes one rule.', 405);
     }
 
     // Central scope enforcement: every authenticated endpoint requires
@@ -1608,6 +1777,11 @@ try {
         header('Content-Length: ' . strlen((string) $file['body']));
         header('Cache-Control: no-store');
         echo (string) $file['body'];
+    } elseif (isset($response['_stream']) && is_array($response['_stream'])) {
+        // A file written to a temporary stream (an offline conversion file),
+        // sent without reading it into memory.
+        $stream = $response['_stream'];
+        \Prosper202\OfflineConversion\OfflineFile::send($stream['handle'], (string) $stream['filename'], $stream['summary'] ?? null);
     } else {
         $status = $response['_status'] ?? 200;
         unset($response['_status']);
@@ -1615,7 +1789,21 @@ try {
     }
 
 } catch (AuthException $e) {
-    Bootstrap::errorResponse($e->getMessage(), $e->getCode() ?: 401);
+    $code = $e->getCode() ?: 401;
+    $message = $e->getMessage();
+    $extra = [];
+    if ($e instanceof InsufficientScopeException) {
+        $keySource = ScopeRefusal::keySource($db, Auth::bearerKey($headers), RequestContext::actorUserId());
+        [$message, $extra] = ScopeRefusal::answer($e, $keySource);
+    }
+    if ($code >= 500) {
+        error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
+        $pending = Bootstrap::pendingUpgrade($db);
+        if ($pending !== null) {
+            [$message, $code] = [$pending, 503];
+        }
+    }
+    Bootstrap::errorResponse($message, $code, $extra);
 } catch (ValidationException $e) {
     Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
 } catch (ConflictException $e) {
@@ -1625,15 +1813,18 @@ try {
     Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
+    $message = $e->getMessage();
     if ($code >= 500) {
-        // The answer names no cause; the log keeps it.
+        // The answer names no cause but a pending upgrade; the log keeps it.
         error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
+        $pending = Bootstrap::pendingUpgrade($db);
+        [$message, $code] = $pending !== null ? [$pending, 503] : ['Internal server error', $code];
     }
-    $message = $code >= 500 ? 'Internal server error' : $e->getMessage();
     Bootstrap::errorResponse($message, $code);
 } catch (\Throwable $e) {
     error_log(p202UncaughtLogLine('API v3 answered 500', $e));
-    Bootstrap::errorResponse('Internal server error', 500);
+    $pending = Bootstrap::pendingUpgrade($db);
+    Bootstrap::errorResponse($pending ?? 'Internal server error', $pending !== null ? 503 : 500);
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────

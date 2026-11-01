@@ -211,7 +211,8 @@ if (!isset($_SESSION['privacy'])) {
             ? $privacy['user_pref_privacy']
             : 'all';
     } else {
-        // No preferences row: nothing was set, the column's own default.
+        // No preferences row: nothing was set, 'disabled' as before 1.9.79,
+        // though a new account's row now starts at 'eu' (PrivacySetting).
         $_SESSION['privacy'] = 'disabled';
     }
 }
@@ -255,11 +256,10 @@ function p202StoredVisitorIp(): string
  * account set to 'all' under an install set to 'disabled' had its visitors
  * stored unmasked and given every click cookie (measured live).
  *
- * A lookup among the first account's clicks (the pixels' and off.php's
- * by-address fallbacks, which only ever look there) applies user 1's, which
- * is the install's: those clicks were stored under it. A later call for
- * another owner replaces the setting in force; the install's is always part
- * of it.
+ * A by-address fallback (the pixels', off.php's) applies the account whose
+ * clicks it searches: those clicks were stored under its setting. A later
+ * call for another owner replaces the setting in force; the install's is
+ * always part of it.
  *
  * An owner that is not a positive integer — a row that names no account —
  * holds back: nothing says which setting governs (CLAUDE.md #11).
@@ -363,6 +363,24 @@ function p202ClickOwner(int $clickId): ?array
 }
 
 /**
+ * Whether this request's visitor may be recognised from one request to the
+ * next: given the p202vid cookie (p202ClickIdentity()), and matched to an
+ * earlier click by address when a pixel names none
+ * (p202SameIpFallbackClick()). Not under the privacy setting in force
+ * (trackingEnabled()), with consent withheld (a p202_consent other than 1)
+ * or for a campaign whose identity capture is off
+ * (RequestSignals::consentGiven()).
+ * One decision for both: a visitor held back from the cookie was still
+ * matched by address.
+ *
+ * @param array<string, mixed> $get
+ */
+function p202MayRecogniseVisitor(array $get, bool $campaignAllows): bool
+{
+    return trackingEnabled() && \Prosper202\Identity\RequestSignals::consentGiven($get, $campaignAllows);
+}
+
+/**
  * The identity signals a click request carries (ClickIdentity::fromRequest())
  * under the privacy setting in force: a visitor held back has no p202vid
  * read, minted or sent, as they are set no click cookie. It was set under
@@ -372,13 +390,13 @@ function p202ClickOwner(int $clickId): ?array
  */
 function p202ClickIdentity(array $get, bool $campaignAllows, bool $mayMint = true): \Prosper202\Identity\ClickIdentity
 {
-    $inFull = trackingEnabled();
+    $recognised = p202MayRecogniseVisitor($get, $campaignAllows);
 
     return \Prosper202\Identity\ClickIdentity::fromRequest(
         $get,
-        $inFull ? $_COOKIE : [],
+        $recognised ? $_COOKIE : [],
         $campaignAllows,
-        $mayMint && $inFull
+        $mayMint && $recognised
     );
 }
 
@@ -437,42 +455,39 @@ class FILTER
 {
 
     /**
-     * Whether to record this click as filtered (1) or not (0).
+     * Whether to record this click as filtered, and why: the account's rules
+     * (Prosper202\Click\Filter\ClickFilterDecision), its settings and the
+     * list entry the click's address falls in read once
+     * (ClickPathFilterRules, which answers the defaults on any error rather
+     * than fail the click). With the defaults the checks below run as they
+     * always did: the sign-in addresses, then the crawler ranges, then the
+     * repeat visit.
      *
-     * The sign-in and netrange checks compare the address the click arrived
-     * from (VisitorIp), read here rather than handed in: a caller that
-     * passed the address the click path stores — masked under privacy —
-     * would match no sign-in and no netrange. Every caller passed one
-     * argument more before; StoredVisitorIpSourceTest holds them to four.
+     * The sign-in and netrange checks, and the list, compare the address the
+     * click arrived from (VisitorIp), read here rather than handed in: a
+     * caller that passed the address the click path stores — masked under
+     * privacy — would match no sign-in and no netrange.
+     * StoredVisitorIpSourceTest holds every caller to three arguments.
      *
      * @param int|string $ip_id the click's stored address row (masked under
      *        privacy): what the duplicate check keeps, the only one it may
      */
-    public static function startFilter($db, $click_id, $ip_id, $user_id)
+    public static function verdict($db, $ip_id, $user_id): \Prosper202\Click\Filter\ClickFilterVerdict
     {
         $arrived = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
+        [$settings, $entry] = \Prosper202\Click\Filter\ClickPathFilterRules::forClick(
+            new \Prosper202\Database\Connection($db),
+            (int) $user_id,
+            $arrived
+        );
 
-        // we only do the other checks, if the first ones have failed.
-        // we will return the variable filter, if the $filter returns TRUE, when the click is inserted and recorded we will insert the new click already inserted,
-        // what was lagign this query is before it would insert a click, then scan it and then update the click, the updating later on was lagging, now we will just insert and it will not stop the clicks from being redirected becuase of a slow update.
-
-        // check the user
-        $filter = FILTER::checkUserIP($db, $arrived);
-        if ($filter == false) {
-
-            // check the netrange
-            $filter = FILTER::checkNetrange($click_id, $arrived);
-            if ($filter == false) {
-
-                $filter = FILTER::checkLastIps($db, $user_id, $ip_id);
-            }
-        }
-
-        if ($filter == true) {
-            return 1;
-        } else {
-            return 0;
-        }
+        return \Prosper202\Click\Filter\ClickFilterDecision::decide(
+            $settings,
+            $entry,
+            static fn (): bool => (bool) FILTER::checkUserIP($db, $arrived),
+            static fn (): bool => FILTER::checkNetrange(0, $arrived),
+            static fn (?int $within): bool => FILTER::checkLastIps($db, $user_id, $ip_id, $within),
+        );
     }
 
     /**
@@ -493,73 +508,10 @@ class FILTER
         return \Prosper202\Click\SignedInFromAddress::any(new \Prosper202\Database\Connection($db), $address);
     }
 
-    public static function checkNetrange($click_id, $ip)
+    /** The built-in crawler ranges (CrawlerRanges, which the API's address test asks too). */
+    public static function checkNetrange($click_id, $ip): bool
     {
-        $ip_address = ip2long(is_string($ip) ? $ip : $ip->address);
-
-        // check each netrange
-        /* google1 */
-        if (($ip_address >= 1208926208) and ($ip_address <= 1208942591)) {
-            return true;
-        }
-        /* google2 */
-        if (($ip_address >= 3512041472) and ($ip_address <= 3512074239)) {
-            return true;
-        }
-        /* google3 */
-        if (($ip_address >= 1123631104) and ($ip_address <= 1123639295)) {
-            return true;
-        }
-        /* Google4 */
-        if (($ip_address >= 1089052672) and ($ip_address <= 1089060863)) {
-            return true;
-        }
-        /* google5 */
-        if (($ip_address >= -782925824) and ($ip_address <= -782893057)) {
-            return true;
-        }
-
-        /* level 3 communications */
-        if (($ip_address >= 1094189056) and ($ip_address <= 1094451199)) {
-            return true;
-        }
-
-        /* yahoo1 */
-        if (($ip_address >= 3515031552) and ($ip_address <= 3515039743)) {
-            return true;
-        }
-        /* Yahoo2 */
-        if (($ip_address >= 3633393664) and ($ip_address <= 3633397759)) {
-            return true;
-        }
-        /* Yahoo3 */
-        if (($ip_address >= 3640418304) and ($ip_address <= 3640426495)) {
-            return true;
-        }
-        /* Yahoo4 */
-        if (($ip_address >= 1209925632) and ($ip_address <= 1209991167)) {
-            return true;
-        }
-        /* Yahoo5 */
-        if (($ip_address >= 1241907200) and ($ip_address <= 1241972735)) {
-            return true;
-        }
-
-        /* Performance Systems International Inc. */
-        if (($ip_address >= 637534208) and ($ip_address <= 654311423)) {
-            return true;
-        }
-        /* Microsoft */
-        if (($ip_address >= 3475898368) and ($ip_address <= 3475963903)) {
-            return true;
-        }
-        /* MSN */
-        if (($ip_address >= 1093926912) and ($ip_address <= 1094189055)) {
-            return true;
-        }
-
-        // if it was none of theses, return false
-        return false;
+        return \Prosper202\Click\Filter\CrawlerRanges::contains(is_string($ip) ? $ip : (string) $ip->address);
     }
 
     // this will filter out a click if it the IP WAS RECORDED, for a particular user within the last 24 hours, if it existed before, filter out this click.
@@ -573,11 +525,20 @@ class FILTER
     // is the only one privacy lets it keep. Unlike checkUserIP, whose other
     // side is an operator's unmasked record, there is nothing unmasked here
     // to compare before the mask.
-    public static function checkLastIps($db, $user_id, $ip_id)
+    //
+    // $within is the account's repeat window in seconds (ClickFilterSettings::
+    // repeatWithin()); null, the default, is the daily cleanup's, so any row
+    // still there counts, as it always did.
+    public static function checkLastIps($db, $user_id, $ip_id, ?int $within = null): bool
     {
         $conn = new \Prosper202\Database\Connection($db);
-        $stmt = $conn->prepareWrite('SELECT 1 FROM 202_last_ips WHERE user_id = ? AND ip_id = ? LIMIT 1');
-        $conn->bind($stmt, 'ii', [(int) $user_id, (int) $ip_id]);
+        if ($within === null) {
+            $stmt = $conn->prepareWrite('SELECT 1 FROM 202_last_ips WHERE user_id = ? AND ip_id = ? LIMIT 1');
+            $conn->bind($stmt, 'ii', [(int) $user_id, (int) $ip_id]);
+        } else {
+            $stmt = $conn->prepareWrite('SELECT 1 FROM 202_last_ips WHERE user_id = ? AND ip_id = ? AND time >= ? LIMIT 1');
+            $conn->bind($stmt, 'iii', [(int) $user_id, (int) $ip_id, time() - $within]);
+        }
         if ($conn->fetchOne($stmt) !== null) {
             // if this ip has been seen within the last 24 hours, filter it out.
             return true;
@@ -660,9 +621,9 @@ function rotateTrackerUrl($db, $tracker_row)
  * record_simple.php). Values are raw; replaceTokens() URL-encodes them.
  *
  * @param array<string, scalar|null> $click keyword, t202pubid, c1-c4, gclid,
- *     msclkid, fbclid, utm_source, utm_medium, utm_campaign, utm_term,
- *     utm_content, country, country_code, region, city, cpc, cpa, payout,
- *     ppc_account_id
+ *     gbraid, wbraid, ttclid, msclkid, fbclid, utm_source, utm_medium,
+ *     utm_campaign, utm_term, utm_content, country, country_code, region,
+ *     city, cpc, cpa, payout, ppc_account_id
  * @return array<string, scalar|null>
  */
 function p202ClickUrlTokens(string $clickId, array $click): array
@@ -689,6 +650,9 @@ function p202ClickUrlTokens(string $clickId, array $click): array
         'c3' => $text('c3'),
         'c4' => $text('c4'),
         'gclid' => $text('gclid'),
+        'gbraid' => $text('gbraid'),
+        'wbraid' => $text('wbraid'),
+        'ttclid' => $text('ttclid'),
         'msclkid' => $text('msclkid'),
         'fbclid' => $text('fbclid'),
         'utm_source' => $text('utm_source'),
@@ -767,8 +731,6 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
             	2trk.click_cpa,
                 2c.ppc_account_id,
             	2g.gclid,
-                2b.msclkid,
-                2f.fbclid,
             	2us.utm_source,
             	2um.utm_medium,
             	2uca.utm_campaign,
@@ -789,8 +751,6 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
                 LEFT OUTER JOIN 202_trackers AS 2trk
                     ON (2trk.tracker_id_public = 2cpa.tracker_id_public AND 2trk.user_id = 2c.user_id)
             	LEFT JOIN `202_google` AS 2g on (2g.click_id=2c.click_id)
-                LEFT JOIN `202_bing` AS 2b on (2b.click_id=2c.click_id)
-                LEFT JOIN `202_facebook` AS 2f on (2f.click_id=2c.click_id) 
                 LEFT JOIN `202_utm_source` AS 2us ON (2g.utm_source_id = 2us.utm_source_id)
                 LEFT JOIN `202_utm_medium` AS 2um ON (2g.utm_medium_id = 2um.utm_medium_id)
                 LEFT JOIN `202_utm_campaign` AS 2uca ON (2g.utm_campaign_id = 2uca.utm_campaign_id) 
@@ -819,6 +779,16 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
     // No such click (a page reading an earlier one by a subid it was sent):
     // its tokens are blank, as they always were.
     $click_row ??= [];
+    // The ids 1.9.79 added, read apart (AdClickIdColumns::of()) and only for
+    // a URL that asks for one, from a click the read above found the owner's.
+    // The msclkid and fbclid among them: 202_bing and 202_facebook, read here
+    // before, were written by no version in this repository's history.
+    if ($click_row !== [] && \Prosper202\Click\AdClickIdColumns::namedIn((string) $url)) {
+        $click_row += \Prosper202\Click\AdClickIdColumns::of(
+            \Prosper202\Repository\LookupRepositoryFactory::connection($db),
+            (int) $tokenClickId
+        );
+    }
 
     return replaceClickPlaceholders($url, (string) $click_id, [
         'keyword' => $click_row['keyword'] ?? null,
@@ -828,6 +798,9 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
         'c3' => $click_row['c3'] ?? null,
         'c4' => $click_row['c4'] ?? null,
         'gclid' => $click_row['gclid'] ?? null,
+        'gbraid' => $click_row['gbraid'] ?? null,
+        'wbraid' => $click_row['wbraid'] ?? null,
+        'ttclid' => $click_row['ttclid'] ?? null,
         'msclkid' => $click_row['msclkid'] ?? null,
         'fbclid' => $click_row['fbclid'] ?? null,
         'utm_source' => $click_row['utm_source'] ?? null,
@@ -912,7 +885,9 @@ class PLATFORMS
         if ($memcacheWorking) {
             // Not "user-agent": entries under that subject name a device
             // model found by its name alone, of whatever type clicked first.
-            $key = md5("user-agent-typed" . $ua . systemHash());
+            // The code's version is in the namespace: the parse that makes
+            // the entry is this code's, and it lives 30 days.
+            $key = md5("user-agent-typed" . $ua . \Prosper202\Repository\LookupRepositoryFactory::cacheNamespace());
             $device_info = $memcache->get($key);
 
             // A miss as well: an entry without ua_device_family
@@ -1010,8 +985,12 @@ class PLATFORMS
             $ip->address = $address;
         }
 
-        if ($memcacheWorking && $ip && isset($ip->address)) {
-            $getFromCache = $memcache->get(md5("ip-bot" . $ip->address . systemHash()));
+        // The ranges below are this code's: its version is in the namespace.
+        $ipBotKey = $ip && isset($ip->address)
+            ? md5("ip-bot" . $ip->address . \Prosper202\Repository\LookupRepositoryFactory::cacheNamespace())
+            : null;
+        if ($memcacheWorking && $ipBotKey !== null) {
+            $getFromCache = $memcache->get($ipBotKey);
         } else {
             $getFromCache = false;
         }
@@ -1063,8 +1042,8 @@ class PLATFORMS
 
             foreach ($ranges as $value) {
                 if (PLATFORMS::check_ip_range($ip, $value)) {
-                    if ($memcacheWorking) {
-                        setCache(md5("ip-bot" . $ip->address . systemHash()), true);
+                    if ($memcacheWorking && $ipBotKey !== null) {
+                        setCache($ipBotKey, true);
                     }
 
                     return true;
@@ -1199,8 +1178,18 @@ function getGeoData($ip)
         ];
     }
 
-    $reader = new Reader(CONFIG_PATH . '/geo/GeoLite2-City.mmdb');
+    // Opened per lookup, so the lookup after a refresh's rename reads the new
+    // file. One that will not open places nobody and the click goes on; the
+    // log, Settings and the health probes say why.
+    $reader = null;
     try {
+        try {
+            $reader = new Reader(\Prosper202\GeoIp\CityDatabase::PATH);
+        } catch (\Exception $e) {
+            error_log('getGeoData: the GeoIP database could not be opened (' . $e->getMessage()
+                . '); this visitor is not placed');
+            throw $e;
+        }
         $record = $reader->city($ip_address);
         $country = $record->country->name;
         $country_code = $record->country->isoCode;
@@ -1268,7 +1257,7 @@ function getGeoData($ip)
         'postal_code' => $postal
     ];
 
-    $reader->close();
+    $reader?->close();
 
     return $geoData;
 }

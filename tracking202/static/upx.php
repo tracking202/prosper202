@@ -8,7 +8,6 @@ include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php')
 include_once(substr(__DIR__, 0,-19) . '/202-config/functions-tracking202api.php');
 
 //get the aff_camapaign_id
-$mysql['user_id'] = 1;
 $mysql['click_id'] = 0;
 $mysql['cid'] = 0;
 $mysql['use_pixel_payout'] = 0;
@@ -26,21 +25,24 @@ if ($requestedClick['malformed'] !== null) {
     error_log('upx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
     exit;
 }
+// How the click was found, kept on the conversion (MatchMethod): the
+// parameter or the cookie that named it, or the address it was guessed from.
+$matchedBy = $requestedClick['method'] ?? \Prosper202\Conversion\Ledger\MatchMethod::SAME_IP;
 if ($requestedClick['click_id'] !== null) {
     $mysql['click_id'] = (string) $requestedClick['click_id'];
-} else { // nothing named a click: fall back to this address's last click
-            // The visitor's last click by the address the click path stored
-            // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR: among the
-            // first account's clicks, stored under its setting, which is the
-            // install's (p202ApplyOwnerPrivacy()).
-            p202ApplyOwnerPrivacy($mysql['user_id']);
-            $daysago = time() - 2592000; // 30 days ago
-            $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
-                new \Prosper202\Database\Connection($db),
-                p202StoredVisitorIp(),
-                (int) $mysql['user_id'],
-                $daysago,
-                !trackingEnabled()
+} else {
+            // Nothing named a click: the latest click from this address of
+            // the account whose pixel this is (pixelAccount()), when
+            // that account has the fallback on and may recognise this
+            // visitor (p202SameIpFallbackClick()). A guess.
+            $click_row1 = p202SameIpFallbackClick(
+                $db,
+                \Prosper202\Conversion\SameIpFallback::pixelAccount(
+                    new \Prosper202\Database\Connection($db),
+                    $_GET['cid'] ?? null,
+                    'upx'
+                ),
+                $_GET
             );
 
             if ($click_row1 !== null) {
@@ -56,51 +58,8 @@ if(!$mysql['click_id']){
 // integer click_id for safe SQL interpolation
 $clickId = (int) $mysql['click_id'];
 
-//get c1-c4 values etc
-$cvar_sql ="
-SELECT 
-	2cid.click_id,
-	2c.user_id,
-	2c.aff_campaign_id,
-	2c.click_payout,
-	2c.click_cpc,
-	2c.click_lead,
-	2c.click_time,
-	2c1.c1,
-	2c2.c2,
-	2c3.c3,
-	2c4.c4,
-	2kw.keyword,
-	2g.gclid,
-	2us.utm_source,
-	2um.utm_medium,
-	2uca.utm_campaign,
-	2ut.utm_term,
-	2uco.utm_content,
-	2trc.click_cpa,
-    2su.site_url_address
-FROM `202_clicks_tracking` AS 2cid
-LEFT JOIN `202_clicks_advance` AS 2ca USING (`click_id`)
-LEFT JOIN `202_google` AS 2g USING (`click_id`)
-LEFT JOIN `202_clicks` AS 2c USING (`click_id`)
-LEFT JOIN `202_tracking_c1` AS 2c1 USING (`c1_id`)
-LEFT JOIN `202_tracking_c2` AS 2c2 USING (`c2_id`)
-LEFT JOIN `202_tracking_c3` AS 2c3 USING (`c3_id`)
-LEFT JOIN `202_tracking_c4` AS 2c4 USING (`c4_id`)
-LEFT JOIN `202_utm_source` AS 2us USING (`utm_source_id`)
-LEFT JOIN `202_utm_medium` AS 2um USING (`utm_medium_id`)
-LEFT JOIN `202_utm_campaign` AS 2uca USING (`utm_campaign_id`)
-LEFT JOIN `202_utm_term` AS 2ut USING (`utm_term_id`)
-LEFT JOIN `202_utm_content` AS 2uco USING (`utm_content_id`)
-LEFT JOIN `202_keywords` AS 2kw ON (2ca.`keyword_id` = 2kw.`keyword_id`)
-LEFT JOIN `202_cpa_trackers` AS 2cpa USING (`click_id`)
-LEFT JOIN `202_trackers` AS 2trc
-    ON (2cpa.`tracker_id_public` = 2trc.`tracker_id_public` AND 2trc.`user_id` = 2c.`user_id`)
-LEFT JOIN `202_clicks_site` AS 2cs ON (2c.click_id=2cs.click_id)
-LEFT JOIN `202_site_urls` AS 2su ON (2cs.click_referer_site_url_id=2su.site_url_id)
-WHERE 2c.`click_id` = {$clickId}
-LIMIT 1";
-
+// The click's latest visit, which the conversion credits (p202PostbackClickSql()).
+$cvar_sql = p202PostbackClickSql($clickId);
 $cvar_sql_result = $db->query($cvar_sql);
 if ($cvar_sql_result === false) {
     record_mysql_error($db, $cvar_sql);
@@ -109,6 +68,14 @@ $cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
 if (!$cvar_sql_row) {
     p202RespondJsonError(404, 'Click data not found');
 }
+// The traffic source and cost, whose pixels announce it: the first visit's,
+// when it is the same account's (p202ClickSourceSql()).
+$source_sql = p202ClickSourceSql($clickId, (int) $cvar_sql_row['user_id']);
+$source_result = $db->query($source_sql);
+if ($source_result === false) {
+    record_mysql_error($db, $source_sql);
+}
+$source_row = p202FetchRow($source_result, $source_sql);
 // The privacy setting in force for this visitor: the stricter of the
 // install's and this click's account's (p202ApplyOwnerPrivacy()), before
 // the conversion stores the address.
@@ -127,10 +94,11 @@ $mysql['utm_content'] = $db->real_escape_string((string) ($cvar_sql_row['utm_con
 $mysql['click_user_id'] = $db->real_escape_string((string) ($cvar_sql_row['user_id'] ?? ''));
 $mysql['campaign_id'] = $db->real_escape_string((string) ($cvar_sql_row['aff_campaign_id'] ?? ''));
 $mysql['payout'] = $db->real_escape_string((string) ($cvar_sql_row['click_payout'] ?? '0'));
-$mysql['cpc'] = $db->real_escape_string((string) ($cvar_sql_row['click_cpc'] ?? '0'));
+$mysql['cpc'] = $db->real_escape_string((string) ($source_row['click_cpc'] ?? '0'));
 $mysql['click_cpa'] = $db->real_escape_string((string) ($cvar_sql_row['click_cpa'] ?? ''));
 $mysql['click_lead'] = $db->real_escape_string((string) ($cvar_sql_row['click_lead'] ?? '0'));
 $mysql['click_time'] = $db->real_escape_string((string) ($cvar_sql_row['click_time'] ?? '0'));
+$mysql['ppc_account_id'] = $db->real_escape_string((string) ($source_row['ppc_account_id'] ?? ''));
 $mysql['referer'] = urlencode((string) $db->real_escape_string((string) ($cvar_sql_row['site_url_address'] ?? '')));
 
 if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
@@ -138,6 +106,12 @@ if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
 	$mysql['payout'] = $db->real_escape_string((string)$_GET['amount']);
 	$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
 }
+
+// Raw: replaceTokens() encodes them, and no statement here reads them.
+$adClickIds = \Prosper202\Click\AdClickIdColumns::of(
+    \Prosper202\Repository\LookupRepositoryFactory::connection($db),
+    $clickId
+);
 
 $tokens = [
     "subid" => $mysql['click_id'],
@@ -147,6 +121,11 @@ $tokens = [
 	"c3" => $mysql['c3'],
 	"c4" => $mysql['c4'],
     "gclid" => $mysql['gclid'],
+    "gbraid" => $adClickIds['gbraid'],
+    "wbraid" => $adClickIds['wbraid'],
+    "ttclid" => $adClickIds['ttclid'],
+    "msclkid" => $adClickIds['msclkid'],
+    "fbclid" => $adClickIds['fbclid'],
     "utm_source" => $mysql['utm_source'],
     "utm_medium" => $mysql['utm_medium'],
     "utm_campaign" => $mysql['utm_campaign'],
@@ -160,25 +139,9 @@ $tokens = [
     "referer" => $mysql['referer']
 ];
 
-$account_id_sql="SELECT 202_clicks.ppc_account_id
-				 FROM 202_clicks
-				 WHERE click_id={$clickId}";
-
-$account_id_result = $db->query($account_id_sql);
-if ($account_id_result === false) {
-    record_mysql_error($db, $account_id_sql);
-}
-$account_id_row = p202FetchRow($account_id_result, $account_id_sql);
-$mysql['ppc_account_id'] = $db->real_escape_string($account_id_row['ppc_account_id'] ?? '');
-
 if (is_numeric($mysql['click_id'])) {
 
 	$conv_time = time();
-	$click_time_raw = (int) ($cvar_sql_row['click_time'] ?? 0);
-	$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time_raw));
-	$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', (int) $conv_time));
-	$diff = $click_time_to_date->diff($conv_time_to_date);
-	$time_difference = $diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec';
 	$mysql['conv_time'] = $conv_time;
 
 		if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
@@ -196,7 +159,7 @@ if (is_numeric($mysql['click_id'])) {
 	// browser pixels of that notification are this response. A campaign
 	// without goals records its plain conversion below, as always.
 	try {
-		$webEvent = p202RecordWebEvent($db, $clickId, $_GET, ['browser' => true]);
+		$webEvent = p202RecordWebEvent($db, $clickId, $_GET, $matchedBy, ['browser' => true]);
 	} catch (\Throwable $webEventError) {
 		error_log('upx: event recording failed for click ' . $clickId . ': ' . $webEventError->getMessage());
 		p202RespondJsonError(500, 'Failed to record event');
@@ -215,11 +178,8 @@ if (is_numeric($mysql['click_id'])) {
 		$db,
 		[
 			'click_id'        => $clickId,
-			'campaign_id'     => (string) ($cvar_sql_row['aff_campaign_id'] ?? '0'),
 			'user_id'         => (string) ($cvar_sql_row['user_id'] ?? '0'),
-			'click_time'      => $click_time_raw,
 			'conv_time'       => $conv_time,
-			'time_difference' => $time_difference,
 			'ip'              => p202StoredVisitorIp(),
 			'pixel_type'      => 3,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
@@ -232,6 +192,7 @@ if (is_numeric($mysql['click_id'])) {
             // Server postbacks queued with the row, sent below (as gpb.php).
             'notify_traffic_source' => true,
 		],
+		$matchedBy,
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,
 		($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',

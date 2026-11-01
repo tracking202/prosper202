@@ -38,7 +38,7 @@ trait AttributionDatabase
         '202_identity_keys', '202_identity_visitors', '202_identity_signals', '202_identity_observations',
         '202_identity_merges', '202_clicks_visitor', '202_browsers', '202_attribution_exports',
         '202_attribution_rollup', '202_attribution_rollup_state', '202_attribution_rollup_overrides',
-        '202_attribution_rollup_dirty', '202_attribution_rollup_dirty_clicks',
+        '202_attribution_rollup_dirty', '202_attribution_rollup_dirty_clicks', '202_click_latest_visits',
     ];
 
     public static function setUpBeforeClass(): void
@@ -164,7 +164,7 @@ trait AttributionDatabase
         if ($convTime !== null) {
             $data['conv_time'] = $convTime;
         }
-        $result = $this->ledger->record(1, $data);
+        $result = $this->ledger->record(1, $data, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertGreaterThan(0, $result['convId'], 'the conversion was recorded');
 
         return $result['convId'];

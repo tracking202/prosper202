@@ -479,7 +479,7 @@ echo p202_account_render_flashes($extra);
 								<input class="form-check-input" type="checkbox" role="switch" id="user_active" name="user_active"<?php echo $active ? ' checked' : ''; ?>>
 								<label class="form-check-label" for="user_active">Active</label>
 							</div>
-							<div class="form-text">An inactive user keeps their account but cannot sign in.</div>
+							<div class="form-text">Off keeps the account, signs it out at once, bars sign-in.</div>
 						</div>
 					</div>
 

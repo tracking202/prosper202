@@ -79,6 +79,17 @@ final class CountedAmount
      */
     public static function sql(string $row): string
     {
+        return 'COALESCE(' . self::sqlOrNull($row) . ', 0)';
+    }
+
+    /**
+     * of() in SQL as it answers: the counted amount, or NULL where of()
+     * answers null, so a read can tell a conversion that does not count from
+     * one that counts for 0 (the offline conversion files send the second and
+     * not the first). sql() is this with 0 for NULL.
+     */
+    public static function sqlOrNull(string $row): string
+    {
         if (preg_match('/^[a-z][a-z0-9_]*$/D', $row) !== 1) {
             throw new \InvalidArgumentException('not a table alias: ' . $row);
         }
@@ -91,9 +102,9 @@ final class CountedAmount
 
         return "(CASE WHEN $row.conv_id IS NULL OR $row.reverses_conv_id IS NOT NULL"
             . " OR ($row.superseded_reason IS NOT NULL AND $row.superseded_reason <> '')"
-            . " OR $row.payable <> 1 OR $row.deleted <> 0 THEN 0"
+            . " OR $row.payable <> 1 OR $row.deleted <> 0 THEN NULL"
             . " ELSE (SELECT $indexHint CASE WHEN COUNT($r.conv_id) > 0"
-            . " AND $row.click_payout + COALESCE(SUM($r.click_payout), 0) <= 0 THEN 0"
+            . " AND $row.click_payout + COALESCE(SUM($r.click_payout), 0) <= 0 THEN NULL"
             . " ELSE $row.click_payout + COALESCE(SUM($r.click_payout), 0) END"
             . " FROM 202_conversion_logs $r"
             . " WHERE $r.reverses_conv_id = $row.conv_id AND $r.deleted = 0 AND $r.payable = 1)"

@@ -11,6 +11,7 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Support\RemoteApiClient;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
+use Api\V3\Support\SyncProfileKeys;
 use Tests\TestCase;
 
 class FakeSyncEngine extends SyncEngine
@@ -167,6 +168,12 @@ final class SyncFeaturesTest extends TestCase
 {
     private string $tmpDir;
 
+    /** The key a job's profile keys are sealed with, in place of the database's. */
+    private static function syncKeys(): SyncProfileKeys
+    {
+        return SyncProfileKeys::withKey(str_repeat('k', 32));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -249,7 +256,7 @@ final class SyncFeaturesTest extends TestCase
         $store = new ServerStateStore($this->tmpDir);
         $engine = new FakeSyncEngine($store);
 
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
         $response = $controller->createJob([
             'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
             'target' => ['name' => 'stage', 'url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
@@ -283,8 +290,8 @@ final class SyncFeaturesTest extends TestCase
             $db = $this->createMysqliMock();
             $store = new ServerStateStore($this->tmpDir);
             $engine = new LoadSyncEngine($store);
-            $controllerA = new SyncController($db, 7, $store, $engine);
-            $controllerB = new SyncController($db, 7, $store, $engine);
+            $controllerA = new SyncController($db, 7, $store, $engine, self::syncKeys());
+            $controllerB = new SyncController($db, 7, $store, $engine, self::syncKeys());
 
             $jobCount = 200;
             for ($i = 0; $i < $jobCount; $i++) {
@@ -320,7 +327,7 @@ final class SyncFeaturesTest extends TestCase
         $db = $this->createMysqliMock();
         $store = new ServerStateStore($this->tmpDir);
         $engine = new FakeSyncEngine($store);
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
         $campaigns = [
             'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
@@ -361,7 +368,7 @@ final class SyncFeaturesTest extends TestCase
             $db = $this->createMysqliMock();
             $store = new ServerStateStore($this->tmpDir);
             $engine = new FakeSyncEngine($store);
-            $controller = new SyncController($db, 42, $store, $engine);
+            $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
             $controller->createJob([
                 'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
@@ -385,7 +392,7 @@ final class SyncFeaturesTest extends TestCase
         $db = $this->createMysqliMock();
         $store = new ServerStateStore($this->tmpDir);
         $engine = new FakeSyncEngine($store);
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
         $this->expectException(ValidationException::class);
         $controller->plan([
@@ -507,7 +514,7 @@ final class SyncFeaturesTest extends TestCase
         $db = $this->createMysqliMock();
         $store = new ServerStateStore($this->tmpDir);
         $engine = new FakeSyncEngine($store);
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
         $created = $controller->createJob([
             'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
@@ -537,7 +544,7 @@ final class SyncFeaturesTest extends TestCase
         $db = $this->createMysqliMock();
         $store = new ServerStateStore($this->tmpDir);
         $engine = new FlakySyncEngine($store);
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
         $created = $controller->createJob([
             'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
@@ -588,7 +595,7 @@ final class SyncFeaturesTest extends TestCase
             'mappings' => [],
             'delete_candidates' => [],
         ];
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
         $created = $controller->createJob([
             'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
@@ -614,7 +621,7 @@ final class SyncFeaturesTest extends TestCase
         $store->recordChange('campaigns', 'update', ['aff_campaign_id' => 1], 9);
         $store->recordChange('campaigns', 'delete', ['aff_campaign_id' => 2], 9);
 
-        $controller = new SyncController($db, 9, $store, $engine);
+        $controller = new SyncController($db, 9, $store, $engine, self::syncKeys());
         $first = $controller->listChanges('campaigns', ['limit' => 1, 'cursor_ttl' => 3600]);
 
         $this->assertCount(1, $first['data']);
@@ -634,7 +641,7 @@ final class SyncFeaturesTest extends TestCase
         $store->recordChange('campaigns', 'update', ['aff_campaign_id' => 1], 9);
         $store->recordChange('campaigns', 'delete', ['aff_campaign_id' => 2], 9);
 
-        $controller = new SyncController($db, 9, $store, $engine);
+        $controller = new SyncController($db, 9, $store, $engine, self::syncKeys());
         $result = $controller->listChanges('campaigns', ['limit' => 10, 'deleted_since' => 0, 'cursor_ttl' => 3600]);
 
         $this->assertCount(1, $result['data']);
@@ -652,7 +659,7 @@ final class SyncFeaturesTest extends TestCase
         $db = $this->createMysqliMock();
         $store = new ServerStateStore($this->tmpDir);
         $engine = new OptionCaptureSyncEngine($store);
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
         $source = ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'];
         $target = ['name' => 'stage', 'url' => 'https://stage.example.com', 'api_key' => 'stage-key'];
@@ -681,7 +688,8 @@ final class SyncFeaturesTest extends TestCase
     public function testASyncJobRefusesAnUpdateTime(): void
     {
         $store = new ServerStateStore($this->tmpDir);
-        $controller = new SyncController($this->createMysqliMock(), 42, $store, new FakeSyncEngine($store));
+        $engine = new FakeSyncEngine($store);
+        $controller = new SyncController($this->createMysqliMock(), 42, $store, $engine, self::syncKeys());
         $body = [
             'source' => ['url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
             'target' => ['url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
@@ -730,7 +738,7 @@ final class SyncFeaturesTest extends TestCase
         $db = $this->createMysqliMock();
         $store = new ServerStateStore($this->tmpDir);
         $engine = new FakeSyncEngine($store);
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
         $this->expectException(ValidationException::class);
         $controller->createJob([
@@ -746,7 +754,7 @@ final class SyncFeaturesTest extends TestCase
         $db = $this->createMysqliMock();
         $store = new ServerStateStore($this->tmpDir);
         $engine = new FakeSyncEngine($store);
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
         $result = $controller->createJob([
             'source' => ['url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
@@ -764,7 +772,7 @@ final class SyncFeaturesTest extends TestCase
         $db = $this->createMysqliMock();
         $store = new ServerStateStore($this->tmpDir);
         $engine = new FakeSyncEngine($store);
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
         $this->expectException(ValidationException::class);
         $controller->createJob([
@@ -803,7 +811,7 @@ final class SyncFeaturesTest extends TestCase
             'mappings' => [],
             'delete_candidates' => [],
         ];
-        $controller = new SyncController($db, 42, $store, $engine);
+        $controller = new SyncController($db, 42, $store, $engine, self::syncKeys());
 
         $created = $controller->createJob([
             'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
@@ -834,7 +842,7 @@ final class SyncFeaturesTest extends TestCase
         $store = new ServerStateStore($this->tmpDir);
 
         $successEngine = new FakeSyncEngine($store);
-        $successController = new SyncController($db, 42, $store, $successEngine);
+        $successController = new SyncController($db, 42, $store, $successEngine, self::syncKeys());
         $success = $successController->createJob([
             'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
             'target' => ['name' => 'stage', 'url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
@@ -857,7 +865,7 @@ final class SyncFeaturesTest extends TestCase
             'mappings' => [],
             'delete_candidates' => [],
         ];
-        $partialController = new SyncController($db, 42, $store, $partialEngine);
+        $partialController = new SyncController($db, 42, $store, $partialEngine, self::syncKeys());
         $partialController->createJob([
             'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
             'target' => ['name' => 'stage', 'url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
@@ -867,7 +875,7 @@ final class SyncFeaturesTest extends TestCase
 
         $failEngine = new FlakySyncEngine($store);
         $failEngine->failuresRemaining = 2;
-        $failController = new SyncController($db, 42, $store, $failEngine);
+        $failController = new SyncController($db, 42, $store, $failEngine, self::syncKeys());
         $failController->createJob([
             'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
             'target' => ['name' => 'stage', 'url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
@@ -876,7 +884,7 @@ final class SyncFeaturesTest extends TestCase
         ]);
         $failController->runWorker(['limit' => 5]);
 
-        $cancelController = new SyncController($db, 42, $store, new FakeSyncEngine($store));
+        $cancelController = new SyncController($db, 42, $store, new FakeSyncEngine($store), self::syncKeys());
         $cancel = $cancelController->createJob([
             'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
             'target' => ['name' => 'stage', 'url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
@@ -906,7 +914,8 @@ final class SyncFeaturesTest extends TestCase
     public function testAuditRefusesAFormatOrStatusNotOnItsList(): void
     {
         $store = new ServerStateStore($this->tmpDir);
-        $controller = new SyncController($this->createMysqliMock(), 42, $store, new FakeSyncEngine($store));
+        $engine = new FakeSyncEngine($store);
+        $controller = new SyncController($this->createMysqliMock(), 42, $store, $engine, self::syncKeys());
         $formats = ['format' => 'Valid values: json, csv'];
         $statuses = ['status' => 'Valid values: succeeded, partial, failed, cancelled'];
         $cases = [

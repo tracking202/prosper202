@@ -123,6 +123,14 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             1,
             'The 202_ips_v6 collation for the install: a failure is logged and the install goes on.',
         ],
+        '202-config/class-dataengine.php::prepareAccountOverview' => [
+            1,
+            'A failed cleanup of an optional temporary table is logged; closing its connection also removes it.',
+        ],
+        '202-config/class-dataengine.php::__destruct' => [
+            1,
+            'A failed cleanup is logged; closing its connection also removes the temporary table.',
+        ],
         '202-config/class-dataengine.php::doSummary' => [
             2,
             'Not reached: doQuery()\'s one caller hands it an INSERT … SELECT (ClickRollupSql), which answers true'
@@ -171,10 +179,11 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             . ' on; a statement that then fails is logged by executePartitionSql(). As'
             . ' SchemaInstaller::disableStrictMode().',
         ],
-        '202-config/Database/SchemaVersion.php::mismatch' => [
+        '202-config/Database/SchemaVersion.php::stored' => [
             1,
-            'A version that cannot be read is answered as a mismatch naming the failure, never as current'
-            . ' (CLAUDE.md #11): sync-worker.php writes it to stderr and exits 1 before any work.',
+            'A version that cannot be read is answered as the failure: mismatch() names it as a mismatch, never'
+            . ' as current (CLAUDE.md #11), and sync-worker.php exits 1 before any work; pendingUpgrade(), asked'
+            . ' only by an answer that has already failed, adds no cause to it.',
         ],
         '202-config/functions-upgrade.php::_upgrade_query_run' => [
             1,
@@ -204,12 +213,6 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             'The partitioning row is a recommendation on the server check: a check that fails is logged and shown'
             . ' as "Could not be checked", and the required checks, which do not read the database, still decide'
             . ' the page.',
-        ],
-        '202-config/User.class.php::__construct' => [
-            1,
-            'Only a missing 202_users (errno 1146) is answered: not installed, as is_installed() reads it, so no'
-            . ' account and no roles; index.php and the setup pages load connect.php before the tables exist. Any'
-            . ' other failure throws.',
         ],
         '202-config/sessions.php::write' => [
             1,

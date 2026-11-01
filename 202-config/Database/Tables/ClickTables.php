@@ -30,6 +30,9 @@ final class ClickTables
             self::clicksVariable(),
             self::clicksRotator(),
             self::clicksTotal(),
+            self::clickLatestVisits(),
+            self::reClickBackfill(),
+            self::clicksFilterReason(),
         ];
     }
 
@@ -212,6 +215,75 @@ final class ClickTables
                 `rotator_id` bigint(20) unsigned NOT NULL,
                 `rule_id` bigint(20) unsigned NOT NULL,
                 `rule_redirect_id` bigint(20) unsigned NOT NULL,
+                PRIMARY KEY (`click_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * A re-clicked click's latest visit time (LatestVisit::isLatest()): one
+     * row per click with more than one 202_clicks row, kept by the re-click
+     * in its transaction, written for the re-clicks before 1.9.79 by
+     * ReClickBackfill, and deleted with the click (ClickRetention). click_id
+     * is 202_clicks.click_id's type: a narrower key clamps large ids into
+     * one row under the app's empty sql_mode.
+     */
+    public static function clickLatestVisits(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICK_LATEST_VISITS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICK_LATEST_VISITS . "` (
+                `click_id` bigint(20) unsigned NOT NULL,
+                `click_time` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`click_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The 1.9.79 re-click backfill's walk (Prosper202\Click\ReClickBackfill):
+     * one row for the installation, written by the upgrade, or none on an
+     * install that never had re-clicks written before 1.9.79.
+     */
+    public static function reClickBackfill(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::RECLICK_BACKFILL,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::RECLICK_BACKFILL . "` (
+                `backfill_id` tinyint(3) unsigned NOT NULL,
+                `next_click_id` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `through_click_id` bigint(20) unsigned NOT NULL,
+                `started_at` int(10) unsigned NOT NULL,
+                `finished_at` int(10) unsigned DEFAULT NULL,
+                `reclicked_clicks` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `same_second_ties` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `mixed_accounts` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `failed_click_id` bigint(20) unsigned DEFAULT NULL,
+                `failed_runs` int(10) unsigned NOT NULL DEFAULT '0',
+                `failing_since` int(10) unsigned DEFAULT NULL,
+                `skipped_clicks` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `last_skipped_click_id` bigint(20) unsigned DEFAULT NULL,
+                PRIMARY KEY (`backfill_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Why a filtered click is filtered (Prosper202\Click\Filter\ClickFilterVerdict):
+     * one row per filtered click recorded from 1.9.79 on, written by
+     * MysqlClickRepository and deleted with the click (ClickRetention). A
+     * filtered click without one was recorded before, or is a bot, which
+     * 202_clicks.click_bot says. entry_id is the list entry of a filter_list
+     * click, 0 for the others.
+     */
+    public static function clicksFilterReason(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICKS_FILTER_REASON,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICKS_FILTER_REASON . "` (
+                `click_id` bigint(20) unsigned NOT NULL,
+                `filter_reason` varchar(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `entry_id` int(10) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`click_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

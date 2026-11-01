@@ -56,6 +56,8 @@ CLAUDE.md
 # Session files
 .ax-session/
 202-cronjobs/cron.lock
+202-cronjobs/cron-run.lock
+202-cronjobs/analytics-delivery.lock
 202-config/cronjob.log
 
 # Go CLI build artifacts
@@ -75,3 +77,9 @@ PHPSTAN_AND_CODE_QUALITY_TOOLS.md
 # Attribution export files (Prosper202\Attribution\ExportFiles): account data,
 # written at run time, never part of the tree.
 /202-config/temp/attribution-exports/
+
+# What the GeoIP refresh (Prosper202\GeoIp) leaves beside the database: the
+# database it replaced, its lock, and the parts of a run that was stopped.
+/202-config/geo/GeoLite2-City.mmdb.previous
+/202-config/geo/.GeoLite2-City.mmdb.lock
+/202-config/geo/.GeoLite2-City.mmdb.*.part

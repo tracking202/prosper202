@@ -3,29 +3,29 @@ declare(strict_types=1);
 include_once(str_repeat("../", 2).'202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_api_integrations');
 if (isset($_GET['getProgress'])) {
-	$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-	$user_sql = "SELECT install_hash FROM 202_users WHERE user_id = '".$mysql['user_own_id']."'";
-	$user_results = _mysqli_query($db, $user_sql);
-	if (!$user_results instanceof mysqli_result) {
-		error_log('ajax/dni.php: the install could not be read: ' . $db->error);
+	// The account's own importing networks, keys and all, read here: the
+	// page used to post them, so every key was in its markup. A body is not read.
+	try {
+		$progress = \Prosper202\Setup\DniNetworks::progressRequest($db, (int) $_SESSION['user_id'], getDNIHost());
+	} catch (\Prosper202\Database\Exceptions\QueryException $failed) {
+		error_log('ajax/dni.php: the account or its networks could not be read: ' . $failed->getMessage());
 		http_response_code(500);
 		die('The account could not be read.');
 	}
-	$user_row = p202FetchRow($user_results, $user_sql);
-	if ($user_row === null) {
+	if ($progress === null) {
 		http_response_code(404);
 		die('The account could not be found.');
 	}
-
-	// The poller's list of networks: a body that does not read is refused,
-	// not passed on as nothing (#4).
-	$postData = json_decode((string) file_get_contents('php://input'), true);
-	if (!is_array($postData)) {
-		http_response_code(400);
-		die('The progress request could not be read.');
+	if ($progress['networks'] === []) {
+		header('Content-Type: application/json');
+		die('{"data":[]}');
 	}
-	getDNICacheProgress($user_row['install_hash'], $postData);
+	if (getDNICacheProgress($progress['install_hash'], $progress) === false) {
+		http_response_code(502);
+		die('The DNI service could not be reached.');
+	}
 }
 
 if (isset($_GET['updateStatus'])) {

@@ -8,10 +8,12 @@ use LogicException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickRecord;
 use Prosper202\Click\ClickRecordBuilder;
+use Prosper202\Click\LastClickFromAddress;
 use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Click\RotatorRoute;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
+use Prosper202\Repository\Mysql\MysqlLocationRepository;
 
 /**
  * Every path's click rows, written by the one writer on a real server in the
@@ -20,7 +22,9 @@ use Prosper202\Database\Exceptions\QueryException;
  * transaction from the rows already written, and a re-click (rtr.php?lpr=)
  * rewrites what the redirector sets and keeps every other column the click
  * has — the REPLACE it replaced reset its customer, its reviewed flag, its
- * public id and its landing and cloaking URLs.
+ * public id and its landing and cloaking URLs. A re-click's row takes the
+ * first visit's traffic source, cost and filtered and bot flags, and the
+ * click keeps its keyword and the c1-c4 the re-click does not bring.
  *
  * @group integration
  */
@@ -29,6 +33,8 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
     use \Tests\Report\ScratchReportDatabase;
 
     private const USER = 990301;
+    /** The account of the click found by address, alone in its window. */
+    private const BY_ADDRESS_USER = 990303;
     private const FIRST_CLICK = 99030101;
 
     /** 202_clicks_rotator as a redirectorClick() writes it */
@@ -59,9 +65,10 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $range = 'BETWEEN ' . self::FIRST_CLICK . ' AND ' . (self::FIRST_CLICK + 99);
-        foreach ([...self::TABLES, '202_attribution_rollup_dirty_clicks'] as $table) {
+        foreach ([...self::TABLES, '202_attribution_rollup_dirty_clicks', '202_click_latest_visits'] as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
         }
+        self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
     }
 
     /** A landing page click as record_simple.php builds one. */
@@ -358,11 +365,12 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
 
     /**
      * A re-click of a landing page click: a second 202_clicks row at the new
-     * time, the redirector's columns rewritten, and the customer a
+     * time with the first visit's traffic source, cost and flags, the redirector's
+     * columns rewritten, the c1-c4 it brings stored, and the customer a
      * conversion set, the reviewed flag, the public id its pci.php links
-     * carry, its landing and cloaking URLs and its text ad (the redirector
-     * records none) kept. The redirect is resolved
-     * from the rewritten rows, before the site row takes its answer.
+     * carry, its landing and cloaking URLs, its keyword and its text ad (the
+     * redirector records none) kept. The redirect is resolved from the
+     * rewritten rows, before the site row takes its answer.
      */
     public function testAReClickRewritesWhatTheRedirectorSetsAndKeepsTheRest(): void
     {
@@ -391,22 +399,25 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
             '202_clicks and 202_clicks_spy have no key on click_id: a second row; the rest one each'
         );
         self::assertSame(
-            [['keyword_id' => '6', 'c2_id' => '92'], ['click_redirect_site_url_id' => '44']],
+            [['keyword_id' => '5', 'c2_id' => '92'], ['click_redirect_site_url_id' => '44']],
             $seenInside,
             'the resolver reads the rewritten rows, before the site row takes its answer'
         );
+        // The link's source is 13 at 0.75, and the visit filtered as a bot:
+        // the first visit's, 3 at 0.125 and neither, are the click's.
         $clickRow = [
             'user_id' => (string) self::USER, 'aff_campaign_id' => '14', 'landing_page_id' => '16',
-            'ppc_account_id' => '13', 'click_filtered' => '1', 'click_bot' => '1', 'click_alp' => '0',
+            'ppc_account_id' => '3', 'click_filtered' => '0', 'click_bot' => '0', 'click_alp' => '0',
+            'click_lead' => '0',
         ];
         self::assertColumns('202_clicks', $clickId, $clickRow + [
-            'click_cpc' => '0.75000', 'click_payout' => '1.25000', 'rotator_id' => '17', 'rule_id' => '19',
+            'click_cpc' => '0.12500', 'click_payout' => '1.25000', 'rotator_id' => '17', 'rule_id' => '19',
         ], "AND click_time = $at");
         self::assertColumns('202_clicks_spy', $clickId, $clickRow + [
-            'click_cpc' => '0.75', 'click_payout' => '1.25',
+            'click_cpc' => '0.13', 'click_payout' => '1.25',
         ], "AND click_time = $at");
         self::assertColumns('202_clicks_advance', $clickId, [
-            'text_ad_id' => '33', 'keyword_id' => '6', 'ip_id' => '23', 'country_id' => '22', 'region_id' => '24',
+            'text_ad_id' => '33', 'keyword_id' => '5', 'ip_id' => '23', 'country_id' => '22', 'region_id' => '24',
             'isp_id' => '29', 'city_id' => '25', 'platform_id' => '26', 'browser_id' => '27', 'device_id' => '28',
         ]);
         self::assertColumns('202_clicks_tracking', $clickId, [
@@ -472,19 +483,363 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
         ]);
     }
 
-    /** rtr.php finds the click by address; one with no keyed rows gets them. */
+    /**
+     * rtr.php finds the click by address; one with no keyed rows gets them,
+     * and its row the first visit's source, cost (none) and flags.
+     */
     public function testAReClickOfAClickWithNoKeyedRowsWritesThem(): void
     {
         $clickId = self::FIRST_CLICK + 8;
+        $first = time() - 60;
         self::q('INSERT INTO 202_clicks SET click_id = ' . $clickId . ', user_id = ' . self::USER
-            . ', ppc_account_id = 0, click_cpc = 0, click_time = ' . (time() - 60));
+            . ', ppc_account_id = 0, click_cpc = 0, click_time = ' . $first);
 
         self::repo()->recordReClick(self::redirectorClick($clickId), static fn (): int => 52);
 
         $keyed = ['202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_rotator',
             '202_clicks_record', '202_clicks_site'];
         self::assertSame(array_merge(self::rowsOf($keyed), ['202_clicks' => 2]), self::rows($clickId));
-        self::assertColumns('202_clicks_tracking', $clickId, ['c1_id' => '91', 'customer_id' => null]);
+        self::assertColumns('202_clicks', $clickId, [
+            'ppc_account_id' => '0', 'click_cpc' => '0.00000', 'click_filtered' => '0',
+        ], "AND click_time > $first");
+        self::assertColumns('202_clicks_advance', $clickId, ['keyword_id' => '5', 'ip_id' => '13']);
+        self::assertColumns('202_clicks_tracking', $clickId, [
+            'c1_id' => '91', 'c2_id' => '0', 'customer_id' => null,
+        ]);
+    }
+
+    /** A redirector click from source 3 at 0.25, with c1-c4 81-84, ten minutes ago. */
+    private static function trackedClick(int $clickId, int $userId = self::USER, int $ago = 600): ClickRecord
+    {
+        return new ClickRecord(
+            clickId: $clickId,
+            userId: $userId,
+            clickTime: time() - $ago,
+            ppcAccountId: 3,
+            clickCpc: '0.25',
+            keywordId: 5,
+            ipId: 13,
+            c1Id: 81,
+            c2Id: 82,
+            c3Id: 83,
+            c4Id: 84,
+            recordsCampaignRows: false,
+            rotator: new RotatorRoute(7, 8, 9),
+        );
+    }
+
+    /**
+     * A re-click through the link's source 13 at 0.75, bringing the c1-c4 ids given (0: none).
+     *
+     * @param array{int, int, int, int} $c
+     */
+    private static function reClickBringing(
+        int $clickId,
+        int $clickTime,
+        array $c = [0, 0, 0, 0],
+        int $userId = self::USER,
+    ): ClickRecord {
+        return new ClickRecord(
+            clickId: $clickId,
+            userId: $userId,
+            clickTime: $clickTime,
+            affCampaignId: 14,
+            ppcAccountId: 13,
+            clickCpc: '0.75',
+            clickPayout: '1.25',
+            keywordId: 6,
+            ipId: 23,
+            c1Id: $c[0],
+            c2Id: $c[1],
+            c3Id: $c[2],
+            c4Id: $c[3],
+            recordsCampaignRows: false,
+            clickOut: 1,
+            rotator: new RotatorRoute(17, 18, 19),
+        );
+    }
+
+    /**
+     * A visit's rows as a re-click wrote them before it kept the first
+     * visit's: the link's source and cost, and no lead unless one is given.
+     */
+    private static function linksVisit(
+        int $clickId,
+        int $time,
+        int $userId = self::USER,
+        int $lead = 0,
+        string $payout = '0',
+    ): void {
+        foreach (['202_clicks', '202_clicks_spy'] as $table) {
+            self::q("INSERT INTO $table SET click_id = $clickId, user_id = $userId, aff_campaign_id = 14,"
+                . " ppc_account_id = 13, click_cpc = 0.75, click_lead = $lead, click_payout = $payout,"
+                . " click_time = $time");
+        }
+    }
+
+    /** @return array<string, string> c1_id..c4_id as the click holds them */
+    private static function cIds(int $clickId): array
+    {
+        return self::one("SELECT c1_id, c2_id, c3_id, c4_id FROM 202_clicks_tracking WHERE click_id = $clickId");
+    }
+
+    public function testAReClickBringingNoC1ToC4KeepsTheClicks(): void
+    {
+        $clickId = self::FIRST_CLICK + 20;
+        self::repo()->recordClick(self::trackedClick($clickId), static fn (): int => 52);
+
+        self::repo()->recordReClick(self::reClickBringing($clickId, time()), static fn (): int => 53);
+
+        self::assertSame(['c1_id' => '81', 'c2_id' => '82', 'c3_id' => '83', 'c4_id' => '84'], self::cIds($clickId));
+    }
+
+    public function testAReClickBringingItsOwnC2ReplacesOnlyC2(): void
+    {
+        $clickId = self::FIRST_CLICK + 21;
+        self::repo()->recordClick(self::trackedClick($clickId), static fn (): int => 52);
+
+        self::repo()->recordReClick(self::reClickBringing($clickId, time(), [0, 92, 0, 0]), static fn (): int => 53);
+
+        self::assertSame(['c1_id' => '81', 'c2_id' => '92', 'c3_id' => '83', 'c4_id' => '84'], self::cIds($clickId));
+    }
+
+    /**
+     * The click's latest row is an earlier re-click's, written with the
+     * link's source and cost: the next re-click takes the first visit's.
+     */
+    public function testAReClickTakesTheFirstVisitsSourceOverAnEarlierReClicksRow(): void
+    {
+        $clickId = self::FIRST_CLICK + 22;
+        self::repo()->recordClick(self::trackedClick($clickId), static fn (): int => 52);
+        self::linksVisit($clickId, time() - 300);
+        $at = time() + 60;
+
+        self::repo()->recordReClick(self::reClickBringing($clickId, $at), static fn (): int => 53);
+
+        $source = ['ppc_account_id' => '3', 'aff_campaign_id' => '14'];
+        self::assertColumns('202_clicks', $clickId, $source + ['click_cpc' => '0.25000'], "AND click_time = $at");
+        self::assertColumns('202_clicks_spy', $clickId, $source + ['click_cpc' => '0.25'], "AND click_time = $at");
+    }
+
+    /**
+     * @return iterable<string, array{array{int, string}, array{int, string}, string, string}> the first
+     *     visit's and a later row's [lead, payout], and the payout the re-click's row is given in
+     *     202_clicks and in 202_clicks_spy
+     */
+    public static function leads(): iterable
+    {
+        yield 'a row written since the click was last recomputed is no lead'
+            => [[1, '4.50'], [0, '0'], '4.50000', '4.50'];
+        yield 'of two leads before the ledger, the latest' => [[1, '4.50'], [1, '5.00'], '5.00000', '5.00'];
+    }
+
+    /**
+     * A click that is a lead holds its lead and value on every row the
+     * ledger last recomputed (MysqlConversionLedger::recompute()): a
+     * re-click's row is given them, from the latest visit that is a lead, as
+     * the ledger carries a pre-ledger lead's in (ensureManaged()).
+     *
+     * @dataProvider leads
+     * @param array{int, string} $first
+     * @param array{int, string} $later
+     */
+    public function testAReClickOfALeadIsALeadWithItsValue(
+        array $first,
+        array $later,
+        string $payout,
+        string $spy
+    ): void {
+        $clickId = self::FIRST_CLICK + 25;
+        foreach ([...self::TABLES, '202_attribution_rollup_dirty_clicks'] as $table) {
+            self::q("DELETE FROM $table WHERE click_id = $clickId");
+        }
+        self::repo()->recordClick(self::trackedClick($clickId), static fn (): int => 52);
+        foreach (['202_clicks', '202_clicks_spy'] as $table) {
+            self::q("UPDATE $table SET click_lead = {$first[0]}, click_payout = {$first[1]} WHERE click_id = $clickId");
+        }
+        self::linksVisit($clickId, time() - 300, lead: $later[0], payout: $later[1]);
+        $at = time() + 60;
+
+        self::repo()->recordReClick(self::reClickBringing($clickId, $at), static fn (): int => 53);
+
+        $row = "AND click_time = $at";
+        self::assertColumns('202_clicks', $clickId, ['click_lead' => '1', 'click_payout' => $payout], $row);
+        self::assertColumns('202_clicks_spy', $clickId, ['click_lead' => '1', 'click_payout' => $spy], $row);
+    }
+
+    /** @return iterable<string, array{array{int, int}, array{int, int}}> first visit's and re-click's [filtered, bot] */
+    public static function arrivalFlags(): iterable
+    {
+        yield 'a re-click the filter calls a duplicate and a bot, of a clean click' => [[0, 0], [1, 1]];
+        yield 'a clean re-click of a filtered click' => [[1, 0], [0, 1]];
+        yield 'a filtered re-click of a click recorded as a bot, not filtered' => [[0, 1], [1, 0]];
+    }
+
+    /**
+     * Whether a click is a duplicate or a bot is its arrival's: rtr.php's
+     * duplicate filter calls every re-click from its click's address a
+     * second arrival, and the visit's own verdicts are not stored.
+     *
+     * @dataProvider arrivalFlags
+     * @param array{int, int} $first
+     * @param array{int, int} $visit
+     */
+    public function testAReClickKeepsTheFirstVisitsFilteredAndBotFlags(array $first, array $visit): void
+    {
+        $clickId = self::FIRST_CLICK + 24;
+        foreach ([...self::TABLES, '202_attribution_rollup_dirty_clicks'] as $table) {
+            self::q("DELETE FROM $table WHERE click_id = $clickId");
+        }
+        $time = time() - 600;
+        self::q("INSERT INTO 202_clicks SET click_id = $clickId, user_id = " . self::USER . ', ppc_account_id = 3,'
+            . " click_cpc = 0.25, click_filtered = {$first[0]}, click_bot = {$first[1]}, click_time = $time");
+        $at = time();
+
+        self::repo()->recordReClick(
+            new ClickRecord(
+                clickId: $clickId,
+                userId: self::USER,
+                clickTime: $at,
+                ppcAccountId: 13,
+                clickCpc: '0.75',
+                clickFiltered: $visit[0],
+                clickBot: $visit[1],
+                recordsCampaignRows: false,
+                rotator: new RotatorRoute(17, 18, 19),
+            ),
+            static fn (): int => 53
+        );
+
+        $flags = ['click_filtered' => (string) $first[0], 'click_bot' => (string) $first[1]];
+        self::assertColumns('202_clicks', $clickId, $flags, "AND click_time = $at");
+        self::assertColumns('202_clicks_spy', $clickId, $flags, "AND click_time = $at");
+    }
+
+    /**
+     * rtr.php finds the click by a visit inside LastClickFromAddress's 30
+     * days, and the click's first visit, 40 days back, is still the one its
+     * source and cost are taken from: by the lookup, and by the re-click.
+     */
+    public function testAClickFirstSeenBeforeTheWindowIsReClickedWithItsFirstVisitsSource(): void
+    {
+        $clickId = self::FIRST_CLICK + 23;
+        $conn = new Connection(self::requireScratch());
+        $address = '198.51.100.123';
+        $first = new ClickRecord(
+            clickId: $clickId,
+            userId: self::BY_ADDRESS_USER,
+            clickTime: time() - 40 * 86400,
+            ppcAccountId: 3,
+            clickCpc: '0.25',
+            keywordId: 5,
+            ipId: (new MysqlLocationRepository($conn))->findOrCreateIp($address),
+            recordsCampaignRows: false,
+            rotator: new RotatorRoute(7, 8, 9),
+        );
+        self::repo()->recordClick($first, static fn (): int => 52);
+        self::linksVisit($clickId, time() - 10 * 86400, self::BY_ADDRESS_USER);
+
+        $found = LastClickFromAddress::find($conn, $address, self::BY_ADDRESS_USER, time() - 2592000, false);
+        self::assertSame(
+            ['click_id' => $clickId, 'ppc_account_id' => 3, 'click_id_public' => '0', 'keyword_id' => 5],
+            $found,
+            'found by the visit 10 days back, with the first visit\'s source'
+        );
+        $at = time() + 60;
+        self::repo()->recordReClick(
+            self::reClickBringing($clickId, $at, userId: self::BY_ADDRESS_USER),
+            static fn (): int => 53
+        );
+
+        self::assertColumns('202_clicks', $clickId, [
+            'ppc_account_id' => '3', 'click_cpc' => '0.25000',
+        ], "AND click_time = $at");
+    }
+
+    private static function recorded(int $clickId): ?string
+    {
+        $result = self::requireScratch()->query(
+            "SELECT click_time FROM 202_click_latest_visits WHERE click_id = $clickId"
+        );
+        self::assertInstanceOf(\mysqli_result::class, $result, self::$db->error);
+        $row = $result->fetch_row();
+
+        return $row === null ? null : (string) $row[0];
+    }
+
+    /**
+     * A re-click records its click's latest visit, the latest of its rows: a
+     * re-click a web server dated before the visit it follows leaves the
+     * later row the latest.
+     */
+    public function testAReClickRecordsTheClicksLatestVisit(): void
+    {
+        $clickId = self::FIRST_CLICK + 30;
+        self::repo()->recordClick(self::trackedClick($clickId), static fn (): int => 52);
+        $at = time() + 60;
+
+        self::repo()->recordReClick(self::reClickBringing($clickId, $at), static fn (): int => 53);
+        self::assertSame((string) $at, self::recorded($clickId));
+
+        self::repo()->recordReClick(self::reClickBringing($clickId, $at - 30), static fn (): int => 53);
+        self::assertSame((string) $at, self::recorded($clickId), 'an earlier-dated re-click leaves the latest');
+        self::assertSame(['n' => '3'], self::one("SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id = $clickId"));
+    }
+
+    /**
+     * rtr.php does not ask whether the database is upgraded, so a re-click
+     * can run before the 1.9.79 upgrade has created 202_click_latest_visits:
+     * the visit is stored and the click marked, the missing record logged,
+     * and the click counts at each visit until the upgrade's backfill
+     * records it (ReClickRollupUpgradeIntegrationTest).
+     */
+    public function testAReClickBeforeTheUpgradeCreatedTheRecordIsStoredAndLogged(): void
+    {
+        $clickId = self::FIRST_CLICK + 31;
+        self::repo()->recordClick(self::trackedClick($clickId), static fn (): int => 52);
+        $log = tempnam(sys_get_temp_dir(), 'p202-reclick-log');
+        self::assertIsString($log);
+        $before = ini_get('error_log');
+        self::q('RENAME TABLE 202_click_latest_visits TO p202_test_latest_visits_away');
+        try {
+            ini_set('error_log', $log);
+            self::repo()->recordReClick(self::reClickBringing($clickId, time() + 60), static fn (): int => 53);
+        } finally {
+            ini_set('error_log', (string) $before);
+            self::q('RENAME TABLE p202_test_latest_visits_away TO 202_click_latest_visits');
+        }
+        $logged = (string) file_get_contents($log);
+        unlink($log);
+
+        self::assertSame(['n' => '2'], self::one("SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id = $clickId"));
+        self::assertSame(1, self::marks($clickId));
+        self::assertNull(self::recorded($clickId));
+        self::assertSame(1, substr_count($logged, "\n"), $logged);
+        self::assertStringContainsString(
+            "p202 re-click: click $clickId was re-clicked before the 1.9.79 upgrade",
+            $logged
+        );
+    }
+
+    /** Any other failure to record the latest visit fails the re-click, which leaves nothing. */
+    public function testARecordTheServerRefusesFailsTheReClick(): void
+    {
+        $clickId = self::FIRST_CLICK + 32;
+        self::repo()->recordClick(self::trackedClick($clickId), static fn (): int => 52);
+        self::q("CREATE TRIGGER p202_test_record_refused BEFORE INSERT ON 202_click_latest_visits FOR EACH ROW"
+            . " BEGIN IF NEW.click_id = $clickId THEN SIGNAL SQLSTATE '45000'"
+            . " SET MESSAGE_TEXT = 'refused by the test'; END IF; END");
+        try {
+            self::repo()->recordReClick(self::reClickBringing($clickId, time() + 60), static fn (): int => 53);
+            self::fail('the refused record reaches the caller');
+        } catch (QueryException $e) {
+            self::assertStringContainsString('refused by the test', $e->getMessage());
+        } finally {
+            self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+        }
+
+        self::assertSame(['n' => '1'], self::one("SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id = $clickId"));
+        self::assertSame(0, self::marks($clickId));
     }
 
     public function testAFailedReClickLeavesTheClickAsItWasAndUnmarked(): void

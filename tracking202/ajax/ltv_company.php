@@ -4,6 +4,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_campaign_data'); // LTV shows customers' revenue
 
 // Draw the window ltv.php drew, not whatever the stored one says by now: a
 // second tab may have stored another (ReportView). ltv.js sends the view
@@ -18,12 +19,20 @@ AUTH::set_timezone($_SESSION['user_timezone']);
  */
 
 $userId = (int) $_SESSION['user_id'];
-$company = isset($_POST['company']) && is_scalar($_POST['company']) ? trim((string) $_POST['company']) : '';
 
 require_once __DIR__ . '/ltv_ui.php';
 $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
+
+// A list is refused, where it was read as no company and answered "No
+// contacts found".
+$error = null;
+$company = p202_ltv_posted_or(
+    fn (): string => trim(p202_ltv_posted_text($_POST['company'] ?? null, 'company')),
+    '',
+    $error
+);
 
 $contacts = [];
 try {
@@ -45,7 +54,9 @@ try {
 <a href="#" class="btn btn-link btn-sm px-0 mb-2" onclick="ltvNav('companies'); return false;"><i class="bi bi-chevron-left"></i> All companies</a>
 
 <?php if ($company === '' || $contacts === []) { ?>
-    <?php echo p202_ltv_flash('warn', 'No contacts found for this company.'); ?>
+    <?php echo $error !== null
+        ? p202_ltv_flash('error', $esc($error))
+        : p202_ltv_flash('warn', 'No contacts found for this company.'); ?>
     <?php return; ?>
 <?php } ?>
 

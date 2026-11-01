@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Conversion\Ledger;
 
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 
 /**
@@ -11,15 +12,127 @@ use Prosper202\Database\Connection;
  * click's `click_lead` and `click_payout` once the click exists.
  *
  * Every method here must run inside the transaction that holds the click's
- * row lock (`SELECT ... FOR UPDATE` on 202_clicks). The callers are
- * MysqlConversionRepository::record() and ::softDelete() and the bulk clear
- * below; ClickValueWritersTest fails if any other code updates those two
- * columns, which is what keeps the cached value equal to its rows.
+ * lock (lockClick(), or clickTransaction()), taken before the transaction's
+ * first plain read. The callers are MysqlConversionRepository::record()
+ * and ::softDelete() and the bulk clear below; ClickValueWritersTest fails
+ * if any other code updates those two columns, which is what keeps the
+ * cached value equal to its rows.
  */
 final class MysqlConversionLedger
 {
     public function __construct(private Connection $conn)
     {
+    }
+
+    /**
+     * Lock a click for a ledger write, then read the visit a conversion
+     * credits: its latest (LatestVisit). Null when there is no such click
+     * (of that account, when $userId is given: a click whose latest visit is
+     * another account's row is not this account's, as every other read of
+     * the latest visit ties it). click_lead is whether any visit of it is a
+     * lead, as LatestVisit::anyVisitIsLead() asks it.
+     *
+     * The lock is the click's first row in the click_id index, the row every
+     * ledger writer locks, so they serialise on it, as does an UPDATE of the
+     * click's rows by click_id.
+     *
+     * The lock is taken before the transaction's first plain read, and a
+     * lock asked for after one is refused. Under REPEATABLE READ a plain read
+     * answers from the snapshot the transaction's first plain read took, not
+     * from the lock (CLAUDE.md #36): a delete that read the conversion to find
+     * its click, then waited on the lock for a sale to commit, recomputed the
+     * click without the sale, left a reversal recorded in the wait unvoided
+     * and inserted a second legacy baseline. Locked first, every plain read
+     * after sees what committed before the lock was granted, and nothing that
+     * writes the click's ledger rows commits while it is held. A click the
+     * transaction has already locked is read again without a second lock.
+     *
+     * @return array<string, mixed>|null click_id, user_id, aff_campaign_id, click_payout, click_time, click_lead
+     * @throws \LogicException when the transaction read before this lock
+     */
+    public function lockClick(int $clickId, ?int $userId = null): ?array
+    {
+        $lock = 'click:' . $clickId;
+        if (!$this->conn->holdsLock($lock)) {
+            if ($this->conn->snapshotTaken()) {
+                throw new \LogicException(
+                    'Click ' . $clickId . '\'s lock was asked for after its transaction read, and nothing was locked:'
+                        . ' what the transaction reads of the click would be its snapshot from before the lock'
+                        . ' (CLAUDE.md #36). Lock the click first in the transaction'
+                        . ' (MysqlConversionLedger::clickTransaction()), or find what names it before the transaction'
+                        . ' begins.'
+                );
+            }
+            if (!$this->lockClickRow($clickId, $userId)) {
+                return null;
+            }
+            $this->conn->holdLock($lock);
+        }
+
+        $read = $this->conn->prepareWrite(self::latestVisitSql());
+        $this->conn->bind($read, 'i', [$clickId]);
+
+        return $this->ownedVisit($clickId, $userId, $this->conn->fetchOne($read));
+    }
+
+    /** lockClick()'s read of the click's (?) latest visit, after the lock. */
+    public static function latestVisitSql(): string
+    {
+        return 'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_payout, c.click_time, '
+            . LatestVisit::anyVisitIsLead('c') . ' AS click_lead FROM ' . LatestVisit::of('?') . ' AS c';
+    }
+
+    /**
+     * Run $fn in a transaction whose first statement locks the click, handing
+     * it what lockClick() returns.
+     *
+     * @template T
+     * @param callable(array<string, mixed>|null): T $fn
+     * @return T
+     */
+    public function clickTransaction(int $clickId, ?int $userId, callable $fn): mixed
+    {
+        return $this->conn->transaction(fn (): mixed => $fn($this->lockClick($clickId, $userId)));
+    }
+
+    private function lockClickRow(int $clickId, ?int $userId): bool
+    {
+        $lock = $this->conn->prepareWrite(
+            'SELECT click_id FROM 202_clicks WHERE click_id = ?' . ($userId !== null ? ' AND user_id = ?' : '')
+            . ' LIMIT 1 FOR UPDATE'
+        );
+        $this->conn->bind($lock, $userId !== null ? 'ii' : 'i', $userId !== null ? [$clickId, $userId] : [$clickId]);
+
+        return $this->conn->fetchOne($lock) !== null;
+    }
+
+    /**
+     * @param array<string, mixed>|null $click the locked click's latest visit
+     * @return array<string, mixed>|null
+     */
+    private function ownedVisit(int $clickId, ?int $userId, ?array $click): ?array
+    {
+        if ($click === null) {
+            throw new LedgerIntegrityException('click ' . $clickId . ' is locked, and no visit of it was read');
+        }
+        if ($userId !== null && self::owner($clickId, $click) !== $userId) {
+            return null;
+        }
+
+        return $click;
+    }
+
+    /**
+     * @param array<string, mixed> $click
+     */
+    private static function owner(int $clickId, array $click): int
+    {
+        $owner = $click['user_id'] ?? null;
+        if (!is_int($owner) && !(is_string($owner) && preg_match('/\A\d+\z/', $owner) === 1)) {
+            throw new LedgerIntegrityException('click ' . $clickId . '\'s user_id read as ' . get_debug_type($owner));
+        }
+
+        return (int) $owner;
     }
 
     /**
@@ -70,16 +183,25 @@ final class MysqlConversionLedger
      * already out of the count, so a conversion cleared before the upgrade
      * cannot come back.
      *
-     * @param array{click_id: int|string, user_id?: int|string, aff_campaign_id: int|string, click_payout: int|float|string, click_lead: int|string, click_time: int|string} $click
-     *        The click row, read under its lock.
+     * The value is the one on the click's latest visit that is a lead, which
+     * need not be its latest visit: a re-click written before 1.9.79 stored
+     * its row as no lead.
+     * The caller holds the click's lock (lockClick()).
+     *
      * @return int|null The baseline's conv_id when one was inserted.
      */
-    public function ensureManaged(array $click, int $userId): ?int
+    public function ensureManaged(int $clickId, int $userId): ?int
     {
-        if ((int) $click['click_lead'] !== 1) {
+        $leadVisit = $this->conn->prepareWrite(
+            'SELECT c.aff_campaign_id, c.click_payout, c.click_time FROM 202_clicks AS c'
+            . ' LEFT JOIN 202_clicks_rotator AS r ON r.click_id = c.click_id'
+            . ' WHERE c.click_id = ? AND c.click_lead = 1 ' . LatestVisit::orderBy('c', 'r') . ' LIMIT 1'
+        );
+        $this->conn->bind($leadVisit, 'i', [$clickId]);
+        $click = $this->conn->fetchOne($leadVisit);
+        if ($click === null) {
             return null;
         }
-        $clickId = (int) $click['click_id'];
 
         $stmt = $this->conn->prepareWrite(
             "SELECT 1 FROM 202_conversion_logs
@@ -92,14 +214,23 @@ final class MysqlConversionLedger
         }
 
         $clickTime = (int) $click['click_time'];
-        $insert = $this->conn->prepareWrite(
+        [$insert, $named] = MatchMethod::prepareInsert(
+            $this->conn,
+            "INSERT INTO 202_conversion_logs
+                (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time,
+                 time_difference, ip, pixel_type, user_agent, deleted,
+                 source, source_ref, event_name, payable, superseded_by, superseded_reason, reverses_conv_id, dedupe_key,
+                 match_method)
+             VALUES (?, NULL, ?, ?, ?, ?, ?, '', '', 0, '', 0, ?, NULL, NULL, 1, NULL, NULL, NULL, ?, ?)",
             "INSERT INTO 202_conversion_logs
                 (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time,
                  time_difference, ip, pixel_type, user_agent, deleted,
                  source, source_ref, event_name, payable, superseded_by, superseded_reason, reverses_conv_id, dedupe_key)
              VALUES (?, NULL, ?, ?, ?, ?, ?, '', '', 0, '', 0, ?, NULL, NULL, 1, NULL, NULL, NULL, ?)"
         );
-        $this->conn->bind($insert, 'iisiiiss', [
+        // The value stands for pre-ledger rows, whose clicks were found by
+        // ways nothing recorded.
+        $row = [
             $clickId,
             (int) $click['aff_campaign_id'],
             Amount::fromUnits(Amount::toUnits((string) $click['click_payout'])),
@@ -108,7 +239,11 @@ final class MysqlConversionLedger
             $clickTime,
             ConversionSource::LEGACY_BASELINE->value,
             DedupeKey::legacy(),
-        ]);
+        ];
+        if ($named) {
+            $row[] = MatchMethod::UNKNOWN->value;
+        }
+        $this->conn->bind($insert, $named ? 'iisiiisss' : 'iisiiiss', $row);
         $baselineId = $this->conn->executeInsert($insert);
         if ($baselineId <= 0) {
             throw new LedgerIntegrityException('click ' . $clickId . ': the legacy baseline row was not inserted');
@@ -214,6 +349,9 @@ final class MysqlConversionLedger
      *
      * Locks the click, writes the mark, recomputes the click and queues the
      * row for MTA — inside the caller's transaction, like every method here.
+     * It reads the row before it locks, so it works only for a caller that
+     * locked the row's click first (the goals engine's current() does);
+     * otherwise lockClick() refuses it.
      */
     public function supersedeGoalRow(int $convId, ?int $byConvId, SupersededReason $reason): void
     {
@@ -249,9 +387,7 @@ final class MysqlConversionLedger
         if ((string) $row['source'] !== ConversionSource::GOAL->value) {
             throw new LedgerIntegrityException('conversion ' . $convId . ' is a ' . (string) $row['source'] . ' row, not a goal row');
         }
-        $lock = $this->conn->prepareWrite('SELECT click_id, aff_campaign_id, user_id FROM 202_clicks WHERE click_id = ? LIMIT 1 FOR UPDATE');
-        $this->conn->bind($lock, 'i', [(int) $row['click_id']]);
-        $click = $this->conn->fetchOne($lock);
+        $click = $this->lockClick((int) $row['click_id']);
         if ($click === null) {
             throw new LedgerIntegrityException('conversion ' . $convId . ' names click ' . (int) $row['click_id'] . ', which does not exist');
         }

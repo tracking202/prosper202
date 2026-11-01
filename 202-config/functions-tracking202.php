@@ -123,7 +123,7 @@ function grab_timeframe($unused = null): array
  * This install's tracking base, `scheme://host[:port]/<install path>/`:
  * TrackingBaseUrl::build() over the install owner's (user 1's) stored
  * tracking domain (a stored scheme kept, the request's otherwise).
- * callAutoCron(), registerDailyEmail(), getDNIHost() and the account home's
+ * callAutoCron(), getDNIHost() and the account home's
  * deeplink pixel hand it to the hosted service, which calls the install back
  * there with the install hash. They took the scheme from SERVER_PROTOCOL,
  * which is "HTTP/1.1" or "HTTP/2.0" and never names https, so every install
@@ -134,7 +134,7 @@ function grab_timeframe($unused = null): array
  * own on Personal settings and every user row carries the install hash, so a
  * session-dependent read let any user save attacker.example and have the
  * hosted service call it with the hash that authenticates the cron
- * callbacks (daily-email.php, dni.php) -- measured, signed in as user 2 this
+ * callbacks (dni.php) -- measured, signed in as user 2 this
  * answered `http://attacker.example/`.
  *
  * Before the installer has made an account there is no owner and nothing
@@ -526,7 +526,7 @@ function query(
     }
 
     $rows = null;
-    if ($count == true || $limitValue !== null || $pref_limit !== false) {
+    if ($count == true || (!$isspy && ($limitValue !== null || $pref_limit !== false))) {
         // For spy mode, apply the 24-hour time bound to the count query too
         if ($isspy) {
             $spy_count_from = time() - 86400;
@@ -1070,15 +1070,21 @@ function clickserver_auth_answer(?string $body, int $status): ?bool
  * fetch-a-key page read it: the body, or false when no answer came, which
  * includes a body that is none of the service's own answers (a gateway's
  * error page). Asked through ClickServerKeyValidator::answer(), which
- * follows a redirect only to the service itself.
+ * follows a redirect only to the service itself. $licence is the answer as
+ * ClickServerKeyValidator::interpret() reads it (null: none), for the
+ * caller to record (ShellAccessCache::recordLicence()).
+ *
+ * @param array{valid: bool, paid: ?bool}|null $licence
  */
-function api_key_validate($key)
+function api_key_validate($key, ?array &$licence = null)
 {
+    $licence = null;
     $answer = \Prosper202\License\ClickServerKeyValidator::answer((string) $key);
-    if ($answer === null || \Prosper202\License\ClickServerKeyValidator::interpret($answer[0], $answer[1]) === null) {
+    if ($answer === null) {
         return false;
     }
-    return $answer[1];
+    $licence = \Prosper202\License\ClickServerKeyValidator::interpret($answer[0], $answer[1]);
+    return $licence === null ? false : $answer[1];
 }
 
 function getBrowserIcon($name)
@@ -1299,37 +1305,6 @@ function callAutoCron($endpoint)
     return json_decode($result, true);
 }
 
-function registerDailyEmail($time, $timezone, $hash)
-{
-    $domain = base64_encode(rtrim(p202TrackingBaseUrl(), '/'));
-
-    if ($time) {
-        $date = new DateTime($time . ':00:00', new DateTimeZone($timezone));
-        $date->setTimezone(new DateTimeZone('UTC'));
-        $set_time = $date->format('H');
-    } else {
-        $set_time = 'NA';
-    }
-
-    // Initiate curl
-    $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/' . $hash . '/' . $domain . '/' . $set_time);
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Bound the wait so a slow/unreachable service can't hang the caller (e.g. install)
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    // Execute
-    $result = curl_exec($ch);
-
-    // close connection
-    curl_close($ch);
-}
-
 function tagUserByNetwork($install_hash, $type, $network)
 {
     $post = [];
@@ -1528,6 +1503,13 @@ function setupDniOffer($hash, $network, $key, $affId, $currency, $id, $ddlci)
 
 function getDNICacheProgress($hash, $data)
 {
+    // As the page's poller sent it, which encoded it with JSON_NUMERIC_CHECK
+    // (the cron's cache request does too).
+    $body = json_encode($data, JSON_NUMERIC_CHECK | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($body === false) {
+        error_log('getDNICacheProgress: the request could not be encoded: ' . json_last_error_msg());
+        return false;
+    }
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/cache/progress');
     curl_setopt($ch, CURLOPT_HEADER, false);
@@ -1536,7 +1518,7 @@ function getDNICacheProgress($hash, $data)
         "Content-type: application/json"
     ]);
     curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
     $results = curl_exec($ch);
     curl_close($ch);
     return $results;

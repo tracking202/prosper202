@@ -211,11 +211,11 @@ final class AccountAdministrationIntegrationTest extends TestCase
         // An id an earlier version scheduled: the state shows it, and the
         // write replaces it.
         self::q('UPDATE 202_users_pref SET user_delete_data_clickid = 103 WHERE user_id = 1');
-        $legacy = ['before' => '2001-03-10', 'cutoff_time' => null, 'through_click_id' => 103, 'clicks_remaining' => 3];
+        $legacy = ['before' => '2001-03-10', 'cutoff_time' => null, 'through_click_id' => 103, 'clicks_remaining' => 2];
         self::assertSame(
             $legacy,
             $this->admin()->retention()['data']['scheduled_deletion'],
-            'the clicks below 103, and the day of the click the id names'
+            'the clicks below 103 (101 once, though it has two visits, and 102), and the day of the click the id names'
         );
 
         $cutoff = gmmktime(0, 0, 0, 3, 1, 2001);
@@ -450,19 +450,55 @@ final class AccountAdministrationIntegrationTest extends TestCase
         $answer = $this->admin()->integrations(['HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443, 'DOCUMENT_ROOT' => dirname(__DIR__, 3)])['data'];
         self::assertSame('https://track.example.com/', $answer['base_url']);
         $byKey = array_column($answer['integrations'], null, 'integration');
-        self::assertSame(['clickbank', 'jvzoo', 'zaxaa', 'slack', 'paykickstart'], array_keys($byKey));
+        self::assertSame(['clickbank', 'jvzoo', 'jvzoo_vendor', 'zaxaa', 'slack', 'paykickstart'], array_keys($byKey));
         self::assertSame('https://track.example.com/tracking202/static/cb202.php', $byKey['clickbank']['url']);
-        self::assertSame('https://track.example.com/tracking202/static/jvzoo.php', $byKey['jvzoo']['url']);
+        self::assertSame(
+            'https://track.example.com/tracking202/static/jvzoo.php?role=affiliate',
+            $byKey['jvzoo']['url']
+        );
+        self::assertSame(
+            'https://track.example.com/tracking202/static/jvzoo.php?role=vendor',
+            $byKey['jvzoo_vendor']['url']
+        );
         self::assertSame('https://track.example.com/tracking202/static/zpn.php', $byKey['zaxaa']['url']);
         self::assertSame('https://track.example.com/tracking202/static/slack.php', $byKey['slack']['url']);
         self::assertSame('https://track.example.com/tracking202/static/paykickstart.php', $byKey['paykickstart']['url']);
         self::assertTrue($byKey['clickbank']['secret_stored']);
         self::assertTrue($byKey['clickbank']['verified']);
         self::assertFalse($byKey['jvzoo']['secret_stored']);
+        self::assertFalse($byKey['jvzoo_vendor']['secret_stored']);
         self::assertFalse($byKey['zaxaa']['secret_stored']);
-        self::assertNull($byKey['paykickstart']['secret_stored'], 'PayKickstart needs no secret');
+        self::assertFalse($byKey['paykickstart']['secret_stored']);
+        self::assertSame(0, $byKey['paykickstart']['keys_stored']);
         self::assertStringNotContainsString('cb-secret-xyz', (string) json_encode($answer));
-        self::q("UPDATE 202_users_pref SET cb_key = NULL, cb_verified = 0 WHERE user_id = " . self::ADMIN);
+
+        // PayKickstart's keys, one for each of its campaigns: how many, never
+        // which, and an entry that is not a key is not counted.
+        self::q('UPDATE 202_users_pref SET paykickstart_ipn_secret_keys ='
+            . " 'pk-campaign-key-one\npk-campaign-key-two\nshort' WHERE user_id = " . self::ADMIN);
+        $answer = $this->admin()->integrations([
+            'HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443,
+            'DOCUMENT_ROOT' => dirname(__DIR__, 3),
+        ])['data'];
+        $byKey = array_column($answer['integrations'], null, 'integration');
+        self::assertTrue($byKey['paykickstart']['secret_stored']);
+        self::assertSame(2, $byKey['paykickstart']['keys_stored']);
+        self::assertStringNotContainsString('pk-campaign-key', (string) json_encode($answer));
+
+        // JVZoo's key is stored when it is one the endpoint signs with: a
+        // value it cannot use (two lines pasted) is not.
+        foreach (["jvzipn-key-one\nsecond-line" => false, ' jvzipn-key-one ' => true] as $stored => $usable) {
+            self::q("UPDATE 202_users_pref SET jvzoo_ipn_secret_key = '" . self::$db->real_escape_string($stored)
+                . "' WHERE user_id = " . self::ADMIN);
+            $byKey = array_column($this->admin()->integrations([
+                'HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443,
+                'DOCUMENT_ROOT' => dirname(__DIR__, 3),
+            ])['data']['integrations'], null, 'integration');
+            self::assertSame($usable, $byKey['jvzoo']['secret_stored']);
+            self::assertSame($usable, $byKey['jvzoo_vendor']['secret_stored']);
+        }
+        self::q('UPDATE 202_users_pref SET cb_key = NULL, cb_verified = 0, paykickstart_ipn_secret_keys = NULL,'
+            . ' jvzoo_ipn_secret_key = NULL WHERE user_id = ' . self::ADMIN);
 
         // With no domain stored, the URLs go back to the caller to paste, as
         // the Integrations page shows them: on the host the request used, not
@@ -518,7 +554,7 @@ final class AccountAdministrationIntegrationTest extends TestCase
         $edited = $this->ltv()->updateProduct($id, ['name' => '  Renamed  ', 'price' => '12.5'])['data'];
         self::assertSame('Renamed', $edited['name']);
         self::assertSame('SKU-it-p1', $edited['sku'], 'a field not sent keeps its value');
-        self::assertSame('12.50000', (string) $edited['price']);
+        self::assertSame(12.5, $edited['price'], 'a number, as GET /ltv/products answers it');
         self::assertSame('it-p1', $edited['external_product_id']);
 
         $cleared = $this->ltv()->updateProduct($id, ['sku' => '', 'price' => null])['data'];

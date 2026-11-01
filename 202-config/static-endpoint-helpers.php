@@ -105,8 +105,8 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
      * @param array<string, scalar> $tokens replaceTokens() tokens; the caller
      *        fills `transactionid` with the conversion's transaction id, or
      *        its dedupe key when the network sent none
-     * @param (callable(string): bool)|null $fetch Performs a type-4 GET and
-     *        says whether it succeeded; injected by tests.
+     * @param (callable(string): (bool|\Prosper202\Notifications\PostbackResult))|null $fetch
+     *        Performs a type-4 GET and says whether it succeeded; injected by tests.
      * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
     function p202FireTrafficSourcePixels(
@@ -404,9 +404,10 @@ if (!function_exists('p202RecordConversion')) {
      * happens after commit, only for a newly recorded conversion.
      *
      * @param array<string,int|float|string|bool> $log Conversion_logs column values.
-     *        Required keys: click_id, campaign_id, user_id, click_time, conv_time,
-     *        time_difference, ip, pixel_type, user_agent, and once_per_click
-     *        (bool). Optional: source (a ConversionSource value; defaults
+     *        Required keys: click_id, user_id, conv_time, ip, pixel_type,
+     *        user_agent, and once_per_click (bool); the campaign, click time
+     *        and time_difference are the credited visit's, read under the
+     *        writer's lock. Optional: source (a ConversionSource value; defaults
      *        from pixel_type), reversal and reversal_ref (see
      *        p202ExtractReversal). click_payout is read only when
      *        $usePixelPayout: without an explicit amount the writer applies
@@ -416,6 +417,9 @@ if (!function_exists('p202RecordConversion')) {
      *        it double-recorded every id-less retry (gpb.php and upx.php
      *        did). Every caller now says which it wants, and one that says
      *        nothing is refused before any database work.
+     * @param \Prosper202\Conversion\Ledger\MatchMethod $matchedBy how the
+     *        endpoint found the click: its parameter, a cookie, or the
+     *        visitor's address (stored as match_method).
      * @param array{customer_ref?: string, customer_ref_type?: string} $customer
      *        LTV customer identity (see p202ExtractCustomer); [] = unlinked.
      * @param list<array<string,mixed>> $items Product line items for the
@@ -432,6 +436,7 @@ if (!function_exists('p202RecordConversion')) {
     function p202RecordConversion(
         mysqli $db,
         array $log,
+        \Prosper202\Conversion\Ledger\MatchMethod $matchedBy,
         string $clickCpa,
         bool $usePixelPayout,
         string $clickPayout,
@@ -458,13 +463,15 @@ if (!function_exists('p202RecordConversion')) {
         $conn = new \Prosper202\Database\Connection($db);
         $repo = new \Prosper202\Conversion\MysqlConversionRepository($conn);
 
+        // The campaign and click time are the visit the writer's click lock
+        // reads, and time_difference is taken from it: a caller's read of the
+        // click came before the lock, and a re-click committed in between
+        // would name the visit before the one the conversion credits.
         $data = [
             'click_id'        => $clickId,
             'transaction_id'  => trim($transactionId),
-            'campaign_id'     => (int) ($log['campaign_id'] ?? 0),
-            'click_time'      => (int) ($log['click_time'] ?? 0),
             'conv_time'       => (int) ($log['conv_time'] ?? time()),
-            'time_difference' => (string) ($log['time_difference'] ?? ''),
+            'legacy_time_difference' => true,
             'ip'              => (string) ($log['ip'] ?? ''),
             'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
             'user_agent'      => (string) ($log['user_agent'] ?? ''),
@@ -536,6 +543,7 @@ if (!function_exists('p202RecordConversion')) {
         $result = $repo->record(
             (int) ($log['user_id'] ?? 0),
             $data,
+            $matchedBy,
             function (int $lockedClickId, float $payout) use ($db, $clickCpa): void {
                 if (!p202ApplyConversionClickSide($db, $lockedClickId, $clickCpa)) {
                     throw new \RuntimeException('p202RecordConversion: click update failed for click ' . $lockedClickId);
@@ -634,36 +642,82 @@ if (!function_exists('p202ClickIdFromRequest')) {
      *
      * @param array<string, mixed> $get
      * @param array<string, mixed> $cookies
-     * @return array{click_id: int|null, malformed: string|null}
+     * @return array{click_id: int|null, malformed: string|null, method: \Prosper202\Conversion\Ledger\MatchMethod|null}
      *         click_id null with malformed null: nothing named a click, the
      *         IP fallback may run. malformed set: the name of the value that
-     *         was present and unreadable; record nothing.
+     *         was present and unreadable; record nothing. method is how the
+     *         click was found (a parameter or a cookie), null when none was.
      */
     function p202ClickIdFromRequest(array $get, array $cookies, int $campaignId): array
     {
+        $parameter = \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID;
+        $cookie = \Prosper202\Conversion\Ledger\MatchMethod::COOKIE;
         $places = [
-            ['subid', $get['subid'] ?? null],
-            ['sid', $get['sid'] ?? null],
+            ['subid', $get['subid'] ?? null, $parameter],
+            ['sid', $get['sid'] ?? null, $parameter],
         ];
         if ($campaignId > 0) {
             $campaignCookie = 'tracking202subid_a_' . $campaignId;
-            $places[] = [$campaignCookie, \Prosper202\Http\ClickCookie::value($cookies, $campaignCookie)];
+            $places[] = [$campaignCookie, \Prosper202\Http\ClickCookie::value($cookies, $campaignCookie), $cookie];
         }
-        $places[] = ['tracking202subid', \Prosper202\Http\ClickCookie::value($cookies, 'tracking202subid')];
+        $places[] = ['tracking202subid', \Prosper202\Http\ClickCookie::value($cookies, 'tracking202subid'), $cookie];
 
-        foreach ($places as [$name, $value]) {
+        foreach ($places as [$name, $value, $method]) {
             if ($value === null || $value === '') {
                 continue;
             }
             $clickId = p202ParseClickId(is_string($value) ? $value : (is_int($value) ? $value : null));
             if ($clickId === null) {
-                return ['click_id' => null, 'malformed' => $name];
+                return ['click_id' => null, 'malformed' => $name, 'method' => null];
             }
 
-            return ['click_id' => $clickId, 'malformed' => null];
+            return ['click_id' => $clickId, 'malformed' => null, 'method' => $method];
         }
 
-        return ['click_id' => null, 'malformed' => null];
+        return ['click_id' => null, 'malformed' => null, 'method' => null];
+    }
+}
+
+if (!function_exists('p202SameIpFallbackClick')) {
+    /**
+     * The click a pixel credits when its request names none: $account's
+     * latest click from the visitor's address in the last 30 days
+     * (Prosper202\Conversion\SameIpFallback), recorded as
+     * MatchMethod::SAME_IP. Null when nothing says whose pixel this is,
+     * when the account has the fallback off, and when the visitor may not
+     * be recognised (p202MayRecogniseVisitor(), the decision that withholds
+     * the p202vid cookie: held back by the privacy setting, consent
+     * withheld, the campaign's identity capture off).
+     *
+     * Puts the account's privacy setting in force first: the address is
+     * looked up as its clicks were stored.
+     *
+     * @param array{user_id: int, campaign_allows: bool}|null $account the
+     *        pixel's (SameIpFallback::pixelAccount(), ::ofCampaign())
+     * @param array<string, mixed> $get
+     * @return array{click_id: int, ppc_account_id: int, click_id_public: string, keyword_id: int}|null
+     */
+    function p202SameIpFallbackClick(mysqli $db, ?array $account, array $get): ?array
+    {
+        if ($account === null) {
+            return null;
+        }
+        p202ApplyOwnerPrivacy($account['user_id']);
+        if (!p202MayRecogniseVisitor($get, $account['campaign_allows'])) {
+            return null;
+        }
+        $conn = new \Prosper202\Database\Connection($db);
+        if (!\Prosper202\Conversion\SameIpFallback::enabledFor($conn, $account['user_id'])) {
+            return null;
+        }
+
+        return \Prosper202\Click\LastClickFromAddress::find(
+            $conn,
+            p202StoredVisitorIp(),
+            $account['user_id'],
+            time() - \Prosper202\Conversion\SameIpFallback::LOOKBACK,
+            !trackingEnabled()
+        );
     }
 }
 
@@ -695,10 +749,120 @@ if (!function_exists('p202TimeDifference')) {
      */
     function p202TimeDifference(int $clickTime, int $convTime): string
     {
-        $from = new \DateTime('@' . max(0, $clickTime));
-        $to = new \DateTime('@' . max(0, $convTime));
-        $diff = $from->diff($to);
-        return $diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec';
+        return \Prosper202\Conversion\MysqlConversionRepository::legacyTimeDifference($clickTime, $convTime);
+    }
+}
+
+if (!function_exists('p202PostbackClickSql')) {
+    /**
+     * The read gpb.php and upx.php make of the click a conversion names:
+     * the latest visit's owner, campaign, payout and time, which the
+     * conversion credits (LatestVisit), whether any visit is a lead, and the
+     * click's c1-c4, keyword, Google and UTM values, tracker CPA and
+     * referrer. One row, or none for an unknown click or one with no
+     * tracking row.
+     */
+    function p202PostbackClickSql(int $clickId): string
+    {
+        $id = (string) $clickId;
+
+        return 'SELECT
+            2cid.click_id, 2c.user_id, 2c.aff_campaign_id, 2c.click_payout,
+            ' . \Prosper202\Click\LatestVisit::anyVisitIsLead('2c') . ' AS click_lead, 2c.click_time,
+            2c1.c1, 2c2.c2, 2c3.c3, 2c4.c4, 2kw.keyword, 2g.gclid,
+            2us.utm_source, 2um.utm_medium, 2uca.utm_campaign, 2ut.utm_term, 2uco.utm_content,
+            2trc.click_cpa, 2su.site_url_address
+            FROM ' . \Prosper202\Click\LatestVisit::of($id) . ' AS 2c
+            LEFT JOIN `202_clicks_tracking` AS 2cid USING (`click_id`)
+            LEFT JOIN `202_clicks_advance` AS 2ca USING (`click_id`)
+            LEFT JOIN `202_google` AS 2g USING (`click_id`)
+            LEFT JOIN `202_tracking_c1` AS 2c1 USING (`c1_id`)
+            LEFT JOIN `202_tracking_c2` AS 2c2 USING (`c2_id`)
+            LEFT JOIN `202_tracking_c3` AS 2c3 USING (`c3_id`)
+            LEFT JOIN `202_tracking_c4` AS 2c4 USING (`c4_id`)
+            LEFT JOIN `202_utm_source` AS 2us USING (`utm_source_id`)
+            LEFT JOIN `202_utm_medium` AS 2um USING (`utm_medium_id`)
+            LEFT JOIN `202_utm_campaign` AS 2uca USING (`utm_campaign_id`)
+            LEFT JOIN `202_utm_term` AS 2ut USING (`utm_term_id`)
+            LEFT JOIN `202_utm_content` AS 2uco USING (`utm_content_id`)
+            LEFT JOIN `202_keywords` AS 2kw ON (2ca.`keyword_id` = 2kw.`keyword_id`)
+            LEFT JOIN `202_cpa_trackers` AS 2cpa USING (`click_id`)
+            LEFT JOIN `202_trackers` AS 2trc
+                ON (2cpa.`tracker_id_public` = 2trc.`tracker_id_public` AND 2trc.`user_id` = 2c.`user_id`)
+            LEFT JOIN `202_clicks_site` AS 2cs ON (2c.click_id = 2cs.click_id)
+            LEFT JOIN `202_site_urls` AS 2su ON (2cs.click_referer_site_url_id = 2su.site_url_id)
+            WHERE 2cid.`click_id` = ' . $id . '
+            LIMIT 1';
+    }
+}
+
+if (!function_exists('p202ClickSourceSql')) {
+    /**
+     * The click's traffic source and cost, whose pixels gpb.php and upx.php
+     * fire with that cost as [[cpc]]: the first visit's (FirstVisit), the
+     * source the visitor came from. $userId is the click's owner as its
+     * latest visit names it (p202PostbackClickSql()), the account the
+     * conversion is recorded for: a first visit of another account reads as
+     * none, and a traffic source account of another account as no source
+     * (a NULL ppc_account_id), whose pixels are not fired.
+     */
+    function p202ClickSourceSql(int $clickId, int $userId): string
+    {
+        return 'SELECT pa.ppc_account_id, fv.click_cpc FROM '
+            . \Prosper202\Click\FirstVisit::of((string) $clickId) . ' AS fv'
+            . ' LEFT JOIN 202_ppc_accounts AS pa ON (pa.ppc_account_id = fv.ppc_account_id AND pa.user_id = fv.user_id)'
+            . ' WHERE fv.user_id = ' . $userId;
+    }
+}
+
+if (!function_exists('p202PixelClickSql')) {
+    /**
+     * The read gpx.php makes of the click a pixel names: the latest visit's
+     * owner, campaign and time (LatestVisit), whether any visit is a lead,
+     * and its tracker's CPA. One row, or none for an unknown click.
+     */
+    function p202PixelClickSql(int $clickId): string
+    {
+        return 'SELECT 2cpa.tracker_id_public, 2trc.click_cpa,
+            2c.user_id, 2c.aff_campaign_id,
+            ' . \Prosper202\Click\LatestVisit::anyVisitIsLead('2c') . ' AS click_lead, 2c.click_time
+            FROM ' . \Prosper202\Click\LatestVisit::of((string) $clickId) . ' AS 2c
+            LEFT JOIN 202_cpa_trackers AS 2cpa ON (2cpa.click_id = 2c.click_id)
+            LEFT JOIN 202_trackers AS 2trc
+                ON (2trc.tracker_id_public = 2cpa.tracker_id_public AND 2trc.user_id = 2c.user_id)
+            LIMIT 1';
+    }
+}
+
+if (!function_exists('p202ClickVisitedCampaign')) {
+    /**
+     * Whether a visit of the click, among $userId's rows of it, was on
+     * $campaignId, a campaign of that account: the check of a postback that
+     * names its campaign (pb.php, with or without an event). A network posts
+     * back for the offer the visitor bought, and a redirector re-click may
+     * have sent the visitor on to another offer since; what it records still
+     * credits the click's latest visit, at that visit's payout when the
+     * postback names no amount. Known limit: which visit a conversion credits
+     * is undecided (CLAUDE.md #26). A second request in the same second
+     * rewrites its visit's campaign (MysqlClickRepository::writeVisitRows()),
+     * so a postback naming the first request's campaign finds no visit on it
+     * and is refused as campaign_mismatch.
+     */
+    function p202ClickVisitedCampaign(
+        \Prosper202\Database\Connection $conn,
+        int $clickId,
+        int $userId,
+        int $campaignId
+    ): bool {
+        $stmt = $conn->prepareRead(
+            'SELECT 1 AS visited FROM 202_clicks AS v'
+            . ' INNER JOIN 202_aff_campaigns AS ac'
+            . ' ON (ac.aff_campaign_id = v.aff_campaign_id AND ac.user_id = v.user_id)'
+            . ' WHERE v.click_id = ? AND v.user_id = ? AND v.aff_campaign_id = ? LIMIT 1'
+        );
+        $conn->bind($stmt, 'iii', [$clickId, $userId, $campaignId]);
+
+        return $conn->fetchOne($stmt) !== null;
     }
 }
 
@@ -718,36 +882,46 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * The click is loaded here, once, with everything the writer needs, and
      * the two ownership checks a caller may ask for are applied before any
      * write: `user_id` (px: the click must belong to the campaign's owner)
-     * and `campaign_id` (pb: the click must belong to the campaign the
-     * postback names). Both were implicit or absent before.
+     * and `campaign_id` (pb: some visit of the click, a redirector re-click
+     * being another, must be on the campaign the postback names, and the
+     * campaign the click's account's). Both were implicit or absent before.
      *
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
      *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
-     *     source?: string, reversal?: bool, reversal_ref?: string, event_name?: string|null
+     *     source?: string, reversal?: bool, reversal_ref?: string, event_name?: string|null,
+     *     conv_time?: int
      * } $opts source is the ledger source the row is recorded under
      *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
-     *     a campaign-without-goals hit's `event=`, kept on the row.
+     *     a campaign-without-goals hit's `event=`, kept on the row; conv_time
+     *     dates the row (a Unix time; now when it is left out).
+     *     $matchedBy is how the endpoint found the click (match_method).
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,
      *         foreign_click, campaign_mismatch, already_lead, duplicate.
      */
-    function p202RecordLegacyConversion(mysqli $db, int $clickId, int $pixelType, array $opts = []): array
-    {
+    function p202RecordLegacyConversion(
+        mysqli $db,
+        int $clickId,
+        int $pixelType,
+        \Prosper202\Conversion\Ledger\MatchMethod $matchedBy,
+        array $opts = []
+    ): array {
         if ($clickId <= 0) {
             throw new \InvalidArgumentException('p202RecordLegacyConversion: click_id must be a positive integer');
         }
 
         // The checked wrapper: prepare, bind, execute and get_result are each
         // verified inside Connection (CLAUDE.md #1), and a failure throws
-        // rather than reading as "no such click".
+        // rather than reading as "no such click". The conversion credits the
+        // click's latest visit, whose campaign the pb check compares.
         $conn = new \Prosper202\Database\Connection($db);
         $stmt = $conn->prepareRead(
-            'SELECT c.user_id, c.aff_campaign_id, c.click_lead, c.click_time, c.click_payout, t.click_cpa
-             FROM 202_clicks AS c
+            'SELECT c.user_id, c.aff_campaign_id, ' . \Prosper202\Click\LatestVisit::anyVisitIsLead('c') . ' AS click_lead,
+                c.click_time, c.click_payout, t.click_cpa
+             FROM ' . \Prosper202\Click\LatestVisit::of('?') . ' AS c
              LEFT JOIN 202_cpa_trackers AS cp ON cp.click_id = c.click_id
              LEFT JOIN 202_trackers AS t ON t.tracker_id_public = cp.tracker_id_public AND t.user_id = c.user_id
-             WHERE c.click_id = ?
              LIMIT 1'
         );
         $conn->bind($stmt, 'i', [$clickId]);
@@ -760,7 +934,10 @@ if (!function_exists('p202RecordLegacyConversion')) {
         if (isset($opts['user_id']) && (int) $click['user_id'] !== (int) $opts['user_id']) {
             return $none + ['reason' => 'foreign_click'];
         }
-        if (isset($opts['campaign_id']) && (int) $click['aff_campaign_id'] !== (int) $opts['campaign_id']) {
+        if (
+            isset($opts['campaign_id'])
+            && !p202ClickVisitedCampaign($conn, $clickId, (int) $click['user_id'], (int) $opts['campaign_id'])
+        ) {
             return $none + ['reason' => 'campaign_mismatch'];
         }
 
@@ -777,18 +954,16 @@ if (!function_exists('p202RecordLegacyConversion')) {
 
         $usePixelPayout = (bool) ($opts['use_pixel_payout'] ?? false);
         $payout = $usePixelPayout ? (string) ($opts['payout'] ?? '0') : (string) $click['click_payout'];
-        $convTime = time();
-        $clickTime = (int) $click['click_time'];
-
+        $convTime = $opts['conv_time'] ?? time();
+        if (!is_int($convTime) || $convTime <= 0) {
+            throw new \InvalidArgumentException('p202RecordLegacyConversion: conv_time must be a positive Unix time');
+        }
         $result = p202RecordConversion(
             $db,
             [
                 'click_id'        => $clickId,
-                'campaign_id'     => (int) $click['aff_campaign_id'],
                 'user_id'         => (int) $click['user_id'],
-                'click_time'      => $clickTime,
                 'conv_time'       => $convTime,
-                'time_difference' => p202TimeDifference($clickTime, $convTime),
                 'ip'              => (string) ($opts['ip'] ?? ''),
                 'pixel_type'      => $pixelType,
                 'user_agent'      => (string) ($opts['user_agent'] ?? ''),
@@ -799,6 +974,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
                 'event_name'      => (string) ($opts['event_name'] ?? ''),
             ],
+            $matchedBy,
             (string) ($click['click_cpa'] ?? ''),
             $usePixelPayout,
             $usePixelPayout ? $payout : '',
@@ -859,16 +1035,25 @@ if (!function_exists('p202RecordWebEvent')) {
      * retries failures retries, and the event id makes the retry safe.
      *
      * @param array<string, mixed> $get the request's query
+     * @param \Prosper202\Conversion\Ledger\MatchMethod $matchedBy how the
+     *        endpoint found the click, which the event and the ledger rows it
+     *        reaches carry (GoalEngine::ingest())
      * @param array{user_id?: int, campaign_id?: int, browser?: bool, trusted?: bool} $opts
-     *        user_id / campaign_id: the click must belong to that owner /
-     *        campaign (px / pb scopes). browser: a browser renders the
+     *        user_id: the click must belong to that owner (px scope);
+     *        campaign_id: some visit of it must be on that campaign (pb
+     *        scope, p202ClickVisitedCampaign()). browser: a browser renders the
      *        response, so image, iframe and script pixels are returned for
      *        it to load. trusted: whether `amount` may set a paid value, as it
      *        does for this endpoint's plain conversions (default true).
      * @return array<string, mixed>|null
      */
-    function p202RecordWebEvent(mysqli $db, int $clickId, array $get, array $opts = []): ?array
-    {
+    function p202RecordWebEvent(
+        mysqli $db,
+        int $clickId,
+        array $get,
+        \Prosper202\Conversion\Ledger\MatchMethod $matchedBy,
+        array $opts = []
+    ): ?array {
         if (!\Prosper202\Goals\WebEvents::requested($get)) {
             return null;
         }
@@ -881,9 +1066,13 @@ if (!function_exists('p202RecordWebEvent')) {
         if (isset($opts['user_id']) && $click['user_id'] !== (int) $opts['user_id']) {
             return ['status' => 'not_found', 'reason' => 'foreign_click'];
         }
-        if (isset($opts['campaign_id']) && $click['campaign_id'] !== (int) $opts['campaign_id']) {
+        if (
+            isset($opts['campaign_id'])
+            && !p202ClickVisitedCampaign($conn, $clickId, $click['user_id'], (int) $opts['campaign_id'])
+        ) {
             return ['status' => 'not_found', 'reason' => 'campaign_mismatch'];
         }
+        // The goals and the conversion are the latest visit's campaign's.
         $now = time();
         if (!$events->campaignEvaluatesGoals($click['user_id'], $click['campaign_id'], $now)) {
             return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
@@ -902,7 +1091,7 @@ if (!function_exists('p202RecordWebEvent')) {
         $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, (bool) ($opts['browser'] ?? false));
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         try {
-            $result = $engine->ingest($click['user_id'], $engine->clickSubject($click['user_id'], $clickId), [$event]);
+            $result = $engine->ingest($click['user_id'], $engine->clickSubject($click['user_id'], $clickId), [$event], $matchedBy);
         } catch (\Prosper202\Goals\GoalEngineException $e) {
             if ($e->reason === \Prosper202\Goals\GoalEngineException::EVENT_CONFLICT) {
                 return ['status' => 'refused', 'code' => 409, 'message' => $e->getMessage()];

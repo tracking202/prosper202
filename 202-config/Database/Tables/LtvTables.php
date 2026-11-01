@@ -509,8 +509,9 @@ final class LtvTables
     }
 
     /**
-     * Outbound webhook delivery queue, dispatched by the ltv_webhooks cronjob
-     * (never inline in ingest). Retries with exponential backoff; after the
+     * Outbound webhook delivery queue, dispatched by the minutely cron
+     * (Prosper202\Ltv\WebhookDispatcher; never inline in ingest). Retries
+     * with exponential backoff; after the
      * final attempt the delivery is marked failed and the webhook may be
      * marked dead. Response bodies are stored truncated.
      */

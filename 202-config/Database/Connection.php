@@ -44,6 +44,32 @@ final class Connection
      */
     private static ?\WeakMap $rollbackOnly = null;
 
+    /**
+     * The open transactions that have run a plain read (isPlainRead()). Under
+     * REPEATABLE READ that read fixed the snapshot every later plain read in
+     * the transaction answers from, so a lock taken after it does not make
+     * them current (CLAUDE.md #36). Kept per handle, as $open is.
+     *
+     * @var \WeakMap<mysqli, true>|null
+     */
+    private static ?\WeakMap $snapshotTaken = null;
+
+    /**
+     * The locks each open transaction has said it holds (holdLock()), by
+     * name, until it ends.
+     *
+     * @var \WeakMap<mysqli, array<string, true>>|null
+     */
+    private static ?\WeakMap $held = null;
+
+    /**
+     * The statements that are plain reads of a table, with the handle each
+     * was prepared on.
+     *
+     * @var \WeakMap<object, mysqli>|null
+     */
+    private static ?\WeakMap $plainReads = null;
+
     /** Names each savepoint apart, so a nested one never replaces another. */
     private static int $savepoints = 0;
 
@@ -151,6 +177,13 @@ final class Connection
      */
     public function execute(object $stmt): void
     {
+        // Before the statement runs: a read that fails part way may still
+        // have taken the snapshot.
+        $handle = self::$plainReads[$stmt] ?? null;
+        if ($handle !== null && (self::$open[$handle] ?? null) === true) {
+            $taken = self::$snapshotTaken ??= new \WeakMap();
+            $taken[$handle] = true;
+        }
         if (!$stmt->execute()) {
             $error = self::text(static fn (): string => $stmt->error, '(unknown)');
             $errno = self::number(static fn (): int => $stmt->errno);
@@ -301,6 +334,65 @@ final class Connection
     }
 
     /**
+     * Execute a read and hand its rows to $fn one at a time as the server
+     * sends them, then close the statement. fetchAll() and get_result() hold
+     * the whole result in memory; this holds one row, for a read whose size
+     * the data decides (an offline conversion file). Nothing else may run on
+     * the statement's handle until it returns.
+     *
+     * A fetch() that answers false failed, and is not the end of the rows.
+     * When $fn throws, the rows not read are discarded before the statement
+     * closes, so the handle can be used again.
+     *
+     * @param mysqli_stmt $stmt
+     * @param callable(array<string, mixed>): void $fn
+     * @return int the rows handed to $fn
+     * @throws QueryException
+     */
+    public function eachRow(object $stmt, callable $fn): int
+    {
+        $this->execute($stmt);
+        try {
+            $meta = $stmt->result_metadata();
+            if (!$meta instanceof mysqli_result) {
+                $error = self::text(static fn (): string => $stmt->error, '');
+                throw new QueryException('MySQL result_metadata failed: ' . ($error !== '' ? $error : '(not a read)'));
+            }
+            $names = [];
+            foreach ($meta->fetch_fields() as $field) {
+                $names[] = (string) $field->name;
+            }
+            $meta->free();
+            $values = array_fill(0, count($names), null);
+            $refs = [];
+            foreach (array_keys($values) as $i) {
+                $refs[] = &$values[$i];
+            }
+            if (!$stmt->bind_result(...$refs)) {
+                throw new QueryException('MySQL bind_result failed: ' . self::text(static fn (): string => $stmt->error, '(unknown)'));
+            }
+            $count = 0;
+            while (($fetched = $stmt->fetch()) !== null) {
+                if ($fetched === false) {
+                    $error = self::text(static fn (): string => $stmt->error, '');
+                    throw new QueryException('MySQL fetch failed: ' . ($error !== '' ? $error : '(unknown)'));
+                }
+                $row = [];
+                foreach ($names as $i => $name) {
+                    $row[$name] = $values[$i];
+                }
+                $fn($row);
+                $count++;
+            }
+
+            return $count;
+        } finally {
+            $stmt->free_result();
+            $stmt->close();
+        }
+    }
+
+    /**
      * Execute an INSERT statement, return the insert ID, and close.
      *
      * Falls back to the connection-level insert_id if the statement
@@ -389,6 +481,7 @@ final class Connection
         }
         $open = self::$open ??= new \WeakMap();
         $open[$this->write] = true;
+        self::forgetReadsAndLocks($this->write);
         $rolledBack = true;
 
         try {
@@ -415,6 +508,7 @@ final class Connection
             }
             throw $e;
         } finally {
+            self::forgetReadsAndLocks($this->write);
             if ($rolledBack) {
                 unset($open[$this->write]);
                 if (self::$rollbackOnly !== null) {
@@ -524,6 +618,72 @@ final class Connection
     }
 
     /**
+     * Whether the transaction() open on this handle has run a plain read of
+     * a table (isPlainRead()) through this class: from that read on, every
+     * plain read in it answers from the snapshot the read took, whatever the
+     * transaction locks after. False outside a transaction(). A statement
+     * run on the raw handle (writeConnection()) is not seen.
+     */
+    public function snapshotTaken(): bool
+    {
+        return self::$snapshotTaken !== null && isset(self::$snapshotTaken[$this->write]);
+    }
+
+    /**
+     * Record that the transaction() open on this handle holds the lock
+     * $name (a name its taker chooses) until it ends. Outside a
+     * transaction() nothing is recorded: a lock there ends with its
+     * statement.
+     */
+    public function holdLock(string $name): void
+    {
+        if (!$this->inTransaction()) {
+            return;
+        }
+        $held = self::$held ??= new \WeakMap();
+        $names = $held[$this->write] ?? [];
+        $names[$name] = true;
+        $held[$this->write] = $names;
+    }
+
+    /** Whether the transaction() open on this handle recorded the lock $name (holdLock()). */
+    public function holdsLock(string $name): bool
+    {
+        return $this->inTransaction() && isset((self::$held[$this->write] ?? [])[$name]);
+    }
+
+    /**
+     * Whether $sql is a plain read of a table: the statement that fixes a
+     * REPEATABLE READ transaction's snapshot. Measured on MariaDB 10.11, a
+     * SELECT that names no table, a locking read (FOR UPDATE, LOCK IN SHARE
+     * MODE) and every write, INSERT … SELECT and an UPDATE with a subquery
+     * included, take none, and a SELECT of an InnoDB table takes it. Any
+     * SELECT with a FROM counts, so a read the server answers without a
+     * snapshot (information_schema on MariaDB) is counted as one.
+     */
+    public static function isPlainRead(string $sql): bool
+    {
+        $text = (string) preg_replace('~\A(?:\s+|\(|/\*.*?\*/|(?:--|#)[^\n]*\n)+~s', '', $sql);
+        if (preg_match('/\A(?:SELECT|WITH)\b/i', $text) !== 1 || preg_match('/\bFROM\b/i', $text) !== 1) {
+            return false;
+        }
+
+        $locking = '(?:\bFOR\s+UPDATE|\bLOCK\s+IN\s+SHARE\s+MODE|\bFOR\s+SHARE)';
+
+        return preg_match('/' . $locking . '(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?[\s;)]*\z/i', $text) !== 1;
+    }
+
+    private static function forgetReadsAndLocks(mysqli $handle): void
+    {
+        if (self::$snapshotTaken !== null) {
+            unset(self::$snapshotTaken[$handle]);
+        }
+        if (self::$held !== null) {
+            unset(self::$held[$handle]);
+        }
+    }
+
+    /**
      * ROLLBACK TO a savepoint, or leave the transaction rollback-only and
      * throw why, with $cause (what the step threw) as previous.
      */
@@ -587,6 +747,7 @@ final class Connection
         if (self::$rollbackOnly !== null) {
             unset(self::$rollbackOnly[$connection]);
         }
+        self::forgetReadsAndLocks($connection);
     }
 
     /**
@@ -620,6 +781,10 @@ final class Connection
             throw new QueryException(
                 'Failed to prepare MySQL statement: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
             );
+        }
+        if (self::isPlainRead($sql)) {
+            $reads = self::$plainReads ??= new \WeakMap();
+            $reads[$stmt] = $connection;
         }
 
         return $stmt;

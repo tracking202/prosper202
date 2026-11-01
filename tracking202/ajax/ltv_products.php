@@ -4,6 +4,10 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_campaign_data'); // LTV shows customers' revenue
+if (isset($_POST['action']) && $_POST['action'] !== '') {
+    AUTH::require_permissions('access_to_setup_section'); // a write
+}
 
 // Draw the window ltv.php drew, not whatever the stored one says by now: a
 // second tab may have stored another (ReportView). ltv.js sends the view
@@ -20,8 +24,10 @@ AUTH::set_timezone($_SESSION['user_timezone']);
  */
 
 $userId = (int) $_SESSION['user_id'];
-$action = (string) ($_POST['action'] ?? '');
-$offset = max(0, (int) ($_POST['offset'] ?? 0));
+$action = $_POST['action'] ?? '';
+if (!is_string($action)) {
+    $action = '?'; // a list names no action: the switch below says "Unknown action."
+}
 $limit = 50;
 
 require_once __DIR__ . '/ltv_ui.php';
@@ -34,23 +40,31 @@ $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_products.php';
 $notice = null;
 $error = null;
 
+// What to show is read first: a request naming a page or a row nobody can
+// name runs no action either.
+$offset = p202_ltv_posted_or(fn (): int => p202_ltv_posted_offset($_POST['offset'] ?? null), 0, $error);
+$editId = p202_ltv_posted_or(fn (): int => p202_ltv_posted_id_or_none(
+    $_POST['edit'] ?? null,
+    'Pick the product to edit from the list.'
+), 0, $error);
+
 try {
     $conn = new \Prosper202\Database\Connection($db);
 
-    if ($action !== '') {
+    if ($action !== '' && $error === null) {
         if (!AUTH::check_csrf_token()) {
             $error = 'Your session token was invalid — please try again.';
         } else {
             try {
                 switch ($action) {
                     case 'save_product':
-                        $productId = (int) ($_POST['product_id'] ?? 0);
-                        $name = trim((string) ($_POST['product_name'] ?? ''));
-                        $sku = trim((string) ($_POST['product_sku'] ?? ''));
-                        $priceRaw = trim((string) ($_POST['product_price'] ?? ''));
-                        if ($productId <= 0) {
-                            throw new \RuntimeException('Product not found.');
-                        }
+                        $productId = p202_ltv_posted_id(
+                            $_POST['product_id'] ?? null,
+                            'Pick the product to edit from the list.'
+                        );
+                        $name = trim(p202_ltv_posted_text($_POST['product_name'] ?? null, 'product_name'));
+                        $sku = trim(p202_ltv_posted_text($_POST['product_sku'] ?? null, 'product_sku'));
+                        $priceRaw = trim(p202_ltv_posted_text($_POST['product_price'] ?? null, 'product_price'));
                         if ($name === '') {
                             throw new \RuntimeException('Product name must not be empty.');
                         }
@@ -88,7 +102,10 @@ try {
                         break;
 
                     case 'delete_product':
-                        $productId = (int) ($_POST['product_id'] ?? 0);
+                        $productId = p202_ltv_posted_id(
+                            $_POST['product_id'] ?? null,
+                            'Pick the product to delete from the list.'
+                        );
                         $check = $conn->prepareRead(
                             'SELECT COUNT(*) AS c FROM 202_revenue_line_items WHERE product_id = ? AND user_id = ?'
                         );
@@ -159,7 +176,10 @@ try {
 }
 
 $csrfToken = (string) ($_SESSION['token'] ?? '');
-$editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['product_id'] ?? 0) : (int) ($_POST['edit'] ?? 0);
+if ($error !== null && $action === 'save_product') {
+    // The row a refused save named stays open, when it names one exactly.
+    $editId = \Prosper202\Http\PostedId::read($_POST['product_id'] ?? null) ?? 0;
+}
 ?>
 
 <?php echo p202_ltv_ui_styles(); ?>

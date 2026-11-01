@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use RuntimeException;
@@ -24,6 +25,28 @@ use Tests\Support\InsertReportingFakeMysqliConnection;
  */
 final class MysqlConversionRepositoryExpandedTest extends TestCase
 {
+    /**
+     * The click's lock and the read of its latest visit after it, each
+     * answering $rows, and the read of its latest visit that is a lead
+     * (MysqlConversionLedger::ensureManaged()) answering those of them that are.
+     *
+     * @param list<array<string, mixed>> $rows
+     */
+    private static function clickVisit(
+        FakeMysqliConnection|InsertReportingFakeMysqliConnection $db,
+        string $lock,
+        array $rows
+    ): void {
+        $db->whenQueryContainsReturnRows($lock, $rows);
+        // Every writer reads the click's latest visit after its lock
+        // (MysqlConversionLedger::lockClick()).
+        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
+        $db->whenQueryContainsReturnRows(
+            'AND c.click_lead = 1',
+            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
+        );
+    }
+
     private function buildRepo(?FakeMysqliConnection $write = null, ?FakeMysqliConnection $read = null): array
     {
         $write ??= new FakeMysqliConnection();
@@ -41,7 +64,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('click_id is required');
-        $repo->create(1, ['click_id' => 0]);
+        $repo->create(1, ['click_id' => 0], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
     }
 
     public function testCreateThrowsForNegativeClickId(): void
@@ -50,33 +73,33 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('click_id is required');
-        $repo->create(1, ['click_id' => -1]);
+        $repo->create(1, ['click_id' => -1], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
     }
 
     public function testCreateThrowsWhenClickNotFound(): void
     {
         $write = new FakeMysqliConnection();
         // Return no rows for click lookup
-        $write->whenQueryContainsReturnRows('FROM 202_clicks WHERE click_id = ?', []);
+        self::clickVisit($write, 'FROM 202_clicks WHERE click_id = ?', []);
 
         [$repo] = $this->buildRepo($write);
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Click not found or not owned by user');
-        $repo->create(1, ['click_id' => 999]);
+        $repo->create(1, ['click_id' => 999], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
     }
 
     public function testCreateThrowsWhenClickOwnedByDifferentUser(): void
     {
         $write = new FakeMysqliConnection();
         // The query includes user_id in WHERE, so no rows returned for wrong user
-        $write->whenQueryContainsReturnRows('FROM 202_clicks WHERE click_id = ?', []);
+        self::clickVisit($write, 'FROM 202_clicks WHERE click_id = ?', []);
 
         [$repo] = $this->buildRepo($write);
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Click not found or not owned by user');
-        $repo->create(1, ['click_id' => 10]);
+        $repo->create(1, ['click_id' => 10], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
     }
 
     public function testCreateInsertsConversionLog(): void
@@ -89,16 +112,17 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // a writable insert_id, while delegating every other prepare/transaction
         // call to the shared fake.
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
         // buildRepo() type-hints FakeMysqliConnection, so wire this bespoke
         // write double through a Connection directly.
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
-        $id = $repo->create(1, ['click_id' => 10, 'transaction_id' => 'TX-1']);
+        $id = $repo->create(1, ['click_id' => 10, 'transaction_id' => 'TX-1'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertSame(7, $id);
 
@@ -108,16 +132,17 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // The NOT-NULL legacy columns (time_difference, ip, pixel_type, user_agent)
         // are always bound — even when the caller (e.g. the V3 API) omits them —
         // so the INSERT can't fail under STRICT sql_mode with "Field doesn't have a
-        // default value"; then the six ledger columns. The amount is bound as the
-        // exact decimal string (Amount), never a float.
-        self::assertSame('isisiii' . 'ssis' . 'sssiis', $insertStmts[0]->boundTypes);
+        // default value"; then the six ledger columns and how the click was
+        // found. The amount is bound as the exact decimal string (Amount),
+        // never a float.
+        self::assertSame('isisiii' . 'ssis' . 'sssiis' . 's', $insertStmts[0]->boundTypes);
         $bound = $insertStmts[0]->boundValues;
         self::assertSame('2.75000', $bound[3], 'the click payout, exactly, when no amount is given (replace mode)');
         self::assertSame('', $bound[8], 'ip defaults to empty string');
         self::assertSame(0, $bound[9], 'pixel_type defaults to 0');
         self::assertSame('', $bound[10], 'user_agent defaults to empty string');
-        self::assertSame(['api', null, null, 1, null, 'tx:TX-1'], array_slice($bound, 11),
-            'source, source_ref, event_name, payable, reverses_conv_id, dedupe_key');
+        self::assertSame(['api', null, null, 1, null, 'tx:TX-1', 'click_id'], array_slice($bound, 11),
+            'source, source_ref, event_name, payable, reverses_conv_id, dedupe_key, match_method');
     }
 
     /**
@@ -130,13 +155,14 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     public function testRecordBindsOneValidAddressOrNothingAsTheIp(string $given, string $bound): void
     {
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
-        $repo->record(1, ['click_id' => 10, 'transaction_id' => 'TX-1', 'ip' => $given]);
+        $repo->record(1, ['click_id' => 10, 'transaction_id' => 'TX-1', 'ip' => $given], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         $insertStmts = $write->statementsContaining('INSERT INTO 202_conversion_logs');
         self::assertCount(1, $insertStmts);
@@ -161,9 +187,10 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // An insert has to report its id (the writer refuses one that does
         // not), which only the insert-reporting double can do on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         $write->whenQueryContainsReturnRows(
             'FROM 202_conversion_logs WHERE click_id = ? ORDER BY conv_id',
@@ -172,7 +199,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         );
 
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
-        $repo->create(1, ['click_id' => 10]);
+        $repo->create(1, ['click_id' => 10], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         // The click's value is not written by the conversion: the ledger
         // recomputes it from the click's rows. With the inserted row visible
@@ -188,13 +215,14 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // An insert has to report its id (the writer refuses one that does
         // not), which only the insert-reporting double can do on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
-        $repo->create(1, ['click_id' => 10, 'payout' => 50.00]);
+        $repo->create(1, ['click_id' => 10, 'payout' => 50.00], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         // The row records 50.00, not the click's 2.75.
         $insert = $write->statementsContaining('INSERT INTO 202_conversion_logs');
@@ -207,13 +235,14 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // An insert has to report its id (the writer refuses one that does
         // not), which only the insert-reporting double can do on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
-        $repo->create(1, ['click_id' => 10]);
+        $repo->create(1, ['click_id' => 10], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         $insert = $write->statementsContaining('INSERT INTO 202_conversion_logs');
         self::assertCount(1, $insert);
@@ -225,13 +254,14 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // An insert has to report its id (the writer refuses one that does
         // not), which only the insert-reporting double can do on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
-        $repo->create(1, ['click_id' => 10]);
+        $repo->create(1, ['click_id' => 10], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         $lockStmts = $write->statementsContaining('FOR UPDATE');
         self::assertNotEmpty($lockStmts, 'Must use FOR UPDATE to prevent race conditions');
@@ -240,9 +270,10 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     public function testCreateDeduplicatesOnTransactionId(): void
     {
         $write = new FakeMysqliConnection();
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         // A conversion with this (click_id, transaction_id) already exists.
         // (The dedup lookup also returns the LTV customer link since the
@@ -253,7 +284,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         );
 
         [$repo] = $this->buildRepo($write);
-        $id = $repo->create(1, ['click_id' => 10, 'transaction_id' => 'DUP']);
+        $id = $repo->create(1, ['click_id' => 10, 'transaction_id' => 'DUP'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertSame(99, $id, 'A duplicate transaction id must return the existing conversion');
         self::assertCount(0, $write->statementsContaining('INSERT INTO 202_conversion_logs'), 'No second row may be inserted');
@@ -268,9 +299,10 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     public function testRecordWritesLegacyColumnsAndRunsClickSideCallbackInTransaction(): void
     {
         $write = new InsertReportingFakeMysqliConnection(5);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
@@ -285,6 +317,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
                 'user_agent' => 'UA/1.0',
                 'time_difference' => '0 days',
             ],
+            \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
             function (int $clickId, float $payout) use (&$callbackArgs): void {
                 $callbackArgs = [$clickId, $payout];
             }
@@ -298,10 +331,13 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         $insert = $write->statementsContaining('INSERT INTO 202_conversion_logs');
         self::assertCount(1, $insert);
         // Base 7 columns + the 4 legacy columns (time_difference, ip,
-        // pixel_type, user_agent) + the 6 ledger columns = 17 bound params.
-        self::assertSame(17, strlen($insert[0]->boundTypes));
+        // pixel_type, user_agent) + the 6 ledger columns + match_method = 18
+        // bound params, the method last, as the caller named it.
+        self::assertSame(18, strlen($insert[0]->boundTypes));
         self::assertStringStartsWith('isisiii', $insert[0]->boundTypes);
         self::assertStringContainsString('pixel_type', $insert[0]->sql);
+        self::assertStringContainsString('match_method', $insert[0]->sql);
+        self::assertSame('click_id', $insert[0]->boundValues[17]);
         // No transaction id, replace mode: the row's key is its own id,
         // written right after the insert.
         $keyed = $write->statementsContaining('UPDATE 202_conversion_logs SET dedupe_key = ?');
@@ -314,7 +350,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         $write = new FakeMysqliConnection(); // no click row registered → lock finds nothing
 
         [$repo] = $this->buildRepo($write);
-        $result = $repo->record(1, ['click_id' => 999]);
+        $result = $repo->record(1, ['click_id' => 999], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertSame(0, $result['convId']);
         self::assertFalse($result['clickFound']);
@@ -333,8 +369,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
             [['click_id' => 10]]
         );
         $write->whenQueryContainsReturnRows(
-            'SELECT conv_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs',
-            [['conv_id' => 5, 'customer_id' => null, 'deleted' => 0, 'reverses_conv_id' => null]]
+            'SELECT conv_id, click_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs',
+            [['conv_id' => 5, 'click_id' => 10, 'customer_id' => null, 'deleted' => 0, 'reverses_conv_id' => null]]
         );
 
         $repo->softDelete(5, 1);
@@ -397,13 +433,14 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // answers "duplicate" and prepares no INSERT, whatever the caller read
         // before it took the lock.
         $write = new FakeMysqliConnection();
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
         );
         [$repo] = $this->buildRepo($write);
 
-        $result = $repo->record(1, ['click_id' => 10, 'once_per_click' => true]);
+        $result = $repo->record(1, ['click_id' => 10, 'once_per_click' => true], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertTrue($result['duplicate']);
         self::assertTrue($result['clickFound']);
@@ -415,13 +452,14 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     public function testOncePerClickRecordsWhileTheClickIsNotYetALead(): void
     {
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
-        $result = $repo->record(1, ['click_id' => 10, 'once_per_click' => true]);
+        $result = $repo->record(1, ['click_id' => 10, 'once_per_click' => true], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertFalse($result['duplicate']);
         self::assertSame(7, $result['convId']);
@@ -433,13 +471,14 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // The gate is opt-in: a conversion carrying a transaction id (a repeat
         // purchase on the same click) records exactly as before.
         $write = new InsertReportingFakeMysqliConnection(8);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
         );
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
-        $result = $repo->record(1, ['click_id' => 10, 'transaction_id' => 'TX-2']);
+        $result = $repo->record(1, ['click_id' => 10, 'transaction_id' => 'TX-2'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertFalse($result['duplicate']);
         self::assertSame(8, $result['convId']);

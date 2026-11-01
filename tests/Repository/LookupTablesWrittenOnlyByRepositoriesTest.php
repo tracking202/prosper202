@@ -73,7 +73,7 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
      */
     private const UNREAD_WRITERS = [
         '202-config/DataEngine/ClickRollupSql.php' => [
-            'insert into …(…) SELECT … …… WHERE … on duplicate key update'
+            'insert into …(…) SELECT … …… WHERE (…) AND … on duplicate'
                 => 'build(), for insertSelect() and forClick(): the rollup table its caller names',
         ],
         '202-config/class-dataengine.php' => [

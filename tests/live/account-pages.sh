@@ -107,6 +107,7 @@ OWNER=$(Q "SELECT user_id FROM 202_users WHERE user_name='$P202_USER'")
 # What the pass changes, so it can be put back.
 ORIG_PREFS=$(Q "SELECT CONCAT_WS('|', u.user_timezone, p.user_daily_email, p.user_keyword_searched_or_bidded, p.user_pref_dynamic_bid, p.user_pref_referer_data, p.user_pref_privacy, p.user_pref_cloak_referer, p.user_pref_ad_settings, IFNULL(p.user_tracking_domain,''), p.user_account_currency, IFNULL(p.ipqs_api_key,''), p.user_auto_database_optimization_days, IFNULL(p.user_delete_data_clickid,'NULL'), IFNULL(p.user_delete_data_before,'NULL')) FROM 202_users u JOIN 202_users_pref p USING (user_id) WHERE u.user_id=$OWNER")
 ORIG_HASH=$(Q "SELECT user_pass FROM 202_users WHERE user_id=$OWNER")
+ORIG_SAME_IP=$(Q "SELECT user_pref_same_ip_fallback FROM 202_users_pref WHERE user_id=$OWNER")
 printf '    owner=%s prefs=%s\n' "$OWNER" "$ORIG_PREFS"
 
 # ─────────────────────────────────────────────────────────────────────
@@ -149,25 +150,37 @@ eq "$(Q "SELECT user_timezone FROM 202_users WHERE user_id=$OWNER")" "$(echo "$O
 say "preferences: a value the form never offers is refused by name"
 get "202-account/account.php" "$OUT/account.html"
 submit "$OUT/account.html" update_profile "202-account/account.php" "$OUT/p-tz.html" \
-  user_timezone=Mars/Olympus_Mons user_pref_privacy=everyone
+  user_timezone=Mars/Olympus_Mons user_pref_privacy=everyone user_pref_same_ip_fallback=maybe
 msgs "$OUT/p-tz.html"
 has "$OUT/p-tz.html" 'Choose a time zone from the list.' "an unknown time zone is refused"
 has "$OUT/p-tz.html" 'You must select your privacy setting.' "an unknown privacy value is refused"
+has "$OUT/p-tz.html" 'Choose whether a pixel may guess the click from the IP address.' "an unknown IP matching value is refused"
 eq "$(Q "SELECT user_pref_privacy FROM 202_users_pref WHERE user_id=$OWNER")" "$(echo "$ORIG_PREFS" | cut -d'|' -f6)" "privacy unchanged"
+eq "$(Q "SELECT user_pref_same_ip_fallback FROM 202_users_pref WHERE user_id=$OWNER")" "$ORIG_SAME_IP" "IP matching unchanged"
 
 say "preferences: every field of the form saves"
 get "202-account/account.php" "$OUT/account.html"
+# The hosted daily email was switched off on 2026-10-29: no field, and a
+# posted hour is not written.
+hasnt "$OUT/account.html" 'user_daily_email' "Personal Settings has no daily email report setting"
 submit "$OUT/account.html" update_profile "202-account/account.php" "$OUT/p-ok.html" \
   user_timezone=Europe/London user_daily_email=09 user_keyword_searched_or_bidded=bidded \
   user_bid=1 user_referer=t202ref user_pref_privacy=eu cloak_referer=never \
-  user_pref_ad_settings=hide_login user_tracking_domain=track.example.test
+  user_pref_ad_settings=hide_login user_tracking_domain=track.example.test user_pref_same_ip_fallback=1
 msgs "$OUT/p-ok.html"
 eq "$FIRST_STATUS" "303" "a saved profile redirects (post-redirect-get)"
 has "$OUT/p-ok.html" 'Your settings are saved.' "and says it saved"
-eq "$(Q "SELECT CONCAT_WS('|', u.user_timezone, p.user_daily_email, p.user_keyword_searched_or_bidded, p.user_pref_dynamic_bid, p.user_pref_referer_data, p.user_pref_privacy, p.user_pref_cloak_referer, p.user_pref_ad_settings, p.user_tracking_domain) FROM 202_users u JOIN 202_users_pref p USING (user_id) WHERE u.user_id=$OWNER")" \
-  "Europe/London|09|bidded|1|t202ref|eu|never|hide_login|track.example.test" "all nine preferences stored"
+eq "$(Q "SELECT CONCAT_WS('|', u.user_timezone, p.user_keyword_searched_or_bidded, p.user_pref_dynamic_bid, p.user_pref_referer_data, p.user_pref_privacy, p.user_pref_cloak_referer, p.user_pref_ad_settings, p.user_tracking_domain) FROM 202_users u JOIN 202_users_pref p USING (user_id) WHERE u.user_id=$OWNER")" \
+  "Europe/London|bidded|1|t202ref|eu|never|hide_login|track.example.test" "all eight preferences stored"
+eq "$(Q "SELECT p.user_daily_email FROM 202_users_pref p WHERE p.user_id=$OWNER")" "$(echo "$ORIG_PREFS" | cut -d'|' -f2)" "and the posted daily email hour is not"
+eq "$(Q "SELECT user_pref_same_ip_fallback FROM 202_users_pref WHERE user_id=$OWNER")" "1" "and IP matching, turned on"
 get "202-account/account.php" "$OUT/account2.html"
 has "$OUT/account2.html" '<option value="Europe/London" selected>' "the page shows the stored time zone"
+has "$OUT/account2.html" '<option value="1" selected>On: guess the click from the IP address</option>' "and the stored IP matching"
+get "202-account/account.php" "$OUT/account.html"
+submit "$OUT/account.html" update_profile "202-account/account.php" "$OUT/p-off.html" user_pref_same_ip_fallback=0
+eq "$FIRST_STATUS" "303" "turning IP matching off saves"
+eq "$(Q "SELECT user_pref_same_ip_fallback FROM 202_users_pref WHERE user_id=$OWNER")" "0" "and stores 0"
 eq "$(grep -c 'value="Europe/London"' "$OUT/account2.html")" "1" "and lists each zone once (the classic page printed the selected one twice)"
 
 # ─────────────────────────────────────────────────────────────────────
@@ -341,6 +354,7 @@ NEWUSER=$(Q "SELECT user_id FROM 202_users WHERE user_name='u6_live_user' AND us
 eq "$(Q "SELECT CONCAT_WS('|', user_fname, user_lname, user_email, user_active) FROM 202_users WHERE user_id=${NEWUSER:-0}")" "Live|User|u6-live@example.test|1" "the row carries every field"
 eq "$(Q "SELECT role_id FROM 202_user_role WHERE user_id=${NEWUSER:-0}")" "4" "role 4 stored"
 eq "$(Q "SELECT COUNT(*) FROM 202_users_pref WHERE user_id=${NEWUSER:-0}")" "1" "a preferences row was created"
+eq "$(Q "SELECT user_pref_privacy FROM 202_users_pref WHERE user_id=${NEWUSER:-0}")" "eu" "the new user starts at privacy eu"
 eq "$(Q "SELECT COUNT(*) FROM 202_attribution_models WHERE user_id=${NEWUSER:-0} AND is_default=1")" "1" "and its default attribution model, in the same save"
 HASH_NEW=$(Q "SELECT user_pass FROM 202_users WHERE user_id=${NEWUSER:-0}")
 if [[ "$HASH_NEW" == \$2y\$* ]]; then ok "the password is stored as a bcrypt hash"; else bad "password hash shape: ${HASH_NEW:0:7}"; fi
@@ -439,23 +453,29 @@ get "202-account/api-integrations.php" "$OUT/ai.html"
 submit "$OUT/ai.html" change_ipqs_api_key "202-account/api-integrations.php" "$OUT/ai-bad.html" token=forged ipqs_api_key=u6-forged
 has "$OUT/ai-bad.html" "$REFUSED" "a bad token is refused"
 eq "$(Q "SELECT IFNULL(ipqs_api_key,'') FROM 202_users_pref WHERE user_id=$OWNER")" "$(echo "$ORIG_PREFS" | cut -d'|' -f11)" "IPQS key unchanged"
+mysql_q "$DB" -e "UPDATE 202_users_pref SET ipqs_api_key='' WHERE user_id=$OWNER"
 get "202-account/api-integrations.php" "$OUT/ai.html"
 submit "$OUT/ai.html" change_ipqs_api_key "202-account/api-integrations.php" "$OUT/ai-empty.html" ipqs_api_key=
 msgs "$OUT/ai-empty.html"
-has "$OUT/ai-empty.html" "The IPQualityScore API Key can&#039;t be empty!" "an empty key is refused under the field"
+has "$OUT/ai-empty.html" "The IPQualityScore API Key can&#039;t be empty!" "an empty key is refused under the field when none is saved"
 get "202-account/api-integrations.php" "$OUT/ai.html"
-submit "$OUT/ai.html" change_ipqs_api_key "202-account/api-integrations.php" "$OUT/ai-ok.html" ipqs_api_key=u6-ipqs-key
+submit "$OUT/ai.html" change_ipqs_api_key "202-account/api-integrations.php" "$OUT/ai-ok.html" ipqs_api_key=u6-ipqs-key-0001
 has "$OUT/ai-ok.html" 'Your IPQualityScore API key was saved.' "a key saves"
-eq "$(Q "SELECT ipqs_api_key FROM 202_users_pref WHERE user_id=$OWNER")" "u6-ipqs-key" "stored"
+eq "$(Q "SELECT ipqs_api_key FROM 202_users_pref WHERE user_id=$OWNER")" "u6-ipqs-key-0001" "stored"
+hasnt "$OUT/ai-ok.html" 'u6-ipqs-key-0001' "the saved key is not on the page"
+has "$OUT/ai-ok.html" 'Saved, ends in 0001' "it shows as saved, by its last four"
+submit "$OUT/ai-ok.html" change_ipqs_api_key "202-account/api-integrations.php" "$OUT/ai-keep.html" ipqs_api_key=
+has "$OUT/ai-keep.html" 'Nothing changed: your saved IPQualityScore API key is kept.' "an empty field keeps the saved key"
+eq "$(Q "SELECT ipqs_api_key FROM 202_users_pref WHERE user_id=$OWNER")" "u6-ipqs-key-0001" "still stored"
 
 say "API integrations: a DNI network is removed by POST only"
-mysql_q "$DB" -e "INSERT INTO 202_dni_networks (user_id, networkId, name, type, apiKey, affiliateId, time, processed, shortDescription, favIcon) VALUES (1, 'u6net', 'U6 Live Network', 'HasOffers', 'u6-dni-secret-key-0001', NULL, UNIX_TIMESTAMP(), 1, 'probe', '')"
+mysql_q "$DB" -e "INSERT INTO 202_dni_networks (user_id, networkId, name, type, apiKey, affiliateId, time, processed, shortDescription, favIcon) VALUES ($OWNER, 'u6net', 'U6 Live Network', 'HasOffers', 'u6-dni-secret-key-0001', NULL, UNIX_TIMESTAMP(), 1, 'probe', '')"
 DNI=$(Q "SELECT id FROM 202_dni_networks WHERE networkId='u6net'")
 curl -sS -b "$JAR" -c "$JAR" -L "$BASE/202-account/api-integrations.php?delete_dni_network=$DNI" -o "$OUT/dni-get.html"
 has "$OUT/dni-get.html" 'Removing a network now asks first.' "the old GET link is answered, not obeyed"
 eq "$(Q "SELECT COUNT(*) FROM 202_dni_networks WHERE id=$DNI")" "1" "the network is still there"
-has "$OUT/dni-get.html" 'data-p202-value="u6-dni-secret-key-0001"' "its API key is behind Reveal"
-hasnt "$OUT/dni-get.html" '>u6-dni-secret-key-0001<' "and not printed in the clear"
+hasnt "$OUT/dni-get.html" 'u6-dni-secret-key-0001' "its API key is not on the page"
+has "$OUT/dni-get.html" 'Saved, ends in 0001' "it shows as saved, by its last four"
 submit "$OUT/dni-get.html" "delete_dni_network=$DNI" "202-account/api-integrations.php" "$OUT/dni-bad.html" token=forged
 has "$OUT/dni-bad.html" "$REFUSED" "a bad token removes nothing"
 eq "$(Q "SELECT COUNT(*) FROM 202_dni_networks WHERE id=$DNI")" "1" "still there"
@@ -576,6 +596,7 @@ say "put the account back"
 # schedules a deletion), so there is nothing to put back.
 IFS='|' read -r TZ DE KW BID REF PRIV CLOAK ADS DOM CUR IPQS DAYS _ _ <<< "$ORIG_PREFS"
 mysql_q "$DB" -e "UPDATE 202_users SET user_timezone='$TZ' WHERE user_id=$OWNER; UPDATE 202_users_pref SET user_daily_email='$DE', user_keyword_searched_or_bidded='$KW', user_pref_dynamic_bid='$BID', user_pref_referer_data='$REF', user_pref_privacy='$PRIV', user_pref_cloak_referer='$CLOAK', user_pref_ad_settings='$ADS', user_tracking_domain='$DOM', user_account_currency='$CUR', ipqs_api_key='$IPQS', user_auto_database_optimization_days='$DAYS' WHERE user_id=$OWNER"
+mysql_q "$DB" -e "UPDATE 202_users_pref SET user_pref_same_ip_fallback='$ORIG_SAME_IP' WHERE user_id=$OWNER"
 drop_probe_users
 J3=$(mktemp)
 curl -sS -c "$J3" -b "$J3" "$BASE/202-login.php" -o "$OUT/l3.html"

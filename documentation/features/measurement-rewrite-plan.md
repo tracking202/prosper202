@@ -209,7 +209,7 @@ becomes a cache of it.**
 
    | Column | Values |
    |---|---|
-   | `source` | `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` (below) |
+   | `source` | `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `app_install`, `goal`, `legacy_baseline` (below) |
    | `source_ref` | What generated it: goal id and version, upload batch id, API key id, app install row. Resolved by the UI into a name and a link |
    | `event_name` | The event that reached the goal, or the postback's `event=` value |
    | `payable` | `1` counts toward income and leads. `0` is a tracked outcome on a click: an unpaid goal, or an event reported for visibility. Outcomes on a subject with no click (an organic install) live only in `202_goal_outcomes`, §5.5 |
@@ -3538,7 +3538,7 @@ rollup of PR 13, §8.2).
 
   | Data | Action | Since |
   |---|---|---|
-  | `202_api_keys` | deleted (sessions already refuse a deleted user) | PR 3 |
+  | `202_api_keys` | deleted (a deleted user's signed-in sessions are refused at their next request since 1.9.79; before, nothing refused them) | PR 3 |
   | `202_attribution_credits` (through the user's models), `_journeys` (through the journey meta), `_journey_meta`, the outbox rows (`202_attribution_pending`) of the user's conversions, `_exports`, `_models`, `_audit` | deleted, children first; the attribution worker refuses a deleted user's conversions, so nothing rebuilds them | PR 9 (the tables; the MTA purge was the account page's alone before PR 3) |
   | `202_attribution_rollup`, `_rollup_state`, `_rollup_overrides`, `_rollup_dirty`, `_rollup_dirty_clicks` | deleted | PR 13 |
   | export files on disk | removed after the delete commits; their names are read from the export rows inside the transaction first, and a file that cannot be removed is logged by name | PR 10 |

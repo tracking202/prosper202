@@ -21,6 +21,12 @@ declare(strict_types=1);
  * printed before it died.
  */
 
+// A checkout served as the web root serves tests/ too (TestScriptsAreNotServedTest).
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 [, $reader, $lock] = $argv + [null, '', 'none'];
 
 $root = dirname(__DIR__, 3);
@@ -98,9 +104,32 @@ if ($lock !== 'none') {
 $now = time();
 try {
     $result = match ($reader) {
+        'overview-page' => (static function () use ($root): bool {
+            require_once $root . '/202-config/functions-ui-overview.php';
+            p202_overview_run([
+                'id' => 'read-probe', 'page_title' => 'Read probe', 'title' => 'Read probe',
+                'desc' => '', 'icon' => 'bi-table', 'panel' => 'Report',
+                'action' => '/tracking202/overview/breakdown.php',
+                'fragment' => '/tracking202/ajax/sort_breakdown.php',
+                'names' => P202_OVERVIEW_CLICK_FILTERS,
+            ]);
+            return true;
+        })(),
         // The Visitors list: its count and its read of the filters. query()'s
         // fragments name the table 2c, as the Visitors page's command does.
         'visitors' => query('SELECT 2c.click_id FROM 202_dataengine 2c ', '2c'),
+        'spy-plan' => query(
+            'SELECT 2c.click_id FROM 202_dataengine 2c ',
+            '2c',
+            false,
+            null,
+            null,
+            null,
+            null,
+            true,
+            false,
+            true
+        ),
         // Every report page's window.
         'window' => grab_timeframe(),
         // The engine's pagination count, as countReportGroups() runs it.

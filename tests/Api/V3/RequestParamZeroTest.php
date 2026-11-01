@@ -8,6 +8,7 @@ use Api\V3\Controllers\CampaignsController;
 use Api\V3\Controllers\ConversionsController;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Tests\Support\FakeMysqliConnection;
 
 /**
@@ -106,10 +107,16 @@ final class RequestParamZeroTest extends TestCase
     public function testACustomerRefOfZeroReachesTheCustomerResolver(): void
     {
         $db = new FakeMysqliConnection();
+        $click = [[
+            'click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => '5.00000',
+            'click_time' => 1700000000, 'click_lead' => 0,
+        ]];
+        // The click's lock, and its latest visit read after it.
         $db->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => '5.00000', 'click_time' => 1700000000, 'click_lead' => 0]]
+            $click
         );
+        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $click);
         try {
             (new ConversionsController($db, 1))->create(['click_id' => 10, 'customer_ref' => '0']);
         } catch (ValidationException) {

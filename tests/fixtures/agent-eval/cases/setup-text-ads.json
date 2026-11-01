@@ -1,0 +1,73 @@
+{
+  "cases": [
+    {
+      "id": "setup-text-ad-001-a-new-ad-goes-on-the-campaigns-link",
+      "priority": "high",
+      "state": "seeded fixture: EVAL Campaign B has a direct-link tracker; setup removes any EVAL Spring Ad and takes the ad off that tracker",
+      "setup": [
+        "for id in $(p202 text-ad list --all --json | jq -r '.data[] | select(.text_ad_name==\"EVAL Spring Ad\") | .text_ad_id'); do p202 text-ad delete \"$id\" --force --json >/dev/null; done; true",
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id') && t=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c and (.rotator_id|tostring)==\"0\")][0].tracker_id') && p202 tracker update \"$t\" --text-ad-id 0 --json >/dev/null"
+      ],
+      "ask": "Write a text ad for EVAL Campaign B called EVAL Spring Ad: headline \"Spring running shoes sale\", description \"Up to 40% off trail and road shoes.\", display URL example.com/spring. Then use it on EVAL Campaign B's tracking link.",
+      "expected": {
+        "runs_one_of": [
+          "text-ad create"
+        ],
+        "never_runs": [
+          "text-ad delete",
+          "tracker delete",
+          "tracker create"
+        ],
+        "checks": [
+          {
+            "run": "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id') && p202 text-ad list --all --json | jq -r --arg c \"$c\" '[.data[] | select(.text_ad_name==\"EVAL Spring Ad\")] | \"ads=\\(length) \" + (map(\"type=\\(.text_ad_type) campaign_matches=\\((.aff_campaign_id|tostring)==$c) headline=\\(.text_ad_headline)|description=\\(.text_ad_description)|display=\\(.text_ad_display_url)\") | join(\";\"))'",
+            "includes": [
+              "ads=1 type=0 campaign_matches=true headline=Spring running shoes sale|description=Up to 40% off trail and road shoes.|display=example.com/spring"
+            ]
+          },
+          {
+            "run": "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id') && a=$(p202 text-ad list --all --json | jq -r '[.data[] | select(.text_ad_name==\"EVAL Spring Ad\")][0].text_ad_id') && p202 tracker list --all --json | jq -r --arg c \"$c\" --arg a \"$a\" '[.data[] | select((.aff_campaign_id|tostring)==$c and (.rotator_id|tostring)==\"0\")][0] | \"tracker_carries_ad=\\((.text_ad_id|tostring)==$a)\"'",
+            "includes": [
+              "tracker_carries_ad=true"
+            ]
+          }
+        ],
+        "rubric": "PASS if one text ad named EVAL Spring Ad exists for EVAL Campaign B (text_ad_type 0, its campaign id looked up with campaign list) with the asked headline, description and display URL, EVAL Campaign B's existing tracker now carries it as its text_ad_id, and the reply says both. FAIL if the ad is made on another campaign or on none, made twice, put on another tracker, or a new tracker is created instead of using the existing one."
+      },
+      "cleanup": [
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id') && t=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c and (.rotator_id|tostring)==\"0\")][0].tracker_id') && p202 tracker update \"$t\" --text-ad-id 0 --json >/dev/null",
+        "for id in $(p202 text-ad list --all --json | jq -r '.data[] | select(.text_ad_name==\"EVAL Spring Ad\") | .text_ad_id'); do p202 text-ad delete \"$id\" --force --json >/dev/null; done; true"
+      ],
+      "notes": "Setup > Text Ads, then Setup > Get Links' ad copy. Until 1.9.79 the MCP connector had text_ad_list only, so this took the browser; text_ad_create and tracker_update text_ad_id now do it, through `p202 text-ad create --aff-campaign-id` and `p202 tracker update --text-ad-id`."
+    },
+    {
+      "id": "setup-text-ad-002-an-ad-for-nothing-is-asked-about-not-made",
+      "priority": "medium",
+      "state": "seeded fixture; setup removes any EVAL Orphan Ad",
+      "setup": [
+        "for id in $(p202 text-ad list --all --json | jq -r '.data[] | select(.text_ad_name==\"EVAL Orphan Ad\") | .text_ad_id'); do p202 text-ad delete \"$id\" --force --json >/dev/null; done; true"
+      ],
+      "ask": "Make me a text ad called EVAL Orphan Ad with the headline \"Fast shipping\", the description \"Orders ship the same day.\" and the display URL example.com/ship.",
+      "expected": {
+        "never_runs": [
+          "text-ad delete",
+          "campaign create",
+          "landing-page create"
+        ],
+        "checks": [
+          {
+            "run": "p202 text-ad list --all --json | jq -r '\"orphan_ads=\\([.data[] | select(.text_ad_name==\"EVAL Orphan Ad\")] | length)\"'",
+            "includes": [
+              "orphan_ads=0"
+            ]
+          }
+        ],
+        "rubric": "PASS if no text ad is made and the reply asks which campaign (or advanced landing page) the ad is for, since Prosper202 offers an ad only on its campaign's or advanced landing page's links. FAIL if an ad is created with no campaign, on a campaign or page the user never named, or the agent invents a campaign for it."
+      },
+      "cleanup": [
+        "for id in $(p202 text-ad list --all --json | jq -r '.data[] | select(.text_ad_name==\"EVAL Orphan Ad\") | .text_ad_id'); do p202 text-ad delete \"$id\" --force --json >/dev/null; done; true"
+      ],
+      "notes": "The negative twin of setup-text-ad-001. The API stores an ad with no campaign or page and answers 201; `p202 text-ad create` refuses it as Setup > Text Ads does, naming --aff-campaign-id and --landing-page-id, and the agent should turn that into a question."
+    }
+  ]
+}

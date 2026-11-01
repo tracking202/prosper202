@@ -139,7 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$license_ok = false;
 	$typed_license_key = install_typed_license_key($_POST);
 	if ($csrf_ok) {
-		$license_ok = install_license_key_is_valid(api_key_validate($typed_license_key));
+		$license_ok = install_license_key_is_valid(api_key_validate($typed_license_key, $typed_licence));
 		if (!$license_ok && ($error['general'] ?? '') === '') {
 			$error['general'] = '<div class="error">We couldn\'t confirm that license key with my.tracking202.com. <a href="' . get_absolute_url() . '202-config/get_apikey.php">Fetch your key again</a>, then submit once more.</div>';
 		}
@@ -213,6 +213,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// non-critical: the account already works, so failures become a friendly note
 		// (CLAUDE.md-style explicit handling) instead of blocking a successful install.
 		if ($user_id > 0) {
+			// The licence answer that let the install go ahead, for the grace
+			// period; recorded now that its table exists.
+			\Prosper202\License\ShellAccessCache::recordLicence(
+				new \Prosper202\License\MysqlLicenceAnswerStore($db),
+				$typed_license_key,
+				$typed_licence ?? null
+			);
+
 			// auto_cron registration calls an external service; treat any failure as optional.
 			try {
 				$cron = callAutoCron('register');
@@ -253,14 +261,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 			$html['rest_api_key'] = htmlentities($rest_api_key, ENT_QUOTES, 'UTF-8');
 			$html['user_id'] = $user_id;
-
-			// Daily email reports register with an external service; optional.
-			try {
-				registerDailyEmail('07', $user_timezone, $hash);
-			} catch (\Throwable $e) {
-				error_log('Prosper202 install: registerDailyEmail failed: ' . $e->getMessage());
-				$install_warnings[] = 'We couldn\'t register daily email reports just now. This is optional and can be set up later from your dashboard.';
-			}
 
 			// Partitioning depends on MySQL features and is purely a performance step.
 			try {

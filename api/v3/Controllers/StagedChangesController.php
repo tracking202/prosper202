@@ -6,6 +6,7 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Auth;
 use Api\V3\AuthException;
+use Api\V3\InsufficientScopeException;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
@@ -76,13 +77,16 @@ final class StagedChangesController
      *
      * The needles are chosen against the real column sets in
      * `202-config/Database/Tables/`, not by shape alone, because the write
-     * result of `PUT /users/{id}/preferences` is a whole `SELECT *` row and
-     * a needle that matches an ordinary column makes the applied write
-     * unreadable. Across all 605 columns defined there:
-     *   'cb_key'        -> cb_key (the ClickBank secret key) only
-     *   'site_key'      -> lpo_site_key only
-     *   'api_signature' -> zaxaa_api_signature only
-     *   'bridge_config' -> lpo_bridge_config only
+     * result of `PUT /users/{id}/preferences` is the whole row (served by
+     * ServedPreferences, which answers a secret only as `{"stored": …}`, so
+     * these needles are the second line) and a needle that matches an
+     * ordinary column makes the applied write unreadable. Across all 605
+     * columns defined there:
+     *   'cb_key'          -> cb_key (the ClickBank secret key) only
+     *   'site_key'        -> lpo_site_key only
+     *   'api_signature'   -> zaxaa_api_signature only
+     *   'bridge_config'   -> lpo_bridge_config only
+     *   'revcontent_user' -> revcontent_user_id and revcontent_user_secret only
      * The broader forms were measured and rejected: '_key' also matches
      * export_keyword*, user_pref_keyword and user_keyword_searched_or_bidded;
      * 'signature' also matches attribution_signature and signature_state;
@@ -94,13 +98,13 @@ final class StagedChangesController
      * `Prosper202\Lpo\CtxToken`). This matcher reads key names, so it can
      * only ever redact that column whole — parsing someone else's JSON to
      * redact a member is not something this class should be doing.
-     * PreferenceSecretCoverageTest fails when a new `202_users_pref` column
-     * is neither classified as non-secret nor matched here.
+     * PreferenceSecretCoverageTest fails when a `202_users_pref` column
+     * ServedPreferences does not serve is not matched here.
      */
     private const SECRET_KEY_SUBSTRINGS = [
         'api_key', 'apikey', 'password', 'passwd', 'secret',
         'token', 'private_key', 'webhook', 'credential',
-        'cb_key', 'site_key', 'api_signature', 'bridge_config',
+        'cb_key', 'site_key', 'api_signature', 'bridge_config', 'revcontent_user',
     ];
 
     /**
@@ -297,11 +301,11 @@ final class StagedChangesController
             return;
         }
         if (!$this->auth->hasFullScope() && !in_array('write', $this->auth->scopes(), true)) {
-            throw new AuthException(sprintf(
+            throw new InsufficientScopeException('write', $this->auth->scopes(), sprintf(
                 "Insufficient API key scope for this operation: the change's area cannot be told, so it requires "
                 . "'write' for every area (key has: %s).",
                 implode(',', $this->auth->scopes())
-            ), 403);
+            ));
         }
     }
 

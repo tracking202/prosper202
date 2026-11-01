@@ -448,7 +448,7 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 if (!AUTH::csrf_token_usable($_SESSION['token'] ?? null)) {
     withWritableSession(static function (): void {
         if (!AUTH::csrf_token_usable($_SESSION['token'] ?? null)) {
-            $_SESSION['token'] = bin2hex(random_bytes(16));
+            $_SESSION['token'] = AUTH::mintCsrfToken();
         }
     });
 }
@@ -499,10 +499,20 @@ switch ($navigation[1]) {
 
 // Skip user initialization during installation
 if (!str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php')) {
+    // A browser holding only its remember-me cookie is signed in by it here,
+    // before the user is read: read first, the User was nobody's, and the
+    // first page after the cookie ran with no roles. Nothing is read for a
+    // session that is signed in already, or a request with no cookie.
+    AUTH::remember_me_on_logged_out();
     $userObj = new User($_SESSION['user_own_id'] ?? null);
 } else {
     $userObj = null;
 }
+
+// A session whose user has been switched off, removed or deleted since it
+// signed in ends here, on the row just read, before any page reads it
+// (SessionSignInPathsTest holds it here).
+AUTH::endSessionIfItsUserCannotAct($userObj);
 
 if (!isset($_SESSION['ipv6']) || !$_SESSION['ipv6']) {
     $sql = "select inet6_ntoa(0x00000000000000000000000000000001) as ipv6";

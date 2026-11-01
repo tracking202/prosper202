@@ -1561,7 +1561,7 @@ abstract class Controller
     protected function stateStore(): ServerStateStore
     {
         if ($this->stateStore === null) {
-            $this->stateStore = new ServerStateStore();
+            $this->stateStore = ServerStateStore::forInstall($this->db);
         }
         return $this->stateStore;
     }

@@ -20,15 +20,12 @@ use Tests\Support\SourceScan;
  */
 final class InlineScriptValuesAreEncodedTest extends TestCase
 {
-    private const OFFSET = 'an integer: `max(0, (int) …)` or `(int) floor(…)` where it is set';
+    private const OFFSET = 'an integer: p202_ltv_posted_offset() (0 when refused) or `(int) floor(…)` where it is set';
     private const SELF_URL = 'the install\'s directory under the document root (get_absolute_url()) and a fixed path';
     private const INSTALL_PATH = 'the install\'s directory under the document root, which the operator chose';
 
     /** @var array<string, array<string, string>> file => echoed expression => why it needs no encoding */
     private const LISTED = [
-        '202-account/api-integrations.php' => [
-            '$dniProcessingJson' => 'json_encode()d with the JSON_HEX_* flags where it is set',
-        ],
         '202-config/template.php' => [
             '$readsDatabase ? p202CronBeaconStatement() : \'/* no cron ping */\'' => 'p202CronBeaconStatement()'
                 . ' json_encode()s its URL with the JSON_HEX_* flags; the other branch is a fixed comment',

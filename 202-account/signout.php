@@ -6,8 +6,7 @@ if (isset($_SESSION['toolbar']) && $_SESSION['toolbar'] == 'true')
 	$redir_url = get_absolute_url().'202-Mobile/';
 else
 	$redir_url = get_absolute_url();
-session_destroy();
-$secure = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
-setcookie('remember_me', '', ['expires' => 1, 'path' => '/', 'domain' => AUTH::cookie_domain(), 'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax']);
-unset($_COOKIE['remember_me']);
+// The session, the cookie and the stored key the cookie names; a key that
+// could not be deleted throws, after the session has ended.
+AUTH::signOut();
 header('location: '.$redir_url);

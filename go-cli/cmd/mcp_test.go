@@ -70,9 +70,16 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Characters, about 20k tokens. Most of it is the report tools' filters;
+	// Characters, about 23k tokens. Most of it is the report tools' filters;
 	// a new tool or flag that crosses this should omit what few asks need.
-	const budget = 80000
+	// The traffic source and category updates and deletes are about 4,600,
+	// the text ad writes about 3,400 (Setup › Text Ads' own fields), the rotator
+	// writes about 5,000 (rotator_set_rules' rules are a schema of their own);
+	// with both the list was about 89,500; with every 1.9.79 addition (the scope
+	// refusals, the optimizer's and the reports' notes) it is about 93,600; the
+	// click filter's five tools (user_id and ids left out, no entry update) and
+	// settings_get add about 5,100.
+	const budget = 99000
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}
@@ -161,6 +168,26 @@ func TestMCPToolArgv(t *testing.T) {
 		{"campaign_delete", `{"id":"7","dry_run":true}`, []string{"campaign", "delete", "--dry-run=true", "--force", "--", "7"}, ""},
 		{"campaign_delete", `{"ids":"7,8"}`, []string{"campaign", "delete", "--ids=7,8", "--force"}, ""},
 		{"change_apply", `{"change_id":"chg_abc"}`, []string{"change", "apply", "--force", "--", "chg_abc"}, ""},
+		{"ppc_network_update", `{"id":"4","ppc_network_name":"Main"}`, []string{"ppc-network", "update", "--ppc-network-name=Main", "--", "4"}, ""},
+		{"ppc_network_update", `{"ppc_network_name":"Main"}`, nil, "ppc_network_update needs id"},
+		{"ppc_network_delete", `{"id":"4","dry_run":true}`, []string{"ppc-network", "delete", "--dry-run=true", "--force", "--", "4"}, ""},
+		{"ppc_account_update", `{"id":"9","ppc_account_default":"1","ppc_network_id":"4"}`, []string{"ppc-account", "update", "--ppc-account-default=1", "--ppc-network-id=4", "--", "9"}, ""},
+		{"ppc_account_update", `{"id":"9","ppc_network_id":"../4"}`, nil, "ppc_network_id must be a numeric id"},
+		{"ppc_account_update", `{"id":"9","ppc_network_id":"none"}`, nil, "ppc_network_id must be a numeric id"},
+		{"ppc_account_create", `{"ppc_account_name":"A","ppc_network_id":"none"}`, nil, "ppc_network_id must be a numeric id"},
+		{"report_summary", `{"ppc_network_id":"none"}`, []string{"report", "summary", "--ppc-network-id=none"}, ""},
+		{"ppc_account_delete", `{"ids":"9,10"}`, []string{"ppc-account", "delete", "--ids=9,10", "--force"}, ""},
+		{"aff_network_update", `{"id":"2","aff_network_name":"Offers"}`, []string{"aff-network", "update", "--aff-network-name=Offers", "--", "2"}, ""},
+		{"aff_network_delete", `{"id":"2","dry_run":true}`, []string{"aff-network", "delete", "--dry-run=true", "--force", "--", "2"}, ""},
+		{"text_ad_create", `{"text_ad_name":"N","text_ad_headline":"H","text_ad_description":"D","text_ad_display_url":"example.com","aff_campaign_id":3}`,
+			[]string{"text-ad", "create", "--aff-campaign-id=3", "--text-ad-description=D", "--text-ad-display-url=example.com", "--text-ad-headline=H", "--text-ad-name=N"}, ""},
+		{"text_ad_create", `{"text_ad_name":"N","text_ad_headline":"H","text_ad_description":"D","text_ad_display_url":"example.com","text_ad_type":"1","landing_page_id":"7"}`,
+			[]string{"text-ad", "create", "--landing-page-id=7", "--text-ad-description=D", "--text-ad-display-url=example.com", "--text-ad-headline=H", "--text-ad-name=N", "--text-ad-type=1"}, ""},
+		{"text_ad_create", `{"text_ad_name":"N","text_ad_headline":"H","text_ad_description":"D","text_ad_display_url":"x","landing_page_id":"../7"}`, nil, "landing_page_id must be a numeric id"},
+		{"text_ad_update", `{"id":"5","text_ad_type":"1","landing_page_id":"7"}`, []string{"text-ad", "update", "--landing-page-id=7", "--text-ad-type=1", "--", "5"}, ""},
+		{"text_ad_update", `{"text_ad_headline":"H"}`, nil, "text_ad_update needs id"},
+		{"text_ad_delete", `{"id":"5","dry_run":true}`, []string{"text-ad", "delete", "--dry-run=true", "--force", "--", "5"}, ""},
+		{"text_ad_delete", `{"ids":"5,6"}`, []string{"text-ad", "delete", "--ids=5,6", "--force"}, ""},
 		{"report_summary", `{"all_profiles":true}`, nil, "does not take all_profiles"},
 		{"click_list", `{"follow":true}`, nil, "does not take follow"},
 	}
@@ -243,10 +270,11 @@ func mcpExecute(t *testing.T, args ...string) (string, string, error) {
 // mcpReadToolRequired are the arguments a read tool needs before it sends a
 // request, beyond its ids.
 var mcpReadToolRequired = map[string]map[string]string{
-	"report_groups":    {"by": "campaign"},
-	"report_crosstab":  {"rows": "country", "cols": "ppc_account"},
-	"report_breakeven": {"aff_campaign_id": "1"},
-	"forecast":         {"metric": "clicks"},
+	"report_groups":     {"by": "campaign"},
+	"report_crosstab":   {"rows": "country", "cols": "ppc_account"},
+	"report_breakeven":  {"aff_campaign_id": "1"},
+	"forecast":          {"metric": "clicks"},
+	"click_filter_test": {"ip": "203.0.113.7"},
 }
 
 // Every read tool, run with placeholder arguments, asks the install for data
@@ -321,6 +349,54 @@ func TestMCPCallCarriesProfileAndStaged(t *testing.T) {
 	}
 	if strings.Contains(strings.TrimSpace(stdout), "\n") || !json.Valid([]byte(stdout)) {
 		t.Fatalf("stdout is not one line of JSON: %q", stdout)
+	}
+}
+
+// The report tools that can leave rows out answer with truncated; the ones
+// that commonly do say in their description what to do then, and the
+// one-page ones take the offset that reads on.
+func TestMCPReportToolsSayWhenRowsRemain(t *testing.T) {
+	cat, err := buildMCPCatalog(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]mcpTool{}
+	for _, tool := range cat.Tools {
+		tools[tool.Name] = tool
+	}
+	for _, name := range []string{"report_breakdown", "report_breakeven", "report_crosstab"} {
+		if !strings.Contains(tools[name].Description, "truncated: true") {
+			t.Errorf("%s's description does not say what truncated means: %q", name, tools[name].Description)
+		}
+	}
+	for _, name := range []string{"report_breakdown", "report_breakeven"} {
+		for _, arg := range []string{"limit", "offset"} {
+			if _, ok := tools[name].InputSchema.Properties[arg]; !ok {
+				t.Errorf("%s takes no %s", name, arg)
+			}
+		}
+	}
+
+	_, requests := depthServer(t, pagedBreakdown(80, true))
+	for tool, input := range map[string]string{
+		"report_breakdown": `{"breakdown":"keyword","offset":"20"}`,
+		"report_breakeven": `{"aff_campaign_id":"3","limit":"20","offset":"20"}`,
+		"report_losers":    `{"breakdown":"keyword","no_attribution_check":true}`,
+	} {
+		stdout, stderr, err := mcpExecute(t, "mcp", "call", tool, "--input", input)
+		if err != nil {
+			t.Fatalf("%s: %v\nstderr: %s", tool, err, stderr)
+		}
+		want := `"truncated":true`
+		if tool == "report_losers" {
+			want = `"truncated":false`
+		}
+		if !strings.Contains(stdout, want) {
+			t.Errorf("%s: the answer must carry %s, got %.200s", tool, want, stdout)
+		}
+	}
+	if n := len(requests()); n < 4 {
+		t.Errorf("the calls reached the install %d times", n)
 	}
 }
 

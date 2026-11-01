@@ -12,6 +12,7 @@ use Api\V3\Support\ReportFilter;
 use Api\V3\Support\ResponseSanitizer;
 use Api\V3\Support\StatementHelpers;
 use Prosper202\Report\LocalTime;
+use Prosper202\Rotator\RuleOrder;
 
 class ReportsController
 {
@@ -231,19 +232,6 @@ class ReportsController
         'total_leads',
     ];
 
-    /** METRIC_FIELDS over 202_dataengine `de`, as every report computes them. */
-    private const string METRICS_SELECT = 'SUM(de.clicks) as total_clicks,
-                SUM(de.click_out) as total_click_throughs,
-                SUM(de.leads) as total_leads,
-                SUM(de.income) as total_income,
-                SUM(de.cost) as total_cost,
-                SUM(de.income) - SUM(de.cost) as total_net,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.income) / SUM(de.clicks) ELSE 0 END as epc,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.cost) / SUM(de.clicks) ELSE 0 END as avg_cpc,
-                CASE WHEN SUM(de.click_out) > 0 THEN SUM(de.leads) / SUM(de.click_out) * 100 ELSE 0 END as conv_rate,
-                CASE WHEN SUM(de.cost) > 0 THEN (SUM(de.income) - SUM(de.cost)) / SUM(de.cost) * 100 ELSE 0 END as roi,
-                CASE WHEN SUM(de.leads) > 0 THEN SUM(de.cost) / SUM(de.leads) ELSE 0 END as cpa';
-
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
     }
@@ -316,7 +304,25 @@ class ReportsController
         $row = $result->fetch_assoc();
         $stmt->close();
 
-        return ['data' => self::typedMetrics($row ?? [])];
+        return ['data' => self::typedMetrics($row ?? []) + ['currency' => $this->accountCurrency()]];
+    }
+
+    /**
+     * The currency the summary's money is in: the account's, as the report
+     * pages print it (USD when unset). A client adding one server's amounts
+     * to another's needs it (`p202 report summary --profiles` adds money
+     * only across profiles that state one currency), and a currency that
+     * could not be read is not USD, so a failed read throws.
+     */
+    private function accountCurrency(): string
+    {
+        $stmt = $this->prepare('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $this->userId);
+        $this->execute($stmt, 'Failed to read the account currency');
+        $row = $this->resultOf($stmt, 'Failed to read the account currency')->fetch_assoc();
+        $stmt->close();
+
+        return UsersController::normalizeCurrency($row['user_account_currency'] ?? null);
     }
 
     public function breakdown(array $params): array
@@ -377,7 +383,8 @@ class ReportsController
             ORDER BY $sortBy $sortDir, $idSql ASC
             LIMIT ? OFFSET ?";
 
-        $binds[] = $limit;
+        // One row past the page says whether rows remain (`truncated`).
+        $binds[] = $limit + 1;
         $types .= 'i';
         $binds[] = $offset;
         $types .= 'i';
@@ -403,10 +410,18 @@ class ReportsController
         }
         $stmt->close();
 
+        $truncated = count($rows) > $limit;
+        if ($truncated) {
+            $rows = array_slice($rows, 0, $limit);
+        }
+
         return [
             'data' => $rows,
             'breakdown' => $breakdownType,
             'available_breakdowns' => array_keys(self::BREAKDOWNS),
+            'truncated' => $truncated,
+            'limit' => $limit,
+            'offset' => $offset,
         ];
     }
 
@@ -420,10 +435,15 @@ class ReportsController
      * (no keyword, a direct link's landing page): they are its `none` child
      * (id and name null), as the page's "[No keyword]" row, so a group's
      * totals are the sum of its children's. Children are sorted by name, or
-     * by `sort`; the `none` child comes last. Money is summed exactly at
-     * five decimals, as the columns hold it, each group's ratios are
-     * computed from its own sums, and every metric is served as a number,
-     * as a breakdown serves it.
+     * by `sort`; the `none` child comes last.
+     *
+     * Every group's metrics, and the totals, are metricsSelect() computed by
+     * the database in the one query, from the sums of the group's rows: an
+     * innermost group's own, an outer group's and the totals' summed over a
+     * window of the innermost groups. So a group answers what a breakdown
+     * and the summary answer for the same rows, to the digit and as the same
+     * JSON number; divided in PHP's floats, one lead in three click-throughs
+     * was a conv_rate of 33.33333333333333 here and 33.3333 there.
      *
      * @param array<string, mixed> $params
      * @return array<string, mixed>
@@ -449,9 +469,12 @@ class ReportsController
         $sortDir = self::sortDirection($params, $sortBy === 'name' ? 'ASC' : 'DESC');
 
         [$where, $binds, $types] = $this->filtered($params);
+        $last = count($levels) - 1;
         $select = [];
         $joins = [];
         $group = [];
+        $metrics = [self::metricsSelect(static fn (string $column): string => "leaf.$column")];
+        $windows = [];
         foreach ($levels as $n => $level) {
             $bd = self::BREAKDOWNS[$level];
             $alias = static fn (string $sql): string => (string) preg_replace(
@@ -469,16 +492,34 @@ class ReportsController
                 $group[] = $alias($expr);
             }
             $group[] = $alias($bd['group'] ?? "ref.{$bd['id']}, ref.{$bd['name']}");
+            if ($n < $last) {
+                // An outer group is keyed by its id under its parent's, as
+                // the tree below keys it; NULL ids partition together, as
+                // `none`.
+                $windows[] = "w$n AS (PARTITION BY "
+                    . implode(', ', array_map(static fn (int $k): string => "leaf.l{$k}_id", range(0, $n))) . ')';
+                $over = static fn (string $column): string => "SUM(leaf.$column) OVER w$n";
+                $metrics[] = self::metricsSelect($over, "g{$n}_");
+            }
         }
+        $metrics[] = self::metricsSelect(static fn (string $column): string => "SUM(leaf.$column) OVER ()", 't_');
 
-        $sql = 'SELECT ' . implode(', ', $select) . ',
-                SUM(de.clicks) AS clicks, SUM(de.click_out) AS click_out, SUM(de.leads) AS leads,
-                SUM(de.income) AS income, SUM(de.cost) AS cost
-            FROM 202_dataengine de
-            ' . implode("\n            ", $joins) . '
-            WHERE ' . implode(' AND ', $where) . '
-            GROUP BY ' . implode(', ', $group) . '
-            LIMIT ?';
+        // The innermost groups' five sums, then every level's metrics from
+        // them. Each SUM() in metricsSelect() over the rows themselves is an
+        // aggregate of its own, and written so the query took twice as long
+        // over 500,000 rows. The cut at one past the most that is served
+        // also bounds what the windows read.
+        $sql = 'SELECT leaf.*,
+                ' . implode(",\n                ", $metrics) . '
+            FROM (SELECT ' . implode(', ', $select) . ',
+                    SUM(de.clicks) AS clicks, SUM(de.click_out) AS click_out, SUM(de.leads) AS leads,
+                    SUM(de.income) AS income, SUM(de.cost) AS cost
+                FROM 202_dataengine de
+                ' . implode("\n                ", $joins) . '
+                WHERE ' . implode(' AND ', $where) . '
+                GROUP BY ' . implode(', ', $group) . '
+                LIMIT ?) leaf'
+            . ($windows === [] ? '' : "\n            WINDOW " . implode(', ', $windows));
         $binds[] = self::GROUPS_MAX_ROWS + 1;
         $types .= 'i';
 
@@ -498,18 +539,19 @@ class ReportsController
             ]);
         }
 
-        $total = self::emptyGroup();
+        // No rows is the summary's answer for no rows: every metric 0.
+        $total = $leaves === [] ? self::typedMetrics([]) : self::prefixedMetrics($leaves[0], 't_');
         $root = ['children' => []];
         foreach ($leaves as $leaf) {
-            $sums = [
-                'clicks' => (int) $leaf['clicks'], 'click_out' => (int) $leaf['click_out'], 'leads' => (int) $leaf['leads'],
-                'income' => self::units($leaf['income']), 'cost' => self::units($leaf['cost']),
-            ];
-            self::addSums($total, $sums);
             $node = &$root;
             foreach ($levels as $n => $level) {
                 $id = $leaf["l{$n}_id"];
                 $key = $id === null ? 'none' : 'id:' . $id;
+                if ($n === $last && isset($node['children'][$key])) {
+                    // Two rows for one group would each hold part of its
+                    // figures; keeping either is a silent drop of the other.
+                    throw new DatabaseException("Group report read one $level group twice");
+                }
                 if (!isset($node['children'][$key])) {
                     $name = $leaf["l{$n}_name"];
                     if ($name !== null && in_array($level, self::VISITOR_AUTHORED_BREAKDOWNS, true)) {
@@ -519,17 +561,18 @@ class ReportsController
                     foreach (array_keys(self::BREAKDOWNS[$level]['extra'] ?? []) as $x) {
                         $child[$x] = $leaf["l{$n}_x_$x"] === null ? null : (int) $leaf["l{$n}_x_$x"];
                     }
-                    $node['children'][$key] = $child + self::emptyGroup() + ($n < count($levels) - 1 ? ['children' => []] : []);
+                    $node['children'][$key] = $child
+                        + self::prefixedMetrics($leaf, $n === $last ? '' : "g{$n}_")
+                        + ($n < $last ? ['children' => []] : []);
                 }
                 $node = &$node['children'][$key];
-                self::addSums($node, $sums);
             }
             unset($node);
         }
 
         return [
             'data' => self::presentGroups($root['children'], $sortBy, $sortDir),
-            'totals' => self::groupMetrics($total),
+            'totals' => $total,
             'by' => $levels,
             'available_breakdowns' => array_keys(self::BREAKDOWNS),
         ];
@@ -557,76 +600,30 @@ class ReportsController
         return "INNER JOIN {$bd['table']} ref ON $on";
     }
 
-    /** @return array{clicks: int, click_out: int, leads: int, income: int, cost: int} */
-    private static function emptyGroup(): array
-    {
-        return ['clicks' => 0, 'click_out' => 0, 'leads' => 0, 'income' => 0, 'cost' => 0];
-    }
-
-    /** @param array<string, int> $sums */
-    private static function addSums(array &$group, array $sums): void
-    {
-        foreach ($sums as $k => $v) {
-            $group[$k] += $v;
-            if (!is_int($group[$k])) {
-                throw new DatabaseException('Group report sum overflowed');
-            }
-        }
-    }
-
     /**
-     * A DECIMAL(…,5) as a whole number of 1/100000ths, exactly. A SUM over
-     * rows that are all NULL is NULL: no money, 0. Anything else that is not
-     * a decimal is refused, not read as 0.
-     */
-    private static function units(mixed $decimal): int
-    {
-        if ($decimal === null) {
-            return 0;
-        }
-        $decimal = (string) $decimal;
-        if (preg_match('/^(-?)(\d+)(?:\.(\d{1,5}))?$/D', $decimal, $m) !== 1) {
-            throw new DatabaseException('Group report read an amount it could not parse');
-        }
-        $units = (int) $m[2] * 100000 + (int) str_pad($m[3] ?? '', 5, '0');
-
-        return $m[1] === '-' ? -$units : $units;
-    }
-
-    /**
-     * A group's metrics from its sums, as breakdown() computes them in SQL
-     * and serves them (typedMetrics()): counts as integers, amounts and
-     * ratios as numbers. The sums are exact (whole 1/100000ths); an amount
-     * becomes a number only here, once.
+     * One group's metrics from a groups() row: the columns metricsSelect()
+     * named with $prefix, served as typedMetrics() serves a breakdown's. A
+     * column the query did not select is an error, never a 0.
      *
-     * @param array<string, int> $g
+     * @param array<string, mixed> $row
      * @return array<string, int|float>
      */
-    private static function groupMetrics(array $g): array
+    private static function prefixedMetrics(array $row, string $prefix): array
     {
-        $ratio = static fn (float $num, float $den, float $scale = 1.0): float => $den > 0 ? $num / $den * $scale : 0.0;
-        // A float divisor: an int one answers an int when it divides evenly.
-        $income = $g['income'] / 100000.0;
-        $cost = $g['cost'] / 100000.0;
+        $metrics = [];
+        foreach (self::METRIC_FIELDS as $field) {
+            if (!array_key_exists($prefix . $field, $row)) {
+                throw new DatabaseException("Group report row has no {$prefix}{$field}");
+            }
+            $metrics[$field] = $row[$prefix . $field];
+        }
 
-        return [
-            'total_clicks' => $g['clicks'],
-            'total_click_throughs' => $g['click_out'],
-            'total_leads' => $g['leads'],
-            'total_income' => $income,
-            'total_cost' => $cost,
-            'total_net' => ($g['income'] - $g['cost']) / 100000.0,
-            'epc' => $ratio($income, $g['clicks']),
-            'avg_cpc' => $ratio($cost, $g['clicks']),
-            'conv_rate' => $ratio($g['leads'], $g['click_out'], 100.0),
-            'roi' => $ratio($income - $cost, $cost, 100.0),
-            'cpa' => $ratio($cost, $g['leads']),
-        ];
+        return self::typedMetrics($metrics);
     }
 
     /**
-     * The tree as served: each group's metrics in place of its sums, its
-     * children sorted, the `none` child last.
+     * The tree as served: each group's children sorted, the `none` child
+     * last.
      *
      * @param array<string, array<string, mixed>> $children
      * @return list<array<string, mixed>>
@@ -635,11 +632,9 @@ class ReportsController
     {
         $out = [];
         $none = null;
-        foreach ($children as $key => $child) {
-            $sums = array_intersect_key($child, self::emptyGroup());
-            $node = array_diff_key($child, self::emptyGroup() + ['children' => true]) + self::groupMetrics($sums);
-            if (isset($child['children'])) {
-                $node['children'] = self::presentGroups($child['children'], $sortBy, $sortDir);
+        foreach ($children as $key => $node) {
+            if (isset($node['children'])) {
+                $node['children'] = self::presentGroups($node['children'], $sortBy, $sortDir);
             }
             if ($key === 'none') {
                 $none = $node;
@@ -904,7 +899,8 @@ class ReportsController
         }
 
         $stmt = $this->prepare(
-            'SELECT id, rule_name, status FROM 202_rotator_rules WHERE rotator_id = ? ORDER BY id ASC'
+            'SELECT ru.id, ru.rule_name, ru.status FROM 202_rotator_rules AS ru WHERE ru.rotator_id = ? '
+                . RuleOrder::orderBy('ru')
         );
         $this->bind($stmt, 'i', $rotatorId);
         $this->execute($stmt, 'Rotator rules lookup failed');
@@ -919,7 +915,7 @@ class ReportsController
         // 202_dataengine.rule_id is nullable; a NULL and a 0 group would be
         // two rows keyed 0 below, the second overwriting the first.
         $stmt = $this->prepare(
-            'SELECT COALESCE(de.rule_id, 0) AS rule_id, ' . self::METRICS_SELECT
+            'SELECT COALESCE(de.rule_id, 0) AS rule_id, ' . self::metricsSelect()
             . " FROM 202_dataengine de $whereClause GROUP BY COALESCE(de.rule_id, 0)"
         );
         $this->bind($stmt, $types, ...$binds);
@@ -929,7 +925,7 @@ class ReportsController
             $byRule[(int) ($row['rule_id'] ?? 0)] = self::typedMetrics($row);
         }
 
-        $stmt = $this->prepare('SELECT ' . self::METRICS_SELECT . " FROM 202_dataengine de $whereClause");
+        $stmt = $this->prepare('SELECT ' . self::metricsSelect() . " FROM 202_dataengine de $whereClause");
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Rotator stats query failed');
         $totals = self::typedMetrics($this->fetchAll($stmt, 'Rotator stats query failed')[0] ?? []);
@@ -980,6 +976,34 @@ class ReportsController
         $stmt->close();
 
         return $rows;
+    }
+
+    /**
+     * METRIC_FIELDS as every report computes them, from the sums of five
+     * 202_dataengine columns: SUM(de.<column>) by default, which is the text
+     * the reports that spell it out hold (ReportMetricsAreOneFormulaTest), or
+     * whatever $sum names as that sum, each alias then taking $prefix. Any
+     * $sum is still the columns' DECIMAL sum, so the division and its
+     * rounding are the database's.
+     *
+     * @param ?callable(string): string $sum
+     */
+    private static function metricsSelect(?callable $sum = null, string $prefix = ''): string
+    {
+        $sum ??= static fn (string $column): string => "SUM(de.$column)";
+        [$clicks, $out, $leads, $income, $cost] = array_map($sum, ['clicks', 'click_out', 'leads', 'income', 'cost']);
+
+        return "$clicks as {$prefix}total_clicks,
+                $out as {$prefix}total_click_throughs,
+                $leads as {$prefix}total_leads,
+                $income as {$prefix}total_income,
+                $cost as {$prefix}total_cost,
+                $income - $cost as {$prefix}total_net,
+                CASE WHEN $clicks > 0 THEN $income / $clicks ELSE 0 END as {$prefix}epc,
+                CASE WHEN $clicks > 0 THEN $cost / $clicks ELSE 0 END as {$prefix}avg_cpc,
+                CASE WHEN $out > 0 THEN $leads / $out * 100 ELSE 0 END as {$prefix}conv_rate,
+                CASE WHEN $cost > 0 THEN ($income - $cost) / $cost * 100 ELSE 0 END as {$prefix}roi,
+                CASE WHEN $leads > 0 THEN $cost / $leads ELSE 0 END as {$prefix}cpa";
     }
 
     /**

@@ -60,6 +60,12 @@ contract vectors and the eval cases the bundled SDKs and CLI point at) ship.
   - all six Go binaries are present;
   - no file is group- or world-writable (suPHP hosts answer 500 for those).
 
+The container image installs the same locked set: the Dockerfile copies
+`composer.lock` with `composer.json` and runs `composer validate` before
+`composer install --no-dev`, and the Docker Image workflow runs verify's vendor
+check on its own (`release-tree.php vendor`) in the built image, against the
+checkout's lock.
+
 Adding a file at the repository root? Put it under `ship` if a server needs it
 at runtime, under `exclude` if only contributors do. Adding a Composer package?
 Run `composer require` (or `composer update <pkg>`) and commit `composer.lock`;
@@ -118,7 +124,14 @@ This is the normal path. CI builds and publishes; you only tag.
    request to show it. Bring master into the version branch with the revert
    reverted, and run the check again.
 
-2. **Write the release notes, on the version branch.** They are
+2. **Fold the changelog fragments in, then write the release notes, on the
+   version branch.** Pull requests add their entries as fragments
+   (`changelogs.d/<version>/`, see `changelogs.d/README.md`). Run
+   `python3 scripts/changelog.py assemble <version>`: it appends them to the
+   version's block in `changelogs.txt` and its list in
+   `202-config/changelogs.json`, in the order they were merged, and deletes
+   them. Commit the result before the release notes, which quote that block.
+   The release notes are
    `.github/release-notes/<version>.md`, and the Release workflow publishes
    that file as the release's notes. It refuses to publish without it, or
    with notes that do not say an upgrade needs a database backup (the check
@@ -141,7 +154,7 @@ This is the normal path. CI builds and publishes; you only tag.
    fires on `v*` tags. It:
    - runs on `ubuntu-24.04`, using the image's own PHP 8.3 and Composer
      (checked, with the extensions the build needs, before anything else) and
-     Go 1.25 via `setup-go` (matching `composer.json` and `go-cli/go.mod`). No
+     Go 1.27.3 via `setup-go` (matching `composer.json` and `go-cli/go.mod`). No
      third-party action touches the release job's PHP, and every action is
      pinned to a commit SHA; Dependabot proposes the updates,
    - runs `build/scripts/package-release.sh` (no build logic is duplicated in
@@ -163,8 +176,12 @@ This is the normal path. CI builds and publishes; you only tag.
 > `GITHUB_TOKEN` (with `contents: write`) to create the release and upload the
 > asset.
 
-6. **Do a full docs pass, the same day.** The docs readers find first still
-   describe the previous version until someone changes them. Read the new
+6. **Do a full docs pass when the release goes live.** Going live is the
+   GitHub Release being published (for a security release, once the owner has
+   said it may be), not the tag or the version branch merging. Prepare the
+   changes on branches before, and merge them when it goes live, not earlier:
+   a merge to the site's `main` deploys at once. The docs readers find first
+   still describe the previous version until someone changes them. Read the new
    version's changelog, then check **every** guide on the site and **every**
    page on ReadMe against it, not only the pages below, and fix whatever the
    release made wrong or out of date. At a minimum, that covers:
@@ -192,6 +209,34 @@ This is the normal path. CI builds and publishes; you only tag.
      prompted to upgrade. Decide on each release whether they should be.
    - **For a security release,** the docs describe how the new version
      behaves. They never say what earlier versions allowed.
+
+7. **Publish a launch post on the blog when the release goes live**, at
+   `prosper.tracking202.com/blog/` (repo `prosper202-marketing`, `blog/`; see
+   the Blog section of `documentation/build.py`). Draft it on a branch, check
+   it in the branch's Cloudflare preview, and merge it with the docs.
+   - **No fixed formula.** Each post gets its own title and shape, written for
+     that release. Say which version it covers, and what a reader can now do.
+   - **Lead with the benefit, not the feature.** Open with the one thing the
+     reader can do now that they could not before, in their words. Pick the
+     new and interesting features; leave fixes and internals to the changelog.
+   - **Two readers.** Write for marketers and end users first: the outcome,
+     the time or money it saves, how it looks in the app. Then give
+     developers and self-hosters their own section: the CLI, API and MCP
+     details, requirements, and the upgrade (backup first, no downgrade),
+     with links to the docs.
+   - **Show it.** Real screenshots from an install of the release with demo
+     data (no real keys or customer data), one per feature that has a screen,
+     with alt text and a caption that says what to notice. Where it fits, an
+     interactive demo that lets a reader try the feature before installing or
+     upgrading is better still.
+   - **What good SaaS release posts do:** a specific, varied headline; short
+     sections that scan; one idea per section; plain words; a clear next step
+     (upgrade, try it, read the guide).
+   - **Dedicated posts.** A feature that needs a walkthrough to be understood
+     also gets a post of its own. The launch post keeps a short version and
+     links to it.
+   - **For a security release,** the post says to update and describes the
+     new behaviour only, as the docs do.
 
 ### Re-running a release
 
@@ -261,7 +306,7 @@ docker run --rm -v "$PWD":/src:ro -v "$PWD/dist":/out ubuntu:24.04 bash -c '
   the runtime code depending on it. The `known_unresolved` list in the
   manifest is for dead references only, each with the reason. It should
   shrink, never grow.
-- **Go build fails** — confirm `go version` is ≥ 1.25 and that
+- **Go build fails** — confirm `go version` is ≥ 1.27.3 and that
   `make -C go-cli all` succeeds on its own. Cross-compiles use
   `CGO_ENABLED=0`, so no C toolchain is needed.
 - **Zip name doesn't match the tag** — you tagged without bumping

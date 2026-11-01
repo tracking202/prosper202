@@ -6,11 +6,15 @@ namespace Api\V3\Support;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\RemoteApiException;
+use Api\V3\Exception\SyncException;
 use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
 
 class SyncEngine
 {
+    /** The criterion the redirects read as every visitor, as a rule with none is read. */
+    private const array EVERY_VISITOR = ['type' => 'country', 'statement' => 'is', 'value' => 'ALL'];
+
     private const array ENTITY_ENDPOINTS = [
         'aff-networks' => 'aff-networks',
         'ppc-networks' => 'ppc-networks',
@@ -249,8 +253,12 @@ class SyncEngine
                     'updated_since' => self::UPDATED_SINCE_REFUSAL,
                 ]);
             }
-            $sourceData = $this->fetchPortableData($sourceClient);
-            $targetData = $this->fetchPortableData($targetClient);
+            try {
+                $sourceData = $this->fetchPortableData($sourceClient);
+                $targetData = $this->fetchPortableData($targetClient);
+            } catch (SyncException $e) {
+                throw $e->beforeAnyWrite();
+            }
 
             $sourceLookups = $this->buildEntityLookups($sourceData);
             $targetLookups = $this->buildEntityLookups($targetData);
@@ -375,7 +383,7 @@ class SyncEngine
                             $op = $putLanded ? 'update (applied; its rules then failed)' : 'update';
                             $refused = !$putLanded;
                             if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, $op, $targetId, $refused)) {
-                                throw $this->stopped($result, $entity, $key, $op, $e);
+                                throw $this->stopped($results, $dryRun, $result, $entity, $key, $op, $e, $putLanded);
                             }
                             continue;
                         }
@@ -394,7 +402,7 @@ class SyncEngine
                     $payload = $this->buildSyncPayload($entity, $sourceRow, $sourceLookups, $targetLookups);
                 } catch (\Throwable $e) {
                     if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'create')) {
-                        throw $this->stopped($result, $entity, $key, 'create', $e);
+                        throw $this->stopped($results, $dryRun, $result, $entity, $key, 'create', $e);
                     }
                     continue;
                 }
@@ -408,7 +416,7 @@ class SyncEngine
                     $created = $targetClient->post(self::ENTITY_ENDPOINTS[$entity], $payload);
                 } catch (\Throwable $e) {
                     if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'create', '', true)) {
-                        throw $this->stopped($result, $entity, $key, 'create', $e);
+                        throw $this->stopped($results, $dryRun, $result, $entity, $key, 'create', $e);
                     }
                     continue;
                 }
@@ -433,7 +441,7 @@ class SyncEngine
                         } catch (\Throwable $e) {
                             $op = 'create (applied; its rules then failed)';
                             if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, $op, $createdId)) {
-                                throw $this->stopped($result, $entity, $key, $op, $e);
+                                throw $this->stopped($results, $dryRun, $result, $entity, $key, $op, $e);
                             }
                         }
                     }
@@ -494,7 +502,7 @@ class SyncEngine
                     } catch (\Throwable $e) {
                         $recorded = $this->recordSyncError($result, $entity, $targetKey, $e, $skipErrors, 'delete', $targetId, true);
                         if (!$recorded) {
-                            throw $this->stopped($result, $entity, $targetKey, 'delete', $e);
+                            throw $this->stopped($results, $dryRun, $result, $entity, $targetKey, 'delete', $e);
                         }
                     }
                 }
@@ -577,7 +585,7 @@ class SyncEngine
         array $targetLookups
     ): void {
         $rules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
-        $this->postRotatorRules($targetClient, $targetRotatorId, $rules, $sourceLookups, $targetLookups);
+        $this->writeRotatorRules($targetClient, $targetRotatorId, $rules, $sourceLookups, $targetLookups);
     }
 
     /** @return array<int, array<string, mixed>> */
@@ -588,86 +596,86 @@ class SyncEngine
         return is_array($rules) ? $rules : [];
     }
 
-    /** @param array<int, array<string, mixed>> $rules */
-    private function postRotatorRules(
+    /**
+     * The source's rules written on the target's redirector in place of its
+     * own, as one set (PUT /rotators/{id}/rules), which the target takes
+     * whole or refuses with nothing written. Removing the target's rules and
+     * posting the source's one at a time left the target with only the rules
+     * before one it refused. A source rule stored before 1.9.79 with no
+     * criterion is sent as country is ALL (rotatorRulePayload). A source
+     * with more rules than the target takes in a set is refused whole, with
+     * the count named, rather than written in part. An install without
+     * the set's route (before 1.9.79) answers it 404, and is written to one
+     * rule at a time; so is a source redirector with no rules, which a set
+     * cannot be.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     */
+    private function writeRotatorRules(
         RemoteApiClient $targetClient,
         string $targetRotatorId,
         array $rules,
         array $sourceLookups,
         array $targetLookups
     ): void {
+        $payloads = [];
         foreach ($rules as $rule) {
-            $rulePayload = [
-                'rule_name' => $rule['rule_name'] ?? '',
-                'splittest' => $rule['splittest'] ?? 0,
-                'status' => $rule['status'] ?? 1,
-            ];
-
-            if (!empty($rule['criteria']) && is_array($rule['criteria'])) {
-                $rulePayload['criteria'] = [];
-                foreach ($rule['criteria'] as $c) {
-                    $rulePayload['criteria'][] = [
-                        'type' => $c['type'] ?? '',
-                        'statement' => $c['statement'] ?? '',
-                        'value' => $c['value'] ?? '',
-                    ];
-                }
-            }
-
-            if (!empty($rule['redirects']) && is_array($rule['redirects'])) {
-                $rulePayload['redirects'] = [];
-                foreach ($rule['redirects'] as $r) {
-                    $redirect = [
-                        'redirect_url' => $r['redirect_url'] ?? '',
-                        'weight' => $r['weight'] ?? 100,
-                        'name' => $r['name'] ?? '',
-                        'redirect_campaign' => 0,
-                        'redirect_lp' => 0,
-                    ];
-
-                    $rawCampaign = $this->scalarString($r['redirect_campaign'] ?? null);
-                    if ($rawCampaign !== '' && $rawCampaign !== '0') {
-                        $natural = $sourceLookups['campaigns']['by_id'][$rawCampaign] ?? '';
-                        if ($natural !== '') {
-                            $targetId = $targetLookups['campaigns']['by_natural'][$natural] ?? '';
-                            if ($targetId !== '') {
-                                $redirect['redirect_campaign'] = (int)$targetId;
-                            }
-                        }
-                    }
-
-                    $rawLp = $this->scalarString($r['redirect_lp'] ?? null);
-                    if ($rawLp !== '' && $rawLp !== '0') {
-                        $natural = $sourceLookups['landing_pages']['by_id'][$rawLp] ?? '';
-                        if ($natural !== '') {
-                            $targetId = $targetLookups['landing_pages']['by_natural'][$natural] ?? '';
-                            if ($targetId !== '') {
-                                $redirect['redirect_lp'] = (int)$targetId;
-                            }
-                        }
-                    }
-
-                    $rulePayload['redirects'][] = $redirect;
-                }
-            }
-
-            $targetClient->post('rotators/' . $targetRotatorId . '/rules', $rulePayload);
+            $payloads[] = $this->rotatorRulePayload($rule, $sourceLookups, $targetLookups);
         }
+        if ($payloads !== []) {
+            try {
+                $targetClient->put('rotators/' . $targetRotatorId . '/rules', ['rules' => $payloads]);
+                return;
+            } catch (RemoteApiException $e) {
+                if ($e->remoteStatus !== 404) {
+                    throw self::namingSourceRules($e, $rules);
+                }
+            }
+        }
+        $this->replaceRotatorRulesOneByOne($targetClient, $targetRotatorId, $payloads);
     }
 
-    private function resyncRotatorRules(
-        RemoteApiClient $sourceClient,
-        RemoteApiClient $targetClient,
-        string $sourceRotatorId,
-        string $targetRotatorId,
-        array $sourceLookups,
-        array $targetLookups
-    ): void {
-        // Fetch the source rules BEFORE deleting anything on the target: if the
-        // source fetch fails we abort with the target rotator's rules intact,
-        // instead of stripping them and having nothing to recreate.
-        $sourceRules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
+    /**
+     * A refusal of the set with each field error naming the source rule it
+     * is about: `rules.1` is the source redirector's second rule, which the
+     * operator finds by its name.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     */
+    private static function namingSourceRules(RemoteApiException $e, array $rules): RemoteApiException
+    {
+        $errors = [];
+        foreach ($e->fieldErrors as $field => $error) {
+            $at = preg_match('/^rules\.(\d+)(?:\.|$)/', (string) $field, $m) === 1 ? $rules[(int) $m[1]] ?? null : null;
+            $errors[$field] = $at === null ? $error : 'the source rule "' . self::ruleName($at) . '": ' . $error;
+        }
+        if (isset($errors['rules']) && is_string($errors['rules'])) {
+            $errors['rules'] .= '; the source redirector has ' . count($rules) . ', and none was written';
+        }
 
+        return new RemoteApiException($e->remoteStatus, $e->remoteMessage, $errors, $e->method, $e->path);
+    }
+
+    /** @param array<string, mixed> $rule */
+    private static function ruleName(array $rule): string
+    {
+        $name = $rule['rule_name'] ?? '';
+
+        return is_scalar($name) ? (string) $name : '';
+    }
+
+    /**
+     * The target's rules removed and the source's posted one at a time, for
+     * an install without PUT /rotators/{id}/rules (before 1.9.79, which
+     * stores any rule it is sent) and for a source redirector with no rules.
+     *
+     * @param list<array<string, mixed>> $payloads
+     */
+    private function replaceRotatorRulesOneByOne(
+        RemoteApiClient $targetClient,
+        string $targetRotatorId,
+        array $payloads
+    ): void {
         $targetRotator = $targetClient->get('rotators/' . $targetRotatorId);
         $targetRules = $targetRotator['data']['rules'] ?? [];
         if (!is_array($targetRules)) {
@@ -683,14 +691,108 @@ class SyncEngine
             }
             $targetClient->delete('rotators/' . $targetRotatorId . '/rules/' . $ruleId);
         }
-
-        $this->postRotatorRules($targetClient, $targetRotatorId, $sourceRules, $sourceLookups, $targetLookups);
+        foreach ($payloads as $payload) {
+            $targetClient->post('rotators/' . $targetRotatorId . '/rules', $payload);
+        }
     }
 
+    /**
+     * One source rule as the target is sent it: its destinations' campaigns
+     * and landing pages by the target's ids.
+     *
+     * @param array<string, mixed> $rule
+     * @return array<string, mixed>
+     */
+    private function rotatorRulePayload(array $rule, array $sourceLookups, array $targetLookups): array
+    {
+        $rulePayload = [
+            'rule_name' => $rule['rule_name'] ?? '',
+            'splittest' => $rule['splittest'] ?? 0,
+            // Active only as the redirects read it (status '1'); a NULL status
+            // is inactive, and a create sent NULL would store it active
+            'status' => $this->scalarString($rule['status'] ?? null) === '1' ? 1 : 0,
+        ];
+
+        // A rule stored before 1.9.79 with no criterion is read by the redirects
+        // as every visitor; sent as country is ALL, which they read the same way.
+        $rulePayload['criteria'] = [self::EVERY_VISITOR];
+        if (!empty($rule['criteria']) && is_array($rule['criteria'])) {
+            $rulePayload['criteria'] = [];
+            foreach ($rule['criteria'] as $c) {
+                $rulePayload['criteria'][] = [
+                    'type' => $c['type'] ?? '',
+                    'statement' => $c['statement'] ?? '',
+                    'value' => $c['value'] ?? '',
+                ];
+            }
+        }
+
+        if (!empty($rule['redirects']) && is_array($rule['redirects'])) {
+            $rulePayload['redirects'] = [];
+            foreach ($rule['redirects'] as $r) {
+                $redirect = [
+                    'redirect_url' => $r['redirect_url'] ?? '',
+                    'weight' => $r['weight'] ?? 100,
+                    'name' => $r['name'] ?? '',
+                    'redirect_campaign' => 0,
+                    'redirect_lp' => 0,
+                ];
+
+                $rawCampaign = $this->scalarString($r['redirect_campaign'] ?? null);
+                if ($rawCampaign !== '' && $rawCampaign !== '0') {
+                    $natural = $sourceLookups['campaigns']['by_id'][$rawCampaign] ?? '';
+                    if ($natural !== '') {
+                        $targetId = $targetLookups['campaigns']['by_natural'][$natural] ?? '';
+                        if ($targetId !== '') {
+                            $redirect['redirect_campaign'] = (int)$targetId;
+                        }
+                    }
+                }
+
+                $rawLp = $this->scalarString($r['redirect_lp'] ?? null);
+                if ($rawLp !== '' && $rawLp !== '0') {
+                    $natural = $sourceLookups['landing_pages']['by_id'][$rawLp] ?? '';
+                    if ($natural !== '') {
+                        $targetId = $targetLookups['landing_pages']['by_natural'][$natural] ?? '';
+                        if ($targetId !== '') {
+                            $redirect['redirect_lp'] = (int)$targetId;
+                        }
+                    }
+                }
+
+                $rulePayload['redirects'][] = $redirect;
+            }
+        }
+
+        return $rulePayload;
+    }
+
+    private function resyncRotatorRules(
+        RemoteApiClient $sourceClient,
+        RemoteApiClient $targetClient,
+        string $sourceRotatorId,
+        string $targetRotatorId,
+        array $sourceLookups,
+        array $targetLookups
+    ): void {
+        // The source's rules are read before anything on the target is
+        // written: a failed read leaves the target's rules as they are.
+        $sourceRules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
+        $this->writeRotatorRules($targetClient, $targetRotatorId, $sourceRules, $sourceLookups, $targetLookups);
+    }
+
+    /** The two remotes of one sync, sharing its deadline (RemoteApiClient::MAX_SECONDS). */
     protected function buildClients(array $sourceProfile, array $targetProfile): array
     {
-        $source = new RemoteApiClient((string)($sourceProfile['url'] ?? ''), (string)($sourceProfile['api_key'] ?? ''));
-        $target = new RemoteApiClient((string)($targetProfile['url'] ?? ''), (string)($targetProfile['api_key'] ?? ''));
+        $deadline = microtime(true) + RemoteApiClient::MAX_SECONDS;
+        $client = static fn (array $profile, string $side): RemoteApiClient => new RemoteApiClient(
+            (string)($profile['url'] ?? ''),
+            (string)($profile['api_key'] ?? ''),
+            $deadline,
+            $side
+        );
+        $source = $client($sourceProfile, 'source');
+        $target = $client($targetProfile, 'target');
 
         return [$source, $target];
     }
@@ -729,6 +831,8 @@ class SyncEngine
                         $detailData = is_array($detail['data'] ?? null) ? $detail['data'] : [];
                         $rules = $detailData['rules'] ?? [];
                         $row['rules'] = is_array($rules) ? $rules : [];
+                    } catch (SyncException $e) {
+                        throw $e;
                     } catch (\Throwable $e) {
                         // Do not map a failed detail fetch to "no rules": the
                         // diff would see a rule-less rotator and a force_update
@@ -1107,7 +1211,8 @@ class SyncEngine
     private function normalizeRuleCriteria(mixed $rawCriteria): array
     {
         if (!is_array($rawCriteria) || count($rawCriteria) === 0) {
-            return [];
+            // No criterion is every visitor, as the sync sends it
+            return [self::EVERY_VISITOR];
         }
 
         $normalized = [];
@@ -1214,6 +1319,10 @@ class SyncEngine
      * after a re-read would force the source over whatever change the 409
      * protected (CLAUDE.md #13); re-running the sync is the caller's call.
      *
+     * A failure that stops the whole sync (SyncException: a URL refused, a
+     * cap reached) stops it with skip_errors too: the next record would meet
+     * it again.
+     *
      * @param array<string, mixed> $result
      * @return bool whether to go on (skip_errors)
      */
@@ -1246,6 +1355,9 @@ class SyncEngine
                     . 'the sync to compare against the target as it is now (plan first to see the difference).',
             ];
         }
+        if (SyncException::in($error)?->stopsSync === true) {
+            return false;
+        }
         return $skipErrors;
     }
 
@@ -1256,25 +1368,48 @@ class SyncEngine
     }
 
     /**
-     * What a run without skip_errors stops with: the record and operation
-     * named, the cause described, and the conflict record when the cause is
-     * one (the job runner does not retry a conflict).
+     * What a run stops with: the record and operation named, the cause
+     * described, the conflict record when the cause is one (the job runner
+     * does not retry a conflict), and what the run had written by then
+     * (CLAUDE.md #13): the entities finished, and this one so far.
      *
-     * @param array<string, mixed> $result after recordSyncError()
+     * @param array<string, array<string, mixed>> $results the entities finished
+     * @param array<string, mixed> $result this entity's, after recordSyncError()
+     * @param bool $updated whether this record's own update landed before what failed after it
      */
     private function stopped(
+        array $results,
+        bool $dryRun,
         array $result,
         string $entity,
         string $key,
         string $operation,
-        \Throwable $error
+        \Throwable $error,
+        bool $updated = false
     ): SyncRecordException {
         $conflicts = is_array($result['conflicts'] ?? null) ? $result['conflicts'] : [];
         $last = $conflicts !== [] ? $conflicts[array_key_last($conflicts)] : null;
         $conflict = is_array($last) && ($last['key'] ?? null) === $key && ($last['operation'] ?? null) === $operation
             && $error instanceof RemoteApiException && $error->isConflict() ? $last : null;
 
-        return new SyncRecordException($entity, $key, $operation, self::describeFailure($error), $conflict, $error);
+        $written = [];
+        if (!$dryRun) {
+            $result['updated'] = (int) ($result['updated'] ?? 0) + ($updated ? 1 : 0);
+            foreach ($results + [$entity => $result] as $name => $counts) {
+                $done = array_filter([
+                    'created' => (int) ($counts['created'] ?? 0),
+                    'updated' => (int) ($counts['updated'] ?? 0),
+                    'pruned' => (int) ($counts['pruned'] ?? 0),
+                ]);
+                if ($done !== []) {
+                    $written[$name] = $done;
+                }
+            }
+        }
+
+        $what = self::describeFailure($error);
+
+        return new SyncRecordException($entity, $key, $operation, $what, $conflict, $error, $written);
     }
 
     /** @param array<string, array<string, string>> $mappings */

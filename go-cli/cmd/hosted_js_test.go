@@ -5,6 +5,10 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"p202/internal/api"
@@ -127,4 +131,158 @@ func TestHostedSearchAnswersCompactJSON(t *testing.T) {
 		t.Fatalf("root's PersistentPreRunE: %v", err)
 	}
 	compact("after root's PersistentPreRunE")
+}
+
+// The engine itself is the hosted run: without a test setting it, each list
+// that reads every page with all lists no all and refuses it, as a
+// validation error that says how to page; change_list keeps its all.
+func TestHostedEngineOmitsEveryPage(t *testing.T) {
+	if !mcpHostedRun {
+		t.Fatal("the js/wasm build does not run as the hosted engine")
+	}
+	cat, err := buildMCPCatalog(rootCmd, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]mcpTool{}
+	for _, tool := range cat.Tools {
+		listed[tool.Name] = tool
+	}
+	if _, ok := listed["change_list"].InputSchema.Properties["all"]; !ok {
+		t.Error("the hosted engine lists change_list without all (every user's changes)")
+	}
+	for _, name := range mcpHostedOmitAll {
+		tool, ok := listed[name]
+		if !ok {
+			t.Errorf("the hosted engine does not list %s", name)
+			continue
+		}
+		if _, ok := tool.InputSchema.Properties["all"]; ok {
+			t.Errorf("the hosted engine lists %s with all", name)
+		}
+		if _, ok := tool.InputSchema.Properties["limit"]; !ok {
+			t.Errorf("the hosted engine lists %s without limit", name)
+		}
+		spec, _ := findMCPSpec(name)
+		argv, err := mcpToolArgv(rootCmd, spec, []byte(`{"all":true}`))
+		if err == nil {
+			t.Errorf("the hosted engine ran %s with all: true as %q", name, argv)
+			continue
+		}
+		if exitCodeForError(err) != 1 || !strings.Contains(err.Error(), name+" does not take all on the hosted server") || !strings.Contains(hintFor(err), "limit and offset") {
+			t.Errorf("the hosted engine's %s all: true: %v (hint %q)", name, err, hintFor(err))
+		}
+	}
+}
+
+// fetchFunc answers the engine's requests in place of the host's fetch.
+type fetchFunc func(*http.Request) (*http.Response, error)
+
+func (f fetchFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// The engine itself bounds what a call decodes, through the whole entry the
+// relay runs: an answer past hostedAnswerValues, and arguments past
+// hostedArgumentValues, are refused as validation errors that say how to ask
+// for less, and refused arguments reach no install.
+func TestHostedEngineBoundsWhatACallDecodes(t *testing.T) {
+	t.Setenv("P202_HOSTED_URL", "https://install.example")
+	t.Setenv("P202_HOSTED_API_KEY", "probe-key-0123456789abcdef")
+	t.Cleanup(resetHostedOutput)
+	over := tinyRows(hostedAnswerValues/2 + 100)
+	requests := 0
+	saved := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = saved })
+	http.DefaultTransport = fetchFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		body := over
+		switch r.URL.Path {
+		case "/api/versions":
+			body = []byte(`{"data":{"preferred":"v3","supported":["v3"]}}`)
+		case "/api/v3/capabilities":
+			body = []byte(`{"data":{"features":{}}}`)
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
+	})
+	envelope := func(stderr []byte) (category, message, hint string) {
+		t.Helper()
+		var e struct {
+			Error struct{ Category, Message, Hint string } `json:"error"`
+		}
+		if err := json.Unmarshal(stderr, &e); err != nil {
+			t.Fatalf("stderr is not the JSON envelope: %q (%v)", stderr, err)
+		}
+		return e.Error.Category, e.Error.Message, e.Error.Hint
+	}
+
+	var stderr bytes.Buffer
+	if code := run([]string{"mcp", "call", "campaign_list", "--input", "{}", "--read-only"}, &stderr); code != ExitValidation {
+		t.Fatalf("an answer past the bound: exit %d, %s", code, stderr.String())
+	}
+	category, message, hint := envelope(stderr.Bytes())
+	if category != "validation" || !strings.Contains(message, fmt.Sprintf("more than %d JSON values", hostedAnswerValues)) || !strings.Contains(hint, "campaign_list takes: ") {
+		t.Fatalf("an answer past the bound: %s", stderr.String())
+	}
+	if requests == 0 {
+		t.Fatal("the call reached no install")
+	}
+
+	requests = 0
+	stderr.Reset()
+	offers := `{"id":"1","offer":[` + strings.TrimSuffix(strings.Repeat(`"campaign:1",`, hostedArgumentValues), ",") + `]}`
+	if code := run([]string{"mcp", "call", "landing_page_code", "--input", offers, "--read-only"}, &stderr); code != ExitValidation {
+		t.Fatalf("arguments past the bound: exit %d, %s", code, stderr.String())
+	}
+	if _, message, _ := envelope(stderr.Bytes()); !strings.Contains(message, fmt.Sprintf("more than %d JSON values", hostedArgumentValues)) || requests != 0 {
+		t.Fatalf("arguments past the bound: %s after %d requests", stderr.String(), requests)
+	}
+}
+
+// The whole entry the relay runs, on a connection's key that an install
+// refuses for a scope it was not approved with: exit 2, and a hint that says
+// to approve the connection again, whatever the install says of the key
+// (an install older than 1.9.79 says nothing); never one that makes a key.
+func TestHostedScopeRefusalSaysConnectAgain(t *testing.T) {
+	t.Setenv("P202_HOSTED_URL", "https://install.example")
+	t.Setenv("P202_HOSTED_API_KEY", "probe-key-0123456789abcdef")
+	t.Cleanup(resetHostedOutput)
+	saved := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = saved })
+	for _, tc := range []struct{ refusal, want string }{
+		{`{"error":true,"message":"Insufficient API key scope for this operation: requires 'ppc-networks:write' (key has: ppc-networks:read). This key is an AI app's connection through Tracking202's MCP server.","status":403,"code":"insufficient_scope","required_scope":"ppc-networks:write","key_scope":"ppc-networks:read","key_source":"ai_connection","remedy":"(remedy)","connect_access":"write"}`,
+			`choose "Read and change"`},
+		{`{"error":true,"message":"Insufficient API key scope for this operation: requires 'ppc-networks:write' (key has: ppc-networks:read).","status":403}`,
+			"approve it with the access that includes 'ppc-networks:write'"},
+	} {
+		http.DefaultTransport = fetchFunc(func(r *http.Request) (*http.Response, error) {
+			status, body := 200, `{"data":{"ppc_network_id":1,"ppc_network_name":"Google Ads - Main"}}`
+			switch {
+			case r.URL.Path == "/api/versions":
+				body = `{"data":{"preferred":"v3","supported":["v3"]}}`
+			case r.URL.Path == "/api/v3/capabilities":
+				body = `{"data":{"features":{}}}`
+			case r.Method != http.MethodGet:
+				status, body = 403, tc.refusal
+			}
+			return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		})
+		// A write connection's call: a test before this one may have left
+		// the flag set.
+		mcpReadOnly = false
+		var stderr bytes.Buffer
+		if code := run([]string{"mcp", "call", "ppc_network_update", "--input", `{"id":"1","ppc_network_name":"Main"}`}, &stderr); code != ExitAuth {
+			t.Fatalf("exit %d, want %d: %s", code, ExitAuth, stderr.String())
+		}
+		var e struct {
+			Error struct{ Category, Message, Hint string } `json:"error"`
+		}
+		if err := json.Unmarshal(stderr.Bytes(), &e); err != nil {
+			t.Fatalf("stderr is not the JSON envelope: %q (%v)", stderr.String(), err)
+		}
+		if e.Error.Category != "auth" || !strings.Contains(e.Error.Message, "requires 'ppc-networks:write'") ||
+			!strings.Contains(e.Error.Hint, "Connect the AI app to Prosper202 again") || !strings.Contains(e.Error.Hint, tc.want) ||
+			strings.Contains(e.Error.Hint, "apikey create") {
+			t.Fatalf("envelope %+v", e.Error)
+		}
+		resetHostedOutput()
+	}
 }

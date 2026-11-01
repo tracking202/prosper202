@@ -68,7 +68,7 @@ final class SingleClickRollupIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $clicks = self::CLICK . ', ' . self::NEXT_CLICK;
-        foreach (['202_dataengine', '202_clicks', '202_clicks_record'] as $table) {
+        foreach (['202_dataengine', '202_clicks', '202_clicks_record', '202_click_latest_visits'] as $table) {
             self::q("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
         self::q('DELETE FROM 202_users WHERE user_id = ' . self::USER);
@@ -76,7 +76,9 @@ final class SingleClickRollupIntegrationTest extends TestCase
 
     public function testTheRollupOfOneClickWritesItsRowAndOnlyIts(): void
     {
-        self::q(ClickRollupSql::forClick('202_dataengine', self::CLICK));
+        foreach (ClickRollupSql::forClick('202_dataengine', self::CLICK) as $sql) {
+            self::q($sql);
+        }
 
         $result = self::$db->query(
             'SELECT click_id, user_id, clicks, cost FROM 202_dataengine WHERE click_id IN ('
@@ -105,16 +107,22 @@ final class SingleClickRollupIntegrationTest extends TestCase
             self::assertSame(0, $count, '202_clicks is not partitioned, as the installer leaves it here');
         }
 
-        $result = self::$db->query('EXPLAIN ' . ClickRollupSql::forClick('202_dataengine', self::CLICK));
-        self::assertInstanceOf(\mysqli_result::class, $result, self::$db->error);
-        $clicks = array_values(array_filter(
-            $result->fetch_all(MYSQLI_ASSOC),
-            static fn (array $row): bool => ($row['table'] ?? null) === '2c'
-        ));
+        // A recorded latest visit, so the removal's plan reaches 202_clicks:
+        // with none, it reads no row of it.
+        self::q('INSERT INTO 202_click_latest_visits (click_id, click_time) SELECT click_id, click_time'
+            . ' FROM 202_clicks WHERE click_id = ' . self::CLICK);
+        foreach (ClickRollupSql::forClick('202_dataengine', self::CLICK) as $step => $sql) {
+            $result = self::$db->query('EXPLAIN ' . $sql);
+            self::assertInstanceOf(\mysqli_result::class, $result, $step . ': ' . self::$db->error);
+            $clicks = array_values(array_filter(
+                $result->fetch_all(MYSQLI_ASSOC),
+                static fn (array $row): bool => ($row['table'] ?? null) === '2c'
+            ));
 
-        self::assertCount(1, $clicks, 'the plan has one row for 202_clicks');
-        $plan = 'the plan for 202_clicks: ' . json_encode($clicks[0]);
-        self::assertContains($clicks[0]['type'], ['ref', 'const'], $plan);
-        self::assertSame('click_id', $clicks[0]['key'], $plan);
+            self::assertCount(1, $clicks, $step . ': the plan has one row for 202_clicks');
+            $plan = $step . ': the plan for 202_clicks: ' . json_encode($clicks[0]);
+            self::assertContains($clicks[0]['type'], ['ref', 'const', 'eq_ref'], $plan);
+            self::assertSame('click_id', $clicks[0]['key'], $plan);
+        }
     }
 }

@@ -24,7 +24,10 @@ var systemHealthCmd = &cobra.Command{
 		"certificate the server sent (null when none arrived); tls_detail says why.\n\n" +
 		"Like `p202 rotator check`, it exits 5 (partial_failure) when tls_status is\n" +
 		"anything but ok or not_used, with the health object still printed on stdout.\n" +
-		"When only the API call fails, it exits as that error does (3 network, 4 server).",
+		"When only the API call fails, it exits as that error does (3 network, 4 server).\n\n" +
+		"geoip_database is the GeoIP file's state (current, stale, missing, unreadable),\n" +
+		"build date and age, and warnings says so when it is not current. A warning\n" +
+		"leaves status healthy and the exit code as it is; `p202 system info` says more.",
 	Example: "  p202 system health\n" +
 		"  p202 system health --cert-warn-days 30 --json",
 	RunE: runSystemHealth,

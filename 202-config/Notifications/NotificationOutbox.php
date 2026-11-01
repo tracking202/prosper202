@@ -29,8 +29,9 @@ use Prosper202\Database\Connection;
  * they are not queued (a web intake a browser loads renders them itself,
  * TrafficSourceNotifier; an app install has no page). The URL is resolved
  * at queue time by TrafficSourcePixels (the tracker's rules) with the
- * click's tokens — [[subid]], [[c1]]–[[c4]], [[t202kw]], [[gclid]], the
- * utm_* tokens, [[cpc]], [[referer]], [[timestamp]], [[random]] — and the
+ * click's tokens — [[subid]], [[c1]]–[[c4]], [[t202kw]], [[gclid]],
+ * [[gbraid]], [[wbraid]], [[ttclid]], [[msclkid]], [[fbclid]], the utm_*
+ * tokens, [[cpc]], [[referer]], [[timestamp]], [[random]] — and the
  * row's own: [[sourceid]], [[payout]] (this row's amount as a network reads
  * money, `4.00`, not the click's total), [[transactionid]] / [[t202txid]]
  * (the network's id, else the ledger key), [[p202_goal]], [[p202_goal_id]]
@@ -76,7 +77,9 @@ use Prosper202\Database\Connection;
  * makes no external calls (plan §7.3). Each row is claimed with a
  * compare-and-set on its attempt count before the send, so two workers
  * never send one row concurrently; a row whose attempts run out is `failed`
- * with its last error.
+ * with its last error. A row whose URL the sender refuses (PostbackSender:
+ * an address it does not call, here or at a redirect) is `failed` at once,
+ * with the reason: every later try would be refused the same way.
  */
 final class NotificationOutbox implements OutcomeNotificationSink
 {
@@ -86,7 +89,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
     public const KIND_RETRACTION = 'retraction';
     private const NO_CORRECTION_URL = 'no correction URL is configured for this traffic source; a sent postback cannot be recalled';
 
-    /** @var callable(string): bool */
+    /** @var callable(string): (bool|PostbackResult) */
     private $fetch;
 
     /** @var callable(int, int): ?string */
@@ -94,14 +97,14 @@ final class NotificationOutbox implements OutcomeNotificationSink
 
     /**
      * @param (callable(): int)|null $clock
-     * @param (callable(string): bool)|null $fetch
+     * @param (callable(string): (bool|PostbackResult))|null $fetch
      * @param (callable(int, int): ?string)|null $correctionUrl a destination's
      *        correction URL (pixel id, destination), or null where it has
      *        none; by default the configured ones (CorrectionUrls::resolver())
      */
     public function __construct(private Connection $conn, private $clock = null, ?callable $fetch = null, ?callable $correctionUrl = null)
     {
-        $this->fetch = $fetch ?? PostbackSender::fetch(...);
+        $this->fetch = $fetch ?? (new PostbackSender())->send(...);
         $this->correctionUrl = $correctionUrl ?? CorrectionUrls::resolver($conn);
     }
 
@@ -437,7 +440,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
     public function sendDue(int $limit, ?array $convIds = null): array
     {
         $now = $this->now();
-        $sql = "SELECT notification_id, url, attempts FROM 202_notification_pending
+        $sql = "SELECT notification_id, pixel_id, url, attempts FROM 202_notification_pending
                 WHERE status = 'pending' AND next_attempt_at <= ?";
         $types = 'i';
         $binds = [$now];
@@ -472,7 +475,8 @@ final class NotificationOutbox implements OutcomeNotificationSink
             // One row, one URL (queueReached()): a retry resends only the
             // destination that did not accept it.
             $url = (string) $row['url'];
-            if (($this->fetch)($url)) {
+            $result = PostbackResult::of(($this->fetch)($url));
+            if ($result->isDelivered()) {
                 $done = $this->conn->prepareWrite(
                     "UPDATE 202_notification_pending SET status = 'sent', sent_at = ?, last_error = NULL WHERE notification_id = ?"
                 );
@@ -481,8 +485,13 @@ final class NotificationOutbox implements OutcomeNotificationSink
                 $out['sent']++;
                 continue;
             }
-            $error = mb_strimwidth('the traffic source did not accept ' . $url, 0, 255, '…', 'UTF-8');
-            $status = $attempts >= self::MAX_ATTEMPTS ? 'failed' : 'pending';
+            $error = mb_strimwidth($result->reason, 0, 255, '…', 'UTF-8');
+            if ($result->isRefused()) {
+                // The host only: the path and query can carry the network's key.
+                error_log('traffic source postback refused for pixel ' . (int) $row['pixel_id']
+                    . ' (notification ' . $id . ', ' . PostbackSender::origin($url) . '): ' . $result->reason);
+            }
+            $status = $result->isRefused() || $attempts >= self::MAX_ATTEMPTS ? 'failed' : 'pending';
             $mark = $this->conn->prepareWrite('UPDATE 202_notification_pending SET status = ?, last_error = ? WHERE notification_id = ?');
             $this->conn->bind($mark, 'ssi', [$status, $error, $id]);
             $this->conn->executeUpdate($mark);

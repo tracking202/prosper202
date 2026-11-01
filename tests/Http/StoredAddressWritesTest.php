@@ -304,6 +304,16 @@ final class StoredAddressWritesTest extends TestCase
         }
         self::assertNotContains('ipqs_api_key', $columns['202_users_pref'], '`ip` must be a word of the name');
         self::assertNotContains('vip_perks_status', $columns['202_users'] ?? []);
+
+        // A setting named for the address it is about holds no address.
+        $definitions = '';
+        foreach (glob(SourceScan::repoRoot() . '/202-config/Database/Tables/*Tables.php') ?: [] as $file) {
+            $definitions .= (string) file_get_contents($file);
+        }
+        foreach (array_keys(AddressWriteScan::NOT_ADDRESSES) as $column) {
+            self::assertSame(1, preg_match('/^\s*`' . $column . '` tinyint\(1\) NOT NULL/m', $definitions), "$column is a 0/1 setting");
+            self::assertFalse(AddressWriteScan::isAddressColumn($column));
+        }
     }
 
     public function testEveryAddressWriteIsDecided(): void

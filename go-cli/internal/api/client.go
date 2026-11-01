@@ -226,6 +226,12 @@ func HintFor(err error) string {
 			return h
 		}
 	}
+	if AnswerTooManyValues(err) {
+		return "Ask for less in one call: a smaller limit (with offset for the next page), a shorter period, or a narrower filter. `p202 mcp` on your own computer has no such bound."
+	}
+	if refusal, ok := ScopeRefusalOf(err); ok {
+		return refusal.Hint()
+	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		switch {
@@ -246,6 +252,9 @@ func HintFor(err error) string {
 			return "The key is valid, but its user is switched off. An admin can switch the user back on: `p202 user update <user_id> --user-active 1`; or use the key of an active user."
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
+		case apiErr.Status == 402 && apiErr.Category == "licence" && strings.Contains(apiErr.Message, "could not be checked"):
+			// The install could not reach the licence service, and no recent answer covers it.
+			return "The install could not reach Tracking202 to check its licence. Make sure the server running Prosper202 can reach my.tracking202.com over HTTPS, then run the command again; for help, contact support@tracking202.com or the support chat."
 		case apiErr.Status == 402 && apiErr.Category == "licence":
 			return "This install's ClickServer API key has no active Prosper202 ClickServer Pro subscription. Start a Pro trial or subscription at https://my.tracking202.com/api/customers/subscriptions/support, then run the command again (the install re-checks a refusal within five minutes)."
 		case apiErr.Status == 402:
@@ -305,6 +314,10 @@ func HintFor(err error) string {
 			return "The server rejected the request values; fix what the message names and retry (`--help` lists the flags)."
 		case apiErr.Status == 429:
 			return "Rate limited. Wait and retry with backoff; reduce --concurrency for bulk operations."
+		// The files were deployed and the upgrade has not run (the message
+		// names both versions); `system health` answers healthy meanwhile.
+		case apiErr.Status == 503 && strings.Contains(apiErr.Message, "the database needs an upgrade"):
+			return "Nothing on this request is wrong: the install's files are newer than its database. An admin opens 202-config/upgrade.php on the site (signed in) to run the upgrade; then retry."
 		case apiErr.Status >= 500:
 			return "Server-side failure. Retry after a short wait; if it persists, run `p202 system health` and check the server logs."
 		}
@@ -433,6 +446,10 @@ func (c *Client) ensureCapabilities() {
 
 	c.negotiateVersionLocked()
 
+	if refused := sendRefusal("GET", "capabilities"); refused != nil {
+		c.capabilitiesErr = refused
+		return
+	}
 	req, err := http.NewRequest("GET", c.baseURL+"/capabilities", nil)
 	if err != nil {
 		c.capabilitiesErr = err
@@ -455,9 +472,13 @@ func (c *Client) ensureCapabilities() {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, tooMany, err := readAnswer(resp.Body, maxResponseSize)
 	if err != nil {
 		c.capabilitiesErr = fmt.Errorf("reading capabilities response: %w", err)
+		return
+	}
+	if tooMany != nil {
+		c.capabilitiesErr = tooMany
 		return
 	}
 	var decoded map[string]interface{}
@@ -480,6 +501,9 @@ var apiVersionPattern = regexp.MustCompile(`^[0-9]{1,4}$`)
 
 // negotiateVersionLocked must be called with c.mu held.
 func (c *Client) negotiateVersionLocked() {
+	if sendRefusal("GET", "versions") != nil {
+		return
+	}
 	req, err := http.NewRequest("GET", c.rootURL+"/api/versions", nil)
 	if err != nil {
 		return
@@ -496,8 +520,11 @@ func (c *Client) negotiateVersionLocked() {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-	if err != nil {
+	// An answer past the value bound keeps the compiled-in version, as an
+	// unreadable one does; the bound, once passed, refuses the call's next
+	// answer.
+	body, tooMany, err := readAnswer(resp.Body, maxResponseSize)
+	if err != nil || tooMany != nil {
 		return
 	}
 	var decoded map[string]interface{}
@@ -592,6 +619,15 @@ func (c *Client) Put(path string, body interface{}) ([]byte, error) {
 	return c.do("PUT", path, nil, body)
 }
 
+// PutDryRun asks a PUT whose route previews (`?dry_run=1` on PUT
+// /rotators/{id}/rules) what it would write, and writes nothing. Every
+// server with that route reads the parameter, and one without it answers
+// 404, so unlike DeletePreview no capability is asked first. A dry run is a
+// read, so --staged never stamps it.
+func (c *Client) PutDryRun(path string, body interface{}) ([]byte, error) {
+	return c.do("PUT", path, map[string]string{"dry_run": "1"}, body)
+}
+
 // Patch sends a partial update: the server changes only the fields the body
 // names (the /ltv customer, company and field updates). It goes through the
 // same request path as Put, so --staged stamps it the same way and a server
@@ -673,6 +709,11 @@ func (c *Client) Download(path string) ([]byte, error) {
 	return c.doLimited("GET", path, nil, nil, nil, maxDownloadSize, true)
 }
 
+// DownloadWith is Download with query parameters.
+func (c *Client) DownloadWith(path string, params map[string]string) ([]byte, error) {
+	return c.doLimited("GET", path, params, nil, nil, maxDownloadSize, true)
+}
+
 func (c *Client) doWithHeaders(method, path string, params map[string]string, body interface{}, headers map[string]string) ([]byte, error) {
 	return c.doLimited(method, path, params, body, headers, maxResponseSize, false)
 }
@@ -690,6 +731,9 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 	if readOnlyMode && method != http.MethodGet && method != http.MethodHead && !readsAsPost {
 		return nil, &RequestError{Kind: "validation", Op: "read_only", Err: fmt.Errorf(
 			"%s %s would change data, and this connection is read-only; nothing was sent", method, path)}
+	}
+	if refused := sendRefusal(method, path); refused != nil {
+		return nil, refused
 	}
 	// Read once under the lock: version negotiation can rewrite baseURL from
 	// another goroutine, and the URL and the version header below must agree.
@@ -771,13 +815,27 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 	if strict {
 		readLimit = limit + 1
 	}
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, readLimit))
+	respBody, tooMany, err := readAnswer(resp.Body, readLimit)
 	if err != nil {
 		return nil, &RequestError{Kind: "network", Op: "read_response", Err: err}
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, parseAPIError(resp.StatusCode, respBody)
+		// The status still says what failed; only the message is not read.
+		apiErr := parseAPIError(resp.StatusCode, respBody)
+		if tooMany != nil {
+			apiErr.Message = fmt.Sprintf("HTTP %d, with a message that was not read: %v", resp.StatusCode, tooMany.Err)
+		}
+		return nil, apiErr
+	}
+	if tooMany != nil {
+		if method != http.MethodGet && method != http.MethodHead && !readsAsPost && params["dry_run"] == "" {
+			// It was sent and accepted: whatever it changed stands (CLAUDE.md #13).
+			noteWriteRefused()
+			return nil, &RequestError{Kind: tooMany.Kind, Op: tooMany.Op, Err: fmt.Errorf(
+				"%w; the install accepted the %s (HTTP %d) before its answer was refused, so it may have changed data", tooMany.Err, method, resp.StatusCode)}
+		}
+		return nil, tooMany
 	}
 	if strict && int64(len(respBody)) > limit {
 		// Not a network failure: the server answered in full and the file

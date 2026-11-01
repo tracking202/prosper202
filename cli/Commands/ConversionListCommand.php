@@ -27,6 +27,7 @@ class ConversionListCommand extends BaseCommand
             ->addOption('time-to', null, InputOption::VALUE_REQUIRED, 'End timestamp')
             ->addOption('click-id', null, InputOption::VALUE_REQUIRED, 'Only this click\'s conversions (click:conversions explains its value)')
             ->addOption('source', null, InputOption::VALUE_REQUIRED, 'Only conversions from this source: ' . ServerLists::list(ServerLists::conversionSources()))
+            ->addOption('match-method', null, InputOption::VALUE_REQUIRED, 'Only conversions whose click was found this way: ' . ServerLists::list(ServerLists::conversionMatchMethods()))
             ->addOption('goal', null, InputOption::VALUE_REQUIRED, 'Only this goal\'s outcomes, every version (a goal id)');
     }
 
@@ -58,6 +59,13 @@ class ConversionListCommand extends BaseCommand
                 throw new \RuntimeException(sprintf('--source must be one of %s, got "%s"', ServerLists::list(ServerLists::conversionSources()), (string) $source));
             }
             $params['source'] = $source;
+        }
+        $method = $input->getOption('match-method');
+        if ($method !== null) {
+            if (!in_array($method, ServerLists::conversionMatchMethods(), true)) {
+                throw new \RuntimeException(sprintf('--match-method must be one of %s, got "%s"', ServerLists::list(ServerLists::conversionMatchMethods()), (string) $method));
+            }
+            $params['match_method'] = $method;
         }
 
         $result = $this->client()->get('conversions', $params);

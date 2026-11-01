@@ -52,7 +52,25 @@ function p202_typed_key_error(?array $licence): ?string
  */
 function p202_check_typed_key(string $key): ?string
 {
-    return p202_typed_key_error(\Prosper202\License\ClickServerKeyValidator::check(trim($key)));
+    $licence = \Prosper202\License\ClickServerKeyValidator::check(trim($key));
+    p202_record_key_answer($key, $licence);
+    return p202_typed_key_error($licence);
+}
+
+/**
+ * Record the licence service's answer for a key a form confirmed, so the
+ * grace period knows it (ShellAccessCache::recordLicence()); none records
+ * nothing.
+ *
+ * @param array{valid: bool, paid: ?bool}|null $licence
+ */
+function p202_record_key_answer(string $key, ?array $licence): void
+{
+    \Prosper202\License\ShellAccessCache::recordLicence(
+        \Prosper202\License\MysqlLicenceAnswerStore::ofThisInstall(),
+        trim($key),
+        $licence
+    );
 }
 
 /**
@@ -105,7 +123,9 @@ function p202_check_clickserver_key(string $key): ?string
 /** The account page's customer key form: p202_customer_key_error() for the key itself. */
 function p202_check_customer_key(string $key): ?string
 {
-    return p202_customer_key_error(\Prosper202\License\ClickServerKeyValidator::check($key));
+    $licence = \Prosper202\License\ClickServerKeyValidator::check($key);
+    p202_record_key_answer($key, $licence);
+    return p202_customer_key_error($licence);
 }
 
 /**
@@ -271,26 +291,6 @@ function p202_account_save_profile(\Prosper202\Database\Connection $conn, int $u
 }
 
 /**
- * Tell the hosted service when to send the daily email, after the profile
- * was saved (registerDailyEmail()).
- *
- * That needs this install's address, and a read of it that fails throws
- * rather than register the server's own name (p202StoredTrackingDomain()).
- * The settings are saved by then, so the failure is said, queued for the
- * page the save redirects to, and the caller goes on: it still has the
- * redirects' cached settings to refresh.
- */
-function p202_account_register_daily_email(string $time, string $timezone, string $installHash): void
-{
-    try {
-        registerDailyEmail($time, $timezone, $installHash);
-    } catch (Throwable $e) {
-        error_log('Daily email registration failed after the profile was saved: ' . $e->getMessage());
-        p202_account_flash('warn', 'The daily email schedule could not be updated just now; save again to retry.');
-    }
-}
-
-/**
  * Save the account currency and re-price this account's campaigns into it:
  * all of it or none.
  *
@@ -342,6 +342,12 @@ function p202_account_save_currency(\Prosper202\Database\Connection $conn, int $
  * by $onCreate inside the same transaction, so an account never commits
  * without them; it must not open a transaction of its own.
  *
+ * An edit that switches the user off, or sets their password, deletes their
+ * remember-me keys and ends their open sessions in the same transaction
+ * (RememberMeKeys, SessionGeneration): a browser kept signed in must not sign
+ * back in when they are switched on again, nor a stolen cookie or session
+ * outlive the password an admin reset.
+ *
  * @param array<string, string|int|null> $userSet  202_users column => value; the
  *   column names are the caller's own literals, never the request's
  * @param (callable(int): mixed)|null $onCreate  run with the new user's id, for a create only
@@ -364,8 +370,10 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
         $types .= is_int($value) || $value === null ? 'i' : 's';
     }
     $values = array_values($userSet);
+    $revokes = array_key_exists('user_pass', $userSet) || (array_key_exists('user_active', $userSet)
+        && !\Prosper202\User\UserStanding::isActive($userSet['user_active']));
 
-    return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId, $onCreate): int {
+    return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId, $onCreate, $revokes): int {
         if ($editUserId !== null) {
             $stmt = $conn->prepareWrite('SELECT `user_id` FROM `202_users` WHERE `user_id` = ? AND `user_deleted` != 1 FOR UPDATE');
             $conn->bind($stmt, 'i', [$editUserId]);
@@ -376,6 +384,10 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
             $conn->bind($stmt, $types . 'i', [...$values, $editUserId]);
             $conn->executeUpdate($stmt);
             $userId = $editUserId;
+            if ($revokes) {
+                \Prosper202\User\RememberMeKeys::revokeAll($conn, $userId);
+                \Prosper202\User\SessionGeneration::bump($conn, $userId);
+            }
             $stmt = $conn->prepareWrite('DELETE FROM `202_user_role` WHERE `user_id` = ?');
             $conn->bind($stmt, 'i', [$userId]);
             $conn->executeUpdate($stmt);

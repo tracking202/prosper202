@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Attribution;
 
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\Report\LocalTime;
 use Prosper202\Report\RollupDirty;
@@ -448,6 +449,10 @@ final class AttributionRollup
         $this->conn->bind($stmt, 'i', [$userId]);
         $modelIds = array_map(static fn (array $r): int => (int) $r['model_id'], $this->conn->fetchAll($stmt));
 
+        // A click is summed at its latest visit, as AttributionReports reads
+        // it: a re-click moves it out of the hour of its earlier rows, which
+        // the re-click's mark (RollupDirty::click()) sends back to exact.
+        $latest = LatestVisit::isLatest('c');
         $rows = [];
         foreach (self::DIMENSION_CODES as $dimension => $code) {
             [$key, $joins] = self::keySql($dimension, 'cr.conv_time');
@@ -459,7 +464,7 @@ final class AttributionRollup
                      FROM 202_attribution_credits cr
                      JOIN 202_clicks c ON c.click_id = cr.click_id
                      $joins
-                     WHERE cr.model_id IN ($in) AND cr.conv_time >= ? AND cr.conv_time <= ?
+                     WHERE cr.model_id IN ($in) AND cr.conv_time >= ? AND cr.conv_time <= ? AND {$latest}
                      GROUP BY m, b, k"
                 );
                 $this->conn->bind($stmt, 'ii', [$from, $to]);
@@ -475,7 +480,7 @@ final class AttributionRollup
                      FROM $source
                      JOIN 202_clicks c ON c.click_id = cr.click_id
                      $joins
-                     WHERE $where
+                     WHERE $where AND {$latest}
                      GROUP BY b, k"
                 );
                 foreach ($this->conn->fetchAll($stmt) as $r) {
@@ -489,7 +494,7 @@ final class AttributionRollup
                         COUNT(*) AS n, SUM(c.click_cpc) AS cost
                  FROM 202_clicks c
                  $joins
-                 WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ? AND c.click_bot = 0
+                 WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ? AND c.click_bot = 0 AND {$latest}
                  GROUP BY b, k"
             );
             $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
@@ -505,7 +510,7 @@ final class AttributionRollup
                  JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position + 1 < jm.touches
                  JOIN 202_clicks c ON c.click_id = j.click_id
                  $joins
-                 WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ?
+                 WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ? AND {$latest}
                  GROUP BY b, k"
             );
             $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);

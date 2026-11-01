@@ -177,8 +177,8 @@ final class SnakeCaseOptionsStillWorkTest extends TestCase
             '[["PUT","users/5",{"user_pass":"typed-secret"}]]',
         ];
         yield 'user:prefs:update' => [
-            ['user:prefs:update', '5', '--user_tracking_domain=t.test', '--user_account_currency=EUR', '--user_slack_incoming_webhook=https://s.test', '--user_daily_email=on', '--ipqs_api_key=K'],
-            '[["PUT","users/5/preferences",{"user_tracking_domain":"t.test","user_account_currency":"EUR","user_slack_incoming_webhook":"https://s.test","user_daily_email":"on","ipqs_api_key":"K"}]]',
+            ['user:prefs:update', '5', '--user_tracking_domain=t.test', '--user_account_currency=EUR', '--user_slack_incoming_webhook=https://s.test', '--user_daily_email=on', '--ipqs_api_key=K', '--user_pref_same_ip_fallback=0'],
+            '[["PUT","users/5/preferences",{"user_tracking_domain":"t.test","user_account_currency":"EUR","user_slack_incoming_webhook":"https://s.test","user_daily_email":"on","ipqs_api_key":"K","user_pref_same_ip_fallback":"0"}]]',
         ];
         yield 'user:role:assign' => [
             ['user:role:assign', '5', '--role_id=2'],

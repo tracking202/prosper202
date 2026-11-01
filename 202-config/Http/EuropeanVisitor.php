@@ -12,9 +12,10 @@ namespace Prosper202\Http;
  * Holding back is also the answer whenever nobody can place the address: no
  * GeoIP library, a database that cannot be opened, an address the database
  * does not hold (a private or documentation range, a block allocated after
- * the shipped database was built — it is GeoLite2 of 2018-07-03, which also
- * still has the United Kingdom in the EU). Each of those masks more, never
- * less.
+ * the database was built — the shipped one is GeoLite2 of 2018-07-03, until
+ * Prosper202\GeoIp\GeoIpRefresh replaces it). Each of those masks more, never
+ * less. That database also has the United Kingdom in the EU, which changes
+ * nothing here: the UK is on continent EU, which holds back either way.
  *
  * One implementation for both places that ask: the click path
  * (connect2.php's p202VisitorMayBeInEu()) and the app intakes
@@ -23,7 +24,7 @@ namespace Prosper202\Http;
 final class EuropeanVisitor
 {
     /** The GeoIP database the click path's getGeoData() reads. */
-    public const DATABASE = __DIR__ . '/../geo/GeoLite2-City.mmdb';
+    public const DATABASE = \Prosper202\GeoIp\CityDatabase::PATH;
 
     private function __construct()
     {

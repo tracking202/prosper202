@@ -5,6 +5,7 @@ namespace Tests\Auth;
 
 use PHPUnit\Framework\TestCase;
 use AUTH;
+use Prosper202\User\UserStanding;
 
 /**
  * Tests for the AUTH class in functions-auth.php
@@ -49,6 +50,7 @@ final class AuthClassTest extends TestCase
         $_SERVER = $this->originalServer;
         $_COOKIE = $this->originalCookie;
         $_POST = $this->originalPost;
+        unset($GLOBALS['userObj']);
 
         parent::tearDown();
     }
@@ -134,9 +136,11 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
+            'user_own_id' => 1,
             'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => time(),
         ];
+        $GLOBALS['userObj'] = self::userRead(1, UserStanding::Active);
 
         $result = AUTH::logged_in();
 
@@ -149,13 +153,42 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
+            'user_own_id' => 1,
             'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => $oldTime,
         ];
+        $GLOBALS['userObj'] = self::userRead(1, UserStanding::Active);
 
         AUTH::logged_in();
 
         $this->assertGreaterThan($oldTime, $_SESSION['session_time']);
+    }
+
+    /** begin_user_session() sets both ids to one user; a session where they differ names nobody. */
+    public function testLoggedInRefusesASessionWhoseTwoIdsDiffer(): void
+    {
+        $_SESSION = [
+            'user_name' => 'testuser',
+            'user_id' => 7,
+            'user_own_id' => 8,
+            'session_fingerprint' => AUTH::session_fingerprint(),
+            'session_time' => time(),
+        ];
+        $GLOBALS['userObj'] = self::userRead(7, UserStanding::Active);
+
+        $this->assertFalse(AUTH::logged_in());
+        $this->assertSame(['token'], array_keys($_SESSION));
+    }
+
+    /** The User connect.php would have built for $userId, read as $standing, without a database. */
+    private static function userRead(int $userId, UserStanding $standing): \User
+    {
+        require_once __DIR__ . '/../../202-config/User.class.php';
+        $user = (new \ReflectionClass(\User::class))->newInstanceWithoutConstructor();
+        (new \ReflectionProperty(\User::class, 'userId'))->setValue($user, $userId);
+        (new \ReflectionProperty(\User::class, 'standing'))->setValue($user, $standing);
+
+        return $user;
     }
 
     public function testGenerateRandomStringReturnsCorrectLength(): void
