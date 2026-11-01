@@ -2,7 +2,13 @@
 
 Self-hosted campaign tracking and marketing analytics platform. Track clicks, conversions, and revenue across any traffic source with full data ownership — your data stays on your servers.
 
-Since 2007, Prosper202 has helped marketers take control of their tracking with an open, self-hosted platform that works with any traffic source, any offer, and any network.
+Since 2007, Prosper202 has helped marketers take control of their tracking with an open, self-hosted platform that works with any traffic source and any destination: an online store, a SaaS trial or demo-request page, or a lead form.
+
+**Current version: 1.9.79.** Download it from the [Releases page](https://github.com/tracking202/prosper202/releases); what changed is in the [1.9.79 release notes](.github/release-notes/1.9.79.md) and [`changelogs.txt`](changelogs.txt).
+
+**Quick start:** shared hosting, upload the [release zip](#download--upload-no-terminal) and follow the setup wizard; on a server with a terminal, `git clone` and run [`./install.sh`](#quick-install) or [Docker](#docker); then connect the [CLI](#cli-tools) or an [AI app over MCP](#ai-apps-mcp).
+
+![Account overview: 30 days of clicks, sales and trial sign-ups for a demo store and SaaS app, with a daily chart and per-campaign income, cost, net and ROI](documentation/images/readme/account-overview.png)
 
 ## Key Features
 
@@ -10,22 +16,29 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - **Click & Conversion Tracking** — Real-time click capture with sub-ID parameters, referrer tracking, and automatic IP/UA logging. Server-to-server postback and pixel tracking with revenue, payout, and status fields. Every conversion is a ledger row that records what produced it, so any click's value can be explained row by row, and a campaign chooses whether repeat conversions keep the latest payout or add up.
 - **Goals & Web Events** — Define what counts as a conversion — an event with conditions, the Nth purchase, a running total, a step after another goal, within a time window — and what each is worth. Goals are versioned, shared by web campaigns and apps, and paid per campaign; events arrive as `event=` on your postbacks and pixels, through `POST /api/v3/events`, or from `p202.track()` on a landing page ([goals](documentation/api/22-goals.md), [events](documentation/api/23-events.md)).
 - **12+ Report Types** — Keywords, geo, device, browser, OS, referrer, ISP, landing page, and custom dimension reports. Track profit and loss, conversion metrics, EPC per keyword, per text ad, per referrer, and more.
+
+  ![Countries report: clicks, conversions, income, cost, net and ROI for the last 30 days by visitor country](documentation/images/readme/report-countries.png)
 - **Multi-Touch Attribution** — Each conversion's value spread over the visitor's own clicks across campaigns (joined by first-party identity signals, never IP), under last-touch, first-touch, linear, time-decay and position-based models, with reports by campaign, source, keyword, landing page, country, device or day ([guide](documentation/tutorials-and-guides/14-advanced-attribution-engine.md)).
 - **Mobile App Measurement (iOS and Android)** — On iOS, act as your app's SKAdNetwork and AdAttributionKit endpoint: receive Apple's signed install postbacks, verify their signatures, decode conversion values into goals and revenue, and report installs by ad network, source identifier, and country. The bundled P202Attribution Swift SDK evaluates your goals on the device against a mapping it fetches from your server at runtime, so changing it never requires an App Store resubmission ([guide](documentation/api/19-app-measurement.md)). On Android, the Prosper202 Android SDK reads the Google Play install referrer and turns each install, and the events after it, into a conversion on the click that sent the user to the store, reported by campaign and goal, with optional Play Integrity checks and click-injection and click-spamming signals ([installs](documentation/api/24-android-installs.md), [SDK](documentation/api/25-android-sdk.md)).
-- **Customer LTV** — Customer records with identity resolution, a unified revenue ledger, products, subscriptions and companies; realized and predictive lifetime value, MRR and churn; next-offer recommendations; and LTV fields as dynamic tokens on your landing pages.
+- **Customer LTV** — Customer records with identity resolution, a unified revenue ledger, products, subscriptions and companies; realized and predictive lifetime value, MRR and churn; next-offer recommendations; and LTV fields as dynamic tokens on your landing pages. Viewing and changing LTV data is governed by role permissions.
 - **Split Testing** — Run unlimited weighted split tests to discover your best marketing message and offer. Pause non-converting tests and automatically send all traffic to the winner.
 - **Smart Redirector & Traffic Rules** — Rule-based traffic distribution with weighted rotation, geo-targeting, and device filtering.
 - **BlazerCache Technology** — Fast redirects that continue working even if the database goes down, preventing lost revenue.
+- **Click Filtering You Control** — Personal Settings › Click filtering switches each filter check on or off, sets the repeat-click window (1 hour to 7 days), and keeps an always-count / always-filter list of addresses or CIDR blocks; test an address to see which rule would apply (also `p202 click-filter` and `/api/v3/users/{id}/click-filter`). Bot detection always applies.
+
+  <img src="documentation/images/readme/click-filtering.png" alt="Personal Settings, Click filtering: on/off switches for own clicks, search engine crawlers and repeat visits, the repeat-visit window, and an always-filter list of addresses" width="640">
 - **Fraud Prevention** — Sentinel Traffic Quality Enforcer (T.Q.E.) redirects potentially fraudulent traffic away from your landing pages.
 - **Landing Page Personalization** — Dynamically display ISP, device, postal code, geo location, keyword, UTM variables, browser, OS, and more on your landing pages.
+- **GeoIP Database Panel** — Account › Settings shows the build date and age of the GeoLite2 City database every location lookup reads, and keeps it current from your own free MaxMind GeoLite account ([setup guide](documentation/tutorials-and-guides/08-maxmind-integrations.md)).
 - **Device Detection** — Automatically detect device types and models for full insights into mobile-targeted campaigns.
 - **Multi-Currency & Timezone** — Automatically convert payouts into your local currency and display reports in your local timezone.
-- **Offline Conversions for Google Ads and Microsoft Advertising** — Clicks keep their GCLID, GBRAID, WBRAID and MSCLKID, and UTM values. Setup › Offline Conversions writes your conversions as Google Ads' offline conversion import file (Data Manager, or the classic Uploads template) or Microsoft Advertising's, with a conversion name per campaign, each conversion's time, value, currency and order id, and Google's consent columns. Only conversions whose click was named, not guessed from an IP address, are sent. Download a file, or give the platform a private URL it fetches on a schedule; the API (`GET /conversions/offline-export`) and `p202 conversion offline-export` write the same file ([guide](documentation/features/offline-conversions.md)).
+- **Offline Conversions for Google Ads and Microsoft Advertising** — Clicks keep their GCLID, GBRAID, WBRAID, MSCLKID, FBCLID and TTCLID, and UTM values. Setup › Offline Conversions writes your conversions as Google Ads' offline conversion import file (Data Manager, or the classic Uploads template) or Microsoft Advertising's, with a conversion name per campaign, each conversion's time, value, currency and order id, and Google's consent columns. Only conversions whose click was named, not guessed from an IP address, are sent. Download a file, or give the platform a private URL it fetches on a schedule; the API (`GET /conversions/offline-export`) and `p202 conversion offline-export` write the same file ([guide](documentation/features/offline-conversions.md)).
 - **WordPress Integration** — Two-way communication between WordPress and Prosper202, instantly setting up posts and pages as landing pages.
 - **Deep Linking** — Boost conversion rates by deep linking directly into apps, reducing friction for users.
+- **Connect AI Apps (MCP)** — `p202 mcp` serves Prosper202 to AI apps on your computer (Claude Desktop, Claude Code, Cursor and others), and claude.ai and other hosted AI apps connect through Tracking202's MCP server, approved on your own install with read-only, propose-changes or read-and-change access ([below](#ai-apps-mcp)).
 - **Team Access** — Full role-based authentication with no limit on users and no per-seat costs.
 - **API & CLI Tools** — Full REST API and CLI tools designed for both human developers and AI agents. Automate campaign management, pull reports, and integrate with your existing tools. CLI-first design works seamlessly with AI coding agents like Claude Code, Codex, and OpenClaw, and agents can be given least-privilege API keys and made to propose writes for a person to approve instead of performing them ([building agents](documentation/tutorials-and-guides/17-building-agents-on-prosper202.md)).
-- **Forecasting** — `p202 forecast` projects any metric forward with calibrated bands, coherent multi-metric output, seasonality, and anomaly handling ([guide](documentation/cli/11-forecasting.md))
+- **Forecasting** — `p202 forecast` projects any metric forward with calibrated bands, coherent multi-metric output, seasonality, and anomaly handling ([guide](documentation/cli/11-forecasting.md)).
 
 ## Requirements
 
@@ -340,7 +353,7 @@ conversions takes one to two minutes). The upgrade keeps running on the server:
 wait a few minutes and reload the page, which sends you to sign in once it has
 finished. What changed in each release is in [`changelogs.txt`](changelogs.txt);
 the step-by-step guide is
-[Upgrading Prosper202](documentation/tutorials-and-guides/05-upgrading-prosper202.md).
+[Upgrading Prosper202](https://prosper.tracking202.com/documentation/tutorials-and-guides/upgrading).
 
 ## API v3
 
@@ -384,8 +397,10 @@ bin/p202 rotator:create --name "My Rotator"
 ### Go CLI (`go-cli/`)
 
 A single static binary for humans and AI agents. Every command has a table
-view for people and `--json` / `--csv` / `--ndjson` for scripts. Full
-reference: [Go CLI (p202)](documentation/cli/10-go-cli.md).
+view for people and `--json` / `--csv` / `--ndjson` for scripts. Command
+reference: [p202 CLI reference](https://prosper.tracking202.com/documentation/cli/); guide: [Go CLI (p202)](documentation/cli/10-go-cli.md).
+
+<img src="documentation/images/readme/cli-report-summary.png" alt="Terminal running p202 report summary --period last30 --table: clicks, leads, cost, income, net, EPC and ROI for the last 30 days" width="640">
 
 **1. Set up once**
 
@@ -410,11 +425,11 @@ Housekeeping that used to take a script:
 
 ```bash
 ./p202 campaign list --with-stats --period last30   # every campaign with its clicks, leads, income, cost and net
-./p202 campaign check-urls                          # offer URLs whose host is dead, found without sending a click
-./p202 campaign replace-url --match old-network.example --with new-network.example --dry-run
-                                                    # bulk-rewrite offer URLs; a real run saves an undo manifest
-./p202 conversion import network-export.csv --dry-run
-                                                    # record a network's conversion export against its clicks, re-runnable
+./p202 campaign check-urls                          # destination URLs whose host is dead, found without sending a click
+./p202 campaign replace-url --match old-shop.example --with shop.example --dry-run
+                                                    # bulk-rewrite destination URLs; a real run saves an undo manifest
+./p202 conversion import orders-export.csv --dry-run
+                                                    # record an exported conversion file against its clicks, re-runnable
 ./p202 analytics --group-by country --split-at 2026-09-04
                                                     # what changed before vs. after a date, per country
 ./p202 system health                                # API reachability and the TLS certificate's expiry
@@ -433,7 +448,7 @@ recover from a failure without a person in the loop. So:
   `p202 config show` says which format is in use and why.
 - **Find a command by describing the task.** `p202 commands --brief` lists
   every command on one line with the web UI page it does, about 6,000 tokens:
-  the catalog an agent reads to choose. `p202 search find dead offer links`
+  the catalog an agent reads to choose. `p202 search find dead destination links`
   ranks commands, flags and flag values by your words, offline; the name of a
   web UI page (`p202 search spy`) or the words for it (`p202 search realtime
   traffic`) give the exact command line, and a weak first match is flagged as
@@ -503,6 +518,22 @@ series has been about 96 clicks. Beyond that, the engine keeps
 repeats, and fits the new level after a detected shift. Each of these is
 walked through with real output in the
 [Forecasting Guide](documentation/cli/11-forecasting.md).
+
+## AI apps (MCP)
+
+**On your computer**, `p202 mcp` serves the Go CLI's commands as MCP tools over stdin/stdout. Tools carry read/write hints, but approval prompts depend on the app's settings. Without `--read-only` or `--staged`, a write can run as soon as the app calls its tool; do not enable automatic approval for destructive tools:
+
+```bash
+claude mcp add prosper202 -- p202 mcp --read-only    # reads only (start here)
+claude mcp add prosper202 -- p202 --staged mcp       # writes become proposals for a person to apply
+claude mcp add prosper202 -- p202 mcp                # reads and writes
+```
+
+Claude Desktop and Cursor take the same command in their MCP settings.
+
+**Hosted AI apps** (claude.ai and others) add `https://mcp.tracking202.com/mcp` as a connector, then sign in and approve the connection on your own install (1.9.78 or later, served over HTTPS), choosing read only, propose changes, or read and change. The connection is an API key under My Account › Personal Settings › API keys; remove it there to disconnect. The hosted connector needs a [ClickServer Pro](https://prosper.tracking202.com/pro/) licence.
+
+Overview: [Prosper202 for AI assistants](https://prosper.tracking202.com/ai/); command reference: [p202 mcp](https://prosper.tracking202.com/documentation/cli/mcp); tools, limits and what the hosted connector records: [MCP Server](documentation/cli/10-go-cli.md#mcp-server-ai-assistants).
 
 ## Development Setup
 
@@ -574,6 +605,13 @@ process — versioning, tagging, CI, local builds, and troubleshooting — see
 - `docs/` - OpenAPI spec (`openapi.yaml`) and CLI references (`cli.md`, `cli-agent.md`)
 - `build/` - Docker, CI, and release tooling (see [`build/README.md`](build/README.md) for the contributor reference)
 - `tests/` - PHPUnit test suite, plus live, browser, and agent-eval passes
+
+## Documentation and support
+
+- Website: [prosper.tracking202.com](https://prosper.tracking202.com/)
+- User, API and CLI guides: [Documentation](https://prosper.tracking202.com/documentation/) ([introduction](https://prosper.tracking202.com/documentation/introduction)); source in [`documentation/`](documentation/)
+- API reference: [`docs/openapi.yaml`](docs/openapi.yaml); CLI references: [`docs/cli.md`](docs/cli.md), [`docs/cli-agent.md`](docs/cli-agent.md)
+- Help and paid support plans: [Help and Support](https://prosper.tracking202.com/documentation/tutorials-and-guides/help-and-support)
 
 ## License
 
