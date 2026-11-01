@@ -15,6 +15,14 @@ final class UrlScrubber
             // Unparseable or hostless: nothing of it is sent.
             return '';
         }
+        if (isset($parts['user']) || isset($parts['pass'])) {
+            // Credentials in the URL are never sent: rebuilt without them.
+            $url = ($parts['scheme'] ?? 'http') . '://' . $parts['host']
+                . (isset($parts['port']) ? ':' . $parts['port'] : '')
+                . ($parts['path'] ?? '')
+                . (isset($parts['query']) ? '?' . $parts['query'] : '')
+                . (isset($parts['fragment']) ? '#' . $parts['fragment'] : '');
+        }
         $q = $parts['query'] ?? '';
         if ($q === '') {
             return $url;

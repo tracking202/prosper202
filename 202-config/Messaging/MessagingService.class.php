@@ -654,6 +654,9 @@ class MessagingService
 
         // Consent read again, uncached, right before sending: rows selected
         // before a denial that landed since are not sent (the denial purged them).
+        // The consent block is read again too, so a denial or an unsubscribe
+        // since this instance first read it travels with this delivery.
+        $this->consentExport = null;
         if ($this->analyticsSyncAllowed()) {
             try {
                 $stillAllowed = ConsentPolicy::analyticsAllowed($this->db, $this->userId);

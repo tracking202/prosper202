@@ -44,4 +44,11 @@ final class UrlScrubberTest extends TestCase
         $this->assertStringNotContainsString('15551234567', urldecode($out));
         $this->assertStringContainsString('c=1', $out);
     }
+
+    public function test_sign_in_details_are_taken_out(): void
+    {
+        $out = UrlScrubber::scrub('https://user:secret@offer.example/x?c=1');
+        $this->assertStringNotContainsString('secret', $out);
+        $this->assertSame('https://offer.example/x?c=1', $out);
+    }
 }

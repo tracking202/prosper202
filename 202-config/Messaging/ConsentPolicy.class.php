@@ -110,6 +110,11 @@ final class ConsentPolicy
         if (!in_array($state, ['granted','denied'], true)) { return false; }
         try {
             $conn = new \Prosper202\Database\Connection($db);
+            // An account without a preferences row gets one, so its choice is
+            // stored rather than lost.
+            $ensure = $conn->prepareWrite('INSERT IGNORE INTO `202_users_pref` (`user_id`) VALUES (?)');
+            $conn->bind($ensure, 'i', [$userId]);
+            $conn->executeUpdate($ensure);
             if ($flag === 'analytics') {
                 $stmt = $conn->prepareWrite(
                     "UPDATE `202_users_pref`
@@ -126,11 +131,11 @@ final class ConsentPolicy
                 );
                 $conn->bind($stmt, 'ssi', [$state, date('Y-m-d H:i:s'), $userId]);
             }
-            // No row matched: nothing was stored, so it is not a success.
-            $ok = $conn->executeUpdate($stmt) > 0;
-            if (!$ok) {
-                error_log('[ConsentPolicy] record matched no 202_users_pref row for user ' . $userId);
-            }
+            // The row exists (above), so a write that changed nothing (the same
+            // choice again within the second) is still a success; a failed
+            // write throws.
+            $conn->executeUpdate($stmt);
+            $ok = true;
         } catch (\Throwable $e) {
             error_log('[ConsentPolicy] record failed: ' . $e->getMessage());
             return false;

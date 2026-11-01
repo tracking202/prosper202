@@ -327,6 +327,8 @@ final class ConsentSyncIntegrationTest extends TestCase
         $this->assertSame(['login'], array_column($fake->trackCalls[0]['events'], 'name'),
             'rows read before a denial must not be sent');
         $this->assertSame([], $fake->trackCalls[0]['attributes']);
+        $this->assertSame('denied', $fake->trackCalls[0]['consent']['analytics'] ?? null,
+            'the consent block sent must be the one read at send time');
     }
 
     public function test_an_unknown_location_holds_analytics(): void
