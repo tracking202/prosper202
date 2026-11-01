@@ -8,12 +8,16 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 
 **Quick start:** shared hosting, upload the [release zip](#download--upload-no-terminal) and follow the setup wizard; on a server with a terminal, `git clone` and run [`./install.sh`](#quick-install) or [Docker](#docker); then connect the [CLI](#cli-tools) or an [AI app over MCP](#ai-apps-mcp).
 
+![Account overview: 30 days of clicks, sales and trial sign-ups for a demo store and SaaS app, with a daily chart and per-campaign income, cost, net and ROI](documentation/images/readme/account-overview.png)
+
 ## Key Features
 
 - **Self-Hosted & Full Source Code** — Run Prosper202 100% on your own servers for ultimate control of your proprietary data and marketing methods. Customize the full source code to meet your needs.
 - **Click & Conversion Tracking** — Real-time click capture with sub-ID parameters, referrer tracking, and automatic IP/UA logging. Server-to-server postback and pixel tracking with revenue, payout, and status fields. Every conversion is a ledger row that records what produced it, so any click's value can be explained row by row, and a campaign chooses whether repeat conversions keep the latest payout or add up.
 - **Goals & Web Events** — Define what counts as a conversion — an event with conditions, the Nth purchase, a running total, a step after another goal, within a time window — and what each is worth. Goals are versioned, shared by web campaigns and apps, and paid per campaign; events arrive as `event=` on your postbacks and pixels, through `POST /api/v3/events`, or from `p202.track()` on a landing page ([goals](documentation/api/22-goals.md), [events](documentation/api/23-events.md)).
 - **12+ Report Types** — Keywords, geo, device, browser, OS, referrer, ISP, landing page, and custom dimension reports. Track profit and loss, conversion metrics, EPC per keyword, per text ad, per referrer, and more.
+
+  ![Countries report: clicks, conversions, income, cost, net and ROI for the last 30 days by visitor country](documentation/images/readme/report-countries.png)
 - **Multi-Touch Attribution** — Each conversion's value spread over the visitor's own clicks across campaigns (joined by first-party identity signals, never IP), under last-touch, first-touch, linear, time-decay and position-based models, with reports by campaign, source, keyword, landing page, country, device or day ([guide](documentation/tutorials-and-guides/14-advanced-attribution-engine.md)).
 - **Mobile App Measurement (iOS and Android)** — On iOS, act as your app's SKAdNetwork and AdAttributionKit endpoint: receive Apple's signed install postbacks, verify their signatures, decode conversion values into goals and revenue, and report installs by ad network, source identifier, and country. The bundled P202Attribution Swift SDK evaluates your goals on the device against a mapping it fetches from your server at runtime, so changing it never requires an App Store resubmission ([guide](documentation/api/19-app-measurement.md)). On Android, the Prosper202 Android SDK reads the Google Play install referrer and turns each install, and the events after it, into a conversion on the click that sent the user to the store, reported by campaign and goal, with optional Play Integrity checks and click-injection and click-spamming signals ([installs](documentation/api/24-android-installs.md), [SDK](documentation/api/25-android-sdk.md)).
 - **Customer LTV** — Customer records with identity resolution, a unified revenue ledger, products, subscriptions and companies; realized and predictive lifetime value, MRR and churn; next-offer recommendations; and LTV fields as dynamic tokens on your landing pages. Viewing and changing LTV data is governed by role permissions.
@@ -21,6 +25,8 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - **Smart Redirector & Traffic Rules** — Rule-based traffic distribution with weighted rotation, geo-targeting, and device filtering.
 - **BlazerCache Technology** — Fast redirects that continue working even if the database goes down, preventing lost revenue.
 - **Click Filtering You Control** — Personal Settings › Click filtering switches each filter check on or off, sets the repeat-click window (1 hour to 7 days), and keeps an always-count / always-filter list of addresses or CIDR blocks; test an address to see which rule would apply (also `p202 click-filter` and `/api/v3/users/{id}/click-filter`). Bot detection always applies.
+
+  <img src="documentation/images/readme/click-filtering.png" alt="Personal Settings, Click filtering: on/off switches for own clicks, search engine crawlers and repeat visits, the repeat-visit window, and an always-filter list of addresses" width="640">
 - **Fraud Prevention** — Sentinel Traffic Quality Enforcer (T.Q.E.) redirects potentially fraudulent traffic away from your landing pages.
 - **Landing Page Personalization** — Dynamically display ISP, device, postal code, geo location, keyword, UTM variables, browser, OS, and more on your landing pages.
 - **GeoIP Database Panel** — Account › Settings shows the build date and age of the GeoLite2 City database every location lookup reads, and keeps it current from your own free MaxMind GeoLite account ([MaxMind guide](https://prosper.tracking202.com/documentation/tutorials-and-guides/maxmind-integrations)).
@@ -393,6 +399,8 @@ bin/p202 rotator:create --name "My Rotator"
 A single static binary for humans and AI agents. Every command has a table
 view for people and `--json` / `--csv` / `--ndjson` for scripts. Command
 reference: [p202 CLI reference](https://prosper.tracking202.com/documentation/cli/); guide: [Go CLI (p202)](documentation/cli/10-go-cli.md).
+
+<img src="documentation/images/readme/cli-report-summary.png" alt="Terminal running p202 report summary --period last30 --table: clicks, leads, cost, income, net, EPC and ROI for the last 30 days" width="640">
 
 **1. Set up once**
 
