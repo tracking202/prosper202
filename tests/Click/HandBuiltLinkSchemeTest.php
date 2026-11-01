@@ -46,6 +46,8 @@ final class HandBuiltLinkSchemeTest extends TestCase
     /** @var array<string, array{int, string}> repo-relative file => count, why */
     private const SCHEME_CHOICES = [
         '202-config/Click/TrackingBaseUrl.php' => [2, 'the rule itself: build() and requestOrigin()'],
+        '202-config/Messaging/UrlScrubber.class.php' => [1, 'rebuilds an offer URL the user entered, minus its sign-in details, on'
+            . ' its own scheme; analytics data, never a link anyone follows'],
         '202-config/DataEngine/SelfCall.php' => [1, "the cron's call to the listener's own address, on its scheme"],
         'tracking202/static/landing.php' => [
             1,
