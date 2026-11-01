@@ -513,7 +513,7 @@ walked through with real output in the
 
 ## AI apps (MCP)
 
-**On your computer**, `p202 mcp` serves the Go CLI's commands as MCP tools over stdin/stdout. Each tool is marked read-only or destructive, so the app runs reads and asks before writes:
+**On your computer**, `p202 mcp` serves the Go CLI's commands as MCP tools over stdin/stdout. Tools carry read/write hints, but approval prompts depend on the app's settings. Without `--read-only` or `--staged`, a write can run as soon as the app calls its tool; do not enable automatic approval for destructive tools:
 
 ```bash
 claude mcp add prosper202 -- p202 mcp --read-only    # reads only (start here)
