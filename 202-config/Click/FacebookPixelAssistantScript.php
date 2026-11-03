@@ -74,14 +74,14 @@ final class FacebookPixelAssistantScript
 
     /**
      * The click path's memcache (getCache()/setCache()) as forClick()'s
-     * $cache, for an hour, under this install's namespace (systemHash()).
+     * $cache, for an hour, under the install and version's namespace.
      *
      * @return \Closure(string, \Closure(): mixed): mixed
      */
     public static function bootstrapCache(): \Closure
     {
         return static function (string $key, \Closure $read): mixed {
-            $key = md5(\systemHash() . $key);
+            $key = md5(\Prosper202\Repository\LookupRepositoryFactory::cacheNamespace() . "\0" . $key);
             $hit = \getCache($key);
             if (is_string($hit)) {
                 return $hit;
