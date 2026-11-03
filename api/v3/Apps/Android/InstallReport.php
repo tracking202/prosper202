@@ -129,8 +129,11 @@ final class InstallReport
     private const CLICK_JOIN = 'LEFT JOIN 202_clicks c ON c.click_id = i.click_id AND c.user_id = i.user_id';
 
     /** An outcome's ledger row, which its revenue is read from (revenue()). */
-    private const LEDGER_JOIN =
-        'LEFT JOIN 202_conversion_logs lc ON lc.conv_id = o.conversion_id AND lc.user_id = o.user_id';
+    private static function ledgerJoin(): string
+    {
+        return 'LEFT JOIN 202_conversion_logs lc ON lc.conv_id = o.conversion_id AND lc.user_id = o.user_id '
+            . \Prosper202\Attribution\CountedAmount::reversalsJoin('lc');
+    }
 
     /**
      * What a payable outcome contributes to `revenue`: its ledger row's
@@ -238,7 +241,7 @@ final class InstallReport
             . ' COALESCE(SUM(CASE WHEN o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
             . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
-            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN
+            . self::CLICK_JOIN . ' ' . self::ledgerJoin()
             . " WHERE o.user_id = ? AND o.subject_type = 'install' AND o.superseded_at IS NULL AND " . $gate
             . ' AND ' . implode(' AND ', $scopedWhere)
             . ' GROUP BY grp, o.goal_id';
@@ -291,7 +294,7 @@ final class InstallReport
             . ' COALESCE(SUM(CASE WHEN ' . $gate . ' AND o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
             . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
-            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN
+            . self::CLICK_JOIN . ' ' . self::ledgerJoin()
             . " WHERE o.user_id = ? AND o.subject_type = 'install' AND o.superseded_at IS NULL"
             . ' AND ' . implode(' AND ', $where)
             . ' GROUP BY o.goal_id ORDER BY installs DESC, o.goal_id LIMIT ?';
@@ -363,7 +366,7 @@ final class InstallReport
             . ' COALESCE(SUM(CASE WHEN o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
             . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
-            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN
+            . self::CLICK_JOIN . ' ' . self::ledgerJoin()
             . " WHERE o.user_id = ? AND o.subject_type = 'install' AND o.superseded_at IS NULL AND " . $gate
             . ' AND ' . $whereSql . ' GROUP BY o.goal_id',
             'i' . $types,
