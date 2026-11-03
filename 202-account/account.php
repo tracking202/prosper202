@@ -234,6 +234,28 @@ $sameIpHelp = 'When a pixel names no click, credit your latest click from the vi
 $cloakChoices = ['origin' => 'Show Prosper202 Domain', 'never' => 'Show Blank Referer'];
 $adChoices = ['show_all' => 'Show All Ads', 'hide_login' => 'Hide Ads On Login Screen', 'hide_all' => 'Hide All Ads'];
 
+// The Data & communication boxes, for every user whatever their permissions:
+// analytics is recorded under the signed-in user, who may always revoke it.
+// A box left as the page showed it records nothing. False when one failed.
+$p202RecordConsentChoices = static function () use ($db): bool {
+	if (empty($_POST['consent_form'])) {
+		return true;
+	}
+	$saved = true;
+	$consentUserId = (int) $_SESSION['user_id'];
+	foreach (['analytics' => 'analytics_consent', 'email_marketing' => 'email_marketing_consent'] as $consentFlag => $consentField) {
+		$consentNow = !empty($_POST[$consentField]);
+		if ($consentNow === (($_POST[$consentField . '_shown'] ?? '') === '1')) {
+			continue;
+		}
+		if (!ConsentPolicy::record($db, $consentUserId, $consentFlag, $consentNow ? 'granted' : 'denied', 'settings')) {
+			error_log('[Consent] failed to record ' . $consentFlag . ' consent for user ' . $consentUserId);
+			$saved = false;
+		}
+	}
+	return $saved;
+};
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	$submittedEmail = isset($_POST['user_email']) ? trim((string)$_POST['user_email']) : $currentUserEmail;
@@ -349,18 +371,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					// form showed them; a failure must not break the settings save.
 					// A box left as the page showed it records nothing, so saving
 					// the page never turns a default into an explicit choice.
-					if (!empty($_POST['consent_form'])) {
-						$consentUserId = (int) $_SESSION['user_id'];
-						foreach (['analytics' => 'analytics_consent', 'email_marketing' => 'email_marketing_consent'] as $consentFlag => $consentField) {
-							$consentNow = !empty($_POST[$consentField]);
-							if ($consentNow === (($_POST[$consentField . '_shown'] ?? '') === '1')) {
-								continue;
-							}
-							if (!ConsentPolicy::record($db, $consentUserId, $consentFlag, $consentNow ? 'granted' : 'denied', 'settings')) {
-								error_log('[Consent] failed to record ' . $consentFlag . ' consent for user ' . $consentUserId);
-								$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your other settings are saved, but your Data & communication choice could not be. Try again.'];
-							}
-						}
+					if (!$p202RecordConsentChoices()) {
+						$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your other settings are saved, but your Data & communication choice could not be. Try again.'];
 					}
 					//try to set non expiring cache for values that are used in redirects
 					if (!empty($memcacheWorking)) {
@@ -465,6 +477,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					} else {
 						if ($slack && $submittedEmail !== $currentUserEmail) {
 							$slack->push('user_email_changed', ['user' => $username, 'old_email' => $currentUserEmail, 'new_email' => $submittedEmail]);
+						}
+						if (!$p202RecordConsentChoices()) {
+							p202_account_flash('bad', 'Your email is saved, but your Data & communication choice could not be. Try again.');
 						}
 						p202_account_flash('ok', 'Your settings are saved.');
 						p202_account_redirect('202-account/account.php');
@@ -991,8 +1006,10 @@ echo p202_account_render_flashes($extraFlashes);
 								</div>
 							</div>
 						</details>
+					<?php } ?>
 
 						<?php
+						// Every user may change these, whatever their permissions.
 						// State comes from ConsentPolicy (the only consent reader), so
 						// 'unset' shows the effective default rather than the raw column.
 						$analyticsChecked = ConsentPolicy::analyticsAllowed($db, (int) $_SESSION['user_id']) ? ' checked' : '';
@@ -1016,7 +1033,6 @@ echo p202_account_render_flashes($extraFlashes);
 									offers and workflow improvements. You can unsubscribe anytime.</label>
 							</div>
 						</fieldset>
-					<?php } ?>
 
 					<div class="p202-form-actions">
 						<button class="btn btn-primary" type="submit">Save settings</button>
