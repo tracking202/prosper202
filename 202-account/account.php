@@ -268,6 +268,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
 			p202_account_redirect('202-account/account.php');
 		}
+		// The consent choices stand on their own: recorded whether or not the
+		// rest of the form is valid or saves, so a revocation is never dropped.
+		$consentSaved = $p202RecordConsentChoices();
+		$consentRefused = 'Your Data & communication choice could not be saved. Try again.';
 		if (check_email_address($submittedEmail) == false) {
 			$error['user_email'] = 'Please enter a valid email address.';
 		}
@@ -362,18 +366,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$profileSaved = false;
 				}
 				if (!$profileSaved) {
-					$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your settings could not be saved. Nothing you see below has changed; try again.'];
+					$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your settings could not be saved. Nothing you see below has changed'
+						. ($consentSaved && !empty($_POST['consent_form']) ? ' apart from your Data & communication choice' : '') . '; try again.'];
 				} else {
 					$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 					//set the  session's user_timezone
 					$_SESSION['user_timezone'] = $postedTimezone;
-					// Consent toggles go through ConsentPolicy only, and only when the
-					// form showed them; a failure must not break the settings save.
-					// A box left as the page showed it records nothing, so saving
-					// the page never turns a default into an explicit choice.
-					if (!$p202RecordConsentChoices()) {
-						$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your other settings are saved, but your Data & communication choice could not be. Try again.'];
-					}
 					//try to set non expiring cache for values that are used in redirects
 					if (!empty($memcacheWorking)) {
 						$tid = $mysql['user_id'];
@@ -449,7 +447,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						}
 					}
 
-					p202_account_flash('ok', 'Your settings are saved.');
+					if ($consentSaved) {
+						p202_account_flash('ok', 'Your settings are saved.');
+					} else {
+						p202_account_flash('bad', 'Your other settings are saved, but your Data & communication choice could not be. Try again.');
+					}
 					p202_account_redirect('202-account/account.php');
 				}
 			}
@@ -478,17 +480,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						if ($slack && $submittedEmail !== $currentUserEmail) {
 							$slack->push('user_email_changed', ['user' => $username, 'old_email' => $currentUserEmail, 'new_email' => $submittedEmail]);
 						}
-						if (!$p202RecordConsentChoices()) {
+						if ($consentSaved) {
+							p202_account_flash('ok', 'Your settings are saved.');
+						} else {
 							p202_account_flash('bad', 'Your email is saved, but your Data & communication choice could not be. Try again.');
 						}
-						p202_account_flash('ok', 'Your settings are saved.');
 						p202_account_redirect('202-account/account.php');
 					}
 				}
 			}
 		}
 
-		// Refused: say it under the field, and keep what was typed.
+		// Refused: say it under the field, and keep what was typed. The consent
+		// choice was recorded (or not) above, and the page says which.
+		if (!$consentSaved) {
+			$pageFlashes[] = ['kind' => 'bad', 'text' => $consentRefused];
+		}
 		$profileErrors = $error;
 		foreach (['user_email', 'user_timezone', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
 			if (isset($_POST[$profileField])) {

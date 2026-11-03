@@ -25,6 +25,7 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
     private const USER = 990891;
     private const PAGE = '202-account/account.php';
     private const CAMPAIGN_MANAGER = 3;
+    private const ADMIN = 2;
 
     private static string $sessions = '';
 
@@ -87,6 +88,7 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
+        self::q('DROP TRIGGER IF EXISTS consent_test_refuse_consent');
         foreach (['202_user_role', '202_users_pref', '202_users'] as $table) {
             self::q("DELETE FROM $table WHERE user_id = " . self::USER);
         }
@@ -97,11 +99,11 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
      * @param array<string, string> $env
      * @return array{output: string, result: array<string, mixed>}
      */
-    private static function request(array $env = []): array
+    private static function request(array $env = [], string $page = self::PAGE): array
     {
         $env += ['P202_SU_USER' => (string) self::USER, 'P202_SU_SESSION_DIR' => self::$sessions];
         $proc = proc_open(
-            [PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/fixtures/session-user-runner.php', self::PAGE],
+            [PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/fixtures/session-user-runner.php', $page],
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             null,
@@ -120,6 +122,106 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
             'output' => substr($stdout, 0, $at) . $stderr,
             'result' => json_decode(substr($stdout, $at + strlen("\n@@RESULT ")), true, 8, JSON_THROW_ON_ERROR),
         ];
+    }
+
+    private static function role(int $role): void
+    {
+        self::q('UPDATE 202_user_role SET role_id = ' . $role . ' WHERE user_id = ' . self::USER);
+    }
+
+    /** The account page's POST: the profile form with analytics unticked from a ticked box. */
+    private static function revoke(string $email): array
+    {
+        return self::request(['P202_SU_POST' => json_encode([
+            'update_profile' => '1', 'token' => 'SESSION', 'user_email' => $email,
+            'user_timezone' => 'UTC', 'user_keyword_searched_or_bidded' => 'searched', 'user_referer' => 'browser',
+            'user_bid' => '0', 'user_pref_privacy' => 'disabled', 'user_pref_same_ip_fallback' => '0',
+            'cloak_referer' => 'origin', 'user_pref_ad_settings' => 'show_all',
+            'consent_form' => '1', 'analytics_consent_shown' => '1', 'email_marketing_consent_shown' => '0',
+        ], JSON_THROW_ON_ERROR)]);
+    }
+
+    private static function analytics(): string
+    {
+        return (string) self::$db->query('SELECT analytics_consent FROM 202_users_pref WHERE user_id = ' . self::USER)->fetch_row()[0];
+    }
+
+    /** What the session queued for the next page. */
+    private static function queued(array $request): string
+    {
+        $file = self::$sessions . '/sess_' . $request['result']['session_id'];
+
+        return is_file($file) ? (string) file_get_contents($file) : '';
+    }
+
+    private static function refuseConsentWrites(): void
+    {
+        self::q("CREATE TRIGGER consent_test_refuse_consent BEFORE UPDATE ON 202_users_pref FOR EACH ROW
+            BEGIN
+              IF NOT (NEW.analytics_consent <=> OLD.analytics_consent) THEN
+                SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'consent refused by the test';
+              END IF;
+            END");
+    }
+
+    /** @return array<string, array{int}> */
+    public static function roles(): array
+    {
+        return ['personal settings' => [self::ADMIN], 'email only' => [self::CAMPAIGN_MANAGER]];
+    }
+
+    /** @dataProvider roles */
+    public function testARevocationIsRecordedEvenWhenTheRestOfTheFormIsRefused(int $role): void
+    {
+        self::role($role);
+        $post = self::revoke('not an email');
+        self::assertNull($post['result']['uncaught'], $post['output']);
+        self::assertStringContainsString('Please enter a valid email address.', $post['output'], 'the form was refused');
+        self::assertSame('denied', self::analytics(), 'the revocation stands anyway');
+        self::assertStringNotContainsString('could not be saved. Try again', $post['output']);
+    }
+
+    /** @dataProvider roles */
+    public function testAConsentThatCannotBeSavedIsNeverReportedAsSaved(int $role): void
+    {
+        self::role($role);
+        self::refuseConsentWrites();
+        $post = self::revoke('consent-cm@example.com');
+        self::assertNull($post['result']['uncaught'], $post['output']);
+        self::assertSame('unset', self::analytics(), 'nothing was recorded');
+        $queued = self::queued($post);
+        self::assertStringContainsString('Data & communication choice could not be', $queued, 'the next page says so');
+        self::assertStringNotContainsString('Your settings are saved.', $queued);
+    }
+
+    /** @dataProvider roles */
+    public function testAConsentThatCannotBeSavedOnARefusedFormIsSaidOnThePage(int $role): void
+    {
+        self::role($role);
+        self::refuseConsentWrites();
+        $post = self::revoke('not an email');
+        self::assertSame('unset', self::analytics());
+        self::assertStringContainsString('Your Data &amp; communication choice could not be saved. Try again.', $post['output']);
+    }
+
+    /** The prompt's endpoint records a choice only from the places that ask for one. */
+    public function testTheConsentEndpointTakesOnlyItsOwnSources(): void
+    {
+        $endpoint = '202-account/ajax/messaging/consent.php';
+        $post = static fn (string $source): string => json_encode(
+            ['flag' => 'analytics', 'state' => 'denied', 'source' => $source, 'token' => 'SESSION'],
+            JSON_THROW_ON_ERROR
+        );
+        foreach (['', str_repeat('é', 40), 'settings ', 'api'] as $source) {
+            $refused = self::request(['P202_SU_POST' => $post($source), 'P202_SU_AJAX' => '1'], $endpoint);
+            self::assertSame(400, $refused['result']['status'], var_export($source, true) . ': ' . $refused['output']);
+            self::assertSame('unset', self::analytics(), 'nothing recorded');
+        }
+        $saved = self::request(['P202_SU_POST' => $post('eu_prompt'), 'P202_SU_AJAX' => '1'], $endpoint);
+        self::assertStringContainsString('{"ok":true}', $saved['output'], 'no status set: 200');
+        self::assertSame(['denied', 'eu_prompt'], self::$db->query(
+            'SELECT analytics_consent, analytics_consent_source FROM 202_users_pref WHERE user_id = ' . self::USER
+        )->fetch_row());
     }
 
     public function testAUserWithoutPersonalSettingsCanSwitchAnalyticsOff(): void
