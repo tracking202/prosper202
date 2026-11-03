@@ -44,6 +44,8 @@ final class LegacyGoogleFeedTest extends TestCase
         $script = (string) file_get_contents($root . '/' . self::SCRIPT);
         self::assertStringContainsString('LegacyGoogleFeed::refuse(', $script);
         self::assertStringNotContainsString('PHP_AUTH', $script);
-        self::assertStringNotContainsString('connect', $script);
+        // Only the autoloader: no database, so the 410 stands when the database is down.
+        self::assertSame(1, preg_match_all('~\b(?:require|include)(?:_once)?\b~', $script));
+        self::assertStringContainsString("/vendor/autoload.php'", $script);
     }
 }
