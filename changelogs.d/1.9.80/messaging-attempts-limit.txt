@@ -1,0 +1,1 @@
+-- Fixed: Product-analytics events that the portal could not take were given up after 4 delivery attempts instead of the 5 the code allows. Each event is now tried 5 times before it is marked failed.

@@ -806,10 +806,11 @@ class MessagingService
 
     private function incrementEventAttempts(int $eventId): void
     {
+        // MySQL assigns SET left to right: the status must read the old count.
         $stmt = $this->conn->prepareWrite(
             "UPDATE 202_messaging_events
-                SET sync_attempts = sync_attempts + 1,
-                    delivery_status = IF(sync_attempts + 1 >= ?, 'failed', 'pending')
+                SET delivery_status = IF(sync_attempts + 1 >= ?, 'failed', 'pending'),
+                    sync_attempts = sync_attempts + 1
               WHERE id = ?"
         );
         $this->conn->bind($stmt, 'ii', [self::MAX_PUSH_ATTEMPTS, $eventId]);
