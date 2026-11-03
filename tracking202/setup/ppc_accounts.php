@@ -136,7 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				// Milestone event on create only (edits must not emit *_added).
 				// Analytics tier → self-gates on consent; failures log + swallow.
 				require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
-				Analytics::event('traffic_source_added', [], 'analytics');
+				Analytics::event('traffic_source_added', ['via' => 'ui'], 'analytics');
 			}
 
 			tagUserByNetwork($user_row['install_hash'], 'traffic-sources', $_POST['ppc_network_name']);

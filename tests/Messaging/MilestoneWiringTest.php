@@ -44,4 +44,33 @@ final class MilestoneWiringTest extends TestCase
             . escapeshellarg(dirname(__DIR__, 2)) . ' --include="*.php" | grep -v /tests/');
         $this->assertNotEmpty(trim((string) $hits), 'lpo_paired not wired');
     }
+
+    /**
+     * A milestone a page records says it came from the dashboard, as the
+     * API's say cli, ai_connector or api: every Analytics::event() in the
+     * served pages but the page view carries 'via' => 'ui' first.
+     */
+    public function test_dashboard_milestones_say_they_came_from_the_ui(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $calls = 0;
+        foreach (['tracking202', '202-account', '202-config'] as $dir) {
+            $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . '/' . $dir, FilesystemIterator::SKIP_DOTS));
+            foreach ($files as $file) {
+                if ($file->getExtension() !== 'php' || str_contains($file->getPathname(), '/Messaging/')) {
+                    continue;
+                }
+                $src = (string) file_get_contents($file->getPathname());
+                preg_match_all("/Analytics::event\('([a-z_]+)',\s*([^;]*?),\s*'analytics'\)/", $src, $m, PREG_SET_ORDER);
+                foreach ($m as [$call, $event, $meta]) {
+                    if ($event === 'page_viewed') {
+                        continue;
+                    }
+                    $calls++;
+                    $this->assertStringStartsWith("['via' => 'ui'", $meta, $file->getPathname() . ': ' . $call);
+                }
+            }
+        }
+        $this->assertGreaterThanOrEqual(9, $calls, 'the scan found the dashboard milestones');
+    }
 }

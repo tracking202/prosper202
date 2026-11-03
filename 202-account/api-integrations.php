@@ -276,7 +276,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			'error_message' => $keyEmpty, 'slack_event' => $keyField . '_updated'];
 		$keyOutcome = processApiKeyUpdate($config, $error, $keyChanged, $user_row, $slack, $username, $db);
 		if ($keyOutcome !== null && $keyOutcome !== 'kept') {
-			Analytics::event('integration_configured', ['integration' => $keyAnchor], 'analytics');
+			Analytics::event('integration_configured', ['via' => 'ui', 'integration' => $keyAnchor], 'analytics');
 		}
 		if ($keyOutcome !== null) {
 			p202_account_flash('ok', $keyOutcome === 'kept' ? 'Nothing changed: your saved ' . $keyLabel . ' is kept.'
@@ -319,7 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 		if ($jvzooKey !== null) {
 			sendSlackNotification($slack, 'jvzoo_secret_key_updated', $username, $jvzooOld, $jvzooKey);
-			Analytics::event('integration_configured', ['integration' => 'jvzoo'], 'analytics');
+			Analytics::event('integration_configured', ['via' => 'ui', 'integration' => 'jvzoo'], 'analytics');
 			p202_account_flash('ok', 'Your JVZoo secret key was saved.');
 			p202_account_redirect('202-account/api-integrations.php#jvzoo');
 		}
@@ -357,7 +357,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$pkAfter = PayKickstartKeys::serialize($pkKeys);
 			sendSlackNotification($slack, 'paykickstart_ipn_keys_updated', $username, $pkBefore, $pkAfter);
 			if ($pkAction === 'add') {
-				Analytics::event('integration_configured', ['integration' => 'paykickstart'], 'analytics');
+				Analytics::event('integration_configured', ['via' => 'ui', 'integration' => 'paykickstart'], 'analytics');
 			}
 			$pkCount = count($pkKeys) === 1 ? '1 key is stored' : count($pkKeys) . ' keys are stored';
 			$pkDone = $pkAction === 'add' ? 'Your PayKickstart IPN secret key was saved' : 'The key was removed';
@@ -442,7 +442,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				// is persisted. Analytics tier → self-gates on consent; Analytics
 				// swallows its own failures — never blocks the redirect.
 				require_once dirname(__DIR__) . '/202-config/Messaging/Analytics.class.php';
-				Analytics::event('lpo_paired', [], 'analytics');
+				Analytics::event('lpo_paired', ['via' => 'ui'], 'analytics');
 
 				header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?lpo=connected#lpo');
 				die();

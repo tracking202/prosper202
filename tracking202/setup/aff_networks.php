@@ -90,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// Analytics tier → self-gates on consent; failures log + swallow.
 		if ($editing != true) {
 			require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
-			Analytics::event('aff_network_added', [], 'analytics');
+			Analytics::event('aff_network_added', ['via' => 'ui'], 'analytics');
 		}
 
 		if ($slack) {

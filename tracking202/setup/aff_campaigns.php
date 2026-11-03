@@ -323,7 +323,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 			// Analytics tier → self-gates on consent; failures log + swallow.
 			// Uses the id captured above — $db->insert_id is reset by later queries.
 			require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
-			Analytics::event('aff_campaign_added', ['aff_campaign_id' => (int) $aff_campaign_row['aff_campaign_id']], 'analytics');
+			Analytics::event('aff_campaign_added', ['via' => 'ui', 'aff_campaign_id' => (int) $aff_campaign_row['aff_campaign_id']], 'analytics');
 		}
 
 		// Landing Page Optimizer (segments-v2 G10): flag this user's dimension

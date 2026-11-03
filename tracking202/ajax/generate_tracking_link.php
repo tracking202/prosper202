@@ -323,7 +323,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 	// Analytics tier → self-gates on consent; failures log + swallow.
 	if (empty($_POST['edit_tracker'])) {
 		require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
-		Analytics::event('tracker_created', [], 'analytics');
+		Analytics::event('tracker_created', ['via' => 'ui'], 'analytics');
 	}
 
 	$parsed_url = [];
