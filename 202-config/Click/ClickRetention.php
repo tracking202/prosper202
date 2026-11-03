@@ -117,6 +117,7 @@ final class ClickRetention
         '202_attribution_backfill' => 'next_click_id and through_click_id are the ledger backfill\'s cursor, not a click\'s row',
         '202_reclick_backfill' => 'next_click_id and through_click_id are the re-click backfill\'s cursor,'
             . ' not a click\'s row',
+        '202_ipqs_progress' => 'cursor_click_id is IPQualityScore scoring\'s cursor, not a click\'s row',
         '202_identity_merges' => 'a merge of two visitors, with the click that proved it: the visitors stay merged, and the row goes with its account',
         '202_app_installs' => 'app installs, pruned by AppRetention on their own windows',
         '202_revenue_events' => 'the LTV revenue ledger: money, kept with the customer',

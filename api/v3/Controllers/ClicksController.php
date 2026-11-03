@@ -125,7 +125,7 @@ class ClicksController
 
     /**
      * What `filter_reason` answers and the list filters by: the recorded
-     * reasons (ClickFilterVerdict::REASONS), `bot` for a click the bot
+     * reasons (ClickFilterVerdict::STORED_REASONS), `bot` for a click the bot
      * detector filtered (202_clicks.click_bot, on every click), and, as a
      * filter only, `not_recorded` for a filtered click with neither (one
      * recorded before 1.9.79).
@@ -135,6 +135,7 @@ class ClicksController
         \Prosper202\Click\Filter\ClickFilterVerdict::CRAWLER_RANGE,
         \Prosper202\Click\Filter\ClickFilterVerdict::REPEAT_VISIT,
         \Prosper202\Click\Filter\ClickFilterVerdict::FILTER_LIST,
+        \Prosper202\Click\Filter\ClickFilterVerdict::FRAUD_SCORE,
         'bot',
         'not_recorded',
     ];
@@ -319,7 +320,7 @@ class ClicksController
         if ($stored === null) {
             return $row;
         }
-        if (!in_array($stored, \Prosper202\Click\Filter\ClickFilterVerdict::REASONS, true)) {
+        if (!in_array($stored, \Prosper202\Click\Filter\ClickFilterVerdict::STORED_REASONS, true)) {
             throw new \UnexpectedValueException('Click ' . (string) ($row['click_id'] ?? '?')
                 . "'s filter reason is stored as an unknown value");
         }

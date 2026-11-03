@@ -455,3 +455,49 @@ function p202_account_api_keys(mysqli $db, int $userId): array
     }
     return $keys;
 }
+
+/** The IPQualityScore card's description on Account › API integrations. */
+function p202_ipqs_card_desc(): string
+{
+    return 'Score your clicks for fraud. A few minutes after a click arrives, IPQualityScore scores its visitor’s'
+        . ' IP address, and a click scoring ' . \Prosper202\Fraud\IpqsScoring::FRAUD_THRESHOLD . ' or more (out'
+        . ' of 100) is filtered out of your reports: it shows under Filtered clicks, with the reason fraud_score.';
+}
+
+/**
+ * What the IPQualityScore card says is sent, and, once a key is saved, how
+ * the account's scoring went last (Prosper202\Fraud\IpqsScoring::status()),
+ * as HTML.
+ */
+function p202_ipqs_card_note(\mysqli $db, int $userId, bool $keySaved): string
+{
+    $note = '<p class="text-secondary small">Only while a key is saved, the IP address of each visitor from outside'
+        . ' the EU, the EEA, the UK and Switzerland is sent to IPQualityScore (ipqualityscore.com, in the USA) for'
+        . ' fraud prevention. Nothing else about the click is sent, an address is looked up at most once a day, and'
+        . ' its score is deleted after 24 hours. Visitors from the EU, the EEA, the UK and Switzerland, and visitors'
+        . ' whose country is unknown, are never sent and are not scored.</p>';
+    if (!$keySaved) {
+        return $note;
+    }
+    try {
+        $status = \Prosper202\Fraud\IpqsScoring::status(new \Prosper202\Database\Connection($db), $userId);
+    } catch (\Throwable $failed) {
+        error_log('api-integrations.php: the IPQualityScore scoring status could not be read: '
+            . $failed->getMessage());
+
+        return $note . p202_flash('warn', 'The scoring status could not be read.');
+    }
+    if ($status !== null && $status['failures'] > 0 && $status['last_error'] !== null) {
+        $failedAt = date('Y-m-d H:i', (int) $status['last_error_at']);
+
+        return $note . p202_flash('warn', 'The last lookup failed (' . $failedAt . '): ' . $status['last_error']
+            . ' Scoring tries again after ' . date('H:i', $status['retry_at']) . '.');
+    }
+    if ($status !== null && $status['last_lookup_at'] !== null) {
+        return $note . '<p class="text-secondary small">Last lookup: '
+            . htmlspecialchars(date('Y-m-d H:i', $status['last_lookup_at']), ENT_QUOTES, 'UTF-8') . '.</p>';
+    }
+
+    return $note . '<p class="text-secondary small">No click has been looked up yet: scoring starts with the next'
+        . ' clicks.</p>';
+}

@@ -154,7 +154,6 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
 
 include_once(CONFIG_PATH . '/functions-auth.php');
 include_once(CONFIG_PATH . '/DeviceDetect.php');
-include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
 
 // Initialize $tid and $db variables to prevent undefined variable errors

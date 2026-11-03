@@ -169,6 +169,9 @@ final class UserDataPurge
         // The click filter's settings and address list (the clicks' reasons stay with the clicks).
         'DELETE FROM 202_click_filter_entries WHERE user_id = ?',
         'DELETE FROM 202_click_filter_settings WHERE user_id = ?',
+        // IPQualityScore scoring: the visitors' cached address scores, and how far it walked.
+        'DELETE FROM 202_ipqs_scores WHERE user_id = ?',
+        'DELETE FROM 202_ipqs_progress WHERE user_id = ?',
     ];
 
     /**
