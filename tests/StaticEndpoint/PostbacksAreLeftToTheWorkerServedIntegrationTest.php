@@ -29,6 +29,9 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
     private const CAMPAIGN = 6608;
     private const GPB_CLICK = 66080001;
     private const UPX_CLICK = 66080002;
+    private const AFTER_CLICK = 66080003;
+    private const SLOW_CLICK = 66080004;
+    private const SLOW_ACCOUNT = 6609;
 
     /** @var resource|null */
     private static $server = null;
@@ -95,7 +98,7 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        $clicks = self::GPB_CLICK . ', ' . self::UPX_CLICK;
+        $clicks = implode(', ', [self::GPB_CLICK, self::UPX_CLICK, self::AFTER_CLICK, self::SLOW_CLICK]);
         self::q('DELETE FROM 202_notification_pending WHERE conv_id IN'
             . " (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($clicks))");
         $tables = [
@@ -104,8 +107,9 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
         foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
-        self::q('DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id = ' . self::ACCOUNT);
-        self::q('DELETE FROM 202_ppc_accounts WHERE ppc_account_id = ' . self::ACCOUNT);
+        $accounts = self::ACCOUNT . ', ' . self::SLOW_ACCOUNT;
+        self::q("DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id IN ($accounts)");
+        self::q("DELETE FROM 202_ppc_accounts WHERE ppc_account_id IN ($accounts)");
         self::q('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = ' . self::CAMPAIGN);
         self::q('DELETE FROM 202_users_pref WHERE user_id = ' . self::USER);
         self::q('DELETE FROM 202_users WHERE user_id = ' . self::USER);
@@ -130,10 +134,23 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
             'ppc_account_id' => self::ACCOUNT, 'pixel_type_id' => 4,
             'pixel_code' => 'https://ads.example/pb?s=[[subid]]&tx=[[transactionid]]',
         ]);
+        self::row('202_ppc_accounts', [
+            'ppc_account_id' => self::SLOW_ACCOUNT, 'user_id' => self::USER, 'ppc_network_id' => 0,
+            'ppc_account_name' => 'social ads', 'ppc_account_time' => time(),
+        ]);
+        self::row('202_ppc_account_pixels', [
+            'ppc_account_id' => self::SLOW_ACCOUNT, 'pixel_type_id' => 4,
+            'pixel_code' => 'https://slow.example/a?s=[[subid]] https://slow.example/b?s=[[subid]]'
+                . ' https://fast.example/c?s=[[subid]]',
+        ]);
         $conn = new Connection(self::$db);
-        foreach ([self::GPB_CLICK, self::UPX_CLICK] as $click) {
+        $clicks = [
+            self::GPB_CLICK => self::ACCOUNT, self::UPX_CLICK => self::ACCOUNT,
+            self::AFTER_CLICK => self::ACCOUNT, self::SLOW_CLICK => self::SLOW_ACCOUNT,
+        ];
+        foreach ($clicks as $click => $account) {
             $columns = "click_id = $click, user_id = " . self::USER . ', aff_campaign_id = ' . self::CAMPAIGN
-                . ', ppc_account_id = ' . self::ACCOUNT . ', click_cpc = 0.25, click_payout = 3, click_lead = 0,'
+                . ", ppc_account_id = $account, click_cpc = 0.25, click_payout = 3, click_lead = 0,"
                 . ' click_time = ' . (time() - 60);
             self::q("INSERT INTO 202_clicks SET $columns");
             self::q("INSERT INTO 202_clicks_spy SET $columns");
@@ -221,5 +238,55 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
 
         self::assertContains($url, self::runWorker(), 'the worker sends it');
         self::assertSame('sent', self::queued(self::UPX_CLICK)[0]['status']);
+    }
+
+    public function testWhereTheClientCanBeReleasedTheRequestSendsAfterItsAnswer(): void
+    {
+        [$status] = self::get('/tracking202/static/gpb.php?subid=' . self::AFTER_CLICK . '&amount=3&txid=A1');
+        self::assertSame(202, $status, $this->serverLog());
+        $attempts = (string) self::queued(self::AFTER_CLICK)[0]['attempts'];
+        self::assertSame('0', $attempts, 'php -S cannot release the client');
+
+        // PHP-FPM's release, which the CLI lacks; it records that the answer went first.
+        if (!function_exists('fastcgi_finish_request')) {
+            eval('function fastcgi_finish_request(): bool { $GLOBALS["p202_released"] = true; return true; }');
+        }
+        if (!class_exists('DataEngine', false)) {
+            eval('class DataEngine { public function setDirtyHour($id) {} }');
+        }
+        require_once dirname(__DIR__, 2) . '/202-config/static-endpoint-helpers.php';
+        $GLOBALS['p202_released'] = false;
+        $result = self::$db->query('SELECT conv_id FROM 202_conversion_logs WHERE click_id = ' . self::AFTER_CLICK);
+        self::assertInstanceOf(\mysqli_result::class, $result);
+        p202SendQueuedPostbacksAfterAnswer(self::$db, (int) $result->fetch_row()[0]);
+
+        self::assertTrue($GLOBALS['p202_released'], 'the client was released first');
+        self::assertSame('1', (string) self::queued(self::AFTER_CLICK)[0]['attempts'], 'then the postback was tried');
+    }
+
+    public function testAHostThatFailsIsNotAskedAgainInTheSameRun(): void
+    {
+        [$status] = self::get('/tracking202/static/gpb.php?subid=' . self::SLOW_CLICK . '&amount=3&txid=S1');
+        self::assertSame(202, $status, $this->serverLog());
+
+        $asked = [];
+        $fetch = static function (string $url) use (&$asked): bool {
+            $asked[] = $url;
+
+            return !str_contains($url, 'slow.example');
+        };
+        $convs = self::$db->query('SELECT conv_id FROM 202_conversion_logs WHERE click_id = ' . self::SLOW_CLICK);
+        self::assertInstanceOf(\mysqli_result::class, $convs);
+        $conv = (int) $convs->fetch_row()[0];
+        (new NotificationOutbox(new Connection(self::$db), null, $fetch))->sendDue(200, [$conv]);
+
+        $s = self::SLOW_CLICK;
+        self::assertSame(
+            ["https://slow.example/a?s=$s", "https://fast.example/c?s=$s"],
+            $asked,
+            'the slow host was asked once; the next host was still asked'
+        );
+        $attempts = array_column(self::queued(self::SLOW_CLICK), 'attempts', 'url');
+        self::assertSame('0', (string) $attempts["https://slow.example/b?s=$s"], 'left for the next run, untried');
     }
 }

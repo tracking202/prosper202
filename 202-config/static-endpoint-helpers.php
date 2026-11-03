@@ -117,11 +117,42 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
         bool $server = true
     ): array {
         // $server false: the type-4 postbacks were queued with the
-        // conversion (notify_traffic_source) and the notification worker sends
-        // them; only the markup types render here.
+        // conversion (notify_traffic_source) and go out after the answer
+        // (p202SendQueuedPostbacksAfterAnswer()) or from the worker.
         $conn = new \Prosper202\Database\Connection($db);
 
         return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server);
+    }
+}
+
+if (!function_exists('p202SendQueuedPostbacksAfterAnswer')) {
+    /**
+     * Send a conversion's queued postbacks once the answer has gone to the
+     * network (PHP-FPM, LiteSpeed). Where the client cannot be released first
+     * the worker sends them, so the network never waits on a traffic source.
+     */
+    function p202SendQueuedPostbacksAfterAnswer(mysqli $db, int $convId): void
+    {
+        if ($convId <= 0) {
+            return;
+        }
+        if (function_exists('fastcgi_finish_request')) {
+            $released = fastcgi_finish_request();
+        } elseif (function_exists('litespeed_finish_request')) {
+            $released = litespeed_finish_request();
+        } else {
+            return;
+        }
+        if ($released !== true) {
+            return;
+        }
+        ignore_user_abort(true);
+        try {
+            (new \Prosper202\Notifications\NotificationOutbox(new \Prosper202\Database\Connection($db)))
+                ->sendDue(20, [$convId], 20);
+        } catch (\Throwable $e) {
+            error_log('conversion ' . $convId . ': its queued postbacks were left to the worker: ' . $e->getMessage());
+        }
     }
 }
 
@@ -470,8 +501,8 @@ if (!function_exists('p202RecordConversion')) {
         }
         if (!empty($log['notify_traffic_source'])) {
             // Queue the click's traffic-source server postbacks with the row
-            // (NotificationOutbox), in its transaction; the notification
-            // worker sends them.
+            // (NotificationOutbox), in its transaction; they are sent after
+            // the answer or by the worker.
             $data['notify_traffic_source'] = true;
         }
         if (isset($log['event_name']) && (string) $log['event_name'] !== '') {

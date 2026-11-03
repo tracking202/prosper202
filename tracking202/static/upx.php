@@ -217,8 +217,11 @@ if (is_numeric($mysql['click_id'])) {
 			? $conversionResult['transaction_id']
 			: $conversionResult['dedupe_key'];
 		$tokens['payout'] = $conversionResult['payout'];
-        // Markup only: the type-4 postbacks, queued with the conversion, are the worker's.
+        // Markup only: the type-4 postbacks were queued with the conversion.
         echo p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens, null, false)['markup'];
 	}
 
 }
+
+// The queued server postbacks, once the answer has gone (or by the worker).
+p202SendQueuedPostbacksAfterAnswer($db, (int) ($conversionId ?? 0));

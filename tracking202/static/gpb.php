@@ -184,8 +184,8 @@ if ($conversionId > 0) {
 }
 $newlyRecorded = $conversionId > 0 && !$conversionResult['duplicate'];
 
-// The server postbacks were queued with the conversion; the notification
-// worker sends them, so this answer never waits on a traffic source.
+// The server postbacks were queued with the conversion. They go out after
+// this answer (p202SendQueuedPostbacksAfterAnswer(), at the end) or from the worker.
 
 // A reversal nets an earlier sale; announcing it to the traffic source as a
 // conversion would tell the network about a sale that was taken back.
@@ -196,7 +196,7 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
 	// This conversion's amount, not the click's cached total, which in an
 	// accumulating campaign is the sum of every conversion so far.
 	$tokens['payout'] = $conversionResult['payout'];
-    // Markup only: the type-4 postbacks are the worker's.
+    // Markup only: the type-4 postbacks were queued.
     $fired = p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens, null, false);
 	if (array_intersect($fired['types'], [1, 2, 3, 4]) !== []) {
 		header('HTTP/1.1 202 Accepted', true, 202);
@@ -208,3 +208,4 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
 	}
 }
 
+p202SendQueuedPostbacksAfterAnswer($db, $conversionId);

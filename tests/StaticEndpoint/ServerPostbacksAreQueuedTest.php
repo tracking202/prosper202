@@ -24,10 +24,11 @@ use PHPUnit\Framework\TestCase;
  * also asks the writer to queue (`'notify_traffic_source' => true`). The goal
  * notifier queues through the engine, so it is held only to the first rule.
  *
- * And none of them sends the queue either (66H8): gpb.php and upx.php sent a
- * conversion's queued postbacks before answering, up to 20 URLs at 10
- * seconds each, so a slow traffic source held the network's postback open.
- * Only the outbox itself names sendDue(); the cron worker calls it.
+ * And none of them sends the queue before answering (66H8): gpb.php and
+ * upx.php did, up to 20 URLs at 10 seconds each, so a slow traffic source held
+ * the network's postback open. Outside the outbox and the cron worker, only
+ * p202SendQueuedPostbacksAfterAnswer() calls sendDue(), after releasing the
+ * client, and both endpoints call it last.
  */
 final class ServerPostbacksAreQueuedTest extends TestCase
 {
@@ -175,7 +176,8 @@ final class ServerPostbacksAreQueuedTest extends TestCase
         $sending = [];
         $read = 0;
         foreach (self::files() as $file) {
-            if ($file === '202-config/Notifications/NotificationOutbox.php') {
+            $senders = ['202-config/Notifications/NotificationOutbox.php', '202-config/static-endpoint-helpers.php'];
+            if (in_array($file, $senders, true)) {
                 continue;
             }
             $read++;
@@ -187,7 +189,25 @@ final class ServerPostbacksAreQueuedTest extends TestCase
             }
         }
         self::assertGreaterThan(100, $read, 'the scan read the tree');
-        self::assertSame([], $sending, 'a request path sends queued postbacks before it answers; leave them to the worker');
+        self::assertSame([], $sending, 'a request path sends queued postbacks before it answers');
+
+        $helpers = (string) file_get_contents(self::ROOT . '202-config/static-endpoint-helpers.php');
+        self::assertSame(1, substr_count($helpers, '->sendDue('), 'the helpers send in one place');
+        $body = substr($helpers, (int) strpos($helpers, 'function p202SendQueuedPostbacksAfterAnswer('));
+        $body = substr($body, 0, (int) strpos($body, '->sendDue('));
+        self::assertStringContainsString('$released = fastcgi_finish_request();', $body, 'after releasing the client');
+        self::assertStringContainsString("if (\$released !== true) {\n            return;", $body, 'and only then');
+
+        foreach (['tracking202/static/gpb.php', 'tracking202/static/upx.php'] as $file) {
+            $t = self::tokens((string) file_get_contents(self::ROOT . $file));
+            $last = null;
+            foreach ($t as $i => $token) {
+                if ($token[0] === T_STRING && ($t[$i + 1][1] ?? null) === '(') {
+                    $last = $token[1];
+                }
+            }
+            self::assertSame('p202SendQueuedPostbacksAfterAnswer', $last, "$file sends after its last output");
+        }
     }
 
     public function testTheCallReaderReadsArgumentsNotText(): void

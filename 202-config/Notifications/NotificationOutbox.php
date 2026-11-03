@@ -433,12 +433,16 @@ final class NotificationOutbox implements OutcomeNotificationSink
     /**
      * Send what is due: pending rows whose next attempt has come, oldest
      * first, at most $limit. Optionally only rows of the given conversions.
+     * No row is claimed after $seconds, and a host whose send failed is not
+     * asked again in the same run, so one slow traffic source cannot hold up the rest.
      *
      * @param list<int>|null $convIds
      * @return array{sent: int, failed: int, retrying: int}
      */
-    public function sendDue(int $limit, ?array $convIds = null): array
+    public function sendDue(int $limit, ?array $convIds = null, int $seconds = 50): array
     {
+        $stopAt = microtime(true) + max(1, $seconds);
+        $unanswered = [];
         $now = $this->now();
         $sql = "SELECT notification_id, pixel_id, url, attempts FROM 202_notification_pending
                 WHERE status = 'pending' AND next_attempt_at <= ?";
@@ -460,6 +464,10 @@ final class NotificationOutbox implements OutcomeNotificationSink
 
         $out = ['sent' => 0, 'failed' => 0, 'retrying' => 0];
         foreach ($this->conn->fetchAll($stmt) as $row) {
+            $origin = PostbackSender::origin((string) $row['url']);
+            if (microtime(true) >= $stopAt || isset($unanswered[$origin])) {
+                continue;
+            }
             $id = (int) $row['notification_id'];
             $attempts = (int) $row['attempts'] + 1;
             // Claim: only the worker that moves the attempt count sends.
@@ -484,6 +492,9 @@ final class NotificationOutbox implements OutcomeNotificationSink
                 $this->conn->executeUpdate($done);
                 $out['sent']++;
                 continue;
+            }
+            if (!$result->isRefused()) {
+                $unanswered[$origin] = true;
             }
             $error = mb_strimwidth($result->reason, 0, 255, '…', 'UTF-8');
             if ($result->isRefused()) {
