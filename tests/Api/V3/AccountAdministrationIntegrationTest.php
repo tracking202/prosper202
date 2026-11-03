@@ -450,7 +450,7 @@ final class AccountAdministrationIntegrationTest extends TestCase
         $answer = $this->admin()->integrations(['HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443, 'DOCUMENT_ROOT' => dirname(__DIR__, 3)])['data'];
         self::assertSame('https://track.example.com/', $answer['base_url']);
         $byKey = array_column($answer['integrations'], null, 'integration');
-        self::assertSame(['clickbank', 'jvzoo', 'jvzoo_vendor', 'zaxaa', 'slack', 'paykickstart'], array_keys($byKey));
+        self::assertSame(['clickbank', 'jvzoo', 'jvzoo_vendor', 'zaxaa', 'paykickstart'], array_keys($byKey));
         self::assertSame('https://track.example.com/tracking202/static/cb202.php', $byKey['clickbank']['url']);
         self::assertSame(
             'https://track.example.com/tracking202/static/jvzoo.php?role=affiliate',
@@ -461,7 +461,6 @@ final class AccountAdministrationIntegrationTest extends TestCase
             $byKey['jvzoo_vendor']['url']
         );
         self::assertSame('https://track.example.com/tracking202/static/zpn.php', $byKey['zaxaa']['url']);
-        self::assertSame('https://track.example.com/tracking202/static/slack.php', $byKey['slack']['url']);
         self::assertSame('https://track.example.com/tracking202/static/paykickstart.php', $byKey['paykickstart']['url']);
         self::assertTrue($byKey['clickbank']['secret_stored']);
         self::assertTrue($byKey['clickbank']['verified']);
