@@ -1,0 +1,4 @@
+-- Fixed: Landing pages carrying the code a paid 1.9.56 install handed out (tracking202/static/landing.js?lpip=) tracked nothing after upgrading, because that file was gone. It is back as a small loader that calls landing.php exactly as the current code does, so those pages track again without re-pasting their code.
+app: Fixed: Landing-page code from paid 1.9.56 installs tracks again without being re-pasted.
+-- Fixed: The universal pixel, global pixel and global postback ignored the order number in t202txid, the name paid 1.9.56 pixels send, so repeat sales and upsells on a click that had already converted were dropped. t202txid is now read, after txid and the other names. A pixel that sends no order number still converts a click once, since a reload cannot be told from a repeat sale: put the order number in t202txid to count each sale.
+app: Fixed: Pixels and postbacks from paid 1.9.56 installs record repeat sales again when they send an order number (t202txid).
