@@ -137,16 +137,21 @@ final class ShopifyAdapter implements ProviderAdapter
 
     /**
      * The status Shopify is answered with. A refusal a retry cannot change
-     * (a 4xx other than 403 unverified and 405) is answered 200, the outcome
-     * staying in the body and the log: Shopify retries a non-2xx answer and
-     * removes an API-made subscription after 8 failures in a row, which would
-     * lose every later order to one bad cart.
+     * (400, 404 for a click, 409, 415, 422) is answered 200, the outcome
+     * staying in the body ("error": true) and the log: Shopify retries a
+     * non-2xx answer and removes an API-made subscription after 8 failures in
+     * a row, which would lose every later order to one bad cart. A refund
+     * whose sale is not on file yet keeps its 404, so Shopify's retry lands
+     * once the order has arrived; every other status is kept.
      */
     public static function deliveryStatus(OutcomeKind $kind): int
     {
         $status = Response::status($kind);
+        if ($kind === OutcomeKind::NOTHING_TO_REVERSE) {
+            return $status;
+        }
 
-        return $status >= 400 && $status < 500 && $status !== 403 && $status !== 405 ? 200 : $status;
+        return in_array($status, [400, 404, 409, 415, 422], true) ? 200 : $status;
     }
 
     /** What Shopify sends in X-Shopify-Hmac-Sha256 for a body signed with a secret. */
@@ -179,7 +184,11 @@ final class ShopifyAdapter implements ProviderAdapter
     /** @param array<string, mixed> $order */
     private static function order(array $order, string $topic): Notification
     {
-        if (($order['test'] ?? false) === true) {
+        $test = $order['test'] ?? false;
+        if (!is_bool($test)) {
+            throw self::malformed('test is not true or false; Shopify sends it as a JSON boolean.');
+        }
+        if ($test) {
             return new Notification(NotificationKind::TEST, $topic);
         }
         // An order is created before it is paid (bank transfer, cash on delivery, a held card):

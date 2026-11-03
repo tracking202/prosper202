@@ -218,9 +218,11 @@ final class ShopifyAdapterTest extends TestCase
     public function testShopifyIsAnsweredWithA2xxForRefusalsARetryCannotChange(): void
     {
         foreach ([OutcomeKind::MALFORMED, OutcomeKind::UNKNOWN_CLICK, OutcomeKind::CONFLICT,
-            OutcomeKind::CURRENCY_MISMATCH, OutcomeKind::NOTHING_TO_REVERSE] as $kind) {
+            OutcomeKind::CURRENCY_MISMATCH, OutcomeKind::UNSUPPORTED_BODY] as $kind) {
             self::assertSame(200, ShopifyAdapter::deliveryStatus($kind), $kind->value);
         }
+        // A refund that arrived before its order: Shopify's retry lands once the order has.
+        self::assertSame(404, ShopifyAdapter::deliveryStatus(OutcomeKind::NOTHING_TO_REVERSE));
         self::assertSame(403, ShopifyAdapter::deliveryStatus(OutcomeKind::UNVERIFIED));
         self::assertSame(500, ShopifyAdapter::deliveryStatus(OutcomeKind::FAILED));
         self::assertSame(503, ShopifyAdapter::deliveryStatus(OutcomeKind::UPGRADE_PENDING));
@@ -238,6 +240,9 @@ final class ShopifyAdapterTest extends TestCase
     public function testATestOrderRecordsNothing(): void
     {
         self::assertSame(NotificationKind::TEST, self::parse(self::webhook('orders/create', self::order(['test' => true])))->kind);
+
+        $refusal = self::refusal(fn () => self::parse(self::webhook('orders/paid', self::order(['test' => 'true']))));
+        self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind, 'not read as a real sale');
     }
 
     public function testOtherTopicsAreAcknowledged(): void

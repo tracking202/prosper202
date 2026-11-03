@@ -261,7 +261,9 @@ click id, a click of another account, an order in a currency other than the
 account's, a changed total, a second refund) is logged with the reason and
 answered `200` with the outcome in the body: Shopify retries any other answer
 and removes a subscription made through its API after 8 failures in a row,
-which would lose every later order. An unverified webhook is answered `403`.
+which would lose every later order. A refund of an order not recorded yet is
+answered `404`, so Shopify's retry reverses it once the order has arrived, and
+an unverified webhook is answered `403`.
 
 ## Slack Integration
 

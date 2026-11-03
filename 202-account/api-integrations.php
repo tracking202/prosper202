@@ -324,11 +324,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// Shopify's webhook secret, held to the rule its endpoint reads it by
 	// (ShopifyWebhookSecret), so a secret saved here is one a webhook verifies with.
 	if (isset($_POST['change_shopify_webhook_secret']) && $_POST['change_shopify_webhook_secret'] == '1') {
-		$shopifyPosted = is_string($_POST[ShopifyWebhookSecret::COLUMN] ?? null) ? $_POST[ShopifyWebhookSecret::COLUMN] : '';
+		$shopifyPosted = $_POST[ShopifyWebhookSecret::COLUMN] ?? '';
 		$shopifyOld = (string) ($user_row[ShopifyWebhookSecret::COLUMN] ?? '');
 		$shopifySecret = null;
 		$shopifyKept = false;
 		try {
+			if (!is_string($shopifyPosted)) {
+				throw new InvalidArgumentException('The secret arrived as a list; paste it as one value.');
+			}
 			$shopifySecret = ShopifyWebhookSecret::parse($shopifyPosted);
 			if ($shopifySecret === '' && ShopifyWebhookSecret::stored($shopifyOld) !== null) {
 				// The saved secret is never shown, so an empty field keeps it.

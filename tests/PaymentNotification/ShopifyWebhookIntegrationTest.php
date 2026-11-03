@@ -363,10 +363,30 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         self::assertStringContainsString('SubID not found', $postback, 'any other request is a postback, as before');
     }
 
+    /**
+     * shopify.php, run as the server runs it, answers a verified webhook it
+     * refuses with a 200 carrying the refusal. The runner's body is empty
+     * (php://input under the CLI), so the webhook signs "".
+     */
+    public function testTheEndpointAnswersAVerifiedRefusalWith200(): void
+    {
+        $out = self::runGpb([
+            'HTTP_X_SHOPIFY_TOPIC' => 'orders/paid',
+            'HTTP_X_SHOPIFY_HMAC_SHA256' => ShopifyAdapter::sign('', self::SECRET),
+        ], 'tracking202/static/shopify.php');
+        $answer = json_decode($out, true);
+
+        self::assertIsArray($answer, $out . self::$runnerErr);
+        self::assertSame(['error' => true, 'code' => 200, 'outcome' => 'malformed'],
+            array_intersect_key($answer, ['error' => 1, 'code' => 1, 'outcome' => 1]));
+        self::assertStringContainsString('is not a JSON object', (string) $answer['msg']);
+        self::assertSame([], self::conversions());
+    }
+
     private static string $runnerErr = '';
 
     /** @param array<string, string> $server */
-    private static function runGpb(array $server): string
+    private static function runGpb(array $server, string $page = 'tracking202/static/gpb.php'): string
     {
         $sessions = sys_get_temp_dir() . '/p202-shopify-gpb-' . getmypid();
         if (!is_dir($sessions) && !mkdir($sessions, 0700)) {
@@ -381,7 +401,7 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         ] + getenv();
         $proc = proc_open(
             [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__) . '/Setup/fixtures/page-runner.php',
-                'tracking202/static/gpb.php'],
+                $page],
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             null,

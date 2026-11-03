@@ -421,6 +421,11 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
             self::assertStringNotContainsString('typed with spaces', $out, 'what was posted is not written back');
             self::assertSame(self::SECRETS['shopify_webhook_secret'], self::secrets()['shopify_webhook_secret']);
 
+            $listed = ['token' => 'SESSION', 'change_shopify_webhook_secret' => '1', 'shopify_webhook_secret' => ['x']];
+            $out = self::page(self::PAGE, [], $listed);
+            self::assertStringContainsString('arrived as a list', $out, 'refused by name, not kept as "nothing changed"');
+            self::assertSame(self::SECRETS['shopify_webhook_secret'], self::secrets()['shopify_webhook_secret']);
+
             $new = self::save('change_shopify_webhook_secret', 'shopify_webhook_secret', ' it-shopify-rotated-secret-SH02 ');
             self::assertRedirected(self::page(self::PAGE, [], $new), 'a new Shopify secret is saved');
             self::assertSame('it-shopify-rotated-secret-SH02', self::secrets()['shopify_webhook_secret'], 'trimmed');

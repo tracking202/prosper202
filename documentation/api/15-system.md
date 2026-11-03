@@ -374,7 +374,8 @@ minutes.
       { "integration": "jvzoo", "name": "JVZoo", "label": "Affiliate IPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=affiliate", "secret_stored": true },
       { "integration": "jvzoo_vendor", "name": "JVZoo", "label": "Vendor JVZIPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=vendor", "secret_stored": true },
       { "integration": "zaxaa", "name": "Zaxaa", "label": "ZPN URL", "url": "https://track.example.com/tracking202/static/zpn.php", "secret_stored": false },
-      { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": true, "keys_stored": 2 }
+      { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": true, "keys_stored": 2 },
+      { "integration": "shopify", "name": "Shopify", "label": "Webhook URL", "url": "https://track.example.com/tracking202/static/shopify.php", "secret_stored": false }
     ]
   }
 }
