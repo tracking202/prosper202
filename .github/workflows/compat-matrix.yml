@@ -133,13 +133,13 @@ jobs:
       - name: Show queries still running
         if: failure()
         run: |
-          mysql -h 127.0.0.1 -P 3306 -uroot -proot -N --raw -e "SELECT ID, TIME, STATE, DB FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep' AND ID <> CONNECTION_ID()"
-          mysql -h 127.0.0.1 -P 3306 -uroot -proot -N --raw -e "SELECT DB, INFO FROM information_schema.PROCESSLIST WHERE COMMAND = 'Query' AND ID <> CONNECTION_ID() AND INFO IS NOT NULL" |
-          while IFS=$'\t' read -r db q; do
-            echo "== $db: $q" | cut -c1-4000
-            case "$q" in SELECT*) mysql -h 127.0.0.1 -P 3306 -uroot -proot "$db" -e "EXPLAIN $q" || true;; esac
-            mysql -h 127.0.0.1 -P 3306 -uroot -proot "$db" -e "SHOW INDEX FROM 202_conversion_logs WHERE Key_name = 'reverses_conv_id'; SELECT COUNT(*) FROM 202_conversion_logs" || true
+          q() { mysql -h 127.0.0.1 -P 3306 -uroot -proot "$@" || true; }
+          q -e "SELECT ID, COMMAND, TIME, STATE, DB, LEFT(INFO, 3000) FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep' AND ID <> CONNECTION_ID()\G"
+          for id in $(q -N -e "SELECT ID FROM information_schema.PROCESSLIST WHERE COMMAND IN ('Query', 'Execute') AND ID <> CONNECTION_ID()"); do
+            echo "== plan of $id"
+            q -e "SHOW EXPLAIN FOR $id"
           done
+          q p202_integration_test -e "SHOW INDEX FROM 202_conversion_logs; SELECT COUNT(*) FROM 202_conversion_logs; SELECT COUNT(*) FROM 202_clicks"
 
       - name: Upload the suites' output
         if: failure()
