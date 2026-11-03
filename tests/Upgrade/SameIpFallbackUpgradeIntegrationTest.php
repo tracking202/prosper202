@@ -119,7 +119,7 @@ final class SameIpFallbackUpgradeIntegrationTest extends TestCase
     private function assertUpgradedTo179(string $out, string $err): void
     {
         self::assertSame('RETURNED true', $out, $err);
-        self::assertSame('1.9.79', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
+        self::assertSame('1.9.80', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
         self::assertSame(self::$installed, self::columns(), 'the upgraded 202_users_pref is the installed one');
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
     }
