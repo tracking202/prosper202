@@ -97,10 +97,11 @@ The Release workflow publishes two zips and a detached Ed25519 signature of
 each: `prosper202-<version>.zip` (the files under `prosper202/`, for a manual
 upload) and `prosper202-<version>-upgrade.zip` (the same tree at the zip's
 root, the layout the 1-click upgraders extract), each with a `.sig` beside it
-(the base64 signature on one line). The `Sign the release` step signs with the
-secret `P202_RELEASE_SIGNING_KEY` (a base64 Ed25519 secret key) of the
-`release` environment, which only `v*` tags may deploy to, and
-fails the release when the secret is missing or its public half is not
+(the base64 signature on one line). The build job runs Composer and never
+sees the key; on a `v*` tag the `publish` job signs the zips and publishes the
+Release. It uses the secret `P202_RELEASE_SIGNING_KEY` (a base64 Ed25519 secret
+key) of the `release` environment, which only `v*` tags may use and which waits
+for its required reviewer, and it fails the release when the secret is missing or its public half is not
 `ReleaseSignature::PUBLIC_KEY` in `202-config/Update/ReleaseSignature.php`.
 
 An install's 1-click upgrader (`202-account/auto-upgrade.php` and
@@ -115,22 +116,37 @@ comes in the update feed the upgrader already reads: `signature` in
 current-version feed's item. Without a valid one the upgrade is refused and the
 page says why. The key in the code is a placeholder until it is set, and with
 the placeholder every 1-click upgrade is refused and every release fails to
-sign. A manual `workflow_dispatch` run from a branch builds without signing:
-the step runs on `v*` tags only, so a branch's code never runs with the key.
+sign. A manual `workflow_dispatch` run from a branch builds and summarizes
+only: the `publish` job runs on `v*` tags, so a branch's code never runs with
+the key.
 
-Setting up the key, once, on a trusted machine (the secret key never goes into
-the repository, an issue or a chat):
+Anyone who can push a `v*` tag chooses the commit whose code runs with the
+key, so the environment's tag rule alone is not enough. Before the real key is
+set, the environment gets a required reviewer (the owner, who approves each
+release run) and a tag ruleset lets only admins create, move or delete `v*`
+tags. Setting it up, once, on a trusted machine (the secret key never goes
+into the repository, an issue or a chat):
 
 ```bash
 umask 077
 php build/scripts/sign-release.php keygen ~/p202-release-signing.key   # prints the public key
-gh api -X PUT repos/tracking202/prosper202/environments/release \
-  -F 'deployment_branch_policy[protected_branches]=false' \
-  -F 'deployment_branch_policy[custom_branch_policies]=true'
+owner_id="$(gh api users/tracking202 --jq .id)"
+gh api -X PUT repos/tracking202/prosper202/environments/release --input - <<JSON
+{"reviewers":[{"type":"User","id":${owner_id}}],"prevent_self_review":false,
+ "deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
+JSON
 gh api -X POST repos/tracking202/prosper202/environments/release/deployment-branch-policies \
   -f name='v*' -f type=tag
+gh api -X POST repos/tracking202/prosper202/rulesets --input - <<'JSON'
+{"name":"release tags","target":"tag","enforcement":"active",
+ "conditions":{"ref_name":{"include":["refs/tags/v*"],"exclude":[]}},
+ "rules":[{"type":"creation"},{"type":"update"},{"type":"deletion"}],
+ "bypass_actors":[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]}
+JSON
 gh secret set P202_RELEASE_SIGNING_KEY -R tracking202/prosper202 --env release < ~/p202-release-signing.key
 ```
+
+(`actor_id` 5 is the repository Admin role.)
 
 Put the printed public key in `ReleaseSignature::PUBLIC_KEY` in a pull request,
 and keep an offline copy of the key file (a lost key means every install needs
