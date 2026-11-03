@@ -113,6 +113,9 @@ if ($raTrackerId !== null) {
 
 //get mysql variables 
 $mysql['user_id'] = $db->real_escape_string((string) ($tracker_row['user_id'] ?? '0'));
+// A publisher link credits a publisher the account granted; any other id is ignored.
+$raPublisher = p202ClickPublisher($db, (int) ($tracker_row['user_id'] ?? 0), $_GET);
+$mysql['publisher_user_id'] = (string) ($raPublisher['user_id'] ?? 0);
 $mysql['aff_campaign_id'] = $db->real_escape_string((string) ($tracker_row['aff_campaign_id'] ?? '0'));
 $mysql['ppc_account_id'] = $db->real_escape_string((string) ($tracker_row['ppc_account_id'] ?? '0'));
 // The bid the link names when the account takes dynamic bids, else the tracker's CPC.

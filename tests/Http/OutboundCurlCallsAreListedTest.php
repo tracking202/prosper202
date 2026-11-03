@@ -53,6 +53,7 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             1,
             "Google's pinned endpoints; the override is loopback only",
         ],
+        '202-config/Update/ReleaseSignature.php' => [1, 'the fixed host my.tracking202.com, https only, redirects only to that host'],
         '202-config/Lpo/PairingClient.php' => [1, 'the operator constant LPO_SAAS_BASE_URL, https only, no redirects'],
         '202-config/Messaging/MessagingClient.class.php' => [
             1,
@@ -80,6 +81,11 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         '202-cronjobs/dni.php' => [1, self::FIXED],
         '202-appstore/index.php' => [1, self::FIXED],
         '202-resources/index.php' => [1, self::FIXED],
+        'api/v3/Support/AiWatchers.php' => [
+            1,
+            "Tracking202's MCP server: AiConnect::relayOrigin(), the fixed https://mcp.tracking202.com or the"
+            . ' operator constant P202_MCP_RELAY_ORIGIN, https (http only to loopback), no redirects',
+        ],
         'api/v3/Support/RemoteApiClient.php' => [
             1,
             "a sync profile's url: WebhookGuard::checkSync() at every request, pinned, no proxy, no redirects",

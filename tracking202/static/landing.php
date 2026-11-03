@@ -491,6 +491,8 @@ function p202SendBeacon() {
 		"c3=" + t202Enc(c3),
 		"c4=" + t202Enc(c4),
 		"t202b=" + t202Enc(t202b),
+		// A publisher link's id: record.php credits it only to a publisher the account granted.
+		"t202pubid=" + t202Enc(t202GetVar('t202pubid')),
 		"gclid=" + t202Enc(t202GetVar('gclid')),
         "gbraid=" + t202Enc(t202GetVar('gbraid')),
         "wbraid=" + t202Enc(t202GetVar('wbraid')),

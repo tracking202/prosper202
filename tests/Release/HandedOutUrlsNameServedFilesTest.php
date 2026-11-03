@@ -17,7 +17,7 @@ use Tests\Support\SourceScan;
  * /system/integrations and `p202 system integrations` listed it, from the
  * day it was written: the file never existed, so every PayKickstart IPN sent
  * there was a 404 nobody in Prosper202 saw. jvzoo.php (written in 1.9.79
- * too), zpn.php and slack.php were handed out the same way; the ones still
+ * too), zpn.php and slack.php (both fixed in 1.9.80) were handed out the same way; the ones still
  * missing are listed below until their own changes remove them, and the list
  * only shrinks.
  *
@@ -37,7 +37,6 @@ final class HandedOutUrlsNameServedFilesTest extends TestCase
 
     /** Handed out, never written: path => where, until the change that removes it. */
     private const KNOWN_DEAD = [
-        'tracking202/static/zpn.php' => 'Zaxaa\'s ZPN URL on Account › API integrations and GET /system/integrations',
     ];
 
     public function testEveryScriptAServedFileNamesExists(): void
