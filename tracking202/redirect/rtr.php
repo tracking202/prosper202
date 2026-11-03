@@ -139,7 +139,19 @@ $rtrVisitor = p202RotatorVisitor(
 	$result,
 	$rotator_row['user_keyword_searched_or_bidded'] ?? null,
 	$rotator_row['user_pref_referer_data'] ?? null,
-	static fn (): bool => ($rtrClassify()['mysql']['click_filtered'] ?? '0') === '1'
+	// A failed classification skips the rule (redirect_process() asks again, and fails as it did).
+	static function () use ($rtrClassify): ?bool {
+		try {
+			$filtered = $rtrClassify()['mysql']['click_filtered'] ?? null;
+		} catch (\Throwable $rtrClassifyError) {
+			error_log('rtr.php: deciding whether the click is filtered failed (' . $rtrClassifyError->getMessage()
+				. '); its visitor rules are skipped');
+
+			return null;
+		}
+
+		return $filtered === null ? null : $filtered === '1';
+	}
 );
 
 foreach ($rule_row as $rule) {

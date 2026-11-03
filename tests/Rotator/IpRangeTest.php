@@ -10,7 +10,7 @@ use Prosper202\Rotator\IpRange;
 /** The range forms the paid 1.9.56 redirector's ip_in_range() read, and IPv6. */
 final class IpRangeTest extends TestCase
 {
-    /** @return iterable<string, array{string, string, bool}> range, address, contained */
+    /** @return iterable<string, array{string, string, ?bool}> range, address, contained (null: cannot be read) */
     public static function ranges(): iterable
     {
         yield 'CIDR, inside' => ['203.0.113.0/24', '203.0.113.200', true];
@@ -31,14 +31,14 @@ final class IpRangeTest extends TestCase
         yield 'IPv6 span' => ['2001:db8::1-2001:db8::ff', '2001:db8::10', true];
         yield 'an IPv4 visitor and an IPv6 range' => ['2001:db8::/32', '192.0.2.1', false];
         yield 'an IPv6 visitor and an IPv4 range' => ['192.0.2.0/24', '2001:db8::1', false];
-        yield 'reversed span' => ['192.0.2.20-192.0.2.10', '192.0.2.15', false];
-        yield 'no range' => ['example', '192.0.2.1', false];
-        yield 'a prefix too long' => ['192.0.2.0/33', '192.0.2.1', false];
-        yield 'no visitor address' => ['192.0.2.0/24', '', false];
+        yield 'reversed span' => ['192.0.2.20-192.0.2.10', '192.0.2.15', null];
+        yield 'no range' => ['example', '192.0.2.1', null];
+        yield 'a prefix too long' => ['192.0.2.0/33', '192.0.2.1', null];
+        yield 'no visitor address' => ['192.0.2.0/24', '', null];
     }
 
     /** @dataProvider ranges */
-    public function testAnAddressIsInARangeAsTheRangeIsWritten(string $range, string $ip, bool $contained): void
+    public function testAnAddressIsInARangeAsTheRangeIsWritten(string $range, string $ip, ?bool $contained): void
     {
         self::assertSame($contained, IpRange::contains($range, $ip));
     }

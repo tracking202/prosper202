@@ -114,6 +114,21 @@ final class CriterionMatcherTest extends TestCase
         }
     }
 
+    /** An upgraded range rule that cannot be read, or a statement that is neither is nor is_not, decides nothing. */
+    public function testAnUnreadableRangeOrStatementMatchesNeitherWay(): void
+    {
+        $visitor = self::visitor();
+        foreach (['is', 'is_not'] as $statement) {
+            self::assertFalse(CriterionMatcher::criterion('iprange', $statement, '203.0.*, nope', $visitor), $statement);
+            self::assertFalse(CriterionMatcher::criterion('iprange', $statement, '198.51.100.0/24', self::visitor(['ip' => ''])), $statement);
+        }
+        self::assertTrue(CriterionMatcher::criterion('iprange', 'is_not', 'nope, 198.51.100.0/24', $visitor), 'the readable range decides');
+        self::assertTrue(CriterionMatcher::criterion('iprange', 'is', 'nope, 203.0.113.0/24', $visitor));
+        self::assertFalse(CriterionMatcher::criterion('country', 'isnt', 'France(FR)', $visitor));
+        self::assertFalse(CriterionMatcher::criterion('country', '', 'Germany(DE)', $visitor));
+        self::assertTrue(CriterionMatcher::criterion('country', '', 'ALL', $visitor), 'ALL is everyone whatever the statement');
+    }
+
     public function testAnUnknownTypeNeverMatches(): void
     {
         self::assertFalse(CriterionMatcher::criterion('weekday', 'is', 'Monday', self::visitor()));

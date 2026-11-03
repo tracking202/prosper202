@@ -24,12 +24,15 @@ final class IpRange
         return self::parse($range) !== null;
     }
 
-    /** Whether the visitor's address falls in $range; false when either cannot be read. */
-    public static function contains(string $range, string $visitorIp): bool
+    /** Whether the visitor's address falls in $range; null when either cannot be read. */
+    public static function contains(string $range, string $visitorIp): ?bool
     {
         $parsed = self::parse($range);
         $ip = self::packed($visitorIp);
-        if ($parsed === null || $ip === null || strlen($ip) !== strlen($parsed[1])) {
+        if ($parsed === null || $ip === null) {
+            return null;
+        }
+        if (strlen($ip) !== strlen($parsed[1])) {
             return false;
         }
         [$kind, $a, $b] = $parsed;

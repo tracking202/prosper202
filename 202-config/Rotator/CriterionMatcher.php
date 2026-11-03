@@ -17,7 +17,9 @@ namespace Prosper202\Rotator;
  * statement, as in 1.9.56; a missing keyword or utm value is ''. A fraud
  * or visitor criterion that cannot be decided (no IPQualityScore key or
  * answer, a failed read) matches neither way: 1.9.56 read an unknown score
- * as "not fraud", which sent every visitor down a "not fraud" rule.
+ * as "not fraud", which sent every visitor down a "not fraud" rule. So does
+ * an IP range none of whose values can be read, and a statement other than
+ * is or is_not.
  */
 final class CriterionMatcher
 {
@@ -80,20 +82,25 @@ final class CriterionMatcher
         if (Criterion::matchesEveryone($values)) {
             return true;
         }
-        $is = $statement !== 'is_not';
+        if ($statement !== 'is' && $statement !== 'is_not') {
+            return false;
+        }
+        $is = $statement === 'is';
 
         switch ($type) {
             case 'ip':
                 return IpCriterion::contains($values, $visitor->ip) === $is;
             case 'iprange':
-                $inAny = false;
+                // Ranges that cannot be read are left out; with none left there is no answer.
+                $read = false;
                 foreach ($values as $range) {
-                    if (IpRange::contains($range, $visitor->ip)) {
-                        $inAny = true;
-                        break;
+                    $in = IpRange::contains($range, $visitor->ip);
+                    if ($in === true) {
+                        return $is;
                     }
+                    $read = $read || $in === false;
                 }
-                return $inAny === $is;
+                return $read && !$is;
             case 'referer':
                 $hit = false;
                 foreach ($values as $pattern) {
