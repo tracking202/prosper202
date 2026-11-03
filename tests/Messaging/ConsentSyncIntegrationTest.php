@@ -11,6 +11,7 @@ require_once __DIR__ . '/../../202-config/Messaging/ConsentPolicy.class.php';
 require_once __DIR__ . '/../../202-config/Messaging/MessagingService.class.php';
 require_once __DIR__ . '/../../202-config/Messaging/Analytics.class.php';
 require_once __DIR__ . '/../../202-config/functions-auth.php';
+require_once __DIR__ . '/../../202-config/functions-tracking202.php';
 
 /**
  * @group integration
@@ -553,6 +554,67 @@ final class ConsentSyncIntegrationTest extends TestCase
         $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'));
         $this->assertSame([], $this->eventRows());
         $this->assertSame('0', $db->query('SELECT COUNT(*) FROM 202_messaging_attributes')->fetch_row()[0]);
+    }
+
+    /** @return list<string> the URLs tagUserByNetwork() would have posted to */
+    private function tagged(?mysqli $db = null): array
+    {
+        $sent = [];
+        tagUserByNetwork(self::USER_ID, 'ih', 'traffic-sources', 'Search Ads', $db ?? self::$db,
+            static function (string $url) use (&$sent): void {
+                $sent[] = $url;
+            });
+        return $sent;
+    }
+
+    public function test_a_network_name_goes_to_tracking202_only_with_analytics_on(): void
+    {
+        $db = self::$db;
+        $this->assertSame([], $this->tagged(), 'location unknown: held');
+
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, true));
+        $this->assertSame([], $this->tagged(), 'EU/UK, not asked yet');
+
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'granted', 'eu_prompt'));
+        $this->assertSame(['https://my.tracking202.com/api/v2/tag/user/ih/traffic-sources'], $this->tagged());
+
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'));
+        $this->assertSame([], $this->tagged(), 'denied');
+
+        $failing = $this->createMock(mysqli::class);
+        $failing->method('prepare')->willReturn(false);
+        $this->assertSame([], $this->tagged($failing), 'a consent that cannot be read sends nothing');
+    }
+
+    public function test_a_stored_value_that_is_no_choice_holds_analytics(): void
+    {
+        $db = self::$db;
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, false));
+        // The UI path's sql_mode is '': an enum value outside the list is stored as ''.
+        $this->assertTrue($db->query("UPDATE 202_users_pref SET analytics_consent = 'maybe' WHERE user_id = " . self::USER_ID));
+        $this->assertSame('', $db->query('SELECT analytics_consent FROM 202_users_pref WHERE user_id = ' . self::USER_ID)->fetch_row()[0]);
+
+        $state = ConsentPolicy::deliveryState($db, self::USER_ID);
+        $this->assertFalse($state['analytics_allowed'], 'held, not read as unset');
+        $this->assertSame('unset', $state['consent']['analytics']);
+        $this->assertFalse(ConsentPolicy::analyticsAllowed($db, self::USER_ID));
+    }
+
+    public function test_a_restored_backup_never_reuses_a_consent_version(): void
+    {
+        $db = self::$db;
+        $before = time();
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'email_marketing', 'granted', 'settings'));
+        $first = ConsentPolicy::deliveryState($db, self::USER_ID)['version'];
+        $this->assertGreaterThanOrEqual($before, $first, 'at least the Unix time of the change');
+
+        // The database comes back from a backup taken before that change.
+        $this->assertTrue($db->query('UPDATE 202_users_pref SET consent_version = 3, consent_acked_version = 3 WHERE user_id = ' . self::USER_ID));
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'email_marketing', 'denied', 'settings'));
+        $this->assertGreaterThanOrEqual($first, ConsentPolicy::deliveryState($db, self::USER_ID)['version']);
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'));
+        $row = $db->query('SELECT consent_version, analytics_revoked_version FROM 202_users_pref WHERE user_id = ' . self::USER_ID)->fetch_row();
+        $this->assertSame($row[0], $row[1], 'the revocation is the version of the denial');
     }
 
     private function consentPending(): bool

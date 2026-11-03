@@ -4,7 +4,9 @@
 // Nothing else reads the raw consent columns or EU status.
 //
 // Every consent change (and a sign-in that first places the account in the
-// EU/UK) counts 202_users_pref.consent_version up in the same statement:
+// EU/UK) moves 202_users_pref.consent_version up in the same statement, to
+// at least the current Unix time, so a database restored from a backup never
+// reuses a version the receiver already holds:
 //  - the change is undelivered while consent_version > consent_acked_version,
 //    and only the receiver's acknowledgement of a version moves the latter;
 //  - analytics_revoked_version is the version at which analytics last
@@ -13,6 +15,9 @@
 
 final class ConsentPolicy
 {
+    /** The next consent version: above the stored one, and at least the current Unix time. */
+    private const NEXT_VERSION = 'GREATEST(`consent_version` + 1, UNIX_TIMESTAMP())';
+
     /** Set at sign-in when the EU/UK location could not be stored. */
     public const SESSION_GEO_HELD = 'analytics_geo_held';
 
@@ -89,7 +94,10 @@ final class ConsentPolicy
         $row = $conn->fetchOne($stmt) ?? [];
 
         $states = ['granted', 'denied', 'unset'];
-        $analytics = in_array($row['analytics_consent'] ?? '', $states, true) ? (string) $row['analytics_consent'] : 'unset';
+        // A value that is none of the three (an enum write the server
+        // blanked) holds analytics, as decide() does; the block says unset.
+        $stored = $row === [] ? 'unset' : (string) ($row['analytics_consent'] ?? 'unset');
+        $analytics = in_array($stored, $states, true) ? $stored : 'unset';
         $isEu = !isset($row['analytics_geo_is_eu']) ? null : ((int) $row['analytics_geo_is_eu']) === 1;
         $version = (int) ($row['consent_version'] ?? 0);
 
@@ -105,7 +113,7 @@ final class ConsentPolicy
             'version' => $version,
             'dirty' => $version > (int) ($row['consent_acked_version'] ?? 0),
             'revoked' => (int) ($row['analytics_revoked_version'] ?? 0),
-            'analytics_allowed' => !self::sessionHoldsAnalytics($userId) && self::decide($analytics, $isEu, 'analytics'),
+            'analytics_allowed' => !self::sessionHoldsAnalytics($userId) && self::decide($stored, $isEu, 'analytics'),
         ];
     }
 
@@ -152,8 +160,8 @@ final class ConsentPolicy
             if ($flag === 'analytics') {
                 $stmt = $conn->prepareWrite(
                     "UPDATE `202_users_pref`
-                        SET `analytics_revoked_version` = IF(? = 'denied', `consent_version` + 1, `analytics_revoked_version`),
-                            `consent_version` = `consent_version` + 1,
+                        SET `analytics_revoked_version` = IF(? = 'denied', " . self::NEXT_VERSION . ", `analytics_revoked_version`),
+                            `consent_version` = " . self::NEXT_VERSION . ",
                             `analytics_consent` = ?, `analytics_consent_at` = ?,
                             `analytics_consent_source` = ?, `eu_consent_prompt_seen` = 1
                       WHERE `user_id` = ?"
@@ -162,7 +170,7 @@ final class ConsentPolicy
             } else {
                 $stmt = $conn->prepareWrite(
                     "UPDATE `202_users_pref`
-                        SET `consent_version` = `consent_version` + 1,
+                        SET `consent_version` = " . self::NEXT_VERSION . ",
                             `email_marketing_consent` = ?, `email_marketing_consent_at` = ?
                       WHERE `user_id` = ?"
                 );
@@ -209,8 +217,8 @@ final class ConsentPolicy
             $stmt = $conn->prepareWrite(
                 "UPDATE `202_users_pref`
                     SET `analytics_revoked_version` = IF(? = 1 AND NOT (`analytics_geo_is_eu` <=> 1) AND `analytics_consent` <> 'granted',
-                                                         `consent_version` + 1, `analytics_revoked_version`),
-                        `consent_version` = `consent_version` + IF(? = 1 AND NOT (`analytics_geo_is_eu` <=> 1), 1, 0),
+                                                         " . self::NEXT_VERSION . ", `analytics_revoked_version`),
+                        `consent_version` = IF(? = 1 AND NOT (`analytics_geo_is_eu` <=> 1), " . self::NEXT_VERSION . ", `consent_version`),
                         `analytics_geo_is_eu` = IF(`analytics_geo_is_eu` = 1, 1, ?)
                   WHERE `user_id` = ?"
             );

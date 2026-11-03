@@ -412,7 +412,8 @@ final class MessagingServiceIntegrationTest extends TestCase
             $this->assertCount(10, $sent);
             foreach ($sent as $body) {
                 $this->assertSame('denied', $body['consent']['email_marketing'] ?? null);
-                $this->assertSame(1, $body['consent']['version'] ?? null);
+                $this->assertIsInt($body['consent']['version'] ?? null);
+                $this->assertGreaterThanOrEqual(1700000000, $body['consent']['version'], 'a version is at least the Unix time');
                 $this->assertSame([], $body['events']);
             }
         } finally {

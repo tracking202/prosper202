@@ -170,7 +170,9 @@ therefore answer without `consent_ack`, or with a non-200, never `ok` alone.
 - `consent` is the same block as `identity.consent` (top-level here per the receiver
   contract), plus `version`; store the latest values. Tolerate its absence (older clients)
   and fail closed: no explicit `email_marketing: "granted"` means no marketing email.
-  `version` counts the user's consent changes on the install and only grows: a block
+  `version` is an integer that grows with each of the user's consent changes on the
+  install (at least the Unix time of the change, so a restored backup does not reuse
+  one), and it only grows: a block
   whose version is lower than one already stored for the user is an older delivery
   arriving late; acknowledge it, but do not let it replace the newer values.
 - Every event carries `tier`: `"essential"` (operational/lifecycle — arrives for all users;
