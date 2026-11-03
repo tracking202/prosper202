@@ -13,7 +13,8 @@ use Prosper202\Database\Connection;
  * offer asks whether that click has since converted, and fires the traffic
  * source's browser pixels for it there. Only conversions reported by a server
  * postback qualify, since a browser pixel conversion already rendered its own
- * markup. Each conversion is handed out at most once, under the click lock.
+ * markup; so do a PurLink offer's goal outcomes, which come only by postback.
+ * Each conversion is handed out at most once, under the click lock.
  */
 final class PurLinkPixels
 {
@@ -69,7 +70,10 @@ final class PurLinkPixels
             . ' FROM 202_conversion_logs AS cl'
             . ' LEFT JOIN 202_purlink_pixel_fires AS f ON f.conv_id = cl.conv_id AND f.user_id = cl.user_id'
             . ' WHERE cl.click_id = ? AND cl.user_id = ? AND cl.deleted = 0 AND cl.payable = 1'
-            . ' AND cl.pixel_type = 2 AND cl.reverses_conv_id IS NULL AND cl.superseded_by IS NULL'
+            // A server postback's conversion, or a PurLink goal outcome (they
+            // arrive only by server postback, keyed pgoal:).
+            . " AND (cl.pixel_type = 2 OR (cl.source = 'goal' AND cl.dedupe_key LIKE 'pgoal:%'))"
+            . ' AND cl.reverses_conv_id IS NULL AND cl.superseded_by IS NULL'
             . ' AND f.conv_id IS NULL'
             . ' AND NOT EXISTS (SELECT 1 FROM 202_conversion_logs AS r'
             . ' WHERE r.reverses_conv_id = cl.conv_id AND r.user_id = cl.user_id AND r.deleted = 0)'
