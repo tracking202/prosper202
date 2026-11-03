@@ -57,6 +57,7 @@ final class ConversionTables
             self::attributionRollupDirtyClicks(),
             self::offlineConversionFeeds(),
             self::offlineConversionNames(),
+            self::postbackAuth(),
         ];
     }
 
@@ -371,6 +372,33 @@ final class ConversionTables
                 `conversion_name` varchar(100) NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`user_id`,`platform`,`aff_campaign_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Each account's postback authentication (Prosper202\Conversion\
+     * PostbackAuth): whether its postbacks and pixels must carry its token
+     * or a signature, and the token, sealed (AES-256-GCM under the
+     * `postback_token` key in 202_deployment_secrets). previous_token_sealed
+     * is the token a rotation replaced, valid until previous_expires_at.
+     * No row is an account made from 1.9.80 on that never had a token: it
+     * reads as required, the DEFAULT; the 1.9.80 rung writes a row with
+     * token_required 0 for every account already there.
+     */
+    public static function postbackAuth(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::POSTBACK_AUTH,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::POSTBACK_AUTH . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `token_required` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `token_sealed` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `token_created_at` int(10) unsigned DEFAULT NULL,
+                `previous_token_sealed` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `previous_expires_at` int(10) unsigned DEFAULT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

@@ -75,6 +75,12 @@ if (is_numeric($mysql['click_id'])) {
 		return;
 	}
 
+	// Postback authentication: the click's account's token or signature,
+	// before anything is written. The image went out first, so a refusal is logged.
+	if (p202PostbackAuthRefusal($db, $cpa_row['user_id'] ?? null, 'gpx') !== null) {
+		return;
+	}
+
 	// An event (plan §2.2): stored on the click and evaluated by its goals.
 	// The image has already been sent, so a refusal is logged. The event
 	// id dedupes a reload, so the one-conversion-per-click gate below is

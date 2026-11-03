@@ -528,6 +528,49 @@ if (!function_exists('_upgrade_reclick_backfill_mark')) {
     }
 }
 
+if (!function_exists('_upgrade_postback_auth_table')) {
+    /**
+     * 202_postback_auth (Prosper202\Conversion\PostbackAuth), made with a
+     * row for every account already here, requirement off: no row reads as
+     * required (an account made from 1.9.80 on), and an account whose
+     * networks call its postbacks without a token must not lose them at the
+     * upgrade. Built under another name and renamed into place, so the table
+     * exists only with its rows: a run that stopped half way left no table,
+     * and the next run starts again. A table already there is left to the
+     * reconciler, with every row and choice in it; this runs on whichever
+     * step first meets the table (the 1.9.75 step reconciles every
+     * conversion table, on an install older than 1.9.76).
+     */
+    function _upgrade_postback_auth_table(\Prosper202\Database\Schema\SchemaDefinition $definition): bool
+    {
+        $table = _upgrade_query("SHOW TABLES LIKE '202\\_postback\\_auth'");
+        if (!$table instanceof \mysqli_result) {
+            error_log('Prosper202 upgrade: could not read whether 202_postback_auth exists; it will be made on the next run.');
+            return false;
+        }
+        $exists = $table->num_rows > 0;
+        $table->free();
+        if ($exists) {
+            return true;
+        }
+        $steps = [
+            'DROP TABLE IF EXISTS `202_postback_auth_building`',
+            str_replace('`202_postback_auth`', '`202_postback_auth_building`', $definition->createStatement),
+            'INSERT INTO `202_postback_auth_building` (user_id, token_required, updated_at)'
+                . ' SELECT u.user_id, 0, UNIX_TIMESTAMP() FROM `202_users` AS u',
+            'RENAME TABLE `202_postback_auth_building` TO `202_postback_auth`',
+        ];
+        foreach ($steps as $sql) {
+            if (_upgrade_query($sql) === false) {
+                error_log('Prosper202 upgrade: failed to make 202_postback_auth with a row for each account; the next run retries.');
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_same_ip_fallback')) {
     /**
      * 202_users_pref.user_pref_same_ip_fallback (Prosper202\Conversion\
@@ -656,6 +699,18 @@ if (!function_exists('_upgrade_measurement_tables')) {
         foreach ($definitions as $definition) {
             if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::USERS_PREF) {
                 if (!_upgrade_same_ip_fallback()) {
+                    return false;
+                }
+                break;
+            }
+        }
+
+        // Postback authentication's table arrives with a row for each account
+        // already there, before the reconciler would make it empty
+        // (_upgrade_postback_auth_table()).
+        foreach ($definitions as $definition) {
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::POSTBACK_AUTH) {
+                if (!_upgrade_postback_auth_table($definition)) {
                     return false;
                 }
                 break;
@@ -4646,13 +4701,26 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.79') {
 
-            // 1.9.80 changes no schema yet, so its step only records the
-            // version. A schema change for 1.9.80 belongs in this block,
-            // reconciled before the version is written.
-            if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
-                $prosper202_version = '1.9.80';
+            // A schema change for 1.9.80 belongs in this block, reconciled
+            // before the version is written.
+            //
+            // Postback authentication (Prosper202\Conversion\PostbackAuth):
+            // 202_postback_auth, made with a row for every account already
+            // here that leaves the requirement off, so the postbacks and
+            // pixels its networks call now keep converting
+            // (_upgrade_postback_auth_table()).
+            $step_ok = _upgrade_measurement_tables([
+                \Prosper202\Database\Tables\ConversionTables::postbackAuth(),
+            ]);
+            if ($step_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
+                    $prosper202_version = '1.9.80';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                }
             } else {
-                error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                error_log('Prosper202 upgrade: 202_postback_auth could not be made or reconciled; leaving version at 1.9.79'
+                    . ' so the next run retries.');
             }
         }
 
