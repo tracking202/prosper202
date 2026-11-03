@@ -296,6 +296,109 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         self::assertSame([], self::conversions());
     }
 
+    public function testAnOrderPaidAtAnotherTotalIsRefusedButAcceptedByShopify(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $changed = $this->deliver('orders/paid', self::order(['total_price' => '64.00']));
+
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $changed);
+        self::assertSame(200, ShopifyAdapter::deliveryStatus($changed->kind), 'not retried until Shopify drops it');
+        self::assertSame(['59.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testAnUnpaidOrderIsLeftToItsPayment(): void
+    {
+        $pending = self::order(['financial_status' => 'pending']);
+
+        self::assertOutcome(OutcomeKind::IGNORED, 200, $this->deliver('orders/create', $pending));
+        self::assertSame([], self::conversions());
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $this->deliver('orders/paid', self::order()));
+    }
+
+    public function testASecondRefundOfTheOrderIsRefusedAndKeptInTheLog(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]));
+
+        $second = $this->deliver('refunds/create', ShopifyAdapterTest::refund(['id' => 9100002, 'refund_line_items' => []]));
+
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $second);
+        self::assertSame(200, ShopifyAdapter::deliveryStatus($second->kind));
+        self::assertSame(['59.00000', '-20.00000'], array_column(self::conversions(), 'click_payout'));
+        self::assertStringContainsString('Shopify notification: conflict (409), refunds/create (refund)',
+            (string) file_get_contents($this->log));
+    }
+
+    public function testARefundOfAnOrderOnTwoClicksIsRefused(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        (new MysqlClickRepository(new Connection(self::requireScratch())))->recordClick(new ClickRecord(
+            clickId: self::CLICK + 1,
+            userId: self::ACCOUNT,
+            clickTime: strtotime('2026-11-01T14:00:00Z'),
+            affCampaignId: self::CAMPAIGN,
+            clickPayout: '0',
+            recordsCampaignRows: false,
+        ));
+        $this->deliver('orders/paid', self::order([], self::CLICK + 1));
+
+        $outcome = $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]));
+
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $outcome);
+        self::assertStringContainsString('recorded on more than one click', $outcome->message);
+        self::assertCount(2, self::conversions());
+    }
+
+    /** gpb.php, run as the server runs it, hands a request with Shopify's headers to shopify.php. */
+    public function testGpbHandsShopifyWebhooksToTheShopifyEndpoint(): void
+    {
+        $shopify = self::runGpb(['HTTP_X_SHOPIFY_TOPIC' => 'orders/paid', 'HTTP_X_SHOPIFY_HMAC_SHA256' => 'bm90LXNpZ25lZA==']);
+        $answer = json_decode($shopify, true);
+        self::assertIsArray($answer, $shopify);
+        self::assertSame('unverified', $answer['outcome'] ?? null, $shopify);
+        self::assertSame(403, $answer['code'] ?? null);
+        self::assertStringContainsString('Shopify notification from', (string) file_get_contents($this->log) . self::$runnerErr);
+
+        $postback = self::runGpb([]);
+        self::assertStringContainsString('SubID not found', $postback, 'any other request is a postback, as before');
+    }
+
+    private static string $runnerErr = '';
+
+    /** @param array<string, string> $server */
+    private static function runGpb(array $server): string
+    {
+        $sessions = sys_get_temp_dir() . '/p202-shopify-gpb-' . getmypid();
+        if (!is_dir($sessions) && !mkdir($sessions, 0700)) {
+            throw new \RuntimeException('could not create ' . $sessions);
+        }
+        $env = [
+            'P202_TEST_REPORT_USER' => (string) self::ACCOUNT,
+            'P202_TEST_SESSION_DIR' => $sessions,
+            'P202_TEST_GET' => '{}',
+            'P202_TEST_POST' => (string) json_encode(['id' => '5550001234567']),
+            'P202_TEST_SERVER' => (string) json_encode((object) $server),
+        ] + getenv();
+        $proc = proc_open(
+            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__) . '/Setup/fixtures/page-runner.php',
+                'tracking202/static/gpb.php'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            null,
+            $env
+        );
+        self::assertIsResource($proc);
+        $out = (string) stream_get_contents($pipes[1]);
+        self::$runnerErr = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        self::assertNotSame(2, proc_close($proc), 'the runner could not set up: ' . self::$runnerErr);
+        array_map('unlink', glob($sessions . '/*') ?: []);
+        @rmdir($sessions);
+
+        return $out;
+    }
+
     public function testAGetIsRefused(): void
     {
         $signed = ShopifyAdapterTest::webhook('orders/paid', self::order());

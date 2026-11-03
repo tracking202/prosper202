@@ -1250,8 +1250,8 @@ template_top('API Integrations');
 						<code class="text-nowrap">t202subid</code> (or <code class="text-nowrap">_t202subid</code>, which
 						checkout hides), filled from the tracker’s <code>[[subid]]</code>.</li>
 					<li>In Shopify, under Settings › Notifications › Webhooks, create a JSON webhook for
-						<strong>Order payment</strong> (or Order creation) and one for <strong>Refund create</strong>,
-						both to this URL.</li>
+						<strong>Order payment</strong> and one for <strong>Refund create</strong>, both to this URL.
+						(Order creation records only an order already paid when it is placed.)</li>
 					<li>Store the secret Shopify shows there (“Your webhooks will be signed with …”) below. A
 						webhook it does not verify is refused, and nothing is recorded until a secret is stored.</li>
 				</ol>

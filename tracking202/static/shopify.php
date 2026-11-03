@@ -18,8 +18,10 @@ $receiver = new \Prosper202\PaymentNotification\Receiver(
     new \Prosper202\PaymentNotification\Shopify\ShopifyAdapter($db),
     $db
 );
+$outcome = $receiver->receive(
+    \Prosper202\PaymentNotification\InboundRequest::fromGlobals($_SERVER, $_POST, $body === false ? '' : $body)
+);
 \Prosper202\PaymentNotification\Response::send(
-    $receiver->receive(
-        \Prosper202\PaymentNotification\InboundRequest::fromGlobals($_SERVER, $_POST, $body === false ? '' : $body)
-    )
+    $outcome,
+    \Prosper202\PaymentNotification\Shopify\ShopifyAdapter::deliveryStatus($outcome->kind)
 );

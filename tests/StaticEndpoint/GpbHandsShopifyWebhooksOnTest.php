@@ -9,8 +9,8 @@ use PHPUnit\Framework\TestCase;
 /**
  * Paid 1.9.56 installs pointed Shopify's order webhooks at gpb.php. A request
  * carrying Shopify's headers is handed to shopify.php before gpb.php reads a
- * subid or boots anything, so it is verified and recorded there. The live
- * pass posts to both URLs (see the pull request).
+ * subid or boots anything, so it is verified and recorded there.
+ * ShopifyWebhookIntegrationTest runs gpb.php with Shopify's headers.
  */
 final class GpbHandsShopifyWebhooksOnTest extends TestCase
 {

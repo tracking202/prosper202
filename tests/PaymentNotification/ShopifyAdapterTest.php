@@ -199,6 +199,42 @@ final class ShopifyAdapterTest extends TestCase
         self::assertStringContainsString('"12abc", which is not a click id', $refusal->outcome->message);
     }
 
+    public function testAnOrderCreatedUnpaidWaitsForItsPayment(): void
+    {
+        foreach (['pending', 'authorized', 'voided'] as $status) {
+            $n = self::parse(self::webhook('orders/create', self::order(['financial_status' => $status])));
+            self::assertSame(NotificationKind::IGNORED, $n->kind, $status);
+            self::assertStringContainsString('not paid yet: ' . $status, $n->event);
+        }
+        $none = self::order();
+        unset($none['financial_status']);
+        self::assertSame(NotificationKind::IGNORED, self::parse(self::webhook('orders/create', $none))->kind);
+
+        // orders/paid is the payment itself.
+        $paid = self::parse(self::webhook('orders/paid', self::order(['financial_status' => 'partially_paid'])));
+        self::assertSame(NotificationKind::SALE, $paid->kind);
+    }
+
+    public function testShopifyIsAnsweredWithA2xxForRefusalsARetryCannotChange(): void
+    {
+        foreach ([OutcomeKind::MALFORMED, OutcomeKind::UNKNOWN_CLICK, OutcomeKind::CONFLICT,
+            OutcomeKind::CURRENCY_MISMATCH, OutcomeKind::NOTHING_TO_REVERSE] as $kind) {
+            self::assertSame(200, ShopifyAdapter::deliveryStatus($kind), $kind->value);
+        }
+        self::assertSame(403, ShopifyAdapter::deliveryStatus(OutcomeKind::UNVERIFIED));
+        self::assertSame(500, ShopifyAdapter::deliveryStatus(OutcomeKind::FAILED));
+        self::assertSame(503, ShopifyAdapter::deliveryStatus(OutcomeKind::UPGRADE_PENDING));
+        self::assertSame(405, ShopifyAdapter::deliveryStatus(OutcomeKind::METHOD_NOT_ALLOWED));
+    }
+
+    public function testATotalTheLedgerCannotHoldIsRefused(): void
+    {
+        $refusal = self::refusal(fn () => self::parse(self::webhook('orders/paid', self::order(['total_price' => '1000000.00']))));
+
+        self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
+        self::assertStringContainsString('at most 999999.99999', $refusal->outcome->message);
+    }
+
     public function testATestOrderRecordsNothing(): void
     {
         self::assertSame(NotificationKind::TEST, self::parse(self::webhook('orders/create', self::order(['test' => true])))->kind);

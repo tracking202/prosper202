@@ -16,6 +16,7 @@ use Prosper202\PaymentNotification\NotificationKind;
 use Prosper202\PaymentNotification\OutcomeKind;
 use Prosper202\PaymentNotification\ProviderAdapter;
 use Prosper202\PaymentNotification\Refusal;
+use Prosper202\PaymentNotification\Response;
 use Prosper202\PaymentNotification\Verification;
 
 /**
@@ -24,8 +25,8 @@ use Prosper202\PaymentNotification\Verification;
  * which each account stores (ShopifyWebhookSecret). The topic header says
  * what the body is.
  *
- * orders/create and orders/paid record the order under its id at its
- * total_price, so a store sending both counts it once. The click is the
+ * orders/paid, and orders/create for an order already paid, record the
+ * order under its id at its total_price, so a store sending both counts it once. The click is the
  * t202subid line item property (or _t202subid, which the checkout hides)
  * that paid 1.9.56's gpb.php read. refunds/create reverses the order by what
  * its successful refund transactions returned, on the click of a refunded
@@ -38,6 +39,9 @@ final class ShopifyAdapter implements ProviderAdapter
     public const TOPIC_HEADER = 'X-Shopify-Topic';
 
     private const PROPERTIES = ['t202subid', '_t202subid'];
+
+    /** The financial_status of an order that has been paid, refunds included. */
+    private const PAID = ['paid', 'partially_refunded', 'refunded'];
 
     /** decimal(11,5): at most six whole digits and five decimals, read exactly. */
     private const AMOUNT = '/^\d{1,6}(?:\.\d{1,5})?$/D';
@@ -131,6 +135,20 @@ final class ShopifyAdapter implements ProviderAdapter
         return new Verification($verified);
     }
 
+    /**
+     * The status Shopify is answered with. A refusal a retry cannot change
+     * (a 4xx other than 403 unverified and 405) is answered 200, the outcome
+     * staying in the body and the log: Shopify retries a non-2xx answer and
+     * removes an API-made subscription after 8 failures in a row, which would
+     * lose every later order to one bad cart.
+     */
+    public static function deliveryStatus(OutcomeKind $kind): int
+    {
+        $status = Response::status($kind);
+
+        return $status >= 400 && $status < 500 && $status !== 403 && $status !== 405 ? 200 : $status;
+    }
+
     /** What Shopify sends in X-Shopify-Hmac-Sha256 for a body signed with a secret. */
     public static function sign(string $body, string $secret): string
     {
@@ -163,6 +181,16 @@ final class ShopifyAdapter implements ProviderAdapter
     {
         if (($order['test'] ?? false) === true) {
             return new Notification(NotificationKind::TEST, $topic);
+        }
+        // An order is created before it is paid (bank transfer, cash on delivery, a held card):
+        // orders/create counts only one already paid, and orders/paid the rest.
+        $status = $order['financial_status'] ?? null;
+        if ($topic === 'orders/create' && !in_array($status, self::PAID, true)) {
+            return new Notification(
+                NotificationKind::IGNORED,
+                $topic . ' (not paid yet: ' . (is_string($status) ? self::shown($status) : 'no financial_status')
+                . '; send Order payment to record it when it is)'
+            );
         }
         $orderId = self::id($order, 'id', 'The order');
         $amount = self::amount($order['total_price'] ?? null, 'total_price');
@@ -282,7 +310,8 @@ final class ShopifyAdapter implements ProviderAdapter
 
     /**
      * The click the order was recorded on, among the accounts whose secret
-     * verified the refund; null when it is on none, or on more than one click.
+     * verified the refund; null when it is on none. On more than one click,
+     * the refund cannot say which it takes back, and is refused.
      */
     private function clickOfOrder(string $orderId): ?int
     {
@@ -298,7 +327,15 @@ final class ShopifyAdapter implements ProviderAdapter
         $conn->bind($stmt, 's' . str_repeat('i', count($this->accounts)), [$orderId, ...$this->accounts]);
         $rows = $conn->fetchAll($stmt);
 
-        return count($rows) === 1 ? (int) $rows[0]['click_id'] : null;
+        if (count($rows) > 1) {
+            throw Refusal::of(
+                OutcomeKind::CONFLICT,
+                'Order ' . $orderId . ' is recorded on more than one click and the refund names no line item, so it'
+                . ' cannot say which sale it takes back; nothing was recorded.'
+            );
+        }
+
+        return $rows === [] ? null : (int) $rows[0]['click_id'];
     }
 
     /** @param array<string, mixed> $body */

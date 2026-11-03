@@ -235,8 +235,8 @@ webhooks. Under **Account › API integrations › Shopify**:
    tracker's `[[subid]]`. Prosper202 reads it from the first line item that
    carries it, as paid 1.9.56 did.
 2. In Shopify, under **Settings › Notifications › Webhooks**, create a JSON
-   webhook for **Order payment** (or **Order creation**) and one for **Refund
-   create**, both to the page's Webhook URL
+   webhook for **Order payment** and one for **Refund create**, both to the
+   page's Webhook URL
    (`https://<your tracking domain>/tracking202/static/shopify.php`). Webhooks
    already pointed at the global postback (`tracking202/static/gpb.php`) by a
    paid 1.9.56 install keep working: a request carrying Shopify's headers is
@@ -248,12 +248,20 @@ webhooks. Under **Account › API integrations › Shopify**:
    secret verifies, or one that arrives before any secret is stored, is
    refused (`403`) and logged with the reason; nothing is recorded.
 
-An order counts once, under its order id, whichever of Order creation and
-Order payment arrives first. A test order and other topics are acknowledged
-and record nothing. A refund reverses the order on the click of a refunded line
-item, or, when it names none, the click the order was recorded on; one that
-returns no money (a restock) records nothing. An order in a currency other
-than the account's is refused (`422`): Prosper202 does not convert it.
+An order counts once, under its order id. Order creation records only an order
+already paid when it is placed (not a bank transfer, cash on delivery or a held
+card), so subscribe to Order payment. A test order and other topics are
+acknowledged and record nothing. A refund reverses the order on the click of a
+refunded line item, or, when it names none, the click the order was recorded
+on; one that returns no money (a restock) records nothing. The ledger reverses
+a sale once, so a second refund of the same order is refused.
+
+A webhook that verifies but cannot be recorded (a cart value that is not a
+click id, a click of another account, an order in a currency other than the
+account's, a changed total, a second refund) is logged with the reason and
+answered `200` with the outcome in the body: Shopify retries any other answer
+and removes a subscription made through its API after 8 failures in a row,
+which would lose every later order. An unverified webhook is answered `403`.
 
 ## Slack Integration
 
