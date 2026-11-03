@@ -43,6 +43,13 @@ final class PostbackRequestTest extends TestCase
             ['subid' => '42', 'amount' => '5']];
         yield 'a blank body value never replaces a query value' => [['subid' => '42'], ['subid' => ''], ['subid' => '42']];
         yield 'a "0" in the query is a value, not a blank' => [['amount' => '0'], ['amount' => '5'], ['amount' => '0']];
+        yield 'a query sid keeps a body subid out: they name one click' => [['sid' => '5'], ['subid' => '7', 'amount' => '2'],
+            ['sid' => '5', 'amount' => '2']];
+        yield 'a query subid keeps a body sid out' => [['subid' => '5'], ['sid' => '7'], ['subid' => '5']];
+        yield 'a blank query subid beside a query sid still keeps the body out' => [['subid' => '', 'sid' => '5'],
+            ['subid' => '7'], ['subid' => '', 'sid' => '5']];
+        yield 'blank query click names take the body\'s' => [['subid' => '', 'sid' => ''], ['sid' => '7'],
+            ['subid' => '', 'sid' => '7']];
         // Refused downstream (ClickId::parse), never replaced by the body's value.
         yield 'an array in the query is a value, not a blank' => [['subid' => ['1']], ['subid' => '42'],
             ['subid' => ['1']]];
@@ -69,7 +76,7 @@ final class PostbackRequestTest extends TestCase
         $reads = [];
         $line = 0;
         foreach (token_get_all($source) as $token) {
-            if (is_array($token) && $token[0] === T_VARIABLE && in_array($token[1], ['$_GET', '$_POST', '$_REQUEST'], true)) {
+            if (is_array($token) && $token[0] === T_VARIABLE && in_array($token[1], ['$_GET', '$_POST', '$_REQUEST', '$_COOKIE'], true)) {
                 $reads[] = $token[1] . '@' . $token[2];
                 $line = $token[2];
             }
@@ -77,6 +84,10 @@ final class PostbackRequestTest extends TestCase
         self::assertCount(2, $reads, 'only the merge reads the superglobals: ' . implode(', ', $reads));
         $merge = explode("\n", $source)[$line - 1];
         self::assertStringContainsString('$request = p202PostbackRequest($_GET, $_POST);', $merge);
-        self::assertGreaterThanOrEqual(10, substr_count($source, '$request'), 'the parameters are read from $request');
+        foreach (['p202RecordWebEvent($db, (int) $mysql[\'click_id\'], $request', 'p202ExtractReversal($request)',
+            'p202ExtractTransactionId($request)', 'p202ExtractCustomer($request)', 'p202ExtractItems($request)',
+            "p202LinkConversionIdentity(\$db, (int) \$mysql['click_id'], \$request)"] as $call) {
+            self::assertStringContainsString($call, $source);
+        }
     }
 }

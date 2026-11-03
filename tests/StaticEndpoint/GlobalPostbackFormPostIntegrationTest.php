@@ -175,14 +175,23 @@ final class GlobalPostbackFormPostIntegrationTest extends TestCase
         self::assertSame([[(string) self::CLICK, '5.00000', 'ord-both']], self::conversions());
     }
 
-    public function testABodyWithNoClickIdRecordsNothing(): void
+    public function testAFormBodyWithNoClickIdRecordsNothing(): void
     {
-        // A JSON body leaves $_POST empty, as PHP parses only form bodies.
         [$status, $body] = self::gpb([], ['amount' => '5']);
 
         self::assertSame(404, $status);
         self::assertStringContainsString('SubID not found', $body);
         self::assertSame([], self::conversions());
+    }
+
+    public function testABodySubidNeverOutranksTheQuerysSid(): void
+    {
+        [$status, $body] = self::gpb(['sid' => (string) self::CLICK], [
+            'subid' => (string) self::OTHER_CLICK, 'amount' => '6', 'txid' => 'ord-sid',
+        ]);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame([[(string) self::CLICK, '6.00000', 'ord-sid']], self::conversions());
     }
 
     public function testAMalformedBodyClickIdRecordsNothing(): void
