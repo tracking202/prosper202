@@ -39,6 +39,9 @@ final class PublisherCreditIntegrationTest extends TestCase
     private const FOREIGN = 990807;
     private const TWIN_A = 990808;
     private const TWIN_B = 990809;
+    /** An Admin and a Publisher whose install hash is blank (accounts made before 1.8.2.1). */
+    private const BLANK_OWNER = 990810;
+    private const BLANK_PUBLISHER = 990811;
     private const FIRST_CLICK = 99080101;
 
     /** user => [role, install, active, deleted, public id] */
@@ -52,6 +55,8 @@ final class PublisherCreditIntegrationTest extends TestCase
         self::FOREIGN => [6, self::OTHER_INSTALL, 1, 0, 'a1a1a1a1a1'],
         self::TWIN_A => [6, self::INSTALL, 1, 0, 'b1b1b1b1b1'],
         self::TWIN_B => [6, self::INSTALL, 1, 0, 'b1b1b1b1b1'],
+        self::BLANK_OWNER => [2, '', 1, 0, 'a2a2a2a2a2'],
+        self::BLANK_PUBLISHER => [6, '', 1, 0, 'b2b2b2b2b2'],
     ];
 
     public static function setUpBeforeClass(): void
@@ -125,6 +130,14 @@ final class PublisherCreditIntegrationTest extends TestCase
     public function testAnotherInstallsPublisherIsIgnored(): void
     {
         self::assertNull(self::credit()->forClick(self::OWNER, 'a1a1a1a1a1'));
+    }
+
+    /** A blank install hash names no install, so two blank ones are not the same install. */
+    public function testABlankInstallHashMatchesNothing(): void
+    {
+        self::assertNull(self::credit()->forClick(self::BLANK_OWNER, 'b2b2b2b2b2'));
+        self::assertNull(self::credit()->forClick(self::OWNER, 'b2b2b2b2b2'));
+        self::assertSame([], self::credit()->grantable(self::BLANK_OWNER));
     }
 
     public function testASwitchedOffOrRemovedPublisherIsIgnored(): void

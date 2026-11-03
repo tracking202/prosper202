@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Click;
 
 use Prosper202\Database\Connection;
+use Prosper202\User\InstallHash;
 
 /**
  * Publisher links (`t202pubid`, paid 1.9.48 to 1.9.56): a click arriving on
@@ -79,7 +80,7 @@ final readonly class PublisherCredit
             return null;
         }
         $installHash = $this->grantingInstall($ownerUserId);
-        if ($installHash === null || !hash_equals($installHash, self::text($row, 'install_hash'))) {
+        if ($installHash === null || !InstallHash::matches($installHash, self::text($row, 'install_hash'))) {
             return null;
         }
 
@@ -164,7 +165,10 @@ final readonly class PublisherCredit
         return $publicId !== '' ? $publicId : null;
     }
 
-    /** The install of an active account that may grant publishers, or null when it may not. */
+    /**
+     * The install of an active account that may grant publishers, or null when
+     * it may not. A blank hash names no install: it matches nothing (InstallHash).
+     */
     private function grantingInstall(int $ownerUserId): ?string
     {
         if ($ownerUserId < 1) {
@@ -181,7 +185,9 @@ final readonly class PublisherCredit
         $this->conn->bind($stmt, 'is', [$ownerUserId, self::GRANT_PERMISSION]);
         $row = $this->conn->fetchOne($stmt);
 
-        return $row === null ? null : self::text($row, 'install_hash');
+        $installHash = $row === null ? '' : self::text($row, 'install_hash');
+
+        return $installHash !== '' ? $installHash : null;
     }
 
     /** @param array<string, mixed> $row */
