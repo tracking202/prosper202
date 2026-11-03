@@ -10,18 +10,18 @@ use Prosper202\Click\ClickRequest;
  * What a redirector rule can ask about a visitor (CriterionMatcher), as
  * rtr.php and offrtr.php know it. Whether the click is filtered and its
  * fraud score cost a write or a network call, so each is asked only when a
- * rule needs it, and once.
+ * rule needs it, and once; null is "could not tell".
  */
 final class VisitorFacts
 {
-    private ?bool $filtered = null;
-    private ?bool $fraud = null;
+    /** @var array<string, ?bool> */
+    private array $asked = [];
 
     /**
      * @param array<string, mixed> $geo getGeoData()'s answer
      * @param array<array-key, mixed> $query the request's query
-     * @param \Closure(): bool $filteredCheck whether the click is (to be) recorded as filtered
-     * @param \Closure(): bool $fraudCheck whether IPQualityScore scores the visitor as fraud
+     * @param \Closure(): ?bool $filteredCheck whether the click is (to be) recorded as filtered
+     * @param \Closure(): ?bool $fraudCheck whether IPQualityScore scores the visitor as fraud
      */
     public function __construct(
         public readonly string $ip,
@@ -47,8 +47,8 @@ final class VisitorFacts
      * @param array<array-key, mixed> $get
      * @param array<array-key, mixed> $server
      * @param array<string, mixed> $geo
-     * @param \Closure(): bool $filteredCheck
-     * @param \Closure(): bool $fraudCheck
+     * @param \Closure(): ?bool $filteredCheck
+     * @param \Closure(): ?bool $fraudCheck
      */
     public static function fromRequest(
         array $get,
@@ -99,13 +99,21 @@ final class VisitorFacts
         return str_replace('%20', ' ', ClickRequest::text($this->query, $name));
     }
 
-    public function filtered(): bool
+    public function filtered(): ?bool
     {
-        return $this->filtered ??= ($this->filteredCheck)();
+        if (!array_key_exists('filtered', $this->asked)) {
+            $this->asked['filtered'] = ($this->filteredCheck)();
+        }
+
+        return $this->asked['filtered'];
     }
 
-    public function fraud(): bool
+    public function fraud(): ?bool
     {
-        return $this->fraud ??= ($this->fraudCheck)();
+        if (!array_key_exists('fraud', $this->asked)) {
+            $this->asked['fraud'] = ($this->fraudCheck)();
+        }
+
+        return $this->asked['fraud'];
     }
 }

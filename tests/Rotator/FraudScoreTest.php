@@ -19,15 +19,15 @@ final class FraudScoreTest extends TestCase
         require_once dirname(__DIR__, 2) . '/202-config/FraudDetectionIPQS.class.php';
     }
 
-    public function testNoKeyIsNotFraudAndAsksNobody(): void
+    public function testNoKeyIsUnknownAndAsksNobody(): void
     {
         $asked = false;
         $detector = static function () use (&$asked): \FraudDetectionInterface {
             $asked = true;
             throw new \LogicException('not to be asked');
         };
-        self::assertFalse(FraudScore::isHigh('', '203.0.113.9', [], $detector));
-        self::assertFalse(FraudScore::isHigh('  ', '203.0.113.9', [], $detector));
+        self::assertNull(FraudScore::isHigh('', '203.0.113.9', [], $detector));
+        self::assertNull(FraudScore::isHigh('  ', '203.0.113.9', [], $detector));
         self::assertFalse($asked);
     }
 
@@ -49,7 +49,7 @@ final class FraudScoreTest extends TestCase
         }
     }
 
-    public function testNoAnswerIsNotFraud(): void
+    public function testNoAnswerIsUnknown(): void
     {
         $detector = static fn (array $config): \FraudDetectionInterface => new class ($config) extends \FraudDetectionIPQS {
             public function get_IPQ_URL($url)
@@ -59,7 +59,7 @@ final class FraudScoreTest extends TestCase
         };
         $log = ini_set('error_log', '/dev/null');
         try {
-            self::assertFalse(FraudScore::isHigh('k', '203.0.113.9', [], $detector));
+            self::assertNull(FraudScore::isHigh('k', '203.0.113.9', [], $detector));
         } finally {
             ini_set('error_log', (string) $log);
         }

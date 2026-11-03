@@ -14,7 +14,10 @@ namespace Prosper202\Rotator;
  * range or referer list matches when any value does (1.9.56 needed every
  * range, and counted a referer list once per value), and `is_not` when none
  * does. A c1-c4 criterion needs the value on the link, whatever the
- * statement, as in 1.9.56; a missing keyword or utm value is ''.
+ * statement, as in 1.9.56; a missing keyword or utm value is ''. A fraud
+ * or visitor criterion that cannot be decided (no IPQualityScore key or
+ * answer, a failed read) matches neither way: 1.9.56 read an unknown score
+ * as "not fraud", which sent every visitor down a "not fraud" rule.
  */
 final class CriterionMatcher
 {
@@ -103,9 +106,11 @@ final class CriterionMatcher
             case 'eu':
                 return self::listed(self::flag($visitor->geo['is_european_union'] ?? null), $values, true) === $is;
             case 'fraud':
-                return self::listed($visitor->fraud() ? 'true' : 'false', $values, true) === $is;
+                $fraud = $visitor->fraud();
+                return $fraud !== null && self::listed($fraud ? 'true' : 'false', $values, true) === $is;
             case 'visitor':
-                return self::listed($visitor->filtered() ? 'filtered' : 'unique', $values, true) === $is;
+                $filtered = $visitor->filtered();
+                return $filtered !== null && self::listed($filtered ? 'filtered' : 'unique', $values, true) === $is;
             case 'c1':
             case 'c2':
             case 'c3':
@@ -172,11 +177,16 @@ final class CriterionMatcher
 
     /**
      * A referer value is a case-insensitive pattern found anywhere in the
-     * referer, as 1.9.56 read it; one that is no valid pattern is found as text.
+     * referer, as 1.9.56 read it. One that is no valid pattern, or that runs
+     * out of backtracking, is found as text: values are typed as URLs too.
      */
     private static function refererMatches(string $pattern, string $referer): bool
     {
-        $regex = '~(' . str_replace('~', '\~', $pattern) . ')~i';
+        if (str_contains($pattern, "\x01")) {
+            return stripos($referer, $pattern) !== false;
+        }
+        // A delimiter no typed pattern holds, so none needs escaping.
+        $regex = "\x01(" . $pattern . ")\x01i";
         set_error_handler(static fn (): bool => true);
         try {
             $hit = preg_match($regex, $referer);

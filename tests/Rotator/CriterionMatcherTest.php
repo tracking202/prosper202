@@ -150,6 +150,19 @@ final class CriterionMatcherTest extends TestCase
         self::assertSame(11, $asked, 'each is asked once');
     }
 
+    /** A score or verdict that could not be had decides nothing: neither "is" nor "is not" matches. */
+    public function testAFraudOrVisitorCriterionThatCannotBeDecidedMatchesNeitherWay(): void
+    {
+        $unknown = VisitorFacts::fromRequest([], [], null, null, '203.0.113.45', [], null, '', '', '',
+            static fn (): ?bool => null, static fn (): ?bool => null);
+        foreach (['fraud' => ['true', 'false'], 'visitor' => ['filtered', 'unique']] as $type => $values) {
+            foreach ($values as $value) {
+                self::assertFalse(CriterionMatcher::criterion($type, 'is', $value, $unknown), "$type is $value");
+                self::assertFalse(CriterionMatcher::criterion($type, 'is_not', $value, $unknown), "$type is not $value");
+            }
+        }
+    }
+
     public function testEuReadsGeoIpsUnknown(): void
     {
         $unknown = self::visitor(['geo' => ['is_european_union' => 'Unknown']]);
@@ -175,6 +188,10 @@ final class CriterionMatcherTest extends TestCase
         $visitor = self::visitor(['server' => ['HTTP_REFERER' => 'https://shop.example/a(b']]);
         self::assertTrue(CriterionMatcher::criterion('referer', 'is', 'a(b', $visitor));
         self::assertTrue(CriterionMatcher::criterion('referer', 'is', 'shop.example/a', $visitor), 'a slash needs no escape');
+        self::assertTrue(CriterionMatcher::criterion('referer', 'is', 'SHOP\\.example/a\\(', $visitor), 'an escape is the pattern\'s');
+        $tilde = self::visitor(['server' => ['HTTP_REFERER' => 'https://shop.example/~team']]);
+        self::assertTrue(CriterionMatcher::criterion('referer', 'is', '/~team', $tilde));
+        self::assertTrue(CriterionMatcher::criterion('referer', 'is', '/\\~team', $tilde), 'an escaped ~ is the pattern\'s');
         self::assertFalse(CriterionMatcher::criterion('referer', 'is', 'x(y', $visitor));
     }
 

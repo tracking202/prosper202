@@ -147,17 +147,21 @@ $offrtrVisitor = p202RotatorVisitor(
 	$result,
 	$rotator_row['user_keyword_searched_or_bidded'] ?? null,
 	$rotator_row['user_pref_referer_data'] ?? null,
-	static function () use ($db, $mysql, $offrtrClickId, $rotator_row): bool {
+	// A failed read skips the rule; the visitor goes on to the next one.
+	static function () use ($mysql, $db, $offrtrClickId, $rotator_row): ?bool {
 		try {
 			$conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
 			$stmt = $conn->prepareWrite('SELECT c.click_filtered FROM ' . \Prosper202\Click\LatestVisit::of('?') . ' AS c WHERE c.user_id = ?');
 			$conn->bind($stmt, 'ii', [(int) $offrtrClickId, (int) $rotator_row['user_id']]);
 			$row = $conn->fetchOne($stmt);
 		} catch (\Throwable $offrtrFilteredError) {
-			record_mysql_error($db, 'reading whether click ' . $mysql['click_id'] . ' is filtered', $offrtrFilteredError->getMessage());
+			error_log('offrtr.php: reading whether click ' . $mysql['click_id'] . ' is filtered failed ('
+				. $offrtrFilteredError->getMessage() . '); its visitor rules are skipped');
+
+			return null;
 		}
 
-		return (string) ($row['click_filtered'] ?? '0') === '1';
+		return $row === null ? null : (string) ($row['click_filtered'] ?? '0') === '1';
 	}
 );
 

@@ -113,6 +113,8 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
         ]);
         // Tried in this order; the visitor rules match everyone else, so they come last.
         $rules = [
+            // The account has no IPQualityScore key: the score is unknown, so this matches nobody.
+            7340 => ['fraud', 'is_not', 'true', 'https://not-fraud.example/'],
             7341 => ['utm_source', 'is', 'newsletter', 'https://utm.example/'],
             7342 => ['c1', 'is', 'spring', 'https://c1.example/'],
             7343 => ['t202kw', 'is', 'crm trial', 'https://keyword.example/'],

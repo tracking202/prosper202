@@ -10,8 +10,8 @@ use Prosper202\Database\Connection;
 /**
  * A redirector's "High fraud score" criterion: whether IPQualityScore scores
  * the visitor 80 or more with the account's key (Settings › API
- * Integrations). As in 1.9.56, no key or no answer reads as not fraud; a
- * failed answer is logged, so a rule that stopped matching can be traced.
+ * Integrations). No key or no answer is null, "could not tell"; a failed
+ * answer is logged, so a rule that stopped matching can be traced.
  */
 final class FraudScore
 {
@@ -33,10 +33,10 @@ final class FraudScore
      * @param array<array-key, mixed> $server
      * @param (\Closure(array<string, mixed>): \FraudDetectionInterface)|null $detector the IPQS client, for tests
      */
-    public static function isHigh(string $key, string $ip, array $server, ?\Closure $detector = null): bool
+    public static function isHigh(string $key, string $ip, array $server, ?\Closure $detector = null): ?bool
     {
         if (trim($key) === '' || $ip === '') {
-            return false;
+            return null;
         }
         $config = [
             'key' => trim($key),
@@ -49,9 +49,9 @@ final class FraudScore
 
             return $client->isFraud($config['ip']) === true;
         } catch (\Throwable $e) {
-            error_log('Redirector fraud rule: IPQualityScore gave no score (' . $e->getMessage() . '); read as not fraud');
+            error_log('Redirector fraud rule: IPQualityScore gave no score (' . $e->getMessage() . '); the rule is skipped');
 
-            return false;
+            return null;
         }
     }
 }
