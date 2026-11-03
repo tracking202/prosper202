@@ -504,22 +504,30 @@ if (!function_exists('_upgrade_conversion_ledger_probe')) {
     }
 }
 
-if (!function_exists('_upgrade_unconsented_analytics_purge')) {
+if (!function_exists('_upgrade_withhold_unconsented_analytics')) {
     /**
-     * Before 1.9.80 analytics was recorded with no consent check. The queued
-     * events and the attribute snapshot of that time are deleted before the
-     * reconcile gives them a tier and consent version that would read as
-     * consented; the essential events (sign-ins, new accounts) are kept.
-     * Keyed on the columns the reconcile adds, so a rerun after it removes
-     * nothing recorded since. False when a table could not be read or purged.
+     * Before 1.9.80 analytics was recorded with no consent check. Before the
+     * reconcile gives those rows a tier and consent version that would read
+     * as consented, the unsent events (all but sign-ins and new accounts)
+     * become 'withheld' and the attribute snapshot is marked withheld: kept,
+     * and never delivered. The enum value and column are added here in the
+     * installer's words so the reconcile finds them. Keyed on the columns the reconcile
+     * adds, so a rerun marks nothing recorded since. False on any failure.
      */
-    function _upgrade_unconsented_analytics_purge(): bool
+    function _upgrade_withhold_unconsented_analytics(): bool
     {
         foreach ([
-            '202_messaging_events' => ['tier', "DELETE FROM `202_messaging_events`
-                WHERE delivery_status <> 'sent' AND event_name NOT IN ('login', 'account_created')"],
-            '202_messaging_attributes' => ['consent_version', 'DELETE FROM `202_messaging_attributes`'],
-        ] as $table => [$marker, $purge]) {
+            '202_messaging_events' => ['tier', [
+                "ALTER TABLE `202_messaging_events` MODIFY COLUMN `delivery_status`
+                    enum('pending','sent','failed','withheld') NOT NULL DEFAULT 'pending'",
+                "UPDATE `202_messaging_events` SET delivery_status = 'withheld'
+                    WHERE delivery_status <> 'sent' AND event_name NOT IN ('login', 'account_created')",
+            ]],
+            '202_messaging_attributes' => ['consent_version', [
+                "ALTER TABLE `202_messaging_attributes` ADD COLUMN `withheld` tinyint(1) NOT NULL DEFAULT '0' AFTER `updated_at`",
+                'UPDATE `202_messaging_attributes` SET withheld = 1, dirty = 0',
+            ]],
+        ] as $table => [$marker, $statements]) {
             $exists = _upgrade_query("SHOW TABLES LIKE '$table'");
             if (!($exists instanceof \mysqli_result)) {
                 return false;
@@ -533,8 +541,17 @@ if (!function_exists('_upgrade_unconsented_analytics_purge')) {
             if ($columns === null) {
                 return false;
             }
-            if (!isset($columns[$marker]) && _upgrade_query($purge) === false) {
-                return false;
+            if (isset($columns[$marker])) {
+                continue;
+            }
+            // A run stopped between the two: the columns are there, the marking is not.
+            if ($table === '202_messaging_attributes' && isset($columns['withheld'])) {
+                $statements = [$statements[1]];
+            }
+            foreach ($statements as $sql) {
+                if (_upgrade_query($sql) === false) {
+                    return false;
+                }
             }
         }
 
@@ -700,13 +717,13 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
         }
 
-        // The analytics queued before 1.9.80 had no consent check: purged
+        // The analytics queued before 1.9.80 had no consent check: withheld
         // before the reconcile gives it a tier and consent version.
         $messagingEvents = false;
         foreach ($definitions as $definition) {
             if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::MESSAGING_EVENTS) {
-                if (!_upgrade_unconsented_analytics_purge()) {
-                    error_log('Prosper202 upgrade: the analytics queued before consent could not be purged');
+                if (!_upgrade_withhold_unconsented_analytics()) {
+                    error_log('Prosper202 upgrade: the analytics queued before consent could not be withheld');
                     return false;
                 }
                 $messagingEvents = true;
@@ -4712,8 +4729,8 @@ class UPGRADE
             // attribute snapshot were captured under.
             // A schema change for 1.9.80 belongs in this block, reconciled
             // before the version is written.
-            // What was queued before consent existed never goes out
-            // (_upgrade_unconsented_analytics_purge(), run by the reconcile).
+            // What was queued before consent existed is kept and never goes out
+            // (_upgrade_withhold_unconsented_analytics(), run by the reconcile).
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\UserTables::usersPref(),
                 \Prosper202\Database\Tables\CoreTables::messagingEvents(),

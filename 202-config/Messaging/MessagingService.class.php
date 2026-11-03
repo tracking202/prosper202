@@ -335,7 +335,7 @@ class MessagingService
                                 AND e.sync_attempts < ?
                                 AND (e.tier = 'essential' OR e.consent_version >= COALESCE(p.analytics_revoked_version, 0)))
                   OR EXISTS (SELECT 1 FROM 202_messaging_attributes a
-                              WHERE a.user_id = u.user_id AND a.dirty = 1
+                              WHERE a.user_id = u.user_id AND a.dirty = 1 AND a.withheld = 0
                                 AND a.consent_version >= COALESCE(p.analytics_revoked_version, 0))
                   OR p.consent_version > p.consent_acked_version)
               ORDER BY u.user_id ASC"
@@ -553,7 +553,7 @@ class MessagingService
             'INSERT INTO 202_messaging_attributes (user_id, data, dirty, updated_at, consent_version)
              SELECT ?, ?, 1, ?, ? FROM DUAL WHERE ' . self::NOT_REVOKED_SINCE . '
              ON DUPLICATE KEY UPDATE data = VALUES(data), dirty = 1, updated_at = VALUES(updated_at),
-                                     consent_version = VALUES(consent_version)'
+                                     consent_version = VALUES(consent_version), withheld = 0'
         );
         $this->conn->bind($stmt, 'issiii', [$this->userId, $json, $now, $version, $version, $this->userId]);
         $this->conn->executeUpdate($stmt);
@@ -849,12 +849,13 @@ class MessagingService
     private function attributeSnapshot(): array
     {
         $stmt = $this->conn->prepareRead(
-            'SELECT data, MD5(data) AS version, consent_version, dirty FROM 202_messaging_attributes WHERE user_id = ?'
+            'SELECT data, MD5(data) AS version, consent_version, dirty, withheld FROM 202_messaging_attributes WHERE user_id = ?'
         );
         $this->conn->bind($stmt, 'i', [$this->userId]);
         $row = $this->conn->fetchOne($stmt);
 
-        if ($row === null || $row['data'] === null) {
+        // A withheld snapshot (recorded before consent existed) reads as none.
+        if ($row === null || $row['data'] === null || (int) $row['withheld'] === 1) {
             return [[], null, 0, false];
         }
         $version = (string) $row['version'];
@@ -874,11 +875,12 @@ class MessagingService
     /** A changed snapshot captured since analytics was last revoked at $revoked. */
     private function areAttributesDirty(int $revoked): bool
     {
-        $stmt = $this->conn->prepareRead('SELECT dirty, consent_version FROM 202_messaging_attributes WHERE user_id = ?');
+        $stmt = $this->conn->prepareRead('SELECT dirty, consent_version, withheld FROM 202_messaging_attributes WHERE user_id = ?');
         $this->conn->bind($stmt, 'i', [$this->userId]);
         $row = $this->conn->fetchOne($stmt);
 
-        return $row !== null && (int) $row['dirty'] === 1 && (int) $row['consent_version'] >= $revoked;
+        return $row !== null && (int) $row['dirty'] === 1 && (int) $row['withheld'] === 0
+            && (int) $row['consent_version'] >= $revoked;
     }
 
     /**

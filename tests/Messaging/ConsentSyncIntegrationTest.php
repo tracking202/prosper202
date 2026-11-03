@@ -540,6 +540,21 @@ final class ConsentSyncIntegrationTest extends TestCase
         $this->assertSame([self::USER_ID], MessagingService::usersWithPendingDelivery($db), 'only for the queued event');
     }
 
+    public function test_a_denial_purges_withheld_rows_like_any_other_unsent_analytics(): void
+    {
+        $db = self::$db;
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, false));
+        $this->assertTrue($db->query("INSERT INTO 202_messaging_events (user_id, event_name, client_token, tier, delivery_status) VALUES ("
+            . self::USER_ID . ", 'before_consent', 'w1', 'analytics', 'withheld')"));
+        $this->assertTrue($db->query("INSERT INTO 202_messaging_attributes (user_id, data, withheld) VALUES ("
+            . self::USER_ID . ", '{}', 1)"));
+        $this->assertSame([], MessagingService::usersWithPendingDelivery($db), 'withheld rows wait for nothing');
+
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'));
+        $this->assertSame([], $this->eventRows());
+        $this->assertSame('0', $db->query('SELECT COUNT(*) FROM 202_messaging_attributes')->fetch_row()[0]);
+    }
+
     private function consentPending(): bool
     {
         return MessagingService::usersWithPendingDelivery(self::$db) === [self::USER_ID];

@@ -140,7 +140,7 @@ final class CoreTables
                 `occurred_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 `client_token` varchar(64) NOT NULL,
                 `tier` enum('essential','analytics') NOT NULL DEFAULT 'analytics',
-                `delivery_status` enum('pending','sent','failed') NOT NULL DEFAULT 'pending',
+                `delivery_status` enum('pending','sent','failed','withheld') NOT NULL DEFAULT 'pending',
                 `sync_attempts` int(11) NOT NULL DEFAULT '0',
                 `consent_version` bigint unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`id`),
@@ -159,6 +159,7 @@ final class CoreTables
                 `data` json DEFAULT NULL,
                 `dirty` tinyint(1) NOT NULL DEFAULT '0',
                 `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `withheld` tinyint(1) NOT NULL DEFAULT '0',
                 `consent_version` bigint unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
