@@ -37,6 +37,26 @@ final class AlertRun
         $this->detectors = $detectors ?? self::detectors();
     }
 
+    /**
+     * The cron job's hourly run on the install's connection: the line to
+     * print, or null when it found nothing to say (worthSaying()).
+     *
+     * @param array<string, mixed> $server normally $_SERVER, for the settings link (AlertNotifier::settingsUrl())
+     */
+    public static function hourly(\mysqli $db, array $server, string $installRoot): ?string
+    {
+        $conn = new Connection($db);
+        $notifier = new AlertNotifier(
+            $conn,
+            new \Prosper202\Notifications\SlackWebhook(),
+            null,
+            AlertNotifier::settingsUrl($conn, $server, $installRoot)
+        );
+        $report = (new self($conn, $notifier))->run(time(), time() + 60);
+
+        return self::worthSaying($report) ? self::summary($report) : null;
+    }
+
     /** @return list<AlertDetector> */
     public static function detectors(): array
     {

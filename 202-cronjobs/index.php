@@ -292,15 +292,9 @@ function RunHourlyCronJob()
 function RunMoneyLossAlerts(): void
 {
     try {
-        $conn = new \Prosper202\Database\Connection(getDatabaseConnection());
-        $settingsUrl = \Prosper202\Alerts\AlertNotifier::settingsUrl($conn, $_SERVER, dirname(__DIR__));
-        $slack = new \Prosper202\Notifications\SlackWebhook();
-        $notifier = new \Prosper202\Alerts\AlertNotifier($conn, $slack, null, $settingsUrl);
-        $run = new \Prosper202\Alerts\AlertRun($conn, $notifier);
-        $report = $run->run(time(), time() + 60);
-        if (\Prosper202\Alerts\AlertRun::worthSaying($report)) {
-            $summary = \Prosper202\Alerts\AlertRun::summary($report);
-            echo 'Money-loss alerts: ' . htmlspecialchars($summary, ENT_QUOTES) . '<br>';
+        $line = \Prosper202\Alerts\AlertRun::hourly(getDatabaseConnection(), $_SERVER, dirname(__DIR__));
+        if ($line !== null) {
+            echo 'Money-loss alerts: ' . htmlspecialchars($line, ENT_QUOTES) . '<br>';
             flushOutput();
         }
     } catch (\Throwable $e) {
