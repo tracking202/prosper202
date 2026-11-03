@@ -722,10 +722,10 @@ $keyIntegrations = [
 	],
 	'slack' => [
 		'title' => 'Slack', 'icon' => 'slack.png', 'help' => 'slack',
-		'desc' => 'Send Prosper202 notifications into a Slack channel, and receive Slack commands at the webhook below.',
+		'desc' => 'Send Prosper202 notifications into a Slack channel through a Slack incoming webhook.',
 		'extra' => '',
 		'flag' => 'change_user_slack_incoming_webhook', 'field' => 'user_slack_incoming_webhook', 'label' => 'Slack incoming webhook URL', 'error' => 'user_slack_incoming_webhook',
-		'endpoint' => ['Prosper202 webhook', $trackingBase . 'tracking202/static/slack.php'],
+		'endpoint' => null,
 	],
 ];
 $cb_crypto_ok = function_exists('openssl_decrypt');
