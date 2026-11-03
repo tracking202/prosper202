@@ -814,24 +814,28 @@ with every method's totals over the campaigns it lists; `--json` is
 `GET /conversions/match-methods`. The PHP CLI's `conversion:match-methods`
 prints the same.
 
-### Postback authentication: the token your postback URLs carry
+### Postback authentication: the token, the signing secret and the mode
 
 ```bash
 p202 conversion postback-auth get
-p202 conversion postback-auth set --token-required 1
-p202 conversion postback-auth rotate --grace-hours 168
+p202 conversion postback-auth set --mode token
+p202 conversion postback-auth rotate --credential signing_secret --grace-hours 168
 ```
 
 Click ids count up, so a bare postback URL lets anyone who guesses one record
 or reverse a conversion. The postback and pixel URLs (`conversion
 postback-url`, `conversion pixel`) carry the account's token as
-`p202_token`. With `--token-required 1` the postback and pixel endpoints
-refuse a request without it or a signature (`p202_ts` + `p202_sig`; `get`
-prints the parameters, and the [Setup API](../documentation/api/27-setup.md#postback-authentication)
-how to sign). A wrong token is refused either way. Accounts from before
-1.9.80 start with it off, later ones with it on. `rotate` makes a new token;
-the old one keeps working for `--grace-hours` (0 stops it at once).
-`conversion simulate` sends the token with its postback.
+`p202_token`; a sender that can sign sends `p202_ts` + `p202_sig` instead,
+keyed with the signing secret, which no URL carries (`get` prints both, and
+the [Setup API](../documentation/api/27-setup.md#postback-authentication)
+says how to sign). `--mode off` accepts requests without credentials,
+`token` needs the token or a signature, `signed` only a signature: the
+token alone is refused, and so is every pixel, which cannot sign. A wrong
+token or signature is refused in every mode. Accounts from before 1.9.80
+start at `off`, later ones at `token`. `rotate` replaces the token (the
+default) or the signing secret; the old one keeps working for
+`--grace-hours` (0 stops it at once). `conversion simulate` sends the token
+with its postback, or signs it when the account accepts only signed ones.
 
 ### Offline conversion files for Google Ads and Microsoft Advertising
 

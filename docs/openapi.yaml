@@ -10669,9 +10669,11 @@ paths:
         category (the page's list). Any other query parameter is refused.
 
         Every URL ends with the account's postback token, `&p202_token=…`
-        (`postback_token`, minted the first time a URL is handed out); an
-        account that requires it refuses a postback or pixel without it
-        (`token_required`, see `GET /conversions/postback-auth`).
+        (`postback_token`, minted the first time a URL is handed out). The
+        account's mode (`postback_auth_mode`, see
+        `GET /conversions/postback-auth`) says whether a postback or pixel
+        without it is refused; in `signed` mode these URLs are refused as
+        they are, and pixels, which cannot sign, are refused.
       operationId: getPostbackCode
       parameters:
         - name: amount
@@ -10722,30 +10724,34 @@ paths:
   /conversions/postback-auth:
     get:
       tags: [Setup]
-      summary: Get the account's postback token and whether postbacks must carry it
+      summary: Get the account's postback mode, token and signing secret
       description: |
         Postback authentication, as Account > API Integrations > Postback
         authentication shows it. Click ids count up, so a bare postback URL
         lets anyone who guesses one record or reverse a conversion. The
         postback and pixel URLs Setup hands out carry the account's token as
-        `p202_token` (minted here the first time, as handing out a URL mints
-        it). When `token_required` is true, `pb.php`, `gpb.php`, `px.php`,
-        `gpx.php` and `upx.php` refuse a request for this account's campaign
-        or click that carries neither the token nor a valid signature: 403
-        with a JSON message, nothing recorded (`gpx.php` has already sent its
-        image, so it only logs). A wrong token is refused whatever the
-        setting. Accounts that existed before 1.9.80 start with it off; an
-        account made later starts with it on.
+        `p202_token`; a sender that can sign keys `p202_sig` with the
+        signing secret, which no URL carries. Both are minted here the first
+        time. `mode` says what `pb.php`, `gpb.php`, `px.php`, `gpx.php` and
+        `upx.php` require of a request for this account's campaign or click:
+        `off` (nothing), `token` (the token or a valid signature) or
+        `signed` (a valid signature only: the token alone is refused, and so
+        is every pixel, which a browser cannot sign). A wrong token or
+        signature is refused in every mode. A refusal is 403 with a JSON
+        message and nothing recorded (`gpx.php` has already sent its image,
+        so it only logs). Accounts that existed before 1.9.80 start at
+        `off`; an account made later starts at `token`. Asks for the role
+        permission access_to_api_integrations: it hands out the secret.
 
-        Signed form, for a sender that can compute an HMAC: send `p202_ts`
-        (Unix seconds, within `window_seconds` of the server's clock) and
-        `p202_sig`, the lower-case hex HMAC-SHA256, keyed with the token, of
+        Signed form: send `p202_ts` (Unix seconds, within `window_seconds`
+        of the server's clock) and `p202_sig`, the lower-case hex
+        HMAC-SHA256, keyed with the signing secret (not the token), of
         `P202-POSTBACK-V1` + newline + the endpoint (`gpb`, `upx`, ...) +
         newline + the canonical query: every parameter except `p202_sig`
         (`p202_ts` included), each name and value decoded and then encoded
         as RFC 3986 says (rawurlencode; a space is `%20`), joined
         `name=value`, sorted by name and then value as bytes, joined with
-        `&`. The token itself is not sent.
+        `&`.
       operationId: getPostbackAuth
       responses:
         "200":
@@ -10761,12 +10767,14 @@ paths:
           $ref: "#/components/responses/Forbidden"
     put:
       tags: [Setup]
-      summary: Require the postback token, or accept postbacks without it
+      summary: Choose what the account's postbacks and pixels must carry
       description: |
-        `token_required` true refuses every postback and pixel of the account
-        that carries neither the token nor a signature; false accepts them
-        again (a wrong token is still refused). Asks for the role permission
-        access_to_api_integrations, as the page does.
+        `mode`: `off` accepts requests without credentials (a wrong token or
+        signature is still refused); `token` refuses one that carries
+        neither the token nor a signature; `signed` refuses one that is not
+        signed with the signing secret, the token alone and every pixel
+        included. Asks for the role permission access_to_api_integrations,
+        as the page does.
       operationId: updatePostbackAuth
       requestBody:
         required: true
@@ -10774,11 +10782,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [token_required]
+              required: [mode]
               additionalProperties: false
               properties:
-                token_required:
-                  type: boolean
+                mode:
+                  type: string
+                  enum: ["off", token, signed]
       responses:
         "200":
           description: The account's postback authentication, as changed
@@ -10796,14 +10805,14 @@ paths:
   /conversions/postback-auth/rotate:
     post:
       tags: [Setup]
-      summary: Replace the postback token
+      summary: Replace the postback token or the signing secret
       description: |
-        A new token. The old one keeps working for `grace_hours` (0 to 720,
-        168 when omitted), so the URLs at the networks can be changed one by
-        one; 0 stops it at once, for a token that leaked. A token an earlier
-        rotation kept working is dropped: two work at most. Every URL handed
-        out after this carries the new token. Asks for the role permission
-        access_to_api_integrations.
+        A new `credential` (`token`, the default, or `signing_secret`). The
+        old one keeps working for `grace_hours` (0 to 720, 168 when
+        omitted), so the URLs at the networks, or the servers that sign, can
+        be moved one by one; 0 stops it at once, for one that leaked. One an
+        earlier rotation kept working is dropped: two of each work at most.
+        Asks for the role permission access_to_api_integrations.
       operationId: rotatePostbackToken
       requestBody:
         required: false
@@ -10813,6 +10822,10 @@ paths:
               type: object
               additionalProperties: false
               properties:
+                credential:
+                  type: string
+                  enum: [token, signing_secret]
+                  default: token
                 grace_hours:
                   type: integer
                   minimum: 0
@@ -10820,7 +10833,7 @@ paths:
                   default: 168
       responses:
         "200":
-          description: The account's postback authentication, with the new token
+          description: The account's postback authentication, with the new credential
           content:
             application/json:
               schema:
@@ -11731,8 +11744,9 @@ components:
     PostbackAuth:
       type: object
       properties:
-        token_required:
-          type: boolean
+        mode:
+          type: string
+          enum: ["off", token, signed]
         token:
           type: string
           example: "0123456789abcdef0123456789abcdef"
@@ -11743,6 +11757,17 @@ components:
           type: integer
           nullable: true
           description: When the token the last rotation replaced stops working; null when none works
+        signing_secret:
+          type: string
+          description: The key of p202_sig; never put it in a URL
+          example: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+        signing_secret_created_at:
+          type: integer
+          description: Unix seconds
+        previous_signing_secret_valid_until:
+          type: integer
+          nullable: true
+          description: When the signing secret the last rotation replaced stops working; null when none works
         parameter:
           type: string
           example: p202_token
@@ -11788,9 +11813,10 @@ components:
           type: string
           description: The account's postback token, which every URL here carries as p202_token
           example: "0123456789abcdef0123456789abcdef"
-        token_required:
-          type: boolean
-          description: Whether the account refuses postbacks and pixels without the token or a signature
+        postback_auth_mode:
+          type: string
+          enum: ["off", token, signed]
+          description: What the account's postbacks and pixels must carry (see GET /conversions/postback-auth)
         simple:
           type: object
           properties:
