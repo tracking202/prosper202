@@ -116,6 +116,23 @@ if (!function_exists('_upgrade_query')) {
     }
 }
 
+if (!function_exists('_upgrade_seed_bot202_facebook_pixel_lookups')) {
+    /**
+     * The Bot202 Facebook Pixel Assistant's lookup rows, as DataSeeder
+     * writes them on a fresh install, for the 1.9.80 rung; rows already
+     * there are kept. Logged, never fatal: the assistant reads its ids from
+     * FacebookPixelAssistantSettings, not from these rows.
+     */
+    function _upgrade_seed_bot202_facebook_pixel_lookups(): void
+    {
+        foreach (\Prosper202\Setup\FacebookPixelAssistantSettings::seedStatements() as $sql) {
+            if (_upgrade_query($sql) === false) {
+                error_log('Prosper202 upgrade: a Bot202 Facebook Pixel Assistant lookup row could not be written.');
+            }
+        }
+    }
+}
+
 if (!function_exists('_upgrade_seed_licence_answers')) {
     /**
      * Copy the licence answers cached on disk within the grace period into
@@ -4646,13 +4663,27 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.79') {
 
-            // 1.9.80 changes no schema yet, so its step only records the
-            // version. A schema change for 1.9.80 belongs in this block,
-            // reconciled before the version is written.
-            if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
-                $prosper202_version = '1.9.80';
+            // 1.9.80 changes no schema yet. A schema change for 1.9.80
+            // belongs in this block, reconciled before the version is written.
+            //
+            // The Bot202 Facebook Pixel Assistant's lookup rows, as a fresh
+            // install seeds them (DataSeeder); a paid install's are kept.
+            $step_ok = _upgrade_measurement_tables([
+                \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelContentType(),
+                \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelClickEvents(),
+            ]);
+            if ($step_ok) {
+                _upgrade_seed_bot202_facebook_pixel_lookups();
+            }
+            if ($step_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
+                    $prosper202_version = '1.9.80';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                }
             } else {
-                error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                error_log('Prosper202 upgrade: the Bot202 Facebook Pixel Assistant lookup tables could not be reconciled;'
+                    . ' leaving version at 1.9.79 so the next run retries.');
             }
         }
 

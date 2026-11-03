@@ -26,7 +26,9 @@ use Prosper202\Notifications\PostbackSender;
  * Pixel types, as the setup page defines them:
  *   1 image, 2 iframe, 3 script — markup for a browser, returned;
  *   4 server-to-server postback — fetched here, one GET per URL;
- *   5 raw code — returned with its tokens replaced.
+ *   5 raw code — returned with its tokens replaced;
+ *   6 Bot202 Facebook Pixel Assistant — a Meta Pixel ID (FacebookPixelId):
+ *     a Purchase event image for a browser, returned.
  */
 final class TrafficSourcePixels
 {
@@ -139,6 +141,7 @@ final class TrafficSourcePixels
         // ''), and refuses anything but http(s) to a public address,
         // redirects included.
         $fetch ??= (new PostbackSender())->send(...);
+        $currency = null;
 
         foreach ($pixels as $pixel) {
             $type = (int) $pixel['pixel_type_id'];
@@ -151,6 +154,21 @@ final class TrafficSourcePixels
                 } else {
                     $out['browser_skipped']++;
                 }
+                continue;
+            }
+            if ($type === FacebookPixelId::PIXEL_TYPE) {
+                if (!$browser) {
+                    $out['browser_skipped']++;
+                    continue;
+                }
+                $currency ??= self::accountCurrency($conn, $ppcAccountId);
+                $markup = self::facebookPurchase($code, $tokens, $currency);
+                if ($markup === null) {
+                    error_log('traffic source pixel ' . (int) ($pixel['pixel_id'] ?? 0) . ' of ppc account ' . $ppcAccountId
+                        . ' is a Bot202 Facebook Pixel Assistant pixel without a Meta Pixel ID; not fired');
+                    continue;
+                }
+                $out['markup'] .= $markup;
                 continue;
             }
 
@@ -197,6 +215,57 @@ final class TrafficSourcePixels
         $out['types'] = array_values(array_unique($out['types']));
 
         return $out;
+    }
+
+    /**
+     * A Meta Pixel Purchase event as the image the Pixel's own <noscript>
+     * code loads: the conversion's payout as its value, in the account's
+     * currency, and its transaction id (or dedupe key) as the event id, so
+     * Meta counts a repeat of one conversion once. Null for a code that
+     * holds no Pixel ID.
+     *
+     * @param array<string, scalar|null> $tokens
+     */
+    public static function facebookPurchase(string $code, array $tokens, string $currency): ?string
+    {
+        $pixelId = FacebookPixelId::fromCode($code);
+        if ($pixelId === null) {
+            return null;
+        }
+        $query = ['id' => $pixelId, 'ev' => 'Purchase', 'noscript' => '1'];
+        $payout = $tokens['payout'] ?? null;
+        if (is_numeric($payout) && preg_match('/^[A-Z]{3}$/D', $currency) === 1) {
+            $query['cd[value]'] = number_format((float) $payout, 2, '.', '');
+            $query['cd[currency]'] = $currency;
+        }
+        $eventId = (string) ($tokens['transactionid'] ?? '');
+        if ($eventId !== '') {
+            $query['eid'] = $eventId;
+        }
+        $src = htmlspecialchars('https://www.facebook.com/tr?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986), ENT_QUOTES);
+
+        return "<img src='{$src}' height='1' width='1' style='display:none' alt='' />\n";
+    }
+
+    /** The account's owner's currency (202_users_pref), USD when unset, '' when unreadable. */
+    private static function accountCurrency(Connection $conn, int $ppcAccountId): string
+    {
+        try {
+            $stmt = $conn->prepareRead(
+                'SELECT up.user_account_currency FROM 202_ppc_accounts AS a
+                 LEFT JOIN 202_users_pref AS up ON up.user_id = a.user_id
+                 WHERE a.ppc_account_id = ?'
+            );
+            $conn->bind($stmt, 'i', [$ppcAccountId]);
+            $row = $conn->fetchOne($stmt);
+        } catch (\Throwable $e) {
+            // The conversion is recorded; its Purchase is still sent, without a value.
+            error_log('traffic source pixels: the currency of ppc account ' . $ppcAccountId . ' could not be read: ' . $e->getMessage());
+
+            return '';
+        }
+
+        return (string) ($row['user_account_currency'] ?? 'USD');
     }
 
     /**

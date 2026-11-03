@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Setup;
 
+use Prosper202\Conversion\FacebookPixelId;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\CorrectionUrls;
 use Prosper202\Notifications\PostbackSender;
@@ -66,6 +67,15 @@ final class AccountPixels
             if (preg_match('/^[1-9][0-9]{0,2}$/D', $type) !== 1) {
                 $errors['pixel_type_id'] = 'A pixel code needs its pixel type; choose one for each pixel, or clear the code to remove that pixel.';
                 continue;
+            }
+            if ((int) $type === FacebookPixelId::PIXEL_TYPE) {
+                // Stored as the bare Pixel ID, as paid 1.9.56's form stored it.
+                $pixelId = FacebookPixelId::fromCode($code);
+                if ($pixelId === null) {
+                    $errors['pixel_code'] = 'A Bot202 Facebook Pixel Assistant pixel needs your Meta Pixel ID: its digits, or Meta\'s Pixel code pasted whole.';
+                    continue;
+                }
+                $code = $pixelId;
             }
             $id = is_string($ids[$key] ?? null) ? trim($ids[$key]) : '';
             $rows[] = [

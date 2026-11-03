@@ -128,6 +128,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
+	// Bot202 Facebook Pixel Assistant: a simple page's settings, refused here before anything is saved.
+	$fbpaSettings = \Prosper202\Setup\FacebookPixelAssistantSettings::fromForm(
+		($_POST['landing_page_type'] ?? '') === '0' ? $_POST : [],
+		$error
+	);
+
 	if (!$error) {
 		$mysql['landing_page_id'] = $db->real_escape_string((string)($_POST['landing_page_id'] ?? ''));
 		$mysql['aff_campaign_id'] = $db->real_escape_string((string)($_POST['aff_campaign_id'] ?? ''));
@@ -206,6 +212,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 								 	WHERE        `landing_page_id`='" . $mysql['landing_page_id'] . "'"
                 . " AND `user_id`='" . $mysql['user_id'] . "'";
 			$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
+		}
+
+		// The page's Bot202 Facebook Pixel Assistant settings; an advanced page never runs it.
+		$fbpaStore = new \Prosper202\Setup\FacebookPixelAssistantSettings(new \Prosper202\Database\Connection($db));
+		if (($_POST['landing_page_type'] ?? '') === '0') {
+			$fbpaStore->save((int) $_SESSION['user_id'], (int) $mysql['landing_page_id'], $fbpaSettings);
+		} else {
+			$fbpaStore->switchOff((int) $_SESSION['user_id'], (int) $mysql['landing_page_id']);
 		}
 
 		// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
@@ -347,6 +361,22 @@ $form = [
 	'landing_page_url' => $value('landing_page_url'),
 	'leave_behind_page_url' => $value('leave_behind_page_url'),
 ];
+// The Bot202 Facebook Pixel Assistant's settings: as posted, or the edited or copied page's.
+$fbpaForm = \Prosper202\Setup\FacebookPixelAssistantSettings::defaults();
+if ($posted) {
+	$fbpaIgnored = [];
+	$fbpaForm = \Prosper202\Setup\FacebookPixelAssistantSettings::fromForm($_POST, $fbpaIgnored);
+} elseif ($row !== []) {
+	$fbpaForm = (new \Prosper202\Setup\FacebookPixelAssistantSettings(new \Prosper202\Database\Connection($db)))
+		->load((int) $_SESSION['user_id'], (int) ($row['landing_page_id'] ?? 0)) ?? $fbpaForm;
+}
+$fbpaOptions = static function (array $lookup): array {
+	$options = [];
+	foreach ($lookup as $id => [, $description]) {
+		$options[(string) $id] = $description;
+	}
+	return $options;
+};
 $editId = $editing ? (int) ($_GET['edit_landing_page_id'] ?? 0) : 0;
 $action = $self . ($editing ? '?edit_landing_page_id=' . $editId : ($copying ? '?copy_landing_page_id=' . (int) ($_GET['copy_landing_page_id'] ?? 0) : ''));
 
@@ -415,7 +445,7 @@ echo p202_setup_query_flashes([
 	'deleted' => 'Landing page removed. Clicks already tracked keep their history.',
 ], $_GET);
 if ($error) {
-	echo p202_setup_error_flashes($error, ['landing_page_type', 'aff_campaign_id', 'landing_page_nickname', 'landing_page_url']);
+	echo p202_setup_error_flashes($error, ['landing_page_type', 'aff_campaign_id', 'landing_page_nickname', 'landing_page_url', 'fbpa_content_name', 'fbpa_content_type', 'fbpa_outbound_clicks']);
 }
 ?>
 
@@ -470,6 +500,36 @@ if ($error) {
 						<?php echo p202_setup_feedback($error, 'landing_page_url'); ?>
 						<?php echo p202_setup_placeholders('landing_page_url', 'setup-landing-pages-placeholders'); ?>
 					</div>
+
+					<details class="p202-disclosure mb-3" data-p202-show-when="landing_page_type=0" data-p202-disable-hidden<?php echo $form['landing_page_type'] === '1' ? ' hidden' : ''; ?><?php echo $fbpaForm['status'] === 1 || isset($error['fbpa_content_name']) || isset($error['fbpa_content_type']) || isset($error['fbpa_outbound_clicks']) ? ' open' : ''; ?>>
+						<summary>Bot202 Facebook Pixel Assistant <span class="p202-disclosure__hint">Meta Pixel events</span></summary>
+						<div class="p202-disclosure__body">
+							<div class="form-text mb-2">Fires your Meta Pixel on this page (PageView and ViewContent) and on clicks out to the offer, for visits from a traffic source with a "Bot202 Facebook Pixel Assistant" pixel holding your Pixel ID. Not for a visitor your privacy setting holds back.</div>
+							<input type="hidden" name="fbpa_status" value="0"<?php echo $form['landing_page_type'] === '1' ? ' disabled' : ''; ?>>
+							<div class="form-check form-switch mb-2">
+								<input class="form-check-input" type="checkbox" role="switch" id="fbpa_status" name="fbpa_status" value="1"<?php echo $fbpaForm['status'] === 1 ? ' checked' : ''; ?><?php echo $form['landing_page_type'] === '1' ? ' disabled' : ''; ?>>
+								<label class="form-check-label" for="fbpa_status">Fire the Meta Pixel on this page</label>
+							</div>
+							<input type="hidden" name="fbpa_dynamic_epv" value="0"<?php echo $form['landing_page_type'] === '1' ? ' disabled' : ''; ?>>
+							<div class="form-check form-switch mb-3">
+								<input class="form-check-input" type="checkbox" role="switch" id="fbpa_dynamic_epv" name="fbpa_dynamic_epv" value="1"<?php echo $fbpaForm['dynamic_epv'] === 1 ? ' checked' : ''; ?><?php echo $form['landing_page_type'] === '1' ? ' disabled' : ''; ?>>
+								<label class="form-check-label" for="fbpa_dynamic_epv">Dynamic EPV: give outbound clicks the traffic source's earnings per click over the last 7 days as their value</label>
+							</div>
+							<label class="form-label" for="fbpa_content_name">Content name</label>
+							<input type="text" class="form-control mb-3<?php echo p202_setup_invalid($error, 'fbpa_content_name'); ?>" id="fbpa_content_name" name="fbpa_content_name" value="<?php echo p202_setup_e($fbpaForm['content_name']); ?>" maxlength="<?php echo \Prosper202\Setup\FacebookPixelAssistantSettings::CONTENT_NAME_MAX; ?>"<?php echo $form['landing_page_type'] === '1' ? ' disabled' : ''; ?>>
+							<?php echo p202_setup_feedback($error, 'fbpa_content_name'); ?>
+							<label class="form-label" for="fbpa_content_type">Content type</label>
+							<select class="form-select mb-3<?php echo p202_setup_invalid($error, 'fbpa_content_type'); ?>" id="fbpa_content_type" name="fbpa_content_type"<?php echo $form['landing_page_type'] === '1' ? ' disabled' : ''; ?>>
+								<?php echo p202_setup_options($fbpaOptions(\Prosper202\Setup\FacebookPixelAssistantSettings::CONTENT_TYPES), (string) $fbpaForm['content_type'], 'None', '0'); ?>
+							</select>
+							<?php echo p202_setup_feedback($error, 'fbpa_content_type'); ?>
+							<label class="form-label" for="fbpa_outbound_clicks">Outbound clicks</label>
+							<select class="form-select<?php echo p202_setup_invalid($error, 'fbpa_outbound_clicks'); ?>" id="fbpa_outbound_clicks" name="fbpa_outbound_clicks"<?php echo $form['landing_page_type'] === '1' ? ' disabled' : ''; ?>>
+								<?php echo p202_setup_options($fbpaOptions(\Prosper202\Setup\FacebookPixelAssistantSettings::CLICK_EVENTS), (string) $fbpaForm['outbound_clicks'], 'Not tracked', '0'); ?>
+							</select>
+							<?php echo p202_setup_feedback($error, 'fbpa_outbound_clicks'); ?>
+						</div>
+					</details>
 
 					<?php if ($leaveBehind) { ?>
 						<details class="p202-disclosure mb-3" data-p202-remember="setup-landing-pages-advanced"<?php echo $form['leave_behind_page_url'] !== '' ? ' open' : ''; ?>>

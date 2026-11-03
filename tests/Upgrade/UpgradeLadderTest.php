@@ -278,7 +278,7 @@ final class UpgradeLadderTest extends TestCase
             // app tables, UserTables::usersPref() for the column 1.9.77 adds),
             // never a CREATE copied into the step, which drifts from them.
             $this->assertMatchesRegularExpression(
-                '/\\\\Prosper202\\\\Database\\\\Tables\\\\[A-Za-z]+Tables::[A-Za-z]+\(\)/',
+                '/\\\\Prosper202\\\\Database\\\\Tables\\\\[A-Za-z]+Tables::[A-Za-z][A-Za-z0-9]*\(\)/',
                 $step['block'],
                 "the step gated on $gate must reconcile from the installer's definitions, not a copied CREATE"
             );
