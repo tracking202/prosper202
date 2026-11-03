@@ -36,7 +36,7 @@ $campaignOptions = p202_setup_campaign_options($db, (int) $_SESSION['user_id']);
 $postbackAuth = null;
 try {
 	$postbackAuth = (new \Prosper202\Conversion\PostbackAuth\PostbackAuthStore(new \Prosper202\Database\Connection($db)))
-		->ensureToken((int) $_SESSION['user_id'], time());
+		->ensureCredentials((int) $_SESSION['user_id'], time());
 } catch (\Throwable $postbackAuthError) {
 	error_log('get_postback.php: the postback token could not be read: ' . $postbackAuthError->getMessage());
 }
@@ -70,9 +70,11 @@ template_top('Pixel And Postback URLs');
 <?php if ($postbackAuth === null) { ?>
 <div class="alert alert-danger" role="alert">Your postback token could not be read just now, so these URLs carry none, and an account that requires one refuses them. Reload the page; if it persists, see the server's error log.</div>
 <?php } else { ?>
-<p class="p202-decided mb-3"><i class="bi bi-shield-lock"></i> <?php echo $postbackAuth->required
-	? 'Your account accepts only postbacks and pixels that carry its token (<code>p202_token</code>), as these URLs do.'
-	: 'Your account also accepts postbacks and pixels without a token. These URLs carry it; once your networks use them, require it.'; ?>
+<p class="p202-decided mb-3"><i class="bi bi-shield-lock"></i> <?php echo match ($postbackAuth->mode) {
+	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN => 'Your account accepts only postbacks and pixels that carry its token (<code>p202_token</code>), as these URLs do, or a signature.',
+	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Your account also accepts postbacks and pixels without a token. These URLs carry it; once your networks use them, require it.',
+	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED => '<strong>Your account accepts only signed postbacks</strong>, so these URLs are refused as they are: the token alone is not enough, and the pixels below cannot sign, so every pixel is refused. Sign each postback with your signing secret, or accept the token again.',
+}; ?>
 	<a href="<?php echo p202_setup_e($base . '202-account/api-integrations.php#postback-auth'); ?>">Postback authentication settings</a></p>
 <?php } ?>
 

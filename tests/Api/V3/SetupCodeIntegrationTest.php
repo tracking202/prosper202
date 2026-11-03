@@ -262,6 +262,7 @@ final class SetupCodeIntegrationTest extends TestCase
         $token = $data['postback_token'];
         self::assertMatchesRegularExpression('/\A[0-9a-f]{32}\z/', $token, 'the account\'s token, minted for the URLs');
         self::assertSame($token, $this->controller()->postbackCode([], self::server())['data']['postback_token'], 'and kept');
+        self::assertSame('token', $data['postback_auth_mode'], 'an account made from 1.9.80 on needs the token or a signature');
         $defaults = PostbackCode::snippets($root, '', '', '', $token);
         foreach (['simple', 'advanced', 'universal'] as $type) {
             self::assertSame($defaults[$type], $data[$type]);

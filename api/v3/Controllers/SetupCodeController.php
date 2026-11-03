@@ -166,7 +166,7 @@ final class SetupCodeController
         $root = $base . 'tracking202/static/';
         // Every URL carries the account's postback token, minted the first
         // time one is handed out (Prosper202\Conversion\PostbackAuth).
-        $auth = (new PostbackAuthStore(new Connection($this->db)))->ensureToken($this->userId, time());
+        $auth = (new PostbackAuthStore(new Connection($this->db)))->ensureCredentials($this->userId, time());
         $token = (string) $auth->token;
         $snippets = PostbackCode::snippets($root, $values['amount'], $campaignId === null ? '' : (string) $campaignId, $values['subid'], $token);
 
@@ -177,7 +177,7 @@ final class SetupCodeController
             'subid' => $values['subid'],
             'campaign_id' => $campaignId,
             'postback_token' => $token,
-            'token_required' => $auth->required,
+            'postback_auth_mode' => $auth->mode->value,
         ] + $snippets];
     }
 

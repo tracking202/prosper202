@@ -10,9 +10,10 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * GET, PUT /conversions/postback-auth and POST /conversions/postback-auth/rotate
- * on a real database: the token is minted on the first read and kept, the
- * requirement and the rotation are the caller's account's alone, and every
- * value the page would not offer is refused by name.
+ * on a real database: the token and the signing secret are minted on the
+ * first read and kept, the mode and each rotation are the caller's
+ * account's alone, and every value the page would not offer is refused by
+ * name.
  *
  * @group integration
  */
@@ -47,41 +48,57 @@ final class PostbackAuthControllerIntegrationTest extends TestCase
         return new PostbackAuthController(self::$db, $user);
     }
 
-    public function testTheFirstReadMintsTheTokenAndSaysHowToSign(): void
+    public function testTheFirstReadMintsTheCredentialsAndSaysHowToSign(): void
     {
         $data = $this->controller()->show(self::NOW)['data'];
         self::assertMatchesRegularExpression('/\A[0-9a-f]{32}\z/', $data['token']);
-        self::assertTrue($data['token_required'], 'an account made from 1.9.80 on requires it');
-        self::assertSame(self::NOW, $data['token_created_at']);
+        self::assertMatchesRegularExpression('/\A[0-9a-f]{64}\z/', $data['signing_secret']);
+        self::assertSame('token', $data['mode'], 'an account made from 1.9.80 on needs the token or a signature');
+        self::assertSame([self::NOW, self::NOW], [$data['token_created_at'], $data['signing_secret_created_at']]);
         self::assertNull($data['previous_token_valid_until']);
+        self::assertNull($data['previous_signing_secret_valid_until']);
         self::assertSame('p202_token', $data['parameter']);
         self::assertSame(['algorithm' => 'HMAC-SHA256', 'version' => 'P202-POSTBACK-V1', 'timestamp_parameter' => 'p202_ts',
             'signature_parameter' => 'p202_sig', 'window_seconds' => 300, 'endpoints' => ['pb', 'gpb', 'px', 'gpx', 'upx']], $data['signing']);
-        self::assertSame($data['token'], $this->controller()->show(self::NOW + 5)['data']['token']);
+        $again = $this->controller()->show(self::NOW + 5)['data'];
+        self::assertSame([$data['token'], $data['signing_secret']], [$again['token'], $again['signing_secret']]);
         self::assertNotSame($data['token'], $this->controller(self::OTHER)->show(self::NOW)['data']['token'], 'each account has its own');
     }
 
-    public function testTheRequirementIsSetAsABoolean(): void
+    public function testTheModeIsOneOfThreeWords(): void
     {
-        self::assertFalse($this->controller()->update(['token_required' => false], self::NOW)['data']['token_required']);
-        self::assertTrue($this->controller(self::OTHER)->show(self::NOW)['data']['token_required'], 'the other account is untouched');
-        foreach ([[], ['token_required' => 'false'], ['token_required' => 0], ['token_required' => null]] as $body) {
-            self::assertArrayHasKey('token_required', $this->refusal(fn () => $this->controller()->update($body, self::NOW)), json_encode($body));
+        foreach (['signed', 'off', 'token'] as $mode) {
+            self::assertSame($mode, $this->controller()->update(['mode' => $mode], self::NOW)['data']['mode']);
         }
-        self::assertArrayHasKey('required', $this->refusal(fn () => $this->controller()->update(['token_required' => true, 'required' => true], self::NOW)));
-        self::assertFalse($this->controller()->show(self::NOW)['data']['token_required'], 'a refused write changed nothing');
+        self::assertSame('token', $this->controller(self::OTHER)->show(self::NOW)['data']['mode'], 'the other account is untouched');
+        self::assertSame('off', $this->controller()->update(['mode' => 'off'], self::NOW)['data']['mode']);
+        foreach ([[], ['mode' => 'OFF'], ['mode' => true], ['mode' => null], ['mode' => 'required']] as $body) {
+            self::assertArrayHasKey('mode', $this->refusal(fn () => $this->controller()->update($body, self::NOW)), json_encode($body));
+        }
+        self::assertArrayHasKey('token_required', $this->refusal(fn () => $this->controller()->update(['mode' => 'token', 'token_required' => true], self::NOW)));
+        self::assertSame('off', $this->controller()->show(self::NOW)['data']['mode'], 'a refused write changed nothing');
     }
 
-    public function testARotationKeepsTheOldTokenForTheHoursAsked(): void
+    public function testEachCredentialRotatesOnItsOwn(): void
     {
-        $old = $this->controller()->show(self::NOW)['data']['token'];
+        $first = $this->controller()->show(self::NOW)['data'];
         $rotated = $this->controller()->rotate([], self::NOW)['data'];
-        self::assertNotSame($old, $rotated['token']);
+        self::assertNotSame($first['token'], $rotated['token'], 'the token when not said');
+        self::assertSame($first['signing_secret'], $rotated['signing_secret']);
         self::assertSame(self::NOW + 168 * 3600, $rotated['previous_token_valid_until'], 'a week when not said');
-        $now = $this->controller()->rotate(['grace_hours' => 0], self::NOW + 1)['data'];
+
+        $secret = $this->controller()->rotate(['credential' => 'signing_secret', 'grace_hours' => 24], self::NOW)['data'];
+        self::assertNotSame($first['signing_secret'], $secret['signing_secret']);
+        self::assertSame($rotated['token'], $secret['token']);
+        self::assertSame(self::NOW + 24 * 3600, $secret['previous_signing_secret_valid_until']);
+
+        $now = $this->controller()->rotate(['credential' => 'token', 'grace_hours' => 0], self::NOW + 1)['data'];
         self::assertNull($now['previous_token_valid_until']);
         foreach ([-1, 721, '24', 1.5, null] as $hours) {
             self::assertArrayHasKey('grace_hours', $this->refusal(fn () => $this->controller()->rotate(['grace_hours' => $hours], self::NOW)), json_encode($hours));
+        }
+        foreach (['secret', 'TOKEN', 1, null] as $credential) {
+            self::assertArrayHasKey('credential', $this->refusal(fn () => $this->controller()->rotate(['credential' => $credential], self::NOW)), json_encode($credential));
         }
         self::assertSame($now['token'], $this->controller()->show(self::NOW + 2)['data']['token'], 'a refused rotation changed nothing');
     }
