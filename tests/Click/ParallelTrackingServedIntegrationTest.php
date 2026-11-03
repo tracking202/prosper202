@@ -305,6 +305,18 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         self::assertSame($before + 1, self::clicks());
     }
 
+    /** The gclid is the visitor's to send: a view from another address is a click of its own. */
+    public function testAViewFromAnotherAddressIsNotTaken(): void
+    {
+        self::get(self::pt(self::SIMPLE_TRACKER, '&gclid=G-addr-1'));
+        $click = self::clickWithGclid('G-addr-1');
+        // Stored as another address's id: no row of 202_ips needs to exist for the comparison.
+        self::q('UPDATE 202_clicks_advance SET ip_id = ip_id + 1000000 WHERE click_id = ' . (int) $click['click_id']);
+        $before = self::clicks();
+        self::get('/tracking202/static/record_simple.php?lpip=' . (self::SIMPLE_LP + self::PUBLIC) . '&gclid=G-addr-1');
+        self::assertSame($before + 1, self::clicks());
+    }
+
     public function testAPageViewWithAnotherGclidIsItsOwnClick(): void
     {
         self::get(self::pt(self::SIMPLE_TRACKER, '&gclid=G-one'));

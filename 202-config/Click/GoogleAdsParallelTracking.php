@@ -59,6 +59,9 @@ final class GoogleAdsParallelTracking
 
         $lpQuery = [];
         $onPage = self::sameSite($lpurl, $landingPageUrl);
+        if (!$onPage && trim($landingPageUrl) === '') {
+            return '';
+        }
         if ($onPage) {
             parse_str((string) parse_url($lpurl, PHP_URL_QUERY), $lpQuery);
         }
@@ -92,10 +95,13 @@ final class GoogleAdsParallelTracking
             return false;
         }
         $scheme = strtolower($a['scheme'] ?? '');
+        $pageScheme = strtolower($b['scheme'] ?? '');
 
-        return ($scheme === 'https' || $scheme === 'http')
+        // The page's host and port, over https or the page's own scheme: no downgrade.
+        return ($scheme === 'https' || ($scheme === 'http' && $pageScheme === 'http'))
             && ($a['host'] ?? '') !== ''
-            && strtolower($a['host']) === strtolower($b['host'] ?? '');
+            && strtolower($a['host']) === strtolower($b['host'] ?? '')
+            && ($a['port'] ?? null) === ($b['port'] ?? null);
     }
 
     /**

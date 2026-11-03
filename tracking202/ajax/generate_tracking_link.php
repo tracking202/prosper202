@@ -609,7 +609,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
         echo '<p class="form-text">Optional, instead of the destination URL above: put the final URL in the ad'
             . ' and the tracking template in its tracking settings. Google records the click through the'
             . ' template while the visitor goes straight to your page. Auto-tagging must be on: the page finds'
-            . ' the click by its gclid.</p>';
+            . ' the click by its Google click id.</p>';
         echo p202_setup_code_box($googleAdsLinks[0], ['label' => 'Final URL']);
         echo p202_setup_code_box($googleAdsLinks[1], ['label' => 'Tracking template']);
         $onLinkBase = true;

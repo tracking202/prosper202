@@ -316,6 +316,7 @@ $rsParallelClick = \Prosper202\Click\ParallelTrackingClick::find(
     (int) $mysql['user_id'],
     (int) $mysql['landing_page_id'],
     $adClickIds['gclid'] ?? '',
+    (int) $ip_id,
     time()
 );
 if ($rsParallelClick !== null) {
@@ -368,7 +369,8 @@ if ($cloaking_on === true) {
 	$mysql['click_cloaking_site_url_id'] = (string) $click_cloaking_site_url_id;
 }
 
-$redirect_site_url = rotateTrackerUrl($db, $tracker_row);
+// A taken click has its offer URL already; rotating again would skip an offer.
+$redirect_site_url = $rsParallelClick === null ? rotateTrackerUrl($db, $tracker_row) : '';
 // The click's rows are written below, so its URL's tokens come from the values
 // in hand: read back, they are not there yet.
 $redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $click_id, [
@@ -412,7 +414,10 @@ $clickIdentity = p202ClickIdentity(
 // until it commits; a failure is the error page, as rtr.php's is.
 // Built outside the try: a record the builder refuses is a bug, not a
 // database failure, and the uncaught handler logs it as one.
-if ($rsParallelClick === null) {
+if ($rsParallelClick !== null) {
+    // The page's identity signals go to the click it took.
+    $clickIdentity->attach($conn, (int) $mysql['user_id'], $click_id, $rsParallelClick->clickTime);
+} else {
     $rsClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
     try {
         p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($rsClick));

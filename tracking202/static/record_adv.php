@@ -325,6 +325,7 @@ $raParallelClick = \Prosper202\Click\ParallelTrackingClick::find(
     (int) $mysql['user_id'],
     (int) $mysql['landing_page_id'],
     (string) ($mysql['gclid'] ?? ''),
+    (int) $ip_id,
     time()
 );
 if ($raParallelClick !== null) {
@@ -383,7 +384,10 @@ $clickIdentity = p202ClickIdentity(
 // until it commits; a failure is the error page, as rtr.php's is.
 // Built outside the try: a record the builder refuses is a bug, not a
 // database failure, and the uncaught handler logs it as one.
-if ($raParallelClick === null) {
+if ($raParallelClick !== null) {
+    // The page's identity signals go to the click it took.
+    $clickIdentity->attach($conn, (int) $mysql['user_id'], $click_id, $raParallelClick->clickTime);
+} else {
     $raClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
     try {
         p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($raClick));

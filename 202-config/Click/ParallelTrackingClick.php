@@ -12,8 +12,9 @@ use Prosper202\Database\Connection;
  * straight to the page, and the page's script then takes that click rather
  * than recording a second one, as paid 1.9.56 did.
  *
- * Only a click of the page's own account, on that page, from the last
- * WINDOW seconds: the gclid is the visitor's to send.
+ * Only a click of the page's own account, on that page, from the same
+ * stored address, in the last WINDOW seconds: the gclid is the visitor's to
+ * send, and Google's background call comes from the visitor's own browser.
  */
 final readonly class ParallelTrackingClick
 {
@@ -24,33 +25,47 @@ final readonly class ParallelTrackingClick
         public int $clickId,
         public string $clickIdPublic,
         public string $affCampaignId,
+        public int $clickTime,
     ) {
     }
 
-    public static function find(Connection $conn, int $userId, int $landingPageId, string $gclid, int $now): ?self
-    {
+    public static function find(
+        Connection $conn,
+        int $userId,
+        int $landingPageId,
+        string $gclid,
+        int $ipId,
+        int $now
+    ): ?self {
         $gclid = ClickRecord::storedGclid($gclid);
-        if ($userId < 1 || $landingPageId < 1 || $gclid === '') {
+        if ($userId < 1 || $landingPageId < 1 || $gclid === '' || $ipId < 1) {
             return null;
         }
 
         // The primary: the template's click was written moments ago.
         $stmt = $conn->prepareWrite(
-            'SELECT c.click_id, cr.click_id_public, c.aff_campaign_id
+            'SELECT c.click_id, cr.click_id_public, c.aff_campaign_id, c.click_time
                FROM 202_clicks AS c
                INNER JOIN 202_google AS g ON g.click_id = c.click_id
                INNER JOIN 202_clicks_record AS cr ON cr.click_id = c.click_id
+               INNER JOIN 202_clicks_advance AS ca ON ca.click_id = c.click_id
               WHERE c.user_id = ? AND c.click_time >= ? AND c.landing_page_id = ? AND g.gclid = ?
-                AND cr.click_id_public > 0
+                AND ca.ip_id = ? AND cr.click_id_public > 0
+                AND ' . LatestVisit::isLatest('c') . '
               ORDER BY c.click_id DESC
               LIMIT 1'
         );
-        $conn->bind($stmt, 'iiis', [$userId, $now - self::WINDOW, $landingPageId, $gclid]);
+        $conn->bind($stmt, 'iiisi', [$userId, $now - self::WINDOW, $landingPageId, $gclid, $ipId]);
         $row = $conn->fetchOne($stmt);
         if ($row === null) {
             return null;
         }
 
-        return new self((int) $row['click_id'], (string) $row['click_id_public'], (string) $row['aff_campaign_id']);
+        return new self(
+            (int) $row['click_id'],
+            (string) $row['click_id_public'],
+            (string) $row['aff_campaign_id'],
+            (int) $row['click_time']
+        );
     }
 }

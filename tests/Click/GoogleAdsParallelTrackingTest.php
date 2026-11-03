@@ -79,6 +79,8 @@ final class GoogleAdsParallelTrackingTest extends TestCase
         yield 'a backslash' => ['https://elsewhere.example\\@shop.example/landing'];
         yield 'not http' => ['javascript://shop.example/%0Aalert(1)'];
         yield 'no scheme' => ['//shop.example/landing'];
+        yield 'the page\'s host over http' => ['http://shop.example/landing'];
+        yield 'the page\'s host on another port' => ['https://shop.example:8443/landing'];
     }
 
     /** @dataProvider lpurlsNotFollowed */
@@ -88,5 +90,12 @@ final class GoogleAdsParallelTrackingTest extends TestCase
             'https://shop.example/landing?x=1&gclid=Cj0KCQ-abc',
             GoogleAdsParallelTracking::redirectTarget(self::PAGE, $lpurl, self::IDS, '')
         );
+    }
+
+    public function testAPageWithNoAddressHasNowhereToGo(): void
+    {
+        self::assertSame('', GoogleAdsParallelTracking::redirectTarget('', '', self::IDS, 'promo=1&'));
+        $offSite = 'https://elsewhere.example/';
+        self::assertSame('', GoogleAdsParallelTracking::redirectTarget(' ', $offSite, self::IDS, ''));
     }
 }

@@ -52,6 +52,13 @@ $ptLocation = \Prosper202\Click\GoogleAdsParallelTracking::redirectTarget(
     (string) getPrePopVars(array_diff_key($_GET, ['lpurl' => true, 'gb' => true]), true)
 );
 
+// A page with no address: nowhere to send the caller, so nothing is recorded.
+if ($ptLocation === '') {
+    p202NoStore();
+    http_response_code(502);
+    die();
+}
+
 // The request the page's script sends (landing.php): the page, the tracker,
 // the visitor's referrer, and the page's own address as the script's referer.
 $ptLandingPageId = (int) $ptTracker['landing_page_id_public'];
@@ -81,12 +88,6 @@ if ($ptRecorder !== null) {
     ob_start();
     include substr(__DIR__, 0, -21) . '/tracking202/static/' . $ptRecorder;
     ob_end_clean();
-}
-
-if ($ptLocation === '') {
-    p202NoStore();
-    http_response_code(502);
-    die();
 }
 
 p202NoStore();

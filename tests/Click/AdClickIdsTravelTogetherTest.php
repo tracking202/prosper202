@@ -63,6 +63,10 @@ final class AdClickIdsTravelTogetherTest extends TestCase
         '202-config/OfflineConversion/OfflineExport.php' => [1, 'reads the ids the import files carry'
             . ' (Format::idColumns())'],
         'tracking202/setup/offline_conversions.php' => [1, 'says which ids each import file carries'],
+        '202-config/Click/ParallelTrackingClick.php' => [1, 'finds the click Google Ads parallel tracking'
+            . ' recorded: Google appends the gclid to both the template and the final URL'],
+        'tracking202/static/record_simple.php' => [1, 'ParallelTrackingClick::find() by the visit\'s gclid'],
+        'tracking202/static/record_adv.php' => [1, 'as record_simple.php'],
     ];
 
     public function testEveryStatementThatNamesTheGclidNamesEveryAdClickId(): void
