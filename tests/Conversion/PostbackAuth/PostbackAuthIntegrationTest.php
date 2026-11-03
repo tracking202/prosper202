@@ -7,6 +7,9 @@ namespace Tests\Conversion\PostbackAuth;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\PostbackAuth\PostbackAuthGate;
+use Prosper202\Conversion\PostbackAuth\PostbackAuthMode;
+use Prosper202\Conversion\PostbackAuth\PostbackAuthSettings;
+use Prosper202\Conversion\PostbackAuth\PostbackCredential;
 use Prosper202\Conversion\PostbackAuth\PostbackAuthStore;
 use Prosper202\Conversion\PostbackAuth\PostbackSignature;
 use Prosper202\Database\Connection;
@@ -99,67 +102,93 @@ final class PostbackAuthIntegrationTest extends TestCase
 
     // ── the store ────────────────────────────────────────────────────────
 
-    public function testATokenIsMintedOnceAndSealedAtRest(): void
+    public function testTheCredentialsAreMintedOnceAndSealedAtRest(): void
     {
-        self::assertTrue(self::store()->settings(self::A)->required, 'no row: an account made from 1.9.80 on');
-        $first = self::store()->ensureToken(self::A, self::NOW);
+        self::assertSame(PostbackAuthMode::TOKEN, self::store()->settings(self::A)->mode, 'no row: an account made from 1.9.80 on');
+        $first = self::store()->ensureCredentials(self::A, self::NOW);
         self::assertNotNull($first->token);
-        self::assertTrue($first->required, 'the row the mint makes keeps the default');
-        self::assertSame($first->token, self::store()->ensureToken(self::A, self::NOW + 5)->token, 'asked again, the same token');
+        self::assertNotNull($first->secret);
+        self::assertNotSame($first->token, $first->secret);
+        self::assertSame(PostbackAuthMode::TOKEN, $first->mode, 'the row the mint makes keeps the default');
+        $again = self::store()->ensureCredentials(self::A, self::NOW + 5);
+        self::assertSame([$first->token, $first->secret], [$again->token, $again->secret], 'asked again, the same ones');
 
-        $raw = self::$db->query('SELECT token_sealed FROM 202_postback_auth WHERE user_id = ' . self::A)->fetch_row()[0];
-        self::assertStringStartsWith('v1.', $raw);
-        self::assertStringNotContainsString((string) $first->token, $raw);
+        [$token, $secret] = self::$db->query('SELECT token_sealed, secret_sealed FROM 202_postback_auth WHERE user_id = ' . self::A)->fetch_row();
+        foreach ([$token, $secret] as $raw) {
+            self::assertStringStartsWith('v1.', $raw);
+            self::assertStringNotContainsString((string) $first->token, $raw);
+            self::assertStringNotContainsString((string) $first->secret, $raw);
+        }
 
-        // A sealed value copied onto another account does not open there.
-        self::q('INSERT INTO 202_postback_auth SET user_id = ' . self::B . ', token_required = 1, updated_at = 0,'
-            . ' token_sealed = ' . self::str($raw));
-        try {
-            self::store()->settings(self::B);
-            self::fail('another account\'s sealed token opened');
-        } catch (\RuntimeException $e) {
-            self::assertStringContainsString('does not decrypt', $e->getMessage());
+        // A sealed value copied onto another account, or into the other credential's column, does not open.
+        foreach ([[self::B, 'token_sealed', $token], [self::A, 'secret_sealed', $token]] as [$user, $column, $raw]) {
+            self::q("DELETE FROM 202_postback_auth WHERE user_id = " . self::B);
+            if ($user === self::B) {
+                self::q('INSERT INTO 202_postback_auth SET user_id = ' . self::B . ", auth_mode = 'token', updated_at = 0, $column = " . self::str($raw));
+            } else {
+                self::q("UPDATE 202_postback_auth SET $column = " . self::str($raw) . ' WHERE user_id = ' . self::A);
+            }
+            try {
+                self::store()->settings($user);
+                self::fail("a sealed value moved into $column of account $user opened");
+            } catch (\RuntimeException $e) {
+                self::assertStringContainsString('does not decrypt', $e->getMessage());
+            }
         }
     }
 
-    public function testARotationKeepsTheOldTokenForItsGraceAndNoLonger(): void
+    public function testARotationKeepsTheOldOneForItsGraceAndNoLonger(): void
     {
-        $old = (string) self::store()->ensureToken(self::A, self::NOW)->token;
-        $rotated = self::store()->rotate(self::A, 3600, self::NOW);
-        self::assertNotSame($old, $rotated->token);
-        self::assertSame([$rotated->token, $old], $rotated->validTokens(self::NOW + 3599));
-        self::assertSame([$rotated->token], $rotated->validTokens(self::NOW + 3600));
+        foreach ([PostbackCredential::TOKEN, PostbackCredential::SIGNING_SECRET] as $credential) {
+            $valid = static fn (PostbackAuthSettings $s, int $at): array => $credential === PostbackCredential::TOKEN
+                ? $s->validTokens($at) : $s->validSecrets($at);
+            $current = static fn (PostbackAuthSettings $s): ?string => $credential === PostbackCredential::TOKEN ? $s->token : $s->secret;
+            $start = self::store()->ensureCredentials(self::A, self::NOW);
+            $old = (string) $current($start);
+            $other = $credential === PostbackCredential::TOKEN ? $start->secret : $start->token;
+            $rotated = self::store()->rotate(self::A, $credential, 3600, self::NOW);
+            self::assertNotSame($old, $current($rotated));
+            self::assertSame($other, $credential === PostbackCredential::TOKEN ? $rotated->secret : $rotated->token,
+                $credential->value . ': the other credential is untouched');
+            self::assertSame([$current($rotated), $old], $valid($rotated, self::NOW + 3599));
+            self::assertSame([$current($rotated)], $valid($rotated, self::NOW + 3600));
 
-        $again = self::store()->rotate(self::A, 3600, self::NOW + 10);
-        self::assertSame([$again->token, $rotated->token], $again->validTokens(self::NOW + 11), 'two work at most');
+            $again = self::store()->rotate(self::A, $credential, 3600, self::NOW + 10);
+            self::assertSame([$current($again), $current($rotated)], $valid($again, self::NOW + 11), 'two work at most');
 
-        $now = self::store()->rotate(self::A, 0, self::NOW + 20);
-        self::assertSame([$now->token], $now->validTokens(self::NOW + 20), 'no grace: the old token stops at once');
-        self::assertNull($now->previousToken);
+            $now = self::store()->rotate(self::A, $credential, 0, self::NOW + 20);
+            self::assertSame([$current($now)], $valid($now, self::NOW + 20), 'no grace: the old one stops at once');
+        }
 
         $this->expectException(\InvalidArgumentException::class);
-        self::store()->rotate(self::A, PostbackAuthStore::MAX_GRACE_SECONDS + 1, self::NOW);
+        self::store()->rotate(self::A, PostbackCredential::TOKEN, PostbackAuthStore::MAX_GRACE_SECONDS + 1, self::NOW);
     }
 
-    public function testTheRequirementIsTheAccountsOwn(): void
+    public function testTheModeIsTheAccountsOwn(): void
     {
-        self::store()->ensureToken(self::A, self::NOW);
-        self::assertFalse(self::store()->setRequired(self::A, false, self::NOW)->required);
-        self::assertTrue(self::store()->settings(self::B)->required, 'B is untouched');
-        self::assertNotNull(self::store()->settings(self::A)->token, 'the token stays');
-        self::assertTrue(self::store()->setRequired(self::A, true, self::NOW)->required);
-        self::assertFalse(self::store()->setRequired(self::B, false, self::NOW)->required, 'a row is made for an account without one');
+        self::store()->ensureCredentials(self::A, self::NOW);
+        foreach (PostbackAuthMode::cases() as $mode) {
+            self::assertSame($mode, self::store()->setMode(self::A, $mode, self::NOW)->mode);
+            self::assertSame(PostbackAuthMode::TOKEN, self::store()->settings(self::B)->mode, 'B is untouched');
+        }
+        self::assertNotNull(self::store()->settings(self::A)->token, 'the credentials stay');
+        self::assertSame(PostbackAuthMode::OFF, self::store()->setMode(self::B, PostbackAuthMode::OFF, self::NOW)->mode, 'a row is made for an account without one');
         self::assertNull(self::store()->settings(self::B)->token);
+
+        self::q("UPDATE 202_postback_auth SET auth_mode = 'maybe' WHERE user_id = " . self::A);
+        $this->expectException(\UnexpectedValueException::class);
+        self::store()->settings(self::A);
     }
 
-    public function testOneAccountsTokenOpensNothingOfAnothers(): void
+    public function testOneAccountsCredentialsOpenNothingOfAnothers(): void
     {
-        $a = (string) self::store()->ensureToken(self::A, self::NOW)->token;
-        self::store()->ensureToken(self::B, self::NOW);
+        $a = self::store()->ensureCredentials(self::A, self::NOW);
+        self::store()->ensureCredentials(self::B, self::NOW);
         $gate = PostbackAuthGate::forConnection(new Connection(self::$db));
-        self::assertNull($gate->check(self::A, 'gpb', 'subid=1&p202_token=' . $a, self::NOW));
-        self::assertSame('token_wrong', $gate->check(self::B, 'gpb', 'subid=1&p202_token=' . $a, self::NOW)?->reason);
-        $signedWithA = PostbackSignature::signedQuery('gpb', ['subid' => '1'], $a, self::NOW);
+        self::assertNull($gate->check(self::A, 'gpb', 'subid=1&p202_token=' . $a->token, self::NOW));
+        self::assertSame('token_wrong', $gate->check(self::B, 'gpb', 'subid=1&p202_token=' . $a->token, self::NOW)?->reason);
+        $signedWithA = PostbackSignature::signedQuery('gpb', ['subid' => '1'], (string) $a->secret, self::NOW);
+        self::assertNull($gate->check(self::A, 'gpb', $signedWithA, self::NOW));
         self::assertSame('signature_wrong', $gate->check(self::B, 'gpb', $signedWithA, self::NOW)?->reason);
         self::assertSame('no_account', $gate->check(0, 'gpb', 'subid=1', self::NOW)?->reason);
     }
@@ -176,8 +205,10 @@ final class PostbackAuthIntegrationTest extends TestCase
     public function testAServerEndpointRefusesBeforeItWritesAndConvertsOnceAuthenticated(string $endpoint, int $owner): void
     {
         $other = $owner === self::A ? self::B : self::A;
-        $mine = (string) self::store()->ensureToken($owner, time())->token;
-        $theirs = (string) self::store()->ensureToken($other, time())->token;
+        $own = self::store()->ensureCredentials($owner, time());
+        $mine = (string) $own->token;
+        $secret = (string) $own->secret;
+        $theirs = (string) self::store()->ensureCredentials($other, time())->token;
 
         [$status, $body] = self::hit($endpoint, $owner, []);
         self::assertSame(403, $status, $body);
@@ -191,30 +222,46 @@ final class PostbackAuthIntegrationTest extends TestCase
         self::assertContains($status, [200, 202], $body);
         self::assertSame(1, self::conversions($owner), 'the authenticated postback converts');
 
-        $signed = self::signed($endpoint, $owner, $mine, time());
+        $signed = self::signed($endpoint, $owner, $secret, time());
         [$status, $body] = self::runQuery($endpoint, $signed);
         self::assertContains($status, [200, 202], 'signed: ' . $body);
         self::assertSame(2, self::conversions($owner));
-        [$status, $body] = self::runQuery($endpoint, self::signed($endpoint, $owner, $mine, time() - PostbackSignature::WINDOW - 60));
+        [$status, $body] = self::runQuery($endpoint, self::signed($endpoint, $owner, $secret, time() - PostbackSignature::WINDOW - 60));
         self::assertSame(403, $status, $body);
         self::assertStringContainsString('p202_ts is more than', $body);
-        [$status] = self::runQuery($endpoint, self::signed($endpoint === 'gpb' ? 'upx' : 'gpb', $owner, $mine, time(), $endpoint));
+        [$status] = self::runQuery($endpoint, self::signed($endpoint === 'gpb' ? 'upx' : 'gpb', $owner, $secret, time(), $endpoint));
         self::assertSame(403, $status, 'signed for another endpoint');
+        [$status, $body] = self::runQuery($endpoint, self::signed($endpoint, $owner, $mine, time()));
+        self::assertSame(403, $status, 'keyed with the URL token, not the signing secret: ' . $body);
+        self::assertStringContainsString('signing secret', $body);
+        self::assertSame(2, self::conversions($owner));
+
+        // Signed only: the token alone is refused, a signature converts.
+        self::store()->setMode($owner, PostbackAuthMode::SIGNED, time());
+        [$status, $body] = self::hit($endpoint, $owner, ['p202_token' => $mine]);
+        self::assertSame(403, $status, 'the token alone, signed only: ' . $body);
+        self::assertStringContainsString('only signed postbacks', $body);
+        [$status, $body] = self::hit($endpoint, $owner, []);
+        self::assertSame(403, $status, $body);
+        self::assertSame(2, self::conversions($owner));
+        [$status, $body] = self::runQuery($endpoint, self::signed($endpoint, $owner, $secret, time()));
+        self::assertContains($status, [200, 202], 'signed, signed only: ' . $body);
+        self::assertSame(3, self::conversions($owner));
 
         // Off: nothing presented converts, and a wrong token is still refused.
-        self::store()->setRequired($owner, false, time());
+        self::store()->setMode($owner, PostbackAuthMode::OFF, time());
         [$status, $body] = self::hit($endpoint, $owner, []);
         self::assertContains($status, [200, 202], $body);
-        self::assertSame(3, self::conversions($owner));
+        self::assertSame(4, self::conversions($owner));
         [$status] = self::hit($endpoint, $owner, ['p202_token' => $theirs]);
         self::assertSame(403, $status);
-        self::assertSame(3, self::conversions($owner));
+        self::assertSame(4, self::conversions($owner));
     }
 
     public function testTheCampaignPixelRefusesBeforeItWrites(): void
     {
-        $mine = (string) self::store()->ensureToken(self::B, time())->token;
-        $theirs = (string) self::store()->ensureToken(self::A, time())->token;
+        $mine = (string) self::store()->ensureCredentials(self::B, time())->token;
+        $theirs = (string) self::store()->ensureCredentials(self::A, time())->token;
         $cookie = ['tracking202subid' => (string) self::CLICK[self::B]];
         $acip = (string) self::CAMPAIGN[self::B][1];
 
@@ -226,12 +273,19 @@ final class PostbackAuthIntegrationTest extends TestCase
         [$status, $body] = self::runQuery('px', 'acip=' . $acip . '&p202_token=' . $mine, $cookie);
         self::assertSame(200, $status, $body);
         self::assertSame(1, self::conversions(self::B));
+
+        // Signed only: a pixel cannot sign, and the refusal says so.
+        self::store()->setMode(self::B, PostbackAuthMode::SIGNED, time());
+        [$status, $body] = self::runQuery('px', 'acip=' . $acip . '&p202_token=' . $mine . '&txid=px-2', $cookie);
+        self::assertSame(403, $status, $body);
+        self::assertStringContainsString('cannot sign, so px.php is refused', $body);
+        self::assertSame(1, self::conversions(self::B));
     }
 
     public function testTheGlobalPixelRefusesSilentlyBeforeItWrites(): void
     {
-        $mine = (string) self::store()->ensureToken(self::B, time())->token;
-        $theirs = (string) self::store()->ensureToken(self::A, time())->token;
+        $mine = (string) self::store()->ensureCredentials(self::B, time())->token;
+        $theirs = (string) self::store()->ensureCredentials(self::A, time())->token;
         $click = (string) self::CLICK[self::B];
 
         foreach (['', '&p202_token=' . $theirs] as $credential) {
@@ -242,11 +296,16 @@ final class PostbackAuthIntegrationTest extends TestCase
         self::assertSame(0, self::conversions(self::B));
         self::runQuery('gpx', 'subid=' . $click . '&p202_token=' . $mine . '&txid=gpx-1');
         self::assertSame(1, self::conversions(self::B));
+
+        self::store()->setMode(self::B, PostbackAuthMode::SIGNED, time());
+        [$status, $body] = self::runQuery('gpx', 'subid=' . $click . '&p202_token=' . $mine . '&txid=gpx-2');
+        self::assertStringStartsWith('GIF89a', $body);
+        self::assertSame(1, self::conversions(self::B), 'signed only: the pixel\'s token alone converts nothing');
     }
 
     public function testAFailedReadIsNeverAPass(): void
     {
-        self::store()->ensureToken(self::B, time());
+        self::store()->ensureCredentials(self::B, time());
         $key = self::$db->query("SELECT secret_value FROM 202_deployment_secrets WHERE secret_name = 'postback_token'")->fetch_row()[0];
         self::q("DELETE FROM 202_deployment_secrets WHERE secret_name = 'postback_token'");
         try {
@@ -311,10 +370,10 @@ final class PostbackAuthIntegrationTest extends TestCase
         return self::runQuery($endpoint, http_build_query(self::naming($endpoint, $owner) + $extra));
     }
 
-    /** A request naming the owner's click as $endpoint names it, signed for $signedFor. */
-    private static function signed(string $signedFor, int $owner, string $token, int $at, ?string $endpoint = null): string
+    /** A request naming the owner's click as $endpoint names it, signed for $signedFor with $key. */
+    private static function signed(string $signedFor, int $owner, string $key, int $at, ?string $endpoint = null): string
     {
-        return PostbackSignature::signedQuery($signedFor, self::naming($endpoint ?? $signedFor, $owner), $token, $at);
+        return PostbackSignature::signedQuery($signedFor, self::naming($endpoint ?? $signedFor, $owner), $key, $at);
     }
 
     /**

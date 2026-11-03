@@ -13,10 +13,13 @@ use Prosper202\Database\Connection;
  * anything is written.
  *
  * - A request presenting a token or a signature is held to it whatever the
- *   setting: a wrong one is refused, never read as absent.
- * - A request presenting nothing passes only when the account does not
- *   require authentication (every account already there at the 1.9.80
- *   upgrade, until its owner turns it on).
+ *   mode: a wrong one is refused, never read as absent. The token is
+ *   checked against the URL token, a signature against the signing secret.
+ * - Mode off (every account already there at the 1.9.80 upgrade, until its
+ *   owner changes it): a request presenting nothing passes.
+ * - Mode token: the token or a signature is needed.
+ * - Mode signed: a signature is needed; the token alone is refused. A pixel
+ *   is fetched by a browser and cannot sign, so every pixel is refused.
  * - A row that cannot be read throws: the caller answers 500, never a pass.
  *
  * A PurLink SubID's MAC is not authentication here: it says which click and
@@ -55,21 +58,31 @@ final class PostbackAuthGate
         if ($presented->problem !== null) {
             return new PostbackAuthRefusal('credentials_malformed', $presented->problem);
         }
+        $pixel = in_array($endpoint, ['px', 'gpx', 'upx'], true);
+        $signingOnly = 'This account accepts only signed postbacks: p202_ts and p202_sig, keyed with its signing secret'
+            . ' (Account › API Integrations › Postback authentication), not p202_token alone.'
+            . ($pixel ? ' A pixel is loaded by the visitor\'s browser and cannot sign, so ' . $endpoint . '.php is refused'
+                . ' while the account accepts only signed postbacks.' : '');
         if ($presented->presentsNothing()) {
-            return $settings->required
-                ? new PostbackAuthRefusal('token_required', 'This account accepts only authenticated postbacks and pixels:'
-                    . ' add p202_token (the URLs in Setup › Postback / Pixel carry it), or sign the request with p202_ts and p202_sig.')
-                : null;
+            return match ($settings->mode) {
+                PostbackAuthMode::OFF => null,
+                PostbackAuthMode::TOKEN => new PostbackAuthRefusal('token_required', 'This account accepts only authenticated'
+                    . ' postbacks and pixels: add p202_token (the URLs in Setup › Postback / Pixel carry it), or sign the'
+                    . ' request with p202_ts and p202_sig.'),
+                PostbackAuthMode::SIGNED => new PostbackAuthRefusal('signature_required', $signingOnly),
+            };
         }
 
-        $valid = $settings->validTokens($now);
-        if ($valid === []) {
-            return new PostbackAuthRefusal('token_wrong', 'The request carries a postback token or signature, and this account'
-                . ' has no postback token yet: copy the URL from Setup › Postback / Pixel, which makes one.');
-        }
-        if ($presented->token !== null && !self::oneOf($presented->token, $valid)) {
-            return new PostbackAuthRefusal('token_wrong', 'p202_token is not this account\'s postback token; copy the URL again'
-                . ' from Setup › Postback / Pixel (the token may have been rotated).');
+        if ($presented->token !== null) {
+            $tokens = $settings->validTokens($now);
+            if ($tokens === []) {
+                return new PostbackAuthRefusal('token_wrong', 'The request carries p202_token, and this account has no'
+                    . ' postback token yet: copy the URL from Setup › Postback / Pixel, which makes one.');
+            }
+            if (!self::oneOf($presented->token, $tokens)) {
+                return new PostbackAuthRefusal('token_wrong', 'p202_token is not this account\'s postback token; copy the URL'
+                    . ' again from Setup › Postback / Pixel (the token may have been rotated).');
+            }
         }
         if ($presented->isSigned()) {
             $ts = PostbackSignature::timestamp((string) $presented->timestamp);
@@ -81,13 +94,16 @@ final class PostbackAuthGate
                     . ' seconds from this server\'s clock (' . $now . '); sign each request when it is sent.');
             }
             $signed = false;
-            foreach ($valid as $token) {
-                $signed = PostbackSignature::matches($endpoint, $presented->pairs, (string) $presented->signature, $token) || $signed;
+            foreach ($settings->validSecrets($now) as $secret) {
+                $signed = PostbackSignature::matches($endpoint, $presented->pairs, (string) $presented->signature, $secret) || $signed;
             }
             if (!$signed) {
                 return new PostbackAuthRefusal('signature_wrong', 'p202_sig does not sign this request for ' . $endpoint
-                    . '.php with this account\'s postback token (see "Signed postbacks" in the postback documentation).');
+                    . '.php with this account\'s signing secret (the secret, not the URL token; see "Signed postbacks" in'
+                    . ' the postback documentation).');
             }
+        } elseif ($settings->mode === PostbackAuthMode::SIGNED) {
+            return new PostbackAuthRefusal('signature_required', $signingOnly);
         }
 
         return null;

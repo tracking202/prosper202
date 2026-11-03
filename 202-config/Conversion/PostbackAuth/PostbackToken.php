@@ -8,8 +8,8 @@ namespace Prosper202\Conversion\PostbackAuth;
  * An account's postback token: 128 random bits as 32 lower-case hex
  * characters, a shape every network's URL field and macro language passes
  * through unchanged. It travels as `p202_token` in the postback and pixel
- * URLs the account hands out, and is the key of the signed form
- * (PostbackSignature).
+ * URLs the account hands out. It is not the key of the signed form: that is
+ * the signing secret (PostbackSigningSecret), which no URL carries.
  */
 final class PostbackToken
 {

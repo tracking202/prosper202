@@ -5,25 +5,30 @@ declare(strict_types=1);
 namespace Prosper202\Conversion\PostbackAuth;
 
 /**
- * An account's postback authentication as stored (PostbackAuthStore):
- * whether its postbacks and pixels must authenticate, its token, and the
- * token a rotation replaced, which keeps working until previousExpiresAt.
+ * An account's postback authentication as stored (PostbackAuthStore): what
+ * its postbacks and pixels must present, its URL token, its signing secret,
+ * and for each the one a rotation replaced, which keeps working until its
+ * grace period ends.
  */
 final class PostbackAuthSettings
 {
     public function __construct(
-        public readonly bool $required,
+        public readonly PostbackAuthMode $mode,
         public readonly ?string $token,
         public readonly ?int $tokenCreatedAt,
         public readonly ?string $previousToken,
-        public readonly ?int $previousExpiresAt,
+        public readonly ?int $previousTokenExpiresAt,
+        public readonly ?string $secret = null,
+        public readonly ?int $secretCreatedAt = null,
+        public readonly ?string $previousSecret = null,
+        public readonly ?int $previousSecretExpiresAt = null,
     ) {
     }
 
     /** An account with no row: one made from 1.9.80 on, before it was ever handed a token. */
     public static function none(): self
     {
-        return new self(true, null, null, null, null);
+        return new self(PostbackAuthMode::TOKEN, null, null, null, null);
     }
 
     /**
@@ -34,19 +39,39 @@ final class PostbackAuthSettings
      */
     public function validTokens(int $now): array
     {
-        $tokens = $this->token === null ? [] : [$this->token];
-        if ($this->previousToken !== null && $this->previousExpiresAt !== null && $this->previousExpiresAt > $now) {
-            $tokens[] = $this->previousToken;
-        }
+        return self::valid($this->token, $this->previousToken, $this->previousTokenExpiresAt, $now);
+    }
 
-        return $tokens;
+    /** @return list<string> the signing secrets a signature may be keyed with now, likewise */
+    public function validSecrets(int $now): array
+    {
+        return self::valid($this->secret, $this->previousSecret, $this->previousSecretExpiresAt, $now);
     }
 
     /** When the replaced token stops working, or null when none is working. */
-    public function previousValidUntil(int $now): ?int
+    public function previousTokenValidUntil(int $now): ?int
     {
-        return $this->previousToken !== null && $this->previousExpiresAt !== null && $this->previousExpiresAt > $now
-            ? $this->previousExpiresAt
-            : null;
+        return self::until($this->previousToken, $this->previousTokenExpiresAt, $now);
+    }
+
+    public function previousSecretValidUntil(int $now): ?int
+    {
+        return self::until($this->previousSecret, $this->previousSecretExpiresAt, $now);
+    }
+
+    /** @return list<string> */
+    private static function valid(?string $current, ?string $previous, ?int $expiresAt, int $now): array
+    {
+        $values = $current === null ? [] : [$current];
+        if (self::until($previous, $expiresAt, $now) !== null) {
+            $values[] = (string) $previous;
+        }
+
+        return $values;
+    }
+
+    private static function until(?string $previous, ?int $expiresAt, int $now): ?int
+    {
+        return $previous !== null && $expiresAt !== null && $expiresAt > $now ? $expiresAt : null;
     }
 }

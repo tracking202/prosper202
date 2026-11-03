@@ -531,8 +531,8 @@ if (!function_exists('_upgrade_reclick_backfill_mark')) {
 if (!function_exists('_upgrade_postback_auth_table')) {
     /**
      * 202_postback_auth (Prosper202\Conversion\PostbackAuth), made with a
-     * row for every account already here, requirement off: no row reads as
-     * required (an account made from 1.9.80 on), and an account whose
+     * row for every account already here, mode `off`: no row reads as
+     * `token` (an account made from 1.9.80 on), and an account whose
      * networks call its postbacks without a token must not lose them at the
      * upgrade. Built under another name and renamed into place, so the table
      * exists only with its rows: a run that stopped half way left no table,
@@ -556,8 +556,8 @@ if (!function_exists('_upgrade_postback_auth_table')) {
         $steps = [
             'DROP TABLE IF EXISTS `202_postback_auth_building`',
             str_replace('`202_postback_auth`', '`202_postback_auth_building`', $definition->createStatement),
-            'INSERT INTO `202_postback_auth_building` (user_id, token_required, updated_at)'
-                . ' SELECT u.user_id, 0, UNIX_TIMESTAMP() FROM `202_users` AS u',
+            'INSERT INTO `202_postback_auth_building` (user_id, auth_mode, updated_at)'
+                . " SELECT u.user_id, 'off', UNIX_TIMESTAMP() FROM `202_users` AS u",
             'RENAME TABLE `202_postback_auth_building` TO `202_postback_auth`',
         ];
         foreach ($steps as $sql) {

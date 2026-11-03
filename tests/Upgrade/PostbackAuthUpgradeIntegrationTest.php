@@ -9,9 +9,9 @@ use PHPUnit\Framework\TestCase;
 /**
  * The 1.9.79 -> 1.9.80 rung brings postback authentication
  * (202_postback_auth): the table as the installer makes it, and a row for
- * every account already there with the requirement off, so the postbacks
- * its networks call keep converting. An account made after the upgrade has
- * no row, which reads as required. A second run changes no one's choice.
+ * every account already there with mode off, so the postbacks its networks
+ * call keep converting. An account made after the upgrade has no row, which
+ * reads as mode token. A second run changes no one's choice.
  * It runs as the upgrade page runs it (UPGRADE::upgrade_databases(),
  * fixtures/ladder-runner.php).
  *
@@ -88,14 +88,14 @@ final class PostbackAuthUpgradeIntegrationTest extends TestCase
         self::row('202_version', ['version' => $version]);
     }
 
-    /** @return array<int, int> account => token_required, for this class's accounts that have a row */
+    /** @return array<int, string> account => auth_mode, for this class's accounts that have a row */
     private static function requirements(): array
     {
         $ids = implode(',', [...self::USERS, self::LATER]);
-        $rows = self::$db->query("SELECT user_id, token_required FROM 202_postback_auth WHERE user_id IN ($ids) ORDER BY user_id")
+        $rows = self::$db->query("SELECT user_id, auth_mode FROM 202_postback_auth WHERE user_id IN ($ids) ORDER BY user_id")
             ->fetch_all(MYSQLI_ASSOC);
 
-        return array_combine(array_map('intval', array_column($rows, 'user_id')), array_map('intval', array_column($rows, 'token_required')));
+        return array_combine(array_map('intval', array_column($rows, 'user_id')), array_column($rows, 'auth_mode'));
     }
 
     /** @return array{0: string, 1: string} what the runner printed, and what the ladder logged */
@@ -130,12 +130,13 @@ final class PostbackAuthUpgradeIntegrationTest extends TestCase
     {
         [$out, $err] = self::upgrade();
         $this->assertUpgradedTo180($out, $err);
-        self::assertSame([5911 => 0, 5912 => 0], self::requirements(), 'every account already there: not required');
+        self::assertSame([5911 => 'off', 5912 => 'off'], self::requirements(), 'every account already there: not required');
 
         self::user(self::LATER);
         $store = new \Prosper202\Conversion\PostbackAuth\PostbackAuthStore(new \Prosper202\Database\Connection(self::$db));
-        self::assertTrue($store->settings(self::LATER)->required, 'an account made after the upgrade requires it');
-        self::assertFalse($store->settings(5911)->required);
+        self::assertSame(\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN, $store->settings(self::LATER)->mode,
+            'an account made after the upgrade needs the token or a signature');
+        self::assertSame(\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF, $store->settings(5911)->mode);
         self::assertNull($store->settings(5911)->token, 'no token until one is handed out');
     }
 
@@ -143,13 +144,13 @@ final class PostbackAuthUpgradeIntegrationTest extends TestCase
     {
         [$out, $err] = self::upgrade();
         $this->assertUpgradedTo180($out, $err);
-        self::q('UPDATE 202_postback_auth SET token_required = 1 WHERE user_id = 5912');
+        self::q("UPDATE 202_postback_auth SET auth_mode = 'signed' WHERE user_id = 5912");
         self::user(self::LATER);
 
         self::stored('1.9.79');
         [$out, $err] = self::upgrade();
         $this->assertUpgradedTo180($out, $err);
-        self::assertSame([5911 => 0, 5912 => 1], self::requirements(),
+        self::assertSame([5911 => 'off', 5912 => 'signed'], self::requirements(),
             'a re-run keeps a choice made, and an account made after the table is left to require it');
     }
 
@@ -159,7 +160,7 @@ final class PostbackAuthUpgradeIntegrationTest extends TestCase
         self::stored('1.9.75');
         [$out, $err] = self::upgrade();
         $this->assertUpgradedTo180($out, $err);
-        self::assertSame([5911 => 0, 5912 => 0], self::requirements());
+        self::assertSame([5911 => 'off', 5912 => 'off'], self::requirements());
     }
 
     /** A run that stopped half way left its building table, and no table: the next run builds it again. */
@@ -167,10 +168,10 @@ final class PostbackAuthUpgradeIntegrationTest extends TestCase
     {
         self::q(str_replace('`202_postback_auth`', '`202_postback_auth_building`',
             \Prosper202\Database\Tables\ConversionTables::postbackAuth()->createStatement));
-        self::q('INSERT INTO 202_postback_auth_building SET user_id = 5911, token_required = 1, updated_at = 0');
+        self::q("INSERT INTO 202_postback_auth_building SET user_id = 5911, auth_mode = 'token', updated_at = 0");
         [$out, $err] = self::upgrade();
         $this->assertUpgradedTo180($out, $err);
-        self::assertSame([5911 => 0, 5912 => 0], self::requirements());
+        self::assertSame([5911 => 'off', 5912 => 'off'], self::requirements());
         self::assertSame(0, self::$db->query("SHOW TABLES LIKE '202\\_postback\\_auth\\_building'")->num_rows);
     }
 

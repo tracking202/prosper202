@@ -6,12 +6,12 @@ namespace Prosper202\Conversion\PostbackAuth;
 
 /**
  * The signed form of a postback, for a sender that can compute an HMAC: the
- * request carries `p202_ts` (Unix seconds) and `p202_sig`, and never the
- * token itself, so a URL that lands in a log hands out nothing that signs
- * another request.
+ * request carries `p202_ts` (Unix seconds) and `p202_sig`. The key is the
+ * account's signing secret (PostbackSigningSecret), which no URL carries,
+ * so neither a URL that lands in a log nor a pixel's token signs anything.
  *
- * p202_sig = lower-case hex HMAC-SHA256, keyed with the account's postback
- * token (its 32 characters as text), of
+ * p202_sig = lower-case hex HMAC-SHA256, keyed with the account's signing
+ * secret (its 64 characters as text), of
  *
  *     P202-POSTBACK-V1 \n <endpoint> \n <canonical query>
  *
@@ -59,24 +59,24 @@ final class PostbackSignature
     }
 
     /** @param list<array{0: string, 1: string}> $pairs */
-    public static function sign(string $endpoint, array $pairs, #[\SensitiveParameter] string $token): string
+    public static function sign(string $endpoint, array $pairs, #[\SensitiveParameter] string $secret): string
     {
-        return hash_hmac('sha256', self::stringToSign($endpoint, $pairs), $token);
+        return hash_hmac('sha256', self::stringToSign($endpoint, $pairs), $secret);
     }
 
     /**
-     * Whether $signature signs $pairs for $endpoint under $token: compared
+     * Whether $signature signs $pairs for $endpoint under $secret: compared
      * in constant time, upper-case hex accepted.
      *
      * @param list<array{0: string, 1: string}> $pairs
      */
-    public static function matches(string $endpoint, array $pairs, string $signature, #[\SensitiveParameter] string $token): bool
+    public static function matches(string $endpoint, array $pairs, string $signature, #[\SensitiveParameter] string $secret): bool
     {
         if (preg_match('/\A[0-9a-fA-F]{64}\z/D', $signature) !== 1) {
             return false;
         }
 
-        return hash_equals(self::sign($endpoint, $pairs, $token), strtolower($signature));
+        return hash_equals(self::sign($endpoint, $pairs, $secret), strtolower($signature));
     }
 
     /**
@@ -95,14 +95,14 @@ final class PostbackSignature
      *
      * @param array<string, string> $query
      */
-    public static function signedQuery(string $endpoint, array $query, #[\SensitiveParameter] string $token, int $now): string
+    public static function signedQuery(string $endpoint, array $query, #[\SensitiveParameter] string $secret, int $now): string
     {
         $query[PresentedCredentials::TIMESTAMP] = (string) $now;
         $pairs = [];
         foreach ($query as $name => $value) {
             $pairs[] = [(string) $name, $value];
         }
-        $query[PresentedCredentials::SIGNATURE] = self::sign($endpoint, $pairs, $token);
+        $query[PresentedCredentials::SIGNATURE] = self::sign($endpoint, $pairs, $secret);
 
         return http_build_query($query, '', '&', PHP_QUERY_RFC3986);
     }
