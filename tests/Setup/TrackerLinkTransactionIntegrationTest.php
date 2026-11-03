@@ -27,6 +27,7 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
     /** A campaign the trigger below refuses a tracker on. */
     private const REFUSED_CAMPAIGN = 990082;
     private const NETWORK = 990081;
+    private const LANDING_PAGE = 990081;
     /** Another account, with a link of its own. */
     private const OTHER = 990083;
     private const THEIR_LINK = 99008399;
@@ -106,6 +107,42 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         self::assertNotSame($created[0]['tracker_id'], $edited[0]['tracker_id'], 'an edit writes the tracker again');
         self::assertSame((string) $public, $edited[0]['tracker_id_public'], 'under the public id it had');
         self::assertSame('1', $edited[0]['click_cloaking']);
+    }
+
+    /**
+     * A landing page's link also gives the Google Ads pair paid 1.9.56 gave:
+     * the page itself as the final URL and pt.php as the tracking template.
+     */
+    public function testALandingPagesLinkGivesTheGoogleAdsFinalUrlAndTrackingTemplate(): void
+    {
+        $out = self::save([
+            'aff_campaign_id' => (string) self::CAMPAIGN,
+            'method_of_promotion' => 'landingpage',
+            'landing_page_id' => (string) self::LANDING_PAGE,
+        ]);
+        $created = self::trackers();
+        self::assertCount(1, $created, $out);
+        $public = $created[0]['tracker_id_public'];
+        $boxes = array_map(
+            static fn (string $v): string => html_entity_decode($v, ENT_QUOTES),
+            preg_match_all('~<pre class="p202-code__value[^"]*">([^<]*)</pre>~', $out, $m) > 0 ? $m[1] : []
+        );
+        self::assertContains('https://shop.example/landing?x=1&t202id=' . $public . '&t202kw=', $boxes, $out);
+        self::assertContains('https://shop.example/landing?x=1', $boxes, 'the final URL: the page as saved');
+        $template = array_values(array_filter($boxes, static fn (string $v): bool => str_contains($v, '/pt.php?')));
+        self::assertCount(1, $template, $out);
+        self::assertMatchesRegularExpression(
+            '~^https?://[^/]+/(?:.*/)?tracking202/redirect/pt\.php\?t202id=' . $public . '&t202kw=&lpurl=\{lpurl\}$~',
+            $template[0]
+        );
+        self::assertStringContainsString('Tracking template', $out);
+    }
+
+    public function testADirectLinkGivesNoGoogleAdsTemplate(): void
+    {
+        $out = self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
+        self::assertStringContainsString('dl.php?t202id=', $out);
+        self::assertStringNotContainsString('pt.php', $out);
     }
 
     public function testAnEditThatFailsAfterItsDeleteLeavesTheTrackerAsItWas(): void
@@ -208,7 +245,7 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
     {
         $tables = [
             '202_user_role', '202_users_pref', '202_users', '202_aff_networks', '202_aff_campaigns',
-            '202_trackers', '202_mysql_errors',
+            '202_trackers', '202_mysql_errors', '202_landing_pages',
         ];
         foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE user_id IN (" . self::USER . ', ' . self::OTHER . ')');
@@ -253,6 +290,11 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
             'tracker_id' => $o, 'user_id' => $o, 'tracker_id_public' => self::THEIR_LINK, 'aff_campaign_id' => $o,
             'text_ad_id' => 0, 'ppc_account_id' => 0, 'landing_page_id' => 0, 'rotator_id' => 0,
             'click_cpc' => 0.1, 'click_cloaking' => 0, 'tracker_time' => $t,
+        ]);
+        self::row('202_landing_pages', [
+            'landing_page_id' => self::LANDING_PAGE, 'user_id' => $u, 'landing_page_id_public' => self::LANDING_PAGE,
+            'aff_campaign_id' => self::CAMPAIGN, 'landing_page_nickname' => 'Landing', 'landing_page_type' => 0,
+            'landing_page_url' => 'https://shop.example/landing?x=1', 'landing_page_time' => $t,
         ]);
         foreach ([self::CAMPAIGN, self::REFUSED_CAMPAIGN] as $campaign) {
             self::row('202_aff_campaigns', [

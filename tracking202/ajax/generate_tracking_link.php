@@ -585,6 +585,16 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
             $destination_url .= '#' . $parsed_url['fragment'];
         }
         $trackingLinkParts[] = $destination_url;
+        $googleAdsLinks = [
+            \Prosper202\Click\GoogleAdsParallelTracking::finalUrl(
+                (string) ($landing_page_row['landing_page_url'] ?? '')
+            ),
+            \Prosper202\Click\GoogleAdsParallelTracking::trackingTemplate(
+                $linkBase,
+                (string) $tracker_id_public,
+                $tracking_variable_string
+            ),
+        ];
     }
 
     if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) {
@@ -592,6 +602,17 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
     }
     foreach ($trackingLinkParts as $trackingLink) {
         echo p202_setup_code_box($trackingLink, ['label' => 'Destination URL']);
+    }
+    if (isset($googleAdsLinks)) {
+        // Paid 1.9.56's clean destination URL and parallel tracking URL.
+        echo '<h3 class="h6 mt-3">Google Ads (parallel tracking)</h3>';
+        echo '<p class="form-text">Optional, instead of the destination URL above: put the final URL in the ad'
+            . ' and the tracking template in its tracking settings. Google records the click through the'
+            . ' template while the visitor goes straight to your page. Auto-tagging must be on: the page finds'
+            . ' the click by its gclid.</p>';
+        echo p202_setup_code_box($googleAdsLinks[0], ['label' => 'Final URL']);
+        echo p202_setup_code_box($googleAdsLinks[1], ['label' => 'Tracking template']);
+        $onLinkBase = true;
     }
     if ($onLinkBase) {
         echo p202_setup_link_scheme_note(

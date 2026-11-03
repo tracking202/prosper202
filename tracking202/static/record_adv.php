@@ -319,8 +319,22 @@ if ($clickIsBot) {
 // Pre-allocate click_id so we can compute click_id_public and site URLs
 $conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
 $clickRepo = new \Prosper202\Click\MysqlClickRepository($conn);
-$click_id = $clickRepo->allocateClickId();
-$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
+// A Google Ads click the tracking template (pt.php) recorded for this page is this visit's click.
+$raParallelClick = \Prosper202\Click\ParallelTrackingClick::find(
+    $conn,
+    (int) $mysql['user_id'],
+    (int) $mysql['landing_page_id'],
+    (string) ($mysql['gclid'] ?? ''),
+    time()
+);
+if ($raParallelClick !== null) {
+    $click_id = $raParallelClick->clickId;
+    $click_id_public = $raParallelClick->clickIdPublic;
+    $mysql['aff_campaign_id'] = $raParallelClick->affCampaignId;
+} else {
+    $click_id = $clickRepo->allocateClickId();
+    $click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
+}
 $mysql['click_id'] = (string) $click_id;
 $mysql['click_id_public'] = (string) $click_id_public;
 
@@ -369,11 +383,13 @@ $clickIdentity = p202ClickIdentity(
 // until it commits; a failure is the error page, as rtr.php's is.
 // Built outside the try: a record the builder refuses is a bug, not a
 // database failure, and the uncaught handler logs it as one.
-$raClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
-try {
-    p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($raClick));
-} catch (\Throwable $raWriteError) {
-    record_mysql_error($db, 'recording click ' . $click_id, $raWriteError->getMessage());
+if ($raParallelClick === null) {
+    $raClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
+    try {
+        p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($raClick));
+    } catch (\Throwable $raWriteError) {
+        record_mysql_error($db, 'recording click ' . $click_id, $raWriteError->getMessage());
+    }
 }
 
 

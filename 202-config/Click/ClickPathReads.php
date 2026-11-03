@@ -167,6 +167,35 @@ final readonly class ClickPathReads
     }
 
     /**
+     * A tracker's landing page (pt.php, the Google Ads tracking template),
+     * when the page is the tracker's account's; landing_page_id_public is
+     * null for a tracker with none.
+     *
+     * @return Row|null
+     */
+    public function trackerLandingPage(int $publicId): ?array
+    {
+        if ($publicId < 1) {
+            return null;
+        }
+
+        return $this->setupRow(
+            'SELECT tr.user_id,
+                    lp.landing_page_id_public,
+                    lp.landing_page_type,
+                    lp.landing_page_url
+               FROM 202_trackers AS tr
+               LEFT JOIN 202_landing_pages AS lp
+                      ON lp.landing_page_id = tr.landing_page_id AND lp.user_id = tr.user_id
+              WHERE tr.tracker_id_public = ?
+              ORDER BY tr.tracker_id
+              LIMIT 1',
+            'i',
+            [$publicId]
+        );
+    }
+
+    /**
      * A redirector's tracker (rtr.php), with its rotator and the rotator's
      * default campaign and landing page when each is the tracker's
      * account's, and the account's settings. rotator_id is 0 when the
