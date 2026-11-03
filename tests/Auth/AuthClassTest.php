@@ -357,6 +357,8 @@ final class AuthClassTest extends TestCase
             '192.0.2.10' => ['DE', true],
             '198.51.100.7' => ['US', false],
             '203.0.113.5' => ['GB', false],
+            '2001:db8::10' => ['FR', true],
+            '2001:db8::20' => ['US', false],
         ];
         $country = static fn (string $ip): ?array => $countries[$ip] ?? null;
 
@@ -378,7 +380,67 @@ final class AuthClassTest extends TestCase
             'a forged CF-Connecting-IP' => [['REMOTE_ADDR' => '192.0.2.10', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null],
             'a forged Forwarded' => [['REMOTE_ADDR' => '192.0.2.10', 'HTTP_FORWARDED' => 'for=198.51.100.7'], null],
             'no address' => [[], null],
+            // Behind Cloudflare: an edge server's CF-Connecting-IP is the visitor.
+            'Cloudflare, a visitor elsewhere' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], false],
+            'Cloudflare, a visitor in the EU' => [['REMOTE_ADDR' => '104.16.0.9', 'HTTP_CF_CONNECTING_IP' => '192.0.2.10'], true],
+            'Cloudflare: X-Forwarded-For ignored' => [
+                ['REMOTE_ADDR' => '162.158.1.1', 'HTTP_X_FORWARDED_FOR' => '192.0.2.10', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], false,
+            ],
+            'Cloudflare, no CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], null],
+            'Cloudflare, a malformed CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7, 192.0.2.10'], null],
+            'Cloudflare, a private CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '10.0.0.5'], null],
+            'Cloudflare, a loopback CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '127.0.0.1'], null],
+            'the last address of a Cloudflare range' => [['REMOTE_ADDR' => '172.71.255.255', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], false],
+            'the first address past a Cloudflare range' => [['REMOTE_ADDR' => '172.72.0.0', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null],
+            'Cloudflare over IPv6, a visitor in the EU over IPv6' => [
+                ['REMOTE_ADDR' => '2606:4700::6810:84e5', 'HTTP_CF_CONNECTING_IP' => '2001:DB8:0::10'], true,
+            ],
+            'Cloudflare over IPv6, the end of a /29' => [['REMOTE_ADDR' => '2a06:98c7:ffff::1', 'HTTP_CF_CONNECTING_IP' => '2001:db8::20'], false],
+            'past a Cloudflare /29' => [['REMOTE_ADDR' => '2a06:98c8::1', 'HTTP_CF_CONNECTING_IP' => '2001:db8::20'], null],
+            'Cloudflare, a unique-local IPv6 CF-Connecting-IP' => [['REMOTE_ADDR' => '2400:cb00::1', 'HTTP_CF_CONNECTING_IP' => 'fd00::1'], null],
+            'Cloudflare, a link-local IPv6 CF-Connecting-IP' => [['REMOTE_ADDR' => '2400:cb00::1', 'HTTP_CF_CONNECTING_IP' => 'fe80::1'], null],
+            'a Cloudflare address written IPv4-mapped is not Cloudflare' => [
+                ['REMOTE_ADDR' => '::ffff:172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null,
+            ],
         ];
+    }
+
+    /** Every published range holds its own first and last address and not the ones beside it. */
+    public function testCloudflareRangesMatchByPrefixLengthNotByText(): void
+    {
+        foreach (\Prosper202\Http\CloudflareRanges::CIDRS as $cidr) {
+            [$network, $bits] = explode('/', $cidr);
+            $base = inet_pton($network);
+            self::assertNotFalse($base, $cidr);
+            $hostBits = strlen($base) * 8 - (int) $bits;
+            $first = self::addToPacked($base, 0);
+            $last = self::addToPacked($base, 1, $hostBits);
+            self::assertTrue(\Prosper202\Http\CloudflareRanges::inCidr(inet_ntop($first), $cidr), "first of $cidr");
+            self::assertTrue(\Prosper202\Http\CloudflareRanges::inCidr(inet_ntop($last), $cidr), "last of $cidr");
+            // Some ranges adjoin another (104.16.0.0/13, 104.24.0.0/14), so each is checked on its own.
+            self::assertFalse(\Prosper202\Http\CloudflareRanges::inCidr(inet_ntop(self::addToPacked($last, 1)), $cidr), "after $cidr");
+            self::assertFalse(\Prosper202\Http\CloudflareRanges::inCidr(inet_ntop(self::addToPacked($first, -1)), $cidr), "before $cidr");
+        }
+        self::assertFalse(\Prosper202\Http\CloudflareRanges::inCidr('2606:4700::1', '173.245.48.0/20'), 'families never match');
+        self::assertFalse(\Prosper202\Http\CloudflareRanges::contains('104.16.0'), 'not an address');
+    }
+
+    /** $packed plus $delta (or, with $hostBits, with its low $hostBits set). */
+    private static function addToPacked(string $packed, int $delta, ?int $hostBits = null): string
+    {
+        $bytes = array_values(unpack('C*', $packed));
+        if ($hostBits !== null) {
+            for ($i = count($bytes) - 1; $hostBits > 0; $i--, $hostBits -= 8) {
+                $bytes[$i] |= $hostBits >= 8 ? 0xFF : (1 << $hostBits) - 1;
+            }
+            return pack('C*', ...$bytes);
+        }
+        for ($i = count($bytes) - 1; $i >= 0 && $delta !== 0; $i--) {
+            $sum = $bytes[$i] + $delta;
+            $bytes[$i] = ($sum % 256 + 256) % 256;
+            $delta = intdiv($sum - $bytes[$i], 256);
+        }
+        return pack('C*', ...$bytes);
     }
 
     public function testSetTimezoneWithValidTimezone(): void

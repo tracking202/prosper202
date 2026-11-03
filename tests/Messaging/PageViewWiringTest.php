@@ -20,7 +20,7 @@ final class PageViewWiringTest extends TestCase
         $this->assertStringContainsString('GeoIp2\Database\Reader', $src);
         // From the connecting peer only: a forwarding header would let the
         // client choose its country (AuthClassTest holds the behaviour).
-        $this->assertStringContainsString('VisitorIp::unforwardedPeer($server)', $src);
+        $this->assertStringContainsString('VisitorIp::cloudflareOrUnforwardedPeer($server)', $src);
         $this->assertStringNotContainsString("\$_SESSION['is_european_union']", $src);
     }
 }

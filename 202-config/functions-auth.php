@@ -620,10 +620,10 @@ class AUTH
     }
 
     /**
-     * The EU/UK answer for the connecting peer, never for a forwarded
-     * address: a forwarding header is the client's own claim and could turn
-     * an EU account's held analytics on, so a request carrying one is
-     * unknown (there is no trusted-proxy setting yet).
+     * The EU/UK answer for the connecting peer, or for the visitor Cloudflare
+     * names when the peer is a Cloudflare edge server. Any other forwarding
+     * header is the client's own claim and could turn an EU account's held
+     * analytics on, so a request carrying one is unknown.
      *
      * @param array<string, mixed> $server normally $_SERVER
      * @param (callable(string): ?array{0: string, 1: bool})|null $country
@@ -632,7 +632,7 @@ class AUTH
      */
     public static function sign_in_is_eu(array $server, ?callable $country = null): ?bool
     {
-        $ip = \Prosper202\Http\VisitorIp::unforwardedPeer($server);
+        $ip = \Prosper202\Http\VisitorIp::cloudflareOrUnforwardedPeer($server);
         if ($ip === '') {
             return null;
         }
