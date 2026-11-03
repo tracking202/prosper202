@@ -48,7 +48,11 @@ final class LegacySetupServedIntegrationTest extends TestCase
         $seeder->seedRolePermissions();
         require_once $root . '/202-config/version.php';
         $found = self::$db->query('SELECT version FROM 202_version');
-        $rows = $found instanceof \mysqli_result ? $found->fetch_all(MYSQLI_ASSOC) : [];
+        if (!$found instanceof \mysqli_result) {
+            // Read as no rows, teardown would leave 202_version empty.
+            throw new \RuntimeException('202_version could not be read: ' . self::$db->error);
+        }
+        $rows = $found->fetch_all(MYSQLI_ASSOC);
         self::$versions = array_column($rows, 'version');
         self::q('DELETE FROM 202_version');
         self::row('202_version', ['version' => PROSPER202_VERSION]);

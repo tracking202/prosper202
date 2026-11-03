@@ -60,7 +60,9 @@ final class LegacySetupIntegrationTest extends TestCase
         if (!$db) {
             return;
         }
-        $db->query("SET SESSION sql_mode=''");
+        if ($db->query("SET SESSION sql_mode=''") === false) {
+            return;
+        }
         (new SchemaInstaller($db))->install();
         $seeder = new DataSeeder($db);
         $seeder->seedRoles();

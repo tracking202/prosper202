@@ -147,8 +147,8 @@ final class LegacySetup
             try {
                 $accountPixels = $pixels->list((int) $account['ppc_account_id'])['data'];
             } catch (NotFoundException) {
-                // An account under another account's traffic source: v3 lists no pixels for it.
-                $accountPixels = [];
+                // Removed since the list, or under a source that is not this account's (never nested below).
+                continue;
             }
             $account['traffic_source_account_pixels'] = $accountPixels;
             $accountsByNetwork[(int) $account['ppc_network_id']][] = $account;
