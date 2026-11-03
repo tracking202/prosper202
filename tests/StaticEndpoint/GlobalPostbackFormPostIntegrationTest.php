@@ -79,14 +79,14 @@ final class GlobalPostbackFormPostIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         foreach (self::CLICKS as $click) {
-            self::$db->query('DELETE FROM 202_attribution_pending WHERE conv_id IN'
+            self::q('DELETE FROM 202_attribution_pending WHERE conv_id IN'
                 . " (SELECT conv_id FROM 202_conversion_logs WHERE click_id = $click)");
             foreach (self::CLICK_TABLES as $table) {
-                self::$db->query("DELETE FROM $table WHERE click_id = $click");
+                self::q("DELETE FROM $table WHERE click_id = $click");
             }
         }
         foreach (['202_aff_campaigns', '202_revenue_events', '202_dirty_hours', '202_users'] as $table) {
-            self::$db->query("DELETE FROM $table WHERE user_id = " . self::USER);
+            self::q("DELETE FROM $table WHERE user_id = " . self::USER);
         }
     }
 
@@ -122,9 +122,15 @@ final class GlobalPostbackFormPostIntegrationTest extends TestCase
     /** @return list<array{string, string, string}> click, payout and transaction id of each conversion */
     private static function conversions(): array
     {
-        return self::$db->query('SELECT click_id, click_payout, COALESCE(transaction_id, \'\')'
+        $sql = 'SELECT click_id, click_payout, COALESCE(transaction_id, \'\')'
             . ' FROM 202_conversion_logs WHERE click_id IN (' . implode(',', self::CLICKS) . ')'
-            . ' ORDER BY conv_id')->fetch_all(MYSQLI_NUM);
+            . ' ORDER BY conv_id';
+        $result = self::$db->query($sql);
+        if (!$result instanceof \mysqli_result) {
+            throw new \RuntimeException(self::$db->error . ' in ' . $sql);
+        }
+
+        return $result->fetch_all(MYSQLI_NUM);
     }
 
     public function testAGetPostbackRecordsAsBefore(): void
