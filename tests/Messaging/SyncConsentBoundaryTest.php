@@ -39,7 +39,7 @@ final class SyncConsentBoundaryTest extends TestCase
         );
         foreach (['track'] as $method) {
             $this->assertMatchesRegularExpression(
-                '/client\(\)->' . $method . '\(\s*\$this->outboundIdentity\(\)/',
+                '/client\(\)->' . $method . '\(\s*\$this->outboundIdentity\(/',
                 $src,
                 "client()->{$method}() must use outboundIdentity()"
             );

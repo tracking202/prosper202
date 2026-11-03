@@ -530,12 +530,17 @@ class AUTH
         return trim((string) ($user_row['p202_customer_api_key'] ?? ''));
     }
 
-    public static function begin_user_session(array $user_row): void
+    /**
+     * @param (callable(): ?bool)|null $resolveGeo whether the client signs in
+     *   from the EU/UK (null: unknown); detect_client_is_eu() when not given
+     */
+    public static function begin_user_session(array $user_row, ?callable $resolveGeo = null): void
     {
         // Read before the session is written: a lookup that throws leaves
         // the request signed out, rather than signed in without an owner.
         $accountOwnerId = self::determineAccountOwnerId($user_row);
-        $writer = static function () use ($user_row, $accountOwnerId): void {
+        $geoHeld = self::rememberSignInGeo((int) ($user_row['user_id'] ?? 0), $resolveGeo);
+        $writer = static function () use ($user_row, $accountOwnerId, $geoHeld): void {
             if (session_status() === PHP_SESSION_ACTIVE) {
                 session_regenerate_id(true);
             }
@@ -553,6 +558,7 @@ class AUTH
             // The generation the user is at; a later change counts it up, and
             // connect.php ends a session still holding this one.
             $_SESSION['user_session_generation'] = (int) ($user_row['user_session_generation'] ?? 0);
+            $_SESSION[\ConsentPolicy::SESSION_GEO_HELD] = $geoHeld;
         };
 
         if (function_exists('withWritableSession')) {
@@ -562,24 +568,6 @@ class AUTH
         }
 
         self::$sessionHeartbeatRefreshed = true;
-
-        // Persist the account holder's EU status, looked up from the client IP
-        // (no session flag carries this — it must be computed here). Only a
-        // definitive lookup is persisted so an unknown result never flattens a
-        // previously known value. Tracking must never break login: guard the
-        // connection and swallow failures.
-        try {
-            require_once __DIR__ . '/Messaging/ConsentPolicy.class.php';
-            $db = $GLOBALS['db'] ?? null;
-            if ($db instanceof \mysqli && !empty($_SESSION['user_id'])) {
-                $is_eu = self::detect_client_is_eu();
-                if ($is_eu !== null && !ConsentPolicy::rememberGeo($db, (int) $_SESSION['user_id'], $is_eu)) {
-                    error_log('[ConsentPolicy] rememberGeo at login failed for user ' . (int) $_SESSION['user_id']);
-                }
-            }
-        } catch (\Throwable $e) {
-            error_log('[ConsentPolicy] rememberGeo at login failed: ' . $e->getMessage());
-        }
 
         // Essential-tier lifecycle event (spec §7.3): login always flows, no
         // consent gate. Analytics resolves $db/$_SESSION (established above),
@@ -591,6 +579,33 @@ class AUTH
         } catch (\Throwable $e) {
             error_log('[Analytics] login event failed: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Store whether the account holder signs in from the EU/UK, looked up from
+     * the client IP. Only a definitive lookup is stored, so an unknown result
+     * never flattens a known value. Never breaks sign-in: true when an EU/UK
+     * result could not be stored, and the session then holds analytics.
+     */
+    private static function rememberSignInGeo(int $userId, ?callable $resolveGeo): bool
+    {
+        require_once __DIR__ . '/Messaging/ConsentPolicy.class.php';
+        $isEu = null;
+        try {
+            $isEu = $resolveGeo === null ? self::detect_client_is_eu() : $resolveGeo();
+            if ($isEu === null) {
+                return false;
+            }
+            $db = $GLOBALS['db'] ?? null;
+            if ($db instanceof \mysqli && ConsentPolicy::rememberGeo($db, $userId, $isEu)) {
+                return false;
+            }
+            error_log('[ConsentPolicy] the sign-in location of user ' . $userId . ' could not be stored');
+        } catch (\Throwable $e) {
+            error_log('[ConsentPolicy] the sign-in location of user ' . $userId . ' could not be stored: ' . $e->getMessage());
+        }
+
+        return $isEu === true;
     }
 
     /**

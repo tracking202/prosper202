@@ -142,6 +142,7 @@ final class CoreTables
                 `tier` enum('essential','analytics') NOT NULL DEFAULT 'analytics',
                 `delivery_status` enum('pending','sent','failed') NOT NULL DEFAULT 'pending',
                 `sync_attempts` int(11) NOT NULL DEFAULT '0',
+                `consent_version` bigint unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`id`),
                 KEY `user_pending` (`user_id`,`delivery_status`),
                 KEY `user_event_time` (`user_id`,`event_name`,`occurred_at`)
@@ -158,6 +159,7 @@ final class CoreTables
                 `data` json DEFAULT NULL,
                 `dirty` tinyint(1) NOT NULL DEFAULT '0',
                 `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `consent_version` bigint unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

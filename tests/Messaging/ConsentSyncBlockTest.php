@@ -41,22 +41,16 @@ final class ConsentBlockFakeClient extends MessagingClient
 }
 
 /**
- * Receiver spec §6 CONTRACT DELTA: the client must transmit its consent state
- * to the central server — attached to identity on every endpoint and as a
- * TOP-LEVEL "consent" block in the /track body. Consent state is operational
- * bookkeeping: it is sent for ALL users, including analytics-denied ones (the
- * server must learn a user is denied), so it must never ride inside the
- * attributes-strip branch.
+ * Receiver spec §6 CONTRACT DELTA: the client transmits its consent state to
+ * the central server, attached to identity and as a TOP-LEVEL "consent" block
+ * in the /track body, for ALL users, including analytics-denied ones (the
+ * server must learn a user is denied), so it never rides inside the
+ * attributes-strip branch. The block carries its version, which the server
+ * acknowledges (`consent_ack`) once stored.
  *
- * Failure semantics (the contract): on ANY DB failure or a genuine missing
- * row, exportForSync returns the explicit all-unset shape — absence/unset
- * must read as "no grant" server-side (fail closed), so a failure can never
- * masquerade as a grant on the wire. Failure and missing-row remain
- * distinguished inside exportForSync (a false get_result() on a SELECT is a
- * fetch FAILURE, logged as one; a genuine zero-row SELECT still yields a
- * mysqli_result) even though both export the same fail-closed shape.
- * Behavioral proof for the DB read lives in ConsentSyncIntegrationTest-style
- * DB-gated tests; these are source guards plus the DB-less fail-closed checks.
+ * Failure semantics: a missing row is the all-unset block at version 0. A
+ * failed read throws and the delivery fails: a stand-in block would overwrite
+ * a stored denial with "unset" and could be acknowledged as the user's choice.
  */
 final class ConsentSyncBlockTest extends TestCase
 {
@@ -68,11 +62,6 @@ final class ConsentSyncBlockTest extends TestCase
         'email_marketing_at' => null,
     ];
 
-    private function policySrc(): string
-    {
-        return file_get_contents(__DIR__ . '/../../202-config/Messaging/ConsentPolicy.class.php');
-    }
-
     private function serviceSrc(): string
     {
         return file_get_contents(__DIR__ . '/../../202-config/Messaging/MessagingService.class.php');
@@ -83,66 +72,9 @@ final class ConsentSyncBlockTest extends TestCase
         return file_get_contents(__DIR__ . '/../../202-config/Messaging/MessagingClient.class.php');
     }
 
-    // ------------------------------------------------------------------
-    // ConsentPolicy::exportForSync — the ONLY reader of raw consent columns
-    // ------------------------------------------------------------------
-
-    public function test_export_for_sync_exists_and_selects_all_five_columns(): void
+    /** A mysqli whose statement executes and then answers $result from get_result(). */
+    private function dbAnswering(mysqli_result|false $result): mysqli
     {
-        $src = $this->policySrc();
-        $this->assertStringContainsString(
-            'public static function exportForSync(mysqli $db, int $userId): array',
-            $src,
-            'ConsentPolicy must expose exportForSync(mysqli, int): array (never null — the contract shape is total)'
-        );
-        // The SELECT inside exportForSync must read all five consent columns.
-        // (loadPref reads only the two enum columns; record() only writes.)
-        $this->assertMatchesRegularExpression(
-            '/function exportForSync.*?SELECT.*?`analytics_consent`.*?`analytics_consent_source`.*?`analytics_consent_at`.*?`email_marketing_consent`.*?`email_marketing_consent_at`.*?FROM `202_users_pref`/s',
-            $src,
-            'exportForSync must SELECT all five consent columns from 202_users_pref'
-        );
-    }
-
-    public function test_export_fails_closed_to_all_unset_on_db_failure(): void
-    {
-        // Same failure shape as ConsentPolicyTest: prepare() fails (mid-retry
-        // migration under the UI path's non-throwing mysqli report mode).
-        $db = $this->createMock(mysqli::class);
-        $db->method('prepare')->willReturn(false);
-
-        $this->assertSame(self::ALL_UNSET, ConsentPolicy::exportForSync($db, 7),
-            'a lookup failure must export the all-unset shape (fail closed: absence reads as "no grant" server-side)');
-    }
-
-    public function test_export_fails_closed_to_all_unset_on_get_result_failure(): void
-    {
-        // A successful SELECT always yields a mysqli_result, even with zero
-        // rows. get_result() === false is therefore a fetch FAILURE
-        // (server-gone-away mid-fetch, mysqlnd OOM) — NOT a missing row —
-        // and must take the failure path, not the missing-row path.
-        $stmt = $this->createMock(mysqli_stmt::class);
-        $stmt->method('bind_param')->willReturn(true);
-        $stmt->method('execute')->willReturn(true);
-        $stmt->method('get_result')->willReturn(false);
-        $stmt->method('close')->willReturn(true);
-
-        $db = $this->createMock(mysqli::class);
-        $db->method('prepare')->willReturn($stmt);
-
-        $this->assertSame(self::ALL_UNSET, ConsentPolicy::exportForSync($db, 7),
-            'a get_result() fetch failure must export the fail-closed all-unset shape');
-    }
-
-    public function test_export_returns_all_unset_for_a_genuine_missing_row(): void
-    {
-        // prepare/bind/execute succeed and the SELECT yields a result set
-        // with zero rows (fetch_assoc() → null): a user with no
-        // 202_users_pref row genuinely never answered. Same fail-closed
-        // all-unset shape, but via the missing-row path, not the failure path.
-        $result = $this->createMock(mysqli_result::class);
-        $result->method('fetch_assoc')->willReturn(null);
-
         $stmt = $this->createMock(mysqli_stmt::class);
         $stmt->method('bind_param')->willReturn(true);
         $stmt->method('execute')->willReturn(true);
@@ -151,22 +83,36 @@ final class ConsentSyncBlockTest extends TestCase
 
         $db = $this->createMock(mysqli::class);
         $db->method('prepare')->willReturn($stmt);
-
-        $this->assertSame(self::ALL_UNSET, ConsentPolicy::exportForSync($db, 7),
-            'a genuine missing row (zero-row result set) must export the all-unset shape');
+        return $db;
     }
 
-    public function test_export_distinguishes_fetch_failure_from_missing_row(): void
+    public function test_a_failed_prepare_is_an_error_not_an_unset_block(): void
     {
-        // A failed fetch must never read as a missing row (CLAUDE.md #5).
-        $src = $this->policySrc();
-        preg_match('/function exportForSync.*?\n    \}/s', $src, $m);
-        $this->assertNotEmpty($m, 'exportForSync must exist');
-        $body = $m[0];
-        // Connection::fetchOne() throws on a failed get_result()/fetch and
-        // answers null only for a missing row, so the two stay apart.
-        $this->assertStringContainsString('$conn->fetchOne($stmt)', $body);
-        $this->assertMatchesRegularExpression('/catch \(\\\\Throwable \$e\)\s*\{\s*error_log\([^;]*failed/', $body);
+        $db = $this->createMock(mysqli::class);
+        $db->method('prepare')->willReturn(false);
+
+        $this->expectException(\Throwable::class);
+        ConsentPolicy::deliveryState($db, 7);
+    }
+
+    public function test_a_failed_fetch_is_an_error_not_a_missing_row(): void
+    {
+        // A successful SELECT always yields a result, even with zero rows:
+        // get_result() === false is a fetch failure, never "no row".
+        $this->expectException(\Throwable::class);
+        ConsentPolicy::deliveryState($this->dbAnswering(false), 7);
+    }
+
+    public function test_a_genuine_missing_row_is_the_all_unset_block_at_version_zero(): void
+    {
+        $result = $this->createMock(mysqli_result::class);
+        $result->method('fetch_assoc')->willReturn(null);
+
+        $state = ConsentPolicy::deliveryState($this->dbAnswering($result), 7);
+        $this->assertSame(self::ALL_UNSET, $state['consent']);
+        $this->assertSame(0, $state['version']);
+        $this->assertFalse($state['dirty'], 'nothing was ever chosen, so nothing waits for delivery');
+        $this->assertFalse($state['analytics_allowed'], 'no row: the location is unknown, so analytics is held');
     }
 
     public function test_consent_policy_stays_the_only_reader_of_raw_consent_columns(): void
@@ -181,92 +127,36 @@ final class ConsentSyncBlockTest extends TestCase
         }
     }
 
-    // ------------------------------------------------------------------
-    // MessagingService — consent attached to identity for ALL users
-    // ------------------------------------------------------------------
-
-    public function test_outbound_identity_attaches_consent_export_unconditionally(): void
+    public function test_a_db_failure_fails_the_delivery_and_sends_nothing(): void
     {
-        $src = $this->serviceSrc();
-        preg_match(
-            '/private function outboundIdentity\(\): array.*?\n    \}/s',
-            $src,
-            $m
-        );
-        $this->assertNotEmpty($m, 'outboundIdentity() must exist');
-        $body = $m[0];
-        $this->assertStringContainsString("\$identity['consent'] = \$this->consentExport();", $body,
-            'outboundIdentity() must attach the cached consent export');
-        $this->assertStringNotContainsString('!== null', $body,
-            'the attach must be unconditional — exportForSync is total (fail-closed all-unset), never null');
-    }
-
-    public function test_consent_is_not_stripped_with_attributes(): void
-    {
-        $src = $this->serviceSrc();
-        // Extract the attributes-strip branch and prove consent is NOT inside
-        // it: denied users must still transmit their (denied) consent state.
-        preg_match('/if \(!\$this->analyticsSyncAllowed\(\)\) \{[^}]*\}/s', $src, $m);
-        $this->assertNotEmpty($m, 'the attributes-strip branch must exist');
-        $this->assertStringNotContainsString('consent', $m[0],
-            'consent is operational bookkeeping — it must not sit under the attributes-strip branch');
-        $this->assertStringContainsString("unset(\$identity['attributes'])", $m[0]);
-    }
-
-    public function test_consent_export_is_cached_per_request(): void
-    {
-        $src = $this->serviceSrc();
-        $this->assertStringContainsString('private ?array $consentExport = null;', $src,
-            'the export must be cached per instance like analyticsSyncAllowed');
-        $this->assertMatchesRegularExpression(
-            '/private function consentExport\(\): array\s*\{\s*if \(\$this->consentExport === null\) \{.*?ConsentPolicy::exportForSync\(\$this->db, \$this->userId\)/s',
-            $src,
-            'consentExport() must null-check-cache ConsentPolicy::exportForSync exactly the way analyticsSyncAllowed() caches'
-        );
-        $this->assertStringNotContainsString('consentExportLoaded', $src,
-            'no extra loaded flag: the export is total (never null), so the null check alone guards the cache');
-    }
-
-    public function test_track_flush_passes_the_cached_export_top_level(): void
-    {
-        $this->assertMatchesRegularExpression(
-            '/client\(\)->track\(\s*\$this->outboundIdentity\(\),\s*\$attributes,\s*\$payloadEvents,\s*\$this->consentExport\(\)\s*\)/',
-            $this->serviceSrc(),
-            'flushEvents must pass the same cached export as the top-level /track consent block'
-        );
-    }
-
-    public function test_db_failure_still_transmits_the_fail_closed_all_unset_block(): void
-    {
-        // Every DB call fails (prepare → false): the transient-failure window.
-        // The sync must still run, and the identity that reaches the wire must
-        // carry the explicit fail-closed all-unset consent block (the contract:
-        // absence/unset reads as "no grant" server-side).
         $db = $this->createMock(mysqli::class);
         $db->method('prepare')->willReturn(false);
 
-        $service = new MessagingService($db, 7, [
-            'install_hash' => 'h',
-            'api_key'      => 'k',
-            'user_id'      => 7,
-            'attributes'   => ['clicks_30d' => 9],
-        ]);
+        $service = new MessagingService($db, 7, ['install_hash' => 'h', 'api_key' => 'k', 'user_id' => 7]);
         $fake = new ConsentBlockFakeClient();
         $prop = new ReflectionProperty(MessagingService::class, 'client');
         $prop->setAccessible(true);
         $prop->setValue($service, $fake);
 
-        // Delivery reads through Connection, which throws on this mock; the
-        // identity a /track call would carry is checked directly.
+        $this->assertSame(MessagingService::SYNC_FAILED, $service->sync(true));
+        $this->assertSame([], $fake->trackCalls);
+    }
+
+    public function test_consent_rides_for_a_user_without_analytics_and_attributes_do_not(): void
+    {
+        $service = new MessagingService($this->createMock(mysqli::class), 7, [
+            'install_hash' => 'h', 'api_key' => 'k', 'user_id' => 7, 'attributes' => ['clicks_30d' => 9],
+        ]);
         $method = new ReflectionMethod(MessagingService::class, 'outboundIdentity');
         $method->setAccessible(true);
-        $identity = $method->invoke($service);
-        $this->assertSame(self::ALL_UNSET, $identity['consent'] ?? null,
-            'a DB failure must transmit the fail-closed all-unset consent block, never an accidental grant');
-        // The consent lookup failing also means analyticsAllowed fails closed,
-        // so the analytics-tier snapshot must be stripped as before.
-        $this->assertArrayNotHasKey('attributes', $identity,
-            'a consent lookup failure must still fail CLOSED for the attribute snapshot');
+        $denied = ['analytics' => 'denied'] + self::ALL_UNSET;
+
+        $identity = $method->invoke($service, false, ['clicks_30d' => 9], $denied);
+        $this->assertSame($denied, $identity['consent']);
+        $this->assertArrayNotHasKey('attributes', $identity);
+
+        $identity = $method->invoke($service, true, ['clicks_30d' => 10], self::ALL_UNSET);
+        $this->assertSame(['clicks_30d' => 10], $identity['attributes'], 'the snapshot this delivery read, not the one cached at construction');
     }
 
     // ------------------------------------------------------------------

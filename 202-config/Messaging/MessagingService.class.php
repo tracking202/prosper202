@@ -48,6 +48,7 @@ class MessagingService
     public const SYNC_SENT = 'sent';           // the pending rows were delivered
     public const SYNC_MORE = 'more';           // batches were delivered and rows are still pending
     public const SYNC_FAILED = 'failed';       // delivery (or reading what to deliver) failed
+    public const SYNC_UNACKED = 'unacknowledged'; // delivered, but the portal did not acknowledge a consent change
 
     /** Events per /track call. */
     public const BATCH_SIZE = 100;
@@ -60,10 +61,14 @@ class MessagingService
     /** @var array<string,mixed> */
     private array $identity;
     private ?MessagingClient $client = null;
-    /** Consent decision for this instance (one lookup per sync). */
-    private ?bool $analyticsSyncAllowed = null;
-    /** @var array<string,string|null>|null Consent export for this instance. */
-    private ?array $consentExport = null;
+    /**
+     * Analytics consent and its version when this instance was made: what it
+     * captures is stamped with that version, so work begun before a denial
+     * is never delivered after a re-grant. Null when it could not be read.
+     *
+     * @var array{allowed:bool,version:int}|null
+     */
+    private ?array $captureFence;
 
     /**
      * @param array<string,mixed> $identity Identity payload for the portal.
@@ -74,6 +79,7 @@ class MessagingService
         $this->conn     = new Connection($db);
         $this->userId   = $userId;
         $this->identity = $identity;
+        $this->captureFence = ConsentPolicy::captureFence($db, $userId);
     }
 
     /**
@@ -217,57 +223,22 @@ class MessagingService
     }
 
     /**
-     * Whether analytics-tier data may leave the install for this user,
-     * checked at delivery so a revocation stops rows queued earlier. Fails
-     * closed: any lookup failure is "not allowed".
-     */
-    private function analyticsSyncAllowed(): bool
-    {
-        if ($this->analyticsSyncAllowed === null) {
-            try {
-                $this->analyticsSyncAllowed = ConsentPolicy::analyticsAllowed($this->db, $this->userId);
-            } catch (Throwable $e) {
-                error_log('MessagingService: consent lookup failed, failing closed: ' . $e->getMessage());
-                $this->analyticsSyncAllowed = false;
-            }
-        }
-        return $this->analyticsSyncAllowed;
-    }
-
-    /**
-     * The consent block sent with every delivery, for every user (a denied
-     * user's denial must reach the portal). Never throws; all-unset on failure.
-     *
-     * @return array<string,string|null>
-     */
-    private function consentExport(): array
-    {
-        if ($this->consentExport === null) {
-            $this->consentExport = ConsentPolicy::exportForSync($this->db, $this->userId);
-        }
-        return $this->consentExport;
-    }
-
-    /**
      * The identity as sent: the attribute snapshot is analytics-tier, so it
      * is left out for a user without analytics consent; consent always rides.
      *
+     * @param array<string,mixed> $attributes the snapshot this delivery sends
+     * @param array<string,string|null> $consent
      * @return array<string,mixed>
      */
-    private function outboundIdentity(): array
+    private function outboundIdentity(bool $analyticsAllowed, array $attributes, array $consent): array
     {
         $identity = $this->identity;
-        if (!$this->analyticsSyncAllowed()) {
+        $identity['attributes'] = $attributes;
+        if (!$analyticsAllowed) {
             unset($identity['attributes']);
         }
-        $identity['consent'] = $this->consentExport();
+        $identity['consent'] = $consent;
         return $identity;
-    }
-
-    /** A changed attribute snapshot this user may deliver (analytics consent). */
-    private function attributesPending(): bool
-    {
-        return $this->analyticsSyncAllowed() && $this->areAttributesDirty();
     }
 
     // ---------------------------------------------------------------------
@@ -275,7 +246,8 @@ class MessagingService
     // ---------------------------------------------------------------------
 
     /**
-     * Deliver pending events and a changed attribute snapshot to POST /track.
+     * Deliver pending events, a changed attribute snapshot and an
+     * unacknowledged consent change to POST /track.
      *
      * Nothing pending is SYNC_IDLE and touches neither the network nor the
      * throttle. Otherwise, unless $force, a sync that ran within
@@ -291,6 +263,10 @@ class MessagingService
      * delivered, and the caller asks again (the page after the throttle, the
      * cron on its next run).
      *
+     * A delivery the portal took without acknowledging the consent version it
+     * carried is SYNC_UNACKED: its rows are marked sent and the consent
+     * change stays pending for the cron, which retries it every run.
+     *
      * @param int $maxBatches Batches this call may send (at least 1)
      * @return self::SYNC_* the outcome
      */
@@ -300,9 +276,7 @@ class MessagingService
         try {
             $sent = false;
             for ($batch = 0; $batch < $maxBatches; $batch++) {
-                $events = $this->pendingEvents();
-                $attributesDirty = $this->attributesPending();
-                if ($events === [] && !$attributesDirty) {
+                if (!$this->somethingPending()) {
                     return $sent ? self::SYNC_SENT : self::SYNC_IDLE;
                 }
                 if (!$sent && !$force && $this->secondsUntilSyncDue() > 0) {
@@ -310,15 +284,19 @@ class MessagingService
                 }
 
                 $this->markSyncStart();
-                if (!$this->flushEvents($events, $attributesDirty)) {
+                $outcome = $this->flushPending();
+                if ($outcome === self::SYNC_FAILED) {
                     $this->recordSyncError('track failed');
                     return self::SYNC_FAILED;
                 }
                 $this->recordSyncSuccess();
+                if ($outcome === self::SYNC_UNACKED) {
+                    return self::SYNC_UNACKED;
+                }
                 $sent = true;
             }
 
-            return $this->pendingEvents() === [] && !$this->attributesPending() ? self::SYNC_SENT : self::SYNC_MORE;
+            return $this->somethingPending() ? self::SYNC_MORE : self::SYNC_SENT;
         } catch (Throwable $e) {
             error_log('MessagingService: sync for user ' . $this->userId . ' failed: ' . $e->getMessage());
         }
@@ -326,9 +304,20 @@ class MessagingService
         return self::SYNC_FAILED;
     }
 
+    /** Whether an event, a changed snapshot or a consent change waits for delivery. */
+    private function somethingPending(): bool
+    {
+        $state = ConsentPolicy::deliveryState($this->db, $this->userId);
+        return $state['dirty']
+            || $this->pendingEvents($state) !== []
+            || ($state['analytics_allowed'] && $this->areAttributesDirty($state['revoked']));
+    }
+
     /**
      * The active users with something to deliver: an event still pending
-     * (and not out of attempts) or a changed attribute snapshot.
+     * (and not out of attempts, nor captured before analytics was last
+     * revoked), a changed attribute snapshot, or an unacknowledged consent
+     * change.
      *
      * @return list<int> user ids, ascending
      * @throws \Prosper202\Database\Exceptions\QueryException
@@ -339,12 +328,16 @@ class MessagingService
         $stmt = $conn->prepareRead(
             "SELECT u.user_id
                FROM 202_users u
+               LEFT JOIN 202_users_pref p ON p.user_id = u.user_id
               WHERE u.user_active = 1 AND u.user_deleted = 0
                 AND (EXISTS (SELECT 1 FROM 202_messaging_events e
                               WHERE e.user_id = u.user_id AND e.delivery_status = 'pending'
-                                AND e.sync_attempts < ?)
+                                AND e.sync_attempts < ?
+                                AND (e.tier = 'essential' OR e.consent_version >= COALESCE(p.analytics_revoked_version, 0)))
                   OR EXISTS (SELECT 1 FROM 202_messaging_attributes a
-                              WHERE a.user_id = u.user_id AND a.dirty = 1))
+                              WHERE a.user_id = u.user_id AND a.dirty = 1
+                                AND a.consent_version >= COALESCE(p.analytics_revoked_version, 0))
+                  OR p.consent_version > p.consent_acked_version)
               ORDER BY u.user_id ASC"
         );
         $conn->bind($stmt, 'i', [self::MAX_PUSH_ATTEMPTS]);
@@ -472,8 +465,14 @@ class MessagingService
                 $failedInARow++;
                 continue;
             }
+            // The portal answered: an unacknowledged consent change is still
+            // pending, and is not a sign the portal is down.
             $failedInARow = 0;
-            $counts[$outcome === self::SYNC_THROTTLED ? 'idle' : $outcome]++;
+            $counts[match ($outcome) {
+                self::SYNC_THROTTLED => 'idle',
+                self::SYNC_UNACKED => 'more',
+                default => $outcome,
+            }]++;
         }
 
         return $counts;
@@ -521,12 +520,16 @@ class MessagingService
      * Merge custom attributes into the stored snapshot and mark it for delivery.
      * Values may be nested arrays; the snapshot is one JSON document.
      *
+     * The snapshot is analytics-tier: nothing is written unless this instance
+     * was made with analytics allowed, and not once analytics has been
+     * revoked since (the write checks the revocation mark itself).
+     *
      * @param array<string,mixed> $attributes
      * @throws \Prosper202\Database\Exceptions\QueryException
      */
     public function updateAttributes(array $attributes): void
     {
-        if ($attributes === []) {
+        if ($attributes === [] || $this->captureFence === null || !$this->captureFence['allowed']) {
             return;
         }
 
@@ -545,12 +548,14 @@ class MessagingService
         }
 
         $now  = date('Y-m-d H:i:s');
+        $version = $this->captureFence['version'];
         $stmt = $this->conn->prepareWrite(
-            'INSERT INTO 202_messaging_attributes (user_id, data, dirty, updated_at)
-             VALUES (?, ?, 1, ?)
-             ON DUPLICATE KEY UPDATE data = VALUES(data), dirty = 1, updated_at = VALUES(updated_at)'
+            'INSERT INTO 202_messaging_attributes (user_id, data, dirty, updated_at, consent_version)
+             SELECT ?, ?, 1, ?, ? FROM DUAL WHERE ' . self::NOT_REVOKED_SINCE . '
+             ON DUPLICATE KEY UPDATE data = VALUES(data), dirty = 1, updated_at = VALUES(updated_at),
+                                     consent_version = VALUES(consent_version)'
         );
-        $this->conn->bind($stmt, 'iss', [$this->userId, $json, $now]);
+        $this->conn->bind($stmt, 'issiii', [$this->userId, $json, $now, $version, $version, $this->userId]);
         $this->conn->executeUpdate($stmt);
 
         // Keep the in-memory identity fresh for a sync later this request.
@@ -558,7 +563,8 @@ class MessagingService
     }
 
     /**
-     * Record a behavioural event for delivery to the portal.
+     * Record a behavioural event for delivery to the portal. An analytics-tier
+     * event is held to the same consent check as updateAttributes().
      *
      * @param array<string,mixed>|null $metadata
      * @param string $tier 'essential' (always delivered) or 'analytics' (consent-gated)
@@ -575,6 +581,9 @@ class MessagingService
             error_log("MessagingService: recordEvent rejected unknown tier '{$tier}' for event '{$name}'");
             return;
         }
+        if ($tier === 'analytics' && ($this->captureFence === null || !$this->captureFence['allowed'])) {
+            return;
+        }
 
         $metaJson = null;
         if ($metadata !== null && $metadata !== []) {
@@ -587,35 +596,45 @@ class MessagingService
 
         $token = $this->generateToken();
         $now   = date('Y-m-d H:i:s');
+        $version = $this->captureFence['version'] ?? 0;
         $stmt  = $this->conn->prepareWrite(
             "INSERT INTO 202_messaging_events
-                (user_id, event_name, metadata, occurred_at, client_token, delivery_status, tier)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?)"
+                (user_id, event_name, metadata, occurred_at, client_token, delivery_status, tier, consent_version)
+             SELECT ?, ?, ?, ?, ?, 'pending', ?, ? FROM DUAL
+              WHERE ? = 'essential' OR " . self::NOT_REVOKED_SINCE
         );
-        $this->conn->bind($stmt, 'isssss', [$this->userId, $name, $metaJson, $now, $token, $tier]);
-        $this->conn->executeInsert($stmt);
+        $this->conn->bind($stmt, 'isssssisii', [$this->userId, $name, $metaJson, $now, $token, $tier, $version, $tier, $version, $this->userId]);
+        $this->conn->executeUpdate($stmt);
     }
+
+    /** SQL true when analytics was not revoked after the version bound first (user id bound second). */
+    private const NOT_REVOKED_SINCE = '? >= COALESCE((SELECT p.analytics_revoked_version FROM 202_users_pref p WHERE p.user_id = ?), 0)';
 
     /**
      * The events waiting for delivery, oldest first, at most BATCH_SIZE a call.
-     * Without analytics consent only essential-tier rows; analytics rows stay
-     * local (and a denial purges them, ConsentPolicy::record()).
+     * Without analytics consent only essential-tier rows; an analytics row
+     * captured before analytics was last revoked is never one of them.
      *
-     * @return list<array{_local_id: int, name: string, metadata: mixed, occurred_at: string, client_token: string, tier: string}>
+     * @param array{analytics_allowed:bool,revoked:int} $state from ConsentPolicy::deliveryState()
+     * @return list<array{_local_id: int, _consent_version: int, name: string, metadata: mixed, occurred_at: string, client_token: string, tier: string}>
      * @throws \Prosper202\Database\Exceptions\QueryException
      */
-    private function pendingEvents(): array
+    private function pendingEvents(array $state): array
     {
         $stmt = $this->conn->prepareRead(
-            "SELECT id, event_name, metadata, occurred_at, client_token, tier
+            "SELECT id, event_name, metadata, occurred_at, client_token, tier, consent_version
                FROM 202_messaging_events
               WHERE user_id = ? AND delivery_status = 'pending'
                 AND sync_attempts < ?"
-            . ($this->analyticsSyncAllowed() ? '' : " AND tier = 'essential'")
+            . ($state['analytics_allowed'] ? " AND (tier = 'essential' OR consent_version >= ?)" : " AND tier = 'essential'")
             . " ORDER BY id ASC
               LIMIT ?"
         );
-        $this->conn->bind($stmt, 'iii', [$this->userId, self::MAX_PUSH_ATTEMPTS, self::BATCH_SIZE]);
+        if ($state['analytics_allowed']) {
+            $this->conn->bind($stmt, 'iiii', [$this->userId, self::MAX_PUSH_ATTEMPTS, $state['revoked'], self::BATCH_SIZE]);
+        } else {
+            $this->conn->bind($stmt, 'iii', [$this->userId, self::MAX_PUSH_ATTEMPTS, self::BATCH_SIZE]);
+        }
 
         $events = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
@@ -625,12 +644,13 @@ class MessagingService
                 $metadata = is_array($decoded) ? $decoded : null;
             }
             $events[] = [
-                '_local_id'    => (int) $row['id'],
-                'name'         => (string) $row['event_name'],
-                'metadata'     => $metadata,
-                'occurred_at'  => (string) $row['occurred_at'],
-                'client_token' => (string) $row['client_token'],
-                'tier'         => (string) $row['tier'],
+                '_local_id'        => (int) $row['id'],
+                '_consent_version' => (int) $row['consent_version'],
+                'name'             => (string) $row['event_name'],
+                'metadata'         => $metadata,
+                'occurred_at'      => (string) $row['occurred_at'],
+                'client_token'     => (string) $row['client_token'],
+                'tier'             => (string) $row['tier'],
             ];
         }
 
@@ -638,69 +658,78 @@ class MessagingService
     }
 
     /**
-     * Deliver the attribute snapshot plus the given events; true when the
-     * portal took them, and only then are they marked sent.
+     * Deliver one batch: the pending events, the attribute snapshot when it
+     * changed, and the consent block with its version. Consent is read again
+     * right before sending and decides what goes: analytics rows and the
+     * snapshot only while analytics is allowed and only when captured since
+     * it was last revoked.
      *
-     * @param list<array<string,mixed>> $events from pendingEvents()
-     * @throws \Prosper202\Database\Exceptions\QueryException
+     * Events are marked sent, and the snapshot clean, only when the portal
+     * took them; a consent change only when the portal acknowledged its
+     * version (`consent_ack`), since a portal can answer ok without having
+     * stored it.
+     *
+     * @return self::SYNC_SENT|self::SYNC_UNACKED|self::SYNC_FAILED
+     * @throws \Throwable when what to deliver cannot be read
      */
-    private function flushEvents(array $events, bool $attributesDirty): bool
+    private function flushPending(): string
     {
-        // Strip internal keys before sending.
-        $payloadEvents = array_map(static function (array $e): array {
-            unset($e['_local_id']);
-            return $e;
-        }, $events);
+        $events = $this->pendingEvents(ConsentPolicy::deliveryState($this->db, $this->userId));
+        [$attributes, $attributesHash, $attributesVersion, $attributesDirty] = $this->attributeSnapshot();
 
-        // Consent read again, uncached, right before sending: rows selected
-        // before a denial that landed since are not sent (the denial purged them).
-        // The consent block is read again too, so a denial or an unsubscribe
-        // since this instance first read it travels with this delivery.
-        $this->consentExport = null;
-        if ($this->analyticsSyncAllowed()) {
-            try {
-                $stillAllowed = ConsentPolicy::analyticsAllowed($this->db, $this->userId);
-            } catch (Throwable $e) {
-                $stillAllowed = false;
-            }
-            if (!$stillAllowed) {
-                $this->analyticsSyncAllowed = false;
-                $events = array_values(array_filter($events, static fn (array $e): bool => ($e['tier'] ?? '') === 'essential'));
-                $payloadEvents = array_map(static function (array $e): array {
-                    unset($e['_local_id']);
-                    return $e;
-                }, $events);
-                $attributesDirty = false;
-                if ($events === []) {
-                    return true;
-                }
-            }
-        }
-
-        [$attributes, $attributesVersion] = $this->attributeSnapshot();
-        if (!$this->analyticsSyncAllowed()) {
+        $state = ConsentPolicy::deliveryState($this->db, $this->userId);
+        $fresh = static fn (int $version): bool => $state['analytics_allowed'] && $version >= $state['revoked'];
+        $events = array_values(array_filter(
+            $events,
+            static fn (array $e): bool => $e['tier'] === 'essential' || $fresh($e['_consent_version'])
+        ));
+        if ($attributesHash === null || !$fresh($attributesVersion)) {
             // Analytics-tier: never sent without consent; the dirty flag stays
             // so a later grant delivers a fresh snapshot.
             $attributes = [];
+            $attributesDirty = false;
         }
-        $response = $this->client()->track($this->outboundIdentity(), $attributes, $payloadEvents, $this->consentExport());
+        if ($events === [] && !$attributesDirty && !$state['dirty']) {
+            return self::SYNC_SENT;
+        }
+
+        $payloadEvents = array_map(static function (array $e): array {
+            unset($e['_local_id'], $e['_consent_version']);
+            return $e;
+        }, $events);
+        $response = $this->client()->track(
+            $this->outboundIdentity($state['analytics_allowed'], $attributes, $state['consent']),
+            $attributes,
+            $payloadEvents,
+            $state['consent'] + ['version' => $state['version']]
+        );
 
         if ($response === null) {
             // Bump attempts so poison events eventually stop being retried.
             foreach ($events as $e) {
                 $this->incrementEventAttempts($e['_local_id']);
             }
-            return false;
+            return self::SYNC_FAILED;
         }
 
         foreach ($events as $e) {
             $this->markEventSent($e['_local_id']);
         }
         if ($attributesDirty) {
-            $this->clearAttributesDirty($attributesVersion);
+            $this->clearAttributesDirty($attributesHash);
         }
+        if (!$state['dirty']) {
+            return self::SYNC_SENT;
+        }
+        $ack = $response['consent_ack'] ?? null;
+        if (!is_int($ack) || $ack !== $state['version']) {
+            error_log('MessagingService: the portal did not acknowledge consent version ' . $state['version']
+                . ' for user ' . $this->userId . '; it stays pending');
+            return self::SYNC_UNACKED;
+        }
+        ConsentPolicy::acknowledgeDelivery($this->db, $this->userId, $state['version']);
 
-        return true;
+        return self::SYNC_SENT;
     }
 
     /**
@@ -795,49 +824,61 @@ class MessagingService
     }
 
     /**
+     * The stored attributes, or none when they were captured before
+     * analytics was last revoked.
+     *
      * @return array<string,mixed>
      * @throws \Prosper202\Database\Exceptions\QueryException
      */
     private function getAttributes(): array
     {
-        return $this->attributeSnapshot()[0];
+        $snapshot = $this->attributeSnapshot();
+        $state = ConsentPolicy::deliveryState($this->db, $this->userId);
+
+        return $snapshot[2] >= $state['revoked'] ? $snapshot[0] : [];
     }
 
     /**
-     * The stored attributes and the server's MD5 of them, which names the
-     * version a delivery sent (null when nothing is stored).
+     * The stored attributes, the server's MD5 of them (which names the version
+     * a delivery sent; null when nothing is stored), the consent version they
+     * were captured under, and whether they changed since the last delivery.
      *
-     * @return array{0: array<string,mixed>, 1: string|null}
+     * @return array{0: array<string,mixed>, 1: string|null, 2: int, 3: bool}
      * @throws \Prosper202\Database\Exceptions\QueryException
      */
     private function attributeSnapshot(): array
     {
-        $stmt = $this->conn->prepareRead('SELECT data, MD5(data) AS version FROM 202_messaging_attributes WHERE user_id = ?');
+        $stmt = $this->conn->prepareRead(
+            'SELECT data, MD5(data) AS version, consent_version, dirty FROM 202_messaging_attributes WHERE user_id = ?'
+        );
         $this->conn->bind($stmt, 'i', [$this->userId]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row === null || $row['data'] === null) {
-            return [[], null];
+            return [[], null, 0, false];
         }
         $version = (string) $row['version'];
+        $captured = (int) $row['consent_version'];
+        $dirty = (int) $row['dirty'] === 1;
 
         $decoded = json_decode((string) $row['data'], true);
         if (!is_array($decoded)) {
             // Our own snapshot should always decode; log corruption rather than
             // silently dropping it.
             error_log('MessagingService: stored attributes for user ' . $this->userId . ' are corrupt');
-            return [[], $version];
+            return [[], $version, $captured, $dirty];
         }
-        return [$decoded, $version];
+        return [$decoded, $version, $captured, $dirty];
     }
 
-    private function areAttributesDirty(): bool
+    /** A changed snapshot captured since analytics was last revoked at $revoked. */
+    private function areAttributesDirty(int $revoked): bool
     {
-        $stmt = $this->conn->prepareRead('SELECT dirty FROM 202_messaging_attributes WHERE user_id = ?');
+        $stmt = $this->conn->prepareRead('SELECT dirty, consent_version FROM 202_messaging_attributes WHERE user_id = ?');
         $this->conn->bind($stmt, 'i', [$this->userId]);
         $row = $this->conn->fetchOne($stmt);
 
-        return $row !== null && (int) $row['dirty'] === 1;
+        return $row !== null && (int) $row['dirty'] === 1 && (int) $row['consent_version'] >= $revoked;
     }
 
     /**

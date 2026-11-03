@@ -172,6 +172,9 @@ final class UserTables
                 `email_marketing_consent_at` datetime DEFAULT NULL,
                 `eu_consent_prompt_seen` tinyint(1) NOT NULL DEFAULT '0',
                 `analytics_geo_is_eu` tinyint(1) DEFAULT NULL,
+                `consent_version` bigint unsigned NOT NULL DEFAULT '0',
+                `consent_acked_version` bigint unsigned NOT NULL DEFAULT '0',
+                `analytics_revoked_version` bigint unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

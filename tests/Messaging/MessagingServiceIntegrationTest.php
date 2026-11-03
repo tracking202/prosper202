@@ -332,6 +332,55 @@ final class MessagingServiceIntegrationTest extends TestCase
         unlink($log);
     }
 
+    /**
+     * A consent change with nothing else queued is delivered by the cron, and
+     * stays pending until the portal acknowledges its version: a portal that
+     * answers ok without one is retried next run, and is not counted as down.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheCronRetriesAConsentChangeUntilThePortalAcknowledgesIt(): void
+    {
+        $portal = LocalHttpRecorder::start();
+        try {
+            define('MESSAGING_API_URL', $portal->url() . '/api/v3/messaging');
+            $log = tempnam(sys_get_temp_dir(), 'p202-messaging-cron-');
+            $this->assertIsString($log);
+            ini_set('error_log', $log);
+            $db = $this->connect();
+            $this->seedUsers($db);
+            foreach ([1, 2, 5, 6, 8] as $userId) {
+                $this->assertTrue(\ConsentPolicy::record($db, $userId, 'email_marketing', 'denied', 'settings'));
+            }
+            $this->assertSame(0, (int) $db->query('SELECT COUNT(*) FROM 202_messaging_events')->fetch_row()[0], 'the queue is empty');
+            $this->assertSame([1, 2, 5, 6, 8], \MessagingService::usersWithPendingDelivery($db));
+
+            $this->assertSame(
+                ['sent' => 0, 'more' => 5, 'idle' => 0, 'failed' => 0, 'stopped' => 0],
+                \MessagingService::deliverPendingExclusive($db, $this->lockPath(), 10, 3),
+                'every user is tried: an answer without an acknowledgement is not a portal that is down'
+            );
+            $this->assertSame([1, 2, 5, 6, 8], \MessagingService::usersWithPendingDelivery($db), 'nothing was acknowledged');
+
+            $portal->acknowledgeConsent();
+            $this->assertSame(
+                ['sent' => 5, 'more' => 0, 'idle' => 0, 'failed' => 0, 'stopped' => 0],
+                \MessagingService::deliverPendingExclusive($db, $this->lockPath(), 10, 3)
+            );
+            $this->assertSame([], \MessagingService::usersWithPendingDelivery($db));
+            $sent = array_map(static fn (array $r): array => json_decode($r['body'], true), $portal->requests());
+            $this->assertCount(10, $sent);
+            foreach ($sent as $body) {
+                $this->assertSame('denied', $body['consent']['email_marketing'] ?? null);
+                $this->assertSame(1, $body['consent']['version'] ?? null);
+                $this->assertSame([], $body['events']);
+            }
+        } finally {
+            $portal->stop();
+        }
+    }
+
     /** The delivery's lock, in this test's own place: each test runs in a process of its own. */
     private function lockPath(): string
     {
@@ -401,5 +450,8 @@ final class MessagingServiceIntegrationTest extends TestCase
             $this->assertTrue($stmt->execute());
             $stmt->close();
         }
+        // Signed in from outside the EU/UK: analytics is on by default. An
+        // account whose location is unknown has it held.
+        $this->assertTrue($db->query('INSERT INTO 202_users_pref (user_id, analytics_geo_is_eu) SELECT user_id, 0 FROM 202_users'));
     }
 }

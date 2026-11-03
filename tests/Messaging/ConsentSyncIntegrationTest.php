@@ -10,6 +10,7 @@ use Prosper202\Database\Tables\UserTables;
 require_once __DIR__ . '/../../202-config/Messaging/ConsentPolicy.class.php';
 require_once __DIR__ . '/../../202-config/Messaging/MessagingService.class.php';
 require_once __DIR__ . '/../../202-config/Messaging/Analytics.class.php';
+require_once __DIR__ . '/../../202-config/functions-auth.php';
 
 /**
  * @group integration
@@ -62,8 +63,11 @@ final class ConsentSyncIntegrationTest extends TestCase
         // Mirror the UI path (connect.php runs with strict mode disabled).
         $db->query("SET SESSION sql_mode = ''");
 
-        // Real schema definitions — the same SQL fresh installs run.
+        // Real schema definitions — the same SQL fresh installs run. A scratch
+        // database another suite installed may hold foreign keys onto 202_users.
+        $db->query('SET FOREIGN_KEY_CHECKS = 0');
         foreach ([
+            UserTables::users(),
             UserTables::usersPref(),
             CoreTables::messagingEvents(),
             CoreTables::messagingAttributes(),
@@ -85,7 +89,7 @@ final class ConsentSyncIntegrationTest extends TestCase
             self::$db->close();
             self::$db = null;
         }
-        unset($GLOBALS['db'], $_SESSION['user_id']);
+        unset($GLOBALS['db'], $_SESSION['user_id'], $_SESSION[ConsentPolicy::SESSION_GEO_HELD]);
     }
 
     protected function setUp(): void
@@ -94,13 +98,30 @@ final class ConsentSyncIntegrationTest extends TestCase
             $this->markTestSkipped(self::$skipReason);
         }
         $db = self::$db;
-        foreach (['202_messaging_events', '202_messaging_attributes', '202_messaging_sync', '202_users_pref'] as $table) {
+        unset($_SESSION[ConsentPolicy::SESSION_GEO_HELD]);
+        foreach (['consent_test_fail_purge_events', 'consent_test_fail_purge_attributes', 'consent_test_reject_eu'] as $trigger) {
+            $this->assertNotFalse($db->query("DROP TRIGGER IF EXISTS `{$trigger}`"));
+        }
+        foreach (['202_messaging_events', '202_messaging_attributes', '202_messaging_sync', '202_users_pref', '202_users'] as $table) {
             $this->assertNotFalse($db->query("DELETE FROM `{$table}`"), "cleanup of {$table} failed: " . $db->error);
         }
         $this->assertNotFalse(
             $db->query('INSERT INTO `202_users_pref` (user_id) VALUES (' . self::USER_ID . ')'),
             'seeding 202_users_pref failed: ' . $db->error
         );
+        $this->assertNotFalse($db->query(
+            "INSERT INTO 202_users (user_id, user_name, user_pass, user_email, user_dash_email, user_time_register, install_hash, user_hash)
+             VALUES (" . self::USER_ID . ", 'consent-test', '', '', '', 0, 'h', 'h')"
+        ), 'seeding 202_users failed: ' . $db->error);
+    }
+
+    protected function tearDown(): void
+    {
+        if (self::$db !== null) {
+            foreach (['consent_test_fail_purge_events', 'consent_test_fail_purge_attributes', 'consent_test_reject_eu'] as $trigger) {
+                self::$db->query("DROP TRIGGER IF EXISTS `{$trigger}`");
+            }
+        }
     }
 
     private function service(array $identity = []): MessagingService
@@ -201,6 +222,7 @@ final class ConsentSyncIntegrationTest extends TestCase
     public function test_denial_purges_snapshot_and_undelivered_analytics_events(): void
     {
         $db = self::$db;
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, false));
         $service = $this->service();
 
         $service->updateAttributes(['clicks_30d' => 5, 'offers' => [['name' => 'Keto - US', 'url' => 'https://x.example/o']]]);
@@ -245,7 +267,15 @@ final class ConsentSyncIntegrationTest extends TestCase
 
         $service->recordEvent('login', null, 'essential');
         $service->recordEvent('page_viewed', ['path' => '/x'], 'analytics');
-        $service->updateAttributes(['clicks_30d' => 9]); // dirty analytics snapshot
+        $service->updateAttributes(['clicks_30d' => 9]);
+        $this->assertSame([['login', 'essential', 'pending']], array_map('array_values', $this->eventRows()),
+            'a held user\'s analytics capture is refused where it is written');
+        // Rows left from before (an older version wrote them unchecked): the
+        // transport boundary is the defense.
+        $this->assertTrue($db->query("INSERT INTO 202_messaging_events (user_id, event_name, client_token, tier) VALUES ("
+            . self::USER_ID . ", 'page_viewed', 'held-row', 'analytics')"));
+        $this->assertTrue($db->query("INSERT INTO 202_messaging_attributes (user_id, data, dirty, consent_version) VALUES ("
+            . self::USER_ID . ", '{\"clicks_30d\":9}', 1, 99)"));
 
         $this->assertSame(MessagingService::SYNC_SENT, $service->sync(true));
 
@@ -306,35 +336,213 @@ final class ConsentSyncIntegrationTest extends TestCase
             array_map('array_values', $rows));
     }
 
-    public function test_a_denial_after_the_rows_were_read_stops_the_analytics_rows(): void
-    {
-        $db = self::$db;
-        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, false));
-
-        $service = $this->service(['install_hash' => 'h', 'api_key' => 'k', 'user_id' => self::USER_ID]);
-        $fake = $this->injectFakeClient($service);
-        $service->recordEvent('login', null, 'essential');
-        $service->recordEvent('page_viewed', ['path' => '/x'], 'analytics');
-
-        // The instance has decided "allowed"; the denial lands before the send.
-        $allowed = new ReflectionMethod(MessagingService::class, 'analyticsSyncAllowed');
-        $allowed->setAccessible(true);
-        $this->assertTrue($allowed->invoke($service));
-        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'));
-
-        $this->assertSame(MessagingService::SYNC_SENT, $service->sync(true));
-        $this->assertCount(1, $fake->trackCalls);
-        $this->assertSame(['login'], array_column($fake->trackCalls[0]['events'], 'name'),
-            'rows read before a denial must not be sent');
-        $this->assertSame([], $fake->trackCalls[0]['attributes']);
-        $this->assertSame('denied', $fake->trackCalls[0]['consent']['analytics'] ?? null,
-            'the consent block sent must be the one read at send time');
-    }
-
     public function test_an_unknown_location_holds_analytics(): void
     {
         // The seeded row has no location yet: held, essential only.
         $this->assertFalse(ConsentPolicy::analyticsAllowed(self::$db, self::USER_ID));
+    }
+
+    public function test_an_account_without_a_preferences_row_is_held_until_placed(): void
+    {
+        $db = self::$db;
+        $this->assertTrue($db->query('DELETE FROM 202_users_pref'));
+        $this->assertFalse(ConsentPolicy::analyticsAllowed($db, self::USER_ID), 'no row: the location is unknown');
+        $this->service()->recordEvent('page_viewed', null, 'analytics');
+        $this->assertSame([], $this->eventRows());
+
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, true));
+        $this->assertSame('1', $db->query('SELECT analytics_geo_is_eu FROM 202_users_pref WHERE user_id = ' . self::USER_ID)->fetch_row()[0],
+            'a first sign-in stores its location even without a row');
+        $this->assertFalse(ConsentPolicy::analyticsAllowed($db, self::USER_ID));
+    }
+
+    // ------------------------------------------------------------------
+    // Consent delivery: a change is pending until the receiver acknowledges it
+    // ------------------------------------------------------------------
+
+    public function test_a_revocation_from_an_empty_queue_is_delivered_until_acknowledged(): void
+    {
+        $db = self::$db;
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, false));
+        $this->assertSame([], $this->eventRows());
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'));
+        $service = $this->service(['install_hash' => 'h', 'api_key' => 'k', 'user_id' => self::USER_ID]);
+        $fake = $this->injectFakeClient($service);
+
+        $fake->answer = 'unreachable';
+        $this->assertSame(MessagingService::SYNC_FAILED, $service->sync(true));
+        $this->assertTrue($this->consentPending());
+
+        $fake->answer = 'ok';
+        $this->assertSame(MessagingService::SYNC_UNACKED, $service->sync(true), 'ok without an acknowledgement');
+        $this->assertTrue($this->consentPending());
+
+        $fake->answer = 'stale-ack';
+        $this->assertSame(MessagingService::SYNC_UNACKED, $service->sync(true), 'an acknowledgement of another version');
+        $this->assertTrue($this->consentPending());
+
+        $fake->answer = 'ack';
+        $this->assertSame(MessagingService::SYNC_SENT, $service->sync(true));
+        $this->assertFalse($this->consentPending());
+        $this->assertSame(MessagingService::SYNC_IDLE, $service->sync(true));
+
+        $this->assertCount(4, $fake->trackCalls);
+        foreach ($fake->trackCalls as $call) {
+            $this->assertSame('denied', $call['consent']['analytics']);
+            $this->assertSame([], $call['events']);
+            $this->assertArrayNotHasKey('attributes', $call['identity']);
+        }
+    }
+
+    public function test_a_change_made_during_a_delivery_stays_pending_after_its_acknowledgement(): void
+    {
+        $db = self::$db;
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'email_marketing', 'granted', 'settings'));
+        $service = $this->service(['install_hash' => 'h', 'api_key' => 'k', 'user_id' => self::USER_ID]);
+        $fake = $this->injectFakeClient($service);
+        $fake->onTrack = function () use ($db): void {
+            $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'email_marketing', 'denied', 'settings'));
+        };
+
+        $this->assertSame(MessagingService::SYNC_MORE, $service->sync(true), 'the denial is still to go');
+        $this->assertSame('granted', $fake->trackCalls[0]['consent']['email_marketing']);
+        $this->assertTrue($this->consentPending());
+
+        $fake->onTrack = null;
+        $this->assertSame(MessagingService::SYNC_SENT, $service->sync(true));
+        $this->assertSame('denied', $fake->trackCalls[1]['consent']['email_marketing'], 'read again for each delivery');
+        $this->assertFalse($this->consentPending());
+    }
+
+    // ------------------------------------------------------------------
+    // What was captured before a revocation never leaves after a re-grant
+    // ------------------------------------------------------------------
+
+    public function test_rows_a_failed_purge_left_are_never_delivered_after_a_regrant(): void
+    {
+        $db = self::$db;
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, false));
+        $service = $this->service(['install_hash' => 'h', 'api_key' => 'k', 'user_id' => self::USER_ID]);
+        $service->recordEvent('before_denial', null, 'analytics');
+        $service->updateAttributes(['before_denial' => 'private']);
+
+        foreach (['consent_test_fail_purge_events' => '202_messaging_events', 'consent_test_fail_purge_attributes' => '202_messaging_attributes'] as $trigger => $table) {
+            $this->assertNotFalse($db->query("CREATE TRIGGER `{$trigger}` BEFORE DELETE ON `{$table}` FOR EACH ROW
+                SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'purge refused by the test'"), $db->error);
+        }
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'), 'the denial stands');
+        $this->assertCount(1, $this->eventRows(), 'the purge failed');
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'granted', 'settings'));
+
+        $after = $this->service(['install_hash' => 'h', 'api_key' => 'k', 'user_id' => self::USER_ID]);
+        $after->recordEvent('after_regrant', null, 'analytics');
+        $fake = $this->injectFakeClient($after);
+        $this->assertSame(MessagingService::SYNC_SENT, $after->sync(true));
+        $this->assertSame(['after_regrant'], array_column($fake->trackCalls[0]['events'], 'name'));
+        $this->assertSame([], $fake->trackCalls[0]['attributes'], 'the pre-denial snapshot stays');
+        $this->assertArrayNotHasKey('before_denial', $fake->trackCalls[0]['identity']['attributes'] ?? []);
+
+        $this->assertSame([], MessagingService::usersWithPendingDelivery($db),
+            'a row no delivery may send does not bring the user back every run');
+        $after->updateAttributes(['fresh' => 1]);
+        $this->assertSame(['fresh' => 1], json_decode($db->query('SELECT data FROM 202_messaging_attributes WHERE user_id = ' . self::USER_ID)->fetch_row()[0], true),
+            'a new snapshot starts empty rather than from the revoked one');
+    }
+
+    public function test_a_capture_begun_before_a_denial_writes_nothing_after_a_regrant(): void
+    {
+        $db = self::$db;
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, false));
+        $begun = $this->service();
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'));
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'granted', 'settings'));
+
+        $begun->recordEvent('began_before_denial', null, 'analytics');
+        $begun->updateAttributes(['began_before_denial' => 'private']);
+        $this->assertSame([], $this->eventRows());
+        $this->assertSame('0', $db->query('SELECT COUNT(*) FROM 202_messaging_attributes')->fetch_row()[0]);
+
+        $this->service()->recordEvent('after_regrant', null, 'analytics');
+        $this->assertSame('after_regrant', $this->eventRows()[0]['event_name'] ?? null);
+    }
+
+    public function test_a_first_eu_sign_in_revokes_what_the_non_eu_default_captured(): void
+    {
+        $db = self::$db;
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, false));
+        $this->service()->recordEvent('non_eu_default', null, 'analytics');
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, true));
+        $this->assertFalse(ConsentPolicy::analyticsAllowed($db, self::USER_ID));
+        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'granted', 'eu_prompt'));
+
+        $service = $this->service(['install_hash' => 'h', 'api_key' => 'k', 'user_id' => self::USER_ID]);
+        $fake = $this->injectFakeClient($service);
+        $this->assertSame(MessagingService::SYNC_SENT, $service->sync(true));
+        $this->assertSame([], $fake->trackCalls[0]['events'], 'only the consent change goes');
+    }
+
+    public function test_an_eu_sign_in_whose_location_cannot_be_stored_holds_analytics(): void
+    {
+        $db = self::$db;
+        $GLOBALS['db'] = $db;
+        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, false));
+        $this->assertTrue(ConsentPolicy::analyticsAllowed($db, self::USER_ID));
+        $this->assertNotFalse($db->query("CREATE TRIGGER `consent_test_reject_eu` BEFORE UPDATE ON `202_users_pref` FOR EACH ROW
+            BEGIN
+              IF NEW.analytics_geo_is_eu = 1 THEN
+                SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'location refused by the test';
+              END IF;
+            END"), $db->error);
+
+        AUTH::begin_user_session(
+            ['user_id' => self::USER_ID, 'user_name' => 'held', 'p202_customer_api_key' => 'k'],
+            static fn (): bool => true
+        );
+
+        $this->assertSame(self::USER_ID, $_SESSION['user_id'], 'sign-in goes on');
+        $this->assertTrue($_SESSION[ConsentPolicy::SESSION_GEO_HELD]);
+        $this->assertFalse(ConsentPolicy::analyticsAllowed($db, self::USER_ID), 'this session holds analytics');
+        Analytics::event('page_viewed', ['path' => '/x'], 'analytics');
+        $this->assertSame(['login'], array_column($this->eventRows(), 'event_name'));
+
+        $this->assertNotFalse($db->query('DROP TRIGGER `consent_test_reject_eu`'));
+        AUTH::begin_user_session(
+            ['user_id' => self::USER_ID, 'user_name' => 'held', 'p202_customer_api_key' => 'k'],
+            static fn (): bool => true
+        );
+        $this->assertFalse($_SESSION[ConsentPolicy::SESSION_GEO_HELD], 'stored at the next sign-in');
+        $this->assertTrue(ConsentPolicy::needsEuPrompt($db, self::USER_ID));
+    }
+
+    public function test_the_upgrade_adds_the_consent_versions_without_marking_anything_pending(): void
+    {
+        $db = self::$db;
+        $this->assertTrue($db->query("UPDATE 202_users_pref SET email_marketing_consent = 'denied' WHERE user_id = " . self::USER_ID));
+        $this->assertTrue($db->query("INSERT INTO 202_messaging_events (user_id, event_name, client_token, tier) VALUES ("
+            . self::USER_ID . ", 'queued', 't1', 'essential')"));
+        foreach ([
+            'ALTER TABLE 202_users_pref DROP COLUMN consent_version, DROP COLUMN consent_acked_version, DROP COLUMN analytics_revoked_version',
+            'ALTER TABLE 202_messaging_events DROP COLUMN consent_version',
+            'ALTER TABLE 202_messaging_attributes DROP COLUMN consent_version',
+        ] as $sql) {
+            $this->assertTrue($db->query($sql), $db->error);
+        }
+        foreach ([UserTables::usersPref(), CoreTables::messagingEvents(), CoreTables::messagingAttributes()] as $definition) {
+            $reconciler = new \Prosper202\Database\SchemaReconciler(static fn (string $sql) => $db->query($sql));
+            $this->assertTrue($reconciler->reconcile($definition), $definition->tableName);
+            $again = new \Prosper202\Database\SchemaReconciler(static fn (string $sql) => $db->query($sql));
+            $this->assertTrue($again->reconcile($definition));
+            $this->assertSame([], $again->getApplied(), $definition->tableName . ' converges');
+        }
+        $this->assertSame(['denied', '0', '0', '0'], $db->query(
+            'SELECT email_marketing_consent, consent_version, consent_acked_version, analytics_revoked_version FROM 202_users_pref WHERE user_id = ' . self::USER_ID
+        )->fetch_row());
+        $this->assertSame([self::USER_ID], MessagingService::usersWithPendingDelivery($db), 'only for the queued event');
+    }
+
+    private function consentPending(): bool
+    {
+        return MessagingService::usersWithPendingDelivery(self::$db) === [self::USER_ID];
     }
 }
 
@@ -347,9 +555,22 @@ final class ConsentSyncFakeClient extends MessagingClient
 {
     /** @var array<int,array{identity:array,attributes:array,events:array,consent:?array}> */
     public array $trackCalls = [];
+    /** 'ack' (the version sent), 'stale-ack', 'ok' (no acknowledgement) or 'unreachable'. */
+    public string $answer = 'ack';
+    /** @var (callable(): void)|null run while the request is in flight */
+    public $onTrack = null;
+
     public function track(array $identity, array $attributes, array $events, ?array $consent = null): ?array
     {
         $this->trackCalls[] = ['identity' => $identity, 'attributes' => $attributes, 'events' => $events, 'consent' => $consent];
-        return ['ok' => true];
+        if ($this->onTrack !== null) {
+            ($this->onTrack)();
+        }
+        return match ($this->answer) {
+            'unreachable' => null,
+            'ok' => ['ok' => true],
+            'stale-ack' => ['ok' => true, 'consent_ack' => (int) ($consent['version'] ?? 0) - 1],
+            default => ['ok' => true, 'consent_ack' => $consent['version'] ?? null],
+        };
     }
 }

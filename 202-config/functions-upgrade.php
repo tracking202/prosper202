@@ -4646,14 +4646,17 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.79') {
 
-            // Product-analytics consent: 202_users_pref's consent flags and the
-            // EU/UK location (in usersPref()), and 202_messaging_events' tier
-            // (existing rows take 'analytics') and its user/event/time key.
+            // Product-analytics consent: 202_users_pref's consent flags, the
+            // EU/UK location and the consent versions (in usersPref()),
+            // 202_messaging_events' tier (existing rows take 'analytics'), its
+            // user/event/time key and the consent version each row and the
+            // attribute snapshot were captured under.
             // A schema change for 1.9.80 belongs in this block, reconciled
             // before the version is written.
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\UserTables::usersPref(),
                 \Prosper202\Database\Tables\CoreTables::messagingEvents(),
+                \Prosper202\Database\Tables\CoreTables::messagingAttributes(),
             ]);
 
             if ($step_ok) {
@@ -4665,7 +4668,7 @@ class UPGRADE
                 }
             } else {
                 error_log('Prosper202 upgrade: a table of the 1.9.80 step could not be reconciled (202_users_pref,'
-                    . ' 202_messaging_events); leaving version at 1.9.79 so the next run retries.');
+                    . ' 202_messaging_events, 202_messaging_attributes); leaving version at 1.9.79 so the next run retries.');
             }
         }
 

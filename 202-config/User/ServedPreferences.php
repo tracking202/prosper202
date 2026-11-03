@@ -48,7 +48,7 @@ final class ServedPreferences
         // Product-analytics consent: shown, never written here (ConsentPolicy writes it).
         'analytics_consent', 'analytics_consent_at', 'analytics_consent_source',
         'email_marketing_consent', 'email_marketing_consent_at', 'eu_consent_prompt_seen',
-        'analytics_geo_is_eu',
+        'analytics_geo_is_eu', 'consent_version', 'consent_acked_version', 'analytics_revoked_version',
     ];
 
     /**

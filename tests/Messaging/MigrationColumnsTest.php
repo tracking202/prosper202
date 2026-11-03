@@ -20,12 +20,14 @@ final class MigrationColumnsTest extends TestCase
         $step = substr($step, 0, $end);
         $this->assertStringContainsString('UserTables::usersPref()', $step);
         $this->assertStringContainsString('CoreTables::messagingEvents()', $step);
+        $this->assertStringContainsString('CoreTables::messagingAttributes()', $step);
 
         $sql = file_get_contents(__DIR__ . '/../../202-config/Database/Tables/UserTables.php');
         foreach ([
             'analytics_consent', 'analytics_consent_at', 'analytics_consent_source',
             'email_marketing_consent', 'email_marketing_consent_at',
             'eu_consent_prompt_seen', 'analytics_geo_is_eu',
+            'consent_version', 'consent_acked_version', 'analytics_revoked_version',
         ] as $col) {
             $this->assertStringContainsString($col, $sql, "installer 202_users_pref missing column $col");
         }

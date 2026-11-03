@@ -296,6 +296,54 @@ final class AuthClassTest extends TestCase
         $this->assertSame('UTC', $_SESSION['user_timezone']);
     }
 
+    /**
+     * A sign-in placed in the EU/UK whose location cannot be stored still
+     * signs in, and its session holds analytics; an unknown location writes
+     * nothing; a non-EU result that cannot be stored holds nothing.
+     *
+     * @dataProvider signInLocations
+     */
+    public function testTheSignInLocationIsStoredOrHeldNeverFatal(?bool $isEu, bool $held): void
+    {
+        $hadDb = array_key_exists('db', $GLOBALS);
+        $oldDb = $GLOBALS['db'] ?? null;
+        $prepared = [];
+        $db = $this->createMock(\mysqli::class);
+        $db->method('prepare')->willReturnCallback(static function (string $sql) use (&$prepared) {
+            $prepared[] = $sql;
+            return false;
+        });
+        $GLOBALS['db'] = $db;
+        $_SESSION = [];
+        try {
+            AUTH::begin_user_session(['user_id' => 42, 'user_name' => 'testuser'], static fn (): ?bool => $isEu);
+
+            self::assertSame(42, $_SESSION['user_id']);
+            self::assertSame($held, $_SESSION[\ConsentPolicy::SESSION_GEO_HELD]);
+            if ($held) {
+                self::assertFalse(\ConsentPolicy::captureFence($db, 42)['allowed'] ?? true, 'the session holds analytics');
+            }
+            $writes = preg_grep('/^\s*(UPDATE|INSERT IGNORE INTO) `202_users_pref`/', $prepared);
+            if ($isEu === null) {
+                self::assertSame([], $writes, 'an unknown location writes nothing');
+            } else {
+                self::assertNotSame([], $writes, 'a definitive location is written');
+            }
+        } finally {
+            if ($hadDb) { $GLOBALS['db'] = $oldDb; } else { unset($GLOBALS['db']); }
+        }
+    }
+
+    /** @return array<string, array{?bool, bool}> */
+    public static function signInLocations(): array
+    {
+        return [
+            'EU/UK, not stored' => [true, true],
+            'elsewhere, not stored' => [false, false],
+            'unknown' => [null, false],
+        ];
+    }
+
     public function testSetTimezoneWithValidTimezone(): void
     {
         AUTH::set_timezone('America/Los_Angeles');

@@ -159,6 +159,29 @@ final class ServedPreferencesTest extends TestCase
         self::assertStringNotContainsString('stored-', $errors[$field], 'a refusal never repeats a secret');
     }
 
+    /**
+     * Consent is written only through ConsentPolicy::record(), which versions
+     * the change for delivery and purges on a denial: GET serves it, and
+     * PUT refuses a change to any of it rather than writing it.
+     */
+    public function testConsentIsServedButNeverWrittenByThePreferencesEndpoint(): void
+    {
+        $consent = [
+            'analytics_consent' => 'granted', 'analytics_consent_at' => '2026-01-01 00:00:00',
+            'analytics_consent_source' => 'settings', 'email_marketing_consent' => 'granted',
+            'email_marketing_consent_at' => '2026-01-01 00:00:00', 'eu_consent_prompt_seen' => 1,
+            'analytics_geo_is_eu' => 0, 'consent_version' => 9, 'consent_acked_version' => 9,
+            'analytics_revoked_version' => 0,
+        ];
+        self::assertSame([], array_values(array_intersect(array_keys($consent), PreferenceRules::columns())));
+
+        $stored = array_map(static fn (): string => 'denied', $consent);
+        [$rest, $errors] = ServedPreferences::withoutEchoes($consent, ServedPreferences::serve($stored));
+
+        self::assertSame([], $rest);
+        self::assertSame(array_keys($consent), array_keys($errors));
+    }
+
     public function testAnObjectForAColumnThatIsNotASecretIsLeftToItsRule(): void
     {
         $body = ['user_pref_limit' => ['stored' => true]];
