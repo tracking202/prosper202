@@ -1,63 +1,89 @@
 <?php
 // 202-config/Messaging/UrlScrubber.class.php
-// Offer URLs are templates and rarely hold PII, but any email/phone query
-// value is redacted before sync. A URL that cannot be parsed is never sent.
+// An offer URL as the analytics profile may carry it: the scheme, host and
+// port, each path segment and query key that reads as a plain word, and query
+// values that are tracking macros or short numbers; everything else is
+// redacted. Sign-in details and the fragment are never kept, and a URL that
+// is not http(s) with a plain host is not sent at all.
 
 final class UrlScrubber
 {
-    private const EMAIL = '/^[^@\s]+@[^@\s]+\.[^@\s]+$/';
-    private const PHONE = '/^\+?[0-9][0-9\-\.\s\(\)]{6,}$/';
+    public const REDACTED = 'redacted';
+
+    /** A path segment or query key kept as written: letters, digits, '-', '_', '.', '~'. */
+    private const PLAIN = '/^[A-Za-z0-9._~-]{1,64}$/D';
+
+    /** A tracking macro the URL is a template for: {clickid}, [[subid]], #s1#. */
+    private const MACRO = '/^(\{[A-Za-z0-9_.:-]{1,40}\}|\[\[[A-Za-z0-9_.:-]{1,40}\]\]|#[A-Za-z0-9_]{1,40}#)$/D';
+
+    /** A query value kept as written besides a macro: an id of at most six digits. */
+    private const SHORT_NUMBER = '/^[0-9]{1,6}$/D';
+
+    /** Seven or more digits anywhere: a phone number, an account or order number. */
+    private const LONG_NUMBER = '/[0-9]{7,}/';
 
     public static function scrub(string $url): string
     {
-        $parts = parse_url($url);
-        if ($parts === false || !isset($parts['host']) || $parts['host'] === '') {
-            // Unparseable or hostless: nothing of it is sent.
+        $parts = parse_url(trim($url));
+        if ($parts === false || !isset($parts['scheme'], $parts['host'])) {
             return '';
         }
-        if (isset($parts['user']) || isset($parts['pass'])) {
-            // Credentials in the URL are never sent: rebuilt without them.
-            $url = ($parts['scheme'] ?? 'http') . '://' . $parts['host']
-                . (isset($parts['port']) ? ':' . $parts['port'] : '')
-                . ($parts['path'] ?? '')
-                . (isset($parts['query']) ? '?' . $parts['query'] : '')
-                . (isset($parts['fragment']) ? '#' . $parts['fragment'] : '');
+        $scheme = strtolower($parts['scheme']);
+        $host = strtolower($parts['host']);
+        if (!in_array($scheme, ['http', 'https'], true)
+            || preg_match('/^[a-z0-9.-]{1,253}$/D', $host) !== 1
+            || str_contains($host, '@')) {
+            return '';
         }
-        $q = $parts['query'] ?? '';
-        if ($q === '') {
-            return $url;
+
+        $out = $scheme . '://' . $host . (isset($parts['port']) ? ':' . (int) $parts['port'] : '');
+
+        $path = $parts['path'] ?? '';
+        if ($path !== '') {
+            $segments = array_map(
+                static fn (string $segment): string => $segment === '' ? '' : self::keep(rawurldecode($segment)),
+                explode('/', $path)
+            );
+            $out .= implode('/', $segments);
         }
-        parse_str($q, $params);
-        $changed = false;
-        $params = self::redact($params, $changed);
-        if (!$changed) { return $url; }
-        // http_build_query urlencodes {macros}; only rebuild when something was
-        // redacted, and only the query portion.
-        $base = strtok($url, '?');
-        $frag = $parts['fragment'] ?? null;
-        return $base . '?' . http_build_query($params) . ($frag !== null ? '#' . $frag : '');
+
+        // Split by hand: parse_str() keeps only the last of a repeated key
+        // and reads `a[b]` as nesting.
+        $query = $parts['query'] ?? '';
+        if ($query !== '') {
+            $pairs = [];
+            foreach (explode('&', $query) as $pair) {
+                if ($pair === '') {
+                    continue;
+                }
+                [$key, $value] = array_pad(explode('=', $pair, 2), 2, null);
+                $key = self::keep(urldecode($key));
+                $pairs[] = $value === null ? $key : $key . '=' . self::keepValue(urldecode($value));
+            }
+            if ($pairs !== []) {
+                $out .= '?' . implode('&', $pairs);
+            }
+        }
+
+        return $out;
     }
 
-    /**
-     * @param array<array-key, mixed> $params
-     * @return array<array-key, mixed>
-     */
-    private static function redact(array $params, bool &$changed): array
+    /** A query value: kept only when it is a macro or a short number. */
+    private static function keepValue(string $text): string
     {
-        foreach ($params as $k => $v) {
-            if (is_array($v)) {
-                $params[$k] = self::redact($v, $changed);
-                continue;
-            }
-            if (!is_string($v)) { continue; }
-            // parse_str already urldecodes ('+' becomes a space); trim so a
-            // leading space from an encoded '+' doesn't defeat the anchors.
-            $decoded = trim(rawurldecode($v));
-            if (preg_match(self::EMAIL, $decoded) || preg_match(self::PHONE, $decoded)) {
-                $params[$k] = '[redacted]';
-                $changed = true;
-            }
+        return preg_match(self::MACRO, $text) === 1 || preg_match(self::SHORT_NUMBER, $text) === 1 ? $text : self::REDACTED;
+    }
+
+    /** $text when it is a macro or a plain word with no long number in it, else the redaction mark. */
+    private static function keep(string $text): string
+    {
+        if (preg_match(self::MACRO, $text) === 1) {
+            return $text;
         }
-        return $params;
+        if (preg_match(self::PLAIN, $text) === 1 && preg_match(self::LONG_NUMBER, $text) !== 1) {
+            return $text;
+        }
+
+        return self::REDACTED;
     }
 }
