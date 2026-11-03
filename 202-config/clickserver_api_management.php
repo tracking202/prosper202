@@ -95,6 +95,7 @@ function clickserver_api_domain_act_deact($key, $csid, $method){
 	}
 	//Initiate curl
 	$ch = curl_init();
+	\Prosper202\Http\OutboundTimeouts::apply($ch);
 	// Will return the response, if false it print the response
 	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 	// Set the url
@@ -122,6 +123,7 @@ function clickserver_api_domain_list($key){
 
 	//Initiate curl
 	$ch = curl_init();
+	\Prosper202\Http\OutboundTimeouts::apply($ch);
 	// Will return the response, if false it print the response
 	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 	// Set the url
@@ -139,6 +141,7 @@ function clickserver_api_license($key){
 
 	//Initiate curl
 	$ch = curl_init();
+	\Prosper202\Http\OutboundTimeouts::apply($ch);
 	// Will return the response, if false it print the response
 	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 	// Set the url

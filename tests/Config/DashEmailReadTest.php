@@ -31,15 +31,15 @@ final class DashEmailReadTest extends TestCase
      * @param string $row the PHP expression the read's fetch_assoc() answers
      * @return array{0: string, 1: list<string>} what getDashEmail() answered, var_export()ed, and the statements run
      */
-    private static function dashEmail(string $standIns, string $row = 'null'): array
+    private static function dashEmail(string $standIns, string $row = 'null', string $session = "['user_id' => 1]"): array
     {
         $code = 'require ' . var_export(__DIR__ . '/fixtures/lift-function.php', true) . ';'
             . $standIns
             . " \$GLOBALS['sql'] = []; \$GLOBALS['row'] = $row;"
             . ' eval(lift_function(' . var_export(dirname(__DIR__, 2) . '/202-config/functions-tracking202.php', true)
             . ", 'getDashEmail'));"
-            . " \$_SESSION = ['user_id' => 1];"
-            . ' echo json_encode([var_export(getDashEmail(), true), $GLOBALS["sql"]]);';
+            . " \$_SESSION = $session;"
+            . ' echo json_encode([var_export(getDashEmail(), true), $GLOBALS["sql"], $_SESSION]);';
         $process = proc_open([PHP_BINARY, '-r', $code], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
         self::assertIsResource($process);
         $out = (string) stream_get_contents($pipes[1]);
@@ -70,6 +70,22 @@ final class DashEmailReadTest extends TestCase
         self::assertSame(var_export("o'brien@example.com", true), $answer);
         self::assertCount(2, $statements);
         self::assertStringContainsString("user_dash_email='o\\'brien@example.com'", $statements[1]);
+    }
+
+    public function testTheServiceIsAskedOnceADayPerSession(): void
+    {
+        $noAnswer = str_replace('["code" => 200, "email" => "o\'brien@example.com"]', '["code" => 404, "email" => ""]', self::NO_ADDRESS_YET);
+        $row = '["user_dash_email" => "", "p202_customer_api_key" => "k"]';
+        $first = self::dashEmail($noAnswer . ' $GLOBALS["asked"] = 0;', $row);
+        self::assertSame('false', $first[0]);
+        self::assertIsInt($first[2]['p202_dash_email_asked_at'] ?? null, 'the ask is remembered in the session');
+
+        $counting = str_replace('function getSetDashEmail($key) {', 'function getSetDashEmail($key) { throw new \\Exception("asked again");', self::NO_ADDRESS_YET);
+        $again = self::dashEmail($counting, $row, "['user_id' => 1, 'p202_dash_email_asked_at' => time() - 60]");
+        self::assertSame('false', $again[0], 'a page within the day does not ask');
+
+        $nextDay = self::dashEmail(self::NO_ADDRESS_YET, $row, "['user_id' => 1, 'p202_dash_email_asked_at' => time() - 86400]");
+        self::assertSame(var_export("o'brien@example.com", true), $nextDay[0], 'a day later it asks again');
     }
 
     /** @return array<string, array{string}> */

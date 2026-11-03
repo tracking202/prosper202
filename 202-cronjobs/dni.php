@@ -35,6 +35,7 @@ try {
                 ];
 
                 $curl = curl_init('https://my.tracking202.com/api/v2/dni/iron/offers/cache/all');
+                \Prosper202\Http\OutboundTimeouts::apply($curl, 30);
                 curl_setopt($curl, CURLOPT_HEADER, false);
                 curl_setopt($curl, CURLOPT_RETURNTRANSFER, false);
                 curl_setopt($curl, CURLOPT_HTTPHEADER, ["Content-type: application/json"]);

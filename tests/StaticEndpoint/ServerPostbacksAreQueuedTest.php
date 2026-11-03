@@ -21,9 +21,13 @@ use PHPUnit\Framework\TestCase;
  * `false` as its fifth argument ($server), and each call of
  * TrafficSourcePixels::fire() passes a literal `false` as its sixth. A file
  * that renders the markup types that way and records its own conversion
- * also asks the writer to queue (`'notify_traffic_source' => true`) and
- * sends what it queued (p202SendQueuedPostbacks()). The goal notifier queues
- * through the engine, so it is held only to the first rule.
+ * also asks the writer to queue (`'notify_traffic_source' => true`). The goal
+ * notifier queues through the engine, so it is held only to the first rule.
+ *
+ * And none of them sends the queue either (66H8): gpb.php and upx.php sent a
+ * conversion's queued postbacks before answering, up to 20 URLs at 10
+ * seconds each, so a slow traffic source held the network's postback open.
+ * Only the outbox itself names sendDue(); the cron worker calls it.
  */
 final class ServerPostbacksAreQueuedTest extends TestCase
 {
@@ -141,7 +145,7 @@ final class ServerPostbacksAreQueuedTest extends TestCase
                     'false',
                     strtolower($args[4] ?? '(omitted)'),
                     "$file:$line calls p202FireTrafficSourcePixels() without \$server = false, so it sends the type-4 postbacks "
-                    . 'itself; queue them with the conversion (notify_traffic_source) and send with p202SendQueuedPostbacks()'
+                    . 'itself; queue them with the conversion (notify_traffic_source); the worker sends them'
                 );
                 $firing[$file] = true;
             }
@@ -163,8 +167,27 @@ final class ServerPostbacksAreQueuedTest extends TestCase
                 $queues = $queues || preg_match("/'notify_traffic_source'\s*=>\s*true\b/i", $args[1] ?? '') === 1;
             }
             self::assertTrue($queues, "$file renders the traffic source's pixels but never asks p202RecordConversion() to queue its server postbacks");
-            self::assertNotSame([], self::calls($src, 'p202SendQueuedPostbacks'), "$file queues server postbacks but never sends them");
         }
+    }
+
+    public function testNoRequestPathSendsTheQueue(): void
+    {
+        $sending = [];
+        $read = 0;
+        foreach (self::files() as $file) {
+            if ($file === '202-config/Notifications/NotificationOutbox.php') {
+                continue;
+            }
+            $read++;
+            $t = self::tokens((string) file_get_contents(self::ROOT . $file));
+            foreach ($t as $i => $token) {
+                if (strcasecmp($token[1], 'sendDue') === 0 && ($t[$i + 1][1] ?? null) === '(') {
+                    $sending[] = $file . ':' . $token[2];
+                }
+            }
+        }
+        self::assertGreaterThan(100, $read, 'the scan read the tree');
+        self::assertSame([], $sending, 'a request path sends queued postbacks before it answers; leave them to the worker');
     }
 
     public function testTheCallReaderReadsArgumentsNotText(): void

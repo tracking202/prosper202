@@ -117,43 +117,11 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
         bool $server = true
     ): array {
         // $server false: the type-4 postbacks were queued with the
-        // conversion (notify_traffic_source) and go out through the outbox
-        // (p202SendQueuedPostbacks()); only the markup types render here.
+        // conversion (notify_traffic_source) and the notification worker sends
+        // them; only the markup types render here.
         $conn = new \Prosper202\Database\Connection($db);
 
         return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server);
-    }
-}
-
-if (!function_exists('p202SendQueuedPostbacks')) {
-    /**
-     * Send, now, the traffic-source postbacks queued for one conversion
-     * (p202RecordConversion() with notify_traffic_source) — after the commit
-     * that queued them. Best effort by design: the rows are already durable,
-     * so a send that fails, throws or never happens is retried by the
-     * notification worker (202-cronjobs/index.php every minute) instead of
-     * being lost. A retried request for the same conversion calls this
-     * again, which sends whatever is still due. Never throws.
-     *
-     * @return array{sent: int, failed: int, retrying: int, queued: int}
-     */
-    function p202SendQueuedPostbacks(mysqli $db, int $convId): array
-    {
-        $out = ['sent' => 0, 'failed' => 0, 'retrying' => 0, 'queued' => 0];
-        if ($convId <= 0) {
-            return $out;
-        }
-        try {
-            $conn = new \Prosper202\Database\Connection($db);
-            $outbox = new \Prosper202\Notifications\NotificationOutbox($conn);
-            $out = $outbox->sendDue(20, [$convId]) + $out;
-            $out['queued'] = $outbox->reachedState($convId)['total'];
-        } catch (\Throwable $e) {
-            error_log('conversion ' . $convId . ': its queued postbacks were not sent now; the worker retries them: '
-                . $e->getMessage());
-        }
-
-        return $out;
     }
 }
 
@@ -502,8 +470,8 @@ if (!function_exists('p202RecordConversion')) {
         }
         if (!empty($log['notify_traffic_source'])) {
             // Queue the click's traffic-source server postbacks with the row
-            // (NotificationOutbox), in its transaction; the caller sends
-            // them with p202SendQueuedPostbacks() and the worker retries.
+            // (NotificationOutbox), in its transaction; the notification
+            // worker sends them.
             $data['notify_traffic_source'] = true;
         }
         if (isset($log['event_name']) && (string) $log['event_name'] !== '') {

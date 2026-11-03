@@ -981,6 +981,7 @@ function clickserver_api_upgrade_url($key)
 
     // Initiate curl
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     // Disable SSL verification
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -1140,6 +1141,7 @@ function updateSurveyData($install_hash, $post)
 
     // Initiate curl
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/deep/survey/' . $install_hash);
     // Disable SSL verification
@@ -1313,6 +1315,7 @@ function tagUserByNetwork($install_hash, $type, $network)
 
     // Initiate curl
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/tag/user/' . $install_hash . '/' . $type);
     // Disable SSL verification
@@ -1343,6 +1346,7 @@ function getAllDniNetworks($install_hash)
 {
     // Initiate curl
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $install_hash . '/networks/all');
     // Disable SSL verification
@@ -1368,6 +1372,7 @@ function authDniNetworks($hash, $network, $key, $affId)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/auth/' . $network);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -1404,6 +1409,7 @@ function getDniOffers($hash, $network, $key, $affId, $offset, $limit, $sort_by, 
     $fields = http_build_query($fields);
 
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/all/' . $offset . '/' . $limit);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -1425,6 +1431,7 @@ function getDniOfferById($hash, $network, $key, $affId, $id)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/id/' . $id);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -1446,6 +1453,7 @@ function requestDniOfferAccess($hash, $network, $key, $affId, $id, $type)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/' . $type . '/' . $id);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -1467,6 +1475,7 @@ function submitDniOfferAnswers($hash, $network, $api_key, $affId, $id, $answers)
     ];
     $fields = http_build_query($fields);
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/answers/' . $id);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -1490,6 +1499,7 @@ function setupDniOffer($hash, $network, $key, $affId, $currency, $id, $ddlci)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/setup/' . $id);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -1511,6 +1521,7 @@ function getDNICacheProgress($hash, $data)
         return false;
     }
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/cache/progress');
     curl_setopt($ch, CURLOPT_HEADER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, false);
@@ -1542,6 +1553,7 @@ function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
+    \Prosper202\Http\OutboundTimeouts::apply($ch);
     curl_setopt($ch, CURLOPT_URL, $url . $id);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -1570,8 +1582,7 @@ function getForeignPayout($currency, $payout_currency, $payout)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
     $result = curl_exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
@@ -1594,8 +1605,7 @@ function validateRevContentCredentials($id, $secret)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
     $result = curl_exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
@@ -1621,8 +1631,7 @@ function pushToRevContent($id, $secret, $boost, $boost_id, array $ads)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
     $result = curl_exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
@@ -1646,8 +1655,7 @@ function pushToFacebook($api_key, $group, $ad_set_id, array $ads)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
     $result = curl_exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
@@ -1661,8 +1669,7 @@ function getFacebookCampaignsAndAdSets($api_key)
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
     $result = curl_exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
@@ -1827,8 +1834,14 @@ function getDashEmail(): string|bool
     if ($user_row['user_dash_email']) {
         return $user_row['user_dash_email'];
     } else {
+        // Every page's footer gets here while no address is stored: ask the service once a day per session.
+        $askedAt = $_SESSION['p202_dash_email_asked_at'] ?? null;
+        if (is_int($askedAt) && time() - $askedAt < 86400) {
+            return false;
+        }
         //email not found, try and set it from api call to the server
         if ($user_row['p202_customer_api_key']) {
+            $_SESSION['p202_dash_email_asked_at'] = time();
             $dashEmail = getSetDashEmail($user_row['p202_customer_api_key']);
             if ($dashEmail['code'] == 200 && $dashEmail['email'] != '') {
                 //found it save to DB and return

@@ -206,10 +206,6 @@ if (is_numeric($mysql['click_id'])) {
 	$conversionId = $conversionResult['conv_id'];
 	if ($conversionId > 0) {
 		p202LinkConversionIdentity($db, $clickId, $_GET);
-        // The server postbacks queued with the conversion: sent now, retried
-        // by the worker if this fails, and sent again by a reload of a
-        // conversion already recorded if still due.
-        p202SendQueuedPostbacks($db, $conversionId);
 	}
 
 	// Tell the traffic source after recording, and only about a conversion
@@ -221,7 +217,7 @@ if (is_numeric($mysql['click_id'])) {
 			? $conversionResult['transaction_id']
 			: $conversionResult['dedupe_key'];
 		$tokens['payout'] = $conversionResult['payout'];
-        // Markup only: the type-4 postbacks go out through the outbox above.
+        // Markup only: the type-4 postbacks, queued with the conversion, are the worker's.
         echo p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens, null, false)['markup'];
 	}
 
