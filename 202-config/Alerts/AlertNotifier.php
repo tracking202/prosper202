@@ -8,6 +8,7 @@ use Prosper202\Click\TrackingDomain;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlWebhookRepository;
 use Prosper202\Notifications\SlackWebhook;
+use Prosper202\User\PasswordResetLink;
 
 /**
  * Sends an alert on the account's own channels: its Slack incoming webhook
@@ -22,19 +23,56 @@ final class AlertNotifier
     public const EMAIL = 'email';
     public const WEBHOOK = 'webhook';
 
+    /** Where the alerts are turned off, as every message names it. */
+    public const SETTINGS_PLACE = 'Account › Personal settings › Money-loss alerts';
+    public const SETTINGS_PAGE = '202-account/account.php#money-loss-alerts';
+
     /** @var callable(string, string, string, string): bool */
     private $mailer;
 
     /**
      * @param ?callable(string, string, string, string): bool $mailer to, subject, body, headers; mail() when null
+     * @param ?string $settingsUrl the settings card's address (settingsUrl()); null names the place without a link
      */
     public function __construct(
         private readonly Connection $conn,
         private readonly SlackWebhook $slack = new SlackWebhook(),
         ?callable $mailer = null,
+        private readonly ?string $settingsUrl = null,
     ) {
         $this->mailer = $mailer ?? static fn (string $to, string $subject, string $body, string $headers): bool
             => mail($to, $subject, $body, $headers);
+    }
+
+    /**
+     * The settings card's address on this install, or null when it is not
+     * known: the install's stored address (user 1's tracking domain, as the
+     * password reset links it) and its path, which a run knows only when it
+     * was started through the web server (a command-line run has no document
+     * root, and a guessed path would link a subdirectory install to nothing).
+     *
+     * @param array<string, mixed> $server normally $_SERVER
+     */
+    public static function settingsUrl(Connection $conn, array $server, string $installRoot): ?string
+    {
+        $docRoot = is_scalar($server['DOCUMENT_ROOT'] ?? null) ? realpath((string) $server['DOCUMENT_ROOT']) : false;
+        $root = realpath($installRoot);
+        if ($docRoot === false || $root === false || !str_starts_with($root . '/', rtrim($docRoot, '/') . '/')) {
+            return null;
+        }
+        $row = $conn->fetchOne(
+            $conn->prepareRead('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1 LIMIT 1')
+        );
+        $base = PasswordResetLink::base((string) ($row['user_tracking_domain'] ?? ''), $server, $installRoot);
+
+        return $base === null ? null : $base . self::SETTINGS_PAGE;
+    }
+
+    /** The line every message ends with: how to turn the alerts off. */
+    public function optOutLine(): string
+    {
+        return 'To turn these alerts off: ' . self::SETTINGS_PLACE
+            . ($this->settingsUrl !== null ? ' (' . $this->settingsUrl . ')' : '') . '.';
     }
 
     /**
@@ -129,8 +167,11 @@ final class AlertNotifier
     public function slackBody(Alert $alert, string $domain): string
     {
         $escape = static fn (string $text): string => str_replace(['&', '<', '>'], ['&amp;', '&lt;', '&gt;'], $text);
+        $optOut = $this->settingsUrl !== null
+            ? 'To turn these alerts off: <' . $escape($this->settingsUrl) . '|' . self::SETTINGS_PLACE . '>.'
+            : $escape($this->optOutLine());
         $json = json_encode([
-            'text' => '*' . $alert->kind->title() . '*: ' . $escape($alert->message),
+            'text' => '*' . $alert->kind->title() . '*: ' . $escape($alert->message) . "\n" . $optOut,
             'username' => $domain !== '' ? $domain : 'Prosper202',
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
         if ($json === false) {
@@ -149,8 +190,7 @@ final class AlertNotifier
             '[Prosper202] ' . $alert->kind->title() . ': ' . $alert->campaignName
         );
         $body = $alert->message . "\n\n"
-            . 'You get this email because money-loss alerts are on for your Prosper202 account.'
-            . ' Change them under Account, Personal settings, Money-loss alerts.' . "\n";
+            . 'Money-loss alerts are on for your Prosper202 account. ' . $this->optOutLine() . "\n";
         $headers = 'MIME-Version: 1.0' . "\r\n"
             . 'Content-Type: text/plain; charset=UTF-8' . "\r\n"
             . 'Content-Transfer-Encoding: 8bit';

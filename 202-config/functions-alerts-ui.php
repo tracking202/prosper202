@@ -75,7 +75,7 @@ function p202_alerts_post(\mysqli $db, int $userId, array $post): array
     }
     p202_account_flash('ok', $settings->enabled
         ? 'Money-loss alerts are on. The cron job checks your campaigns every hour.'
-        : 'Money-loss alerts are off.');
+        : 'Money-loss alerts are off for your account. Turn them back on here at any time.');
     p202_account_redirect(P202_ALERTS_RETURN);
 }
 
@@ -170,10 +170,15 @@ function p202_alerts_card(AlertSettings $settings, array $contact, array $errors
         . ' Once an hour the cron job checks each of your campaigns, and tells you once per incident when a campaign'
         . ' that converts steadily has had no conversion for several times its usual gap while real clicks keep'
         . ' arriving, or when a campaign\'s cost today passes your daily cap with no conversion today. A conversion'
-        . ' re-arms the first; the second is told at most once a day.</p>'
+        . ' re-arms the first; the second is told at most once a day. Email goes to your account\'s address, Slack'
+        . ' only if you set a webhook, and webhooks only to ones subscribed to the alerts.</p>'
         . '<form method="post" action="' . $action . '">'
         . '<input type="hidden" name="update_money_loss_alerts" value="1">' . p202_account_token_field()
-        . $switch('enabled', 'Alerts on', 'Off until you turn them on.')
+        . $switch(
+            'enabled',
+            'Alerts on',
+            'On by default. Turn this off to stop every money-loss alert for your account.'
+        )
         . '<h3 class="p202-panel__title mb-2 mt-3">Where they go</h3>'
         . $switch('notify_slack', 'Slack', $slackHelp)
         . $switch('notify_email', 'Email', $emailHelp)

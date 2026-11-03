@@ -56,8 +56,10 @@ final class MysqlAlertStore
     }
 
     /**
-     * The accounts with alerts on, by id, with their settings. A row that
-     * cannot be read is named in $unreadable rather than read as off.
+     * The accounts with alerts on, by id, with their settings: every active
+     * account with no row (the defaults, on) and every row with alerts on.
+     * A row that cannot be read is named in $unreadable rather than read as
+     * off or on.
      *
      * @param array<int, string> $unreadable user id => why, filled in
      * @return array<int, AlertSettings>
@@ -65,14 +67,19 @@ final class MysqlAlertStore
     public function enabledAccounts(array &$unreadable = []): array
     {
         $stmt = $this->conn->prepareRead(
-            'SELECT s.user_id, s.enabled, s.notify_slack, s.notify_email, s.notify_webhook, s.gap_multiple,'
-            . ' s.min_conversions, s.daily_cost_cap'
-            . ' FROM 202_alert_settings s INNER JOIN 202_users u ON u.user_id = s.user_id'
-            . ' WHERE s.enabled <> 0 AND u.user_active = 1 AND u.user_deleted = 0 ORDER BY s.user_id'
+            'SELECT u.user_id, s.user_id AS settings_row, s.enabled, s.notify_slack, s.notify_email,'
+            . ' s.notify_webhook, s.gap_multiple, s.min_conversions, s.daily_cost_cap'
+            . ' FROM 202_users u LEFT JOIN 202_alert_settings s ON s.user_id = u.user_id'
+            . ' WHERE u.user_active = 1 AND u.user_deleted = 0 AND (s.user_id IS NULL OR s.enabled <> 0)'
+            . ' ORDER BY u.user_id'
         );
         $accounts = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $userId = (int) $row['user_id'];
+            if ($row['settings_row'] === null) {
+                $accounts[$userId] = AlertSettings::defaults();
+                continue;
+            }
             try {
                 $accounts[$userId] = self::settingsOf($row);
             } catch (\UnexpectedValueException $e) {
@@ -84,19 +91,25 @@ final class MysqlAlertStore
     }
 
     /**
-     * The incident each alert was last sent for: "kind:campaign" => key.
+     * The incident each alert was last tried for: "kind:campaign" =>
+     * [key, delivered, attempts].
      *
-     * @return array<string, int>
+     * @return array<string, array{int, bool, int}>
      */
     public function sentIncidents(int $userId): array
     {
         $stmt = $this->conn->prepareRead(
-            'SELECT aff_campaign_id, alert_kind, incident_key FROM 202_alert_state WHERE user_id = ?'
+            'SELECT aff_campaign_id, alert_kind, incident_key, delivered, attempts'
+            . ' FROM 202_alert_state WHERE user_id = ?'
         );
         $this->conn->bind($stmt, 'i', [$userId]);
         $sent = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
-            $sent[$row['alert_kind'] . ':' . (int) $row['aff_campaign_id']] = (int) $row['incident_key'];
+            $sent[$row['alert_kind'] . ':' . (int) $row['aff_campaign_id']] = [
+                (int) $row['incident_key'],
+                (int) $row['delivered'] === 1,
+                (int) $row['attempts'],
+            ];
         }
 
         return $sent;
@@ -107,19 +120,27 @@ final class MysqlAlertStore
         return $alert->kind->stateKey() . ':' . $alert->campaignId;
     }
 
-    public function recordSent(Alert $alert, int $now): void
+    /**
+     * Records the incident as tried: delivered, or failed for the attempts'th
+     * time (attempts counts the tries of this incident, 1 for its first).
+     */
+    public function recordAttempt(Alert $alert, bool $delivered, int $attempts, int $now): void
     {
         $stmt = $this->conn->prepareWrite(
-            'INSERT INTO 202_alert_state (user_id, aff_campaign_id, alert_kind, incident_key, alerted_at)'
-            . ' VALUES (?, ?, ?, ?, ?)'
-            . ' ON DUPLICATE KEY UPDATE incident_key = VALUES(incident_key), alerted_at = VALUES(alerted_at)'
+            'INSERT INTO 202_alert_state'
+            . ' (user_id, aff_campaign_id, alert_kind, incident_key, alerted_at, delivered, attempts)'
+            . ' VALUES (?, ?, ?, ?, ?, ?, ?)'
+            . ' ON DUPLICATE KEY UPDATE incident_key = VALUES(incident_key), alerted_at = VALUES(alerted_at),'
+            . ' delivered = VALUES(delivered), attempts = VALUES(attempts)'
         );
-        $this->conn->bind($stmt, 'iisii', [
+        $this->conn->bind($stmt, 'iisiiii', [
             $alert->userId,
             $alert->campaignId,
             $alert->kind->stateKey(),
             $alert->incidentKey,
             $now,
+            $delivered ? 1 : 0,
+            min($attempts, 255),
         ]);
         $this->conn->executeUpdate($stmt);
     }

@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Prosper202\Alerts;
 
 /**
- * An account's money-loss alerts (202_alert_settings). Off until the account
- * turns them on: they send email and Slack messages nobody asked for before.
+ * An account's money-loss alerts (202_alert_settings). On for an account with
+ * no row: email to its own address, Slack only where it set a webhook, and
+ * webhooks only where one subscribed to the alerts' events. Turning them off
+ * stores a row with enabled 0.
  *
  * A campaign is steady when it had at least minConversions conversions in the
  * last LOOKBACK_DAYS; its usual gap is the time between its first and last of
@@ -23,7 +25,7 @@ final class AlertSettings
     public const COST_CAP_MAX = 9999999.99;
 
     public function __construct(
-        public readonly bool $enabled = false,
+        public readonly bool $enabled = true,
         public readonly bool $notifySlack = true,
         public readonly bool $notifyEmail = true,
         public readonly bool $notifyWebhook = true,

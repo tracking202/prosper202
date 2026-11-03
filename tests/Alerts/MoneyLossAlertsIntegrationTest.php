@@ -23,9 +23,10 @@ use Prosper202\Notifications\SlackWebhook;
  * its webhooks' delivery queue.
  *
  * Skips unless a scratch database is configured (P202_TEST_DB_HOST, ...); it
- * installs the schema there and writes users 7811-7812, campaigns
- * 781101-781107, clicks 978110000 on, and their conversions, settings and
- * webhooks.
+ * installs the schema there and writes users 7811-7813, campaigns
+ * 781101-781108, clicks 978110000 on, and their conversions, settings and
+ * webhooks. 7811 has settings of its own, 7812 turned alerts off, and 7813
+ * has no settings row (alerts on) and nowhere to send them.
  *
  * @group integration
  */
@@ -35,6 +36,9 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
 
     private const OWNER = 7811;
     private const OTHER = 7812;
+    private const QUIET = 7813;
+    private const USERS = '7811, 7812, 7813';
+    private const SETTINGS_URL = 'https://p202.example.com/202-account/account.php#money-loss-alerts';
     private const STOPPED = 781101;
     private const FLOWING = 781102;
     private const PAUSED = 781103;
@@ -42,6 +46,7 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
     private const OVER_CAP = 781105;
     private const CONVERTED_TODAY = 781106;
     private const OTHERS = 781107;
+    private const QUIET_STOPPED = 781108;
     private const OWNER_SLACK = 'https://hooks.slack.com/services/T0/B0/ownerSecretPath';
     private const OTHER_SLACK = 'https://hooks.slack.com/services/T0/B0/otherSecretPath';
     private const ZONE = 'Asia/Kolkata';
@@ -67,6 +72,8 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         self::$now = time();
         self::user(self::OWNER, self::ZONE);
         self::user(self::OTHER);
+        self::user(self::QUIET);
+        self::q("UPDATE 202_users SET user_email = '' WHERE user_id = " . self::QUIET);
         self::row('202_users_pref', ['user_id' => self::OWNER, 'user_slack_incoming_webhook' => self::OWNER_SLACK,
             'user_tracking_domain' => 'https://track.example.com', 'user_account_currency' => 'EUR']);
         self::row('202_users_pref', ['user_id' => self::OTHER, 'user_slack_incoming_webhook' => self::OTHER_SLACK]);
@@ -79,6 +86,7 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
             self::OVER_CAP => [self::OWNER, 'Quote Requests'],
             self::CONVERTED_TODAY => [self::OWNER, 'Demo Requests'],
             self::OTHERS => [self::OTHER, 'Other Shop'],
+            self::QUIET_STOPPED => [self::QUIET, 'Quiet Shop'],
             ] as $id => [$user, $name]
         ) {
             self::row('202_aff_campaigns', ['aff_campaign_id' => $id, 'user_id' => $user, 'aff_network_id' => 1,
@@ -107,6 +115,9 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         // The other account's campaign, the same as the stopped one, with alerts off.
         self::conversions(self::OTHER, self::OTHERS, range($now - 30 * $hour, $now - 11 * $hour, $hour));
         self::clicks(self::OTHER, self::OTHERS, range($now - 30 * $hour, $now - 300, 360));
+        // An account with no email, no Slack and no webhook.
+        self::conversions(self::QUIET, self::QUIET_STOPPED, range($now - 30 * $hour, $now - 11 * $hour, $hour));
+        self::clicks(self::QUIET, self::QUIET_STOPPED, range($now - 30 * $hour, $now - 300, 360));
 
         // Cost today in the account's zone, and a bigger cost the day before.
         $dayStart = AccountActivity::dayStart($now, self::ZONE);
@@ -143,9 +154,9 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         $this->log = (string) tempnam(sys_get_temp_dir(), 'p202-alerts-log-');
         $this->savedLog = ini_get('error_log');
         ini_set('error_log', $this->log);
-        self::q('DELETE FROM 202_alert_state WHERE user_id IN (' . self::OWNER . ', ' . self::OTHER . ')');
-        self::q('DELETE FROM 202_ltv_webhook_deliveries WHERE user_id IN (' . self::OWNER . ', ' . self::OTHER . ')');
-        self::q('DELETE FROM 202_alert_settings WHERE user_id IN (' . self::OWNER . ', ' . self::OTHER . ')');
+        foreach (['202_alert_state', '202_ltv_webhook_deliveries', '202_alert_settings'] as $table) {
+            self::q("DELETE FROM $table WHERE user_id IN (" . self::USERS . ')');
+        }
         $this->settings(self::OWNER, new AlertSettings(true, true, true, true, 5, 10, '100.00'));
         $this->settings(self::OTHER, new AlertSettings(false, true, true, true, 5, 10, '100.00'));
     }
@@ -160,7 +171,7 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
     {
         $report = $this->runAlerts(self::$now);
 
-        self::assertSame(['accounts' => 1, 'sent' => 2, 'failed' => 0, 'unsent' => 0, 'errors' => 0], $report);
+        self::assertSame(['accounts' => 2, 'sent' => 2, 'failed' => 0, 'unsent' => 1, 'errors' => 0], $report);
 
         self::assertCount(2, $this->posted);
         foreach ($this->posted as $options) {
@@ -240,8 +251,7 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         $this->slackStatus = 500;
 
         $first = $this->runAlerts(self::$now);
-        self::assertSame(['accounts' => 1, 'sent' => 0, 'failed' => 2, 'unsent' => 0, 'errors' => 0], $first);
-        self::assertSame([], (new MysqlAlertStore(new Connection(self::$db)))->sentIncidents(self::OWNER));
+        self::assertSame(['accounts' => 2, 'sent' => 0, 'failed' => 2, 'unsent' => 1, 'errors' => 0], $first);
         $logged = (string) file_get_contents($this->log);
         self::assertStringContainsString(
             'campaign ' . self::STOPPED . ' of account ' . self::OWNER
@@ -256,6 +266,91 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         self::assertCount(4, $this->posted);
         self::assertSame([], $this->mailed, 'email is off');
         self::assertSame([], self::deliveries(), 'webhooks are off');
+    }
+
+    public function testAnIncidentEveryChannelFailsForIsTriedAtMostThreeTimes(): void
+    {
+        $this->settings(self::OWNER, new AlertSettings(true, true, false, false, 5, 10, '0.00'));
+        $this->slackStatus = 500;
+
+        foreach ([1, 2, 3] as $run) {
+            self::assertSame(1, $this->runAlerts(self::$now + $run)['failed'], "run $run tries again");
+        }
+        self::assertCount(3, $this->posted);
+
+        $this->slackStatus = 200;
+        self::assertSame(0, $this->runAlerts(self::$now + 4)['sent'], 'the fourth run leaves the incident alone');
+        self::assertCount(3, $this->posted);
+    }
+
+    public function testAnAccountWithNoSettingsRowIsAlertedByEmailAndItsOwnSlack(): void
+    {
+        self::q('DELETE FROM 202_alert_settings WHERE user_id = ' . self::OWNER);
+
+        $report = $this->runAlerts(self::$now);
+
+        self::assertSame(['accounts' => 2, 'sent' => 1, 'failed' => 0, 'unsent' => 1, 'errors' => 0], $report);
+        self::assertSame(['rp' . self::OWNER . '@example.com'], array_column($this->mailed, 0));
+        self::assertStringContainsString('Spring Sale', $this->mailed[0][2]);
+        self::assertSame([self::OWNER_SLACK], array_column($this->posted, CURLOPT_URL));
+        $events = array_column(self::deliveries(), 'event_name');
+        self::assertSame(['alert.conversions_stopped'], $events, 'no cap by default');
+        // The account with nowhere to send its alert is told nothing and logs nothing.
+        self::assertStringNotContainsString('account ' . self::QUIET, (string) file_get_contents($this->log));
+        self::assertArrayHasKey(
+            'conversions_stopped:' . self::QUIET_STOPPED,
+            (new MysqlAlertStore(new Connection(self::$db)))->sentIncidents(self::QUIET),
+            'recorded, so it is not tried every hour'
+        );
+    }
+
+    public function testAnAccountThatTurnedAlertsOffGetsNone(): void
+    {
+        $this->runAlerts(self::$now);
+
+        self::assertNotContains(self::OTHER_SLACK, array_column($this->posted, CURLOPT_URL));
+        self::assertNotContains('rp' . self::OTHER . '@example.com', array_column($this->mailed, 0));
+        $queuedFor = array_values(array_unique(array_map('intval', array_column(self::deliveries(), 'user_id'))));
+        self::assertSame([self::OWNER], $queuedFor);
+        self::assertSame([], (new MysqlAlertStore(new Connection(self::$db)))->sentIncidents(self::OTHER));
+
+        // Without its row the same account is alerted: the row is what keeps it quiet.
+        self::q('DELETE FROM 202_alert_settings WHERE user_id = ' . self::OTHER);
+        $this->runAlerts(self::$now + 60);
+        self::assertContains(self::OTHER_SLACK, array_column($this->posted, CURLOPT_URL));
+        self::assertContains('rp' . self::OTHER . '@example.com', array_column($this->mailed, 0));
+    }
+
+    public function testEveryMessageSaysHowToTurnAlertsOff(): void
+    {
+        $this->settings(self::OWNER, new AlertSettings(true, true, true, false, 5, 10, '0.00'));
+
+        $this->runAlerts(self::$now, self::SETTINGS_URL);
+
+        self::assertStringEndsWith(
+            "\nTo turn these alerts off: <" . self::SETTINGS_URL . '|Account › Personal settings › Money-loss alerts>.',
+            self::slackText((string) $this->posted[0][CURLOPT_POSTFIELDS])
+        );
+        self::assertStringContainsString(
+            'To turn these alerts off: Account › Personal settings › Money-loss alerts (' . self::SETTINGS_URL . ').',
+            $this->mailed[0][2]
+        );
+
+        // Where the install's address is not known, the place is named without a link.
+        self::q('DELETE FROM 202_alert_state WHERE user_id = ' . self::OWNER);
+        $this->runAlerts(self::$now);
+        self::assertStringEndsWith(
+            "\nTo turn these alerts off: Account › Personal settings › Money-loss alerts.",
+            self::slackText((string) $this->posted[1][CURLOPT_POSTFIELDS])
+        );
+        self::assertStringContainsString(
+            'To turn these alerts off: Account › Personal settings › Money-loss alerts.',
+            $this->mailed[1][2]
+        );
+        self::assertNull(
+            AlertNotifier::settingsUrl(new Connection(self::$db), ['argv' => []], dirname(__DIR__, 2)),
+            'a command-line run does not know the install\'s path'
+        );
     }
 
     public function testNoCapMeansNoSpendAlert(): void
@@ -274,7 +369,7 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
     }
 
     /** @return array{accounts: int, sent: int, failed: int, unsent: int, errors: int} */
-    private function runAlerts(int $now): array
+    private function runAlerts(int $now, ?string $settingsUrl = null): array
     {
         $transport = function (array $options): array {
             $this->posted[] = $options;
@@ -291,7 +386,7 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         };
         $conn = new Connection(self::$db);
 
-        return (new AlertRun($conn, new AlertNotifier($conn, $slack, $mailer)))->run($now, time() + 60);
+        return (new AlertRun($conn, new AlertNotifier($conn, $slack, $mailer, $settingsUrl)))->run($now, time() + 60);
     }
 
     private function settings(int $user, AlertSettings $settings): void
@@ -354,7 +449,7 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        $users = self::OWNER . ', ' . self::OTHER;
+        $users = self::USERS;
         foreach (
             ['202_alert_state', '202_alert_settings', '202_ltv_webhook_deliveries', '202_ltv_webhooks',
             '202_conversion_logs', '202_dataengine', '202_aff_campaigns', '202_users_pref', '202_users'] as $table

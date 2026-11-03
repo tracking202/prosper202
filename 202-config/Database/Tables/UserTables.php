@@ -331,7 +331,8 @@ final class UserTables
 
     /**
      * An account's money-loss alerts (Prosper202\Alerts\AlertSettings): no
-     * row is the defaults, which are off. From 1.9.80, added by its rung.
+     * row is the defaults, which are on; an account that turns them off has
+     * a row with enabled 0. From 1.9.80, added by its rung.
      */
     public static function alertSettings(): SchemaDefinition
     {
@@ -339,7 +340,7 @@ final class UserTables
             TableRegistry::ALERT_SETTINGS,
             "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ALERT_SETTINGS . "` (
                 `user_id` mediumint(8) unsigned NOT NULL,
-                `enabled` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `enabled` tinyint(1) unsigned NOT NULL DEFAULT '1',
                 `notify_slack` tinyint(1) unsigned NOT NULL DEFAULT '1',
                 `notify_email` tinyint(1) unsigned NOT NULL DEFAULT '1',
                 `notify_webhook` tinyint(1) unsigned NOT NULL DEFAULT '1',
@@ -357,7 +358,9 @@ final class UserTables
      * The last incident each alert was sent for, per campaign: the campaign's
      * last conversion for conversions_stopped, the local day's start for
      * spend_without_conversions (Prosper202\Alerts\MysqlAlertStore). A new
-     * incident has another key, so it is sent again. From 1.9.80.
+     * incident has another key, so it is sent again. delivered 0 is an
+     * incident every channel failed for, tried again until attempts reaches
+     * AlertRun::MAX_ATTEMPTS. From 1.9.80.
      */
     public static function alertState(): SchemaDefinition
     {
@@ -369,6 +372,8 @@ final class UserTables
                 `alert_kind` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
                 `incident_key` int(10) unsigned NOT NULL,
                 `alerted_at` int(10) unsigned NOT NULL,
+                `delivered` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `attempts` tinyint(3) unsigned NOT NULL DEFAULT '1',
                 PRIMARY KEY (`user_id`, `aff_campaign_id`, `alert_kind`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

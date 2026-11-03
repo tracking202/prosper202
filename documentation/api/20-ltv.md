@@ -362,8 +362,8 @@ export webhooks' setting; link-local and metadata addresses never are.
 
 `alert.conversions_stopped` and `alert.spend_without_conversions` are the
 money-loss alerts (Account › Personal settings › Money-loss alerts), queued
-by the cron job's hourly run when the account turns alerts and their webhook
-channel on. Both carry `{alert, campaign_id, campaign_name, message}`;
+by the cron job's hourly run for webhooks subscribed to them, unless the
+account turned the alerts or their webhook channel off. Both carry `{alert, campaign_id, campaign_name, message}`;
 `conversions_stopped` adds `last_conversion_at`, `seconds_without_conversion`,
 `usual_gap_seconds`, `clicks_since_last_conversion`,
 `usual_clicks_per_conversion`, `conversions_last_7_days` and `gap_multiple`,

@@ -4,9 +4,11 @@ A postback or pixel that breaks quietly is the costliest failure in paid
 traffic: the campaign keeps buying clicks, and the missing conversions are
 found only at the next look. Money-loss alerts watch for it.
 
-Turn them on under **Account › Personal settings › Money-loss alerts**. They
-are off until you do. The cron job's hourly run then checks each of your
-campaigns.
+They are **on for every account by default**, including accounts that
+existed before the upgrade to 1.9.80. The cron job's hourly run checks each
+account's campaigns. Turn them off, or change when and where they are sent,
+under **Account › Personal settings › Money-loss alerts**. An account that
+turns them off stays off through later upgrades.
 
 ## What is alerted
 
@@ -35,16 +37,28 @@ one. Each alert is sent once per incident.
 
 ## Where alerts go
 
-Choose any of the three; each uses your own account's settings.
+Each channel uses your own account's settings. By default all three are on,
+and each sends only where it has somewhere to go:
 
-- **Slack**: the incoming webhook set under Account › API integrations.
 - **Email**: your account's email address, sent through the server's
-  `mail()`. A server that cannot send email logs that it did not.
+  `mail()`. If the server cannot send email, the failure is logged.
+- **Slack**: only if you have set an incoming webhook under Account › API
+  integrations.
 - **Webhooks**: your account webhooks (`p202 ltv webhooks create`, or
   `POST /ltv/webhooks`) subscribed to `alert.conversions_stopped`,
   `alert.spend_without_conversions`, or every event (`*`). They are signed and
   retried as every webhook event is; see [the payloads](../api/20-ltv.md).
 
-An alert that no channel took because each one failed (Slack answered an
-error, `mail()` refused it, the webhook could not be queued) is tried again
-the next hour. Failures are written to the PHP error log.
+An account with no email address, no Slack webhook and no subscribed webhook
+gets nothing, and nothing is logged for it.
+
+Every email and Slack message ends with a line saying how to turn the alerts
+off. The line links to the settings page when the install's address is known:
+user 1's tracking domain is set and the cron job is fetched through the web
+server. A command-line cron run cannot know the install's path, so the
+message names the page without a link.
+
+If every channel tried for an alert fails (Slack answered an error, `mail()`
+refused it, the webhook could not be queued), the alert is tried again the
+next hour, at most three times per incident. Failures are written to the PHP
+error log.

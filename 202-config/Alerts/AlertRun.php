@@ -8,15 +8,21 @@ use Prosper202\Database\Connection;
 
 /**
  * The cron job's hourly run of the money-loss alerts: every account with
- * alerts on, each detector, each alert sent once per incident.
+ * alerts on (all of them unless one turned them off), each detector, each
+ * alert sent once per incident.
  *
- * An alert is recorded as sent once a channel took it, or when no channel
- * could be tried (nothing set up to send to); a channel's failure is
- * logged. When every channel tried failed, nothing is recorded and the next
- * run sends it again. One account's failure is logged and the others go on.
+ * An alert is recorded as sent once a channel took it, or when the account
+ * has nowhere to send it (no email, no Slack webhook, no subscribed
+ * webhook), which is quiet. A channel's failure is logged; when every
+ * channel tried failed, the next run tries again, up to MAX_ATTEMPTS runs
+ * per incident, so a server that cannot send mail logs a few lines per
+ * incident rather than one an hour. One account's failure is logged and
+ * the others go on.
  */
 final class AlertRun
 {
+    public const MAX_ATTEMPTS = 3;
+
     /** @var list<AlertDetector> */
     private array $detectors;
 
@@ -82,7 +88,9 @@ final class AlertRun
         $contact = null;
         foreach ($this->detectors as $detector) {
             foreach ($detector->detect($this->conn, $activity, $settings) as $alert) {
-                if (($sent[MysqlAlertStore::incidentId($alert)] ?? null) === $alert->incidentKey) {
+                [$key, $delivered, $attempts] = $sent[MysqlAlertStore::incidentId($alert)] ?? [null, false, 0];
+                $tries = $key === $alert->incidentKey ? $attempts : 0;
+                if ($key === $alert->incidentKey && ($delivered || $tries >= self::MAX_ATTEMPTS)) {
                     continue;
                 }
                 $contact ??= $this->notifier->contact($userId);
@@ -93,26 +101,31 @@ final class AlertRun
                 }
                 if ($result['taken'] === [] && $result['failed'] !== []) {
                     $report['failed']++;
+                    $store->recordAttempt($alert, false, $tries + 1, $now);
                     continue;
                 }
-                if ($result['taken'] === []) {
-                    $report['unsent']++;
-                    error_log('Money-loss alerts: the ' . $alert->kind->stateKey() . ' alert for campaign '
-                        . $alert->campaignId . ' of account ' . $userId . ' had nowhere to go: '
-                        . implode('; ', $result['skipped']));
-                } else {
-                    $report['sent']++;
-                }
-                $store->recordSent($alert, $now);
+                $report[$result['taken'] === [] ? 'unsent' : 'sent']++;
+                $store->recordAttempt($alert, true, $tries + 1, $now);
             }
         }
+    }
+
+    /**
+     * Whether the run has anything to say: with alerts on for every account,
+     * a run that found nothing prints nothing.
+     *
+     * @param array{accounts: int, sent: int, failed: int, unsent: int, errors: int} $report
+     */
+    public static function worthSaying(array $report): bool
+    {
+        return $report['sent'] + $report['failed'] + $report['errors'] > 0;
     }
 
     /** @param array{accounts: int, sent: int, failed: int, unsent: int, errors: int} $report */
     public static function summary(array $report): string
     {
         return $report['accounts'] . ' account(s) checked, ' . $report['sent'] . ' alert(s) sent'
-            . ($report['failed'] > 0 ? ', ' . $report['failed'] . ' not sent (tried again next hour)' : '')
+            . ($report['failed'] > 0 ? ', ' . $report['failed'] . ' not sent' : '')
             . ($report['unsent'] > 0 ? ', ' . $report['unsent'] . ' with no channel set up' : '')
             . ($report['errors'] > 0 ? ', ' . $report['errors'] . ' account(s) failed' : '');
     }

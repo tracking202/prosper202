@@ -10,8 +10,9 @@ use PHPUnit\Framework\TestCase;
  * The 1.9.79 -> 1.9.80 rung creates the money-loss alerts' tables
  * (202_alert_settings, 202_alert_state) and adds 202_conversion_logs'
  * user_conv_time as the installer makes them, keeps the conversions there,
- * and logs nothing: a 1.9.79 install has none of them, and every account's
- * alerts are off until it turns them on.
+ * and logs nothing: a 1.9.79 install has none of them, so every account has
+ * the defaults (alerts on) until it changes them; an account that turned them
+ * off keeps its row through the step.
  *
  * The rung runs as the upgrade page runs it (fixtures/ladder-runner.php).
  *
@@ -81,6 +82,25 @@ final class MoneyLossAlertsUpgradeIntegrationTest extends TestCase
             self::assertSame('1.9.80', $version->fetch_row()[0]);
         } finally {
             self::q('DELETE FROM 202_conversion_logs WHERE user_id = 7899');
+        }
+    }
+
+    public function testAnAccountThatTurnedAlertsOffStaysOffThroughTheStep(): void
+    {
+        self::q('DELETE FROM 202_alert_settings WHERE user_id = 7899');
+        self::q('INSERT INTO 202_alert_settings SET user_id = 7899, enabled = 0, updated_at = 1');
+        self::q('DELETE FROM 202_version');
+        self::row('202_version', ['version' => '1.9.79']);
+
+        try {
+            [$out, $err] = self::upgrade();
+
+            self::assertSame('RETURNED true', $out, $err);
+            $kept = self::$db->query('SELECT enabled FROM 202_alert_settings WHERE user_id = 7899');
+            self::assertInstanceOf(\mysqli_result::class, $kept);
+            self::assertSame([['0']], $kept->fetch_all());
+        } finally {
+            self::q('DELETE FROM 202_alert_settings WHERE user_id = 7899');
         }
     }
 

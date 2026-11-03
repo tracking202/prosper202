@@ -10,7 +10,7 @@ use Prosper202\Alerts\AlertText;
 
 /**
  * The money-loss alert settings' one rule (AlertSettings::fromInput()), which
- * the Personal settings card asks: off by default, every value held to its
+ * the Personal settings card asks: on by default, every value held to its
  * range, and a malformed one refused by name rather than read as a default.
  */
 final class AlertSettingsTest extends TestCase
@@ -22,11 +22,12 @@ final class AlertSettingsTest extends TestCase
             'gap_multiple' => '6', 'min_conversions' => '25', 'daily_cost_cap' => '150.5'];
     }
 
-    public function testTheDefaultsAreOff(): void
+    public function testTheDefaultsAreOnWithEveryChannelAndNoCap(): void
     {
         $defaults = AlertSettings::defaults();
 
-        self::assertFalse($defaults->enabled);
+        self::assertTrue($defaults->enabled);
+        self::assertTrue($defaults->notifyEmail && $defaults->notifySlack && $defaults->notifyWebhook);
         self::assertFalse($defaults->hasCostCap());
         self::assertSame(5, $defaults->gapMultiple);
         self::assertSame(10, $defaults->minConversions);
