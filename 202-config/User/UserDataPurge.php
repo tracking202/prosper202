@@ -89,6 +89,7 @@ final class UserDataPurge
         'DELETE o FROM 202_identity_observations o JOIN 202_clicks c ON c.click_id = o.click_id WHERE c.user_id = ?',
         'DELETE FROM 202_clicks_visitor WHERE user_id = ?',
         'DELETE FROM 202_purlink_exit_order WHERE user_id = ?',
+        'DELETE FROM 202_purlink_pixel_fires WHERE user_id = ?',
         'DELETE FROM 202_identity_merges WHERE user_id = ?',
         'DELETE FROM 202_identity_signals WHERE user_id = ?',
         'DELETE FROM 202_identity_visitors WHERE user_id = ?',

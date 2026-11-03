@@ -26,6 +26,7 @@ final class PurLinkOrderUpgradeIntegrationTest extends TestCase
         if (self::$db === null) { return; }
         self::q('DROP VIEW IF EXISTS 202_purlink_order_blocker');
         self::q(ClickTables::purLinkExitOrder()->createStatement);
+        self::q(ClickTables::purLinkPixelFires()->createStatement);
         self::q(GoalTables::purLinkGoalSubjects()->createStatement);
         self::q('DELETE FROM 202_version');
         foreach (self::$versions as $version) { self::row('202_version', ['version' => $version]); }
@@ -40,7 +41,9 @@ final class PurLinkOrderUpgradeIntegrationTest extends TestCase
     {
         $shape = self::shape();
         $goalShape = self::goalShape();
+        $pixelShape = self::pixelShape();
         self::q('DROP TABLE 202_purlink_exit_order');
+        self::q('DROP TABLE IF EXISTS 202_purlink_pixel_fires');
         self::q('DROP TABLE 202_purlink_goal_subjects');
         self::setVersion($version);
         [$out, $err] = self::upgrade();
@@ -49,6 +52,8 @@ final class PurLinkOrderUpgradeIntegrationTest extends TestCase
         self::assertSame('1.9.81', self::version());
         self::assertSame($shape, self::shape());
         self::assertSame($goalShape, self::goalShape());
+        self::assertSame($pixelShape, self::pixelShape());
+        self::q('INSERT INTO 202_purlink_pixel_fires VALUES (789, 123, 1, 2000000000)');
         self::q('INSERT INTO 202_purlink_exit_order VALUES (123, 1, 2, 3, 4, 2000000000)');
         self::q('INSERT INTO 202_purlink_goal_subjects (subject_id,user_id,click_id,landing_page_id,campaign_id) VALUES (456,1,123,2,4)');
         self::setVersion($version);
@@ -57,7 +62,9 @@ final class PurLinkOrderUpgradeIntegrationTest extends TestCase
         self::assertSame('1.9.81', self::version());
         self::assertSame('3', self::$db->query('SELECT sequence FROM 202_purlink_exit_order WHERE click_id=123')->fetch_row()[0]);
         self::assertSame('4', self::$db->query('SELECT campaign_id FROM 202_purlink_goal_subjects WHERE subject_id=456')->fetch_row()[0]);
+        self::assertSame('123', self::$db->query('SELECT click_id FROM 202_purlink_pixel_fires WHERE conv_id=789')->fetch_row()[0]);
         self::q('DELETE FROM 202_purlink_exit_order WHERE click_id=123');
+        self::q('DELETE FROM 202_purlink_pixel_fires WHERE conv_id=789');
         self::q('DELETE FROM 202_purlink_goal_subjects WHERE subject_id=456');
     }
 
@@ -100,6 +107,12 @@ final class PurLinkOrderUpgradeIntegrationTest extends TestCase
     private static function shape(): string
     {
         return (string) self::$db->query('SHOW CREATE TABLE 202_purlink_exit_order')->fetch_row()[1];
+    }
+
+    private static function pixelShape(): string
+    {
+        self::q(ClickTables::purLinkPixelFires()->createStatement);
+        return (string) self::$db->query('SHOW CREATE TABLE 202_purlink_pixel_fires')->fetch_row()[1];
     }
 
     private static function goalShape(): string

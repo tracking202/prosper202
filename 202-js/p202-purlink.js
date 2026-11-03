@@ -232,6 +232,12 @@
             generated = formResult.generated;
         }
         if (ownsRaw) { element.setAttribute('data-t202rawlink', template); }
+        // A deferred pixel needs this page to stay open: as in 1.9.56 the
+        // offer opens in a new tab, unless the page chose a target itself.
+        if (options.newTab === true && direct && element.tagName === 'A' && !element.hasAttribute('target')) {
+            element.setAttribute('target', '_blank');
+            element.setAttribute('rel', 'noopener');
+        }
         element.setAttribute(attribute, rendered);
         managed.set(element, {
             attribute: attribute, template: template, rendered: rendered,
@@ -256,6 +262,9 @@
         var state = managed.get(element);
         if (state && state.direct) {
             try { options.report(state.offer, event); } catch (e) { /* Never block navigation. */ }
+            if (typeof options.afterExit === 'function') {
+                try { options.afterExit(state.offer); } catch (e) { /* Never block navigation. */ }
+            }
         }
     }
 
@@ -354,6 +363,65 @@
         return reporter;
     }
 
+    // The deferred pixel (1.9.56's defpixel): after a PurLink click-out, ask
+    // until the click converts, then render the traffic source's browser
+    // pixels on this page. The proof stays in the body. A refusal (an expired
+    // proof, a page that moved) or withdrawn consent stops it for good.
+    function createPixelPoller(endpoint, proof, allowed, render) {
+        var url = new URL(endpoint, document.baseURI);
+        if ((url.protocol !== 'https:' && url.protocol !== 'http:') || typeof proof !== 'string' || !proof ||
+            typeof allowed !== 'function' || typeof render !== 'function') {
+            throw new Error('Invalid PurLink pixel configuration');
+        }
+        var started = 0;
+        var timer = null;
+        var active = true;
+        function permitted() {
+            try { return active && allowed() === true; } catch (e) { return false; }
+        }
+        function schedule() {
+            if (!permitted()) { return; }
+            var elapsed = Date.now() - started;
+            timer = window.setTimeout(poll, elapsed < 1800000 ? 30000 : 60000);
+        }
+        function poll() {
+            timer = null;
+            if (!permitted() || typeof window.fetch !== 'function') { return; }
+            window.fetch(url.toString(), {
+                method: 'POST', mode: 'cors', credentials: 'omit', cache: 'no-store', redirect: 'error',
+                referrerPolicy: 'no-referrer', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: 'proof=' + encodeURIComponent(proof)
+            }).then(function (response) {
+                if (response.status === 404 || response.status === 422) { active = false; return null; }
+                return response.ok ? response.json() : null;
+            }).then(function (payload) {
+                if (payload && payload.status === 'fired' && typeof payload.markup === 'string' &&
+                    payload.markup !== '' && permitted()) {
+                    try { render(payload.markup); } catch (e) { /* A broken pixel never stops tracking. */ }
+                }
+            }).catch(function () { /* Network trouble: try again later. */ }).then(schedule);
+        }
+        function poller() {
+            if (started || !permitted()) { return; }
+            started = Date.now();
+            timer = window.setTimeout(poll, 10000);
+        }
+        poller.cancel = function () {
+            active = false;
+            if (timer !== null) { window.clearTimeout(timer); timer = null; }
+        };
+        return poller;
+    }
+
+    // Pixel code is the account's own: it runs in this page, where a traffic
+    // source pixel (for example one that reads its first-party cookie) works.
+    function renderPixels(markup) {
+        var host = document.body || document.documentElement;
+        var range = document.createRange();
+        range.selectNode(host);
+        host.appendChild(range.createContextualFragment(markup));
+    }
+
     function init(config) {
         var next = config || {};
         if (options !== next) {
@@ -398,6 +466,7 @@
         refresh();
     }
 
-    window.p202PurLink = {init: init, refresh: refresh, createPreparer: createPreparer, createReporter: createReporter};
+    window.p202PurLink = {init: init, refresh: refresh, createPreparer: createPreparer, createReporter: createReporter,
+        createPixelPoller: createPixelPoller, renderPixels: renderPixels};
     window.updatePurLink = refresh;
 }(window, document));

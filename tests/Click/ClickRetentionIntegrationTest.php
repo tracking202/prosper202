@@ -50,6 +50,7 @@ final class ClickRetentionIntegrationTest extends TestCase
         '202_clicks_visitor' => 'user_id = {u}, visitor_key = {id}, click_time = {t}',
         '202_clicks_filter_reason' => "filter_reason = 'repeat_visit'",
         '202_purlink_exit_order' => 'user_id = {u}, landing_page_id = 1, sequence = 1, campaign_id = 1, expires_at = {t}',
+        '202_purlink_pixel_fires' => 'conv_id = {id}, user_id = {u}, expires_at = {t}',
         '202_click_latest_visits' => 'click_time = {t}',
     ];
 

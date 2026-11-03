@@ -6,7 +6,7 @@ namespace Prosper202\Click;
 
 use Prosper202\Database\Connection;
 
-/** Deletes ordering records only after their pageview proofs have expired. */
+/** Deletes ordering and deferred-pixel records only after their pageview proofs have expired. */
 final class PurLinkExitRetention
 {
     public const BATCH = 1000;
@@ -25,6 +25,12 @@ final class PurLinkExitRetention
             'DELETE FROM 202_purlink_exit_order WHERE expires_at <= ? ORDER BY expires_at LIMIT ' . self::BATCH
         );
         $this->conn->bind($stmt, 'i', [$now]);
-        return $this->conn->executeUpdate($stmt);
+        $orders = $this->conn->executeUpdate($stmt);
+        $stmt = $this->conn->prepareWrite(
+            'DELETE FROM 202_purlink_pixel_fires WHERE expires_at <= ? ORDER BY expires_at LIMIT ' . self::BATCH
+        );
+        $this->conn->bind($stmt, 'i', [$now]);
+
+        return max($orders, $this->conn->executeUpdate($stmt));
     }
 }

@@ -154,6 +154,8 @@ $p202BeaconFinishedJs = $p202Js(!$p202SendsBeacon);
 $p202PurLinkRequestedJs = $p202Js($p202SendsBeacon && isset($identityRow) && ($_GET['p202_purlink'] ?? null) !== '0');
 $p202PurLinkBaseJs = $p202Js($baseUrl);
 $p202PurLinkAdvancedJs = $p202Js(isset($identityRow) && (int) $identityRow['landing_page_type'] === 1);
+// The deferred pixel: p202_defpixel=1, or defpixel=1 from a 1.9.56 snippet.
+$p202PurLinkDeferredJs = $p202Js(($_GET['p202_defpixel'] ?? $_GET['defpixel'] ?? null) === '1');
 $p202ServerDataJs = $p202Js($t202ServerData, true);
 $p202ClientParamMapJs = $p202Js($t202ClientParamMap);
 ?>
@@ -319,6 +321,9 @@ var p202PurLinkPage = <?php echo $lpip_js; ?>;
 var p202PurLinkPending = null;
 var p202PurLinkReporter = null;
 var p202PurLinkReporterProof = null;
+var p202PurLinkDeferred = <?php echo $p202PurLinkDeferredJs; ?>;
+var p202PurLinkPoller = null;
+var p202PurLinkPollerProof = null;
 var p202PurLinkRevoked = !!p202PurLinkInitialRefusal || !p202ConsentGiven();
 function p202PurLinkFallback(offer) {
     if (offer) { return p202PurLinkBase + 'tracking202/redirect/go.php?acip=' + t202Enc(offer); }
@@ -332,14 +337,22 @@ function p202ConfigurePurLinks(pageview) {
         p202PurLinkReporter = null;
         p202PurLinkReporterProof = null;
     }
+    var currentPixelProof = pageview && pageview.pixelProof;
+    if (p202PurLinkPoller && (!currentPixelProof || currentPixelProof !== p202PurLinkPollerProof || p202PurLinkRevoked)) {
+        p202PurLinkPoller.cancel();
+        p202PurLinkPoller = null;
+        p202PurLinkPollerProof = null;
+    }
     var config = {
         directEnabled: true,
+        newTab: p202PurLinkDeferred,
         trackerBase: p202PurLinkBase,
         fallback: p202PurLinkFallback,
         tokens: {t202kw: t202kw, c1: c1, c2: c2, c3: c3, c4: c4,
             utm_source: utm_source, utm_medium: utm_medium, utm_campaign: utm_campaign,
             utm_term: utm_term, utm_content: utm_content, t202pubid: t202GetVar('t202pubid'),
-            gclid: t202GetVar('gclid'), msclkid: t202GetVar('msclkid'), fbclid: t202GetVar('fbclid'),
+            gclid: t202GetVar('gclid'), gbraid: t202GetVar('gbraid'), wbraid: t202GetVar('wbraid'),
+            ttclid: t202GetVar('ttclid'), msclkid: t202GetVar('msclkid'), fbclid: t202GetVar('fbclid'),
             referer: document.referrer || null, referrer: document.referrer || null,
             random: String(Math.floor(Math.random() * 1000000000))}
     };
@@ -354,6 +367,17 @@ function p202ConfigurePurLinks(pageview) {
                 p202PurLinkReporterProof = pageview.exitProof;
             }
             config.report = p202PurLinkReporter;
+            if (p202PurLinkDeferred && typeof pageview.pixelProof === 'string' && pageview.pixelProof) {
+                if (!p202PurLinkPoller) {
+                    p202PurLinkPoller = window.p202PurLink.createPixelPoller(
+                        p202PurLinkBase + 'tracking202/static/purlink-pixels.php', pageview.pixelProof,
+                        function () { return !p202PurLinkRevoked && p202ConsentGiven(); },
+                        window.p202PurLink.renderPixels
+                    );
+                    p202PurLinkPollerProof = pageview.pixelProof;
+                }
+                config.afterExit = p202PurLinkPoller;
+            }
             config.prepareOffer = function (offer) {
                 if (p202PurLinkAdvanced && !offer) { return Promise.reject(new Error('Offer required')); }
                 return prepare(offer);

@@ -4650,6 +4650,7 @@ class UPGRADE
             // failure leaves 1.9.79 so the next run retries.
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),
+                \Prosper202\Database\Tables\ClickTables::purLinkPixelFires(),
                 \Prosper202\Database\Tables\GoalTables::purLinkGoalSubjects(),
             ]);
             if (!$step_ok) {

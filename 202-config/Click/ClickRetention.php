@@ -99,6 +99,7 @@ final class ClickRetention
         '202_clicks_visitor',
         '202_clicks_filter_reason',
         '202_purlink_exit_order',
+        '202_purlink_pixel_fires',
         '202_click_latest_visits',
         '202_clicks',
     ];

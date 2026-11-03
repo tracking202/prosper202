@@ -12,6 +12,7 @@ use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Click\OfferRoute;
 use Prosper202\Click\PurLinkExit;
 use Prosper202\Click\PurLinkLegacySubid;
+use Prosper202\Click\PurLinkPixels;
 use Prosper202\Click\PurLinkProof;
 use Prosper202\Click\PurLinkSubid;
 use Prosper202\Click\RecordedClicks;
@@ -78,7 +79,7 @@ final class ClickExitIntegrationTest extends TestCase
         $tables = [
             '202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_variable',
             '202_google', '202_clicks_rotator', '202_clicks_record', '202_clicks_site',
-            '202_attribution_rollup_dirty_clicks', '202_purlink_exit_order',
+            '202_attribution_rollup_dirty_clicks', '202_purlink_exit_order', '202_purlink_pixel_fires',
         ];
         foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
@@ -90,6 +91,8 @@ final class ClickExitIntegrationTest extends TestCase
             . " WHERE r.user_id IN ($users)");
         self::q("DELETE FROM 202_rotators WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_landing_pages WHERE user_id IN ($users)");
+        self::q("DELETE x FROM 202_ppc_account_pixels x JOIN 202_ppc_accounts a USING (ppc_account_id) WHERE a.user_id IN ($users)");
+        self::q("DELETE FROM 202_ppc_accounts WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_aff_campaigns WHERE user_id IN ($users)");
     }
 
@@ -461,6 +464,90 @@ final class ClickExitIntegrationTest extends TestCase
         );
         self::assertSame($mode === 'replace' ? '3.12500' : '10.37500', self::state($clickId)['click_payout']);
         self::q("UPDATE 202_aff_campaigns SET payout_mode = 'replace' WHERE aff_campaign_id = " . self::$campaign);
+    }
+
+    public function testDeferredPixelsFireEachServerConversionOnceForItsOwnPageview(): void
+    {
+        $clickId = self::FIRST_CLICK + 70;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'deferred',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        $account = self::insert('INSERT INTO 202_ppc_accounts SET user_id = ' . self::OWNER
+            . ", ppc_network_id = 1, ppc_account_name = 'source', ppc_account_time = 1");
+        self::q("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 1,"
+            . " pixel_code = 'https://source.example/px?v=[[payout]]&t=[[transactionid]]&s=[[subid]]'");
+        self::q("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 4,"
+            . " pixel_code = 'https://source.example/server?t=[[transactionid]]'");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page, ppc_account_id = $account WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $exitProof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 3600, $key);
+        $pixelProof = PurLinkProof::issue(PurLinkProof::PIXELS, $clickId, $page, self::OWNER, $now, 3600, $key);
+        $conn = new Connection(self::requireScratch());
+        $exit = new PurLinkExit($conn);
+        $pixels = new PurLinkPixels($conn);
+
+        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key)['status'], 'no conversion yet');
+        self::assertSame('refused', $pixels->poll($exitProof, $now, $key)['status'], 'an exit proof is not a pixel proof');
+        self::assertSame('refused', $pixels->poll($pixelProof, $now + 3600, $key)['status'], 'expired');
+        self::assertSame('refused', $pixels->poll($pixelProof, $now, str_repeat('y', 32))['status'], 'another key');
+
+        $subid = $exit->subid($exitProof, '11101', $now, $key);
+        self::assertIsString($subid);
+        $sale = $exit->recordConversion($subid, $key, [
+            'transaction_id' => 'deferred-sale', 'pixel_type' => 2, 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($sale);
+        $fired = $pixels->poll($pixelProof, $now, $key);
+        self::assertSame('fired', $fired['status']);
+        self::assertSame(1, $fired['conversions']);
+        self::assertStringContainsString('https://source.example/px?v=7.25000&amp;t=deferred-sale&amp;s=' . $clickId, $fired['markup']);
+        self::assertStringNotContainsString('/server', $fired['markup'], 'server postbacks are never resent');
+        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key)['status'], 'each conversion fires once');
+        self::assertSame(
+            ['expires_at' => (string) ($now + 3600)],
+            self::one('SELECT expires_at FROM 202_purlink_pixel_fires WHERE conv_id = ' . (int) $sale['convId'])
+        );
+
+        // A browser pixel conversion rendered its own markup; a reversed sale
+        // is not announced; a replaced one no longer counts.
+        $browser = $exit->recordConversion($subid, $key, [
+            'transaction_id' => 'browser-sale', 'pixel_type' => 1, 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($browser);
+        $taken = $exit->recordConversion($subid, $key, [
+            'transaction_id' => 'taken-back', 'pixel_type' => 2, 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($taken);
+        $reversal = $exit->recordConversion($subid, $key, [
+            'transaction_id' => 'taken-back', 'pixel_type' => 2, 'reversal' => true, 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($reversal);
+        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key)['status']);
+
+        // A pageview's proof cannot read the click once it is on another page,
+        // and another account's click is never this proof's.
+        $moved = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'moved',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $moved WHERE click_id = $clickId");
+        self::assertSame('refused', $pixels->poll($pixelProof, $now, $key)['status']);
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        $foreign = self::FIRST_CLICK + 71;
+        self::click($foreign, self::OTHER);
+        RecordedClicks::note($foreign);
+        $forged = PurLinkProof::issue(PurLinkProof::PIXELS, $foreign, $page, self::OWNER, $now, 3600, $key);
+        self::assertSame('refused', $pixels->poll($forged, $now, $key)['status']);
+
+        // Fired rows go once no proof can poll for them.
+        (new \Prosper202\Click\PurLinkExitRetention($conn))->prune($now + 3601);
+        self::assertSame(
+            ['n' => '0'],
+            self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE click_id = $clickId")
+        );
     }
 
     public function testExpiredExitFencesArePrunedInBoundedBatches(): void

@@ -25,6 +25,7 @@ final class ClickTables
             self::clicksCounter(),
             self::clicksRecord(),
             self::purLinkExitOrder(),
+            self::purLinkPixelFires(),
             self::clicksSite(),
             self::clicksSpy(),
             self::clicksTracking(),
@@ -144,6 +145,24 @@ final class ClickTables
                 KEY `user_id` (`user_id`),
                 KEY `expires_at` (`expires_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Ordering for PurLink exits while their proof is valid'"
+        );
+    }
+
+    /** Conversions a landing page's deferred pixel has already been given. */
+    public static function purLinkPixelFires(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::PURLINK_PIXEL_FIRES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::PURLINK_PIXEL_FIRES . "` (
+                `conv_id` int(11) unsigned NOT NULL,
+                `click_id` bigint(20) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `expires_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`conv_id`),
+                KEY `click_id` (`click_id`),
+                KEY `user_id` (`user_id`),
+                KEY `expires_at` (`expires_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Deferred PurLink pixels already fired, while their proof is valid'"
         );
     }
 
