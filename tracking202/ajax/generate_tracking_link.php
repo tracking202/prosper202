@@ -254,6 +254,17 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
             $get_tracker_row
         ): array {
             if (isset($get_tracker_result) && $get_tracker_result->num_rows > 0) {
+                $edit_where = "`tracker_id`='".$db->real_escape_string((string)$get_tracker_row['tracker_id'])."'"
+                    . " AND `user_id`='".$mysql['user_id']."'";
+                // Lock the row first: a link removed since it was read is refused, not recreated.
+                $lock_sql = "SELECT `tracker_id` FROM `202_trackers` WHERE " . $edit_where . " FOR UPDATE";
+                $locked = $db->query($lock_sql);
+                if (!$locked) {
+                    record_mysql_error($db, $lock_sql);
+                }
+                if ($locked->num_rows !== 1) {
+                    die(p202_flash('bad', 'That tracking link is not one of yours, or it was removed.'));
+                }
                 // Every column the form owns, the unsent cost type cleared as an insert left it.
                 $edit_sql = "UPDATE `202_trackers`
                             SET			`aff_campaign_id`='".$mysql['aff_campaign_id']."',
@@ -265,14 +276,9 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
                                         `rotator_id`='".$mysql['rotator_id']."',
                                         `click_cloaking`='".$mysql['click_cloaking']."',
                                         `tracker_time`='".$mysql['tracker_time']."'
-                            WHERE		`tracker_id`='".$db->real_escape_string((string)$get_tracker_row['tracker_id'])."'
-                                        AND `user_id`='".$mysql['user_id']."'";
+                            WHERE		" . $edit_where;
                 if (!$db->query($edit_sql)) {
                     record_mysql_error($db, $edit_sql);
-                }
-                // Rows matched, not changed: a link removed since it was read is not recreated.
-                if (!preg_match('/Rows matched: 1\b/', (string) $db->info)) {
-                    die(p202_flash('bad', 'That tracking link is not one of yours, or it was removed.'));
                 }
 
                 return [['tracker_id' => $get_tracker_row['tracker_id']], (string) $get_tracker_row['tracker_id_public']];
