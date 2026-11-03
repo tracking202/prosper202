@@ -126,16 +126,29 @@ var conversionSimulateCmd = &cobra.Command{
 			source = "--subid-field (" + offers.why + ")"
 		}
 
-		// 3. Fire the real S2S postback (gpb.php), with the account's
-		// postback token, as the URL Setup hands out carries it.
-		token, err := postbackTokenFor(c)
+		// 3. Fire the real S2S postback (gpb.php) as the account's mode asks:
+		// signed with the signing secret when it accepts only signed
+		// postbacks, else carrying the token, as the URL Setup hands out does.
+		auth, err := postbackAuthFor(c)
 		if err != nil {
 			return err
 		}
-		pbURL := fmt.Sprintf("%s/tracking202/static/gpb.php?amount=%s&subid=%s", base, payout, subid)
-		if token != "" {
-			pbURL += "&p202_token=" + url.QueryEscape(token)
+		pairs := [][2]string{{"amount", payout}, {"subid", subid}}
+		signs := auth.Mode == "signed" && auth.SigningSecret != ""
+		if !signs && auth.Token != "" {
+			pairs = append(pairs, [2]string{"p202_token", auth.Token})
 		}
+		var query string
+		if signs {
+			query = signedPostbackQuery("gpb", pairs, auth.SigningSecret, time.Now().Unix())
+		} else {
+			parts := make([]string, len(pairs))
+			for i, p := range pairs {
+				parts[i] = p[0] + "=" + url.QueryEscape(p[1])
+			}
+			query = strings.Join(parts, "&")
+		}
+		pbURL := base + "/tracking202/static/gpb.php?" + query
 		pbRes, err := (&http.Client{Timeout: 15 * time.Second}).Get(pbURL)
 		if err != nil {
 			return withHint(fmt.Errorf("postback request failed: %w", err), "The postback URL could not be fetched; check the server URL and that the postback endpoint (tracking202/static/gpb.php) is reachable.")
@@ -157,9 +170,9 @@ var conversionSimulateCmd = &cobra.Command{
 			return err
 		}
 		if !pass {
-			if pbRes.StatusCode == 403 && token == "" {
+			if pbRes.StatusCode == 403 && auth.Token == "" {
 				return withHint(partialFailureError("postback returned HTTP %d — conversions from this network would not record", pbRes.StatusCode),
-					"%s", "The account requires its postback token, which this key may not read (it needs access_to_setup_section); `p202 conversion postback-auth get` with such a key shows it.")
+					"%s", "The account requires its postback token or a signature, which this key may not read (it needs access_to_api_integrations); `p202 conversion postback-auth get` with such a key shows them.")
 			}
 			return partialFailureError("postback returned HTTP %d — conversions from this network would not record", pbRes.StatusCode)
 		}

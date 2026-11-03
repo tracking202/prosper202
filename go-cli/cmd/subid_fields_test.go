@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -495,6 +499,8 @@ type simulateFake struct {
 	trackerStatus int
 
 	token          string // GET /conversions/postback-auth's token; "" answers 404, a server before 1.9.80
+	secret         string // its signing_secret
+	mode           string // its mode; "" is token
 	authStatus     int    // that read's status instead, when set
 	postbackStatus int    // gpb.php's status, when set
 
@@ -502,6 +508,7 @@ type simulateFake struct {
 	clicks   int
 	postback []string
 	tokens   []string
+	queries  []string
 }
 
 func (f *simulateFake) server(t *testing.T) {
@@ -563,11 +570,16 @@ func (f *simulateFake) server(t *testing.T) {
 				http.NotFound(w, r)
 				return
 			}
-			fmt.Fprintf(w, `{"data":{"token":%q,"token_required":true}}`, f.token)
+			mode := f.mode
+			if mode == "" {
+				mode = "token"
+			}
+			fmt.Fprintf(w, `{"data":{"token":%q,"signing_secret":%q,"mode":%q}}`, f.token, f.secret, mode)
 		case "/tracking202/static/gpb.php":
 			f.mu.Lock()
 			f.postback = append(f.postback, r.URL.Query().Get("subid"))
 			f.tokens = append(f.tokens, r.URL.Query().Get("p202_token"))
+			f.queries = append(f.queries, r.URL.RawQuery)
 			f.mu.Unlock()
 			if f.postbackStatus != 0 {
 				w.WriteHeader(f.postbackStatus)
@@ -627,6 +639,41 @@ func TestConversionSimulateSendsThePostbackToken(t *testing.T) {
 	}
 	if len(f.tokens) != 1 || f.tokens[0] != f.token {
 		t.Fatalf("postback tokens %v, want [%s]", f.tokens, f.token)
+	}
+}
+
+// An account that accepts only signed postbacks gets one signed with its
+// signing secret, and no token.
+func TestConversionSimulateSignsForASignedOnlyAccount(t *testing.T) {
+	f := &simulateFake{
+		campaign: map[string]interface{}{"aff_campaign_url": "https://hp.example/rd/r.php?c1=[[subid]]"},
+		location: "https://hp.example/rd/r.php?c1=4821",
+		token:    "0123456789abcdef0123456789abcdef",
+		secret:   "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+		mode:     "signed",
+	}
+	f.server(t)
+	if _, stderr, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json"); err != nil {
+		t.Fatalf("simulate: %v\nstderr: %s", err, stderr)
+	}
+	if len(f.queries) != 1 || f.tokens[0] != "" {
+		t.Fatalf("postbacks %v, want one without p202_token", f.queries)
+	}
+	values, err := url.ParseQuery(f.queries[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pairs [][2]string
+	for _, part := range strings.Split(f.queries[0], "&") {
+		name, value, _ := strings.Cut(part, "=")
+		n, _ := url.QueryUnescape(name)
+		v, _ := url.QueryUnescape(value)
+		pairs = append(pairs, [2]string{n, v})
+	}
+	mac := hmac.New(sha256.New, []byte(f.secret))
+	mac.Write([]byte(postbackStringToSign("gpb", pairs)))
+	if got, want := values.Get("p202_sig"), hex.EncodeToString(mac.Sum(nil)); got != want || values.Get("p202_ts") == "" {
+		t.Fatalf("p202_sig %q, want %q keyed with the signing secret (query %s)", got, want, f.queries[0])
 	}
 }
 
