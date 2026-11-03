@@ -41,11 +41,17 @@ final class PaidVersionUpgradeIntegrationTest extends TestCase
         if (!self::connectScratch()) {
             return;
         }
+        // A failed read must not become "no version", which teardown would then restore.
         $found = self::$db->query('SELECT version FROM 202_version');
-        $rows = $found instanceof \mysqli_result ? $found->fetch_all(MYSQLI_ASSOC) : [];
-        self::$versions = array_column($rows, 'version');
-        $marks = (int) self::$db->query('SELECT COUNT(*) FROM 202_reclick_backfill')->fetch_row()[0];
-        self::$backfillWasEmpty = $marks === 0;
+        if (!$found instanceof \mysqli_result) {
+            throw new \RuntimeException('could not read 202_version: ' . self::$db->error);
+        }
+        self::$versions = array_column($found->fetch_all(MYSQLI_ASSOC), 'version');
+        $marks = self::$db->query('SELECT COUNT(*) FROM 202_reclick_backfill');
+        if (!$marks instanceof \mysqli_result) {
+            throw new \RuntimeException('could not read 202_reclick_backfill: ' . self::$db->error);
+        }
+        self::$backfillWasEmpty = (int) $marks->fetch_row()[0] === 0;
         foreach (['202_users', 'user_data_feedback'] as $table) {
             self::$fresh[$table] = self::shape($table);
         }
@@ -187,5 +193,18 @@ final class PaidVersionUpgradeIntegrationTest extends TestCase
         self::stored('1.9.56');
         [$out, $err] = self::upgrade();
         self::assertUpgradedToTheInstalledSchema($out, $err);
+    }
+
+    public function testAColumnAlreadyWiderThanTheInstallersIsNotNarrowed(): void
+    {
+        self::q('ALTER TABLE 202_users MODIFY user_pass varchar(300) NOT NULL');
+        self::stored('1.9.56');
+
+        [$out, $err] = self::upgrade();
+
+        self::assertSame('RETURNED true', $out, $err);
+        self::assertStringNotContainsString('Prosper202 upgrade', $err);
+        $type = self::$db->query("SHOW COLUMNS FROM 202_users LIKE 'user_pass'")->fetch_assoc()['Type'] ?? null;
+        self::assertSame('varchar(300)', $type);
     }
 }

@@ -601,13 +601,15 @@ if (!function_exists('_upgrade_1956_baseline')) {
             error_log('Prosper202 upgrade: failed to create user_data_feedback');
         }
 
-        // A failed probe is not "already wide" (error pattern #11).
+        // A failed probe is not "already wide" (error pattern #11). Only a
+        // (var)char narrower than 255 is widened; anything wider is left alone.
         $check = _upgrade_query("SHOW COLUMNS FROM `202_users` LIKE 'user_pass'");
         $column = $check instanceof mysqli_result ? $check->fetch_assoc() : null;
         if (!is_array($column)) {
             $ok = false;
             error_log('Prosper202 upgrade: could not read 202_users.user_pass');
-        } elseif (strtolower((string) $column['Type']) !== 'varchar(255)'
+        } elseif (preg_match('/^(?:var)?char\((\d+)\)/i', (string) $column['Type'], $width) === 1
+            && (int) $width[1] < 255
             && _upgrade_query("ALTER TABLE `202_users` MODIFY `user_pass` varchar(255) NOT NULL") === false) {
             $ok = false;
             error_log('Prosper202 upgrade: failed to widen 202_users.user_pass');
