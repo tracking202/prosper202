@@ -92,6 +92,14 @@ final class RecordConversionTest extends TestCase
         self::assertSame('123', p202ExtractTransactionId(['oid' => 123]));
     }
 
+    public function testExtractTransactionIdReadsLegacyPaidT202txid(): void
+    {
+        // Paid 1.9.56 upx/gpx/gpb URLs carry the id as t202txid.
+        self::assertSame('ord-77', p202ExtractTransactionId(['amount' => '9.99', 't202txid' => 'ord-77', 't202dedupe' => '0']));
+        self::assertSame('modern', p202ExtractTransactionId(['t202txid' => 'legacy', 'txid' => 'modern']));
+        self::assertSame('', p202ExtractTransactionId(['t202txid' => '']));
+    }
+
     public function testExtractTransactionIdPrefersTxidOverOtherKeys(): void
     {
         self::assertSame('first', p202ExtractTransactionId([
