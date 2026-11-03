@@ -188,6 +188,9 @@ final class AdClickIdsIntegrationTest extends TestCase
         try {
             self::record($clickId, ['ttclid' => self::ttclid()]);
             self::fail('a refused 202_google row failed nothing');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('refused by the test', $e->getMessage());
         } finally {

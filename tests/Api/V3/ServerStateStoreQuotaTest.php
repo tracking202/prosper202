@@ -117,6 +117,9 @@ final class ServerStateStoreQuotaTest extends TestCase
             try {
                 $store->refundQuota('s', 60, 1, $charge['window_start']);
                 self::fail('a corrupt bucket is refused, not refunded into: ' . $corrupt);
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException) {
                 self::assertSame($corrupt, file_get_contents($this->file('s')));
             }
@@ -176,6 +179,9 @@ final class ServerStateStoreQuotaTest extends TestCase
             try {
                 $store->reserveQuota('c', 5, 60);
                 self::fail('a corrupt bucket is not "nothing used": ' . $corrupt);
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException) {
                 self::assertSame($corrupt, file_get_contents($file), 'and is left for the pruner, not overwritten with zero');
             }
@@ -186,6 +192,9 @@ final class ServerStateStoreQuotaTest extends TestCase
         try {
             (new ServerStateStore($notADir))->reserveQuota('d', 5, 60);
             self::fail('an unwritable store throws');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertNotSame('', $e->getMessage());
         } finally {

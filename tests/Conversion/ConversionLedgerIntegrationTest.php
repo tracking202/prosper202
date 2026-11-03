@@ -884,6 +884,9 @@ final class ConversionLedgerIntegrationTest extends TestCase
             // whole transaction (row, click, outbox) must roll back.
             $this->record(100, ['payout' => '5', 'transaction_id' => 'A', 'event_name' => str_repeat('e', 300)]);
             self::fail('an over-long event name was stored');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable) {
             self::addToAssertionCount(1);
         }
