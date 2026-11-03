@@ -308,6 +308,11 @@ try {
     // The key that authenticated removes itself, and only itself, whatever
     // its scope: so before the limits, the CLI licence gate and the scopes.
     if ($path === '/connect/revoke' && $method === 'POST') {
+        // Its watchers end first, best effort, as on every key delete. The MCP
+        // server's own give-back finds none, at the cost of one short call.
+        if (!(new \Api\V3\Support\AiWatchers())->stopBeforeDelete($db, $userId, Auth::bearerKey($headers), true)) {
+            error_log('p202: AI connect: revoke: the MCP server did not confirm that the key\'s watchers stopped');
+        }
         [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::revoke($db, Auth::bearerKey($headers));
         Bootstrap::jsonResponse($connectBody, $connectStatus);
         exit;

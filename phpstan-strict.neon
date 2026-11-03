@@ -24,6 +24,7 @@ parameters:
         - 202-config/Click/MysqlClickRepository.php
         - 202-config/Click/OfferRoute.php
         - 202-config/Click/PublicId.php
+        - 202-config/Click/PublisherCredit.php
         - 202-config/Click/RotatorRoute.php
         - 202-config/Click/StoredAddressIds.php
         - 202-config/Cron/CronLock.php
