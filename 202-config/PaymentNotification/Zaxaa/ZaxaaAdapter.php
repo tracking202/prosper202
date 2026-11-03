@@ -15,6 +15,7 @@ use Prosper202\PaymentNotification\NotificationKind;
 use Prosper202\PaymentNotification\OutcomeKind;
 use Prosper202\PaymentNotification\ProviderAdapter;
 use Prosper202\PaymentNotification\Refusal;
+use Prosper202\PaymentNotification\SignsThePaymentNotTheClick;
 use Prosper202\PaymentNotification\Verification;
 
 /**
@@ -25,8 +26,13 @@ use Prosper202\PaymentNotification\Verification;
  * as a rebill; REFUND takes back trans_amount (none: all) of the sale its
  * receipt names; CANCELED moves no money; trans_testmode=1 is a test. The
  * click comes back in products[x][custom], from ?custom=[[subid]] on the order link.
+ *
+ * hash_key signs neither the click nor trans_type: the processor refuses a
+ * signed payment re-aimed at another click or receipt, but a sale's body
+ * retyped as REFUND cannot be told apart (owner accepted, 2026-11-03). A ZPN
+ * body is a credential, so the ZPN URL is https.
  */
-final class ZaxaaAdapter implements ProviderAdapter
+final class ZaxaaAdapter implements ProviderAdapter, SignsThePaymentNotTheClick
 {
     /** decimal(11,5): at most six whole digits and five decimals. */
     private const AMOUNT = '/^\d{1,6}(?:\.\d{1,5})?$/D';
@@ -52,6 +58,11 @@ final class ZaxaaAdapter implements ProviderAdapter
     public function clickField(): ClickField
     {
         return new ClickField('custom in products', 'the Zaxaa order link', '?custom=[[subid]]');
+    }
+
+    public function signedPayment(string $transactionId, string $amount): string
+    {
+        return $transactionId . $amount;
     }
 
     public function storedSecrets(Connection $conn): array

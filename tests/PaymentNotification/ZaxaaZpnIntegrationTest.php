@@ -19,7 +19,7 @@ use Prosper202\PaymentNotification\Zaxaa\ZaxaaSignature;
 
 /**
  * Zaxaa's ZPN end to end on a real server: the key read from
- * 202_users_pref, the cverify, the processor and the real conversion writer
+ * 202_users_pref, the hash_key check, the processor and the real conversion writer
  * (p202RecordLegacyConversion()), and the rows it leaves. The endpoint itself is a few lines around Receiver;
  * the live pass posts to it (see the pull request).
  *
@@ -235,6 +235,54 @@ final class ZaxaaZpnIntegrationTest extends TestCase
         $rebill = self::fields(['trans_type' => 'REBILL', 'trans_receipt' => 'ZX-50002', 'trans_amount' => '10.00']);
         self::assertOutcome(OutcomeKind::RECORDED, 200, $this->post($rebill, self::KEY));
         self::assertSame(['47.00000', '10.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    /** hash_key signs no click: the same signed sale aimed at another click of the account records nothing. */
+    public function testASignedSaleReAimedAtAnotherClickIsRefused(): void
+    {
+        $sale = ZaxaaAdapterTest::signed(self::fields(), self::KEY);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $this->deliver($sale));
+
+        $sale['products'][0]['custom'] = (string) self::SECOND_CLICK;
+        $outcome = $this->deliver($sale);
+
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $outcome);
+        self::assertStringContainsString('not a new payment', $outcome->message);
+        self::assertSame([(string) self::CLICK], array_column(self::conversions(), 'click_id'));
+        self::assertStringContainsString('refused as a re-aimed copy', (string) file_get_contents($this->log));
+    }
+
+    /** hash_key joins receipt and amount with no separator: digits moved across the join record nothing. */
+    public function testDigitsMovedBetweenTheReceiptAndTheAmountAreRefused(): void
+    {
+        $sale = ZaxaaAdapterTest::signed(self::fields(), self::KEY);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $this->deliver($sale));
+
+        $longer = ['trans_receipt' => self::RECEIPT . '4', 'trans_amount' => '7.00'] + $sale;
+        $shorter = ['trans_receipt' => 'ZX-5000', 'trans_amount' => '147.00'] + $sale;
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $this->deliver($longer));
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $this->deliver($shorter));
+        $shorter['products'][0]['custom'] = (string) self::SECOND_CLICK;
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $this->deliver($shorter));
+        self::assertSame([self::RECEIPT], array_column(self::conversions(), 'transaction_id'));
+    }
+
+    /** Only a copy of a signed sale is refused: other sales of the account, and another account's, still record. */
+    public function testOtherSalesOnOtherClicksStillRecord(): void
+    {
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $this->post(self::fields(), self::KEY));
+
+        $next = self::fields(['trans_receipt' => 'ZX-50003'], self::SECOND_CLICK);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $this->post($next, self::KEY));
+        $prefixed = self::fields(['trans_receipt' => self::RECEIPT . '7', 'trans_amount' => '47.00'], self::SECOND_CLICK);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $this->post($prefixed, self::KEY));
+        $other = self::fields([], self::OTHER_CLICK);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $this->post($other, self::OTHER_KEY));
+
+        self::assertSame(
+            [self::RECEIPT, 'ZX-50003', self::RECEIPT . '7', self::RECEIPT],
+            array_column(self::conversions(), 'transaction_id')
+        );
     }
 
     public function testARefundReversesTheSaleItsReceiptNames(): void
