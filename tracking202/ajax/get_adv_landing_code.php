@@ -77,9 +77,16 @@ $offer = static fn (string $name, int $n): string => (string) ($_POST[$name . $n
 	echo '<h3 class="p202-section__title">1. Landing page code</h3>'
 		. '<p>Put this right above the <code>&lt;/body&gt;</code> tag of <strong>only</strong> the page your visitors first arrive on, not in a template every page of the site includes.</p>';
 	echo p202_setup_code_box($javascript_code, ['long' => true]);
+	echo '<details class="p202-disclosure mb-3" data-p202-remember="setup-lp-code-defpixel">'
+		. '<summary>With the deferred pixel <span class="p202-disclosure__hint">fires your traffic source\'s pixels on this page when a PurLink click converts</span></summary>'
+		. '<div class="p202-disclosure__body">'
+		. '<p>Use this version of the code instead when your traffic source\'s pixel must fire on your own page, for example a pixel that reads a cookie of this site. After a visitor follows a PurLink, the offer opens in a new tab and this page fires the pixels once the network\'s postback reports the conversion.</p>'
+		. p202_setup_code_box(\Prosper202\Setup\LandingPageCode::loader($codeBase, (string) $landing_page_row['landing_page_id_public'], true), ['long' => true])
+		. '</div></details>';
 
 	echo '<h3 class="p202-section__title">2. Link out to each offer</h3>'
-		. '<p>Each offer has its own outbound link. Use it as that offer\'s link on your page, or save its PHP redirect as a page on your site and link to that.</p>';
+		. '<p>Each offer has its own outbound link. Use it as that offer\'s link on your page, or save its PHP redirect as a page on your site and link to that.</p>'
+		. '<p>A PurLink sends the visitor straight to the offer, with no redirect through your tracker; the landing page code records the click-out in the background. Tokens such as <code>[[subid]]</code> and <code>[[c1]]</code> in the link are filled in on the page. Until the visitor\'s SubID is ready the link goes through the tracker\'s redirect instead.</p>';
 
 	for ($count = 1; $count <= $offers; $count++) {
 
@@ -89,7 +96,7 @@ $offer = static fn (string $name, int $n): string => (string) ($_POST[$name . $n
 			if ($aff_campaign_id != 0) {
 
 				$mysql['aff_campaign_id'] = $db->real_escape_string($aff_campaign_id);
-				$aff_campaign_sql = "SELECT aff_campaign_id_public, aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id='".$mysql['aff_campaign_id']."' AND user_id='".$mysql['user_id']."'";
+				$aff_campaign_sql = "SELECT aff_campaign_id_public, aff_campaign_name, aff_campaign_url FROM 202_aff_campaigns WHERE aff_campaign_id='".$mysql['aff_campaign_id']."' AND user_id='".$mysql['user_id']."'";
 				$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
 				$aff_campaign_row = $aff_campaign_result->fetch_assoc();
 				if (!is_array($aff_campaign_row)) {
@@ -104,6 +111,13 @@ $offer = static fn (string $name, int $n): string => (string) ($_POST[$name . $n
 				$outbound_go = \Prosper202\Setup\LandingPageCode::campaignOutboundLink($codeBase, (string) $aff_campaign_row['aff_campaign_id_public']);
 				$outbound_php = \Prosper202\Setup\LandingPageCode::campaignOutboundPhp($codeBase, (string) $aff_campaign_row['aff_campaign_id_public'], (string) $aff_campaign_row['aff_campaign_name'], (string) $landing_page_row['landing_page_url'], time());
 				echo '<h4 class="h6 mt-3">Offer ' . $count . ': campaign ' . p202_setup_e($aff_campaign_row['aff_campaign_name']) . '</h4>';
+				$purLink = \Prosper202\Setup\LandingPageCode::campaignPurLink((string) $aff_campaign_row['aff_campaign_url'], (string) $aff_campaign_row['aff_campaign_id_public']);
+				if ($purLink !== null) {
+					echo p202_setup_code_box($purLink, ['label' => 'PurLink: link straight to the offer']);
+					if (!\Prosper202\Setup\LandingPageCode::purLinkHasSubid($purLink)) {
+						echo p202_flash('warn', 'Add [[subid]] to the campaign URL where your network takes its SubID, or its conversions cannot be matched to the click.');
+					}
+				}
 				echo p202_setup_code_box($outbound_go, ['label' => 'Outbound link']);
 				echo '<details class="p202-disclosure mb-3"><summary>PHP redirect <span class="p202-disclosure__hint">cloaks the affiliate link</span></summary>'
 					. '<div class="p202-disclosure__body">' . p202_setup_code_box($outbound_php, ['long' => true]) . '</div></details>';

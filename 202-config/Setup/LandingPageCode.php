@@ -73,8 +73,12 @@ final class LandingPageCode
         return '//' . substr($trackingBaseUrl, $at + 3);
     }
 
-    /** The script that goes above </body> of the page visitors arrive on (both page types). */
-    public static function loader(string $base, string $landingPageIdPublic): string
+    /**
+     * The script that goes above </body> of the page visitors arrive on (both
+     * page types). $deferredPixel adds p202_defpixel=1: after a PurLink click
+     * the page fires the traffic source's pixels when the click converts.
+     */
+    public static function loader(string $base, string $landingPageIdPublic, bool $deferredPixel = false): string
     {
         return '<script>
 	(function(d, s) {
@@ -84,9 +88,38 @@ final class LandingPageCode
 			upxf.parentNode.insertBefore(if202, upxf);
 		};
 		var t = new URLSearchParams(window.location.search).get("t202id") || "";
-		load("' . $base . 'tracking202/static/landing.php?lpip=' . $landingPageIdPublic . '&t202id=" + encodeURIComponent(t), "upxif");
+		load("' . $base . 'tracking202/static/landing.php?lpip=' . $landingPageIdPublic . ($deferredPixel ? '&p202_defpixel=1' : '') . '&t202id=" + encodeURIComponent(t), "upxif");
 	}(document, "script"));
 	</script>';
+    }
+
+    /**
+     * A simple page's PurLink: the campaign URL itself, used as the offer
+     * link on the page. Null when it is not an absolute http(s) URL.
+     */
+    public static function simplePurLink(string $campaignUrl): ?string
+    {
+        try {
+            return PurLinkTemplate::simple($campaignUrl);
+        } catch (\InvalidArgumentException) {
+            return null;
+        }
+    }
+
+    /** An advanced page offer's PurLink: the campaign URL with acip= naming the offer. */
+    public static function campaignPurLink(string $campaignUrl, string $campaignIdPublic): ?string
+    {
+        try {
+            return PurLinkTemplate::advanced($campaignUrl, $campaignIdPublic);
+        } catch (\InvalidArgumentException) {
+            return null;
+        }
+    }
+
+    /** Whether a PurLink carries the [[subid]] its conversions come back with. */
+    public static function purLinkHasSubid(string $purLink): bool
+    {
+        return preg_match('/(?:\[\[|%5b%5b)subid(?:\]\]|%5d%5d)/i', $purLink) === 1;
     }
 
     /** A simple page's outbound link (Option 1): go.php?lpip=. */

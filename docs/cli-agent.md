@@ -821,10 +821,12 @@ Landing page code (Setup > Get LP Code):
 p202 landing-page code <id> [--offer campaign:N|rotator:N]... [--json]
 ```
 
-`data`: `landing_page_type` (`simple`/`advanced`), `base_url`, `loader`, and
-for a simple page `outbound_link`, `outbound_php`, `outbound_javascript`; for
-an advanced page `offers[]` (`position`, `type`, `id`, `public_id`, `name`,
-`outbound_link`, `outbound_php`); `segments`. Accepts the public id (`lpip=`).
+`data`: `landing_page_type` (`simple`/`advanced`), `base_url`, `loader`,
+`loader_deferred_pixel`, and for a simple page `purlink`, `outbound_link`,
+`outbound_php`, `outbound_javascript`; for an advanced page `offers[]`
+(`position`, `type`, `id`, `public_id`, `name`, `purlink` for a campaign,
+`outbound_link`, `outbound_php`); `segments`. `purlink` is null when the
+campaign URL cannot be one. Accepts the public id (`lpip=`).
 
 #### Text ad fields
 

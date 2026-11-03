@@ -21,13 +21,17 @@ The alternative solution if you don't want such an ugly URL as an outbound link 
 ![Screen Shot 2015-12-02 at 4.14.13 PM.png](../images/step-7-5.png)
 Finally if you need it to redirect out because you need to load other scripts such as retargeting or conversion pixels first, you can use the last option but in most instances, you won't likely need to use this last option.
 
+### PurLink: link straight to the offer
+
+The fastest choice is the **PurLink**, listed first. It is your campaign URL itself: link to it from your page and the visitor goes straight to the offer, with no redirect through your tracker, while the landing page code records the click-out in the background and fills in `[[subid]]` and the other tokens. The campaign URL needs `[[subid]]` where your network takes its SubID. To fire your traffic source's pixel on your own page when a PurLink click converts, use the **With the deferred pixel** version of the landing page code. See [PurLinks](../features/purlinks.md).
+
 ## Advanced LP
 
 If you selected the Advanced LP because you have multiple pages and/or multiple offers, simply select your options. In general you'll be using the campaign option select to add multiple offers if you have them when setting up your advanced LP as shown below:
 ![Screen Shot 2015-12-07 at 2.58.47 PM.png](../images/step-7-6.png)
 You can choose rotator option if you setup a specific rotator rule in Step 6 previously and wish to use it here.
 
-The inbound and outbound code usage are exactly the same as the one for Simple LP. The only difference is you have more outbound codes for each offer you are promoting on your Advanced LP. Please see above section on how to implement inbound and outbound code.
+The inbound and outbound code usage are exactly the same as the one for Simple LP. The only difference is you have more outbound codes for each offer you are promoting on your Advanced LP. Each campaign offer has its own PurLink, the campaign URL with `acip=` naming the offer; a redirector has none. Please see above section on how to implement inbound and outbound code.
 
 ## Dynamic Content Segment
 
