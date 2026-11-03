@@ -500,6 +500,11 @@ if (!function_exists('p202RecordConversion')) {
         if (isset($log['reversal_ref']) && (string) $log['reversal_ref'] !== '') {
             $data['reversal_ref'] = (string) $log['reversal_ref'];
         }
+        if (!empty($log['reversal']) && !empty($log['reverses_carried_value'])) {
+            // With no sale under its id, the reversal nets against the value
+            // the click carried from before the ledger (its legacy baseline).
+            $data['reverses_carried_value'] = true;
+        }
         if (!empty($log['notify_traffic_source'])) {
             // Queue the click's traffic-source server postbacks with the row
             // (NotificationOutbox), in its transaction; the caller sends
@@ -892,7 +897,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
      *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
-     *     source?: string, reversal?: bool, reversal_ref?: string, event_name?: string|null,
+     *     source?: string, reversal?: bool, reversal_ref?: string, reverses_carried_value?: bool,
+     *     event_name?: string|null,
      *     conv_time?: int
      * } $opts source is the ledger source the row is recorded under
      *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
@@ -975,6 +981,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'source'          => (string) ($opts['source'] ?? \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value),
                 'reversal'        => !empty($opts['reversal']),
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
+                'reverses_carried_value' => !empty($opts['reverses_carried_value']),
                 'event_name'      => (string) ($opts['event_name'] ?? ''),
             ],
             $matchedBy,

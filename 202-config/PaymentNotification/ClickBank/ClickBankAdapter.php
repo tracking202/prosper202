@@ -16,7 +16,9 @@ use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
 use Prosper202\PaymentNotification\OutcomeKind;
 use Prosper202\PaymentNotification\ProviderAdapter;
+use Prosper202\PaymentNotification\RecordsAmountsAsStated;
 use Prosper202\PaymentNotification\Refusal;
+use Prosper202\PaymentNotification\ReversesPreUpgradeSales;
 use Prosper202\PaymentNotification\Verification;
 
 /**
@@ -32,20 +34,28 @@ use Prosper202\PaymentNotification\Verification;
  * the transaction id.
  *
  * ClickBank's amounts are in USD (totalAccountAmount: "Total you received for
- * the transaction in USD"), so they are stated as USD and an account that
- * counts in another currency is refused (Processor).
+ * the transaction in USD"), so they are stated as USD; an account that
+ * counts in another currency records them as stated, as 1.9.56 did, and the
+ * answer says so (RecordsAmountsAsStated).
  *
  * What each transactionType does is TYPES. A refund, chargeback or returned
  * eCheck reverses the conversion under its receipt by what its
  * totalAccountAmount says the account lost, since ClickBank refunds part of
  * a payment too (a subscription's product change refunds "a portion of the
  * old product's last recurring payment"), and the whole of it when it states
- * none or 0.
+ * none or 0. A refund of a sale credited before the upgrade, which left no
+ * row under its receipt, takes its amount back from the value the click
+ * carried over (ReversesPreUpgradeSales).
  *
  * The legacy versions (4.0 and earlier: a form signed with an 8-digit
  * `cverify`) are answered 415, saying which version to set.
  */
-final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotifications, FingerprintsNotifications
+final class ClickBankAdapter implements
+    ProviderAdapter,
+    ConfirmsTestNotifications,
+    FingerprintsNotifications,
+    RecordsAmountsAsStated,
+    ReversesPreUpgradeSales
 {
     /**
      * Every transactionType ClickBank's INS article lists, and what each asks

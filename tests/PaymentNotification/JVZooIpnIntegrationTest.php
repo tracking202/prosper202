@@ -230,6 +230,38 @@ final class JVZooIpnIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * The JVZIPN URL 1.9.56 showed names no role: a sale there is recorded on
+     * caffitid, as 1.9.56 read it, and the answer and the log say how it was read.
+     */
+    public function testASaleAtTheUrlWithNoRoleIsRecordedOnTheTidAndSaysHow(): void
+    {
+        $fields = JVZooAdapterTest::signed(self::fields(['cvendthru' => 'subid=' . self::SECOND_CLICK]), self::KEY);
+        $request = new InboundRequest('POST', 'application/x-www-form-urlencoded', $fields, '203.0.113.9', '203.0.113.9', 'JVZoo IPN');
+        $outcome = (new Receiver(JVZooAdapter::forQuery(null), self::requireScratch()))->receive($request);
+
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $outcome);
+        self::assertSame(
+            'Recorded transaction ' . self::RECEIPT . ' on click ' . self::CLICK . ' at 47.00. '
+            . JVZooAdapter::ROLELESS_NOTE,
+            $outcome->message
+        );
+        self::assertSame([(string) self::CLICK], array_column(self::conversions(), 'click_id'));
+        self::assertStringContainsString('This URL names no role', (string) file_get_contents($this->log));
+
+        // Its retry is the same sale; an unsigned one is still refused.
+        $again = (new Receiver(JVZooAdapter::forQuery(null), self::requireScratch()))->receive($request);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $again);
+        $forged = ['cverify' => 'ABCDEF12'] + $fields;
+        $unsigned = new InboundRequest('POST', 'application/x-www-form-urlencoded', $forged, '203.0.113.9', '203.0.113.9', 'JVZoo IPN');
+        self::assertOutcome(
+            OutcomeKind::UNVERIFIED,
+            403,
+            (new Receiver(JVZooAdapter::forQuery(null), self::requireScratch()))->receive($unsigned)
+        );
+        self::assertCount(1, self::conversions());
+    }
+
     public function testAVendorsSaleIsRecordedOnTheBuyLinksSubidNeverOnTheAffiliatesTid(): void
     {
         // An affiliate's tid that happens to name one of the vendor's clicks.

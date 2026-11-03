@@ -286,7 +286,7 @@ final class JVZooAdapterTest extends TestCase
         $affiliate = JVZooRole::AFFILIATE;
 
         return [
-            'a URL with no role' => [[], null, 'This URL names no role.'],
+            'a URL whose role is another' => [[], null, 'role is neither affiliate nor vendor'],
             'a field JVZIPN does not post' => [['ctid' => '9'], $affiliate, 'a field JVZIPN v1 does not post (ctid)'],
             'no ctransaction' => [['ctransaction' => ''], $affiliate, 'The notification carries no ctransaction.'],
             'an unknown type' => [['ctransaction' => 'sale'], $affiliate, 'ctransaction is "sale", which JVZIPN'],
@@ -421,6 +421,29 @@ final class JVZooAdapterTest extends TestCase
             $refusal = self::refusal(static fn () => $adapter->parse(self::request($fields)));
             self::assertSame($kind, $refusal->outcome->kind, $name);
         }
+    }
+
+    /** The URL 1.9.56 showed has no role and is read as the affiliate's, as 1.9.56 read it, saying so. */
+    public function testAUrlWithNoRoleIsReadAsTheAffiliatesAndSaysSo(): void
+    {
+        $roleless = JVZooAdapter::forQuery(null);
+        $notification = $roleless->parse(self::request(self::sale()));
+
+        self::assertEquals(
+            (new JVZooAdapter(JVZooRole::AFFILIATE))->parse(self::request(self::sale()))->withNote(JVZooAdapter::ROLELESS_NOTE),
+            $notification
+        );
+        self::assertSame(42, $notification->clickId);
+        self::assertSame('caffitid', $roleless->clickField()->field);
+        self::assertNull(JVZooAdapter::forQuery('affiliate')->parse(self::request(self::sale()))->note);
+        // A role that is neither is refused, as before.
+        foreach (['', 'seller', ['vendor']] as $other) {
+            $refusal = self::refusal(static fn () => JVZooAdapter::forQuery($other)->parse(self::request(self::sale())));
+            self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
+        }
+        // The vendor's subid is not read at the URL with no role.
+        $vendorOnly = $roleless->parse(self::request(self::sale(['caffitid' => '', 'cvendthru' => 'subid=42'])));
+        self::assertNull($vendorOnly->clickId);
     }
 
     public function testTheRoleIsReadFromTheQueryExactly(): void
