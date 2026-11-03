@@ -61,6 +61,25 @@ final class ApiUsage
     }
 
     /**
+     * The APCu key that says api_used was recorded today. APCu is shared by
+     * every install a PHP server runs, and two may share a directory but not
+     * a database (or the reverse), so the key names both.
+     */
+    public static function dayKey(mysqli $db, int $userId, string $client, string $day): string
+    {
+        $database = $GLOBALS['dbname'] ?? null;
+        if (!is_string($database) || $database === '') {
+            $found = $db->query('SELECT DATABASE()');
+            $database = $found instanceof mysqli_result ? (string) ($found->fetch_row()[0] ?? '') : '';
+            if ($database === '') {
+                throw new \RuntimeException('the database name could not be read');
+            }
+        }
+
+        return 'p202_api_used:' . md5(dirname(__DIR__, 2) . "\0" . $database) . ':' . $userId . ':' . $client . ':' . $day;
+    }
+
+    /**
      * Record what a finished request means: api_used once per day per
      * client, and its milestone when it was a real (not dry-run, not staged)
      * successful write.
@@ -76,13 +95,11 @@ final class ApiUsage
         try {
             $milestone = $preview ? null : self::milestoneFor($method, $path);
             // api_used once a day per client: after the first request of the
-            // day an APCu key (namespaced by install) lets a request with no
-            // milestone skip the consent and event queries. The CLI is told
-            // by its User-Agent; anything else asks $clientKind (one key read).
-            $client = str_starts_with((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 'p202-cli/')
-                ? self::CLIENT_CLI
-                : $clientKind();
-            $dayKey = 'p202_api_used:' . md5(dirname(__DIR__, 2)) . ':' . $userId . ':' . $client . ':' . date('Y-m-d');
+            // day an APCu key lets a request with no milestone skip the
+            // consent and event queries. $clientKind is clientKind(), so an
+            // AI connection is told first, then the CLI by its User-Agent.
+            $client = $clientKind();
+            $dayKey = self::dayKey($db, $userId, $client, date('Y-m-d'));
             $apcu = function_exists('apcu_fetch') && (bool) ini_get('apc.enabled');
             if ($milestone === null && $apcu && apcu_fetch($dayKey) !== false) {
                 return;

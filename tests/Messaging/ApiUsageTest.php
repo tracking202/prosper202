@@ -34,6 +34,43 @@ final class ApiUsageTest extends TestCase
         $this->assertSame(ApiUsage::CLIENT_API, ApiUsage::clientKind(false, 'curl/8.4'));
     }
 
+    public function test_an_ai_connection_is_told_first_even_with_the_clis_user_agent(): void
+    {
+        $db = $this->createMock(mysqli::class);
+        $db->method('prepare')->willReturn(false);
+        $hadUa = $_SERVER['HTTP_USER_AGENT'] ?? null;
+        $hadName = $GLOBALS['dbname'] ?? null;
+        $_SERVER['HTTP_USER_AGENT'] = 'p202-cli/2.0 (Go)';
+        $GLOBALS['dbname'] = 'p202_one';
+        $asked = 0;
+        try {
+            ApiUsage::record($db, 7, function () use (&$asked): string {
+                $asked++;
+                return ApiUsage::CLIENT_AI_CONNECTOR;
+            }, 'POST', '/campaigns', 201, false);
+        } finally {
+            $_SERVER['HTTP_USER_AGENT'] = $hadUa;
+            $GLOBALS['dbname'] = $hadName;
+        }
+        $this->assertSame(1, $asked, 'the classifier, which checks the AI connection first, decides the client');
+    }
+
+    public function test_the_daily_key_names_the_directory_and_the_database(): void
+    {
+        $db = $this->createMock(mysqli::class);
+        $hadName = $GLOBALS['dbname'] ?? null;
+        try {
+            $GLOBALS['dbname'] = 'p202_one';
+            $one = ApiUsage::dayKey($db, 7, ApiUsage::CLIENT_CLI, '2026-11-03');
+            $GLOBALS['dbname'] = 'p202_two';
+            $two = ApiUsage::dayKey($db, 7, ApiUsage::CLIENT_CLI, '2026-11-03');
+        } finally {
+            $GLOBALS['dbname'] = $hadName;
+        }
+        $this->assertNotSame($one, $two, 'two installs on one directory and two databases do not share a key');
+        $this->assertStringEndsWith(':7:cli:2026-11-03', $one);
+    }
+
     public function test_failed_requests_and_missing_users_record_nothing_and_read_nothing(): void
     {
         $db = $this->createMock(mysqli::class);
