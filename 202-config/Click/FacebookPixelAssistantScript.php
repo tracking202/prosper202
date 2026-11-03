@@ -6,6 +6,7 @@ namespace Prosper202\Click;
 
 use Prosper202\Conversion\FacebookPixelId;
 use Prosper202\Database\Connection;
+use Prosper202\Identity\RequestSignals;
 use Prosper202\Setup\FacebookPixelAssistantSettings;
 
 /**
@@ -15,11 +16,11 @@ use Prosper202\Setup\FacebookPixelAssistantSettings;
  * carry, which 202-js/p202-fb-pixel-assistant.js then fires. Paid 1.9.56
  * did this in record_simple.php, bot202_fb_pixel.php and fbpx.js.
  *
- * Nothing is answered unless the visitor may be tracked in full (the
- * privacy setting in force and the page's consent: a third-party pixel
- * sets the visitor cookies), the page's assistant is on, and the click's
- * traffic source (the account's own) has a "Bot202 Facebook Pixel
- * Assistant" pixel holding a Meta Pixel ID. With dynamic EPV on, the
+ * Nothing is answered unless the visitor may be sent a third-party pixel,
+ * which sets cookies (mayTrack(): the privacy setting in force, the page's
+ * consent and the campaign's identity capture), the page's assistant is
+ * on, and the click's traffic source (the account's own) has a "Bot202
+ * Facebook Pixel Assistant" pixel holding a Meta Pixel ID. With dynamic EPV on, the
  * outbound click carries the source's earnings per outbound click over
  * the last seven days.
  *
@@ -70,6 +71,19 @@ final class FacebookPixelAssistantScript
         );
 
         return "\nif (typeof window.p202FbPixelAssistant === 'function') { window.p202FbPixelAssistant(" . $json . "); }\n";
+    }
+
+    /**
+     * Whether the visitor may be sent a third-party pixel: the privacy
+     * setting in force tracks them in full, the page's consent was not
+     * refused (p202_consent), and the campaign's identity capture is on, as
+     * for the click's own identity signals (p202ClickIdentity()).
+     *
+     * @param array<string, mixed> $get
+     */
+    public static function mayTrack(bool $trackingEnabled, array $get, mixed $identitySignals): bool
+    {
+        return $trackingEnabled && RequestSignals::consentGiven($get, RequestSignals::campaignAllows($identitySignals));
     }
 
     /**
@@ -127,22 +141,22 @@ final class FacebookPixelAssistantScript
         }
 
         $config = ['pixelId' => $pixelId, 'eventId' => 'p202-' . $clickId];
-        $name = (string) ($page['b202_fbpa_content_name'] ?? '');
+        $name = self::text($page['b202_fbpa_content_name'] ?? null);
         if ($name !== '') {
             $config['contentName'] = $name;
         }
-        $type = FacebookPixelAssistantSettings::CONTENT_TYPES[(int) $page['b202_fbpa_content_type']] ?? null;
+        $type = FacebookPixelAssistantSettings::CONTENT_TYPES[self::number($page['b202_fbpa_content_type'] ?? null)] ?? null;
         if ($type !== null) {
             $config['contentType'] = $type[0];
         }
-        $offer = (int) ($page['aff_campaign_id_public'] ?? 0);
+        $offer = self::number($page['aff_campaign_id_public'] ?? null);
         if ($offer > 0) {
             $config['contentId'] = 't202id' . $offer;
         }
-        $event = FacebookPixelAssistantSettings::CLICK_EVENTS[(int) $page['b202_fbpa_outbound_clicks']] ?? null;
+        $event = FacebookPixelAssistantSettings::CLICK_EVENTS[self::number($page['b202_fbpa_outbound_clicks'] ?? null)] ?? null;
         if ($event !== null) {
             $config['clickEvent'] = $event[0];
-            if ((int) $page['b202_fbpa_dynamic_epv'] === 1) {
+            if (self::number($page['b202_fbpa_dynamic_epv'] ?? null) === 1) {
                 $config += self::dynamicEpv($conn, $userId, $ppcAccountId, $cache, $now);
             }
         }
@@ -166,7 +180,7 @@ final class FacebookPixelAssistantScript
             if ($id !== null) {
                 return $id;
             }
-            error_log('p202 Bot202 Facebook Pixel Assistant: pixel ' . (int) ($row['pixel_id'] ?? 0)
+            error_log('p202 Bot202 Facebook Pixel Assistant: pixel ' . self::number($row['pixel_id'] ?? null)
                 . ' of ppc account ' . $ppcAccountId . ' holds no Meta Pixel ID; skipped');
         }
 
@@ -192,9 +206,10 @@ final class FacebookPixelAssistantScript
             );
             $conn->bind($stmt, 'iii', [$userId, $since, $ppcAccountId]);
             $row = $conn->fetchOne($stmt) ?? [];
-            $out = (float) ($row['click_out'] ?? 0);
+            $out = is_numeric($row['click_out'] ?? null) ? (float) $row['click_out'] : 0.0;
+            $income = is_numeric($row['income'] ?? null) ? (float) $row['income'] : 0.0;
 
-            return $out > 0 ? number_format((float) ($row['income'] ?? 0) / $out, 2, '.', '') : '0.00';
+            return $out > 0 ? number_format($income / $out, 2, '.', '') : '0.00';
         };
         $epv = $cache === null ? $read() : $cache('p202-fbpa-epv-' . $userId . '-' . $ppcAccountId . '-' . $since, $read);
         if (!is_string($epv) || !is_numeric($epv) || (float) $epv <= 0) {
@@ -203,7 +218,7 @@ final class FacebookPixelAssistantScript
 
         $stmt = $conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ?');
         $conn->bind($stmt, 'i', [$userId]);
-        $currency = (string) ($conn->fetchOne($stmt)['user_account_currency'] ?? 'USD');
+        $currency = self::text($conn->fetchOne($stmt)['user_account_currency'] ?? 'USD');
         if (preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
             error_log('p202 Bot202 Facebook Pixel Assistant: user ' . $userId . '\'s currency is not a currency code; no value sent');
 
@@ -211,5 +226,17 @@ final class FacebookPixelAssistantScript
         }
 
         return ['value' => (float) $epv, 'currency' => $currency];
+    }
+
+    /** A column read as text ('' for NULL or anything but a scalar). */
+    private static function text(mixed $value): string
+    {
+        return is_scalar($value) ? (string) $value : '';
+    }
+
+    /** A column read as an integer (0 for NULL or anything not numeric). */
+    private static function number(mixed $value): int
+    {
+        return is_numeric($value) ? (int) $value : 0;
     }
 }

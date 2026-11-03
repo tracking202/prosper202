@@ -61,21 +61,23 @@ final class FacebookPixelAssistantSettings
      */
     public static function seedStatements(): array
     {
-        $rows = static function (array $lookup): string {
-            $values = [];
-            foreach ($lookup as $id => [$name, $description]) {
-                $values[] = '(' . (int) $id . ", '" . addslashes($name) . "', '" . addslashes($description) . "')";
-            }
-
-            return implode(', ', $values);
-        };
-
         return [
             'INSERT IGNORE INTO `' . TableRegistry::BOT202_FACEBOOK_PIXEL_CONTENT_TYPE
-                . '` (`content_type_id`, `content_type`, `content_type_description`) VALUES ' . $rows(self::CONTENT_TYPES),
+                . '` (`content_type_id`, `content_type`, `content_type_description`) VALUES ' . self::seedRows(self::CONTENT_TYPES),
             'INSERT IGNORE INTO `' . TableRegistry::BOT202_FACEBOOK_PIXEL_CLICK_EVENTS
-                . '` (`event_type_id`, `event_type`, `event_type_description`) VALUES ' . $rows(self::CLICK_EVENTS),
+                . '` (`event_type_id`, `event_type`, `event_type_description`) VALUES ' . self::seedRows(self::CLICK_EVENTS),
         ];
+    }
+
+    /** @param array<int, array{string, string}> $lookup */
+    private static function seedRows(array $lookup): string
+    {
+        $values = [];
+        foreach ($lookup as $id => [$name, $description]) {
+            $values[] = '(' . $id . ", '" . addslashes($name) . "', '" . addslashes($description) . "')";
+        }
+
+        return implode(', ', $values);
     }
 
     /**
@@ -143,11 +145,11 @@ final class FacebookPixelAssistantSettings
         }
 
         return [
-            'status' => (int) $row['b202_fbpa_status'] === 1 ? 1 : 0,
-            'dynamic_epv' => (int) $row['b202_fbpa_dynamic_epv'] === 1 ? 1 : 0,
-            'content_name' => (string) ($row['b202_fbpa_content_name'] ?? ''),
-            'content_type' => (int) $row['b202_fbpa_content_type'],
-            'outbound_clicks' => (int) $row['b202_fbpa_outbound_clicks'],
+            'status' => self::number($row['b202_fbpa_status'] ?? null) === 1 ? 1 : 0,
+            'dynamic_epv' => self::number($row['b202_fbpa_dynamic_epv'] ?? null) === 1 ? 1 : 0,
+            'content_name' => is_scalar($row['b202_fbpa_content_name'] ?? null) ? (string) $row['b202_fbpa_content_name'] : '',
+            'content_type' => self::number($row['b202_fbpa_content_type'] ?? null),
+            'outbound_clicks' => self::number($row['b202_fbpa_outbound_clicks'] ?? null),
         ];
     }
 
@@ -200,5 +202,11 @@ final class FacebookPixelAssistantSettings
         );
         $this->conn->bind($stmt, 'ii', [$userId, $landingPageId]);
         $this->conn->executeUpdate($stmt);
+    }
+
+    /** A column read as an integer (0 for NULL or anything not numeric). */
+    private static function number(mixed $value): int
+    {
+        return is_numeric($value) ? (int) $value : 0;
     }
 }

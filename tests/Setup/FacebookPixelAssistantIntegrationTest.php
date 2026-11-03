@@ -180,4 +180,22 @@ final class FacebookPixelAssistantIntegrationTest extends TestCase
         self::assertSame(FacebookPixelAssistantSettings::CONTENT_TYPES, $types);
         self::assertSame(FacebookPixelAssistantSettings::CLICK_EVENTS, $events);
     }
+
+    /** The API stores a type-6 pixel as its Pixel ID, as the form does, and refuses a code with none. */
+    public function testTheApiStoresTheFacebookPixelIdAndRefusesACodeWithout(): void
+    {
+        $account = $this->ids['account mine'];
+        $api = new \Api\V3\Controllers\PpcAccountPixelsController(self::$db, self::USER);
+
+        $created = $api->create($account, ['pixel_type_id' => 6, 'pixel_code' => "<script>fbq('init', '123456789012345');</script>"]);
+        self::assertSame('123456789012345', (string) $created['data']['pixel_code']);
+
+        try {
+            $api->create($account, ['pixel_type_id' => 6, 'pixel_code' => 'https://example.com/pixel']);
+            self::fail('a type-6 code without a Pixel ID is refused');
+        } catch (\Api\V3\Exception\ValidationException $e) {
+            self::assertArrayHasKey('pixel_code', $e->getFieldErrors());
+        }
+        self::assertSame('1', self::row("SELECT COUNT(*) AS n FROM 202_ppc_account_pixels WHERE ppc_account_id = $account")['n']);
+    }
 }

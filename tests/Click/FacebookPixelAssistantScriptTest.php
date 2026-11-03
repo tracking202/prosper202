@@ -181,4 +181,34 @@ final class FacebookPixelAssistantScriptTest extends TestCase
         self::assertStringNotContainsString("'x'", $answer);
         self::assertSame("</script><script>alert('x')</script>", self::settings($answer)['contentName']);
     }
+
+    /**
+     * A third-party pixel goes only to a visitor the privacy setting tracks
+     * in full, who did not refuse consent, on a campaign whose identity
+     * capture is on (as p202ClickIdentity() reads it for the click's own signals).
+     */
+    public function testMayTrackNeedsThePrivacySettingConsentAndTheCampaign(): void
+    {
+        self::assertTrue(FacebookPixelAssistantScript::mayTrack(true, [], '1'));
+        self::assertTrue(FacebookPixelAssistantScript::mayTrack(true, ['p202_consent' => '1'], 1));
+        self::assertTrue(FacebookPixelAssistantScript::mayTrack(true, [], null), 'no campaign leaves it on, as for the click');
+        self::assertFalse(FacebookPixelAssistantScript::mayTrack(false, [], '1'), 'held back by the privacy setting');
+        self::assertFalse(FacebookPixelAssistantScript::mayTrack(true, ['p202_consent' => '0'], '1'), 'consent refused');
+        self::assertFalse(FacebookPixelAssistantScript::mayTrack(true, [], '0'), 'the campaign has identity capture off');
+        self::assertFalse(FacebookPixelAssistantScript::mayTrack(true, [], 'yes'), 'a setting that cannot be read is off');
+    }
+
+    /** record_simple.php asks mayTrack() with the request and its campaign's setting, as it asks for the click's identity. */
+    public function testRecordSimpleGatesTheAnswerOnMayTrack(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/tracking202/static/record_simple.php');
+        $campaign = "array_key_exists('identity_signals', \$tracker_row) ? \$tracker_row['identity_signals'] : null";
+        self::assertStringContainsString("RequestSignals::campaignAllows($campaign)", $source, 'the click identity reads the same setting');
+        self::assertSame(1, substr_count($source, 'FacebookPixelAssistantScript::forClick('));
+        self::assertMatchesRegularExpression(
+            '/FacebookPixelAssistantScript::forClick\(\s*\$conn,[^;]*?FacebookPixelAssistantScript::mayTrack\(trackingEnabled\(\), \$_GET, '
+                . preg_quote($campaign, '/') . '\),/s',
+            $source
+        );
+    }
 }
