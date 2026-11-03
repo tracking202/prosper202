@@ -39,6 +39,18 @@ final class ConversionLog
 
     private const MAX_PAGE = 100000;
 
+    /** Every query field the page reads, with the name its error uses. */
+    private const FIELDS = [
+        'campaign_id' => 'Campaign', 'click_id' => 'Subid', 'type' => 'Type', 'deleted' => 'Deleted',
+        'time_basis' => 'Date range applies to', 'range' => 'Range', 'from' => 'From', 'to' => 'To',
+        'offset' => 'Page',
+    ];
+
+    /** A row's source as the upgrade backfills an empty one (ConversionSource::fromLegacyRow()). */
+    private const LEGACY_SOURCE_SQL = "CASE WHEN cl.pixel_type = 1 THEN 'pixel' WHEN cl.pixel_type = 2 THEN 'postback'
+        WHEN cl.pixel_type = 3 THEN 'universal_pixel' WHEN cl.user_agent = 'subid-upload' THEN 'subid_upload'
+        ELSE 'api' END";
+
     public function __construct(private Connection $conn)
     {
     }
@@ -59,8 +71,14 @@ final class ConversionLog
      */
     public static function readQuery(array $query, string $zone, int $now): array
     {
-        $text = static fn (string $name): string => is_string($query[$name] ?? null) ? trim($query[$name]) : '';
         $errors = [];
+        // A value that is not one string (?click_id[]=1) is refused, never read as "not set".
+        foreach (self::FIELDS as $name => $label) {
+            if (array_key_exists($name, $query) && !is_string($query[$name])) {
+                $errors[$name] = $label . ' takes one value.';
+            }
+        }
+        $text = static fn (string $name): string => is_string($query[$name] ?? null) ? trim($query[$name]) : '';
         $filters = ['campaign_id' => null, 'click_id' => null, 'from' => null, 'to' => null,
             'time_basis' => 'conversion', 'type' => null, 'deleted' => null];
         $form = [];
@@ -68,7 +86,7 @@ final class ConversionLog
         $ids = ['campaign_id' => 'a campaign from the list', 'click_id' => 'a click id (subid), digits only'];
         foreach ($ids as $name => $what) {
             $form[$name] = $text($name);
-            if ($form[$name] === '') {
+            if ($form[$name] === '' || isset($errors[$name])) {
                 continue;
             }
             if (preg_match('/^[1-9][0-9]{0,18}$/D', $form[$name]) !== 1) {
@@ -79,7 +97,7 @@ final class ConversionLog
         }
 
         $form['type'] = $text('type');
-        if ($form['type'] !== '') {
+        if ($form['type'] !== '' && !isset($errors['type'])) {
             if (ConversionSource::tryFrom($form['type']) === null) {
                 $errors['type'] = 'Choose a type from the list.';
             } else {
@@ -88,7 +106,7 @@ final class ConversionLog
         }
 
         $form['deleted'] = $text('deleted');
-        if ($form['deleted'] !== '') {
+        if ($form['deleted'] !== '' && !isset($errors['deleted'])) {
             if (!isset(self::DELETED[$form['deleted']])) {
                 $errors['deleted'] = 'Choose live or deleted conversions.';
             } else {
@@ -97,7 +115,9 @@ final class ConversionLog
         }
 
         $form['time_basis'] = $text('time_basis') !== '' ? $text('time_basis') : 'conversion';
-        if (!isset(self::TIME_BASES[$form['time_basis']])) {
+        if (isset($errors['time_basis'])) {
+            $form['time_basis'] = 'conversion';
+        } elseif (!isset(self::TIME_BASES[$form['time_basis']])) {
             $errors['time_basis'] = 'Choose conversion time or click time.';
         } else {
             $filters['time_basis'] = $form['time_basis'];
@@ -107,7 +127,10 @@ final class ConversionLog
         $form['from'] = $text('from');
         $form['to'] = $text('to');
         $tz = new \DateTimeZone($zone);
-        if ($form['range'] === self::CUSTOM_RANGE) {
+        if (isset($errors['range']) || isset($errors['from']) || isset($errors['to'])) {
+            $errors['range'] = $errors['range'] ?? 'Enter each date once, as YYYY-MM-DD.';
+            unset($errors['from'], $errors['to']);
+        } elseif ($form['range'] === self::CUSTOM_RANGE) {
             $from = self::day($form['from'], $tz);
             $to = self::day($form['to'], $tz);
             if ($from === null || $to === null) {
@@ -133,8 +156,14 @@ final class ConversionLog
 
         $page = 0;
         $rawPage = $text('offset');
-        if ($rawPage !== '' && preg_match('/^[0-9]{1,9}$/D', $rawPage) === 1) {
-            $page = min((int) $rawPage, self::MAX_PAGE);
+        if (isset($errors['offset'])) {
+            $errors['offset'] = 'That is not a page of this list.';
+        } elseif ($rawPage !== '') {
+            if (preg_match('/^[0-9]{1,9}$/D', $rawPage) !== 1 || (int) $rawPage > self::MAX_PAGE) {
+                $errors['offset'] = 'That is not a page of this list.';
+            } else {
+                $page = (int) $rawPage;
+            }
         }
 
         return ['filters' => $filters, 'form' => $form, 'errors' => $errors, 'page' => $page];
@@ -158,7 +187,8 @@ final class ConversionLog
      * One page of the account's conversion rows, newest conversion first.
      *
      * @param Filters $filters as readQuery() gives them
-     * @return array{rows: list<array<string, mixed>>, total: int}
+     * @return array{rows: list<array<string, mixed>>, total: int, page: int} page is the one read,
+     *         the last when the one asked for is past the end
      */
     public function page(int $userId, array $filters, int $page): array
     {
@@ -174,7 +204,6 @@ final class ConversionLog
             ['click_id', 'cl.click_id = ?', 'i'],
             ['from', $timeColumn . ' >= ?', 'i'],
             ['to', $timeColumn . ' <= ?', 'i'],
-            ['type', 'cl.source = ?', 's'],
         ];
         foreach ($clauses as [$key, $clause, $type]) {
             if (($filters[$key] ?? null) !== null) {
@@ -182,6 +211,13 @@ final class ConversionLog
                 $types .= $type;
                 $binds[] = $filters[$key];
             }
+        }
+        if (($filters['type'] ?? null) !== null) {
+            // A row the upgrade did not backfill is the type its pixel type reads as, as the column shows it.
+            $where[] = "(cl.source = ? OR (cl.source = '' AND " . self::LEGACY_SOURCE_SQL . ' = ?))';
+            $types .= 'ss';
+            $binds[] = $filters['type'];
+            $binds[] = $filters['type'];
         }
         if (($filters['deleted'] ?? null) === 'yes') {
             $where[] = 'cl.deleted = 1';
@@ -193,6 +229,8 @@ final class ConversionLog
         $stmt = $this->conn->prepareRead('SELECT COUNT(*) AS total FROM 202_conversion_logs cl WHERE ' . $whereSql);
         $this->conn->bind($stmt, $types, $binds);
         $total = (int) ($this->conn->fetchOne($stmt)['total'] ?? 0);
+        // Past the end is the last page, so the count, the rows and the pager agree.
+        $page = min(max(0, $page), max(0, intdiv($total - 1, self::PER_PAGE)));
 
         $stmt = $this->conn->prepareRead(
             'SELECT cl.conv_id, cl.click_id, cl.campaign_id, cl.transaction_id, cl.click_payout,
@@ -204,7 +242,7 @@ final class ConversionLog
              ORDER BY cl.conv_time DESC, cl.conv_id DESC
              LIMIT ? OFFSET ?'
         );
-        $this->conn->bind($stmt, $types . 'ii', array_merge($binds, [self::PER_PAGE, max(0, $page) * self::PER_PAGE]));
+        $this->conn->bind($stmt, $types . 'ii', array_merge($binds, [self::PER_PAGE, $page * self::PER_PAGE]));
 
         $rows = [];
         foreach ($this->conn->fetchAll($stmt) as $r) {
@@ -223,14 +261,14 @@ final class ConversionLog
                 'conv_time' => $convTime,
                 'elapsed' => self::elapsed($clickTime, $convTime),
                 'ip' => (string) $r['ip'],
-                'type' => $type->label(),
+                'type' => $type !== null ? $type->label() : 'Unknown (' . (string) $r['source'] . ')',
                 'reverses_conv_id' => $r['reverses_conv_id'] !== null ? (int) $r['reverses_conv_id'] : null,
                 'deleted' => (int) $r['deleted'] === 1,
                 'user_agent' => (string) $r['user_agent'],
             ];
         }
 
-        return ['rows' => $rows, 'total' => $total];
+        return ['rows' => $rows, 'total' => $total, 'page' => $page];
     }
 
     /**
@@ -253,10 +291,17 @@ final class ConversionLog
         return $out;
     }
 
-    /** What produced the row; a row from before the ledger is read from its pixel type. */
-    public static function typeOf(string $source, int $pixelType, string $userAgent): ConversionSource
+    /**
+     * What produced the row: an empty source (a row the upgrade did not backfill) is read from its
+     * pixel type; a source no ConversionSource names is null, shown as unknown rather than guessed.
+     */
+    public static function typeOf(string $source, int $pixelType, string $userAgent): ?ConversionSource
     {
-        return ConversionSource::tryFrom($source) ?? ConversionSource::fromLegacyRow($pixelType, $userAgent);
+        if ($source === '') {
+            return ConversionSource::fromLegacyRow($pixelType, $userAgent);
+        }
+
+        return ConversionSource::tryFrom($source);
     }
 
     /** Click to conversion, "2d 3h 4m 5s"; null when the click time is unknown or later. */

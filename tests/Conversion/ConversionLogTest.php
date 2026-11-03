@@ -73,7 +73,7 @@ final class ConversionLogTest extends TestCase
     }
 
     /**
-     * @return iterable<string, array{array<string, string>, string}>
+     * @return iterable<string, array{array<string, mixed>, string}>
      */
     public static function unreadable(): iterable
     {
@@ -88,13 +88,26 @@ final class ConversionLogTest extends TestCase
         yield 'custom without dates' => [['range' => 'custom'], 'range'];
         yield 'custom not a day' => [['range' => 'custom', 'from' => '2026-02-30', 'to' => '2026-03-01'], 'range'];
         yield 'custom reversed' => [['range' => 'custom', 'from' => '2026-03-05', 'to' => '2026-03-01'], 'range'];
+        yield 'page not a number' => [['offset' => 'abc'], 'offset'];
+        yield 'negative page' => [['offset' => '-1'], 'offset'];
+        yield 'page in exponent form' => [['offset' => '1e3'], 'offset'];
+        yield 'page past the cap' => [['offset' => '100001'], 'offset'];
+        yield 'subid as a list' => [['click_id' => ['1', '2']], 'click_id'];
+        yield 'empty subid list' => [['click_id' => []], 'click_id'];
+        yield 'campaign as a list' => [['campaign_id' => ['10']], 'campaign_id'];
+        yield 'type as a list' => [['type' => ['postback']], 'type'];
+        yield 'deleted as a list' => [['deleted' => ['yes']], 'deleted'];
+        yield 'time basis as a list' => [['time_basis' => ['click']], 'time_basis'];
+        yield 'range as a list' => [['range' => ['alltime']], 'range'];
+        yield 'from as a list' => [['range' => 'custom', 'from' => ['2026-03-01'], 'to' => '2026-03-02'], 'range'];
+        yield 'page as a list' => [['offset' => ['2']], 'offset'];
     }
 
     /**
      * A value that cannot be read is refused by name, never read as "no
      * filter": that would list every conversion as the ones asked for.
      *
-     * @param array<string, string> $query
+     * @param array<string, mixed> $query
      * @dataProvider unreadable
      */
     public function testAnUnreadableValueIsAnErrorNotAWiderList(array $query, string $field): void
@@ -104,12 +117,19 @@ final class ConversionLogTest extends TestCase
         self::assertArrayHasKey($field, $read['errors']);
     }
 
-    public function testAnArrayValueIsNotReadAsAFilter(): void
+    public function testAListValueIsRefusedAndNotAlsoReadAsAnotherError(): void
     {
-        $read = ConversionLog::readQuery(['click_id' => ['1', '2'], 'offset' => ['2']], self::ZONE, self::NOW);
+        $read = ConversionLog::readQuery(['click_id' => ['1', '2'], 'range' => 'custom'], self::ZONE, self::NOW);
 
+        self::assertSame('Subid takes one value.', $read['errors']['click_id']);
         self::assertNull($read['filters']['click_id']);
-        self::assertSame(0, $read['page']);
+        self::assertArrayHasKey('range', $read['errors']);
+    }
+
+    public function testAPageWithinTheCapIsRead(): void
+    {
+        self::assertSame(100000, ConversionLog::readQuery(['offset' => '100000'], self::ZONE, self::NOW)['page']);
+        self::assertSame([], ConversionLog::readQuery(['offset' => '0'], self::ZONE, self::NOW)['errors']);
     }
 
     public function testElapsed(): void
@@ -129,6 +149,8 @@ final class ConversionLogTest extends TestCase
         self::assertSame(ConversionSource::POSTBACK, ConversionLog::typeOf('', 2, ''));
         self::assertSame(ConversionSource::UNIVERSAL_PIXEL, ConversionLog::typeOf('', 3, ''));
         self::assertSame(ConversionSource::SUBID_UPLOAD, ConversionLog::typeOf('', 0, 'subid-upload'));
+        // A source nothing names is unknown, not guessed from the pixel type.
+        self::assertNull(ConversionLog::typeOf('fax', 2, ''));
     }
 
     public function testThePageAndItsTabAskForTheSetupPermission(): void

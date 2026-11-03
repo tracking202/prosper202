@@ -104,7 +104,9 @@ echo '<section class="p202-panel" aria-labelledby="logs-title"><div class="p202-
 if ($errors !== []) {
     echo '</div><div class="p202-panel__body"><div class="p202-empty"><i class="bi bi-funnel p202-empty__icon"></i>'
         . '<strong class="p202-empty__title">These filters were not applied</strong>'
-        . '<div>Correct the field marked above and apply again.</div></div></div></section>';
+        . '<div>' . $e(isset($errors['offset']) && count($errors) === 1
+            ? $errors['offset'] . ' Apply the filters again to start from the first page.'
+            : 'Correct the field marked above and apply again.') . '</div></div></div></section>';
     template_bottom();
     exit;
 }
@@ -179,7 +181,7 @@ $view = http_build_query(array_filter([
     'time_basis' => $form['time_basis'] !== 'conversion' ? $form['time_basis'] : '',
 ], static fn (string $v): bool => $v !== ''));
 $pages = (int) ceil($total / ConversionLog::PER_PAGE);
-echo p202_overview_pagination($pages, $read['page'], 'Conversion log pages', $view);
+echo p202_overview_pagination($pages, $result['page'], 'Conversion log pages', $view);
 
 echo '</div></section>';
 

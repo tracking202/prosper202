@@ -148,6 +148,13 @@ final class ConversionLogIntegrationTest extends TestCase
         ));
     }
 
+    /** @return array<string, mixed> no filter set */
+    private function none(): array
+    {
+        return ['campaign_id' => null, 'click_id' => null, 'from' => null, 'to' => null,
+            'time_basis' => 'conversion', 'type' => null, 'deleted' => null];
+    }
+
     /** @param array<string, mixed> $filters */
     private function ids(int $user, array $filters = [], int $page = 0): array
     {
@@ -217,6 +224,20 @@ final class ConversionLogIntegrationTest extends TestCase
         self::assertSame([7, 4, 2, 1], $this->ids(self::MINE, ['deleted' => 'no']));
     }
 
+    public function testTheTypeFilterMatchesTheTypeShownForARowWithoutASource(): void
+    {
+        // Not backfilled: no source, a postback by its pixel type. And one whose source nothing names.
+        $this->conversion(8, 504, self::MINE, 10, '', 2, 86400 * 5, 86400 * 5 - 10, 0, null, '7.00');
+        $this->conversion(9, 505, self::MINE, 10, 'fax', 2, 86400 * 6, 86400 * 6 - 10, 0, null, '8.00');
+        $rows = array_column($this->log->page(self::MINE, $this->none(), 0)['rows'], null, 'conv_id');
+
+        self::assertSame('Postback', $rows[8]['type']);
+        self::assertSame('Unknown (fax)', $rows[9]['type']);
+        self::assertSame([8, 2, 1], $this->ids(self::MINE, ['type' => 'postback']));
+        self::assertSame([], $this->ids(self::MINE, ['type' => 'api', 'click_id' => 504]));
+        self::assertSame([4], $this->ids(self::MINE, ['type' => 'api']));
+    }
+
     public function testDateRangeAppliesToConversionOrClickTime(): void
     {
         // Day 2 (UTC): conversion 3 converted then, from a click on day 1.
@@ -245,6 +266,15 @@ final class ConversionLogIntegrationTest extends TestCase
         self::assertCount(ConversionLog::PER_PAGE, $first['rows']);
         self::assertSame([3, 2, 1], array_column($second['rows'], 'conv_id'));
         self::assertSame(ConversionLog::PER_PAGE + 3, $second['total']);
+        self::assertSame(1, $second['page']);
+
+        // Past the end reads the last page, and says so.
+        $past = $this->log->page(self::MINE, $filters, 9);
+        self::assertSame(1, $past['page']);
+        self::assertSame([3, 2, 1], array_column($past['rows'], 'conv_id'));
+        $empty = $this->log->page(self::OTHER, array_merge($filters, ['click_id' => 1]), 4);
+        self::assertSame(0, $empty['page']);
+        self::assertSame(0, $empty['total']);
     }
 
     public function testTheCampaignListIsTheAccountsLiveCampaigns(): void
