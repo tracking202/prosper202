@@ -49,7 +49,8 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
         self::seed();
 
         $probe = stream_socket_server('tcp://127.0.0.1:0');
-        $port = (int) substr((string) stream_socket_get_name($probe, false), strrpos((string) stream_socket_get_name($probe, false), ':') + 1);
+        $name = (string) stream_socket_get_name($probe, false);
+        $port = (int) substr($name, strrpos($name, ':') + 1);
         fclose($probe);
         self::$log = (string) tempnam(sys_get_temp_dir(), 'p202srv');
         self::$server = proc_open(
@@ -95,8 +96,12 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $clicks = self::GPB_CLICK . ', ' . self::UPX_CLICK;
-        self::q("DELETE FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($clicks))");
-        foreach (['202_conversion_logs', '202_clicks', '202_clicks_spy', '202_clicks_tracking', '202_click_latest_visits'] as $table) {
+        self::q('DELETE FROM 202_notification_pending WHERE conv_id IN'
+            . " (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($clicks))");
+        $tables = [
+            '202_conversion_logs', '202_clicks', '202_clicks_spy', '202_clicks_tracking', '202_click_latest_visits',
+        ];
+        foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
         self::q('DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id = ' . self::ACCOUNT);
@@ -132,7 +137,8 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
                 . ' click_time = ' . (time() - 60);
             self::q("INSERT INTO 202_clicks SET $columns");
             self::q("INSERT INTO 202_clicks_spy SET $columns");
-            self::q("INSERT INTO 202_clicks_tracking SET click_id = $click, c1_id = 0, c2_id = 0, c3_id = 0, c4_id = 0");
+            self::q("INSERT INTO 202_clicks_tracking SET click_id = $click,"
+                . ' c1_id = 0, c2_id = 0, c3_id = 0, c4_id = 0');
             LatestVisit::refresh($conn, $click);
         }
     }
@@ -142,7 +148,12 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
     {
         $ch = curl_init(self::$base . $path);
         self::assertNotFalse($ch);
-        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_PROXY => '', CURLOPT_CONNECTTIMEOUT => 5, CURLOPT_TIMEOUT => 30]);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_PROXY => '',
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 30,
+        ]);
         $body = (string) curl_exec($ch);
 
         return [(int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE), $body];
@@ -162,11 +173,12 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
     private static function runWorker(): array
     {
         $sent = [];
-        $outbox = new NotificationOutbox(new Connection(self::$db), null, static function (string $url) use (&$sent): bool {
+        $fetch = static function (string $url) use (&$sent): bool {
             $sent[] = $url;
 
             return true;
-        });
+        };
+        $outbox = new NotificationOutbox(new Connection(self::$db), null, $fetch);
         $outbox->sendDue(200);
 
         return $sent;
@@ -184,8 +196,11 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
         self::assertStringContainsString('"msg":"Postback successful"', $body, 'the answer it always gave');
 
         $url = 'https://ads.example/pb?s=' . self::GPB_CLICK . '&tx=G1';
-        self::assertSame([['status' => 'pending', 'attempts' => '0', 'url' => $url]], self::queued(self::GPB_CLICK),
-            'queued and not tried: the request did not call the traffic source');
+        self::assertSame(
+            [['status' => 'pending', 'attempts' => '0', 'url' => $url]],
+            self::queued(self::GPB_CLICK),
+            'queued and not tried: the request did not call the traffic source'
+        );
 
         self::assertContains($url, self::runWorker(), 'the worker sends it');
         self::assertSame('sent', self::queued(self::GPB_CLICK)[0]['status']);
@@ -198,8 +213,11 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
         self::assertSame(200, $status, $body . $this->serverLog());
 
         $url = 'https://ads.example/pb?s=' . self::UPX_CLICK . '&tx=U1';
-        self::assertSame([['status' => 'pending', 'attempts' => '0', 'url' => $url]], self::queued(self::UPX_CLICK),
-            'queued and not tried');
+        self::assertSame(
+            [['status' => 'pending', 'attempts' => '0', 'url' => $url]],
+            self::queued(self::UPX_CLICK),
+            'queued and not tried'
+        );
 
         self::assertContains($url, self::runWorker(), 'the worker sends it');
         self::assertSame('sent', self::queued(self::UPX_CLICK)[0]['status']);

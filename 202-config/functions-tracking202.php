@@ -1843,7 +1843,7 @@ function getDashEmail(): string|bool
         if ($user_row['p202_customer_api_key']) {
             $_SESSION['p202_dash_email_asked_at'] = time();
             $dashEmail = getSetDashEmail($user_row['p202_customer_api_key']);
-            if ($dashEmail['code'] == 200 && $dashEmail['email'] != '') {
+            if (is_array($dashEmail) && ($dashEmail['code'] ?? null) == 200 && ($dashEmail['email'] ?? '') != '') {
                 //found it save to DB and return
                 $mysql['email'] = $db->real_escape_string($dashEmail['email']);
                 $sql = "UPDATE `202_users` SET user_dash_email='" . $mysql['email'] . "' WHERE user_id ='" . $_SESSION['user_id'] . "'";

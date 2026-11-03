@@ -42,6 +42,11 @@ try {
                 curl_setopt($curl, CURLOPT_POST, true);
                 curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($data, JSON_NUMERIC_CHECK));
                 $response = curl_exec($curl);
+                if ($response === false) {
+                    // A timeout or refused connection: answer it, rather than a 200 for a job never started.
+                    error_log('dni.php: the offer cache request failed: ' . curl_error($curl));
+                    http_response_code(502);
+                }
             } else if ($_GET['processed'] == 'true') {
                 // The hosted service's callback names the network by its id
                 // and key, the pair it was sent above: it marks that network
