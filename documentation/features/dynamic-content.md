@@ -24,6 +24,9 @@ Welcome, reader from <span name="t202Country" t202Default="your country">your co
 - **Form fields** (`input`, `textarea`) get the value; a `select` picks the
   option whose value or text is the value, and keeps its choice when none is.
   Other elements get it as text, never as HTML.
+- Radio, checkbox, submit and other button inputs keep their own value, and
+  a `<button>` matched by its `name` keeps its label (one marked with
+  `t202attribute` is filled).
 - **`t202Default`** is shown when the segment has no value.
 - Fields named `t202p13n_…` belong to personalization and are left alone.
 
