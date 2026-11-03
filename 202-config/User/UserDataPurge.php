@@ -48,6 +48,8 @@ use Prosper202\Database\Connection;
  *    user (functions-auth.php reads user_deleted); the API authenticates by
  *    key alone, so before this a deleted user's key kept working — and could
  *    register the very apps whose postbacks the purge had just released;
+ *    once the delete commits, the MCP server is asked to stop the watchers of
+ *    the user's AI connections (AiWatchers), best effort;
  *  - clicks and conversion rows are KEPT, as they always were: they are the
  *    account's traffic record and other reports aggregate them.
  *
@@ -246,6 +248,17 @@ final class UserDataPurge
             throw new \InvalidArgumentException('A user id to delete is positive');
         }
 
+        // Read before the delete, used after it commits: a delete rolled back
+        // keeps the user's AI connections watching.
+        $watchers = new \Api\V3\Support\AiWatchers();
+        try {
+            $aiTokens = \Api\V3\Support\AiWatchers::connectionTokens($this->db, $userId);
+        } catch (\Throwable $e) {
+            error_log('p202 user delete: the AI connection keys of user ' . $userId . ' could not be read: '
+                . $e->getMessage());
+            $aiTokens = [];
+        }
+
         try {
             [$exportFileNames, $unlinked] = (new Connection($this->db))->transaction(function () use ($userId): array {
                 // The user row is locked first, before anything is purged. The
@@ -276,6 +289,12 @@ final class UserDataPurge
             });
         } catch (\Throwable $e) {
             throw new \RuntimeException('User ' . $userId . ' was not deleted: ' . $e->getMessage(), 0, $e);
+        }
+
+        // Best effort: the deleted keys already read nothing.
+        if (!$watchers->stopAllOf($aiTokens)) {
+            error_log('p202 user delete: user ' . $userId . ' was deleted, but the MCP server did not confirm that'
+                . ' the watchers of their AI connections stopped');
         }
 
         // The campaigns the purge unlinked from the deleted registrations

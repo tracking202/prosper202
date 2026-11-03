@@ -455,3 +455,201 @@ function p202_account_api_keys(mysqli $db, int $userId): array
     }
     return $keys;
 }
+
+/**
+ * Each AI-connection key's watchers, as Tracking202's MCP server reports
+ * them (AiWatchers::list()): api_key => the list, or null where it could not
+ * be read. Keys of no AI connection get no entry, so an account without one
+ * makes no call.
+ *
+ * @param list<array<string, mixed>> $keys p202_account_api_keys()
+ * @return array<string, list<array<string, mixed>>|null>
+ */
+function p202_account_ai_watchers(array $keys, \Api\V3\Support\AiWatchers $relay): array
+{
+    $watchers = [];
+    foreach ($keys as $key) {
+        if (\Api\V3\Support\AiConnect::isConnectionLabel(isset($key['label']) ? (string) $key['label'] : null)) {
+            $apiKey = (string) $key['api_key'];
+            $watchers[$apiKey] = $relay->list(\Api\V3\Support\AiConnect::watcherToken($apiKey));
+        }
+    }
+    return $watchers;
+}
+
+/**
+ * The account's own campaigns among $ids: id => name, '(deleted)' after a
+ * deleted one's. Another account's campaign, or none, is not in the answer.
+ *
+ * @param list<int> $ids
+ * @return array<int, string>
+ * @throws Throwable when the campaigns cannot be read
+ */
+function p202_account_campaign_names(mysqli $db, int $userId, array $ids): array
+{
+    $ids = array_values(array_unique(array_map('intval', $ids)));
+    if ($ids === []) {
+        return [];
+    }
+    $conn = new \Prosper202\Database\Connection($db);
+    $stmt = $conn->prepareRead('SELECT aff_campaign_id, aff_campaign_name, aff_campaign_deleted FROM 202_aff_campaigns'
+        . ' WHERE user_id = ? AND aff_campaign_id IN (' . implode(', ', array_fill(0, count($ids), '?')) . ')');
+    $conn->bind($stmt, 'i' . str_repeat('i', count($ids)), array_merge([$userId], $ids));
+    $names = [];
+    foreach ($conn->fetchAll($stmt) as $row) {
+        $names[(int) $row['aff_campaign_id']] = (string) $row['aff_campaign_name']
+            . ((int) ($row['aff_campaign_deleted'] ?? 0) === 1 ? ' (deleted)' : '');
+    }
+    return $names;
+}
+
+/**
+ * What a watcher watches, in one sentence, from its rule, breakdown and
+ * window: "Each landing page's EPC 30% or more below breakeven, after 500
+ * clicks, since the watcher started. Checked every 60 minutes."
+ *
+ * @param array<string, mixed> $watcher AiWatchers::list()'s entry
+ */
+function p202_account_watcher_rule(array $watcher): string
+{
+    $rule = is_array($watcher['rule'] ?? null) ? $watcher['rule'] : [];
+    $breakdowns = [
+        'campaign' => 'The campaign\'s', 'ppc_account' => 'Each traffic source account\'s',
+        'ppc_network' => 'Each traffic source\'s', 'landing_page' => 'Each landing page\'s',
+        'keyword' => 'Each keyword\'s', 'country' => 'Each country\'s', 'device' => 'Each device\'s',
+        'text_ad' => 'Each text ad\'s', 'rotator' => 'Each rotator\'s',
+    ];
+    $metrics = ['epc' => 'EPC', 'roi' => 'ROI', 'cvr' => 'conversion rate'];
+    $comparators = ['lt' => 'below', 'lte' => 'at or below', 'gt' => 'above', 'gte' => 'at or above'];
+    $windows = [
+        'since_start' => 'since the watcher started', 'today' => 'today', 'yesterday' => 'yesterday',
+        'last7' => 'over the last 7 days', 'last14' => 'over the last 14 days', 'last30' => 'over the last 30 days',
+    ];
+    $text = static fn (mixed $v): string => is_string($v) ? $v : '';
+    $number = static fn (mixed $v): string => is_int($v) || is_float($v)
+        ? rtrim(rtrim(number_format((float) $v, 2, '.', ''), '0'), '.')
+        : '?';
+
+    $breakdown = $text($watcher['breakdown'] ?? '');
+    $subject = $breakdowns[$breakdown]
+        ?? ($breakdown === '' ? 'The campaign\'s' : 'Each ' . str_replace('_', ' ', $breakdown) . '\'s');
+    $metricKey = $text($rule['metric'] ?? '');
+    if ($metricKey === '') {
+        return 'What it watches was not given.';
+    }
+    $metric = $metrics[$metricKey] ?? $metricKey;
+    $unit = in_array($metricKey, ['roi', 'cvr'], true) ? '%' : '';
+    if ($text($rule['thresholdKind'] ?? '') === 'pctBelowBreakeven') {
+        $condition = $number($rule['threshold'] ?? null) . '% or more below breakeven';
+    } else {
+        $comparator = $text($rule['comparator'] ?? '');
+        $condition = ($comparators[$comparator] ?? $comparator) . ' ' . $number($rule['threshold'] ?? null) . $unit;
+    }
+    $sentence = $subject . ' ' . $metric . ' ' . $condition;
+    if (is_int($rule['minClicks'] ?? null) && $rule['minClicks'] > 0) {
+        $sentence .= ', after ' . number_format($rule['minClicks']) . ' click' . ($rule['minClicks'] === 1 ? '' : 's');
+    }
+    $window = $text($watcher['window'] ?? '');
+    if ($window !== '') {
+        $sentence .= ', ' . ($windows[$window] ?? str_replace('_', ' ', $window));
+    }
+    $sentence .= '.';
+    if (is_int($rule['checkEveryMinutes'] ?? null) && $rule['checkEveryMinutes'] > 0) {
+        $every = $rule['checkEveryMinutes'];
+        $sentence .= ' Checked every ' . ($every % 60 === 0 && $every >= 60
+            ? ($every === 60 ? 'hour' : ($every / 60) . ' hours')
+            : $every . ' minute' . ($every === 1 ? '' : 's')) . '.';
+    }
+    return $sentence;
+}
+
+/**
+ * Account › API keys' Stop: stops one watcher of one of the signed-in user's
+ * AI-connection keys, named byte for byte as the page printed it. Another
+ * user's key, or a key of no AI connection, stops nothing.
+ *
+ * @return array{kind: 'ok'|'bad'|'warn', text: string} the flash to show
+ */
+function p202_account_stop_ai_watcher(
+    mysqli $db,
+    int $userId,
+    string $postedKey,
+    string $watcherId,
+    \Api\V3\Support\AiWatchers $relay
+): array {
+    if (preg_match(\Api\V3\Support\AiWatchers::ID, $watcherId) !== 1) {
+        return ['kind' => 'warn', 'text' => 'That watcher was not recognised; nothing was stopped.'];
+    }
+    try {
+        $tokens = \Api\V3\Support\AiWatchers::connectionTokens($db, $userId, $postedKey, true);
+    } catch (Throwable $e) {
+        error_log('Account page: the AI connection key could not be read: ' . $e->getMessage());
+        return ['kind' => 'bad', 'text' => 'The watcher could not be stopped just now; try again.'];
+    }
+    if ($tokens === []) {
+        $text = 'That AI connection key was not found on this account; nothing was stopped.';
+        return ['kind' => 'warn', 'text' => $text];
+    }
+    return match ($relay->stop($tokens[0], $watcherId)) {
+        'stopped' => ['kind' => 'ok', 'text' => 'Watcher stopped. It reads nothing more with this key.'],
+        'not_found' => ['kind' => 'warn', 'text' => 'Tracking202\'s MCP server has no such watcher for this key;'
+            . ' it may have ended already.'],
+        default => ['kind' => 'bad', 'text' => 'Tracking202\'s MCP server could not be reached to stop the watcher;'
+            . ' try again, or revoke the key to cut it off.'],
+    };
+}
+
+/**
+ * Account › API keys' list of one AI-connection key's watchers, with a Stop
+ * form for each running one; null watchers is a list that could not be read.
+ *
+ * @param list<array<string, mixed>>|null $watchers AiWatchers::list()
+ * @param array<int, string> $campaignNames p202_account_campaign_names()
+ * @param string $action where the Stop form posts
+ */
+function p202_account_render_watchers(string $apiKey, ?array $watchers, array $campaignNames, string $action): string
+{
+    $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+    $html = '<div class="mt-2 ms-3" data-ai-watchers><div class="form-text mt-0 mb-1"><strong>Watchers</strong>'
+        . ' · campaign checks this AI app keeps running with this key after the chat ends</div>';
+    if ($watchers === null) {
+        return $html . '<div class="form-text text-warning">Couldn\'t load watchers right now. Reload the page to'
+            . ' try again; revoking the key cuts them all off.</div></div>';
+    }
+    if ($watchers === []) {
+        return $html . '<div class="form-text">No watchers.</div></div>';
+    }
+    $tones = ['running' => ' p202-pill--good', 'cancelled' => ' p202-pill--warn', 'failed' => ' p202-pill--bad'];
+    $ends = ['running' => 'ends', 'completed' => 'ended'];
+    $html .= '<ul class="list-unstyled mb-0">';
+    foreach ($watchers as $watcher) {
+        $campaign = (int) $watcher['campaignId'];
+        $status = (string) $watcher['status'];
+        $reason = (string) ($watcher['statusReason'] ?? '');
+        $html .= '<li class="mb-2" data-ai-watcher="' . $e($watcher['id']) . '"><div><strong>'
+            . $e($campaignNames[$campaign] ?? 'Campaign #' . $campaign) . '</strong> · <span class="p202-pill'
+            . ($tones[$status] ?? '') . '"' . ($reason !== '' ? ' title="' . $e($reason) . '"' : '') . '>'
+            . $e($status) . '</span>';
+        if (is_int($watcher['endsAt'] ?? null)) {
+            $html .= ' · ' . ($ends[$status] ?? 'was to end') . ' '
+                . $e(date('M j, Y g:i a', intdiv($watcher['endsAt'], 1000)));
+        }
+        $alerts = (int) ($watcher['alerts'] ?? 0);
+        $latest = $watcher['lastAlert'] ?? null;
+        $html .= '</div><div class="form-text mt-0">' . $e(p202_account_watcher_rule($watcher)) . '</div>'
+            . '<div class="form-text mt-0">' . ($alerts === 1 ? '1 alert' : $e($alerts . ' alerts'))
+            . (is_string($latest) ? ' · latest: ' . $e($latest) : '') . '</div>';
+        if ($status === 'running') {
+            $html .= '<form method="post" action="' . $e($action)
+                . '" class="mt-1"'
+                . ' data-p202-confirm="Stop this watcher? It reads nothing more and sends no more alerts.">'
+                . '<input type="hidden" name="stop_ai_watcher" value="1">'
+                . '<input type="hidden" name="rest_api_key" value="' . $e($apiKey) . '">'
+                . '<input type="hidden" name="watcher_id" value="' . $e($watcher['id']) . '">'
+                . p202_account_token_field()
+                . '<button class="btn btn-outline-danger btn-sm" type="submit">Stop</button></form>';
+        }
+        $html .= '</li>';
+    }
+    return $html . '</ul></div>';
+}
