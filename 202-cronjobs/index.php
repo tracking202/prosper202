@@ -258,6 +258,10 @@ function RunHourlyCronJob()
         // spends one of an event's five attempts.
         DeliverPendingAnalytics();
 
+        // Money-loss alerts: a steady campaign that stopped converting while
+        // it buys clicks, or one past its daily cost cap with no conversion.
+        RunMoneyLossAlerts();
+
         // LTV subscriptions that stopped renewing: past_due once their period
         // and grace are over, canceled 30 days later, which MRR, churn and
         // the customers' rollups read. Last, under its own budget.
@@ -277,6 +281,27 @@ function RunHourlyCronJob()
         return true;
     } else {
         return false;
+    }
+}
+
+/**
+ * The money-loss alerts (Prosper202\Alerts\AlertRun) for every account that
+ * turned them on, for up to 60 seconds; accounts the time did not reach are
+ * checked next hour. A failure is logged and the tier goes on.
+ */
+function RunMoneyLossAlerts(): void
+{
+    try {
+        $conn = new \Prosper202\Database\Connection(getDatabaseConnection());
+        $run = new \Prosper202\Alerts\AlertRun($conn, new \Prosper202\Alerts\AlertNotifier($conn));
+        $report = $run->run(time(), time() + 60);
+        if ($report['accounts'] > 0) {
+            $summary = \Prosper202\Alerts\AlertRun::summary($report);
+            echo 'Money-loss alerts: ' . htmlspecialchars($summary, ENT_QUOTES) . '<br>';
+            flushOutput();
+        }
+    } catch (\Throwable $e) {
+        error_log('Money-loss alerts failed: ' . $e->getMessage());
     }
 }
 

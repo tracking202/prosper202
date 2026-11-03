@@ -169,6 +169,9 @@ final class UserDataPurge
         // The click filter's settings and address list (the clicks' reasons stay with the clicks).
         'DELETE FROM 202_click_filter_entries WHERE user_id = ?',
         'DELETE FROM 202_click_filter_settings WHERE user_id = ?',
+        // The money-loss alerts' settings and the incidents they were sent for.
+        'DELETE FROM 202_alert_settings WHERE user_id = ?',
+        'DELETE FROM 202_alert_state WHERE user_id = ?',
     ];
 
     /**

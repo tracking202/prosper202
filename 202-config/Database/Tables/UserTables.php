@@ -31,6 +31,8 @@ final class UserTables
             self::authKeys(),
             self::clickFilterSettings(),
             self::clickFilterEntries(),
+            self::alertSettings(),
+            self::alertState(),
         ];
     }
 
@@ -323,6 +325,51 @@ final class UserTables
                 PRIMARY KEY (`entry_id`),
                 UNIQUE KEY `user_range` (`user_id`, `family`, `range_start`, `prefix`),
                 KEY `user_match` (`user_id`, `family`, `range_start`, `range_end`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * An account's money-loss alerts (Prosper202\Alerts\AlertSettings): no
+     * row is the defaults, which are off. From 1.9.80, added by its rung.
+     */
+    public static function alertSettings(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ALERT_SETTINGS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ALERT_SETTINGS . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `enabled` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `notify_slack` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `notify_email` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `notify_webhook` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `gap_multiple` tinyint(3) unsigned NOT NULL DEFAULT '5',
+                `min_conversions` smallint(5) unsigned NOT NULL DEFAULT '10',
+                `daily_cost_cap` decimal(12,2) NOT NULL DEFAULT '0.00',
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`),
+                KEY `enabled` (`enabled`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The last incident each alert was sent for, per campaign: the campaign's
+     * last conversion for conversions_stopped, the local day's start for
+     * spend_without_conversions (Prosper202\Alerts\MysqlAlertStore). A new
+     * incident has another key, so it is sent again. From 1.9.80.
+     */
+    public static function alertState(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ALERT_STATE,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ALERT_STATE . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `aff_campaign_id` mediumint(8) unsigned NOT NULL,
+                `alert_kind` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `incident_key` int(10) unsigned NOT NULL,
+                `alerted_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`, `aff_campaign_id`, `alert_kind`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
