@@ -105,8 +105,13 @@ const query = 'c1=<b>one</b>&c2=two&t202kw=blue+shoes&utm_source=news&pci=88&t20
     const purlinkField = new Element('input', {name: 't202kw', 'data-p202-purlink-input': ''}, {value: '[[t202kw]]'});
     const file = new Element('input', {name: 't202City', type: 'file'}, {refuseValue: true});
     const both = new Element('span', {name: 't202City', t202attribute: 't202Country'});
+    const kept = ['radio', 'checkbox', 'submit', 'button', 'reset', 'image'].map((type) =>
+        new Element('input', {name: 'pick_t202C2', type}, {value: 'own'}));
+    kept.forEach((el) => { el.type = el.attrs.type; });
+    const button = new Element('button', {name: 'go_t202Country'}, {text: 'Order now'});
+    const labelled = new Element('button', {t202attribute: 't202City'}, {text: 'Ship'});
     const els = [input, attr, prefixed, exact, code, region, postal, textarea, select, selectText, selectNone,
-        ...oldCase, form, p13n, purlinkField, file, both];
+        ...oldCase, form, p13n, purlinkField, file, both, ...kept, button, labelled];
     const {window, network} = page(server, query, els);
 
     assert.deepStrictEqual([input.value, attr.textContent, prefixed.textContent, exact.textContent],
@@ -124,6 +129,9 @@ const query = 'c1=<b>one</b>&c2=two&t202kw=blue+shoes&utm_source=news&pci=88&t20
     assert.strictEqual(p13n.textContent, 'before', 'personalization fields are left alone');
     assert.strictEqual(purlinkField.value, '[[t202kw]]', 'PurLink form fields are left alone');
     assert.strictEqual(both.textContent, 'Example', 't202attribute is written after the name');
+    assert.deepStrictEqual(kept.map((el) => el.value), kept.map(() => 'own'), 'choice and button inputs keep what they post');
+    assert.strictEqual(button.textContent, 'Order now', 'a button matched by name keeps its label');
+    assert.strictEqual(labelled.textContent, 'Sample City', 't202attribute labels a button on purpose');
 
     const dcs = window.dcs;
     assert.ok(dcs && typeof dcs.addDataObj === 'function' && typeof dcs.updateDataObj === 'function'

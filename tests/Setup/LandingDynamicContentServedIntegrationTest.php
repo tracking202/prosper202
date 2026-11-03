@@ -23,6 +23,8 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
     private const HELD_BACK = 7462;
     private const TRACKED_PAGE = 7461 + 100000;
     private const HELD_BACK_PAGE = 7462 + 100000;
+    private const EU = 7463;
+    private const EU_PAGE = 7463 + 100000;
 
     /** @var resource|null */
     private static $server = null;
@@ -82,7 +84,7 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        $users = self::TRACKED . ', ' . self::HELD_BACK;
+        $users = self::TRACKED . ', ' . self::HELD_BACK . ', ' . self::EU;
         foreach (['202_landing_pages', '202_aff_campaigns', '202_users_pref', '202_users'] as $table) {
             self::q("DELETE FROM $table WHERE user_id IN ($users)");
         }
@@ -92,7 +94,8 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
     {
         self::cleanUp();
         // 127.0.0.1 is a visitor GeoIP cannot place: 'all' and 'eu' hold it back.
-        foreach ([self::TRACKED => ['disabled', 'Asia/Tokyo'], self::HELD_BACK => ['all', 'America/New_York']]
+        foreach ([self::TRACKED => ['disabled', 'Asia/Tokyo'], self::HELD_BACK => ['all', 'America/New_York'],
+            self::EU => ['eu', 'Europe/Paris']]
             as $user => [$privacy, $zone]) {
             self::user($user, $zone);
             self::q("INSERT INTO 202_users_pref SET user_id = $user, user_pref_privacy = " . self::str($privacy));
@@ -149,6 +152,7 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
     {
         self::assertSame('127.0.0.1', $this->segments('lpip=' . self::TRACKED_PAGE)['t202IP']);
         self::assertSame('', $this->segments('lpip=' . self::HELD_BACK_PAGE)['t202IP'], 'held back');
+        self::assertSame('', $this->segments('lpip=' . self::EU_PAGE)['t202IP'], "'eu': a visitor GeoIP cannot place");
         self::assertSame('', $this->segments('lpip=' . (7469 + 100000))['t202IP'], 'no such page');
     }
 
@@ -175,7 +179,8 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
         self::assertNotNull($click, 'the click is recorded');
         self::assertStringContainsString('window.p202DcsClick({"t202Subid":"' . $click . '"})', $body);
 
-        foreach (['refused' => self::TRACKED_PAGE . '&p202_consent=0', 'held back' => (string) self::HELD_BACK_PAGE] as $why => $query) {
+        foreach (['refused' => self::TRACKED_PAGE . '&p202_consent=0', 'held back' => (string) self::HELD_BACK_PAGE,
+            "'eu'" => (string) self::EU_PAGE] as $why => $query) {
             [$status, $body] = self::get('/tracking202/static/record_simple.php?lpip=' . $query);
             self::assertSame(200, $status, $why);
             self::assertStringContainsString('var subid =', $body, "$why: the click is answered");

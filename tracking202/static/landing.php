@@ -653,6 +653,8 @@ if (document.readyState === 'loading') {
 	// The keys 1.9.56's server-side redirect/u.php stored from updateDataObj().
 	var clickKeys = /^t202(kw|c[1-4]|referrer|id|utm_(source|medium|term|content|campaign))$/i;
 	var notText = {FORM: 1, SCRIPT: 1, STYLE: 1, META: 1, LINK: 1, IFRAME: 1, OBJECT: 1, HTML: 1, HEAD: 1, BODY: 1};
+	// Inputs whose value is what they post or their label, not a field's text.
+	var notValue = {radio: 1, checkbox: 1, submit: 1, button: 1, reset: 1, image: 1, file: 1};
 	var warned = false;
 	function own(obj, key) { return Object.prototype.hasOwnProperty.call(obj, key); }
 	function consented() { return !p202PurLinkRevoked && p202ConsentGiven(); }
@@ -686,17 +688,20 @@ if (document.readyState === 'loading') {
 		return best;
 	}
 
-	function write(el, data, key) {
+	// byName: a button matched only by a name that contains a key keeps its label.
+	function write(el, data, key, byName) {
 		var value = data[key] ? String(data[key]) : (el.getAttribute('t202Default') || '');
 		var tag = el.tagName;
 		try {
-			if (tag === 'INPUT' || tag === 'TEXTAREA') {
+			if (tag === 'INPUT' && notValue[String(el.type || el.getAttribute('type') || '').toLowerCase()]) {
+				return;
+			} else if (tag === 'INPUT' || tag === 'TEXTAREA') {
 				el.value = value;
 			} else if (tag === 'SELECT') {
 				for (var i = 0; i < el.options.length; i++) {
 					if (el.options[i].value === value || el.options[i].text === value) { el.selectedIndex = i; break; }
 				}
-			} else if (!notText[tag]) {
+			} else if (!notText[tag] && !(byName && tag === 'BUTTON')) {
 				el.textContent = value;
 			}
 		} catch (e) { /* a field that refuses the value (a file input) keeps its own */ }
@@ -719,10 +724,10 @@ if (document.readyState === 'loading') {
 			// t202p13n_ fields are the personalization block's.
 			if (name && name.indexOf('t202p13n_') !== 0) {
 				var key = keyInName(data, name, only);
-				if (key !== null && (!wanted || wanted[key])) { write(el, data, key); }
+				if (key !== null && (!wanted || wanted[key])) { write(el, data, key, true); }
 			}
 			var attr = el.getAttribute('t202attribute');
-			if (attr && (wanted ? wanted[attr] : own(data, attr))) { write(el, data, attr); }
+			if (attr && (wanted ? wanted[attr] : own(data, attr))) { write(el, data, attr, false); }
 		}
 	}
 
