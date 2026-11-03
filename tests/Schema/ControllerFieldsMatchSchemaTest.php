@@ -152,10 +152,16 @@ final class ControllerFieldsMatchSchemaTest extends TestCase
                 $problems[] = "$name: a writable {$column['COLUMN_TYPE']} column, and validatePayload() "
                     . 'has no format for one; add it there before declaring the field';
             }
-            if ($format !== null && !($format === 'date' && $dataType === 'date' && $type === 's')) {
+            $textColumn = in_array($dataType, ['char', 'varchar', 'text', 'mediumtext', 'longtext'], true);
+            if (
+                $format !== null
+                && !($format === 'date' && $dataType === 'date' && $type === 's')
+                && !($format === 'http_url' && $textColumn && $type === 's')
+            ) {
                 $problems[] = "$name: 'format' => " . var_export($format, true)
                     . " on a '$type' field over a {$column['COLUMN_TYPE']} column; "
-                    . "only 'date' on an 's' field over a DATE column is read";
+                    . "only 'date' on an 's' field over a DATE column, or 'http_url' on an 's' field"
+                    . ' over a text column, is read';
             }
             if ($type === 's' && $column['CHARACTER_MAXIMUM_LENGTH'] !== null && in_array($column['DATA_TYPE'], ['char', 'varchar'], true)) {
                 $columnMax = (int) $column['CHARACTER_MAXIMUM_LENGTH'];
