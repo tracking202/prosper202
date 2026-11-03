@@ -700,7 +700,7 @@ $keyIntegrations = [
 	],
 	'zaxaa' => [
 		'title' => 'Zaxaa', 'icon' => 'zaxaa.png', 'help' => 'zaxaa',
-		'desc' => 'Update conversions from Zaxaa Payment Notification (ZPN): put custom=[[subid]] on your Zaxaa order link and paste the ZPN URL into the product’s Notification Handler URL.',
+		'desc' => 'Update conversions from Zaxaa Payment Notification (ZPN): put custom=[[subid]] on your Zaxaa order link and paste the ZPN URL into the product’s Notification Handler URL. Use the https:// form of the ZPN URL.',
 		'extra' => '',
 		'flag' => 'change_zaxaa_api_signature', 'field' => 'zaxaa_api_signature', 'label' => 'Zaxaa API signature', 'error' => 'zaxaa_api_signature_error',
 		'endpoint' => ['ZPN URL', $trackingBase . 'tracking202/static/zpn.php'],

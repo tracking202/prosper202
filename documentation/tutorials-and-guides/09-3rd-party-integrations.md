@@ -229,7 +229,7 @@ the buyer's details.
 Prosper202 records Zaxaa sales from Zaxaa Payment Notifications (ZPN).
 
 1. In Zaxaa, open **Settings › Account Settings** and click **Show API Signature**. Paste it into **Account › API integrations › Zaxaa** in Prosper202 and save.
-2. Copy the **ZPN URL** from that card (`https://your-tracker/tracking202/static/zpn.php`). In Zaxaa, edit your front-end product, set **Third Party Script Integration** to **Yes** and paste the URL into **Notification Handler URL** (one for each price variant you use).
+2. Copy the **ZPN URL** from that card (`https://your-tracker/tracking202/static/zpn.php`). In Zaxaa, edit your front-end product, set **Third Party Script Integration** to **Yes** and paste the URL into **Notification Handler URL** (one for each price variant you use). Use the `https://` form of the ZPN URL.
 3. Send buyers to the Zaxaa order link through a Prosper202 tracker with `?custom=[[subid]]` on it, so the click id comes back in the notification.
 
 A notification is accepted only when its `hash_key` verifies with your saved API signature. `SALE` and `FIRST_BILL` record a conversion at `trans_amount` under the Zaxaa receipt number, `REBILL` records another, `REFUND` reverses the sale its receipt names, and `CANCELED` and test-mode notifications record nothing.
