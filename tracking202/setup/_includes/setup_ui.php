@@ -136,6 +136,21 @@ function p202_setup_token_field(string $token): string
 }
 
 /**
+ * "Check my page" under a landing page's code: posts the page's id to
+ * ajax/check_landing_code.php and shows the answer below the button.
+ */
+function p202_setup_lp_check(string $base, string $token, int $landingPageId): string
+{
+    return '<form method="post" class="mb-2" action="' . p202_setup_e($base . 'tracking202/ajax/check_landing_code.php') . '" data-p202-ajax-target="#lp-check-result">'
+        . p202_setup_token_field($token)
+        . '<input type="hidden" name="landing_page_id" value="' . $landingPageId . '">'
+        . '<button type="submit" class="btn btn-secondary btn-sm"><i class="bi bi-search"></i> Check my page</button>'
+        . ' <span class="form-text">Once the code is on your page, this fetches the page and looks for it.</span>'
+        . '</form>'
+        . '<div id="lp-check-result" class="mb-3" aria-live="polite"></div>';
+}
+
+/**
  * A read-only code box with a Copy button: the kit's `.p202-code`.
  *
  * $value is the raw snippet; it is escaped here. `long` caps a many-line
