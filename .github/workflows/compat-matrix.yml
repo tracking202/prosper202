@@ -128,6 +128,19 @@ jobs:
           P202_IT_SHARD_INDEX: ${{ matrix.shard }}
         run: bash tests/run-integration-suites.sh
 
+      # A hung query keeps running on the server after the step times out:
+      # show it and its plan, so the log says which statement and why.
+      - name: Show queries still running
+        if: failure()
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot -N --raw -e "SELECT ID, TIME, STATE, DB FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep' AND ID <> CONNECTION_ID()"
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot -N --raw -e "SELECT DB, INFO FROM information_schema.PROCESSLIST WHERE COMMAND = 'Query' AND ID <> CONNECTION_ID() AND INFO IS NOT NULL" |
+          while IFS=$'\t' read -r db q; do
+            echo "== $db: $q" | cut -c1-4000
+            case "$q" in SELECT*) mysql -h 127.0.0.1 -P 3306 -uroot -proot "$db" -e "EXPLAIN $q" || true;; esac
+            mysql -h 127.0.0.1 -P 3306 -uroot -proot "$db" -e "SHOW INDEX FROM 202_conversion_logs WHERE Key_name = 'reverses_conv_id'; SELECT COUNT(*) FROM 202_conversion_logs" || true
+          done
+
       - name: Upload the suites' output
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
