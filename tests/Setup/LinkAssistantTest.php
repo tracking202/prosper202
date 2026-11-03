@@ -299,6 +299,12 @@ final class LinkAssistantTest extends TestCase
                 'add',
                 null,
             ],
+            'Partnerize: a character lowercasing lengthens comes before the destination' => [
+                "https://prf.hn/click/camref:1/\u{130}x/destination:https://shop.example",
+                "https://prf.hn/click/camref:1/\u{130}x/pubref:[[subid]]/destination:https://shop.example",
+                'add',
+                null,
+            ],
         ];
     }
 
@@ -339,6 +345,10 @@ final class LinkAssistantTest extends TestCase
             ],
             'Zanox, merged into Awin' => ['https://ad.zanox.com/ppc/?12345C67890&ULP=https://shop.example'],
             'a shop path shaped like /c/a/b/c is not an impact.com link' => ['https://shop.example/c/shoes/men/boots'],
+            'a network host in a parameter value' => ['https://shop.example/?r=hop.clickbank.net'],
+            'a network link in a parameter value' => ['https://shop.example/go?u=https://www.ebay.com/itm/1?campid=5'],
+            'a network path in the fragment' => ['https://shop.example/#/click-1-2'],
+            'a Partnerize link in a parameter value' => ['https://shop.example/p?ref=prf.hn/click/camref:1'],
             'Clickbooth\'s retired link host' => ['https://iluv.clickbooth.com/?E=abc123&s1='],
         ];
     }
@@ -375,6 +385,10 @@ final class LinkAssistantTest extends TestCase
     {
         $found = trim((string) shell_exec('command -v node 2>/dev/null'));
         if ($found === '') {
+            // CI's runners carry node: a skip there would leave the seam unchecked.
+            if (getenv('CI') !== false && getenv('CI') !== '') {
+                self::fail('node is not on PATH in CI; the page script must be compared with the class');
+            }
             self::markTestSkipped('node is not installed; the page script cannot be run here');
         }
         $urls = array_merge(
@@ -402,6 +416,52 @@ final class LinkAssistantTest extends TestCase
         foreach ($urls as $i => $url) {
             self::assertSame(LinkAssistant::suggest($url), $script[$i], 'both agree on ' . json_encode($url));
         }
+    }
+
+    /**
+     * Every URL field the campaign form prints has its suggestion box, and
+     * the page prints the table and script once.
+     */
+    public function testTheCampaignFormWiresEveryUrlField(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-ui.php';
+        require_once dirname(__DIR__, 2) . '/tracking202/setup/_includes/setup_ui.php';
+        $values = [
+            'aff_network_id' => '',
+            'aff_campaign_name' => '',
+            'aff_campaign_url' => '',
+            'aff_campaign_payout' => '',
+            'aff_campaign_rotate' => '1',
+            'aff_campaign_cloaking' => '0',
+            'payout_mode' => 'replace',
+            'attribution_model_id' => '',
+        ];
+        foreach ([2, 3, 4, 5] as $n) {
+            $values['aff_campaign_url_' . $n] = '';
+        }
+        $campaignForm = [
+            'values' => $values,
+            'errors' => [],
+            'categories' => ['1' => 'Shop'],
+            'rotation_offered' => true,
+        ];
+        $render = static function (string $file) use ($campaignForm): string {
+            ob_start();
+            include $file;
+
+            return (string) ob_get_clean();
+        };
+        $dir = dirname(__DIR__, 2) . '/tracking202/setup/_includes/campaign_form/';
+        $html = $render($dir . 'offer.php') . $render($dir . 'advanced.php');
+        $fields = ['aff_campaign_url', 'aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4',
+            'aff_campaign_url_5'];
+        foreach ($fields as $id) {
+            self::assertStringContainsString('id="' . $id . '"', $html);
+            $boxes = substr_count($html, 'data-p202-link-assistant="#' . $id . '"');
+            self::assertSame(1, $boxes, "$id has one suggestion box");
+        }
+        $page = (string) file_get_contents(dirname(__DIR__, 2) . '/tracking202/setup/aff_campaigns.php');
+        self::assertSame(1, substr_count($page, 'p202_setup_link_assistant_script($base)'));
     }
 
     public function testThePageCarriesTheTableAndTheScript(): void

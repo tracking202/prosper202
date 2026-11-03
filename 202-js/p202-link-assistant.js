@@ -45,7 +45,9 @@
             path = path.slice(0, start) + TOKEN + path.slice(start + value.length);
             return [path + query + fragment, value === '' ? 'fill' : 'replace', value === '' ? null : value];
         }
-        var destination = path.toLowerCase().indexOf('/destination:');
+        // A regex, not toLowerCase(): lowercasing can change a string's length.
+        var found = /\/destination:/i.exec(path);
+        var destination = found ? found.index : -1;
         var head = destination === -1 ? path.replace(/\/+$/, '') : path.slice(0, destination);
         var tail = destination === -1 ? '' : path.slice(destination);
         return [head + '/' + param + ':' + TOKEN + tail + query + fragment, 'add', null];
@@ -62,6 +64,12 @@
         return [path.slice(0, end) + '/' + TOKEN + query + fragment, value === '' ? 'add' : 'replace', value === '' ? null : value];
     }
 
+    function isLinkOf(url, pattern) {
+        var parts = split(url);
+        var m = new RegExp(pattern, 'i').exec(parts[0] + parts[1]);
+        return m !== null && m.index <= parts[0].length;
+    }
+
     function suggest(url, networks) {
         // PHP's trim() set, so both sides read the same link.
         url = String(url).replace(/^[ \n\r\t\v\0]+|[ \n\r\t\v\0]+$/g, '');
@@ -70,7 +78,7 @@
         }
         for (var i = 0; i < networks.length; i++) {
             var network = networks[i];
-            if (!new RegExp(network.match, 'i').test(url)) {
+            if (!isLinkOf(url, network.match)) {
                 continue;
             }
             var placed = network.place === 'pair' ? placePair(url, network.param)

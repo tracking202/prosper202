@@ -18,6 +18,9 @@ namespace Prosper202\Setup;
  * - query:   ?param=value in the query string;
  * - pair:    /param:value as a path segment (Partnerize);
  * - segment: a path segment after the part of the path `match` matched.
+ *
+ * `match` is read from the link's start up to its query: a pattern found
+ * only inside a parameter value or the fragment is another site's name.
  */
 final class LinkAssistant
 {
@@ -108,7 +111,7 @@ final class LinkAssistant
             return null;
         }
         foreach (self::NETWORKS as $network) {
-            if (preg_match(self::regex($network['match']), $url) !== 1) {
+            if (!self::isLinkOf($url, $network['match'])) {
                 continue;
             }
             $placed = match ($network['place']) {
@@ -132,6 +135,21 @@ final class LinkAssistant
         }
 
         return null;
+    }
+
+    /**
+     * The pattern must start in the link's own host or path (a `\?...`
+     * pattern at the query's start), not in a parameter value or fragment
+     * that names another site.
+     */
+    private static function isLinkOf(string $url, string $pattern): bool
+    {
+        [$path, $query] = self::split($url);
+        if (preg_match(self::regex($pattern), $path . $query, $m, PREG_OFFSET_CAPTURE) !== 1) {
+            return false;
+        }
+
+        return $m[0][1] <= strlen($path);
     }
 
     public static function regex(string $pattern): string
