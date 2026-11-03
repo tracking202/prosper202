@@ -38,10 +38,12 @@ final class PostbackAuthStore
     private const CIPHER = 'aes-256-gcm';
     private const COLUMNS = 'auth_mode, token_sealed, token_created_at, previous_token_sealed, previous_token_expires_at,'
         . ' secret_sealed, secret_created_at, previous_secret_sealed, previous_secret_expires_at';
-    /** Each credential's columns: current, made at, the one it replaced, that one's end. */
-    private const CREDENTIAL_COLUMNS = [
-        'token' => ['token_sealed', 'token_created_at', 'previous_token_sealed', 'previous_token_expires_at'],
-        'signing_secret' => ['secret_sealed', 'secret_created_at', 'previous_secret_sealed', 'previous_secret_expires_at'],
+    /** Each credential's write, its columns spelled out: current, made at, the one it replaced, that one's end. */
+    private const WRITES = [
+        'token' => 'UPDATE `202_postback_auth` SET token_sealed = ?, token_created_at = ?, previous_token_sealed = ?,'
+            . ' previous_token_expires_at = ?, updated_at = ? WHERE user_id = ?',
+        'signing_secret' => 'UPDATE `202_postback_auth` SET secret_sealed = ?, secret_created_at = ?, previous_secret_sealed = ?,'
+            . ' previous_secret_expires_at = ?, updated_at = ? WHERE user_id = ?',
     ];
 
     public function __construct(private readonly Connection $conn)
@@ -165,11 +167,7 @@ final class PostbackAuthStore
         int $now
     ): void {
         $key = $this->ensureKey();
-        [$current, $createdAt, $previousColumn, $expiresColumn] = self::CREDENTIAL_COLUMNS[$credential->value];
-        $stmt = $this->conn->prepareWrite(
-            'UPDATE `' . TableRegistry::POSTBACK_AUTH . '` SET ' . $current . ' = ?, ' . $createdAt . ' = ?, '
-            . $previousColumn . ' = ?, ' . $expiresColumn . ' = ?, updated_at = ? WHERE user_id = ?'
-        );
+        $stmt = $this->conn->prepareWrite(self::WRITES[$credential->value]);
         $this->conn->bind($stmt, 'sisiii', [
             self::seal($value, $key, $userId, $credential),
             $now,
@@ -191,11 +189,9 @@ final class PostbackAuthStore
                 . implode(', ', PostbackAuthMode::values()));
         }
         $sealed = [];
-        foreach (self::CREDENTIAL_COLUMNS as [$current, , $previous]) {
-            foreach ([$current, $previous] as $column) {
-                if (($row[$column] ?? null) !== null) {
-                    $sealed[$column] = StoredRow::text($row, $column);
-                }
+        foreach (['token_sealed', 'previous_token_sealed', 'secret_sealed', 'previous_secret_sealed'] as $column) {
+            if (($row[$column] ?? null) !== null) {
+                $sealed[$column] = StoredRow::text($row, $column);
             }
         }
         $key = $sealed === [] ? null : $this->loadKey();
