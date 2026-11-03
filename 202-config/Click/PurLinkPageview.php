@@ -34,7 +34,10 @@ final class PurLinkPageview
         int $now,
         callable $key,
     ): string {
-        if (($request['p202_purlink'] ?? null) !== '1' || !$trackingAllowed || !RequestSignals::consentGiven($request)) {
+        // The exit proof does what the tracker's redirect does, so it needs
+        // only consent. The pixel proof fires third-party pixels in the page,
+        // so the account's privacy setting must also allow full tracking.
+        if (($request['p202_purlink'] ?? null) !== '1' || !RequestSignals::consentGiven($request)) {
             return '';
         }
         try {
@@ -44,8 +47,10 @@ final class PurLinkPageview
             }
             $payload = [
                 'exitProof' => PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $landingPageId, $userId, $now, self::LIFETIME, $secret),
-                'pixelProof' => PurLinkProof::issue(PurLinkProof::PIXELS, $clickId, $landingPageId, $userId, $now, self::LIFETIME, $secret),
             ];
+            if ($trackingAllowed) {
+                $payload['pixelProof'] = PurLinkProof::issue(PurLinkProof::PIXELS, $clickId, $landingPageId, $userId, $now, self::LIFETIME, $secret);
+            }
             $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
         } catch (\Throwable $error) {
             error_log('PurLink pageview capability unavailable: ' . $error->getMessage());

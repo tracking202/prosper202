@@ -111,7 +111,13 @@ again. The landing page can ask for a day after the visit.
 PurLinks follow the landing page's consent: a visitor who refused tracking, or
 withdraws it with `p202.consent(false)`, gets no SubID, sends no click-out and
 fires no deferred pixel. The links fall back to the tracker's redirect, which
-applies its own rules. The page's proofs travel in request bodies, never in a
+applies its own rules.
+
+The account's privacy setting (Settings › Privacy) does not stop PurLinks: a
+PurLink stores nothing in the visitor's browser and records what the tracker's
+redirect would. It does stop the deferred pixel, which fires third-party
+pixels: a visitor the setting holds back (under `eu`, anyone who may be in
+Europe) gets no deferred pixel. The page's proofs travel in request bodies, never in a
 URL, a cookie or a referrer, and the requests send no cookies.
 
 ## Limits

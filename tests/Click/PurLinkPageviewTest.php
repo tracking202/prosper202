@@ -43,7 +43,17 @@ final class PurLinkPageviewTest extends TestCase
         yield 'list option' => [['p202_purlink' => ['1']], true];
         yield 'withheld consent' => [['p202_purlink' => '1', 'p202_consent' => '0'], true];
         yield 'invalid consent' => [['p202_purlink' => '1', 'p202_consent' => ['1']], true];
-        yield 'privacy restriction' => [['p202_purlink' => '1'], false];
+    }
+
+    public function testPrivacyHoldsBackOnlyThePixelProof(): void
+    {
+        RecordedClicks::note(22);
+        $key = str_repeat('x', 32);
+        $output = PurLinkPageview::script(['p202_purlink' => '1'], false, 22, 4, 8, 1_700_000_000, fn () => $key);
+        self::assertSame(1, preg_match('/p202PurLinkPageview\((\{.*\})\)/', $output, $matches));
+        $proofs = json_decode($matches[1], true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(22, PurLinkProof::verify($proofs['exitProof'], PurLinkProof::EXIT, 1_700_000_001, $key)['click_id']);
+        self::assertArrayNotHasKey('pixelProof', $proofs, 'a held-back visitor fires no third-party pixel');
     }
 
     public function testUnallocatedClicksAndUnavailableKeyDoNotEmitCapabilities(): void
