@@ -265,7 +265,7 @@ final class ReClickRollupUpgradeIntegrationTest extends TestCase
 
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
-        self::assertSame('1.9.79', self::version());
+        self::assertSame('1.9.80', self::version());
         self::assertSame(
             [['0', (string) self::BEFORE_UPGRADE, '1']],
             self::all('SELECT next_click_id, through_click_id, finished_at IS NULL FROM 202_reclick_backfill'),
@@ -330,7 +330,7 @@ final class ReClickRollupUpgradeIntegrationTest extends TestCase
 
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
-        self::assertSame('1.9.79', self::version());
+        self::assertSame('1.9.80', self::version());
         self::assertSame(
             [
                 ['failed_click_id', 'YES', 'NULL'], ['failed_runs', 'NO', '0'], ['failing_since', 'YES', 'NULL'],
