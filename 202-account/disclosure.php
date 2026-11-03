@@ -42,10 +42,10 @@ template_top('Product Analytics Disclosure');
 			<li><strong>Traffic and results:</strong> clicks, conversions, income, cost, and net over the last
 				30 days; top countries and device mix.</li>
 			<li><strong>Your campaign setup:</strong> affiliate network names, traffic source names, campaign
-				names, and the campaign destination (template) URLs you entered at setup. A query-string value that looks like an
-				email address or phone number is replaced with [redacted] before sending, and a URL that cannot be
-				read as a web address is not sent at all; the rest of each URL (its domain and path) is sent as you
-				entered it.</li>
+				names, and the shape of the campaign destination (template) URLs you entered at setup: the address,
+				path words and query names, with only tracking macros (such as {clickid}) and short numeric ids kept
+				as values. Every other value, sign-in details and anything after # are taken out, and a URL that is not
+				a plain http(s) address is not sent at all.</li>
 			<li><strong>Offer performance:</strong> per-campaign payout, currency, EPC, conversion rate, and
 				clicks.</li>
 			<li><strong>Account-level revenue aggregates:</strong> if you use Customer LTV, only account totals

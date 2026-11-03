@@ -91,11 +91,17 @@ if ($attributes === null && $eventName === null && $flush === null) {
 // Page attributes and events are analytics-tier: without analytics consent
 // they are not recorded at all (a flush still delivers essential rows).
 require_once dirname(__DIR__, 3) . '/202-config/Messaging/ConsentPolicy.class.php';
-if (($attributes !== null || $eventName !== null) && !ConsentPolicy::analyticsAllowed($db, $userId)) {
+// ConsentPolicy::analyticsAllowed()'s answer, told apart from a read that failed.
+$consentFence = ($attributes !== null || $eventName !== null) ? ConsentPolicy::captureFence($db, $userId) : null;
+if (($attributes !== null || $eventName !== null) && ($consentFence === null || !$consentFence['allowed'])) {
     $attributes = null;
     $eventName = null;
     if ($flush === null) {
-        echo json_encode(['ok' => true, 'recorded' => false, 'reason' => 'analytics_not_consented']);
+        if ($consentFence === null) {
+            http_response_code(503);
+        }
+        echo json_encode(['ok' => $consentFence !== null, 'recorded' => false,
+            'reason' => $consentFence === null ? 'consent_unavailable' : 'analytics_not_consented']);
         exit;
     }
 }
