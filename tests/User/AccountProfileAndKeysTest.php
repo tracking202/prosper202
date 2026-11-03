@@ -92,9 +92,43 @@ final class AccountProfileAndKeysTest extends TestCase
         $db->whenQueryContainsReturnRows('FROM 202_api_keys WHERE user_id', [$row]);
 
         $keys = p202_account_api_keys($db, 7);
-        self::assertSame([$row], $keys);
+        self::assertSame([[
+            'ref' => hash('sha256', 'k1'),
+            'prefix' => 'k1',
+            'created_at' => 5,
+            'scope' => 'reports:read',
+            'label' => 'AI: Claude via mcp.tracking202.com',
+            'watcher_token' => \Api\V3\Support\AiConnect::watcherToken('k1'),
+        ]], $keys, 'a key not hashed yet is named by the hash it will get, and never returned');
         $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
         self::assertStringContainsString('SELECT api_key, created_at, scope, label FROM 202_api_keys', $select);
+    }
+
+    /**
+     * From 1.9.80 a key is stored hashed (ApiKeyStore): the list reads its
+     * hash, prefix and the watcher token stored for an AI connection's key.
+     */
+    public function testHashedKeysAreListedByTheirHashAndPrefix(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'key_hash'", [['Field' => 'key_hash']]);
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'", [['Field' => 'scope']]);
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'label'", [['Field' => 'label']]);
+        $hash = str_repeat('ab', 32);
+        $token = str_repeat('cd', 32);
+        $db->whenQueryContainsReturnRows('FROM 202_api_keys WHERE user_id', [
+            ['api_key' => '', 'key_hash' => $hash, 'key_prefix' => '1a2b3c4d', 'watcher_token' => $token,
+                'created_at' => 5, 'scope' => 'reports:read', 'label' => 'AI: Claude via mcp.tracking202.com'],
+            ['api_key' => '', 'key_hash' => $hash, 'key_prefix' => '9f8e7d6c', 'watcher_token' => null,
+                'created_at' => 4, 'scope' => null, 'label' => null],
+        ]);
+
+        $keys = p202_account_api_keys($db, 7);
+        self::assertSame(['1a2b3c4d', $token], [$keys[0]['prefix'], $keys[0]['watcher_token']]);
+        self::assertSame([$hash, '9f8e7d6c', null], [$keys[1]['ref'], $keys[1]['prefix'], $keys[1]['watcher_token']]);
+        self::assertArrayNotHasKey('api_key', $keys[0]);
+        $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
+        self::assertStringContainsString('SELECT api_key, key_hash, key_prefix, watcher_token, created_at, scope, label', $select);
     }
 
     /**
@@ -112,7 +146,8 @@ final class AccountProfileAndKeysTest extends TestCase
         $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
         self::assertStringContainsString('SELECT api_key, created_at, scope FROM 202_api_keys', $select);
         self::assertStringNotContainsString('label', $select, 'no column the install does not have');
-        self::assertSame([['api_key' => 'k1', 'created_at' => 5, 'scope' => 'reports:read', 'label' => null]], $keys);
+        self::assertSame([['ref' => hash('sha256', 'k1'), 'prefix' => 'k1', 'created_at' => 5,
+            'scope' => 'reports:read', 'label' => null, 'watcher_token' => null]], $keys);
     }
 
     public function testALabelProbeThatCannotTellIsAnErrorNotAnAnswer(): void
@@ -134,7 +169,8 @@ final class AccountProfileAndKeysTest extends TestCase
         $keys = p202_account_api_keys($db, 7);
         $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
         self::assertStringNotContainsString('scope', $select, 'the list does not name a column the install does not have');
-        self::assertSame([['api_key' => 'k1', 'created_at' => 5, 'scope' => null, 'label' => null]], $keys);
+        self::assertSame([['ref' => hash('sha256', 'k1'), 'prefix' => 'k1', 'created_at' => 5,
+            'scope' => null, 'label' => null, 'watcher_token' => null]], $keys);
         self::assertSame(['*'], \Api\V3\Auth::parseScopes((string) ($keys[0]['scope'] ?? '')), 'which the page reads as full access, as the API grants it');
     }
 

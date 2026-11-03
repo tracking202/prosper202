@@ -135,6 +135,23 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
             error_log('Prosper202 upgrade: the cached licence answers could not be copied: ' . $e->getMessage());
         }
     }
+
+    /**
+     * Hash the API keys still stored whole (ApiKeyStore::hashStoredKeys()),
+     * for the 1.9.80 rung. False when one is left whole.
+     */
+    function _upgrade_hash_api_keys(): bool
+    {
+        global $db;
+
+        try {
+            $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
+            return \Prosper202\User\ApiKeyStore::hashStoredKeys($conn);
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade: the API keys could not be hashed: ' . $e->getMessage());
+            return false;
+        }
+    }
 }
 
 if (!function_exists('_upgrade_conversion_ledger_columns')) {
@@ -670,6 +687,13 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 continue;
             }
             if (!$reconciler->reconcile($definition)) {
+                $ok = false;
+                continue;
+            }
+            // The keys still stored whole are hashed once key_hash is there
+            // (_upgrade_hash_api_keys()).
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::API_KEYS
+                && !_upgrade_hash_api_keys()) {
                 $ok = false;
             }
         }
@@ -4646,13 +4670,22 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.79') {
 
-            // 1.9.80 changes no schema yet, so its step only records the
-            // version. A schema change for 1.9.80 belongs in this block,
+            // 202_api_keys stores each key as its SHA-256 and prefix, and an
+            // AI connection's key its watcher token, from 1.9.80
+            // (Prosper202\User\ApiKeyStore); the reconcile hashes the keys
+            // already there. A schema change for 1.9.80 belongs in this block,
             // reconciled before the version is written.
-            if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
-                $prosper202_version = '1.9.80';
+            $api_keys_ok = _upgrade_measurement_tables([\Prosper202\Database\Tables\UserTables::apiKeys()]);
+
+            if ($api_keys_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
+                    $prosper202_version = '1.9.80';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                }
             } else {
-                error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                error_log('Prosper202 upgrade: 202_api_keys could not be reconciled or its keys hashed; '
+                    . 'leaving version at 1.9.79 so the next run retries.');
             }
         }
 

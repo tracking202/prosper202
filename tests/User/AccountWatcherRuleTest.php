@@ -81,7 +81,8 @@ final class AccountWatcherRuleTest extends TestCase
         self::assertStringContainsString('title="the key was refused"', $html);
         self::assertSame(1, substr_count($html, 'name="stop_ai_watcher"'), 'Stop only for the running one');
         self::assertStringContainsString('name="watcher_id" value="wch_0123456789abcdef01234567"', $html);
-        self::assertStringContainsString('name="rest_api_key" value="k&quot;ey"', $html);
+        self::assertStringContainsString('name="api_key_ref" value="k&quot;ey"', $html, 'the key is named by its ref, escaped');
+        self::assertStringNotContainsString('rest_api_key', $html, 'never by the key');
         self::assertStringContainsString('name="token" value="session-token"', $html);
         self::assertStringContainsString('0 alerts', $html);
         self::assertStringContainsString('action="/a.php#api-keys"', $html);

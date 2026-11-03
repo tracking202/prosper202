@@ -254,14 +254,14 @@ final class AiWatchersTest extends TestCase
     {
         $root = dirname(__DIR__, 2);
         $page = (string) file_get_contents($root . '/202-account/account.php');
-        $stop = strpos($page, '->stopBeforeDelete($db, $keyUserId, $removeKey)');
-        $delete = strpos($page, "'DELETE FROM 202_api_keys WHERE api_key = ? AND user_id = ?'");
+        $stop = strpos($page, '->stopBeforeDelete($db, $keyUserId, null, $removeRef)');
+        $delete = strpos($page, '\'DELETE FROM 202_api_keys WHERE user_id = ? AND \' . $refMatch');
         self::assertIsInt($stop, 'the page\'s revoke asks the server');
         self::assertIsInt($delete);
         self::assertLessThan($delete, $stop);
 
         $router = (string) file_get_contents($root . '/api/v3/index.php');
-        $stop = strpos($router, '->stopBeforeDelete($db, $userId, Auth::bearerKey($headers), true)');
+        $stop = strpos($router, '->stopBeforeDelete($db, $userId, Auth::bearerKey($headers))');
         $revoke = strpos($router, 'AiConnect::revoke($db, Auth::bearerKey($headers))');
         self::assertIsInt($stop, 'POST /connect/revoke asks the server');
         self::assertIsInt($revoke);

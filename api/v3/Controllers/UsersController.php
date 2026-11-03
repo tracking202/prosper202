@@ -13,7 +13,9 @@ use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Report\AccountZone;
+use Prosper202\User\ApiKeyStore;
 use Prosper202\User\CurrencyChange;
 use Prosper202\User\ExchangeRates;
 use Prosper202\User\PreferenceRules;
@@ -566,7 +568,7 @@ class UsersController
         $hasScopeColumn = \Api\V3\Auth::apiKeyScopeColumnExists($this->db);
         // label came with 1.9.78; the files can land before its upgrade runs.
         $hasLabelColumn = \Api\V3\Auth::apiKeyLabelColumnExists($this->db);
-        $columns = 'user_id, api_key' . ($hasScopeColumn ? ', scope' : '')
+        $columns = 'user_id, ' . ApiKeyStore::columns($this->db) . ($hasScopeColumn ? ', scope' : '')
             . ($hasLabelColumn ? ', label' : '') . ', created_at';
         $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?");
         $this->bind($stmt, 'i', $userId);
@@ -574,16 +576,30 @@ class UsersController
         $result = $this->resultOf($stmt, 'Query failed');
         $rows = [];
         while ($row = $result->fetch_assoc()) {
-            // Mask key: show first 8 chars only
-            if (isset($row['api_key']) && strlen($row['api_key']) > 8) {
-                $row['api_key'] = substr($row['api_key'], 0, 8) . str_repeat('*', 24);
-            }
-            // Normalize scope for display: rows without one are full-access.
-            $row['scope'] = implode(',', \Api\V3\Auth::parseScopes((string)($row['scope'] ?? '')));
-            $rows[] = $row;
+            $rows[] = self::keyView($row);
         }
         $stmt->close();
         return ['data' => $rows];
+    }
+
+    /**
+     * A key row as the API shows it: its prefix and a mask in api_key, and
+     * no hash or watcher token.
+     *
+     * @param array<string, mixed> $row read with ApiKeyStore::columns()
+     * @return array<string, mixed>
+     */
+    private static function keyView(array $row, bool $withScope = true): array
+    {
+        $prefix = ApiKeyStore::prefixOf($row);
+        $view = $row;
+        unset($view['key_hash'], $view['key_prefix'], $view['watcher_token']);
+        $view['api_key'] = $prefix === '' ? '' : ApiKeyStore::masked($prefix);
+        if ($withScope) {
+            // Rows without a scope are full-access.
+            $view['scope'] = implode(',', \Api\V3\Auth::parseScopes((string)($row['scope'] ?? '')));
+        }
+        return $view;
     }
 
     /**
@@ -693,16 +709,11 @@ class UsersController
         $now = time();
         $storedScope = $scopeTokens === null ? null : implode(',', $scopeTokens);
 
-        if ($hasScopeColumn) {
-            $stmt = $this->prepare('INSERT INTO 202_api_keys (user_id, api_key, scope, created_at) VALUES (?, ?, ?, ?)');
-            $this->bind($stmt, 'issi', $userId, $key, $storedScope, $now);
-        } else {
-            $stmt = $this->prepare('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
-            $this->bind($stmt, 'isi', $userId, $key, $now);
+        try {
+            ApiKeyStore::insert($this->db, $userId, $key, $storedScope, null, $now);
+        } catch (QueryException $e) {
+            throw new DatabaseException('Failed to create API key', $e);
         }
-
-        $this->execute($stmt, 'Failed to create API key');
-        $stmt->close();
 
         // Return the full key only on creation — it cannot be retrieved later.
         return ['data' => [
@@ -765,8 +776,9 @@ class UsersController
         if (!(new \Api\V3\Support\AiWatchers())->stopBeforeDelete($this->db, $userId, $apiKey)) {
             error_log('p202: API key delete: the MCP server did not confirm that the key\'s watchers stopped');
         }
-        $stmt = $this->prepare('DELETE FROM 202_api_keys WHERE user_id = ? AND api_key = ?');
-        $this->bind($stmt, 'is', $userId, $apiKey);
+        [$keyMatch, $keyTypes, $keyValues] = ApiKeyStore::matchKey($this->db, $apiKey);
+        $stmt = $this->prepare('DELETE FROM 202_api_keys WHERE user_id = ? AND ' . $keyMatch);
+        $this->bind($stmt, 'i' . $keyTypes, $userId, ...$keyValues);
         $this->execute($stmt, 'Failed to delete API key');
         $affected = $stmt->affected_rows;
         $stmt->close();
@@ -785,8 +797,10 @@ class UsersController
      */
     public function deleteApiKeyPreview(int $userId, string $apiKey): array
     {
-        $stmt = $this->prepare('SELECT user_id, api_key, created_at FROM 202_api_keys WHERE user_id = ? AND api_key = ? LIMIT 1');
-        $this->bind($stmt, 'is', $userId, $apiKey);
+        [$keyMatch, $keyTypes, $keyValues] = ApiKeyStore::matchKey($this->db, $apiKey);
+        $stmt = $this->prepare('SELECT user_id, ' . ApiKeyStore::columns($this->db)
+            . ', created_at FROM 202_api_keys WHERE user_id = ? AND ' . $keyMatch . ' LIMIT 1');
+        $this->bind($stmt, 'i' . $keyTypes, $userId, ...$keyValues);
         $this->execute($stmt, 'Query failed');
         $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
@@ -794,9 +808,7 @@ class UsersController
         if (!$row) {
             throw new NotFoundException('API key not found for user');
         }
-        if (isset($row['api_key']) && strlen($row['api_key']) > 8) {
-            $row['api_key'] = substr($row['api_key'], 0, 8) . str_repeat('*', 24);
-        }
+        $row = self::keyView($row, false);
 
         return ['data' => [
             'dry_run' => true,
