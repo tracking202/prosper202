@@ -34,8 +34,9 @@ final class LandingPageCheck
     /** Bytes of the page read; the rest is not fetched. */
     public const MAX_BYTES = 2097152;
 
-    /** The loader's address in a page, either version; group 1 is php or js, group 2 the id. */
-    private const SNIPPET = '~tracking202\\\\?/static\\\\?/landing\.(php|js)\?lpip=([0-9]*)~i';
+    /** The loader's address in a page, either version: 1 its host (when written), 2 php or js, 3 the id. */
+    private const SNIPPET = '~(?:(?:https?:)?(?:\\\\?/){2}([A-Za-z0-9.-]+(?::[0-9]{1,5})?)[^\s"\'<>]{0,300}?)?'
+        . 'tracking202\\\\?/static\\\\?/landing\.(php|js)\?lpip=([0-9]*)~i';
 
     private ?WebhookGuard $guard;
     /** @var callable(array<int, mixed>): Answer */
@@ -51,14 +52,19 @@ final class LandingPageCheck
     /**
      * @param string $landingPageUrl the landing page's saved URL, [[placeholders]] and all
      * @param string $publicId the landing page's public id, the lpip= its code carries
+     * @param string $trackerHost this install's tracking host[:port], which its code loads from; '' when unknown
      */
-    public function check(string $landingPageUrl, string $publicId): LandingPageCheckResult
+    public function check(string $landingPageUrl, string $publicId, string $trackerHost = ''): LandingPageCheckResult
     {
         if (preg_match('/^[0-9]+$/D', $publicId) !== 1) {
             return self::error('This landing page has no public id, so no code was made for it to look for.');
         }
         // Placeholders are filled per click; the page is fetched without them.
-        $url = trim((string) preg_replace('/\[\[[^\]]*\]\]/', '', $landingPageUrl));
+        $url = preg_replace('/\[\[[^\]]*\]\]/', '', $landingPageUrl);
+        if ($url === null) {
+            return self::error('The landing page URL could not be read: ' . preg_last_error_msg() . '.');
+        }
+        $url = trim($url);
         if ($url === '') {
             return self::error('This landing page has no URL to check. Add it in Setup › Landing Pages.');
         }
@@ -87,16 +93,17 @@ final class LandingPageCheck
             }
             $answer = ($this->transport)(self::curlOptions($target, $left));
 
-            $connected = $answer['primary_ip'];
-            if ($connected !== null && $connected !== '' && !self::sameAddress($connected, $target->pinned())) {
-                return self::error('The connection to ' . $where . ' went to ' . $connected
-                    . ' instead of the checked address ' . $target->pinned() . ', so the page was not read.');
-            }
             $status = $answer['status'];
             if ($status === 0) {
                 return self::error($answer['timed_out']
                     ? 'Your page at ' . $where . ' did not answer within ' . self::TIMEOUT . ' seconds.'
                     : 'Your page at ' . $where . ' could not be fetched: ' . ($answer['error'] ?? 'no answer') . '.');
+            }
+            // An answer from an address that cannot be confirmed as the checked one is not read.
+            $connected = $answer['primary_ip'] ?? '';
+            if (!self::sameAddress($connected, $target->pinned())) {
+                return self::error('The connection to ' . $where . ' went to ' . ($connected === '' ? 'an address curl did not report' : $connected)
+                    . ' instead of the checked address ' . $target->pinned() . ', so the page was not read.');
             }
             if ($status >= 300 && $status < 400) {
                 $location = $answer['redirect_url'];
@@ -114,15 +121,20 @@ final class LandingPageCheck
                     . ', so its code could not be read. Check the URL saved for this landing page.');
             }
 
-            return self::inspect($answer['body'], $publicId, $answer['truncated'], $where);
+            return self::inspect($answer['body'], $publicId, $answer['truncated'], $where, $trackerHost);
         }
     }
 
     /**
      * What a page's HTML says about the code for $publicId. Pure, for tests.
      */
-    public static function inspect(string $html, string $publicId, bool $truncated = false, string $where = ''): LandingPageCheckResult
-    {
+    public static function inspect(
+        string $html,
+        string $publicId,
+        bool $truncated = false,
+        string $where = '',
+        string $trackerHost = ''
+    ): LandingPageCheckResult {
         $yours = $where === '' ? 'Your page' : 'Your page at ' . $where;
         [$live, $comments] = self::splitComments($html);
         $found = self::snippets($live);
@@ -137,6 +149,17 @@ final class LandingPageCheck
         ));
 
         if ($mine !== []) {
+            $tracker = strtolower($trackerHost);
+            $here = array_values(array_filter($mine, static fn (array $s): bool => $tracker === '' || $s[2] === '' || $s[2] === $tracker));
+            if ($here === []) {
+                $hosts = array_values(array_unique(array_map(static fn (array $s): string => $s[2], $mine)));
+
+                return new LandingPageCheckResult(LandingPageCheckResult::OTHER_TRACKER,
+                    $yours . ' carries code for lpip=' . $publicId . ', but it loads from ' . implode(', ', $hosts)
+                    . ', not from this install\'s tracking domain (' . $trackerHost . '). If that is another install, '
+                    . 'the visits are recorded there: replace the code with the code above.');
+            }
+            $mine = $here;
             if ($others !== []) {
                 return new LandingPageCheckResult(LandingPageCheckResult::MIXED,
                     $yours . ' carries this landing page\'s code (lpip=' . $publicId . ') and also code for '
@@ -173,9 +196,9 @@ final class LandingPageCheck
     }
 
     /**
-     * Each loader address in the HTML: [php|js, lpip digits].
+     * Each loader address in the HTML: [php|js, lpip digits, host as written lower-cased or ''].
      *
-     * @return list<array{0: string, 1: string}>
+     * @return list<array{0: string, 1: string, 2: string}>
      */
     private static function snippets(string $html): array
     {
@@ -183,11 +206,12 @@ final class LandingPageCheck
             throw new \RuntimeException('The page could not be searched: ' . preg_last_error_msg());
         }
 
-        return array_map(static fn (array $one): array => [strtolower($one[1]), $one[2]], $m);
+        return array_map(static fn (array $one): array => [strtolower($one[2]), $one[3], strtolower($one[1])], $m);
     }
 
     /**
-     * The HTML outside comments, and the comments' text.
+     * The HTML outside comments, and the comments' text. A `<!--` inside a
+     * <script> element is script text, not a comment, as a browser reads it.
      *
      * @return array{0: string, 1: string}
      */
@@ -197,6 +221,14 @@ final class LandingPageCheck
         $comments = '';
         $at = 0;
         while (($open = strpos($html, '<!--', $at)) !== false) {
+            $script = stripos($html, '<script', $at);
+            if ($script !== false && $script < $open) {
+                $closeScript = stripos($html, '</script', $script + 7);
+                $end = $closeScript === false ? strlen($html) : $closeScript + 8;
+                $live .= substr($html, $at, $end - $at);
+                $at = $end;
+                continue;
+            }
             $live .= substr($html, $at, $open - $at) . ' ';
             $close = strpos($html, '-->', $open + 4);
             $end = $close === false ? strlen($html) : $close + 3;

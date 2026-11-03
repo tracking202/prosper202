@@ -29,5 +29,9 @@ if ($page === null) {
 	die(p202_flash('bad', 'That landing page is not yours, or it was removed.'));
 }
 
-$result = (new \Prosper202\Setup\LandingPageCheck())->check((string) $page['landing_page_url'], (string) ($page['landing_page_id_public'] ?? ''));
+$result = (new \Prosper202\Setup\LandingPageCheck())->check(
+	(string) $page['landing_page_url'],
+	(string) ($page['landing_page_id_public'] ?? ''),
+	getTrackingDomain()
+);
 echo p202_flash($result->flashKind(), $result->message);

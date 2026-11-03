@@ -46,11 +46,19 @@ final class LandingPageCheckTest extends TestCase
             $next = array_shift($answers);
             self::assertIsArray($next, 'no more transfers were expected');
 
-            return $next + ['status' => 200, 'error' => null, 'timed_out' => false, 'primary_ip' => null,
+            return $next + ['status' => 200, 'error' => null, 'timed_out' => false, 'primary_ip' => self::pinnedIn($options),
                 'redirect_url' => null, 'body' => '', 'truncated' => false];
         };
 
         return new LandingPageCheck($guard, $transport);
+    }
+
+    /** The address a transfer was pinned to, as curl would report it connected to. */
+    private static function pinnedIn(array $options): ?string
+    {
+        $entry = $options[CURLOPT_RESOLVE][0] ?? null;
+
+        return is_string($entry) ? trim(substr($entry, strpos($entry, ':', strpos($entry, ':') + 1) + 1), '[]') : null;
     }
 
     public function testTheCurrentCodeForThisPageIsFound(): void
@@ -92,6 +100,34 @@ final class LandingPageCheckTest extends TestCase
 
         $legacy = LandingPageCheck::inspect(self::page(self::legacySnippet('77')), self::ID);
         self::assertSame(Result::WRONG_ID, $legacy->status, 'an old snippet with another id is the wrong id too');
+    }
+
+    public function testThisIdLoadedFromAnotherTrackerIsNotFound(): void
+    {
+        $html = self::page(LandingPageCode::loader('//staging-track.example.com/', self::ID));
+        $result = LandingPageCheck::inspect($html, self::ID, false, 'https://shop.example.com', 'track.example.com');
+
+        self::assertSame(Result::OTHER_TRACKER, $result->status, $result->message);
+        self::assertSame('warn', $result->flashKind());
+        self::assertStringContainsString('loads from staging-track.example.com', $result->message);
+        self::assertStringContainsString('(track.example.com)', $result->message);
+
+        $ours = self::page(LandingPageCode::loader('//Track.Example.com/p202/', self::ID));
+        self::assertSame(Result::PRESENT, LandingPageCheck::inspect($ours, self::ID, false, '', 'track.example.com')->status,
+            'the host is compared without case, the install path aside');
+        $escaped = '<script>var u = "https:\\/\\/track.example.com\\/tracking202\\/static\\/landing.php?lpip=' . self::ID . '";</script>';
+        self::assertSame(Result::PRESENT, LandingPageCheck::inspect($escaped, self::ID, false, '', 'track.example.com')->status,
+            'a JSON-escaped address names its host too');
+        $both = self::page(LandingPageCode::loader('//staging-track.example.com/', self::ID) . LandingPageCode::loader('//track.example.com/', self::ID));
+        self::assertSame(Result::PRESENT, LandingPageCheck::inspect($both, self::ID, false, '', 'track.example.com')->status);
+        self::assertSame(Result::PRESENT, LandingPageCheck::inspect($html, self::ID)->status, 'no tracking domain known: the host is not judged');
+    }
+
+    public function testCommentOpenersInsideAScriptDoNotHideTheCode(): void
+    {
+        $html = '<script>var marker = "<!--";</script><p>Sale</p>' . LandingPageCode::loader('//t.example/', self::ID);
+
+        self::assertSame(Result::PRESENT, LandingPageCheck::inspect($html, self::ID)->status);
     }
 
     public function testCodeWithNoIdIsNamedAsSuch(): void
@@ -234,6 +270,9 @@ final class LandingPageCheckTest extends TestCase
         self::assertStringContainsString('instead of the checked address',
             $run(['primary_ip' => '10.0.0.9', 'body' => LandingPageCode::loader('//t.example/', self::ID)])->message,
             'a connection that went elsewhere is not read');
+        $unconfirmed = $run(['primary_ip' => null, 'body' => LandingPageCode::loader('//t.example/', self::ID)]);
+        self::assertSame(Result::ERROR, $unconfirmed->status, 'nor one whose address curl did not report');
+        self::assertStringContainsString('an address curl did not report', $unconfirmed->message);
 
         $unresolved = $this->checker([], [])->check('https://gone.example.com/', self::ID);
         self::assertSame(Result::ERROR, $unresolved->status);
@@ -275,13 +314,16 @@ final class LandingPageCheckTest extends TestCase
     }
 
     /**
-     * The real transfer against a listener on this machine: a page larger
-     * than MAX_BYTES is cut there and reported as cut, not as a failure.
+     * A listener on 127.0.0.1 that answers one request: 'big' sends 4 MB,
+     * anything else is sent as the page. Returns its port, or skips.
+     *
+     * @return array{0: resource, 1: resource, 2: string, 3: string}
      */
-    public function testTheTransportCutsOffALargePage(): void
+    private function listen(string $mode): array
     {
         $listener = <<<'PHP'
 <?php
+[, $mode] = $argv;
 $server = @stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
 if ($server === false) { echo "ERR $errstr\n"; exit(1); }
 $name = (string) stream_socket_get_name($server, false);
@@ -290,37 +332,76 @@ $conn = @stream_socket_accept($server, 20);
 if ($conn === false) { exit(1); }
 $request = '';
 while (!str_contains($request, "\r\n\r\n") && !feof($conn)) { $request .= (string) fread($conn, 4096); }
-fwrite($conn, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 4194304\r\nConnection: close\r\n\r\n");
-for ($i = 0; $i < 1024 && @fwrite($conn, str_repeat('x', 4096)) !== false; $i++) {}
+if ($mode === 'big') {
+    fwrite($conn, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 4194304\r\nConnection: close\r\n\r\n");
+    for ($i = 0; $i < 1024 && @fwrite($conn, str_repeat('x', 4096)) !== false; $i++) {}
+} else {
+    fwrite($conn, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: " . strlen($mode) . "\r\nConnection: close\r\n\r\n" . $mode);
+}
 fclose($conn);
 PHP;
         $script = tempnam(sys_get_temp_dir(), 'p202lp');
         self::assertIsString($script);
         file_put_contents($script, $listener);
-        $proc = proc_open([PHP_BINARY, $script], [1 => ['pipe', 'w']], $pipes);
+        $proc = proc_open([PHP_BINARY, $script, $mode], [1 => ['pipe', 'w']], $pipes);
         self::assertIsResource($proc);
-        try {
-            $port = trim((string) fgets($pipes[1]));
-            if (!ctype_digit($port)) {
-                self::markTestSkipped('no local listener: ' . $port);
-            }
-            $answer = LandingPageCheck::curlTransport([
-                CURLOPT_URL => 'http://127.0.0.1:' . $port . '/',
-                CURLOPT_PROXY => '',
-                CURLOPT_NOPROXY => '*',
-                CURLOPT_CONNECTTIMEOUT => 5,
-                CURLOPT_TIMEOUT => 10,
-            ]);
-        } finally {
-            fclose($pipes[1]);
+        $port = trim((string) fgets($pipes[1]));
+        $this->listeners[] = [$proc, $pipes[1], $script];
+        if (!ctype_digit($port)) {
+            self::markTestSkipped('no local listener: ' . $port);
+        }
+
+        return [$proc, $pipes[1], $script, $port];
+    }
+
+    /** @var list<array{0: resource, 1: resource, 2: string}> */
+    private array $listeners = [];
+
+    protected function tearDown(): void
+    {
+        foreach ($this->listeners as [$proc, $pipe, $script]) {
+            fclose($pipe);
             proc_terminate($proc);
             proc_close($proc);
             unlink($script);
         }
+        $this->listeners = [];
+    }
+
+    /**
+     * The real transfer against a listener on this machine: a page larger
+     * than MAX_BYTES is cut there and reported as cut, not as a failure.
+     */
+    public function testTheTransportCutsOffALargePage(): void
+    {
+        $port = $this->listen('big')[3];
+        $answer = LandingPageCheck::curlTransport([
+            CURLOPT_URL => 'http://127.0.0.1:' . $port . '/',
+            CURLOPT_PROXY => '',
+            CURLOPT_NOPROXY => '*',
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 10,
+        ]);
 
         self::assertNull($answer['error']);
         self::assertSame(200, $answer['status']);
         self::assertTrue($answer['truncated']);
         self::assertSame(LandingPageCheck::MAX_BYTES, strlen($answer['body']));
+    }
+
+    /**
+     * The whole check with the real transport: a host name the guard
+     * resolves (to loopback, which only the operator's allowlist admits) is
+     * pinned through PostbackSender's options, curl reports the address it
+     * reached, and the page it read carries the code.
+     */
+    public function testTheRealFetchIsPinnedAndReadsThePage(): void
+    {
+        $port = $this->listen('<html><body>' . LandingPageCode::loader('//track.example.com/', self::ID) . '</body></html>')[3];
+        $guard = new WebhookGuard(static fn (string $host): array => $host === 'lp.shop.example.com' ? ['127.0.0.1'] : [], '127.0.0.0/8');
+        $result = (new LandingPageCheck($guard))->check('http://lp.shop.example.com:' . $port . '/spring', self::ID, 'track.example.com');
+
+        self::assertSame(Result::PRESENT, $result->status, $result->message);
+        self::assertStringContainsString('http://lp.shop.example.com:' . $port, $result->message);
     }
 }

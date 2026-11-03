@@ -16,6 +16,8 @@ final class LandingPageCheckResult
     public const LEGACY = 'legacy';
     /** This landing page's code, and another landing page's beside it. */
     public const MIXED = 'mixed';
+    /** This landing page's id, but loaded from a host other than this install's tracking domain. */
+    public const OTHER_TRACKER = 'other_tracker';
     /** Only another landing page's code. */
     public const WRONG_ID = 'wrong_id';
     /** This landing page's code, but only inside an HTML comment. */
@@ -39,7 +41,7 @@ final class LandingPageCheckResult
     {
         return match ($this->status) {
             self::PRESENT, self::LEGACY => 'ok',
-            self::MIXED => 'warn',
+            self::MIXED, self::OTHER_TRACKER => 'warn',
             default => 'bad',
         };
     }
