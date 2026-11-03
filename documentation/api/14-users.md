@@ -212,6 +212,11 @@ landing-page script sets on your page (`tracking202subid`,
 the `p202vid` visitor cookie, which a visitor held back is neither given nor
 read for (see [Visitor identity](../features/visitor-identity.md)).
 
+A held-back visitor still gets [PurLinks](../features/purlinks.md): they set
+no cookie and store no address, and record what the tracker's redirect would.
+The deferred pixel, which fires the traffic source's own pixels on the landing
+page, is not fired for them.
+
 - `disabled`: nobody.
 - `all`: every visitor.
 - `eu` ("Enabled for European Traffic"): every visitor GeoIP does not place
