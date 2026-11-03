@@ -17,7 +17,7 @@ final class FailInBroadCatchTest extends TestCase
     {
         $sites = [];
         $root = SourceScan::repoRoot() . '/tests';
-        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS)) as $file) {
+        foreach (new \RecursiveIteratorIterator(SourceScan::tree($root)) as $file) {
             if (!$file->isFile() || $file->getExtension() !== 'php') {
                 continue;
             }
