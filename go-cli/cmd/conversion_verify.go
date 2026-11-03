@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -125,8 +126,16 @@ var conversionSimulateCmd = &cobra.Command{
 			source = "--subid-field (" + offers.why + ")"
 		}
 
-		// 3. Fire the real S2S postback (gpb.php).
+		// 3. Fire the real S2S postback (gpb.php), with the account's
+		// postback token, as the URL Setup hands out carries it.
+		token, err := postbackTokenFor(c)
+		if err != nil {
+			return err
+		}
 		pbURL := fmt.Sprintf("%s/tracking202/static/gpb.php?amount=%s&subid=%s", base, payout, subid)
+		if token != "" {
+			pbURL += "&p202_token=" + url.QueryEscape(token)
+		}
 		pbRes, err := (&http.Client{Timeout: 15 * time.Second}).Get(pbURL)
 		if err != nil {
 			return withHint(fmt.Errorf("postback request failed: %w", err), "The postback URL could not be fetched; check the server URL and that the postback endpoint (tracking202/static/gpb.php) is reachable.")
@@ -148,6 +157,10 @@ var conversionSimulateCmd = &cobra.Command{
 			return err
 		}
 		if !pass {
+			if pbRes.StatusCode == 403 && token == "" {
+				return withHint(partialFailureError("postback returned HTTP %d — conversions from this network would not record", pbRes.StatusCode),
+					"%s", "The account requires its postback token, which this key may not read (it needs access_to_setup_section); `p202 conversion postback-auth get` with such a key shows it.")
+			}
 			return partialFailureError("postback returned HTTP %d — conversions from this network would not record", pbRes.StatusCode)
 		}
 		return nil

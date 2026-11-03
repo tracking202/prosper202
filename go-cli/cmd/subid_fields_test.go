@@ -494,9 +494,14 @@ type simulateFake struct {
 
 	trackerStatus int
 
+	token          string // GET /conversions/postback-auth's token; "" answers 404, a server before 1.9.80
+	authStatus     int    // that read's status instead, when set
+	postbackStatus int    // gpb.php's status, when set
+
 	mu       sync.Mutex
 	clicks   int
 	postback []string
+	tokens   []string
 }
 
 func (f *simulateFake) server(t *testing.T) {
@@ -548,10 +553,25 @@ func (f *simulateFake) server(t *testing.T) {
 			f.mu.Unlock()
 			w.Header().Set("Location", f.location)
 			w.WriteHeader(http.StatusFound)
+		case "/api/v3/conversions/postback-auth":
+			if f.authStatus != 0 {
+				w.WriteHeader(f.authStatus)
+				fmt.Fprint(w, `{"message":"Forbidden"}`)
+				return
+			}
+			if f.token == "" {
+				http.NotFound(w, r)
+				return
+			}
+			fmt.Fprintf(w, `{"data":{"token":%q,"token_required":true}}`, f.token)
 		case "/tracking202/static/gpb.php":
 			f.mu.Lock()
 			f.postback = append(f.postback, r.URL.Query().Get("subid"))
+			f.tokens = append(f.tokens, r.URL.Query().Get("p202_token"))
 			f.mu.Unlock()
+			if f.postbackStatus != 0 {
+				w.WriteHeader(f.postbackStatus)
+			}
 			fmt.Fprint(w, `{"status":"ok"}`)
 		default:
 			http.NotFound(w, r)
@@ -591,6 +611,47 @@ func TestConversionSimulatePostsTheCampaignsSubidField(t *testing.T) {
 	}
 	if row := simulateRow(t, stdout); row["subid_field"] != "c1" || row["subid_source"] != "campaign URL" || row["result"] != "PASS" {
 		t.Errorf("row %v, want c1 from the campaign URL and PASS", row)
+	}
+}
+
+// The postback carries the account's token, as the URL Setup hands out does.
+func TestConversionSimulateSendsThePostbackToken(t *testing.T) {
+	f := &simulateFake{
+		campaign: map[string]interface{}{"aff_campaign_url": "https://hp.example/rd/r.php?c1=[[subid]]"},
+		location: "https://hp.example/rd/r.php?c1=4821",
+		token:    "0123456789abcdef0123456789abcdef",
+	}
+	f.server(t)
+	if _, stderr, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json"); err != nil {
+		t.Fatalf("simulate: %v\nstderr: %s", err, stderr)
+	}
+	if len(f.tokens) != 1 || f.tokens[0] != f.token {
+		t.Fatalf("postback tokens %v, want [%s]", f.tokens, f.token)
+	}
+}
+
+// A key that may not read the token sends the postback without it, and a
+// refusal says why.
+func TestConversionSimulateWithoutTheTokenSaysWhyThePostbackWasRefused(t *testing.T) {
+	f := &simulateFake{
+		campaign:       map[string]interface{}{"aff_campaign_url": "https://hp.example/rd/r.php?c1=[[subid]]"},
+		location:       "https://hp.example/rd/r.php?c1=4821",
+		authStatus:     403,
+		postbackStatus: 403,
+	}
+	f.server(t)
+	_, _, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json")
+	if err == nil {
+		t.Fatal("a refused postback passed")
+	}
+	if len(f.tokens) != 1 || f.tokens[0] != "" {
+		t.Fatalf("postback tokens %v, want one without", f.tokens)
+	}
+	if got := exitCodeForError(err); got != ExitPartialFailure {
+		t.Errorf("exit code %d, want %d", got, ExitPartialFailure)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "postback-auth get") {
+		t.Errorf("hint %q does not say how to read the token", hint)
 	}
 }
 
