@@ -1,1 +1,3 @@
 -- Changed: Prosper202 is now tested on PHP 8.4 and 8.5, MySQL 8.4 LTS and MariaDB 11.4 LTS as well as PHP 8.3 and MySQL 8.0, and the README lists the tested versions. MySQL 8.0 reached end of life in April 2026: use 8.4 LTS for new installs.
+-- Fixed: On MariaDB 11, offline conversion files and the Android install report could take hours on a large conversion ledger, because the refund lookup read the whole ledger once per conversion. It now uses its index on MariaDB too.
+app: Fixed: Offline conversion files no longer stall on MariaDB 11.

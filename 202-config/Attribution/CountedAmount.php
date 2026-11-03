@@ -107,7 +107,9 @@ final class CountedAmount
             . " AND $row.click_payout + COALESCE(SUM($r.click_payout), 0) <= 0 THEN NULL"
             . " ELSE $row.click_payout + COALESCE(SUM($r.click_payout), 0) END"
             . " FROM 202_conversion_logs $r"
-            . " WHERE $r.reverses_conv_id = $row.conv_id AND $r.deleted = 0 AND $r.payable = 1)"
+            // Redundant, but MariaDB ignores the hint and only uses the index once told NULLs are out.
+            . " WHERE $r.reverses_conv_id = $row.conv_id AND $r.reverses_conv_id IS NOT NULL"
+            . " AND $r.deleted = 0 AND $r.payable = 1)"
             . ' END)';
     }
 
