@@ -901,7 +901,7 @@ paths:
         The URL to paste into ClickBank (INS), JVZoo (two URLs, both verified
         with the JVZIPN secret key: `jvzoo`, `?role=affiliate`, for an
         affiliate's Affiliate IPN, and `jvzoo_vendor`, `?role=vendor`, for a
-        product's JVZIPN v1 URL), Zaxaa (ZPN), Slack and PayKickstart (the
+        product's JVZIPN v1 URL), Zaxaa (ZPN) and PayKickstart (the
         product IPN, set under each product's IPN Integration tab), on this
         install's tracking base (user 1's tracking
         domain or this server's name, and the install's path — the base
@@ -933,7 +933,7 @@ paths:
                           properties:
                             integration:
                               type: string
-                              enum: [clickbank, jvzoo, jvzoo_vendor, zaxaa, slack, paykickstart]
+                              enum: [clickbank, jvzoo, jvzoo_vendor, zaxaa, paykickstart]
                             name:
                               type: string
                             label:
