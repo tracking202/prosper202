@@ -301,6 +301,21 @@ final class AiConnect
         return $label !== null && str_starts_with($label, self::LABEL_PREFIX);
     }
 
+    /**
+     * The client's kind for analytics: a fixed category, never the name the
+     * approval link carried, which anyone can set to anything.
+     */
+    public static function analyticsClientKind(string $clientName): string
+    {
+        return match (strtolower(trim($clientName))) {
+            'claude' => 'claude',
+            'chatgpt' => 'chatgpt',
+            'cursor' => 'cursor',
+            'gemini' => 'gemini',
+            default => 'other',
+        };
+    }
+
     /** Records an approval and returns its one-time code. */
     public static function approve(
         ServerStateStore $store,
@@ -479,7 +494,7 @@ final class AiConnect
         // Analytics milestone (consent-gated): the app's kind and the access granted.
         require_once dirname(__DIR__, 3) . '/202-config/Messaging/Analytics.class.php';
         \Analytics::eventFor($db, $userId, 'ai_connector_connected', [
-            'client' => mb_substr((string) $grant['client_name'], 0, 40),
+            'client' => self::analyticsClientKind((string) $grant['client_name']),
             'access' => (string) $access,
         ], 'analytics');
 
