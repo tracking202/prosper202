@@ -43,6 +43,12 @@ final class PostbackRequestTest extends TestCase
             ['subid' => '42', 'amount' => '5']];
         yield 'a blank body value never replaces a query value' => [['subid' => '42'], ['subid' => ''], ['subid' => '42']];
         yield 'a "0" in the query is a value, not a blank' => [['amount' => '0'], ['amount' => '5'], ['amount' => '0']];
+        // Refused downstream (ClickId::parse), never replaced by the body's value.
+        yield 'an array in the query is a value, not a blank' => [['subid' => ['1']], ['subid' => '42'],
+            ['subid' => ['1']]];
+        // As connect2.php's array_change_key_case() on $_GET: the later name wins.
+        yield 'body names differing only in case: the later wins' => [[], ['SubID' => '41', 'subid' => '42'],
+            ['subid' => '42']];
     }
 
     /**
