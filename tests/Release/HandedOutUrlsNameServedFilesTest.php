@@ -38,7 +38,6 @@ final class HandedOutUrlsNameServedFilesTest extends TestCase
     /** Handed out, never written: path => where, until the change that removes it. */
     private const KNOWN_DEAD = [
         'tracking202/static/zpn.php' => 'Zaxaa\'s ZPN URL on Account › API integrations and GET /system/integrations',
-        'tracking202/static/slack.php' => 'Slack\'s webhook on Account › API integrations, GET /system/integrations',
     ];
 
     public function testEveryScriptAServedFileNamesExists(): void
