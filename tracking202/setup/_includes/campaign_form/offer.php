@@ -37,7 +37,7 @@ $errors = $campaignForm['errors'];
 	<label class="form-label" for="aff_campaign_url">Campaign URL</label>
 	<textarea class="form-control font-monospace<?php echo p202_setup_invalid($errors, 'aff_campaign_url'); ?>" id="aff_campaign_url" name="aff_campaign_url" rows="3" placeholder="https://" required><?php echo p202_setup_e($values['aff_campaign_url']); ?></textarea>
 	<div class="form-text">Where a click on your tracking link is sent: for an affiliate offer, your affiliate link. Put <code>[[subid]]</code> where the network takes a sub id.</div>
-	<?php echo p202_setup_feedback($errors, 'aff_campaign_url'); ?>
+	<?php echo p202_setup_feedback($errors, 'aff_campaign_url') . p202_setup_link_assistant('aff_campaign_url'); ?>
 	<?php echo p202_setup_placeholders('aff_campaign_url', 'setup-campaigns-placeholders'); ?>
 </div>
 
