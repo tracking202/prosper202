@@ -30,4 +30,13 @@ if (!in_array($flag, ['analytics', 'email_marketing'], true)
 
 // Single chokepoint — ConsentPolicy owns every raw consent-column write.
 $ok = ConsentPolicy::record($db, (int) $messagingUserId, $flag, $state, $source);
-echo json_encode(['ok' => (bool) $ok]);
+if (!$ok) {
+    // The prompt stays up and says so; it is removed only on {"ok": true}.
+    http_response_code(503);
+}
+$answer = json_encode($ok ? ['ok' => true] : ['ok' => false, 'error' => 'not_saved']);
+if ($answer === false) {
+    http_response_code(500);
+    $answer = '{"ok":false,"error":"not_saved"}';
+}
+echo $answer;

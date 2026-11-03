@@ -4,15 +4,22 @@ on:
   push:
     paths:
       - '**.php'
+      - '202-js/consent-prompt.js'
+      - 'tests/Messaging/consent-prompt.test.mjs'
   pull_request:
     paths:
       - '**.php'
+      - '202-js/consent-prompt.js'
+      - 'tests/Messaging/consent-prompt.test.mjs'
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test the EU consent prompt
+        run: node --test tests/Messaging/consent-prompt.test.mjs
 
       - name: Set up PHP
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0

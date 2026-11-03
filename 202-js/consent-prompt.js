@@ -4,7 +4,7 @@
  * Mounted by 202-config/template.php only when ConsentPolicy::needsEuPrompt()
  * says so (EU user, analytics consent unset, prompt not yet seen). Posts the
  * choice to 202-account/ajax/messaging/consent.php with source=eu_prompt and
- * removes itself. Styled with the global design system (.card-modern,
+ * removes itself only after the choice is saved. Styled with the global design system (.card-modern,
  * .btn-modern) on p202-ui.css tokens — no bespoke palette.
  */
 (function () {
@@ -69,11 +69,20 @@
     decline.style.fontSize = '14px';
     decline.style.color = 'var(--p202-accent)';
 
+    var error = document.createElement('p');
+    error.setAttribute('role', 'alert');
+    error.style.fontSize = '13px';
+    error.textContent = '';
+
     function remove() {
         if (mount.parentNode) { mount.parentNode.removeChild(mount); }
     }
 
     function send(state) {
+        if (accept.disabled || decline.disabled) { return; }
+        accept.disabled = true;
+        decline.disabled = true;
+        error.textContent = '';
         var params = new URLSearchParams();
         params.append('flag', 'analytics');
         params.append('state', state);
@@ -84,10 +93,17 @@
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: params.toString()
+        }).then(function (response) {
+            if (!response.ok) { throw new Error('Could not save choice'); }
+            return response.json();
+        }).then(function (result) {
+            if (!result || result.ok !== true) { throw new Error('Could not save choice'); }
+            remove();
         }).catch(function () {
-            /* Never break the host page; the prompt simply reappears next load. */
+            error.textContent = 'Your choice could not be saved. Please try again.';
+            accept.disabled = false;
+            decline.disabled = false;
         });
-        remove();
     }
 
     accept.addEventListener('click', function () { send('granted'); });
@@ -98,5 +114,6 @@
     card.appendChild(headline);
     card.appendChild(body);
     card.appendChild(actions);
+    card.appendChild(error);
     mount.appendChild(card);
 })();
