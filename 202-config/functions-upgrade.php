@@ -4653,13 +4653,15 @@ class UPGRADE
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
             ]);
-            if (!$step_ok) {
+            if ($step_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
+                    $prosper202_version = '1.9.80';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                }
+            } else {
                 error_log('Prosper202 upgrade: a table of the 1.9.80 step could not be reconciled (the list above);'
                     . ' leaving version at 1.9.79 so the next run retries.');
-            } elseif (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
-                $prosper202_version = '1.9.80';
-            } else {
-                error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
             }
         }
 
