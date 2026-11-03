@@ -238,7 +238,11 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         );
     }
 
-    /** Record an exit as part of the caller's transaction, under the click lock. */
+    /**
+     * Record an exit as part of the caller's transaction, under the click lock.
+     *
+     * @param (\Closure(): int)|null $redirectSiteUrlId as for recordExit()
+     */
     public function recordExitInTransaction(ClickExit $exit, ?\Closure $redirectSiteUrlId = null): bool
     {
         return $this->conn->joinTransaction(function () use ($exit, $redirectSiteUrlId): bool {
@@ -248,7 +252,10 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         });
     }
 
-    /** @param array<string, mixed>|null $locked */
+    /**
+     * @param (\Closure(): int)|null $redirectSiteUrlId
+     * @param array<string, mixed>|null $locked
+     */
     private function recordExitLocked(ClickExit $exit, ?\Closure $redirectSiteUrlId, ?array $locked): bool
     {
         if (($redirectSiteUrlId === null) !== ($exit->outboundSiteUrlId === 0)) {
@@ -534,12 +541,13 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                     . ' WHERE c.user_id = ? AND lp.landing_page_id = ?';
             $types = 'iii';
             $values = [$exit->clickId, $exit->userId, $exit->landingPageId];
-            if ($exit->offer !== null) {
+            $offer = $exit->offer;
+            if ($offer !== null) {
                 // A simple page can only send its own campaign; an advanced
                 // page may send any campaign of its account.
                 $sql .= ' AND (lp.landing_page_type = 1 OR lp.aff_campaign_id = ?)';
                 $types .= 'i';
-                $values[] = $exit->offer->campaignId;
+                $values[] = $offer->campaignId;
             }
             $stmt = $this->conn->prepareWrite($sql);
             $this->conn->bind($stmt, $types, $values);
@@ -547,12 +555,13 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                 return false;
             }
         }
-        if ($exit->offer !== null) {
+        $offer = $exit->offer;
+        if ($offer !== null) {
             $stmt = $this->conn->prepareWrite(
                 'SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ?'
                     . ($exit->landingPageId !== null ? ' AND aff_campaign_deleted = 0' : '')
             );
-            $this->conn->bind($stmt, 'ii', [$exit->offer->campaignId, $exit->userId]);
+            $this->conn->bind($stmt, 'ii', [$offer->campaignId, $exit->userId]);
             if ($this->conn->fetchOne($stmt) === null) {
                 return false;
             }
