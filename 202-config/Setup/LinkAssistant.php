@@ -28,35 +28,39 @@ final class LinkAssistant
 
     /**
      * First match wins, so a network matched by its host comes before the
-     * path shapes several platforms share.
+     * path shapes several platforms share. A host is matched as the link's
+     * own host; the shared shapes are the platforms' own, on any host.
      *
      * @var list<array{id: string, name: string, match: string, param: string, place: string}>
      */
+    /** The scheme and any subdomains before a network's own host. */
+    private const HOST = '^[a-z][a-z0-9+.-]*://([^/?#]*\.)?';
+
     private const NETWORKS = [
         ['id' => 'clickbank', 'name' => 'ClickBank', 'param' => 'tid', 'place' => 'query',
-            'match' => 'hop\.clickbank\.net'],
+            'match' => self::HOST . 'hop\.clickbank\.net(/|\?|$)'],
         ['id' => 'paykickstart', 'name' => 'PayKickstart', 'param' => 'tid', 'place' => 'query',
-            'match' => 'paykstrt\.com/[0-9]+/[0-9]+'],
+            'match' => self::HOST . 'paykstrt\.com/[0-9]+/[0-9]+'],
         ['id' => 'jvzoo', 'name' => 'JVZoo', 'param' => 'tid', 'place' => 'query',
-            'match' => '(jvzoo|jvz[1-9])\.com/c/[0-9]+/[0-9]+'],
+            'match' => self::HOST . '(jvzoo|jvz[1-9])\.com/c/[0-9]+/[0-9]+'],
         ['id' => 'warriorplus', 'name' => 'WarriorPlus', 'param' => 'sid', 'place' => 'segment',
-            'match' => 'warriorplus\.com/o2/[av]/\w+/\w+'],
+            'match' => self::HOST . 'warriorplus\.com/o2/[av]/\w+/\w+'],
         ['id' => 'zaxaa', 'name' => 'Zaxaa', 'param' => 'sid', 'place' => 'segment',
-            'match' => 'zaxaa\.com/o/[0-9]+/[0-1](/|\?|$)'],
+            'match' => self::HOST . 'zaxaa\.com/o/[0-9]+/[0-1](/|\?|$)'],
         ['id' => 'rakuten', 'name' => 'Rakuten Advertising', 'param' => 'u1', 'place' => 'query',
-            'match' => 'click\.linksynergy\.com/(fs-bin/click|deeplink)\?id='],
+            'match' => self::HOST . 'click\.linksynergy\.com/(fs-bin/click|deeplink)\?id='],
         ['id' => 'shareasale', 'name' => 'ShareASale', 'param' => 'afftrack', 'place' => 'query',
-            'match' => 'shareasale\.com/r\.cfm\?'],
+            'match' => self::HOST . 'shareasale\.com/r\.cfm\?'],
         ['id' => 'awin', 'name' => 'Awin', 'param' => 'clickref', 'place' => 'query',
-            'match' => 'awin1\.com/cread\.php\?'],
+            'match' => self::HOST . 'awin1\.com/cread\.php\?'],
         ['id' => 'avantlink', 'name' => 'AvantLink', 'param' => 'ctc', 'place' => 'query',
-            'match' => 'avantlink\.com/click\.php\?'],
+            'match' => self::HOST . 'avantlink\.com/click\.php\?'],
         ['id' => 'linkconnector', 'name' => 'LinkConnector', 'param' => 'atid', 'place' => 'query',
-            'match' => 'linkconnector\.com/ta\.php\?lc='],
+            'match' => self::HOST . 'linkconnector\.com/ta\.php\?lc='],
         ['id' => 'ebay', 'name' => 'eBay Partner Network', 'param' => 'customid', 'place' => 'query',
-            'match' => '//(www\.|m\.)?ebay\.[a-z.]+/[^#]*[?&]campid=[0-9]+'],
+            'match' => '^[a-z][a-z0-9+.-]*://(www\.|m\.)?ebay\.[a-z.]+/[^#]*[?&]campid=[0-9]+'],
         ['id' => 'partnerize', 'name' => 'Partnerize', 'param' => 'pubref', 'place' => 'pair',
-            'match' => 'prf\.hn/click/camref:\w+'],
+            'match' => self::HOST . 'prf\.hn/click/camref:\w+'],
         ['id' => 'flexoffers', 'name' => 'FlexOffers', 'param' => 'fobs', 'place' => 'query',
             'match' => '/a\.ashx\?foid='],
         ['id' => 'maxbounty', 'name' => 'MaxBounty', 'param' => 's2', 'place' => 'query',
