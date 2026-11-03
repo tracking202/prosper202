@@ -44,6 +44,14 @@ if ($rotateUrlCampaignsResults === false) {
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 
+// The account currency: a campaign's payout is stored in it, and a campaign
+// in another currency keeps its own amount beside it (CampaignCurrency).
+$currencyConn = new \Prosper202\Database\Connection($db);
+$currencyStmt = $currencyConn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
+$currencyConn->bind($currencyStmt, 'i', [(int) $_SESSION['user_id']]);
+$accountCurrency = \Api\V3\Controllers\UsersController::normalizeCurrency($currencyConn->fetchOne($currencyStmt)['user_account_currency'] ?? null);
+$campaignStored = null;
+
 if (!empty($_GET['edit_aff_campaign_id'])) {
 	$editing = true;
 }
@@ -151,6 +159,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 		$error['aff_campaign_payout'] .= '<div class="error">Please enter in a numeric number for the payout.</div>';
 	}
 
+	// The payout's currency. A post without the field (an older form, a
+	// script) is in the account currency, as the page took it before.
+	$campaignCurrency = array_key_exists('aff_campaign_currency', $_POST) ? strtoupper(trim((string) $_POST['aff_campaign_currency'])) : $accountCurrency;
+
 	//check to see if they are the owners of this affiliate network
 	$mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_id']);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -175,6 +187,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 		}
 	}
 
+	// One of the currencies an account may use, or the one the edited campaign already holds.
+	if (!in_array($campaignCurrency, \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES, true)
+		&& !($editing == true && is_array($aff_campaign_row) && $campaignCurrency === (string) ($aff_campaign_row['aff_campaign_currency'] ?? ''))) {
+		$error['aff_campaign_currency'] = '<div class="error">Choose a currency from the list.</div>';
+	}
+
+	// The rate is asked for only once everything else is accepted: a network
+	// call, and a failure stores nothing.
+	if (! $error) {
+		try {
+			$campaignStored = \Prosper202\Setup\CampaignCurrency::store($accountCurrency, $campaignCurrency, $aff_campaign_payout,
+				static fn (string $from, string $to, string $amount): ?string => \Prosper202\User\ExchangeRates::convert($from, $to, $amount));
+		} catch (\RuntimeException $e) {
+			// The form escapes the text when it shows it.
+			$error['aff_campaign_currency'] = '<div class="error">' . $e->getMessage()
+				. ' Nothing was saved. Try again, or enter the payout in ' . $accountCurrency . '.</div>';
+		}
+	}
+
 	if (! $error) {
 		$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
 		$mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_id']);
@@ -186,7 +217,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 		$mysql['aff_campaign_url_5'] = $db->real_escape_string(trim($_POST['aff_campaign_url_5'] ?? ''));
 		$post_aff_campaign_rotate = isset($_POST['aff_campaign_rotate']) ? (string)$_POST['aff_campaign_rotate'] : '0';
 		$mysql['aff_campaign_rotate'] = $db->real_escape_string($post_aff_campaign_rotate);
-		$mysql['aff_campaign_payout'] = $db->real_escape_string(trim($_POST['aff_campaign_payout'] ?? ''));
+		$mysql['aff_campaign_payout'] = $db->real_escape_string($campaignStored['payout']);
+		$mysql['aff_campaign_currency'] = $db->real_escape_string($campaignStored['currency']);
+		$mysql['aff_campaign_foreign_payout'] = $db->real_escape_string($campaignStored['foreign_payout']);
 		$mysql['aff_campaign_cloaking'] = $db->real_escape_string((string)($_POST['aff_campaign_cloaking'] ?? '0'));
 		
 		// Handle attribution model ID
@@ -215,6 +248,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 													  `aff_campaign_url_5`='" . $mysql['aff_campaign_url_5'] . "',
 													  `aff_campaign_rotate`='" . $mysql['aff_campaign_rotate'] . "',
 													  `aff_campaign_payout`='" . $mysql['aff_campaign_payout'] . "',
+													  `aff_campaign_currency`='" . $mysql['aff_campaign_currency'] . "',
+													  `aff_campaign_foreign_payout`='" . $mysql['aff_campaign_foreign_payout'] . "',
 													  `aff_campaign_cloaking`='" . $mysql['aff_campaign_cloaking'] . "',
 													  `attribution_model_id`=" . ($mysql['attribution_model_id'] ? "'" . (int)$mysql['attribution_model_id'] . "'" : 'NULL') . ",
 													  " . ($payoutMode === null ? '' : "`payout_mode`='" . ($payoutMode === 'accumulate' ? 'accumulate' : 'replace') . "',") . "
@@ -267,8 +302,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 					$slack->push('campaign_url_changed', ['name' => $_POST['aff_campaign_name'], 'old_url' => $aff_campaign_row['aff_campaign_url'], 'new_url' => $_POST['aff_campaign_url'], 'user' => $user_row['username']]);
 				}
 
-				if ($aff_campaign_row['aff_campaign_payout'] != $_POST['aff_campaign_payout']) {
-					$slack->push('campaign_payout_changed', ['name' => $_POST['aff_campaign_name'], 'old_payout' => $aff_campaign_row['aff_campaign_payout'], 'new_payout' => $_POST['aff_campaign_payout'], 'user' => $user_row['username']]);
+				if ($aff_campaign_row['aff_campaign_payout'] != $campaignStored['payout']) {
+					$slack->push('campaign_payout_changed', ['name' => $_POST['aff_campaign_name'], 'old_payout' => $aff_campaign_row['aff_campaign_payout'], 'new_payout' => $campaignStored['payout'], 'user' => $user_row['username']]);
 				}
 
 				if ($aff_campaign_row['aff_campaign_cloaking'] != $_POST['aff_campaign_cloaking']) {
@@ -447,7 +482,7 @@ $uid = $db->real_escape_string((string) $_SESSION['user_id']);
 // offers are neither searched nor shown as loading.
 $categoryRows = p202_setup_rows($db, "SELECT af.aff_network_id, af.aff_network_name, dni.id AS dni_network_id, dni.favicon, dni.processed FROM 202_aff_networks AS af LEFT JOIN 202_dni_networks AS dni ON (af.dni_network_id = dni.id AND dni.user_id = af.user_id) WHERE af.user_id='" . $uid . "' AND af.aff_network_deleted='0' ORDER BY af.aff_network_name ASC");
 $campaignsByCategory = [];
-foreach (p202_setup_rows($db, "SELECT aff_campaign_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_campaign_rotate FROM `202_aff_campaigns` WHERE `user_id`='" . $uid . "' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC") as $campaign) {
+foreach (p202_setup_rows($db, "SELECT aff_campaign_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_campaign_currency, aff_campaign_foreign_payout, aff_campaign_rotate FROM `202_aff_campaigns` WHERE `user_id`='" . $uid . "' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC") as $campaign) {
 	$campaignsByCategory[(int) $campaign['aff_network_id']][] = $campaign;
 }
 $categories = [];
@@ -470,7 +505,8 @@ $values = [
 	'aff_campaign_url_4' => $field('aff_campaign_url_4'),
 	'aff_campaign_url_5' => $field('aff_campaign_url_5'),
 	'aff_campaign_rotate' => $field('aff_campaign_rotate') === '1' ? '1' : '0',
-	'aff_campaign_payout' => $field('aff_campaign_payout'),
+	'aff_campaign_payout' => $posted ? $field('aff_campaign_payout') : \Prosper202\Setup\CampaignCurrency::shown($source, $accountCurrency)['payout'],
+	'aff_campaign_currency' => $posted ? ($field('aff_campaign_currency') !== '' ? $field('aff_campaign_currency') : $accountCurrency) : \Prosper202\Setup\CampaignCurrency::shown($source, $accountCurrency)['currency'],
 	'aff_campaign_cloaking' => $field('aff_campaign_cloaking') === '1' ? '1' : '0',
 	// A copy chooses its own model, as the classic page did.
 	'attribution_model_id' => !$posted && $copying ? '' : $field('attribution_model_id'),
@@ -484,6 +520,7 @@ $campaignForm = [
 	'values' => $values,
 	'errors' => $error,
 	'categories' => $categories,
+	'account_currency' => $accountCurrency,
 	'rotation_offered' => $rotateUrlCampaignsResults->num_rows > 0,
 ];
 $editId = $editing ? (int) ($_GET['edit_aff_campaign_id'] ?? 0) : 0;
@@ -526,7 +563,7 @@ echo p202_setup_query_flashes([
 	'goal_archived' => 'Goal archived. Its outcomes and conversions keep their history.',
 ], $_GET);
 if ($error) {
-	echo p202_setup_error_flashes($error, ['aff_network_id', 'aff_campaign_name', 'aff_campaign_url', 'aff_campaign_payout', 'aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4', 'aff_campaign_url_5', 'payout_mode']);
+	echo p202_setup_error_flashes($error, ['aff_network_id', 'aff_campaign_name', 'aff_campaign_url', 'aff_campaign_payout', 'aff_campaign_currency', 'aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4', 'aff_campaign_url_5', 'payout_mode']);
 }
 ?>
 
@@ -630,7 +667,9 @@ if ($error) {
 											$name = (string) $campaign['aff_campaign_name']; ?>
 											<li class="p202-list__item<?php echo $editId === $id ? ' is-active' : ''; ?>" data-p202-filter-text="<?php echo p202_setup_e($name); ?>">
 												<span class="p202-list__name"><?php echo p202_setup_e($name); ?></span>
-												<span class="p202-pill p202-pill--good">$<?php echo p202_setup_e($campaign['aff_campaign_payout']); ?></span>
+												<?php $shownPayout = \Prosper202\Setup\CampaignCurrency::shown($campaign, $accountCurrency); ?>
+												<span class="p202-pill p202-pill--good"><?php echo p202_setup_e(dollar_format($campaign['aff_campaign_payout'], $accountCurrency)
+													. ($shownPayout['currency'] !== $accountCurrency ? ' (' . dollar_format($shownPayout['payout'], $shownPayout['currency']) . ')' : '')); ?></span>
 												<?php if ((string) $campaign['aff_campaign_rotate'] === '1') { ?>
 													<span class="p202-pill">rotates URLs</span>
 												<?php } ?>

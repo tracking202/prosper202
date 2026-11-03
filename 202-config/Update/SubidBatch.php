@@ -8,6 +8,7 @@ use Prosper202\Click\ClickId;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\BatchInterrupted;
 use Prosper202\Conversion\Ledger\ConversionSource;
+use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
@@ -22,7 +23,9 @@ use Prosper202\Database\Exceptions\QueryException;
  *
  * - mark(): each subid's click is recorded as converted, through the ledger's
  *   single writer (MysqlConversionRepository::record(), source subid_upload,
- *   once per click), and a converting click is never left filtered;
+ *   once per click, or once per transaction id when the line gives one), at
+ *   the line's payout and time when it gives them, and a converting click is
+ *   never left filtered;
  * - clear(): each subid's conversions are cleared through the ledger
  *   (clearClicks()) and its click unfiltered;
  * - reset(): every converted click of a category, or of one campaign in it,
@@ -49,6 +52,13 @@ final class SubidBatch
     public const NOT_FOUND = 'not_found';
     public const NOT_A_SUBID = 'not_a_subid';
     public const DUPLICATE_IN_LIST = 'duplicate_in_list';
+    public const INVALID_LINE = 'invalid_line';
+
+    /** A line's payout must be below this (the ledger's decimal(11,5)). */
+    private const PAYOUT_LIMIT = '1000000';
+
+    /** 202_conversion_logs.transaction_id is varchar(255). */
+    private const TRANSACTION_ID_MAX = 255;
 
     /** Clicks read per statement by the previews (an IN list's size). */
     private const PREVIEW_CHUNK = 500;
@@ -92,21 +102,89 @@ final class SubidBatch
      */
     public static function read(array $items): array
     {
+        return self::parse($items, false, null, time());
+    }
+
+    /**
+     * read() for Update Subids, whose items may carry up to three more
+     * comma-separated fields, as it took them in 1.9.56:
+     * `SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP`, each optional and left empty
+     * to skip it. A field that cannot be read makes the line invalid_line,
+     * with `error` saying why; a time is read in $zone (a time with no zone
+     * to read it in is refused). A repeat is the same click with the same
+     * transaction id (or none).
+     *
+     * @param list<mixed> $items
+     * @return list<array{line: int, subid: string, click_id: int|null, status: string|null, first_line?: int, payout?: string, transaction_id?: string, conv_time?: int, error?: string}>
+     */
+    public static function readLines(array $items, ?\DateTimeZone $zone = null, ?int $now = null): array
+    {
+        return self::parse($items, true, $zone, $now ?? time());
+    }
+
+    /**
+     * @param list<mixed> $items
+     * @return list<array<string, mixed>>
+     */
+    private static function parse(array $items, bool $withFields, ?\DateTimeZone $zone, int $now): array
+    {
         $entries = [];
         $firstLine = [];
         foreach (array_values($items) as $index => $item) {
-            $subid = is_string($item) ? trim($item) : (is_int($item) ? (string) $item : null);
-            if ($subid === '') {
+            $text = is_string($item) ? trim($item) : (is_int($item) ? (string) $item : null);
+            if ($text === '') {
                 continue;
             }
-            $entry = ['line' => $index + 1, 'subid' => $subid ?? '', 'click_id' => $subid === null ? null : ClickId::parse($subid), 'status' => null];
+            $fields = $text === null ? [] : ($withFields ? array_map('trim', explode(',', $text)) : [$text]);
+            $subid = $text === null ? '' : $fields[0];
+            $entry = ['line' => $index + 1, 'subid' => $subid, 'click_id' => $text === null ? null : ClickId::parse($subid), 'status' => null];
             if ($entry['click_id'] === null) {
                 $entry['status'] = self::NOT_A_SUBID;
-            } elseif (isset($firstLine[$entry['click_id']])) {
+                $entries[] = $entry;
+                continue;
+            }
+
+            $error = null;
+            if (count($fields) > 4) {
+                $error = 'has ' . count($fields) . ' fields; a line is SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP (a comma inside a value is not read)';
+            }
+            if ($error === null && ($fields[1] ?? '') !== '') {
+                $error = self::payoutError($fields[1]);
+                $entry['payout'] = $fields[1];
+                // "1,250.00" splits into a payout of 1 and a transaction id of 250.00.
+                if ($error === null && preg_match('/^\d{1,3}$/D', $fields[1]) === 1 && preg_match('/^\d{3}\.\d{1,2}$/D', $fields[2] ?? '') === 1) {
+                    $error = 'payout "' . $fields[1] . ',' . $fields[2] . '" looks like an amount with a thousands separator: write it as ' . $fields[1] . $fields[2];
+                }
+            }
+            if ($error === null && ($fields[2] ?? '') !== '') {
+                $error = self::transactionIdError($fields[2]);
+                $entry['transaction_id'] = $fields[2];
+            }
+            if ($error === null && ($fields[3] ?? '') !== '') {
+                $time = $zone === null ? null : self::parseTime($fields[3], $zone);
+                if ($zone === null) {
+                    $error = 'has a time, but no time zone was given to read it in';
+                } elseif ($time === null) {
+                    $error = 'time "' . $fields[3] . '" is not a date and time this reads: write it as 11/03/2026 2:30:00 PM, 2026-11-03 14:30:00 or a Unix timestamp';
+                } elseif ($time > $now + 300) {
+                    $error = 'time "' . $fields[3] . '" is in the future';
+                } else {
+                    $entry['conv_time'] = $time;
+                }
+            }
+            if ($error !== null) {
+                $entry['status'] = self::INVALID_LINE;
+                $entry['error'] = $error;
+                $entries[] = $entry;
+                continue;
+            }
+
+            $key = $entry['click_id'] . "\0" . ($entry['transaction_id'] ?? '');
+            if (isset($firstLine[$key])) {
                 $entry['status'] = self::DUPLICATE_IN_LIST;
-                $entry['first_line'] = $firstLine[$entry['click_id']];
+                $entry['first_line'] = $firstLine[$key];
             } else {
-                $firstLine[$entry['click_id']] = $entry['line'];
+                $firstLine[$key] = $entry['line'];
             }
             $entries[] = $entry;
         }
@@ -115,36 +193,147 @@ final class SubidBatch
     }
 
     /**
-     * Mark each subid's click as converted, at its campaign's payout.
+     * Why $payout is not an amount Update Subids records, or null when it
+     * is: a plain decimal, not negative, below a million.
+     */
+    public static function payoutError(string $payout): ?string
+    {
+        if (preg_match('/^-\s*\d/', $payout) === 1) {
+            return 'payout "' . $payout . '" is negative; a reversal is not recorded here';
+        }
+        if (preg_match('/^(\d+)(?:\.\d{1,5})?$/D', $payout, $m) !== 1) {
+            return 'payout "' . $payout . '" is not a number: write it as digits with a decimal point (at most five decimals), such as 12.50, with no currency sign or thousands separator';
+        }
+        // Compared as text: a long run of digits is no int.
+        if (strlen(ltrim($m[1], '0')) >= strlen(self::PAYOUT_LIMIT)) {
+            return 'payout "' . $payout . '" is too large: it must be less than ' . self::PAYOUT_LIMIT;
+        }
+
+        return null;
+    }
+
+    private static function transactionIdError(string $transactionId): ?string
+    {
+        if (!mb_check_encoding($transactionId, 'UTF-8') || preg_match('/[\x00-\x1F\x7F]/', $transactionId) === 1) {
+            return 'transaction id holds characters that cannot be stored';
+        }
+        if (strlen($transactionId) > self::TRANSACTION_ID_MAX) {
+            return 'transaction id is longer than ' . self::TRANSACTION_ID_MAX . ' bytes';
+        }
+
+        return null;
+    }
+
+    /**
+     * A line's time as a Unix timestamp: digits are one already; otherwise
+     * month/day/year (two or four digits) or year-month-day, with an optional
+     * time (12-hour with AM/PM, or 24-hour), read in $zone. Null when it is
+     * none of these or not a real date.
+     */
+    public static function parseTime(string $text, \DateTimeZone $zone): ?int
+    {
+        $text = trim($text);
+        if (preg_match('/^\d{9,10}$/D', $text) === 1) {
+            return (int) $text;
+        }
+        $clock = '(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?)?';
+        if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})' . $clock . '$/D', $text, $m) === 1) {
+            [$year, $month, $day] = [(int) $m[1], (int) $m[2], (int) $m[3]];
+        } elseif (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})' . $clock . '$#D', $text, $m) === 1) {
+            [$month, $day, $year] = [(int) $m[1], (int) $m[2], (int) $m[3]];
+            if (strlen($m[3]) === 2) {
+                $year += 2000;
+            }
+        } else {
+            return null;
+        }
+        if (!checkdate($month, $day, $year)) {
+            return null;
+        }
+        $hour = ($m[4] ?? '') === '' ? 0 : (int) $m[4];
+        $minute = ($m[5] ?? '') === '' ? 0 : (int) $m[5];
+        $second = ($m[6] ?? '') === '' ? 0 : (int) $m[6];
+        $meridiem = strtolower($m[7] ?? '');
+        if ($meridiem !== '') {
+            if ($hour < 1 || $hour > 12) {
+                return null;
+            }
+            $hour = ($hour % 12) + ($meridiem === 'pm' ? 12 : 0);
+        }
+        if ($hour > 23 || $minute > 59 || $second > 59) {
+            return null;
+        }
+
+        return (new \DateTimeImmutable('now', $zone))->setDate($year, $month, $day)->setTime($hour, $minute, $second)->getTimestamp();
+    }
+
+    /**
+     * The lines read() refused, for SubidLinesRefused.
+     *
+     * @param list<array<string, mixed>> $entries
+     * @return list<array{line: int, subid: string, error: string}>
+     */
+    private static function invalidLines(array $entries): array
+    {
+        $invalid = [];
+        foreach ($entries as $entry) {
+            if ($entry['status'] === self::INVALID_LINE) {
+                $invalid[] = ['line' => (int) $entry['line'], 'subid' => (string) $entry['subid'], 'error' => (string) $entry['error']];
+            }
+        }
+
+        return $invalid;
+    }
+
+    /**
+     * Mark each subid's click as converted: at the line's payout, else
+     * $defaultPayout, else the campaign's; at the line's time, else now.
      *
      * Through the single canonical writer, which locks the click, records the
      * row and derives the click's value from its rows (and refreshes the
-     * click's report row once committed). once_per_click: a click that is
-     * already a lead changes nothing.
+     * click's report row once committed). A line without a transaction id is
+     * once_per_click: a click that is already a lead changes nothing. A line
+     * with one records that sale, once: the same id on the same click again
+     * is already_converted, and another id is another sale, as a postback's.
      *
      * @param list<mixed> $items
+     * @param string|null $defaultPayout payoutError() must have accepted it
+     * @param \DateTimeZone|null $zone the zone the lines' times are in
      * @return array{marked: int, lines: list<array<string, mixed>>}
+     * @throws SubidLinesRefused when a line cannot be read; nothing is written
      * @throws BatchInterrupted when a click's write fails; the clicks before it stay marked
      */
-    public function mark(int $userId, array $items): array
+    public function mark(int $userId, array $items, ?string $defaultPayout = null, ?\DateTimeZone $zone = null): array
     {
-        $entries = self::read($items);
+        $entries = $this->readForWrite($items, $defaultPayout, $zone);
         $marked = 0;
         foreach ($entries as $i => $entry) {
             if ($entry['status'] !== null) {
                 continue;
             }
             $clickId = (int) $entry['click_id'];
+            $data = [
+                'click_id' => $clickId,
+                'source' => ConversionSource::SUBID_UPLOAD->value,
+                'user_agent' => 'subid-upload',
+                'pixel_type' => 0,
+            ];
+            if (isset($entry['transaction_id'])) {
+                $data['transaction_id'] = $entry['transaction_id'];
+            } else {
+                $data['once_per_click'] = true;
+            }
+            $payout = $entry['payout'] ?? $defaultPayout;
+            if ($payout !== null) {
+                $data['payout'] = $payout;
+            }
+            if (isset($entry['conv_time'])) {
+                $data['conv_time'] = $entry['conv_time'];
+            }
             try {
                 $result = $this->conversions->record(
                     $userId,
-                    [
-                        'click_id' => $clickId,
-                        'source' => ConversionSource::SUBID_UPLOAD->value,
-                        'user_agent' => 'subid-upload',
-                        'pixel_type' => 0,
-                        'once_per_click' => true,
-                    ],
+                    $data,
                     // The list named the click.
                     MatchMethod::CLICK_ID,
                     function (int $lockedClickId) use ($userId): void {
@@ -183,12 +372,16 @@ final class SubidBatch
      * one in an accumulate-mode campaign whose plain conversion was deleted,
      * because a deleted conversion keeps its place in the click's ledger.
      *
+     * A line with a transaction id would be marked unless that id is
+     * already on the click, as record() keys it.
+     *
      * @param list<mixed> $items
      * @return array{would_mark: int, lines: list<array<string, mixed>>}
+     * @throws SubidLinesRefused when a line cannot be read, as mark() refuses it
      */
-    public function markPreview(int $userId, array $items): array
+    public function markPreview(int $userId, array $items, ?string $defaultPayout = null, ?\DateTimeZone $zone = null): array
     {
-        $entries = self::read($items);
+        $entries = $this->readForWrite($items, $defaultPayout, $zone);
         $clicks = $this->ownedClicks($userId, $entries);
         $count = 0;
         foreach ($entries as $i => $entry) {
@@ -198,7 +391,7 @@ final class SubidBatch
             $click = $clicks[(int) $entry['click_id']] ?? null;
             if ($click === null) {
                 $entries[$i]['status'] = self::NOT_FOUND;
-            } elseif ((int) $click['click_lead'] === 1) {
+            } elseif (isset($entry['transaction_id']) ? $this->transactionOnFile((int) $entry['click_id'], $entry['transaction_id']) : (int) $click['click_lead'] === 1) {
                 $entries[$i]['status'] = self::ALREADY_CONVERTED;
             } else {
                 $entries[$i]['status'] = self::WOULD_MARK;
@@ -463,6 +656,35 @@ final class SubidBatch
         $dirty = $this->conn->prepareWrite('INSERT IGNORE INTO 202_dirty_hours SET ppc_account_id = 0, aff_campaign_id = ?, aff_network_id = ?, landing_page_id = 0, user_id = ?, click_time_from = ?, click_time_to = ?');
         $this->conn->bind($dirty, 'iiiii', [$campaignId, $networkId, $userId, $from, time()]);
         $this->conn->executeUpdate($dirty);
+    }
+
+    /**
+     * read(), refusing the whole list when a line cannot be read.
+     *
+     * @param list<mixed> $items
+     * @return list<array<string, mixed>>
+     */
+    private function readForWrite(array $items, ?string $defaultPayout, ?\DateTimeZone $zone): array
+    {
+        if ($defaultPayout !== null && ($problem = self::payoutError($defaultPayout)) !== null) {
+            throw new \InvalidArgumentException('default ' . $problem);
+        }
+        $entries = self::readLines($items, $zone);
+        $invalid = self::invalidLines($entries);
+        if ($invalid !== []) {
+            throw new SubidLinesRefused($invalid);
+        }
+
+        return $entries;
+    }
+
+    /** Whether the click holds a row keyed by this transaction id, deleted or not, as record()'s replay check reads it. */
+    private function transactionOnFile(int $clickId, string $transactionId): bool
+    {
+        $stmt = $this->conn->prepareWrite('SELECT 1 FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ? LIMIT 1');
+        $this->conn->bind($stmt, 'is', [$clickId, DedupeKey::transaction($transactionId)]);
+
+        return $this->conn->fetchOne($stmt) !== null;
     }
 
     /**

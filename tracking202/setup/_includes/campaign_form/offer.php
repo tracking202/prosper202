@@ -41,12 +41,24 @@ $errors = $campaignForm['errors'];
 	<?php echo p202_setup_placeholders('aff_campaign_url', 'setup-campaigns-placeholders'); ?>
 </div>
 
+<?php
+// Every supported currency, and the one the campaign holds even when it is not among them.
+$currencyOptions = array_combine(\Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES, \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES);
+if ($values['aff_campaign_currency'] !== '' && !isset($currencyOptions[$values['aff_campaign_currency']])) {
+	$currencyOptions = [$values['aff_campaign_currency'] => $values['aff_campaign_currency']] + $currencyOptions;
+}
+$accountCurrency = (string) $campaignForm['account_currency'];
+$currencyOptions[$accountCurrency] = $accountCurrency . ' (your account)';
+?>
 <div class="mb-3">
 	<label class="form-label" for="aff_campaign_payout">Payout</label>
 	<div class="input-group">
-		<span class="input-group-text">$</span>
+		<label class="visually-hidden" for="aff_campaign_currency">Currency</label>
+		<select class="form-select flex-grow-0 w-auto<?php echo p202_setup_invalid($errors, 'aff_campaign_currency'); ?>" id="aff_campaign_currency" name="aff_campaign_currency">
+			<?php echo p202_setup_options($currencyOptions, $values['aff_campaign_currency']); ?>
+		</select>
 		<input type="text" inputmode="decimal" class="form-control<?php echo p202_setup_invalid($errors, 'aff_campaign_payout'); ?>" id="aff_campaign_payout" name="aff_campaign_payout" value="<?php echo p202_setup_e($values['aff_campaign_payout']); ?>" required>
 	</div>
-	<div class="form-text">What one conversion earns. A postback that reports its own amount overrides it.</div>
-	<?php echo p202_setup_feedback($errors, 'aff_campaign_payout'); ?>
+	<div class="form-text">What one conversion earns, in the currency the network pays in. A payout in another currency than your account's (<?php echo p202_setup_e($accountCurrency); ?>) is converted at today's rate when you save, and conversions are recorded at the converted amount. A postback that reports its own amount overrides it, and that amount is recorded as sent.</div>
+	<?php echo p202_setup_feedback($errors, 'aff_campaign_payout', 'aff_campaign_currency'); ?>
 </div>
