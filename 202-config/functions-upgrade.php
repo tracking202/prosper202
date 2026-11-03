@@ -504,6 +504,44 @@ if (!function_exists('_upgrade_conversion_ledger_probe')) {
     }
 }
 
+if (!function_exists('_upgrade_unconsented_analytics_purge')) {
+    /**
+     * Before 1.9.80 analytics was recorded with no consent check. The queued
+     * events and the attribute snapshot of that time are deleted before the
+     * reconcile gives them a tier and consent version that would read as
+     * consented; the essential events (sign-ins, new accounts) are kept.
+     * Keyed on the columns the reconcile adds, so a rerun after it removes
+     * nothing recorded since. False when a table could not be read or purged.
+     */
+    function _upgrade_unconsented_analytics_purge(): bool
+    {
+        foreach ([
+            '202_messaging_events' => ['tier', "DELETE FROM `202_messaging_events`
+                WHERE delivery_status <> 'sent' AND event_name NOT IN ('login', 'account_created')"],
+            '202_messaging_attributes' => ['consent_version', 'DELETE FROM `202_messaging_attributes`'],
+        ] as $table => [$marker, $purge]) {
+            $exists = _upgrade_query("SHOW TABLES LIKE '$table'");
+            if (!($exists instanceof \mysqli_result)) {
+                return false;
+            }
+            $found = $exists->num_rows > 0;
+            $exists->free();
+            if (!$found) {
+                continue;
+            }
+            $columns = _upgrade_conversion_ledger_probe("SHOW COLUMNS FROM `$table`", 'Field', 'Type');
+            if ($columns === null) {
+                return false;
+            }
+            if (!isset($columns[$marker]) && _upgrade_query($purge) === false) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_reclick_backfill_mark')) {
     /**
      * ReClickBackfill's marker: the newest click, read by a statement of its
@@ -662,6 +700,20 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
         }
 
+        // The analytics queued before 1.9.80 had no consent check: purged
+        // before the reconcile gives it a tier and consent version.
+        $messagingEvents = false;
+        foreach ($definitions as $definition) {
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::MESSAGING_EVENTS) {
+                if (!_upgrade_unconsented_analytics_purge()) {
+                    error_log('Prosper202 upgrade: the analytics queued before consent could not be purged');
+                    return false;
+                }
+                $messagingEvents = true;
+                break;
+            }
+        }
+
         $ok = true;
         foreach ($definitions as $definition) {
             if (_upgrade_query($definition->createStatement) === false) {
@@ -672,6 +724,13 @@ if (!function_exists('_upgrade_measurement_tables')) {
             if (!$reconciler->reconcile($definition)) {
                 $ok = false;
             }
+        }
+
+        // The sign-ins and new accounts it kept are essential.
+        if ($ok && $messagingEvents && _upgrade_query("UPDATE `202_messaging_events` SET tier = 'essential'
+                WHERE event_name IN ('login', 'account_created') AND tier <> 'essential'") === false) {
+            $ok = false;
+            error_log('Prosper202 upgrade: the essential events could not be marked');
         }
 
         if ($ok) {
@@ -4653,6 +4712,8 @@ class UPGRADE
             // attribute snapshot were captured under.
             // A schema change for 1.9.80 belongs in this block, reconciled
             // before the version is written.
+            // What was queued before consent existed never goes out
+            // (_upgrade_unconsented_analytics_purge(), run by the reconcile).
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\UserTables::usersPref(),
                 \Prosper202\Database\Tables\CoreTables::messagingEvents(),
