@@ -39,7 +39,7 @@ jobs:
       - name: Check the runner's PHP and Composer
         # 8.3 matches composer.json's platform pin. The extensions are the ext-*
         # requirements in composer.lock's runtime packages, plus tokenizer for
-        # build/scripts/release-tree.php.
+        # build/scripts/release-tree.php and sodium for the signing step.
         run: |
           php -v
           composer --version
@@ -50,7 +50,7 @@ jobs:
               exit(1);
           }
           $missing = array_filter(
-              ['openssl', 'pcre', 'json', 'curl', 'libxml', 'simplexml', 'iconv', 'tokenizer'],
+              ['openssl', 'pcre', 'json', 'curl', 'libxml', 'simplexml', 'iconv', 'tokenizer', 'sodium'],
               fn ($e) => !extension_loaded($e)
           );
           if ($missing) {
@@ -104,10 +104,26 @@ jobs:
         id: build
         run: |
           bash build/scripts/package-release.sh
-          zip_path="$(ls dist/prosper202-*.zip)"
+          version="$(php -r 'require "202-config/version.php"; echo PROSPER202_VERSION;')"
+          zip_path="dist/prosper202-${version}.zip"
+          upgrade_zip_path="dist/prosper202-${version}-upgrade.zip"
           sha256="$(sha256sum "${zip_path}" | cut -d' ' -f1)"
-          echo "zip_path=${zip_path}" >> "$GITHUB_OUTPUT"
-          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
+          {
+            echo "zip_path=${zip_path}"
+            echo "upgrade_zip_path=${upgrade_zip_path}"
+            echo "sha256=${sha256}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Sign the release
+        # Installs' 1-click upgraders refuse a zip without a valid signature by
+        # the key in 202-config/Update/ReleaseSignature.php. A missing secret,
+        # or one that does not match that key, fails the release.
+        env:
+          P202_RELEASE_SIGNING_KEY: ${{ secrets.P202_RELEASE_SIGNING_KEY }}
+        run: |
+          php build/scripts/sign-release.php sign \
+            "${{ steps.build.outputs.zip_path }}" \
+            "${{ steps.build.outputs.upgrade_zip_path }}"
 
       - name: Summarize release artifact
         if: always()
@@ -122,6 +138,8 @@ jobs:
               echo "| Artifact | \`$(basename "${zip_path}")\` |"
               echo "| Size | $(du -h "${zip_path}" | cut -f1) |"
               echo "| SHA256 | \`${{ steps.build.outputs.sha256 }}\` |"
+              echo "| Upgrade zip | \`$(basename "${{ steps.build.outputs.upgrade_zip_path }}")\` |"
+              echo "| Signed | $( [ -f "${zip_path}.sig" ] && echo yes || echo no ) |"
             else
               echo "> ❌ Build did not produce a zip. Review the job log above."
             fi
@@ -134,7 +152,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          files: dist/prosper202-*.zip
+          files: |
+            dist/prosper202-*.zip
+            dist/prosper202-*.zip.sig
           body_path: ${{ steps.notes.outputs.path }}
           fail_on_unmatched_files: true
 

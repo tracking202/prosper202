@@ -41,6 +41,10 @@ $array = json_decode((string) $json, true);
 // An unreadable answer is "no update known", never an update to nothing.
 $latest_version = is_array($array) ? (string) ($array['version'] ?? '') : '';
 $update_needed = $latest_version !== '' && version_compare($version, $latest_version) == '-1';
+$release_signature = is_array($array) && is_string($array['signature'] ?? null)
+	? $array['signature']
+	: null;
+$signature_problem = null;
 
 $installlog = '';
 $upgrade_done = false;
@@ -61,13 +65,28 @@ if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token()) {
     ignore_user_abort(true);
     set_time_limit(0);
 
-	$GetUpdate = @getData('https://my.tracking202.com/api/v2/premium-p202/download/' . $user_row['install_hash'] . '/' . $user_row['p202_customer_api_key']);
 	$installlog = "Downloading new update...\n";
-	$checkError = json_decode((string) $GetUpdate, true);
-	if (json_last_error() == JSON_ERROR_NONE) {
-		$installlog .= (is_array($checkError) ? (string) ($checkError['msg'] ?? 'The download was refused') : 'The download was refused') . "...\n";
+	$download = \Prosper202\Update\ReleaseSignature::download('https://my.tracking202.com/api/v2/premium-p202/download/'
+		. rawurlencode((string) $user_row['install_hash']) . '/' . rawurlencode((string) $user_row['p202_customer_api_key']));
+	$GetUpdate = $download['body'] ?? false;
+	if ($GetUpdate === false) {
+		$installlog .= $download['error'] . "\nOperation aborted.";
 		$FilesUpdated = false;
-		$GetUpdate = false;
+	} else {
+		$checkError = json_decode($GetUpdate, true);
+		if (json_last_error() == JSON_ERROR_NONE) {
+			$installlog .= (is_array($checkError) ? (string) ($checkError['msg'] ?? 'The download was refused') : 'The download was refused') . "...\n";
+			$FilesUpdated = false;
+			$GetUpdate = false;
+		} else {
+			// Nothing is written until the download's signature checks out.
+			$signature_problem = \Prosper202\Update\ReleaseSignature::problem($GetUpdate, $release_signature);
+			if ($signature_problem !== null) {
+				$installlog .= $signature_problem . "\nOperation aborted.";
+				$FilesUpdated = false;
+				$GetUpdate = false;
+			}
+		}
 	}
 
 	if ($GetUpdate) {
@@ -138,9 +157,6 @@ if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token()) {
 			$installlog .= "Can't create /202-config/temp/ directory! Operation aborted.";
 			$FilesUpdated = false;
 		}
-	} else {
-		$installlog .= "Can't download new update : \nOperation aborted.";
-		$FilesUpdated = false;
 	}
 
 	if ($FilesUpdated == true) {
@@ -182,6 +198,10 @@ template_top('1-Click Upgrade');
 		<p class="p202-page-header__desc"><?php echo $detail('body') !== '' ? $e($detail('body')) : 'Upgrade this install to the latest Prosper202 in place.'; ?></p>
 	</div>
 </div>
+
+<?php if ($signature_problem !== null) {
+	echo p202_flash('bad', $signature_problem . ' Nothing on this install was changed.');
+} ?>
 
 <?php if ($token_refused) {
 	echo p202_flash('bad', 'This form expired or did not come from this page, so nothing was upgraded. Reload the page and try again.');

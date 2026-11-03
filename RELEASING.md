@@ -91,6 +91,44 @@ host's snapshot) of the Prosper202 database, taken after the site stops
 taking traffic and before the upgrade page is opened; see
 `documentation/features/measurement-rewrite-plan.md` §7.5a.
 
+## Signed releases: the 1-click upgraders install nothing else
+
+The Release workflow publishes two zips and a detached Ed25519 signature of
+each: `prosper202-<version>.zip` (the files under `prosper202/`, for a manual
+upload) and `prosper202-<version>-upgrade.zip` (the same tree at the zip's
+root, the layout the 1-click upgraders extract), each with a `.sig` beside it
+(the base64 signature on one line). The `Sign the release` step signs with the
+repository secret `P202_RELEASE_SIGNING_KEY` (a base64 Ed25519 secret key) and
+fails the release when the secret is missing or its public half is not
+`ReleaseSignature::PUBLIC_KEY` in `202-config/Update/ReleaseSignature.php`.
+
+An install's upgrader (`202-account/auto-upgrade.php`,
+`202-account/auto-upgrade-premium.php` and the automatic update in
+`202-config/functions.php`) downloads over HTTPS from `my.tracking202.com`
+only, follows a redirect only to that host over HTTPS, and checks the
+downloaded bytes against that key before it writes anything. The signature
+comes in the update feed the upgrader already reads: `signature` in
+`/api/v2/premium-p202/version`'s JSON, or a `<signature>` element in the
+current-version feed's item. Without a valid one the upgrade is refused and the
+page says why. The key in the code is a placeholder until it is set, and with
+the placeholder every 1-click upgrade is refused and every release fails to
+sign.
+
+Setting up the key, once, on a trusted machine (the secret key never goes into
+the repository, an issue or a chat):
+
+```bash
+umask 077
+php build/scripts/sign-release.php keygen ~/p202-release-signing.key   # prints the public key
+gh secret set P202_RELEASE_SIGNING_KEY -R tracking202/prosper202 < ~/p202-release-signing.key
+```
+
+Put the printed public key in `ReleaseSignature::PUBLIC_KEY` in a pull request,
+and keep an offline copy of the key file (a lost key means every install needs
+a manual upgrade to learn a new one). The portal must serve each install the
+`-upgrade.zip` byte for byte, with its `.sig` in the feed: a rebuilt zip,
+however identical its files, does not verify.
+
 ## The single source of truth: `202-config/version.php`
 
 The version lives in **one** place — the `$version_string` in
@@ -253,7 +291,7 @@ is unavailable:
 
 ```bash
 build/scripts/package-release.sh
-# -> dist/prosper202-<version>.zip   (+ printed SHA256)
+# -> dist/prosper202-<version>.zip and dist/prosper202-<version>-upgrade.zip   (+ printed SHA256s)
 ```
 
 Prerequisites (the script preflights for these and fails loudly if any is

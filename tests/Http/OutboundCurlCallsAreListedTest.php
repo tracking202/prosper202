@@ -53,6 +53,7 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             1,
             "Google's pinned endpoints; the override is loopback only",
         ],
+        '202-config/Update/ReleaseSignature.php' => [1, 'the fixed host my.tracking202.com, https only, redirects only to that host'],
         '202-config/Lpo/PairingClient.php' => [1, 'the operator constant LPO_SAAS_BASE_URL, https only, no redirects'],
         '202-config/Messaging/MessagingClient.class.php' => [
             1,
