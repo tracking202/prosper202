@@ -22,8 +22,8 @@ use Tests\TestCase;
  */
 final class UpgradeLadderTest extends TestCase
 {
-    private const CURRENT_VERSION = '1.9.79';
-    private const PRIOR_VERSION = '1.9.78';
+    private const CURRENT_VERSION = '1.9.80';
+    private const PRIOR_VERSION = '1.9.79';
 
     /**
      * The step that reconciles 202_users_pref and drops the chat cache:

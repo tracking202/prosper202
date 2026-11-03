@@ -72,7 +72,7 @@ final class ClickFilterUpgradeIntegrationTest extends TestCase
         self::assertSame($clicks, self::shape('202_clicks'), '202_clicks is not altered');
         $version = self::$db->query('SELECT version FROM 202_version');
         self::assertInstanceOf(\mysqli_result::class, $version);
-        self::assertSame('1.9.79', $version->fetch_row()[0]);
+        self::assertSame('1.9.80', $version->fetch_row()[0]);
     }
 
     /** @return array<string, string> */
