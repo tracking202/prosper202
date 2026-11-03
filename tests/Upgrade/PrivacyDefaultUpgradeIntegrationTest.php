@@ -152,7 +152,7 @@ final class PrivacyDefaultUpgradeIntegrationTest extends TestCase
 
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
-        self::assertSame('1.9.79', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
+        self::assertSame('1.9.80', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
         self::assertSame(['type' => 'varchar(100)', 'nullable' => false, 'default' => 'eu'], $privacy());
         self::assertSame($fresh, self::shape(), 'the upgraded table is the installed one');
         self::assertSame(
