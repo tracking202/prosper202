@@ -98,6 +98,7 @@ final class ClickRetention
         '202_identity_observations',
         '202_clicks_visitor',
         '202_clicks_filter_reason',
+        '202_clicks_publisher',
         '202_click_latest_visits',
         '202_clicks',
     ];

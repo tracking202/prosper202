@@ -4670,22 +4670,26 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.79') {
 
-            // 202_api_keys stores each key as its SHA-256 and prefix, and an
-            // AI connection's key its watcher token, from 1.9.80
-            // (Prosper202\User\ApiKeyStore); the reconcile hashes the keys
-            // already there. A schema change for 1.9.80 belongs in this block,
-            // reconciled before the version is written.
-            $api_keys_ok = _upgrade_measurement_tables([\Prosper202\Database\Tables\UserTables::apiKeys()]);
-
-            if ($api_keys_ok) {
+            // A schema change for 1.9.80 belongs in this block, reconciled
+            // before the version is written.
+            $step_ok = _upgrade_measurement_tables([
+                // The publisher a publisher link's click is credited to
+                // (Prosper202\Click\PublisherCredit).
+                \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
+                // Each API key as its SHA-256 and prefix, and an AI connection's
+                // key with its watcher token (Prosper202\User\ApiKeyStore); the
+                // reconcile hashes the keys already there.
+                \Prosper202\Database\Tables\UserTables::apiKeys(),
+            ]);
+            if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
                     $prosper202_version = '1.9.80';
                 } else {
                     error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: 202_api_keys could not be reconciled or its keys hashed; '
-                    . 'leaving version at 1.9.79 so the next run retries.');
+                error_log('Prosper202 upgrade: a table of the 1.9.80 step could not be reconciled (the list above)'
+                    . ' or an API key hashed; leaving version at 1.9.79 so the next run retries.');
             }
         }
 
