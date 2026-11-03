@@ -578,10 +578,21 @@ final class ClickExitIntegrationTest extends TestCase
             . " click_time = $now, conv_time = $now, time_difference = '', pixel_type = 0, user_agent = '',"
             . " source = 'goal', transaction_id = '$tx', dedupe_key = '$key'");
         $offerGoal = $outcome('pgoal:1:2:1:1:e1', 'goal-offer');
+        // As in 1.9.56, a payment notification's sale (pixel_type 0) fires too;
+        // a carried pre-ledger value is not a conversion and never does.
+        $row = static fn (string $source, string $tx): int => self::insert('INSERT INTO 202_conversion_logs SET click_id = '
+            . $clickId . ', user_id = ' . self::OWNER . ', campaign_id = ' . self::$campaign . ", click_payout = 4,"
+            . " click_time = $now, conv_time = $now, time_difference = '', pixel_type = 0, user_agent = '',"
+            . " source = '$source', transaction_id = '$tx', dedupe_key = 'k-$tx'");
+        $ipn = $row('clickbank', 'cb-receipt');
+        $row('legacy_baseline', 'carried');
         $outcome('goal:2:1:1:e2', 'goal-click');
         $goal = $pixels->poll($pixelProof, $now, $key);
-        self::assertSame(['fired', 1], [$goal['status'], $goal['conversions']]);
+        self::assertSame(['fired', 2], [$goal['status'], $goal['conversions']]);
         self::assertStringContainsString('t=goal-offer', $goal['markup']);
+        self::assertStringContainsString('t=cb-receipt', $goal['markup']);
+        self::assertStringNotContainsString('t=carried', $goal['markup']);
+        self::assertSame(['n' => '1'], self::one('SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = ' . $ipn));
         self::assertSame(['n' => '1'], self::one('SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = ' . $offerGoal));
 
         // A pageview's proof cannot read the click once it is on another page,

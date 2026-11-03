@@ -97,12 +97,16 @@ Use the **With the deferred pixel** version of the landing page code (it adds
    A link with its own `target` keeps it.
 2. The landing page asks the tracker every 30 seconds (every minute after half
    an hour) whether the click has converted.
-3. When the network's postback reports a conversion, the page fires the
-   traffic source's browser pixels (image, iframe, script and raw code types)
-   with that conversion's `[[payout]]` and `[[transactionid]]`.
+3. When the click converts, the page fires the traffic source's browser
+   pixels (image, iframe, script and raw code types) with that conversion's
+   `[[payout]]` and `[[transactionid]]`. Any conversion counts, as in 1.9.56:
+   a network's postback, a ClickBank, JVZoo, PayKickstart or Zaxaa
+   notification, the API or an upload.
 
-Each conversion fires once. A conversion recorded by a browser pixel already
-fired its pixels where it happened and does not fire again; a reversed or
+Each conversion fires once. A conversion recorded by a browser pixel (on the
+offer's thank-you page) already fired its pixels where it happened and does
+not fire again, nor does a goal outcome of the click itself, which a browser
+may have reported; a reversed or
 replaced conversion does not fire; server-to-server postbacks are never sent
 again. The landing page can ask for a day after the visit.
 

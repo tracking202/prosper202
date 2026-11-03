@@ -11,9 +11,9 @@ use Prosper202\Database\Connection;
 /**
  * The deferred pixel: a landing page that sent its visitor straight to an
  * offer asks whether that click has since converted, and fires the traffic
- * source's browser pixels for it there. Only conversions reported by a server
- * postback qualify, since a browser pixel conversion already rendered its own
- * markup; so do a PurLink offer's goal outcomes, which come only by postback.
+ * source's browser pixels for it there. As in 1.9.56 any conversion of the
+ * click counts (postbacks, payment notifications, the API, uploads), except
+ * one a browser pixel reported, which already rendered its own markup.
  * Each conversion is handed out at most once, under the click lock.
  */
 final class PurLinkPixels
@@ -70,9 +70,11 @@ final class PurLinkPixels
             . ' FROM 202_conversion_logs AS cl'
             . ' LEFT JOIN 202_purlink_pixel_fires AS f ON f.conv_id = cl.conv_id AND f.user_id = cl.user_id'
             . ' WHERE cl.click_id = ? AND cl.user_id = ? AND cl.deleted = 0 AND cl.payable = 1'
-            // A server postback's conversion, or a PurLink goal outcome (they
-            // arrive only by server postback, keyed pgoal:).
-            . " AND (cl.pixel_type = 2 OR (cl.source = 'goal' AND cl.dedupe_key LIKE 'pgoal:%'))"
+            // Not a browser pixel's (gpx/px 1, upx 3), an install, or a carried
+            // pre-ledger value; goal outcomes only for PurLink offers (pgoal:),
+            // since a click's own goal events may have come from a browser.
+            . " AND cl.pixel_type NOT IN (1, 3, 4) AND cl.source NOT IN ('app_install', 'legacy_baseline')"
+            . " AND (cl.source <> 'goal' OR cl.dedupe_key LIKE 'pgoal:%')"
             . ' AND cl.reverses_conv_id IS NULL AND cl.superseded_by IS NULL'
             . ' AND f.conv_id IS NULL'
             . ' AND NOT EXISTS (SELECT 1 FROM 202_conversion_logs AS r'
