@@ -88,7 +88,7 @@ get() {
     loc=$(curl -sS -o "$OUT/page" -w '%{redirect_url}' -A "$UA" -H "X-Forwarded-For: 198.51.100.$((n % 250 + 1))" "$@" "$BASE$path")
     echo "${loc:-none}"
 }
-ME=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
+ME=$(Q "SELECT user_id FROM 202_api_keys WHERE (key_hash = SHA2('$P202_API_KEY', 256) OR (key_hash IS NULL AND api_key COLLATE utf8mb4_bin = '$P202_API_KEY'))")
 [ -n "$ME" ] || { echo "no account holds P202_API_KEY" >&2; exit 2; }
 since() { Q "SELECT COUNT(*) FROM 202_clicks WHERE user_id = $ME AND click_time >= $T"; }
 public() { Q "SELECT $2 FROM $1 WHERE $3"; }
