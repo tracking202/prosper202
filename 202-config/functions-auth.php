@@ -609,15 +609,44 @@ class AUTH
     }
 
     /**
-     * Whether the current request's client IP is inside the European Union,
-     * per the bundled GeoLite2 database. Uses the GeoIp2 reader directly:
-     * getGeoData() lives in connect2.php, which the UI/login bootstrap
-     * (connect.php) never includes, so it does not exist on this path.
-     * Returns true/false only when the lookup succeeded and resolved a
-     * country; null when geo data is unavailable or inconclusive so callers
-     * can skip persisting instead of overwriting a known value.
+     * Whether the current request signs in from the EU/UK, per the bundled
+     * GeoLite2 database (getGeoData() lives in connect2.php, which the login
+     * bootstrap never includes). Null when it cannot be told, so the caller
+     * stores nothing and analytics stays held.
      */
     private static function detect_client_is_eu(): ?bool
+    {
+        return self::sign_in_is_eu($_SERVER);
+    }
+
+    /**
+     * The EU/UK answer for the connecting peer, never for a forwarded
+     * address: a forwarding header is the client's own claim and could turn
+     * an EU account's held analytics on, so a request carrying one is
+     * unknown (there is no trusted-proxy setting yet).
+     *
+     * @param array<string, mixed> $server normally $_SERVER
+     * @param (callable(string): ?array{0: string, 1: bool})|null $country
+     *   the address's ISO country and EU flag, null when unresolved; GeoLite2
+     *   when not given
+     */
+    public static function sign_in_is_eu(array $server, ?callable $country = null): ?bool
+    {
+        $ip = \Prosper202\Http\VisitorIp::unforwardedPeer($server);
+        if ($ip === '') {
+            return null;
+        }
+        $found = ($country ?? self::geoLiteCountry(...))($ip);
+        if ($found === null) {
+            return null;
+        }
+        [$iso, $inEu] = $found;
+        // The disclosure promises EU/UK: the UK and the EEA outside the EU too.
+        return $inEu || in_array($iso, ['GB', 'NO', 'IS', 'LI'], true);
+    }
+
+    /** @return array{0: string, 1: bool}|null */
+    private static function geoLiteCountry(string $ip): ?array
     {
         if (!class_exists(\GeoIp2\Database\Reader::class)) {
             return null;
@@ -631,15 +660,11 @@ class AUTH
         $reader = null;
         try {
             $reader = new \GeoIp2\Database\Reader($mmdb);
-            $record = $reader->city(self::client_ip());
+            $record = $reader->city($ip);
             // Only trust the EU flag when the country actually resolved;
             // isInEuropeanUnion defaults to false on absent data.
-            if (($record->country->isoCode ?? null) === null) {
-                return null;
-            }
-            // The disclosure promises EU/UK: the UK and the EEA outside the EU too.
-            return (bool) $record->country->isInEuropeanUnion
-                || in_array($record->country->isoCode, ['GB', 'NO', 'IS', 'LI'], true);
+            $iso = $record->country->isoCode ?? null;
+            return $iso === null ? null : [(string) $iso, (bool) $record->country->isInEuropeanUnion];
         } catch (\Throwable) {
             return null; // Private/unroutable IP, bad DB, etc. → inconclusive.
         } finally {

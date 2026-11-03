@@ -344,6 +344,43 @@ final class AuthClassTest extends TestCase
         ];
     }
 
+    /**
+     * The sign-in location comes from REMOTE_ADDR alone: a request carrying
+     * any forwarding header is unknown, which holds analytics.
+     *
+     * @dataProvider signInRequests
+     * @param array<string, string> $server
+     */
+    public function testTheSignInLocationIsTheConnectingPeersNeverAForwardedOne(array $server, ?bool $expected): void
+    {
+        $countries = [
+            '192.0.2.10' => ['DE', true],
+            '198.51.100.7' => ['US', false],
+            '203.0.113.5' => ['GB', false],
+        ];
+        $country = static fn (string $ip): ?array => $countries[$ip] ?? null;
+
+        self::assertSame($expected, AUTH::sign_in_is_eu($server, $country));
+    }
+
+    /** @return array<string, array{array<string, string>, ?bool}> */
+    public static function signInRequests(): array
+    {
+        return [
+            'an EU address' => [['REMOTE_ADDR' => '192.0.2.10'], true],
+            'a UK address' => [['REMOTE_ADDR' => '203.0.113.5'], true],
+            'an address elsewhere' => [['REMOTE_ADDR' => '198.51.100.7'], false],
+            'an address the database cannot place' => [['REMOTE_ADDR' => '192.0.2.99'], null],
+            'a forged X-Forwarded-For from the EU' => [
+                ['REMOTE_ADDR' => '192.0.2.10', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], null,
+            ],
+            'a forged X-Real-IP' => [['REMOTE_ADDR' => '192.0.2.10', 'HTTP_X_REAL_IP' => '198.51.100.7'], null],
+            'a forged CF-Connecting-IP' => [['REMOTE_ADDR' => '192.0.2.10', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null],
+            'a forged Forwarded' => [['REMOTE_ADDR' => '192.0.2.10', 'HTTP_FORWARDED' => 'for=198.51.100.7'], null],
+            'no address' => [[], null],
+        ];
+    }
+
     public function testSetTimezoneWithValidTimezone(): void
     {
         AUTH::set_timezone('America/Los_Angeles');

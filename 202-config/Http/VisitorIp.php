@@ -79,6 +79,24 @@ final class VisitorIp
     }
 
     /**
+     * The connecting peer's address for a decision a client must not be able
+     * to steer: REMOTE_ADDR, or '' when the request carries any forwarding
+     * header (there is no trusted-proxy setting to say which to believe).
+     *
+     * @param array<string, mixed> $server normally $_SERVER
+     */
+    public static function unforwardedPeer(array $server): string
+    {
+        foreach ([...self::FORWARDING_HEADERS, 'HTTP_FORWARDED', 'HTTP_X_FORWARDED', 'HTTP_FORWARDED_FOR'] as $key) {
+            if (isset($server[$key]) && self::scalar($server[$key]) !== '') {
+                return '';
+            }
+        }
+
+        return self::address(self::scalar($server['REMOTE_ADDR'] ?? null));
+    }
+
+    /**
      * The X-Forwarded-For header exactly as the client sent it, for a
      * diagnostic log line that wants to show what arrived. Never a stored
      * value or a decision: that is fromServer().

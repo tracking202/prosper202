@@ -18,7 +18,9 @@ final class PageViewWiringTest extends TestCase
         // it would persist analytics_geo_is_eu = 0 for every account; and
         // getGeoData() (connect2.php) is not loaded by the login bootstrap.
         $this->assertStringContainsString('GeoIp2\Database\Reader', $src);
-        $this->assertStringContainsString('self::client_ip()', $src);
+        // From the connecting peer only: a forwarding header would let the
+        // client choose its country (AuthClassTest holds the behaviour).
+        $this->assertStringContainsString('VisitorIp::unforwardedPeer($server)', $src);
         $this->assertStringNotContainsString("\$_SESSION['is_european_union']", $src);
     }
 }
