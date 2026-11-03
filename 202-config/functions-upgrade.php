@@ -4651,6 +4651,9 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 // The inbound postback and notification log (Prosper202\InboundLog).
                 \Prosper202\Database\Tables\ConversionTables::inboundLog(),
+                // The publisher a publisher link's click is credited to
+                // (Prosper202\Click\PublisherCredit).
+                \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
             ]);
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
@@ -4659,7 +4662,8 @@ class UPGRADE
                     error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: 202_inbound_log could not be reconciled; leaving version at 1.9.79 so the next run retries.');
+                error_log('Prosper202 upgrade: a table of the 1.9.80 step could not be reconciled (the list above);'
+                    . ' leaving version at 1.9.79 so the next run retries.');
             }
         }
 
