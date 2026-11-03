@@ -105,7 +105,7 @@ final class PreferencesWriteIntegrationTest extends TestCase
     public function testACurrencyChangeRepricesTheCampaignsWithEverythingElseInTheRequest(): void
     {
         $asked = [];
-        $rate = static function (string $to, string $from, string $payout) use (&$asked): array {
+        $rate = static function (string $from, string $to, string $payout) use (&$asked): array {
             $asked[] = "$from>$to:$payout";
             return ['exchange_payout' => number_format((float) $payout * 2, 2, '.', '')];
         };
@@ -126,7 +126,7 @@ final class PreferencesWriteIntegrationTest extends TestCase
 
     public function testARateTheServiceDoesNotGiveChangesNothingInTheRequest(): void
     {
-        $rate = static fn (string $to, string $from, string $payout): ?array => $payout === '4.00' ? null : ['exchange_payout' => '20.00'];
+        $rate = static fn (string $from, string $to, string $payout): ?array => $payout === '4.00' ? null : ['exchange_payout' => '20.00'];
         try {
             (new UsersController(self::$db))->updatePreferences(self::USER, ['user_account_currency' => 'EUR', 'user_pref_limit' => 100], $rate);
             self::fail('a missing rate must refuse the change');

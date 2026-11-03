@@ -151,9 +151,12 @@ final class SubidBatch
             if ($error === null && ($fields[1] ?? '') !== '') {
                 $error = self::payoutError($fields[1]);
                 $entry['payout'] = $fields[1];
-                // "1,250.00" splits into a payout of 1 and a transaction id of 250.00.
-                if ($error === null && preg_match('/^\d{1,3}$/D', $fields[1]) === 1 && preg_match('/^\d{3}\.\d{1,2}$/D', $fields[2] ?? '') === 1) {
-                    $error = 'payout "' . $fields[1] . ',' . $fields[2] . '" looks like an amount with a thousands separator: write it as ' . $fields[1] . $fields[2];
+                // "1,250", "1,250.00" and "12,50" split into a payout and a short numeric
+                // transaction id; a payout written with its decimals ("12.00, 50") is not refused.
+                if ($error === null && preg_match('/^\d{1,3}$/D', $fields[1]) === 1 && preg_match('/^\d{2,3}(?:\.\d{1,2})?$/D', $fields[2] ?? '') === 1) {
+                    $error = 'payout "' . $fields[1] . ',' . $fields[2] . '" looks like an amount with a thousands separator or a decimal comma:'
+                        . ' write it as ' . $fields[1] . $fields[2] . ' or ' . $fields[1] . '.' . $fields[2]
+                        . ' (if ' . $fields[2] . ' is the transaction id, write the payout with its decimals, as ' . $fields[1] . '.00)';
                 }
             }
             if ($error === null && ($fields[2] ?? '') !== '') {
@@ -305,7 +308,7 @@ final class SubidBatch
      */
     public function mark(int $userId, array $items, ?string $defaultPayout = null, ?\DateTimeZone $zone = null): array
     {
-        $entries = $this->readForWrite($items, $defaultPayout, $zone);
+        $entries = $this->readForWrite($userId, $items, $defaultPayout, $zone);
         $marked = 0;
         foreach ($entries as $i => $entry) {
             if ($entry['status'] !== null) {
@@ -381,7 +384,7 @@ final class SubidBatch
      */
     public function markPreview(int $userId, array $items, ?string $defaultPayout = null, ?\DateTimeZone $zone = null): array
     {
-        $entries = $this->readForWrite($items, $defaultPayout, $zone);
+        $entries = $this->readForWrite($userId, $items, $defaultPayout, $zone);
         $clicks = $this->ownedClicks($userId, $entries);
         $count = 0;
         foreach ($entries as $i => $entry) {
@@ -664,15 +667,50 @@ final class SubidBatch
      * @param list<mixed> $items
      * @return list<array<string, mixed>>
      */
-    private function readForWrite(array $items, ?string $defaultPayout, ?\DateTimeZone $zone): array
+    private function readForWrite(int $userId, array $items, ?string $defaultPayout, ?\DateTimeZone $zone): array
     {
         if ($defaultPayout !== null && ($problem = self::payoutError($defaultPayout)) !== null) {
             throw new \InvalidArgumentException('default ' . $problem);
         }
-        $entries = self::readLines($items, $zone);
+        $entries = $this->refuseTimesBeforeTheirClick($userId, self::readLines($items, $zone));
         $invalid = self::invalidLines($entries);
         if ($invalid !== []) {
             throw new SubidLinesRefused($invalid);
+        }
+
+        return $entries;
+    }
+
+    /**
+     * A line's time before its click's first visit is no time it converted:
+     * the line is invalid_line. A click that is not the account's is left
+     * for mark() to report not_found.
+     *
+     * @param list<array<string, mixed>> $entries
+     * @return list<array<string, mixed>>
+     */
+    private function refuseTimesBeforeTheirClick(int $userId, array $entries): array
+    {
+        $timed = [];
+        foreach ($entries as $i => $entry) {
+            if ($entry['status'] === null && isset($entry['conv_time'])) {
+                $timed[(int) $entry['click_id']][] = $i;
+            }
+        }
+        foreach (array_chunk(array_keys($timed), self::PREVIEW_CHUNK) as $chunk) {
+            $stmt = $this->conn->prepareWrite(
+                'SELECT click_id, MIN(click_time) AS click_time FROM 202_clicks WHERE user_id = ? AND click_id IN ('
+                . implode(', ', array_fill(0, count($chunk), '?')) . ') GROUP BY click_id'
+            );
+            $this->conn->bind($stmt, 'i' . str_repeat('i', count($chunk)), array_merge([$userId], $chunk));
+            foreach ($this->conn->fetchAll($stmt) as $row) {
+                foreach ($timed[(int) $row['click_id']] ?? [] as $i) {
+                    if ((int) $entries[$i]['conv_time'] < (int) $row['click_time']) {
+                        $entries[$i]['status'] = self::INVALID_LINE;
+                        $entries[$i]['error'] = 'time is before the click (' . gmdate('Y-m-d H:i:s', (int) $row['click_time']) . ' UTC)';
+                    }
+                }
+            }
         }
 
         return $entries;

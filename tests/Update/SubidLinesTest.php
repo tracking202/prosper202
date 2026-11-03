@@ -113,6 +113,8 @@ final class SubidLinesTest extends TestCase
         yield 'words' => ['abc', 'is not a number'];
         yield 'currency sign' => ['$12.50', 'is not a number'];
         yield 'thousands separator' => ['1,250.00', 'thousands separator'];
+        yield 'thousands separator, no decimals' => ['1,250', 'thousands separator'];
+        yield 'decimal comma' => ['12,50', 'decimal comma'];
         yield 'exponent' => ['1e3', 'is not a number'];
         yield 'negative' => ['-5', 'is negative'];
         yield 'a million' => ['1000000', 'too large'];
@@ -174,5 +176,13 @@ final class SubidLinesTest extends TestCase
     {
         self::assertSame(SubidBatch::NOT_A_SUBID, SubidBatch::read(['940001, 5'])[0]['status']);
         self::assertNull(SubidBatch::read(['940001'])[0]['status']);
+    }
+
+    /** A short numeric transaction id is still read after a payout written with its decimals. */
+    public function testAPayoutWithItsDecimalsTakesAShortNumericTransactionId(): void
+    {
+        $entry = self::read(['940001, 12.00, 50'])[0];
+        self::assertNull($entry['status']);
+        self::assertSame('50', $entry['transaction_id']);
     }
 }

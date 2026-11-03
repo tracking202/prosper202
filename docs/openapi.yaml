@@ -2738,8 +2738,9 @@ paths:
         filtered.
 
         A line whose payout, transaction id or time cannot be read (a
-        currency sign, a thousands separator, a negative amount, a date that
-        does not exist or is in the future, more than four fields) is a 422
+        currency sign, a thousands separator or decimal comma, a negative
+        amount, a date that does not exist, is in the future or is before its
+        click, more than four fields) is a 422
         naming it (`subids.3`), and nothing in the request is written; a dry
         run refuses it the same way. Times read as `11/03/2026 2:30:00 PM`
         (month first, two- or four-digit year, 12- or 24-hour),

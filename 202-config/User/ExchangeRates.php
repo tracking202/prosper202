@@ -22,9 +22,7 @@ final class ExchangeRates
 
     /**
      * $amount in $from, converted into $to; null when the service gives no
-     * positive number. The service converts `payout` FROM `currency` INTO
-     * `payout_currency` (checked live 2026-11-03: GBP 10 => USD 13.41), so
-     * $from goes in `currency`.
+     * positive number.
      */
     public static function convert(string $from, string $to, string $amount): ?string
     {
@@ -35,12 +33,14 @@ final class ExchangeRates
     }
 
     /**
-     * $payout in $campaignCurrency, as the service converts it to
-     * $accountCurrency: ['exchange_payout' => number], or null.
+     * The service's answer for $amount in $from converted into $to:
+     * ['exchange_payout' => number], or null. It converts `payout` FROM
+     * `currency` INTO `payout_currency` (checked live 2026-11-03: GBP 10 =>
+     * USD 13.41, EUR 10 => USD 11.18; ExchangeRatesLiveTest repeats it).
      *
      * @return array<string, mixed>|null
      */
-    public static function foreignPayout(string $accountCurrency, string $campaignCurrency, string $payout): ?array
+    public static function foreignPayout(string $from, string $to, string $amount): ?array
     {
         $ch = curl_init(self::ENDPOINT);
         if ($ch === false) {
@@ -49,9 +49,9 @@ final class ExchangeRates
         curl_setopt_array($ch, [
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => http_build_query([
-                'currency' => $accountCurrency,
-                'payout_currency' => $campaignCurrency,
-                'payout' => $payout,
+                'currency' => $from,
+                'payout_currency' => $to,
+                'payout' => $amount,
             ]),
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_SSL_VERIFYPEER => true,
@@ -61,7 +61,6 @@ final class ExchangeRates
         ]);
         $body = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
         if (!is_string($body) || $status !== 200) {
             return null;
         }

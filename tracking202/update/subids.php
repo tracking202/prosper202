@@ -29,8 +29,9 @@ $repeated = [];
 
 $conn = new Connection($db);
 $accountZone = AccountZone::read($conn, (int) $_SESSION['user_id']);
+// A field posted as anything but text is refused below, not read as empty.
 $postedPayout = is_string($_POST['subid_payout'] ?? null) ? trim($_POST['subid_payout']) : '';
-$postedZone = is_string($_POST['subid_timezone'] ?? null) ? $_POST['subid_timezone'] : $accountZone;
+$postedZone = is_string($_POST['subid_timezone'] ?? $accountZone) ? (string) ($_POST['subid_timezone'] ?? $accountZone) : '';
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
@@ -40,6 +41,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// An empty list used to answer "0 subid(s) marked", which reads as
 		// "none of them matched"; the person sent nothing, so say that.
 		$fieldError = 'Paste at least one subid, one per line.';
+	} elseif (!is_string($_POST['subid_payout'] ?? '')) {
+		$payoutError = 'Enter the payout as a number, such as 12.50.';
 	} elseif ($postedPayout !== '' && ($payoutError = (string) SubidBatch::payoutError($postedPayout)) !== '') {
 		$payoutError = ucfirst($payoutError) . '.';
 	} elseif (!AccountZone::isZone($postedZone)) {

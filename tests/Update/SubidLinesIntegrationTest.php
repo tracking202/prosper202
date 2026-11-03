@@ -127,6 +127,14 @@ final class SubidLinesIntegrationTest extends TestCase
             self::assertSame([2], array_column($e->lines, 'line'));
         }
         self::assertSame([], self::rows($d), 'nothing was written, not even the readable line');
+
+        try {
+            (new SubidBatch(new Connection(self::$db)))->mark(self::USER, ["$d,,,100000000"], null, new \DateTimeZone('UTC'));
+            self::fail('a time before the click was recorded');
+        } catch (SubidLinesRefused $e) {
+            self::assertStringContainsString('before the click', $e->lines[0]['error']);
+        }
+        self::assertSame([], self::rows($d));
     }
 
     public function testTheApiReadsTheSameLinesInTheAccountsZone(): void
@@ -147,6 +155,12 @@ final class SubidLinesIntegrationTest extends TestCase
             } catch (ValidationException $ex) {
                 self::assertArrayHasKey($field, $ex->getFieldErrors(), json_encode($body));
             }
+        }
+        try {
+            $controller->markSubids(['subids' => ["$e, five"]], true);
+            self::fail('the dry run accepted an unreadable line');
+        } catch (ValidationException $ex) {
+            self::assertArrayHasKey('subids.0', $ex->getFieldErrors(), 'a dry run refuses it as the write does');
         }
         self::assertSame([], self::rows($e), 'a refused request writes nothing');
 

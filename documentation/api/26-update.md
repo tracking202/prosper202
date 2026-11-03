@@ -156,9 +156,10 @@ empty to skip it (`"940003,,order-10"`).
 
 A line whose payout, transaction id or time cannot be read is a `422` naming
 it, and nothing in the request is written (a dry run refuses it the same
-way): a currency sign or thousands separator in the payout, a negative
-amount, a date that does not exist or is in the future, more than four
-fields.
+way): a currency sign, thousands separator or decimal comma in the payout
+(`1,250` and `12,50` split into two fields; write `1250` or `12.50`), a
+negative amount, a date that does not exist, is in the future or is before
+its click, more than four fields.
 
 ```bash
 curl -X POST "$P202/api/v3/conversions/subids" -H "Authorization: Bearer $KEY" \
