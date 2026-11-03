@@ -19,7 +19,7 @@ const context={window,document,URL,WeakMap,Object,encodeURIComponent,Promise};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context);
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const subid='p1.1.2.3.42.1700000000.'+'a'.repeat(22);
+const subid='1-42-'+'a'.repeat(12);
 const fallback=()=>'https://tracker.test/go?acip=42';
 
 (async () => {

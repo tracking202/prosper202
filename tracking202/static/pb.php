@@ -33,6 +33,33 @@ p202ApplyOwnerPrivacy($aff_campaign_row['user_id'] ?? null);
 
 // An exact positive integer, or nothing: "123.9" must not become click 123.
 $click_id = p202ParseClickId($_GET['subid'] ?? null);
+// A PurLink SubID must name this postback's campaign. The signed
+// click-offer-mac form routes its click to the offer first, so a conversion
+// that beats the browser's click-out report still matches; the unsigned
+// 1.9.56 click-offer form only names a click already on the offer.
+$pbRawSubid = $_GET['subid'] ?? null;
+$pbSignedSubid = $click_id === null ? p202VerifyPurLinkSubid($db, $pbRawSubid, 'pb') : null;
+if ($pbSignedSubid !== null) {
+    if ($pbSignedSubid['claims']['campaign_public_id'] !== $pbCampaignId) {
+        p202RespondJsonError(404, 'Unknown subid for this campaign');
+    }
+    try {
+        $pbRouted = (new \Prosper202\Click\PurLinkExit(new \Prosper202\Database\Connection($db)))
+            ->route($pbRawSubid, $pbSignedSubid['key']);
+    } catch (\Throwable $routeError) {
+        error_log('pb: PurLink routing failed: ' . $routeError->getMessage());
+        p202RespondJsonError(500, 'Failed to record conversion');
+    }
+    if (!$pbRouted) {
+        p202RespondJsonError(404, 'Unknown subid for this campaign');
+    }
+    $click_id = $pbSignedSubid['claims']['click_id'];
+} elseif ($click_id === null && is_string($pbRawSubid)) {
+    $pbLegacy = \Prosper202\Click\PurLinkSubid::legacy($pbRawSubid);
+    if ($pbLegacy !== null && $pbLegacy['campaign_public_id'] === $pbCampaignId) {
+        $click_id = $pbLegacy['click_id'];
+    }
+}
 if ($click_id === null) {
 	p202RespondJsonError(404, 'Missing or malformed subid');
 }

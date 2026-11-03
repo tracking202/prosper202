@@ -560,7 +560,7 @@ if (!function_exists('p202RecordConversion')) {
                 throw new \InvalidArgumentException('A signed PurLink requires an installation key');
             }
             $result = (new \Prosper202\Click\PurLinkExit($conn))->recordConversion(
-                $purLinkSubid, time(), $purLinkKey, $data, $matchedBy, $clickSideUpdate
+                $purLinkSubid, $purLinkKey, $data, $matchedBy, $clickSideUpdate
             );
             if ($result === null) {
                 throw new \Prosper202\Conversion\PurLinkCampaignChanged('PurLink no longer matches its click and campaign');
@@ -1136,6 +1136,37 @@ if (!function_exists('p202RecordWebEvent')) {
     }
 }
 
+if (!function_exists('p202VerifyPurLinkSubid')) {
+    /**
+     * A signed PurLink SubID (`click-offer-mac`) checked against its click.
+     * Null when the value does not have that shape. Answers and exits with
+     * 503 when the installation key is unavailable, 404 when it is forged.
+     *
+     * @return array{claims: array{click_id: int, landing_page_id: int, user_id: int, campaign_public_id: int}, key: string}|null
+     */
+    function p202VerifyPurLinkSubid(mysqli $db, mixed $raw, string $endpoint): ?array
+    {
+        if (\Prosper202\Click\PurLinkSubid::parse($raw) === null) {
+            return null;
+        }
+        try {
+            $key = \Api\V3\Apps\Android\InstallTokenKey::load($db);
+            if ($key === null) {
+                throw new \RuntimeException('installation token key is missing');
+            }
+            $claims = (new \Prosper202\Click\PurLinkExit(new \Prosper202\Database\Connection($db)))->claims($raw, $key);
+        } catch (\Throwable $error) {
+            error_log($endpoint . ': signed PurLink verification unavailable: ' . $error->getMessage());
+            p202RespondJsonError(503, 'Service unavailable');
+        }
+        if ($claims === null) {
+            p202RespondJsonError(404, 'SubID not found');
+        }
+
+        return ['claims' => $claims, 'key' => $key];
+    }
+}
+
 if (!function_exists('p202RecordPurLinkWebEvent')) {
     /**
      * A signed PurLink goal event: resolve its offer and write its isolated
@@ -1152,11 +1183,11 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
             return null;
         }
         $now = time();
-        $claims = \Prosper202\Click\PurLinkSubid::verify($subid, $now, $key);
+        $conn = new \Prosper202\Database\Connection($db);
+        $claims = (new \Prosper202\Click\PurLinkExit($conn))->claims($subid, $key);
         if ($claims === null) {
             return ['status' => 'not_found', 'reason' => 'unknown_click'];
         }
-        $conn = new \Prosper202\Database\Connection($db);
         $events = new \Prosper202\Goals\WebEvents($conn);
         $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, false);
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
@@ -1164,7 +1195,6 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
         try {
             $done = (new \Prosper202\Click\PurLinkExit($conn))->convert(
                 $subid,
-                $now,
                 $key,
                 function (int $user, int $click, int $campaign, string $payout) use ($conn, $events, $engine, $claims, $get, $now, &$event): array {
                     if (!$events->campaignEvaluatesGoals($user, $campaign, $now)) {

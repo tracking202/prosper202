@@ -225,8 +225,8 @@ final class ClickExitIntegrationTest extends TestCase
         self::assertFalse($exit->record($proof, '11102', $now, $key));
         self::assertFalse($exit->record($proof, '11103', $now, $key));
         self::assertFalse($exit->record($proof, '11101e0', $now, $key));
-        self::assertNull($exit->subid($proof, '11102', $now, 86400, $key));
-        self::assertNull($exit->subid($proof, '11103', $now, 86400, $key));
+        self::assertNull($exit->subid($proof, '11102', $now, $key));
+        self::assertNull($exit->subid($proof, '11103', $now, $key));
         self::assertSame('0', self::state($clickId)['click_out']);
         self::assertTrue($exit->record($proof, '11101', $now, $key));
         self::assertSame('1', self::state($clickId)['click_out']);
@@ -251,20 +251,23 @@ final class ClickExitIntegrationTest extends TestCase
 
         self::assertFalse($exit->record($proof, null, $now, $key));
         self::assertFalse($exit->record($proof, '11102', $now, $key));
-        self::assertNull($exit->subid($proof, '11102', $now, 86400, $key));
+        self::assertNull($exit->subid($proof, '11102', $now, $key));
         self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = ' . self::$campaign);
         self::assertFalse($exit->record($proof, '11101', $now, $key));
-        self::assertNull($exit->subid($proof, '11101', $now, 86400, $key));
+        self::assertNull($exit->subid($proof, '11101', $now, $key));
         self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 0 WHERE aff_campaign_id = ' . self::$campaign);
-        $subid = $exit->subid($proof, '11101', $now, 86400, $key);
+        $subid = $exit->subid($proof, '11101', $now, $key);
         self::assertIsString($subid);
         self::assertSame([
             'click_id' => $clickId,
             'landing_page_id' => $page,
             'user_id' => self::OWNER,
             'campaign_public_id' => 11101,
-            'expires' => $now + 86400,
-        ], PurLinkSubid::verify($subid, $now, $key));
+        ], $exit->claims($subid, $key));
+        self::assertMatchesRegularExpression('/\A' . $clickId . '-11101-[0-9a-f]{12}\z/', $subid);
+        self::assertNull($exit->claims($subid, str_repeat('y', 32)));
+        self::assertNull($exit->claims(str_replace('-11101-', '-11102-', $subid), $key));
+        self::assertNull($exit->claims($clickId . '-11101', $key));
         self::assertSame('0', self::state($clickId)['click_out']);
         self::assertTrue($exit->record($proof, '11101', $now, $key));
         self::assertSame('1', self::state($clickId)['click_out']);
@@ -286,11 +289,10 @@ final class ClickExitIntegrationTest extends TestCase
         $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
 
         $exit = new PurLinkExit(new Connection(self::requireScratch()));
-        $subid = $exit->subid($proof, '11101', $now, 86400, $key);
+        $subid = $exit->subid($proof, '11101', $now, $key);
         self::assertIsString($subid);
         $seen = $exit->convert(
             $subid,
-            $now,
             $key,
             static fn (int $user, int $click, int $campaign, string $payout): array => [$user, $click, $campaign, $payout]
         );
@@ -316,18 +318,18 @@ final class ClickExitIntegrationTest extends TestCase
         $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
         $conn = new Connection(self::requireScratch());
         $exit = new PurLinkExit($conn);
-        $subid = $exit->subid($proof, '11101', $now, 86400, $key);
+        $subid = $exit->subid($proof, '11101', $now, $key);
         self::assertIsString($subid);
         self::q("UPDATE 202_clicks SET landing_page_id = 0 WHERE click_id = $clickId");
         $called = false;
-        self::assertNull($exit->convert($subid, $now, $key, static function () use (&$called): void {
+        self::assertNull($exit->convert($subid, $key, static function () use (&$called): void {
             $called = true;
         }));
         self::assertFalse($called);
         self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
         $writer = new MysqlConversionRepository($conn);
 
-        $result = $exit->convert($subid, $now, $key, static function (
+        $result = $exit->convert($subid, $key, static function (
             int $user,
             int $click,
             int $campaign,
@@ -363,10 +365,10 @@ final class ClickExitIntegrationTest extends TestCase
         $now = time();
         $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
         $exit = new PurLinkExit(new Connection(self::requireScratch()));
-        $subid = $exit->subid($proof, '11101', $now, 86400, $key);
+        $subid = $exit->subid($proof, '11101', $now, $key);
         self::assertIsString($subid);
         try {
-            $exit->convert($subid, $now, $key, static function (): never {
+            $exit->convert($subid, $key, static function (): never {
                 throw new \RuntimeException('conversion failed');
             });
             self::fail('The failure was swallowed');
@@ -404,15 +406,15 @@ final class ClickExitIntegrationTest extends TestCase
         $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
         $conn = new Connection(self::requireScratch());
         $exit = new PurLinkExit($conn);
-        $firstToken = $exit->subid($proof, '11101', $now, 86400, $key);
-        $secondToken = $exit->subid($proof, (string) $secondPublic, $now, 86400, $key);
+        $firstToken = $exit->subid($proof, '11101', $now, $key);
+        $secondToken = $exit->subid($proof, (string) $secondPublic, $now, $key);
         self::assertIsString($firstToken);
         self::assertIsString($secondToken);
-        $first = $exit->recordConversion($firstToken, $now, $key, [
+        $first = $exit->recordConversion($firstToken, $key, [
             'transaction_id' => 'offer-first', 'click_id' => 1, 'campaign_id' => self::$othersCampaign,
             'skip_bridge' => true,
         ], MatchMethod::CLICK_ID);
-        $last = $exit->recordConversion($secondToken, $now, $key, [
+        $last = $exit->recordConversion($secondToken, $key, [
             'transaction_id' => 'offer-second', 'skip_bridge' => true,
         ], MatchMethod::CLICK_ID);
         self::assertIsArray($first);
@@ -432,7 +434,7 @@ final class ClickExitIntegrationTest extends TestCase
             ['superseded_reason' => $firstSuperseded],
             self::one('SELECT superseded_reason FROM 202_conversion_logs WHERE conv_id = ' . (int) $first['convId'])
         );
-        $retry = $exit->recordConversion($secondToken, $now, $key, [
+        $retry = $exit->recordConversion($secondToken, $key, [
             'transaction_id' => 'offer-second', 'skip_bridge' => true,
         ], MatchMethod::CLICK_ID);
         self::assertIsArray($retry);
@@ -440,7 +442,7 @@ final class ClickExitIntegrationTest extends TestCase
         self::assertSame($expectedTotal, self::state($clickId)['click_payout']);
         // A later campaign payout change must not change the amount reversed.
         self::q("UPDATE 202_aff_campaigns SET aff_campaign_payout = 99 WHERE aff_campaign_id = $second");
-        $reversal = $exit->recordConversion($secondToken, $now, $key, [
+        $reversal = $exit->recordConversion($secondToken, $key, [
             'transaction_id' => 'offer-second', 'reversal' => true, 'skip_bridge' => true,
         ], MatchMethod::CLICK_ID);
         self::assertIsArray($reversal);
@@ -449,7 +451,7 @@ final class ClickExitIntegrationTest extends TestCase
             self::one('SELECT click_payout FROM 202_conversion_logs WHERE conv_id = ' . (int) $reversal['convId'])
         );
         self::assertSame($mode === 'replace' ? '0.00000' : '7.25000', self::state($clickId)['click_payout']);
-        $explicit = $exit->recordConversion($secondToken, $now, $key, [
+        $explicit = $exit->recordConversion($secondToken, $key, [
             'transaction_id' => 'offer-explicit', 'payout' => '3.125', 'skip_bridge' => true,
         ], MatchMethod::CLICK_ID);
         self::assertIsArray($explicit);
@@ -535,10 +537,10 @@ final class ClickExitIntegrationTest extends TestCase
         $now = time();
         $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
         $exit = new PurLinkExit(new Connection(self::requireScratch()));
-        $subid = $exit->subid($proof, '11101', $now, 86400, $key);
+        $subid = $exit->subid($proof, '11101', $now, $key);
         self::assertIsString($subid);
         try {
-            $exit->recordConversion($subid, $now, $key, ['transaction_id' => 'callback-rollback', 'skip_bridge' => true],
+            $exit->recordConversion($subid, $key, ['transaction_id' => 'callback-rollback', 'skip_bridge' => true],
                 MatchMethod::CLICK_ID, static function (): void { throw new \RuntimeException('failed click update'); });
             self::fail('a failed click update must roll back the conversion');
         } catch (\RuntimeException $error) {
@@ -547,7 +549,7 @@ final class ClickExitIntegrationTest extends TestCase
         self::assertSame(['campaign_id' => '4'], self::one("SELECT aff_campaign_id AS campaign_id FROM 202_clicks WHERE click_id = $clickId"));
         self::assertSame(['n' => '0'], self::one("SELECT COUNT(*) AS n FROM 202_conversion_logs WHERE click_id = $clickId"));
         $called = 0;
-        $result = $exit->recordConversion($subid, $now, $key, ['transaction_id' => 'callback-rollback', 'skip_bridge' => true],
+        $result = $exit->recordConversion($subid, $key, ['transaction_id' => 'callback-rollback', 'skip_bridge' => true],
             MatchMethod::CLICK_ID, static function (int $updatedClick, float $payout) use (&$called, $clickId): void {
                 self::assertSame($clickId, $updatedClick);
                 self::assertSame(7.25, $payout);
@@ -575,9 +577,9 @@ final class ClickExitIntegrationTest extends TestCase
         $now = time();
         $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
         $exit = new PurLinkExit(new Connection(self::requireScratch()));
-        $subid = $exit->subid($proof, '11101', $now, 86400, $key);
+        $subid = $exit->subid($proof, '11101', $now, $key);
         self::assertIsString($subid);
-        $result = $exit->recordConversion($subid, $now, $key, [
+        $result = $exit->recordConversion($subid, $key, [
             'transaction_id' => 'old-multiple-visits', 'skip_bridge' => true,
         ], MatchMethod::CLICK_ID);
         self::assertIsArray($result);

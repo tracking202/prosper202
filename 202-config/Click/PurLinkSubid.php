@@ -6,13 +6,16 @@ namespace Prosper202\Click;
 
 use InvalidArgumentException;
 
-/** A click and an advanced-page offer carried through an offer's SubID. */
+/**
+ * A click and an offer carried through an offer's SubID: `<click>-<offer>-<mac>`.
+ * The 1.9.56 `click-offer` shape plus a MAC, short and URL-safe enough for
+ * networks that cap SubID length. The page and account are not in the value;
+ * the MAC binds them, and the verifier reads them from the click.
+ */
 final class PurLinkSubid
 {
-    public const MAX_LIFETIME = 365 * 24 * 60 * 60;
-    private const DOMAIN = "prosper202-purlink-subid-v1\0";
-    private const SHAPE = '/\Ap1\.([1-9][0-9]{0,18})\.([1-9][0-9]{0,18})\.'
-        . '([1-9][0-9]{0,18})\.([1-9][0-9]{0,18})\.([1-9][0-9]{0,18})\.([A-Za-z0-9_-]{22})\z/D';
+    private const DOMAIN = "prosper202-purlink-subid-v2\0";
+    private const SHAPE = '/\A([1-9][0-9]{0,18})-([1-9][0-9]{0,18})-([0-9a-f]{12})\z/D';
 
     private function __construct()
     {
@@ -22,58 +25,49 @@ final class PurLinkSubid
      * Issue from a valid exit proof after the caller has resolved the offer
      * against the page's account. No arbitrary click ID is signed.
      */
-    public static function issue(
-        string $exitProof,
-        mixed $campaignPublicId,
-        int $now,
-        int $lifetime,
-        string $key
-    ): string {
+    public static function issue(string $exitProof, mixed $campaignPublicId, int $now, string $key): string
+    {
         $claims = PurLinkProof::verify($exitProof, PurLinkProof::EXIT, $now, $key);
         $campaign = PublicId::parse($campaignPublicId);
-        if (
-            $claims === null || $campaign === null || $lifetime < 1 || $lifetime > self::MAX_LIFETIME
-            || $now > PHP_INT_MAX - $lifetime
-        ) {
-            throw new InvalidArgumentException('A valid PurLink exit proof, campaign and lifetime are required');
+        if ($claims === null || $campaign === null) {
+            throw new InvalidArgumentException('A valid PurLink exit proof and campaign are required');
         }
-        $payload = implode('.', [
-            'p1', $claims['click_id'], $claims['landing_page_id'], $claims['user_id'], $campaign, $now + $lifetime,
-        ]);
 
-        return $payload . '.' . self::mac($payload, $key);
+        return $claims['click_id'] . '-' . $campaign . '-'
+            . self::mac($claims['click_id'], $claims['landing_page_id'], $claims['user_id'], $campaign, $key);
     }
 
-    /** @return array{click_id: int, landing_page_id: int, user_id: int, campaign_public_id: int, expires: int}|null */
-    public static function verify(string $subid, int $now, string $key): ?array
+    /**
+     * The IDs a signed SubID names. Not proof: check() it against the
+     * click's own page and account before trusting the offer.
+     *
+     * @return array{click_id: int, campaign_public_id: int, mac: string}|null
+     */
+    public static function parse(mixed $subid): ?array
     {
-        if (strlen($key) !== 32) {
-            throw new InvalidArgumentException('The PurLink SubID key must be 32 bytes');
-        }
-        if ($now < 1 || preg_match(self::SHAPE, $subid, $parts) !== 1) {
+        if (!is_string($subid) || preg_match(self::SHAPE, $subid, $parts) !== 1) {
             return null;
         }
-        foreach ([1, 2, 3, 4, 5] as $index) {
-            if ((string) (int) $parts[$index] !== $parts[$index]) {
-                return null;
-            }
-        }
-        $expires = (int) $parts[5];
-        if ($expires <= $now || $expires - $now > self::MAX_LIFETIME) {
-            return null;
-        }
-        $payload = substr($subid, 0, strrpos($subid, '.'));
-        if (!hash_equals(self::mac($payload, $key), $parts[6])) {
+        $click = ClickId::parse($parts[1]);
+        $campaign = PublicId::parse($parts[2]);
+        if ($click === null || $campaign === null) {
             return null;
         }
 
-        return [
-            'click_id' => (int) $parts[1],
-            'landing_page_id' => (int) $parts[2],
-            'user_id' => (int) $parts[3],
-            'campaign_public_id' => (int) $parts[4],
-            'expires' => $expires,
-        ];
+        return ['click_id' => $click, 'campaign_public_id' => $campaign, 'mac' => $parts[3]];
+    }
+
+    /** @param array{click_id: int, campaign_public_id: int, mac: string} $parsed */
+    public static function check(array $parsed, int $landingPageId, int $userId, string $key): bool
+    {
+        if ($landingPageId < 1 || $userId < 1) {
+            return false;
+        }
+
+        return hash_equals(
+            self::mac($parsed['click_id'], $landingPageId, $userId, $parsed['campaign_public_id'], $key),
+            $parsed['mac']
+        );
     }
 
     /**
@@ -96,10 +90,13 @@ final class PurLinkSubid
         return ['click_id' => $click, 'campaign_public_id' => $campaign];
     }
 
-    private static function mac(string $payload, string $key): string
+    private static function mac(int $click, int $landingPageId, int $userId, int $campaign, string $key): string
     {
-        $raw = substr(hash_hmac('sha256', self::DOMAIN . $payload, $key, true), 0, 16);
+        if (strlen($key) !== 32) {
+            throw new InvalidArgumentException('The PurLink SubID key must be 32 bytes');
+        }
+        $payload = self::DOMAIN . implode('.', [$click, $landingPageId, $userId, $campaign]);
 
-        return rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
+        return substr(hash_hmac('sha256', $payload, $key), 0, 12);
     }
 }

@@ -24,20 +24,10 @@ $signedPurLink = null;
 $signedPurLinkValue = null;
 $purLinkKey = null;
 $rawSubid = $_GET['subid'] ?? $_GET['sid'] ?? null;
-if ($parsedClickId === null && is_string($rawSubid) && str_starts_with($rawSubid, 'p1.')) {
-    try {
-        $purLinkKey = \Api\V3\Apps\Android\InstallTokenKey::load($db);
-        if ($purLinkKey === null) {
-            throw new \RuntimeException('installation token key is missing');
-        }
-        $signedPurLink = \Prosper202\Click\PurLinkSubid::verify($rawSubid, time(), $purLinkKey);
-    } catch (\Throwable $keyError) {
-        error_log('gpb: signed PurLink verification unavailable: ' . $keyError->getMessage());
-        p202RespondJsonError(503, 'Service unavailable');
-    }
-    if ($signedPurLink === null) {
-        p202RespondJsonError(404, 'SubID not found');
-    }
+$signedPurLinkRead = $parsedClickId === null ? p202VerifyPurLinkSubid($db, $rawSubid, 'gpb') : null;
+if ($signedPurLinkRead !== null) {
+    $signedPurLink = $signedPurLinkRead['claims'];
+    $purLinkKey = $signedPurLinkRead['key'];
     $parsedClickId = $signedPurLink['click_id'];
     $signedPurLinkValue = $rawSubid;
 }

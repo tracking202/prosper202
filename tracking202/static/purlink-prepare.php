@@ -6,7 +6,6 @@ use Api\V3\Apps\Android\InstallTokenKey;
 use Api\V3\Apps\PublicIntake;
 use Api\V3\Bootstrap;
 use Prosper202\Click\PurLinkExit;
-use Prosper202\Click\PurLinkSubid;
 use Prosper202\Database\Connection;
 
 header('Cache-Control: no-store');
@@ -54,7 +53,6 @@ try {
         $fields['proof'],
         $fields['campaign'] ?? null,
         time(),
-        PurLinkSubid::MAX_LIFETIME,
         $key
     );
 } catch (Throwable $error) {

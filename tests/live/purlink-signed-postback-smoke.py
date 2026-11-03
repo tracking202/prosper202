@@ -56,7 +56,7 @@ def main():
     tx = 'signed-pur-' + secrets.token_hex(8)
     valid = {'subid': signed, 'txid': tx}
     for fields, expected in [(valid, 200), (valid, 200),
-                             ({'subid': signed[:-1] + ('A' if signed[-1] != 'A' else 'B'), 'txid': tx + 'bad'}, 404),
+                             ({'subid': signed[:-1] + ('0' if signed[-1] != '0' else '1'), 'txid': tx + 'bad'}, 404),
                              ({'subid': signed, 'event': 'signup'}, 200)]:
         status, _ = request(pb, fields)
         if status != expected:

@@ -46,11 +46,27 @@
         }
     }
 
+    var subidPattern = /(?:\[\[|%5b%5b)subid(?:\]\]|%5d%5d)/i;
+
+    function hasKnownToken(template) {
+        var found = false;
+        template.replace(tokenPattern, function (match, name) {
+            var key = name.toLowerCase();
+            if (legacyNames[key] || Object.prototype.hasOwnProperty.call(options.tokens || {}, key)) { found = true; }
+            return match;
+        });
+        return found;
+    }
+
+    // As in 1.9.56: a link carrying [[subid]] or any other known token is a
+    // PurLink. Links into the tracker itself are left to its own redirects.
     function isManaged(element, template) {
+        if (typeof options.trackerBase === 'string' && options.trackerBase !== '' &&
+            template.indexOf(options.trackerBase) === 0) { return false; }
         return element.hasAttribute('data-p202-purlink') ||
             (typeof options.simpleTemplate === 'string' && options.simpleTemplate !== '' &&
                 template === options.simpleTemplate) ||
-            /(?:\[\[|%5b%5b)subid(?:\]\]|%5d%5d)/i.test(template);
+            subidPattern.test(template) || hasKnownToken(template);
     }
 
     function replaceTokens(template, subid, encodeValues) {
@@ -78,14 +94,14 @@
         }
     }
 
-    function updateFormInputs(form, subid) {
+    function updateFormInputs(form, subid, direct) {
         var inputs = form.querySelectorAll('input[name],select[name],textarea[name],button[name]');
         for (var i = 0; i < inputs.length; i++) {
             var input = inputs[i];
             if (typeof input.value !== 'string' || input.hasAttribute('data-p202-purlink-input')) { continue; }
             var previous = inputTemplates.get(input);
             var template = previous && input.value === previous.rendered ? previous.template : input.value;
-            if (!subid) {
+            if (!direct) {
                 // Do not submit a previous pageview's token after returning
                 // to the redirect fallback (for example, after revocation).
                 if (previous && input.value === previous.rendered) { input.value = previous.template; }
@@ -150,7 +166,7 @@
         Promise.resolve(result).then(function (subid) {
             if (generation !== pageview || options !== config) { return; }
             state.pending = false;
-            if (typeof subid !== 'string' || !/^p1\.(?:[1-9][0-9]{0,18}\.){5}[A-Za-z0-9_-]{22}$/.test(subid)) {
+            if (typeof subid !== 'string' || !/^[1-9][0-9]{0,18}-[1-9][0-9]{0,18}-[0-9a-f]{12}$/.test(subid)) {
                 throw new Error('Invalid PurLink SubID');
             }
             if (offer) {
@@ -187,14 +203,17 @@
             if (templateUrl.protocol !== 'http:' && templateUrl.protocol !== 'https:') { return; }
         } catch (e) { return; }
         var offer = offerOf(template);
-        var prepared = offer ? (options.offerSubids || {})[offer] : options.simpleSubid;
-        if (!prepared) { prepareOffer(offer); }
-        // A deployment can prepare ahead of enabling direct navigation, so
-        // incomplete click-out reporting never exposes an untracked link.
+        // Only a [[subid]] needs a prepared SubID; until it is ready the
+        // tracker's redirect stands in. Other tokens render at once.
+        var needsSubid = subidPattern.test(template) || !hasKnownToken(template) ||
+            template === options.simpleTemplate;
+        var prepared = needsSubid ? (offer ? (options.offerSubids || {})[offer] : options.simpleSubid) : null;
+        if (needsSubid && !prepared) { prepareOffer(offer); }
         var subid = options.directEnabled === true ? prepared : null;
+        var direct = options.directEnabled === true && (!needsSubid || !!subid);
         var rendered;
         try {
-            rendered = subid ? destination(template, subid) :
+            rendered = direct ? destination(template, subid) :
                 (typeof options.fallback === 'function' ? options.fallback(offer) : null);
         } catch (e) { return; }
         if (typeof rendered !== 'string' || rendered === '') { return; }
@@ -207,7 +226,7 @@
         removeGenerated(old);
         var generated = [];
         if (element.tagName === 'FORM') {
-            updateFormInputs(element, subid);
+            updateFormInputs(element, subid, direct);
             var formResult = formDestination(element, rendered);
             rendered = formResult.url;
             generated = formResult.generated;
@@ -216,7 +235,7 @@
         element.setAttribute(attribute, rendered);
         managed.set(element, {
             attribute: attribute, template: template, rendered: rendered,
-            offer: offer, direct: !!subid, ownsRaw: ownsRaw, generated: generated
+            offer: offer, direct: direct, ownsRaw: ownsRaw, generated: generated
         });
     }
 

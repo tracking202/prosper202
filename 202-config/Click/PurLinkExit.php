@@ -120,14 +120,43 @@ final class PurLinkExit
     }
 
     /** A SubID for the offer, or null when the proof or offer is refused. */
-    public function subid(string $proof, mixed $campaignPublicId, int $now, int $lifetime, string $key): ?string
+    public function subid(string $proof, mixed $campaignPublicId, int $now, string $key): ?string
     {
         $route = $this->resolve($proof, $campaignPublicId, $now, $key);
         if ($route === null || $route['campaign_public_id'] < 1) {
             return null;
         }
 
-        return PurLinkSubid::issue($proof, $route['campaign_public_id'], $now, $lifetime, $key);
+        return PurLinkSubid::issue($proof, $route['campaign_public_id'], $now, $key);
+    }
+
+    /**
+     * Verify a signed SubID against its click's latest visit. Without a lock:
+     * convert() checks the page and account again under the click lock.
+     *
+     * @return array{click_id: int, landing_page_id: int, user_id: int, campaign_public_id: int}|null
+     */
+    public function claims(mixed $subid, string $key): ?array
+    {
+        $parsed = PurLinkSubid::parse($subid);
+        if ($parsed === null) {
+            return null;
+        }
+        $stmt = $this->conn->prepareWrite(
+            'SELECT c.user_id, c.landing_page_id FROM ' . LatestVisit::of('?') . ' AS c'
+        );
+        $this->conn->bind($stmt, 'i', [$parsed['click_id']]);
+        $click = $this->conn->fetchOne($stmt);
+        if ($click === null || !PurLinkSubid::check($parsed, (int) $click['landing_page_id'], (int) $click['user_id'], $key)) {
+            return null;
+        }
+
+        return [
+            'click_id' => $parsed['click_id'],
+            'landing_page_id' => (int) $click['landing_page_id'],
+            'user_id' => (int) $click['user_id'],
+            'campaign_public_id' => $parsed['campaign_public_id'],
+        ];
     }
 
     /**
@@ -144,8 +173,8 @@ final class PurLinkExit
     }
 
     /**
-     * @param array{click_id: int, landing_page_id: int, user_id: int, expires: int} $claims
-     * @return array{claims: array{click_id: int, landing_page_id: int, user_id: int, expires: int},
+     * @param array{click_id: int, landing_page_id: int, user_id: int, expires?: int} $claims
+     * @return array{claims: array{click_id: int, landing_page_id: int, user_id: int, expires?: int},
      *     campaign_id: int, campaign_public_id: int, payout: string}|null
      */
     private function resolveClaims(array $claims, mixed $campaignPublicId): ?array
@@ -210,9 +239,9 @@ final class PurLinkExit
      *        under another campaign.
      * @return T|null null when the SubID or its route is refused
      */
-    public function convert(string $subid, int $now, string $key, callable $write): mixed
+    public function convert(string $subid, string $key, callable $write): mixed
     {
-        $claims = PurLinkSubid::verify($subid, $now, $key);
+        $claims = $this->claims($subid, $key);
         if ($claims === null) {
             return null;
         }
@@ -258,6 +287,15 @@ final class PurLinkExit
     }
 
     /**
+     * Route the click to a verified SubID's offer, as its click-out would,
+     * so a conversion writer that checks the campaign can follow.
+     */
+    public function route(string $subid, string $key): bool
+    {
+        return $this->convert($subid, $key, static fn (): bool => true) === true;
+    }
+
+    /**
      * Record a plain ledger conversion using the verified SubID's offer.
      * Caller-supplied click and campaign IDs cannot override the SubID.
      * An explicit payout is preserved; otherwise the offer's payout is used.
@@ -267,7 +305,6 @@ final class PurLinkExit
      */
     public function recordConversion(
         string $subid,
-        int $now,
         string $key,
         array $data,
         MatchMethod $matchedBy,
@@ -275,9 +312,12 @@ final class PurLinkExit
     ): ?array
     {
         $writer = new MysqlConversionRepository($this->conn);
+        $claims = $this->claims($subid, $key);
+        if ($claims === null) {
+            return null;
+        }
         $result = $this->convert(
             $subid,
-            $now,
             $key,
             static function (
                 int $user,
@@ -306,10 +346,6 @@ final class PurLinkExit
             return null;
         }
         // convert() returned only after its outer transaction committed.
-        $claims = PurLinkSubid::verify($subid, $now, $key);
-        if ($claims === null) {
-            throw new \LogicException('A verified PurLink SubID could not be read after commit');
-        }
         $writer->afterRecordInTransaction($claims['user_id'], $result);
 
         return $result;

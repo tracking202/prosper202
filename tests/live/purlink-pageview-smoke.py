@@ -51,7 +51,7 @@ def main():
         req = urllib.request.Request(args.base.rstrip('/') + '/tracking202/static/purlink-prepare.php', data=data)
         with urllib.request.urlopen(req, timeout=20) as response:
             subid = json.load(response)['subid']
-        if not subid.startswith('p1.' + click.group(1) + '.'):
+        if not re.fullmatch(click.group(1) + r'-[1-9][0-9]*-[0-9a-f]{12}', subid):
             raise AssertionError('prepared SubID does not name the recorded click')
     print('Simple and advanced pageviews issue usable scoped proofs only with consent and opt-in')
 
