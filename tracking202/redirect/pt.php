@@ -83,7 +83,10 @@ if ($ptRecorder === 'record_simple.php') {
     }
 }
 
-if ($ptRecorder !== null) {
+if ($ptRecorder === null) {
+    error_log('Prosper202 pt.php: landing page ' . $ptLandingPageId . ' of tracker ' . $ptTrackerId
+        . ' has no recorder (type or campaign), so no click was recorded');
+} else {
     // The recorder answers with the page's script; nobody here runs it.
     ob_start();
     include substr(__DIR__, 0, -21) . '/tracking202/static/' . $ptRecorder;
