@@ -26,6 +26,9 @@ final class LinkAssistant
 {
     public const TOKEN = '[[subid]]';
 
+    /** The scheme and any subdomains before a network's own host. */
+    private const HOST = '^[a-z][a-z0-9+.-]*://([^/?#]*\.)?';
+
     /**
      * First match wins, so a network matched by its host comes before the
      * path shapes several platforms share. A host is matched as the link's
@@ -33,9 +36,6 @@ final class LinkAssistant
      *
      * @var list<array{id: string, name: string, match: string, param: string, place: string}>
      */
-    /** The scheme and any subdomains before a network's own host. */
-    private const HOST = '^[a-z][a-z0-9+.-]*://([^/?#]*\.)?';
-
     private const NETWORKS = [
         ['id' => 'clickbank', 'name' => 'ClickBank', 'param' => 'tid', 'place' => 'query',
             'match' => self::HOST . 'hop\.clickbank\.net(/|\?|$)'],
@@ -176,11 +176,16 @@ final class LinkAssistant
         return $mark === false ? [$rest, '', $fragment] : [substr($rest, 0, $mark), substr($rest, $mark), $fragment];
     }
 
-    /** @return array{string, string, ?string} */
-    private static function placeQuery(string $url, string $param): array
+    /** @return array{string, string, ?string}|null */
+    private static function placeQuery(string $url, string $param): ?array
     {
         [$path, $query, $fragment] = self::split($url);
+        $joiner = $query === '' ? '?' : (str_ends_with($query, '?') || str_ends_with($query, '&') ? '' : '&');
         $found = preg_match('~([?&])(' . preg_quote($param, '~') . ')=([^&]*)~i', $query, $m, PREG_OFFSET_CAPTURE);
+        if ($found === false) {
+            // Unreadable is not "absent": adding would duplicate the parameter.
+            return null;
+        }
         if ($found === 1) {
             $value = $m[3][0];
             $start = $m[3][1];
@@ -188,16 +193,18 @@ final class LinkAssistant
 
             return [$path . $query . $fragment, $value === '' ? 'fill' : 'replace', $value === '' ? null : $value];
         }
-        $joiner = $query === '' ? '?' : (str_ends_with($query, '?') || str_ends_with($query, '&') ? '' : '&');
 
         return [$path . $query . $joiner . $param . '=' . self::TOKEN . $fragment, 'add', null];
     }
 
-    /** @return array{string, string, ?string} */
-    private static function placePair(string $url, string $param): array
+    /** @return array{string, string, ?string}|null */
+    private static function placePair(string $url, string $param): ?array
     {
         [$path, $query, $fragment] = self::split($url);
         $found = preg_match('~/(' . preg_quote($param, '~') . '):([^/]*)~i', $path, $m, PREG_OFFSET_CAPTURE);
+        if ($found === false) {
+            return null;
+        }
         if ($found === 1) {
             $value = $m[2][0];
             $start = $m[2][1];
