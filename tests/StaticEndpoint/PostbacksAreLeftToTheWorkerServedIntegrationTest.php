@@ -278,7 +278,8 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
         $convs = self::$db->query('SELECT conv_id FROM 202_conversion_logs WHERE click_id = ' . self::SLOW_CLICK);
         self::assertInstanceOf(\mysqli_result::class, $convs);
         $conv = (int) $convs->fetch_row()[0];
-        (new NotificationOutbox(new Connection(self::$db), null, $fetch))->sendDue(200, [$conv]);
+        // A window of two: the slow host's second row must not keep the third out.
+        (new NotificationOutbox(new Connection(self::$db), null, $fetch))->sendDue(2, [$conv]);
 
         $s = self::SLOW_CLICK;
         self::assertSame(
