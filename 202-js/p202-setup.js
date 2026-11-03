@@ -919,12 +919,15 @@
             var amount = field('amount_value');
             var cid = field('aff_campaign_id');
             var subid = field('subid_value');
-            put('unsecure_pixel', '<img height="1" width="1" border="0" style="display: none;" src="' + base + 'gpx.php?amount=' + amount + '&subid=' + subid + '" />');
-            put('unsecure_postback', base + 'gpb.php?amount=' + amount + '&subid=' + subid);
-            put('unsecure_pixel_2', '<img height="1" width="1" border="0" style="display: none;" src="' + base + 'gpx.php?amount=' + amount + '&cid=' + cid + '&subid=' + subid + '" />');
-            put('unsecure_postback_2', base + 'gpb.php?amount=' + amount + '&cid=' + cid + '&subid=' + subid);
-            put('unsecure_universal_pixel', '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="' + base + 'upx.php?amount=' + amount + '&subid=' + subid + '" seamless></iframe>');
-            put('unsecure_universal_pixel_js', '<script>\n var vars202={amount:"' + amount + '",cid:"",subid:"' + subid + '"};(function(d, s) {\n \tvar js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {\n \t\tif (d.getElementById(id)) {return;}\n \t\tif202 = d.createElement("iframe");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = "no";if202.noResize = true;\n \t\tupxf.parentNode.insertBefore(if202, upxf);\n \t};\n \tload("' + base + 'upx.php?amount="+vars202[\'amount\']+"&cid="+vars202[\'cid\']+"&subid="+vars202[\'subid\'], "upxif");\n }(document, "script"));</' + 'script>\n<noscript>\n \t<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="' + base + 'upx.php?amount=' + amount + '&cid=&subid=' + subid + '" seamless></iframe>\n</noscript>');
+            // The account's postback token (Prosper202\\Conversion\\PostbackAuth), as PostbackCode writes it.
+            var token = root.getAttribute('data-postback-token') || '';
+            var t = token === '' ? '' : '&p202_token=' + token;
+            put('unsecure_pixel', '<img height="1" width="1" border="0" style="display: none;" src="' + base + 'gpx.php?amount=' + amount + '&subid=' + subid + t + '" />');
+            put('unsecure_postback', base + 'gpb.php?amount=' + amount + '&subid=' + subid + t);
+            put('unsecure_pixel_2', '<img height="1" width="1" border="0" style="display: none;" src="' + base + 'gpx.php?amount=' + amount + '&cid=' + cid + '&subid=' + subid + t + '" />');
+            put('unsecure_postback_2', base + 'gpb.php?amount=' + amount + '&cid=' + cid + '&subid=' + subid + t);
+            put('unsecure_universal_pixel', '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="' + base + 'upx.php?amount=' + amount + '&subid=' + subid + t + '" seamless></iframe>');
+            put('unsecure_universal_pixel_js', '<script>\n var vars202={amount:"' + amount + '",cid:"",subid:"' + subid + '"};(function(d, s) {\n \tvar js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {\n \t\tif (d.getElementById(id)) {return;}\n \t\tif202 = d.createElement("iframe");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = "no";if202.noResize = true;\n \t\tupxf.parentNode.insertBefore(if202, upxf);\n \t};\n \tload("' + base + 'upx.php?amount="+vars202[\'amount\']+"&cid="+vars202[\'cid\']+"&subid="+vars202[\'subid\']+"' + t + '", "upxif");\n }(document, "script"));</' + 'script>\n<noscript>\n \t<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="' + base + 'upx.php?amount=' + amount + '&cid=&subid=' + subid + t + '" seamless></iframe>\n</noscript>');
             var decided = document.querySelector('[data-postback-decided]');
             if (decided && decided.getAttribute('data-initial') === null) {
                 decided.setAttribute('data-initial', decided.textContent);

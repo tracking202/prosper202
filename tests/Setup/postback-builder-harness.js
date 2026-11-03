@@ -43,7 +43,12 @@ for (const id of codeBoxes) {
     byId[id] = box;
 }
 const root = element({
-    getAttribute(name) { return name === 'data-root-path' ? args.root_path : null; },
+    getAttribute(name) {
+        if (name === 'data-root-path') {
+            return args.root_path;
+        }
+        return name === 'data-postback-token' && args.token ? args.token : null;
+    },
 });
 
 const listeners = [];

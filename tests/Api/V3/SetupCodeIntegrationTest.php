@@ -54,7 +54,7 @@ final class SetupCodeIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         foreach ([self::USER, self::OTHER] as $u) {
-            foreach (['202_landing_pages', '202_aff_campaigns', '202_aff_networks', '202_rotators'] as $table) {
+            foreach (['202_landing_pages', '202_aff_campaigns', '202_aff_networks', '202_rotators', '202_postback_auth'] as $table) {
                 self::$db->query("DELETE FROM $table WHERE user_id = $u");
             }
         }
@@ -259,7 +259,10 @@ final class SetupCodeIntegrationTest extends TestCase
         $data = $this->controller()->postbackCode([], self::server())['data'];
         $root = 'https://track.example.com/tracking202/static/';
         self::assertSame(['https', $root, '', '', null], [$data['scheme'], $data['base_url'], $data['amount'], $data['subid'], $data['campaign_id']]);
-        $defaults = PostbackCode::snippets($root, '', '', '');
+        $token = $data['postback_token'];
+        self::assertMatchesRegularExpression('/\A[0-9a-f]{32}\z/', $token, 'the account\'s token, minted for the URLs');
+        self::assertSame($token, $this->controller()->postbackCode([], self::server())['data']['postback_token'], 'and kept');
+        $defaults = PostbackCode::snippets($root, '', '', '', $token);
         foreach (['simple', 'advanced', 'universal'] as $type) {
             self::assertSame($defaults[$type], $data[$type]);
         }
@@ -267,8 +270,8 @@ final class SetupCodeIntegrationTest extends TestCase
         $campaign = $this->ids['campaign_mine'];
         $data = $this->controller()->postbackCode(['amount' => '{payout}', 'subid' => '#s2#', 'campaign_id' => (string) $campaign, 'scheme' => 'http'], self::server())['data'];
         $root = 'http://track.example.com/tracking202/static/';
-        self::assertSame($root . "gpb.php?amount={payout}&cid=$campaign&subid=#s2#", $data['advanced']['postback_url']);
-        self::assertSame($root . 'gpb.php?amount={payout}&subid=#s2#', $data['simple']['postback_url']);
+        self::assertSame($root . "gpb.php?amount={payout}&cid=$campaign&subid=#s2#&p202_token=$token", $data['advanced']['postback_url']);
+        self::assertSame($root . "gpb.php?amount={payout}&subid=#s2#&p202_token=$token", $data['simple']['postback_url']);
         self::assertSame($campaign, $data['campaign_id']);
 
         self::setTrackingDomain('https://secure.example.com/');

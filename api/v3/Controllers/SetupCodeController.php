@@ -9,6 +9,8 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TrackingBaseLookup;
+use Prosper202\Conversion\PostbackAuth\PostbackAuthStore;
+use Prosper202\Database\Connection;
 use Prosper202\Setup\LandingPageCode;
 use Prosper202\Setup\PostbackCode;
 
@@ -162,7 +164,11 @@ final class SetupCodeController
             $base = $scheme . substr($base, (int) strpos($base, '://'));
         }
         $root = $base . 'tracking202/static/';
-        $snippets = PostbackCode::snippets($root, $values['amount'], $campaignId === null ? '' : (string) $campaignId, $values['subid']);
+        // Every URL carries the account's postback token, minted the first
+        // time one is handed out (Prosper202\Conversion\PostbackAuth).
+        $auth = (new PostbackAuthStore(new Connection($this->db)))->ensureToken($this->userId, time());
+        $token = (string) $auth->token;
+        $snippets = PostbackCode::snippets($root, $values['amount'], $campaignId === null ? '' : (string) $campaignId, $values['subid'], $token);
 
         return ['data' => [
             'scheme' => substr($base, 0, (int) strpos($base, '://')),
@@ -170,6 +176,8 @@ final class SetupCodeController
             'amount' => $values['amount'],
             'subid' => $values['subid'],
             'campaign_id' => $campaignId,
+            'postback_token' => $token,
+            'token_required' => $auth->required,
         ] + $snippets];
     }
 
