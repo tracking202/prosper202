@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace Prosper202\InboundLog;
 
 /**
- * What the log keeps of a request's fields: every name, and each value
- * unless it is a secret (signature, key, token) or about a person (address,
- * email, name, phone). Redacted by name and, whatever the name, by value.
+ * What the log keeps of a request's fields: every name, and a value only
+ * when its endpoint is known to send that field (KEEP) and the value names
+ * no person (email, IP address). Every other value is redacted, so a field a
+ * provider adds later is hidden until it is listed here.
  */
 final class Redactor
 {
@@ -15,10 +16,41 @@ final class Redactor
     public const MAX_FIELDS = 40;
     public const MAX_VALUE = 120;
     public const MAX_BYTES = 4000;
+    /** A longer value is not scanned, and not kept. */
+    private const MAX_SCANNED = 2048;
 
-    private const SECRET_NAME = '/sig|secret|key|token|hash|verif|pass|auth|cred|nonce|cipher|^iv$|^notification$/i';
-    private const VISITOR_NAME = '/mail|name|phone|addr|street|city|zip|postal|card|birth|ssn|agent|refer|(^|[^a-z])ip($|[^a-z])/i';
-    private const EMAIL_VALUE = '/[^@\s]+@[^@\s]+\.[a-z]{2,}/i';
+    /** The classic postback and pixel parameters Prosper202 reads (pb, gpb, px, gpx, upx). */
+    private const CLASSIC = [
+        'acip', 'subid', 'sid', 'cid', 'amount', 'txid', 'transaction_id', 'transactionid', 'order_id', 'orderid',
+        'oid', 't202txid', 'status', 'reversal_id', 'event', 'event_id', 'p13n_have', 'sku', 'product_id',
+        'external_product_id', 'product_name', 'qty', 'quantity', 'unit_price', 'currency',
+    ];
+
+    /** Per endpoint, the fields whose values are kept. */
+    private const KEEP = [
+        'pb' => self::CLASSIC,
+        'gpb' => self::CLASSIC,
+        'px' => self::CLASSIC,
+        'gpx' => self::CLASSIC,
+        'upx' => self::CLASSIC,
+        // ClickBank's INS is an encrypted body (notification, iv): nothing in it is kept.
+        'clickbank' => [],
+        'jvzoo' => [
+            'ctransaction', 'ctransreceipt', 'ctransamount', 'ctranstime', 'ctranspaymentmethod', 'ctransvendor',
+            'cproditem', 'cprodtitle', 'cprodtype', 'cupsellreceipt', 'caffitid', 'cvendthru',
+        ],
+        'paykickstart' => [
+            'event', 'mode', 'payment_processor', 'is_rebill', 'amount', 'quantity', 'currency', 'transaction_id',
+            'invoice_id', 'transaction_time', 'transaction_type', 'product_id', 'product_name', 'campaign_id',
+            'campaign_name', 'custom_subid', 'affiliate_commission_amount', 'coupon_code', 'coupon_rate',
+            'tax_amount', 'shipping_amount',
+        ],
+    ];
+
+    /** Inside a kept field's nested values, names that are never kept. */
+    private const SECRET_NAME = '/sig|secret|key|token|hash|hmac|verif|pass|^pw|auth|cred|nonce|cipher|licen|^iv$|^notification$/i';
+    private const VISITOR_NAME = '/mail|name|phone|addr|street|city|zip|postal|card|birth|ssn|agent|refer|^cust$|customer|buyer|(^|[^a-z])ip($|[^a-z])/i';
+    private const EMAIL_VALUE = '/[^@\s]@[^@\s]+\.[a-z]{2,}/i';
     private const IPV4_VALUE = '/(^|[^0-9.])(\d{1,3}\.){3}\d{1,3}($|[^0-9.])/';
 
     private function __construct()
@@ -27,10 +59,12 @@ final class Redactor
 
     /**
      * @param array<array-key, mixed> $fields
+     * @param string $endpoint whose KEEP list applies; an unknown one keeps no value
      * @return array<string, mixed>
      */
-    public static function fields(array $fields): array
+    public static function fields(array $fields, string $endpoint): array
     {
+        $keep = self::KEEP[$endpoint] ?? [];
         $out = [];
         $kept = 0;
         foreach ($fields as $name => $value) {
@@ -38,7 +72,8 @@ final class Redactor
                 $out['_more_fields'] = count($fields) - $kept;
                 break;
             }
-            $out[self::text((string) $name, 64)] = self::value((string) $name, $value, 0);
+            $name = (string) $name;
+            $out[self::text($name, 64)] = in_array($name, $keep, true) ? self::value($value, 0) : self::REDACTED;
             $kept++;
         }
 
@@ -66,18 +101,16 @@ final class Redactor
         }
     }
 
-    private static function value(string $name, mixed $value, int $depth): mixed
+    private static function value(mixed $value, int $depth): mixed
     {
-        if (preg_match(self::SECRET_NAME, $name) === 1 || preg_match(self::VISITOR_NAME, $name) === 1) {
-            return self::REDACTED;
-        }
         if (is_array($value)) {
             if ($depth >= 2) {
                 return self::REDACTED;
             }
             $out = [];
             foreach (array_slice($value, 0, self::MAX_FIELDS, true) as $k => $v) {
-                $out[self::text((string) $k, 64)] = self::value((string) $k, $v, $depth + 1);
+                $hidden = preg_match(self::SECRET_NAME, (string) $k) !== 0 || preg_match(self::VISITOR_NAME, (string) $k) !== 0;
+                $out[self::text((string) $k, 64)] = $hidden ? self::REDACTED : self::value($v, $depth + 1);
             }
 
             return $out;
@@ -86,12 +119,44 @@ final class Redactor
             return self::REDACTED;
         }
         $text = (string) $value;
-        if (preg_match(self::EMAIL_VALUE, $text) === 1 || preg_match(self::IPV4_VALUE, $text) === 1
-            || (str_contains($text, ':') && filter_var(trim($text, '[]'), FILTER_VALIDATE_IP) !== false)) {
-            return self::REDACTED;
+
+        return self::namesAPerson($text) ? self::REDACTED : self::text($text, self::MAX_VALUE);
+    }
+
+    /** An email or IP address in the value, as sent or URL-decoded; a value that cannot be scanned counts as one. */
+    private static function namesAPerson(string $text): bool
+    {
+        if (strlen($text) > self::MAX_SCANNED) {
+            return true;
+        }
+        $forms = [$text];
+        for ($i = 0; $i < 2; $i++) {
+            $decoded = urldecode($forms[count($forms) - 1]);
+            if ($decoded === $forms[count($forms) - 1]) {
+                break;
+            }
+            $forms[] = $decoded;
+        }
+        foreach ($forms as $form) {
+            // preg_match answers false on a PCRE error: redact, never keep.
+            if (preg_match(self::EMAIL_VALUE, $form) !== 0 || preg_match(self::IPV4_VALUE, $form) !== 0) {
+                return true;
+            }
+            if (str_contains($form, ':')) {
+                $tokens = preg_split('/[^0-9a-f:.\[\]]+/i', $form);
+                if ($tokens === false) {
+                    return true;
+                }
+                foreach ($tokens as $token) {
+                    $token = trim($token, '[].');
+                    if (substr_count($token, ':') >= 2 && filter_var($token, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+                        return true;
+                    }
+                }
+            }
         }
 
-        return self::text($text, self::MAX_VALUE);
+        return false;
     }
 
     private static function text(string $text, int $max): string

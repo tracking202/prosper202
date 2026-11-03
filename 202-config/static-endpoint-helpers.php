@@ -591,7 +591,8 @@ if (!function_exists('p202RecordConversion')) {
             $clickId,
             (int) $result['convId'],
             (bool) $result['duplicate'],
-            trim($transactionId)
+            trim($transactionId),
+            (bool) ($result['clickFound'] ?? true)
         );
 
         return [

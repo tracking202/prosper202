@@ -68,6 +68,20 @@ final class RequestLogTest extends TestCase
         self::assertSame('failed', $failed->entry(500)->outcome);
     }
 
+    public function testNoRowOnAClickThatIsOnFileIsNotCalledAnUnknownClick(): void
+    {
+        $missing = self::watch();
+        $missing->conversionWritten(9001, 0, false, '', false);
+        self::assertSame('unknown_click', $missing->entry(200)->outcome);
+
+        RequestLog::reset();
+        $stopped = self::watch();
+        $stopped->conversionWritten(9001, 0, false, 'ORD-1');
+        $entry = $stopped->entry(200);
+        self::assertSame('not_recorded', $entry->outcome);
+        self::assertSame('The click is on file, and no conversion was recorded.', $entry->reason);
+    }
+
     public function testTheFieldsAreRedacted(): void
     {
         $entry = self::watch(['subid' => '9001', 'email' => 'pat@contoso.example'])->entry(200);

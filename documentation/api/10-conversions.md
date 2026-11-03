@@ -116,7 +116,9 @@ the sender got and why: the same list as Setup › Inbound Log. It needs the
 role's access to the Setup section. An admin also gets the requests no
 account could be found for (an unknown campaign, a signature no stored key
 verifies), with `user_id` null. The newest 5,000 requests per account are
-kept.
+kept, and the newest 1,000 no account was found for. A request no account
+was found for, or one that was refused, is logged at most 60 times a minute
+per account.
 
 | Parameter | Description |
 | --------- | ----------- |
@@ -151,9 +153,11 @@ kept.
 
 `accepted` is true for `recorded`, `reversed`, `duplicate`, `test`,
 `ignored` and `event_recorded`; every other outcome recorded nothing.
-`fields` keeps the request's fields with every signature, key, token, IP
-address, email, name, phone and street address replaced by `[redacted]`; a
-ClickBank notification's encrypted body is never kept.
+`fields` keeps every field's name, and its value only for the fields that
+endpoint is known to send (subid, amount, transaction id and the like) and
+only when the value holds no email or IP address. Every other value,
+including signatures, keys, licence keys and the buyer's details, is
+`[redacted]`; a ClickBank notification's encrypted body is never kept.
 
 ## Offline conversion files
 

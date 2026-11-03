@@ -42,18 +42,23 @@ final class Receiver
             }
         }
         error_log($this->logLine($request, $outcome, $notification));
-        ($this->inboundLog ?? new InboundLog($this->db))->append(new Entry(
-            strtolower($this->provider->name()),
-            $request->method !== '' ? $request->method : 'GET',
-            Response::status($outcome->kind),
-            $outcome->kind->value,
-            $outcome->message,
-            $outcome->accountId ?? 0,
-            $notification?->clickId,
-            $outcome->conversionId,
-            $notification?->transactionId,
-            Redactor::fields($request->fields),
-        ));
+        try {
+            $endpoint = strtolower($this->provider->name());
+            ($this->inboundLog ?? new InboundLog($this->db))->append(new Entry(
+                $endpoint,
+                $request->method !== '' ? $request->method : 'GET',
+                Response::status($outcome->kind),
+                $outcome->kind->value,
+                $outcome->message,
+                $outcome->accountId ?? 0,
+                $notification?->clickId,
+                $outcome->conversionId,
+                $notification?->transactionId,
+                Redactor::fields($request->fields, $endpoint),
+            ));
+        } catch (\Throwable $e) {
+            error_log($this->provider->name() . ' notification: the inbound log could not be written: ' . $e->getMessage());
+        }
 
         return $outcome;
     }

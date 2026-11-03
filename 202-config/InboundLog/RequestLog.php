@@ -100,8 +100,11 @@ final class RequestLog
         $this->converted($reason, null, null, self::LEGACY_REASONS[$reason] ?? $reason);
     }
 
-    /** What the conversion writer answered (p202RecordConversion()). */
-    public function conversionWritten(int $clickId, int $conversionId, bool $duplicate, string $transactionId): void
+    /**
+     * What the conversion writer answered (p202RecordConversion()). $clickFound
+     * false: the click is not on file; true with no row: something else stopped it.
+     */
+    public function conversionWritten(int $clickId, int $conversionId, bool $duplicate, string $transactionId, bool $clickFound = true): void
     {
         $this->click($clickId);
         if ($conversionId > 0 && !$duplicate) {
@@ -109,8 +112,10 @@ final class RequestLog
         } elseif ($duplicate) {
             $this->converted($conversionId > 0 ? 'duplicate' : 'already_lead', $conversionId, $transactionId,
                 self::LEGACY_REASONS[$conversionId > 0 ? 'duplicate' : 'already_lead']);
-        } else {
+        } elseif (!$clickFound) {
             $this->legacyResult('unknown_click');
+        } else {
+            $this->converted('not_recorded', null, $transactionId, 'The click is on file, and no conversion was recorded.');
         }
     }
 
@@ -147,7 +152,7 @@ final class RequestLog
             $this->clickId,
             $this->conversionId,
             $this->transactionId,
-            Redactor::fields($this->fields),
+            Redactor::fields($this->fields, $this->endpoint),
         );
     }
 

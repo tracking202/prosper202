@@ -2521,8 +2521,9 @@ paths:
         Setup › Inbound Log, asked with the role's access to the Setup
         section. An admin also gets the requests no account could be found
         for, with `user_id` null. The newest 5,000 per account are kept.
-        `fields` holds the request's fields with every signature, key,
-        token, address, email and name replaced by `[redacted]`.
+        `fields` holds every field's name, and its value only for the
+        fields the endpoint is known to send and only when it holds no
+        email or IP address; every other value is `[redacted]`.
       operationId: listInboundLog
       parameters:
         - name: outcome

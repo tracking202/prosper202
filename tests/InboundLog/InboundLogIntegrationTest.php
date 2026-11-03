@@ -18,6 +18,8 @@ use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\JVZoo\JVZooAdapter;
 use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\JVZoo\JVZooRole;
+use Prosper202\PaymentNotification\PayKickstart\PayKickstartAdapter;
+use Prosper202\PaymentNotification\PayKickstart\PayKickstartSignature;
 use Prosper202\PaymentNotification\Receiver;
 use Tests\PaymentNotification\JVZooAdapterTest;
 
@@ -258,6 +260,93 @@ final class InboundLogIntegrationTest extends TestCase
             [(string) self::OTHER, '1', '1'],
         ], $kept->fetch_all());
         self::assertSame(0, (new InboundLog($db))->prune(), 'a second prune has nothing to do');
+    }
+
+    /** Rows for $user with outcome $outcome, received at 1..$count, inserted by doubling. */
+    private static function seed(int $user, int $count, string $outcome = 'unknown_campaign'): void
+    {
+        $columns = 'user_id, received_at, endpoint, method, http_status, outcome, reason';
+        self::q("INSERT INTO 202_inbound_log ($columns) VALUES ($user, 1, 'pb', 'GET', 200, '$outcome', '')");
+        for ($have = 1; $have < $count; $have *= 2) {
+            self::q("INSERT INTO 202_inbound_log ($columns) SELECT user_id, received_at + $have, endpoint, method,"
+                . " http_status, outcome, reason FROM 202_inbound_log WHERE user_id = $user AND received_at + $have <= $count"
+                . ' ORDER BY inbound_id');
+        }
+    }
+
+    /** @return array<int, int> rows per user_id */
+    private static function counts(): array
+    {
+        $result = self::$db->query('SELECT user_id, COUNT(*) FROM 202_inbound_log GROUP BY user_id ORDER BY user_id');
+        self::assertInstanceOf(\mysqli_result::class, $result);
+        $counts = [];
+        foreach ($result->fetch_all() as [$user, $count]) {
+            $counts[(int) $user] = (int) $count;
+        }
+
+        return $counts;
+    }
+
+    /** The review's case: 262,144 unattributed rows used to take the whole prune and leave the account over its cap. */
+    public function testAFloodOfUnattributedRowsDoesNotKeepAnAccountOverItsCap(): void
+    {
+        $db = self::requireScratch();
+        self::seed(0, 262144);
+        self::seed(self::ACCOUNT, 6000, 'recorded');
+
+        (new InboundLog($db))->prune(0.0);
+        self::assertSame(InboundLog::KEEP_PER_ACCOUNT, self::counts()[self::ACCOUNT], 'accounts first, even with no time left');
+
+        (new InboundLog($db))->prune();
+        self::assertSame([0 => InboundLog::KEEP_UNATTRIBUTED, self::ACCOUNT => InboundLog::KEEP_PER_ACCOUNT], self::counts(),
+            'one prune catches up on everything');
+        $oldest = $db->query('SELECT MIN(received_at) FROM 202_inbound_log WHERE user_id = 0');
+        self::assertInstanceOf(\mysqli_result::class, $oldest);
+        self::assertSame((string) (262144 - InboundLog::KEEP_UNATTRIBUTED + 1), (string) $oldest->fetch_row()[0], 'the newest kept');
+    }
+
+    public function testUnattributedAndRefusedRequestsAreLoggedAtMostSixtyAMinute(): void
+    {
+        $log = new InboundLog(self::requireScratch());
+        $now = 1793000000;
+        for ($i = 0; $i < InboundLog::UNBACKED_PER_MINUTE; $i++) {
+            self::assertTrue($log->append(new Entry('pb', 'GET', 200, 'unknown_campaign', '', 0), $now));
+            self::assertTrue($log->append(new Entry('pb', 'GET', 404, 'unknown_click', '', self::ACCOUNT), $now));
+        }
+        self::assertFalse($log->append(new Entry('pb', 'GET', 200, 'unknown_campaign', '', 0), $now + 59));
+        self::assertFalse($log->append(new Entry('pb', 'GET', 404, 'unknown_click', '', self::ACCOUNT), $now + 59));
+        self::assertTrue($log->append(new Entry('pb', 'GET', 200, 'recorded', '', self::ACCOUNT), $now + 59),
+            'a conversion is always logged');
+        self::assertTrue($log->append(new Entry('pb', 'GET', 404, 'unknown_click', '', self::ACCOUNT), $now + 59),
+            'and opens the account\'s window again');
+        self::assertTrue($log->append(new Entry('pb', 'GET', 200, 'unknown_campaign', '', 0), $now + 60), 'a minute on');
+        self::assertSame([0 => 61, self::ACCOUNT => 62], self::counts());
+    }
+
+    public function testAPayKickstartNotificationKeepsNoLicenceKeyOrBuyerDetail(): void
+    {
+        $fields = [
+            'event' => 'sales', 'mode' => 'live', 'payment_processor' => 'stripe', 'is_rebill' => '0', 'amount' => '47.00',
+            'quantity' => '1', 'buyer_first_name' => 'Ruggero', 'buyer_email' => 'buyer@example.com',
+            'transaction_id' => 'PK-TX-0001', 'invoice_id' => 'PK-INV-0001', 'transaction_time' => (string) time(),
+            'product_id' => '2354', 'campaign_id' => '215', 'custom_subid' => (string) self::CLICK,
+            'affiliate_commission_amount' => '0', 'licenses' => ['LIC-AAAA-1111', 'LIC-BBBB-2222'],
+        ];
+        $fields['hash'] = PayKickstartSignature::sign(PayKickstartSignature::message($fields), 'not-a-stored-key');
+        $request = new InboundRequest('POST', 'application/x-www-form-urlencoded', $fields, '203.0.113.9', '203.0.113.9', 'PayKickstart IPN');
+        (new Receiver(new PayKickstartAdapter(), self::requireScratch()))->receive($request);
+
+        $rows = self::rows(self::ACCOUNT, true);
+        self::assertCount(1, $rows);
+        self::assertSame(['paykickstart', 'unverified'], [$rows[0]['endpoint'], $rows[0]['outcome']]);
+        self::assertSame('PK-TX-0001', $rows[0]['fields']['transaction_id']);
+        self::assertSame(Redactor::REDACTED, $rows[0]['fields']['licenses']);
+        $stored = self::$db->query('SELECT fields FROM 202_inbound_log');
+        self::assertInstanceOf(\mysqli_result::class, $stored);
+        $raw = (string) $stored->fetch_row()[0];
+        foreach (['LIC-', 'Ruggero', 'buyer@example.com', $fields['hash'], '203.0.113.9'] as $private) {
+            self::assertStringNotContainsString($private, $raw);
+        }
     }
 
     public function testALogThatCannotBeWrittenDoesNotFailTheRequest(): void
