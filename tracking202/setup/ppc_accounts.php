@@ -139,7 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				Analytics::event('traffic_source_added', ['via' => 'ui'], 'analytics');
 			}
 
-			tagUserByNetwork($user_row['install_hash'], 'traffic-sources', $_POST['ppc_network_name']);
+			tagUserByNetwork((int) $_SESSION['user_id'], $user_row['install_hash'], 'traffic-sources', $_POST['ppc_network_name']);
 		}
 	}
 

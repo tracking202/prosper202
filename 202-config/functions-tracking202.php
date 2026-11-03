@@ -1305,8 +1305,26 @@ function callAutoCron($endpoint)
     return json_decode($result, true);
 }
 
-function tagUserByNetwork($install_hash, $type, $network)
+/**
+ * Tell Tracking202 a network name the user set up. The name is product
+ * analytics (disclosure.php), so nothing is sent unless analytics is on for
+ * $userId; a consent that cannot be read sends nothing. True when sent.
+ *
+ * @param (callable(string, string): void)|null $send the POST (URL, body); curl when not given
+ */
+function tagUserByNetwork(int $userId, $install_hash, $type, $network, ?mysqli $db = null, ?callable $send = null): bool
 {
+    require_once __DIR__ . '/Messaging/ConsentPolicy.class.php';
+    $db ??= $GLOBALS['db'] ?? null;
+    if ($userId <= 0 || !($db instanceof mysqli) || !ConsentPolicy::analyticsAllowed($db, $userId)) {
+        return false;
+    }
+    $url = 'https://my.tracking202.com/api/v2/tag/user/' . $install_hash . '/' . $type;
+    if ($send !== null) {
+        $send($url, http_build_query(['network' => $network]));
+        return true;
+    }
+
     $post = [];
     $post['network'] = $network;
     $fields = http_build_query($post);
@@ -1314,7 +1332,7 @@ function tagUserByNetwork($install_hash, $type, $network)
     // Initiate curl
     $ch = curl_init();
     // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/tag/user/' . $install_hash . '/' . $type);
+    curl_setopt($ch, CURLOPT_URL, $url);
     // Disable SSL verification
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -1332,6 +1350,8 @@ function tagUserByNetwork($install_hash, $type, $network)
     }
     // close connection
     curl_close($ch);
+
+    return true;
 }
 
 function getDNIHost(): string

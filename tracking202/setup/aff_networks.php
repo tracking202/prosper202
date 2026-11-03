@@ -102,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
-	tagUserByNetwork($user_row['install_hash'], 'affiliate-networks', $_POST['aff_network_name']);
+	tagUserByNetwork((int) $_SESSION['user_id'], $user_row['install_hash'], 'affiliate-networks', $_POST['aff_network_name']);
 }
 
 

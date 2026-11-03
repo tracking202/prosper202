@@ -603,7 +603,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						error_log('api-integrations.php: a DNI network was not saved: ' . $failed->getMessage());
 					}
 					if ($dniSaved) {
-						tagUserByNetwork($user_row['install_hash'], 'affiliate-networks', $dniNetworkName[0]);
+						tagUserByNetwork((int) $_SESSION['user_id'], $user_row['install_hash'], 'affiliate-networks', $dniNetworkName[0]);
 						p202_account_flash('ok', $dniNetworkName[0] . ' network configured. API processing can take up to 5 minutes.');
 						p202_account_redirect('202-account/api-integrations.php#dni');
 					}
