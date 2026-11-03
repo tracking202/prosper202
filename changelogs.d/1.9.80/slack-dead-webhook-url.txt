@@ -1,0 +1,2 @@
+-- Fixed: Account › API integrations said the Slack integration could receive Slack commands and handed out tracking202/static/slack.php as a "Prosper202 webhook", a file that has never existed, and GET /system/integrations and `p202 system integrations` listed it too. The panel now describes what works, notifications sent to a Slack incoming webhook, and the API and CLI no longer list a Slack URL. A Slack app that answers questions is planned for a later release.
+app: Fixed: The Slack integration no longer shows a command webhook URL that never worked.
