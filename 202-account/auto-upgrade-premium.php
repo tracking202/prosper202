@@ -40,6 +40,10 @@ $json = @getData('https://my.tracking202.com/api/v2/premium-p202/version');
 $array = json_decode((string) $json, true);
 // An unreadable answer is "no update known", never an update to nothing.
 $latest_version = is_array($array) ? (string) ($array['version'] ?? '') : '';
+// It names the temp file below, so only a version number is read as one.
+if (!preg_match('/^\d+\.\d+\.\d+(-[A-Za-z0-9]+)?$/', $latest_version)) {
+	$latest_version = '';
+}
 $update_needed = $latest_version !== '' && version_compare($version, $latest_version) == '-1';
 $release_signature = is_array($array) && is_string($array['signature'] ?? null)
 	? $array['signature']
@@ -99,8 +103,15 @@ if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token()) {
 			$downloadUpdate = @file_put_contents(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
 			if ($downloadUpdate) {
 				$installlog .= "Update downloaded and saved!\n";
+				$zipFile = substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip';
+				// A signed release that is not the version offered, or not newer, is never extracted.
+				$signature_problem = \Prosper202\Update\ReleaseSignature::versionProblem($zipFile, $latest_version, (string) $version);
+				if ($signature_problem !== null) {
+					$installlog .= $signature_problem . "\nOperation aborted.";
+					$FilesUpdated = false;
+				}
 
-				$zip = @zip_open(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip');
+				$zip = $signature_problem === null ? @zip_open($zipFile) : false;
 
 				if ($zip) {
 					$installlog .= "\nUpdate process started...\n";

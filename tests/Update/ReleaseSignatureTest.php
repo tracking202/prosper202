@@ -15,6 +15,8 @@ final class ReleaseSignatureTest extends TestCase
 {
     private const string ZIP = "PK\x03\x04 a release zip's bytes";
 
+    /** @var list<string> */
+    private array $zips = [];
     private string $public;
     private string $secret;
 
@@ -208,10 +210,9 @@ final class ReleaseSignatureTest extends TestCase
             $source = self::codeOnly((string)file_get_contents($root . '/' . $file));
             if ($file === '202-config/functions.php') {
                 $start = strpos($source, 'function update_needed(');
-                $end = strpos($source, 'function check_premium_update(');
                 self::assertNotFalse($start);
-                self::assertNotFalse($end);
-                $source = substr($source, $start, $end - $start);
+                $end = strpos($source, "\n\tfunction ", $start + 1);
+                $source = substr($source, $start, $end === false ? null : $end - $start);
             }
             $ready = strpos($source, 'ReleaseSignature::notReady(');
             $download = strpos($source, 'ReleaseSignature::download(');
@@ -226,6 +227,11 @@ final class ReleaseSignatureTest extends TestCase
             self::assertNotFalse($write, $file);
             self::assertLessThan($write, $download, $file);
             self::assertLessThan($write, $check, $file . ' checks the signature before writing');
+            $versionCheck = strpos($source, 'ReleaseSignature::versionProblem(');
+            $open = max((int)strpos($source, 'zip_open('), (int)strpos($source, '$zip->open('));
+            self::assertNotFalse($versionCheck, $file . ' checks the release version');
+            self::assertGreaterThan(0, $open, $file);
+            self::assertLessThan($open, $versionCheck, $file . ' checks the version before extracting');
             self::assertStringNotContainsString('getData($link)', $source, $file);
             self::assertStringNotContainsString('getData($download_link)', $source, $file);
         }
@@ -266,6 +272,64 @@ final class ReleaseSignatureTest extends TestCase
             @unlink($keyFile);
             @rmdir($dir);
         }
+    }
+
+    private function zipWith(?string $versionPhp): string
+    {
+        $file = tempnam(sys_get_temp_dir(), 'p202-zip');
+        self::assertIsString($file);
+        $zip = new \ZipArchive();
+        self::assertTrue($zip->open($file, \ZipArchive::OVERWRITE));
+        $zip->addFromString('index.php', '<?php');
+        if ($versionPhp !== null) {
+            $zip->addFromString('202-config/version.php', $versionPhp);
+        }
+        self::assertTrue($zip->close());
+        $this->zips[] = $file;
+        return $file;
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->zips as $file) {
+            @unlink($file);
+        }
+    }
+
+    public function testOnlyTheOfferedVersionNewerThanTheInstallIsExtracted(): void
+    {
+        $zip = $this->zipWith("<?php\n\$version_string = '1.9.81';\nif (true) {}\n");
+        self::assertSame('1.9.81', ReleaseSignature::zipVersion($zip));
+        self::assertNull(ReleaseSignature::versionProblem($zip, '1.9.81', '1.9.80'));
+        $problem = static fn (string $offered, string $installed): string
+            => (string)ReleaseSignature::versionProblem($zip, $offered, $installed);
+        self::assertStringContainsString('not 1.9.90 as offered', $problem('1.9.90', '1.9.80'));
+        self::assertStringContainsString('not newer', $problem('1.9.81', '1.9.81'));
+        self::assertStringContainsString('not newer', $problem('1.9.81', '1.9.85'));
+    }
+
+    public function testAReleaseThatDoesNotNameItsVersionIsNotExtracted(): void
+    {
+        $expected = 'The release does not say which version it is, so it was not installed.';
+        self::assertSame($expected, ReleaseSignature::versionProblem($this->zipWith(null), '1.9.81', '1.9.80'));
+        $odd = $this->zipWith("<?php\n\$version_string = 'latest';\n");
+        self::assertSame($expected, ReleaseSignature::versionProblem($odd, '1.9.81', '1.9.80'));
+        self::assertSame($expected, ReleaseSignature::versionProblem(__FILE__, '1.9.81', '1.9.80'));
+    }
+
+    public function testTheShippedVersionFileIsReadable(): void
+    {
+        $source = (string)file_get_contents(dirname(__DIR__, 2) . '/202-config/version.php');
+        $zip = $this->zipWith($source);
+        self::assertSame(1, preg_match("/'(\\d+\\.\\d+\\.\\d+[^']*)'/", $source, $m));
+        self::assertSame($m[1], ReleaseSignature::zipVersion($zip));
+    }
+
+    public function testARefusalKeepsThePortalsReason(): void
+    {
+        $hop = static fn (): array => [403, '{"code":403,"msg":"This key has no <b>licence</b>"}', null];
+        $result = ReleaseSignature::download('https://my.tracking202.com/dl', 10, $hop);
+        self::assertSame('The update server answered HTTP 403: This key has no licence.', $result['error']);
     }
 
     /** The source without comments, so a mention in a comment cannot stand in for a call. */

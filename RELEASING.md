@@ -98,22 +98,25 @@ each: `prosper202-<version>.zip` (the files under `prosper202/`, for a manual
 upload) and `prosper202-<version>-upgrade.zip` (the same tree at the zip's
 root, the layout the 1-click upgraders extract), each with a `.sig` beside it
 (the base64 signature on one line). The `Sign the release` step signs with the
-repository secret `P202_RELEASE_SIGNING_KEY` (a base64 Ed25519 secret key) and
+secret `P202_RELEASE_SIGNING_KEY` (a base64 Ed25519 secret key) of the
+`release` environment, which only `v*` tags may deploy to, and
 fails the release when the secret is missing or its public half is not
 `ReleaseSignature::PUBLIC_KEY` in `202-config/Update/ReleaseSignature.php`.
 
-An install's upgrader (`202-account/auto-upgrade.php`,
-`202-account/auto-upgrade-premium.php` and the automatic update in
-`202-config/functions.php`) downloads over HTTPS from `my.tracking202.com`
-only, follows a redirect only to that host over HTTPS, and checks the
-downloaded bytes against that key before it writes anything. The signature
+An install's 1-click upgrader (`202-account/auto-upgrade.php` and
+`202-account/auto-upgrade-premium.php`) downloads over HTTPS from
+`my.tracking202.com` only, follows a redirect only to that host over HTTPS,
+and checks the downloaded bytes against that key before it writes anything.
+It then extracts the zip only when its `202-config/version.php` names the
+version the feed offered and that version is newer than the install's, so an
+older signed release cannot be passed off as the latest. The signature
 comes in the update feed the upgrader already reads: `signature` in
 `/api/v2/premium-p202/version`'s JSON, or a `<signature>` element in the
 current-version feed's item. Without a valid one the upgrade is refused and the
 page says why. The key in the code is a placeholder until it is set, and with
 the placeholder every 1-click upgrade is refused and every release fails to
-sign, a manual `workflow_dispatch` build included (its signing step needs the
-secret too, so the dry run proves the key is set up).
+sign. A manual `workflow_dispatch` run from a branch builds without signing:
+the step runs on `v*` tags only, so a branch's code never runs with the key.
 
 Setting up the key, once, on a trusted machine (the secret key never goes into
 the repository, an issue or a chat):
@@ -121,7 +124,12 @@ the repository, an issue or a chat):
 ```bash
 umask 077
 php build/scripts/sign-release.php keygen ~/p202-release-signing.key   # prints the public key
-gh secret set P202_RELEASE_SIGNING_KEY -R tracking202/prosper202 < ~/p202-release-signing.key
+gh api -X PUT repos/tracking202/prosper202/environments/release \
+  -F 'deployment_branch_policy[protected_branches]=false' \
+  -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X POST repos/tracking202/prosper202/environments/release/deployment-branch-policies \
+  -f name='v*' -f type=tag
+gh secret set P202_RELEASE_SIGNING_KEY -R tracking202/prosper202 --env release < ~/p202-release-signing.key
 ```
 
 Put the printed public key in `ReleaseSignature::PUBLIC_KEY` in a pull request,

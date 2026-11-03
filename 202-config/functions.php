@@ -360,9 +360,17 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 
 								if (temp_exists()) {
 									$downloadUpdate = @file_put_contents(__DIR__ . '/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
+									$zipFile = __DIR__ . '/temp/prosper202_' . $latest_version . '.zip';
+									$versionProblem = $downloadUpdate
+										? \Prosper202\Update\ReleaseSignature::versionProblem($zipFile, (string) $latest_version, (string) $version)
+										: null;
+									if ($versionProblem !== null) {
+										$_SESSION['upgrade_error_log'] = $log . 'Auto update not installed: ' . $versionProblem . ' ';
+										return true;
+									}
 									if ($downloadUpdate) {
 										$zip = new ZipArchive();
-										$zipResult = $zip->open(__DIR__ . '/temp/prosper202_' . $latest_version . '.zip');
+										$zipResult = $zip->open($zipFile);
 
 										if ($zipResult === TRUE) {
 											$basePath = realpath(dirname(__DIR__));

@@ -30,6 +30,8 @@ jobs:
     # Composer. The image is named rather than "latest" so a newer PHP cannot
     # arrive unannounced, and the check below fails the build if it ever does.
     runs-on: ubuntu-24.04
+    # The signing key is a secret of this environment, which only v* tags may use.
+    environment: release
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -117,8 +119,9 @@ jobs:
       - name: Sign the release
         # Installs' 1-click upgraders refuse a zip without a valid signature by
         # the key in 202-config/Update/ReleaseSignature.php. A missing secret,
-        # or one that does not match that key, fails the run, a manual
-        # (workflow_dispatch) build included.
+        # or one that does not match that key, fails the release. Tags only: a
+        # manual run from a branch never runs that branch's code with the key.
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           P202_RELEASE_SIGNING_KEY: ${{ secrets.P202_RELEASE_SIGNING_KEY }}
         run: |

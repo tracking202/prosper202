@@ -48,7 +48,7 @@ And that's it! Prosper202 should now be upgraded.
 
 Please note newer versions now come with an auto-upgrade feature.
 
-The **1-Click Upgrade** installs only a release signed by Tracking202. It downloads the release over HTTPS from my.tracking202.com, checks its signature before writing any file, and refuses a download whose signature is missing or does not match, with the reason on the page; nothing on your install changes then. It needs PHP's sodium extension, which PHP includes by default. When it refuses, download the release and follow the steps above.
+The **1-Click Upgrade** installs only a release signed by Tracking202. It downloads the release over HTTPS from my.tracking202.com, checks its signature before writing any file, and refuses a download whose signature is missing or does not match, or a release that is not newer than your install, with the reason on the page; nothing on your install changes then. It needs PHP's sodium extension, which most hosts include (the Requirements page shows whether yours has it). When it refuses, download the release and follow the steps above.
 
 ## Additional Support
 

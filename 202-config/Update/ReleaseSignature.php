@@ -18,6 +18,7 @@ final class ReleaseSignature
 
     public const string HOST = 'my.tracking202.com';
     public const int MAX_REDIRECTS = 3;
+    public const int MAX_BYTES = 400_000_000;
     private const string NO_KEY =
         'This install has no release signing key to check the download with. Upgrade by hand.';
     private const string ONLY_HOST = 'updates come only from https://' . self::HOST . '.';
@@ -89,6 +90,42 @@ final class ReleaseSignature
     }
 
     /**
+     * Why the verified zip at $zipFile may not replace version $installed, the
+     * feed having offered $offered; null when it is $offered and newer.
+     */
+    public static function versionProblem(string $zipFile, string $offered, string $installed): ?string
+    {
+        $shipped = self::zipVersion($zipFile);
+        if ($shipped === null) {
+            return 'The release does not say which version it is, so it was not installed.';
+        }
+        if ($shipped !== $offered) {
+            return "The release is version {$shipped}, not {$offered} as offered, so it was not installed.";
+        }
+        if (version_compare($shipped, $installed, '<=')) {
+            return "The release is version {$shipped}, not newer than this install's {$installed},"
+                . ' so it was not installed.';
+        }
+        return null;
+    }
+
+    /** The $version_string in the zip's 202-config/version.php, or null. */
+    public static function zipVersion(string $zipFile): ?string
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            return null;
+        }
+        $zip = new \ZipArchive();
+        if ($zip->open($zipFile, \ZipArchive::RDONLY) !== true) {
+            return null;
+        }
+        $source = $zip->getFromName('202-config/version.php');
+        $zip->close();
+        $pattern = '/^\$version_string\s*=\s*\'(\d+\.\d+\.\d+(?:-[A-Za-z0-9]+)?)\';/m';
+        return is_string($source) && preg_match($pattern, $source, $m) === 1 ? $m[1] : null;
+    }
+
+    /**
      * $url when it is https://my.tracking202.com at the default port with no credentials; else null.
      *
      * @return non-empty-string|null
@@ -148,7 +185,7 @@ final class ReleaseSignature
                 continue;
             }
             if ($status !== 200) {
-                return ['body' => null, 'error' => 'The update server answered HTTP ' . $status . '.'];
+                return ['body' => null, 'error' => 'The update server answered HTTP ' . $status . self::reason($body)];
             }
             return ['body' => $body, 'error' => null];
         }
@@ -176,6 +213,11 @@ final class ReleaseSignature
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, min(10, $timeoutSeconds));
         curl_setopt($ch, CURLOPT_TIMEOUT, $timeoutSeconds);
+        // The body is held in memory, so its size is capped, a body sent without a length included.
+        curl_setopt($ch, CURLOPT_MAXFILESIZE, self::MAX_BYTES);
+        curl_setopt($ch, CURLOPT_NOPROGRESS, false);
+        curl_setopt($ch, CURLOPT_XFERINFOFUNCTION, static fn ($ch, int $total, int $received): int
+            => $received > self::MAX_BYTES ? 1 : 0);
         $body = curl_exec($ch);
         if (curl_errno($ch) !== 0 || !is_string($body)) {
             error_log('ReleaseSignature: no answer from ' . $url . ': ' . curl_error($ch));
@@ -187,6 +229,14 @@ final class ReleaseSignature
             $body,
             is_string($redirect) && $redirect !== '' ? $redirect : null,
         ];
+    }
+
+    /** The portal's JSON "msg", as ": <msg>.", or "." */
+    private static function reason(string $body): string
+    {
+        $answer = json_decode($body, true);
+        $msg = is_array($answer) && is_string($answer['msg'] ?? null) ? trim(strip_tags($answer['msg'])) : '';
+        return $msg === '' ? '.' : ': ' . mb_substr($msg, 0, 200) . '.';
     }
 
     /** @return non-empty-string|null exactly $bytes raw bytes */

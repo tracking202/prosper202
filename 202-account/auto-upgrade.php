@@ -129,8 +129,15 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 					$downloadUpdate = @file_put_contents(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
 					if ($downloadUpdate) {
 						$log .= "Update downloaded and saved!\n";
+						$zipFile = substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip';
+						// A signed release that is not the version offered, or not newer, is never extracted.
+						$signature_problem = \Prosper202\Update\ReleaseSignature::versionProblem($zipFile, $latest_version, (string) $version);
+						if ($signature_problem !== null) {
+							$log .= $signature_problem . "\nOperation aborted.";
+							$FilesUpdated = false;
+						}
 
-						$zip = @zip_open(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip');
+						$zip = $signature_problem === null ? @zip_open($zipFile) : false;
 
 						if ($zip) {
 							$log .= "\nUpdate process started...\n";
