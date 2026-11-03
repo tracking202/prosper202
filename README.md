@@ -347,6 +347,10 @@ stops taking traffic, then upgrade — through `202-config/upgrade.php`, or the
 pages say the same above their button. From 1.9.55, the 1-click page replaces
 the files and then sends you to the upgrade page for the database step, which
 checks the database server's version before it changes anything.
+The 1-click upgrade installs only a release signed by Tracking202: it downloads
+over HTTPS from my.tracking202.com, checks the zip's signature before writing
+anything, and refuses a download that does not verify, saying why. It needs
+PHP's sodium extension.
 
 On a large install the upgrade page can outlast a proxy's time limit (a million
 conversions takes one to two minutes). The upgrade keeps running on the server:
