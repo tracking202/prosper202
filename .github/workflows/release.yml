@@ -117,7 +117,8 @@ jobs:
       - name: Sign the release
         # Installs' 1-click upgraders refuse a zip without a valid signature by
         # the key in 202-config/Update/ReleaseSignature.php. A missing secret,
-        # or one that does not match that key, fails the release.
+        # or one that does not match that key, fails the run, a manual
+        # (workflow_dispatch) build included.
         env:
           P202_RELEASE_SIGNING_KEY: ${{ secrets.P202_RELEASE_SIGNING_KEY }}
         run: |
@@ -139,7 +140,8 @@ jobs:
               echo "| Size | $(du -h "${zip_path}" | cut -f1) |"
               echo "| SHA256 | \`${{ steps.build.outputs.sha256 }}\` |"
               echo "| Upgrade zip | \`$(basename "${{ steps.build.outputs.upgrade_zip_path }}")\` |"
-              echo "| Signed | $( [ -f "${zip_path}.sig" ] && echo yes || echo no ) |"
+              upgrade_zip_path="${{ steps.build.outputs.upgrade_zip_path }}"
+              echo "| Signed | $( [ -f "${zip_path}.sig" ] && [ -f "${upgrade_zip_path}.sig" ] && echo yes || echo no ) |"
             else
               echo "> ❌ Build did not produce a zip. Review the job log above."
             fi

@@ -31,13 +31,15 @@ if ($command === 'keygen') {
         $fail("{$file} already exists; not overwriting a key");
     }
     $pair = sodium_crypto_sign_keypair();
+    umask(0077);
     $handle = fopen($file, 'x');
     if ($handle === false || !chmod($file, 0600)) {
         $fail("cannot create {$file}");
     }
-    $written = fwrite($handle, base64_encode(sodium_crypto_sign_secretkey($pair)));
-    fclose($handle);
-    if ($written === false) {
+    $secretKey = base64_encode(sodium_crypto_sign_secretkey($pair));
+    $written = fwrite($handle, $secretKey);
+    if ($written !== strlen($secretKey) || !fclose($handle)) {
+        @unlink($file);
         $fail("cannot write {$file}");
     }
     echo base64_encode(sodium_crypto_sign_publickey($pair)), PHP_EOL;

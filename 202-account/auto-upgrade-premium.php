@@ -66,8 +66,11 @@ if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token()) {
     set_time_limit(0);
 
 	$installlog = "Downloading new update...\n";
-	$download = \Prosper202\Update\ReleaseSignature::download('https://my.tracking202.com/api/v2/premium-p202/download/'
-		. rawurlencode((string) $user_row['install_hash']) . '/' . rawurlencode((string) $user_row['p202_customer_api_key']));
+	$signature_problem = \Prosper202\Update\ReleaseSignature::notReady();
+	$download = $signature_problem === null
+		? \Prosper202\Update\ReleaseSignature::download('https://my.tracking202.com/api/v2/premium-p202/download/'
+			. rawurlencode((string) $user_row['install_hash']) . '/' . rawurlencode((string) $user_row['p202_customer_api_key']))
+		: ['body' => null, 'error' => $signature_problem];
 	$GetUpdate = $download['body'] ?? false;
 	if ($GetUpdate === false) {
 		$installlog .= $download['error'] . "\nOperation aborted.";

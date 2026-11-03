@@ -340,7 +340,10 @@ require_once __DIR__ . '/functions-standalone-ui.php';
                             ignore_user_abort(true);
                             set_time_limit(0);
 							// Nothing is written until the download's signature checks out.
-							$download = \Prosper202\Update\ReleaseSignature::download((string) $link);
+							$notReady = \Prosper202\Update\ReleaseSignature::notReady();
+							$download = $notReady === null
+								? \Prosper202\Update\ReleaseSignature::download((string) $link)
+								: ['body' => null, 'error' => $notReady];
 							$GetUpdate = $download['body'];
 							$problem = $GetUpdate === null
 								? $download['error']

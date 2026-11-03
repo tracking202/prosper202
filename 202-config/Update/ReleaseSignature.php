@@ -18,6 +18,8 @@ final class ReleaseSignature
 
     public const string HOST = 'my.tracking202.com';
     public const int MAX_REDIRECTS = 3;
+    private const string NO_KEY =
+        'This install has no release signing key to check the download with. Upgrade by hand.';
     private const string ONLY_HOST = 'updates come only from https://' . self::HOST . '.';
 
     /**
@@ -26,12 +28,13 @@ final class ReleaseSignature
      */
     public static function problem(string $zip, ?string $signature, string $publicKey = self::PUBLIC_KEY): ?string
     {
-        if (!function_exists('sodium_crypto_sign_verify_detached')) {
-            return "This server's PHP has no sodium extension, so the download cannot be checked. Upgrade by hand.";
+        $notReady = self::notReady($publicKey);
+        if ($notReady !== null) {
+            return $notReady;
         }
         $key = self::decode($publicKey, SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES);
         if ($key === null) {
-            return 'This install has no release signing key to check the download with. Upgrade by hand.';
+            return self::NO_KEY;
         }
         if ($signature === null || trim($signature) === '') {
             return 'The update server sent no signature for this release, so it was not installed.';
@@ -49,6 +52,15 @@ final class ReleaseSignature
             $valid = false;
         }
         return $valid ? null : 'The download is not signed by Tracking202, so it was not installed.';
+    }
+
+    /** Why no download could be checked (no sodium, no key), or null; checked before downloading. */
+    public static function notReady(string $publicKey = self::PUBLIC_KEY): ?string
+    {
+        if (!function_exists('sodium_crypto_sign_verify_detached')) {
+            return "This server's PHP has no sodium extension, so the download cannot be checked. Upgrade by hand.";
+        }
+        return self::decode($publicKey, SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) === null ? self::NO_KEY : null;
     }
 
     /**

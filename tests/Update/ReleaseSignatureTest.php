@@ -205,7 +205,7 @@ final class ReleaseSignatureTest extends TestCase
             '202-config/functions.php',
         ];
         foreach ($upgraders as $file) {
-            $source = (string)file_get_contents($root . '/' . $file);
+            $source = self::codeOnly((string)file_get_contents($root . '/' . $file));
             if ($file === '202-config/functions.php') {
                 $start = strpos($source, 'function update_needed(');
                 $end = strpos($source, 'function check_premium_update(');
@@ -213,9 +213,14 @@ final class ReleaseSignatureTest extends TestCase
                 self::assertNotFalse($end);
                 $source = substr($source, $start, $end - $start);
             }
+            $ready = strpos($source, 'ReleaseSignature::notReady(');
             $download = strpos($source, 'ReleaseSignature::download(');
             $check = strpos($source, 'ReleaseSignature::problem(');
             $write = strpos($source, 'file_put_contents(');
+            self::assertNotFalse($ready, $file . ' checks for a key before downloading');
+            self::assertLessThan($download, $ready, $file);
+            self::assertSame(1, substr_count($source, 'file_put_contents('), $file . ' writes the zip in one place');
+            self::assertSame(1, substr_count($source, 'ReleaseSignature::download('), $file);
             self::assertNotFalse($download, $file . ' downloads through ReleaseSignature::download()');
             self::assertNotFalse($check, $file . ' checks the signature');
             self::assertNotFalse($write, $file);
@@ -260,6 +265,41 @@ final class ReleaseSignatureTest extends TestCase
         } finally {
             @unlink($keyFile);
             @rmdir($dir);
+        }
+    }
+
+    /** The source without comments, so a mention in a comment cannot stand in for a call. */
+    private static function codeOnly(string $source): string
+    {
+        $code = '';
+        foreach (token_get_all($source) as $token) {
+            if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+            $code .= is_array($token) ? $token[1] : $token;
+        }
+        return $code;
+    }
+
+    public function testNotReadyNamesTheMissingKeyBeforeAnyDownload(): void
+    {
+        self::assertNull(ReleaseSignature::notReady($this->public));
+        self::assertStringContainsString('no release signing key', (string)ReleaseSignature::notReady('PLACEHOLDER'));
+    }
+
+    /** The real transport: curl is held to HTTPS, so a plain-HTTP URL never leaves the machine. */
+    public function testTheCurlTransportRefusesPlainHttp(): void
+    {
+        $hop = new \ReflectionMethod(ReleaseSignature::class, 'curlHop');
+        $log = tempnam(sys_get_temp_dir(), 'p202-sig-log');
+        self::assertIsString($log);
+        $errorLog = ini_set('error_log', $log);
+        try {
+            self::assertNull($hop->invoke(null, 'http://127.0.0.1:9/prosper202.zip', 5));
+            self::assertMatchesRegularExpression('/protocol/i', (string)file_get_contents($log));
+        } finally {
+            ini_set('error_log', (string)$errorLog);
+            @unlink($log);
         }
     }
 

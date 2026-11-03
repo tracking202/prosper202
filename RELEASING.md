@@ -112,7 +112,8 @@ comes in the update feed the upgrader already reads: `signature` in
 current-version feed's item. Without a valid one the upgrade is refused and the
 page says why. The key in the code is a placeholder until it is set, and with
 the placeholder every 1-click upgrade is refused and every release fails to
-sign.
+sign, a manual `workflow_dispatch` build included (its signing step needs the
+secret too, so the dry run proves the key is set up).
 
 Setting up the key, once, on a trusted machine (the secret key never goes into
 the repository, an issue or a chat):

@@ -107,7 +107,10 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 		if ($FilesUpdated !== false) {
 			$log = "Downloading new update...\n";
 			// Nothing is written until the download's signature checks out.
-			$download = \Prosper202\Update\ReleaseSignature::download($download_link);
+			$signature_problem = \Prosper202\Update\ReleaseSignature::notReady();
+			$download = $signature_problem === null
+				? \Prosper202\Update\ReleaseSignature::download($download_link)
+				: ['body' => null, 'error' => $signature_problem];
 			$GetUpdate = $download['body'];
 			$problem = $GetUpdate === null
 				? $download['error']
