@@ -43,6 +43,7 @@ final class LandingPageCode
         't202OS'           => "Visitor's Operating System",
         't202Device'       => "Visitor's Device Type",
         't202ISP'          => "Visitor's ISP",
+        't202IP'           => "Visitor's IP address (when your privacy setting tracks the visitor in full)",
         't202kw'           => 'Value passed in t202kw',
         't202c1'           => 'Value passed in C1',
         't202c2'           => 'Value passed in C2',

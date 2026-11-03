@@ -35,6 +35,6 @@ The inbound and outbound code usage are exactly the same as the one for Simple L
 
 ## Dynamic Content Segment
 
-We have available dynamic content you can integrate into your LP to make it more targeted. Please see the list below and in your setup Step 7:
+We have available dynamic content you can integrate into your LP to make it more targeted, in its text and in your form fields. Please see the list below and in your setup Step 7, and [Dynamic content](../features/dynamic-content.md) for every segment:
 ![Screen Shot 2015-12-07 at 3.02.14 PM.png](../images/step-7-7.png)
 **[Click here to proceed to Step 8](09-step-8.md)**
