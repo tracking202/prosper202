@@ -24,7 +24,7 @@ class FraudDetectionIPQS implements FraudDetectionInterface
     
     function verifyKey()
     {
-        $result = json_decode((string) $this->get_IPQ_URL(sprintf('https://www.ipqualityscore.com/api/json/account/%s', $this->key)), true);
+        $result = json_decode((string) $this->get_IPQ_URL('https://www.ipqualityscore.com/api/json/account/' . rawurlencode((string) $this->key)), true);
         
         if($result !== null){
             if(isset($result['success']) && $result['success'] == true) {
@@ -39,7 +39,16 @@ class FraudDetectionIPQS implements FraudDetectionInterface
 
     function isFraud($ip)
     {
-        $result = json_decode((string) $this->get_IPQ_URL(sprintf('https://www.ipqualityscore.com/api/json/ip/%s/%s?user_agent=%s&fast=true&user_language=%s;&strictness=%s&allow_public_access_points=true', $this->key, $this->ip->address, $this->user_agent, $this->language, $this->strictness)), true);
+        // Encoded: libcurl refuses a URL with the spaces a user agent holds.
+        $query = http_build_query([
+            'user_agent' => (string) $this->user_agent,
+            'fast' => 'true',
+            'user_language' => (string) $this->language,
+            'strictness' => $this->strictness,
+            'allow_public_access_points' => 'true',
+        ], '', '&', PHP_QUERY_RFC3986);
+        $result = json_decode((string) $this->get_IPQ_URL('https://www.ipqualityscore.com/api/json/ip/'
+            . rawurlencode((string) $this->key) . '/' . rawurlencode((string) $this->ip->address) . '?' . $query), true);
         if($result !== null){
             if(isset($result['fraud_score']) && $result['fraud_score'] >= 80) {
                 return true;
