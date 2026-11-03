@@ -71,6 +71,7 @@ final class ClickRecordBuilderTest extends TestCase
         'click_redirect_site_url_id' => ['clickRedirectSiteUrlId', '145', 145],
         'click_filter_reason' => ['clickFilterReason', 'filter_list', 'filter_list'],
         'click_filter_entry_id' => ['clickFilterEntryId', '146', 146],
+        'publisher_user_id' => ['publisherUserId', '31', 31],
     ];
 
     private const FLAGS = [

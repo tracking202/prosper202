@@ -113,6 +113,7 @@ final class ClickRecordBuilder
             identity: $identity,
             clickFilterReason: self::text($mysql, 'click_filter_reason'),
             clickFilterEntryId: self::int($mysql, 'click_filter_entry_id'),
+            publisherUserId: self::int($mysql, 'publisher_user_id'),
         );
     }
 
