@@ -85,6 +85,9 @@ var searchTasks = []searchTask{
 		Phrases: []string{"offline conversions csv", "google ads offline conversions",
 			"upload conversions to google ads", "gclid upload", "microsoft ads offline conversions", "msclkid upload",
 			"bing offline conversions", "scheduled conversion upload"}},
+	{Run: "p202 conversion inbound-log --outcome refused", Pages: []string{"Setup › Inbound Log"},
+		Phrases: []string{"postback log", "refused postbacks", "why a postback failed", "conversions not showing",
+			"ipn log", "rejected pixel", "inbound requests"}},
 
 	// Overview
 	{Run: "p202 report breakdown --breakdown campaign", Pages: []string{"Overview › Campaign Overview"},

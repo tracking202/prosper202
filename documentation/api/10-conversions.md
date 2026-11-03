@@ -11,6 +11,7 @@ List, inspect, manually create, and delete conversions.
 | `GET` | `/conversions/match-methods` | Each campaign's conversions by how their click was found ([below](#how-each-conversions-click-was-found)) |
 | `GET` | `/conversions/offline-export` | The conversions as Google Ads' or Microsoft Advertising's offline conversion import CSV ([below](#offline-conversion-files)) |
 | `GET` | `/conversions/offline-export/summary` | What that file holds, and why each other conversion is left out |
+| `GET` | `/conversions/inbound-log` | The postbacks, pixels and payment notifications received, and why each was refused ([below](#inbound-log)) |
 | `GET` | `/offline-conversions/{key}` | A fetch URL made on Setup › Offline Conversions: the file, with no API key |
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
@@ -105,6 +106,54 @@ netted (a reversal is under its own request's method). A role without access
 to campaign data gets the three figures as `null` and `masked: true`. Group
 Overview's **Match method** level shows the same split by click time, with
 each group's clicks and cost.
+
+## Inbound log
+
+`GET /conversions/inbound-log` lists the requests the postback (`pb`,
+`gpb`), pixel (`px`, `gpx`, `upx`) and payment notification (`clickbank`,
+`jvzoo`, `paykickstart`) endpoints answered, newest first, with the status
+the sender got and why: the same list as Setup › Inbound Log. It needs the
+role's access to the Setup section. An admin also gets the requests no
+account could be found for (an unknown campaign, a signature no stored key
+verifies), with `user_id` null. The newest 5,000 requests per account are
+kept.
+
+| Parameter | Description |
+| --------- | ----------- |
+| `outcome` | `refused` (recorded nothing), `accepted`, or one outcome such as `unknown_click` |
+| `endpoint` | One of the endpoints above |
+| `limit` | 1 to 500 (50) |
+| `before` | Only requests older than this `inbound_id`: the previous page's `next_before` |
+
+```json
+{
+  "data": [
+    {
+      "inbound_id": 812,
+      "received_at": 1793000000,
+      "endpoint": "jvzoo",
+      "method": "POST",
+      "http_status": 403,
+      "accepted": false,
+      "outcome": "unverified",
+      "reason": "The notification's cverify does not verify with any JVZoo secret key stored in Prosper202 (Account > API integrations > JVZoo); nothing was recorded.",
+      "user_id": null,
+      "click_id": null,
+      "conversion_id": null,
+      "transaction_id": null,
+      "fields": {"ctransaction": "SALE", "ctransreceipt": "ORD-20391", "ctransamount": "49.00", "ccustemail": "[redacted]", "cverify": "[redacted]"}
+    }
+  ],
+  "next_before": null,
+  "kept_per_account": 5000
+}
+```
+
+`accepted` is true for `recorded`, `reversed`, `duplicate`, `test`,
+`ignored` and `event_recorded`; every other outcome recorded nothing.
+`fields` keeps the request's fields with every signature, key, token, IP
+address, email, name, phone and street address replaced by `[redacted]`; a
+ClickBank notification's encrypted body is never kept.
 
 ## Offline conversion files
 

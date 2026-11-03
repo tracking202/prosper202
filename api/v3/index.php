@@ -553,6 +553,14 @@ try {
             $r->get('/offline-export', fn() => $crud($cls)->export($queryParams));
             $r->get('/offline-export/summary', fn() => $crud($cls)->summary($queryParams));
         }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_campaign_data'); }]);
+        // Setup › Inbound Log: asked as the page asks; an admin also sees the requests no account was found for.
+        $router->group('/conversions', function (Router $r) use ($db, $auth, $actorUserId, $queryParams) {
+            $r->get('/inbound-log', fn() => (new \Api\V3\Controllers\InboundLogController(
+                $db,
+                $actorUserId,
+                $auth->hasPermission($db, 'add_users')
+            ))->list($queryParams));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_setup_section'); }]);
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));

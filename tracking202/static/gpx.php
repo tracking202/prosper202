@@ -13,6 +13,7 @@ echo base64_decode("R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
+p202InboundLogWatch($db, 'gpx');
 
 //get the aff_camapaign_id
 $mysql['click_id'] = 0;
@@ -30,6 +31,7 @@ $mysql['cid'] = (string) $campaignIdFromRequest;
 $requestedClick = p202ClickIdFromRequest($_GET, $_COOKIE, $campaignIdFromRequest);
 if ($requestedClick['malformed'] !== null) {
     error_log('gpx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
+    \Prosper202\InboundLog\RequestLog::current()?->refuse('malformed_click', 'The ' . $requestedClick['malformed'] . ' does not hold a click id.');
     exit;
 }
 // How the click was found, kept on the conversion (MatchMethod): the
@@ -61,6 +63,7 @@ if ($requestedClick['click_id'] !== null) {
 if (is_numeric($mysql['click_id'])) {
 
     if ((int) $mysql['click_id'] <= 0) {
+        \Prosper202\InboundLog\RequestLog::current()?->refuse('no_click', 'Nothing named a click, and the same-IP fallback found none.');
         return; // nothing named a click, and none from this address
     }
     // The click's latest visit, which the conversion credits (p202PixelClickSql()).
@@ -72,6 +75,8 @@ if (is_numeric($mysql['click_id'])) {
     $cpa_row = p202FetchRow($cpa_result, $cpa_sql);
 	if (!$cpa_row) {
 		// Unknown click id; nothing to convert.
+		\Prosper202\InboundLog\RequestLog::current()?->click((int) $mysql['click_id']);
+		\Prosper202\InboundLog\RequestLog::current()?->legacyResult('unknown_click');
 		return;
 	}
 
@@ -85,12 +90,16 @@ if (is_numeric($mysql['click_id'])) {
 		$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, $matchedBy, ['browser' => false]);
 	} catch (\Throwable $webEventError) {
 		error_log('gpx: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
+		\Prosper202\InboundLog\RequestLog::current()?->refuse('failed', 'The event could not be recorded just now.');
 		return;
 	}
 	if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
 		if ($webEvent['status'] !== 'recorded') {
 			error_log('gpx: event refused for click ' . $mysql['click_id'] . ' (' . $webEvent['status'] . '): '
 				. ($webEvent['message'] ?? $webEvent['reason'] ?? ''));
+			\Prosper202\InboundLog\RequestLog::current()?->refuse('event_' . $webEvent['status'], (string) ($webEvent['message'] ?? $webEvent['reason'] ?? ''));
+		} else {
+			\Prosper202\InboundLog\RequestLog::current()?->converted('event_recorded', null, null, 'The event was recorded.');
 		}
 		return;
 	}
@@ -127,6 +136,7 @@ if (is_numeric($mysql['click_id'])) {
         // The conversion keeps the address under the setting of the click's
         // account (p202ApplyOwnerPrivacy()).
         p202ApplyOwnerPrivacy($cpa_row['user_id'] ?? null);
+        \Prosper202\InboundLog\RequestLog::current()?->account($cpa_row['user_id'] ?? null);
 		try {
 		$conversionResult = p202RecordConversion(
 			$db,
@@ -154,12 +164,17 @@ if (is_numeric($mysql['click_id'])) {
 		);
 		} catch (\Throwable $conversionError) {
 			error_log('gpx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
+			\Prosper202\InboundLog\RequestLog::current()?->refuse('failed', 'The conversion could not be recorded just now.');
 		}
 		$conversionId = $conversionResult['conv_id'];
 		if ($conversionId > 0) {
 			p202LinkConversionIdentity($db, (int) $mysql['click_id'], $_GET);
 		}
 
+	} else {
+		\Prosper202\InboundLog\RequestLog::current()?->account($cpa_row['user_id'] ?? null);
+		\Prosper202\InboundLog\RequestLog::current()?->click((int) $mysql['click_id']);
+		\Prosper202\InboundLog\RequestLog::current()?->legacyResult('already_lead');
 	}
 }
 

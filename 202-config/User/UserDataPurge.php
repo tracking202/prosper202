@@ -145,6 +145,8 @@ final class UserDataPurge
     public const CONVERSION_STATEMENTS = [
         'DELETE FROM 202_conversion_uploads WHERE user_id = ?',
         'DELETE FROM 202_offline_conversion_names WHERE user_id = ?',
+        // The requests the inbound log kept for the account.
+        'DELETE FROM 202_inbound_log WHERE user_id = ?',
     ];
 
     /** Queued traffic-source postbacks, and where corrections to them would go: a deleted account's never go out. */
