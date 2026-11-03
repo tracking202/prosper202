@@ -1895,8 +1895,8 @@ p202 system info                    # versions (and database_upgrade_needed), PH
 p202 system login-log --limit 100   # sign-in attempts: user name, time, IP, status (default 50)
 p202 system login-log --status not_completed  # right password, but a database failure stopped the
                                     # sign-in (the throttle counts failed attempts alone)
-p202 system integrations --wide     # the INS/IPN/ZPN/webhook URLs to paste into ClickBank, JVZoo,
-                                    # Zaxaa, Slack, PayKickstart; secret_stored, never the secret
+p202 system integrations --wide     # the INS/IPN/ZPN URLs to paste into ClickBank, JVZoo,
+                                    # Zaxaa, PayKickstart; secret_stored, never the secret
 
 p202 system retention show          # auto_delete_days, and any scheduled one-off deletion
 p202 system retention set --days 180          # asks when it keeps less than now; --force skips
