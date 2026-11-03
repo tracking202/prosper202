@@ -56,19 +56,19 @@ final class FacebookPixelAssistantScript
         }
         try {
             $settings = self::config($conn, $userId, $landingPageId, $ppcAccountId, $clickId, $cache, $now ?? time());
+            if ($settings === null) {
+                return '';
+            }
+            $json = json_encode(
+                $settings,
+                JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR
+            );
         } catch (\Throwable $e) {
             error_log('p202 Bot202 Facebook Pixel Assistant: landing page ' . $landingPageId
                 . ' could not be read; its Meta Pixel events are not sent for click ' . $clickId . ': ' . $e->getMessage());
 
             return '';
         }
-        if ($settings === null) {
-            return '';
-        }
-        $json = json_encode(
-            $settings,
-            JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR
-        );
 
         return "\nif (typeof window.p202FbPixelAssistant === 'function') { window.p202FbPixelAssistant(" . $json . "); }\n";
     }
@@ -218,9 +218,10 @@ final class FacebookPixelAssistantScript
 
         $stmt = $conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ?');
         $conn->bind($stmt, 'i', [$userId]);
-        $currency = self::text($conn->fetchOne($stmt)['user_account_currency'] ?? 'USD');
+        // No preferences row is no known currency: no value, rather than a guessed USD.
+        $currency = self::text($conn->fetchOne($stmt)['user_account_currency'] ?? null);
         if (preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
-            error_log('p202 Bot202 Facebook Pixel Assistant: user ' . $userId . '\'s currency is not a currency code; no value sent');
+            error_log('p202 Bot202 Facebook Pixel Assistant: user ' . $userId . '\'s currency is unknown or not a currency code; no value sent');
 
             return [];
         }

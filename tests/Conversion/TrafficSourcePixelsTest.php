@@ -187,4 +187,18 @@ final class TrafficSourcePixelsTest extends TestCase
         );
         self::assertNull(TrafficSourcePixels::facebookPurchase('x', ['payout' => '5'], 'USD'));
     }
+
+    /** An account whose currency is unknown (no preferences row) sends no value rather than a guessed USD. */
+    public function testAnUnknownCurrencySendsNoValue(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows('FROM 202_ppc_account_pixels WHERE ppc_account_id = ?', [
+            ['pixel_id' => 7, 'pixel_code' => '123456789012345', 'pixel_type_id' => 6],
+        ]);
+
+        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '24.5', 'transactionid' => 'T'], static fn (): bool => true);
+
+        self::assertStringContainsString('ev=Purchase', $out['markup']);
+        self::assertStringNotContainsString('cd%5B', $out['markup']);
+    }
 }

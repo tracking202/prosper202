@@ -211,4 +211,24 @@ final class FacebookPixelAssistantScriptTest extends TestCase
             $source
         );
     }
+
+    /** No preferences row is no known currency: no value, not a guessed USD (logged). */
+    public function testAnUnknownCurrencySendsNoValue(): void
+    {
+        $db = $this->db(['b202_fbpa_dynamic_epv' => '1']);
+        $db->whenQueryContainsReturnRows(self::CURRENCY, []);
+        $log = (string) tempnam(sys_get_temp_dir(), 'p202-fbpa-log');
+        $previous = ini_set('error_log', $log);
+        try {
+            $settings = self::settings(FacebookPixelAssistantScript::forClick(new Connection($db), 7, 41, 3, 1, true));
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+        $logged = (string) file_get_contents($log);
+        unlink($log);
+
+        self::assertArrayNotHasKey('value', $settings);
+        self::assertArrayNotHasKey('currency', $settings);
+        self::assertStringContainsString("user 7's currency is unknown", $logged);
+    }
 }

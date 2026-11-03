@@ -247,7 +247,7 @@ final class TrafficSourcePixels
         return "<img src='{$src}' height='1' width='1' style='display:none' alt='' />\n";
     }
 
-    /** The account's owner's currency (202_users_pref), USD when unset, '' when unreadable. */
+    /** The account's owner's currency (202_users_pref); '' when unknown or unreadable. */
     private static function accountCurrency(Connection $conn, int $ppcAccountId): string
     {
         try {
@@ -265,7 +265,8 @@ final class TrafficSourcePixels
             return '';
         }
 
-        return (string) ($row['user_account_currency'] ?? 'USD');
+        // No such account or preferences row is no known currency: '' sends no value.
+        return is_string($row['user_account_currency'] ?? null) ? $row['user_account_currency'] : '';
     }
 
     /**
