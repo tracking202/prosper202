@@ -483,7 +483,18 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // cache; carry it into the ledger before this row changes it.
         $ledger->ensureManaged($clickId, $userId);
 
-        if ($reverses !== null) {
+        if ($reverses !== null && $reversesCarried) {
+            // Capped under the lock, so concurrent refunds cannot take back more than is left.
+            $left = $this->carriedLeft($reverses, $userId);
+            if ($left <= 0) {
+                throw new ReversalException(
+                    'Nothing is left of the value click ' . $clickId . ' carried from before the upgrade to take'
+                    . ' transaction id "' . $transactionId . '" back from.',
+                    ReversalException::NO_TARGET
+                );
+            }
+            $amountUnits = -min(abs($explicitPayout ?? $left), $left);
+        } elseif ($reverses !== null) {
             $amountUnits = -abs($explicitPayout ?? Amount::toUnits((string) $reverses['click_payout']));
         } elseif ($explicitPayout !== null) {
             $amountUnits = $explicitPayout;
@@ -666,12 +677,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     }
 
     /**
-     * What follows a committed record(): the report row and the bridge event.
-     *
-     * @param array<string, mixed> $prepared
-     * @param array<string, mixed> $result
-     */
-    /**
      * The click's live legacy baseline, carried in first when the click is
      * still a pre-ledger lead (ensureManaged()), or null when it has none.
      * Runs under the click's lock.
@@ -682,7 +687,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     {
         $ledger->ensureManaged($clickId, $userId);
         $stmt = $this->conn->prepareWrite(
-            'SELECT conv_id, click_payout, deleted FROM 202_conversion_logs
+            'SELECT conv_id, click_payout, deleted, superseded_reason FROM 202_conversion_logs
              WHERE click_id = ? AND user_id = ? AND dedupe_key = ? AND reverses_conv_id IS NULL AND deleted = 0
              LIMIT 1'
         );
@@ -691,6 +696,36 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         return $this->conn->fetchOne($stmt);
     }
 
+    /**
+     * What is left of a legacy baseline, in positive units, read under the
+     * click's lock: nothing once a later sale superseded it, else its value
+     * less what live reversals took back from it.
+     *
+     * @param array<string, mixed> $baseline from carriedValue()
+     */
+    private function carriedLeft(array $baseline, int $userId): int
+    {
+        if ($baseline['superseded_reason'] !== null) {
+            return 0;
+        }
+        $left = abs(Amount::toUnits((string) $baseline['click_payout']));
+        $stmt = $this->conn->prepareWrite(
+            'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0'
+        );
+        $this->conn->bind($stmt, 'ii', [(int) $baseline['conv_id'], $userId]);
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $left -= abs(Amount::toUnits((string) $row['click_payout']));
+        }
+
+        return max(0, $left);
+    }
+
+    /**
+     * What follows a committed record(): the report row and the bridge event.
+     *
+     * @param array<string, mixed> $prepared
+     * @param array<string, mixed> $result
+     */
     private function afterRecordCommit(int $userId, array $prepared, array $result): void
     {
         $clickId = (int) $prepared['clickId'];

@@ -284,25 +284,16 @@ final class Processor
                 . ', more than the sale recorded';
             $amount = Amount::fromUnits($sale['units']);
         }
-        // A sale credited before the upgrade left no row to name: its refund
-        // takes its amount back from the value the click carried over.
-        $carried = $sale === null && $amount !== null && $provider instanceof ReversesPreUpgradeSales
-            ? $this->preUpgradeValueLeft($clickId, $owner)
-            : null;
-        if ($carried !== null) {
-            if (abs(Amount::toUnits((string) $amount)) > $carried) {
-                $by = self::units($carried) . ', all that is left of it: this ' . $n->event . ' states ' . $amount;
-                $amount = Amount::fromUnits($carried);
-            }
-            $by .= ', from the value the click carried from before the upgrade (no sale under ' . $original
-                . ' was recorded since)';
-        }
+        // A sale credited before the upgrade left no row to name: the writer
+        // takes its refund back from the value the click carried over, capped
+        // under the click lock at what is left of it.
+        $carriedPath = $sale === null && $amount !== null && $provider instanceof ReversesPreUpgradeSales;
         try {
             $result = $this->record($clickId, $owner, $provider, $request, [
                 'transaction_id' => $original,
                 'reversal' => true,
                 'reversal_ref' => $reference,
-                'reverses_carried_value' => $carried !== null,
+                'reverses_carried_value' => $carriedPath,
                 'use_pixel_payout' => $amount !== null,
                 'payout' => $amount ?? '',
                 'conv_time' => $time,
@@ -322,7 +313,16 @@ final class Processor
                 $owner
             );
         }
+        $taken = $carriedPath && $result['conv_id'] > 0 ? $this->carriedTaken($result['conv_id'], $owner) : null;
         if ($result['recorded']) {
+            if ($taken !== null) {
+                if ($taken !== abs(Amount::toUnits((string) $amount))) {
+                    $by = self::units($taken) . ', all that was left of it: this ' . $n->event . ' states ' . $amount;
+                }
+                $by .= ', from the value the click carried from before the upgrade (no sale under ' . $original
+                    . ' was recorded since)';
+            }
+
             return new Outcome(
                 OutcomeKind::REVERSED,
                 'Reversed transaction ' . $original . ' on click ' . $clickId . ' by '
@@ -332,7 +332,7 @@ final class Processor
             );
         }
         if ($result['reason'] === 'duplicate') {
-            if ($carried !== null) {
+            if ($taken !== null) {
                 // Keyed by this notification, so a hit is this refund sent again.
                 return new Outcome(
                     OutcomeKind::DUPLICATE,
@@ -465,52 +465,22 @@ final class Processor
     }
 
     /**
-     * What a value the click carried from before the upgrade still holds, in
-     * positive units, or null when it holds nothing or the click's value is
-     * the ledger's own: its legacy baseline less what was taken back from it,
-     * or, before any ledger write, the value its lead visit holds
-     * (MysqlConversionLedger::ensureManaged() carries that one over).
+     * What a reversal row took back, in positive units, when the row it nets
+     * against is a legacy baseline (the value a click carried from before
+     * the ledger), or null when it reverses a sale of its own.
      */
-    private function preUpgradeValueLeft(int $clickId, int $owner): ?int
+    private function carriedTaken(int $conversionId, int $owner): ?int
     {
         $conn = new Connection($this->db);
         $stmt = $conn->prepareRead(
-            'SELECT conv_id, click_payout FROM 202_conversion_logs WHERE click_id = ? AND user_id = ? AND dedupe_key = ?'
-            . ' AND reverses_conv_id IS NULL AND deleted = 0 AND superseded_reason IS NULL LIMIT 1'
+            'SELECT r.click_payout FROM 202_conversion_logs r'
+            . ' JOIN 202_conversion_logs s ON s.conv_id = r.reverses_conv_id AND s.user_id = r.user_id'
+            . ' WHERE r.conv_id = ? AND r.user_id = ? AND s.dedupe_key = ? LIMIT 1'
         );
-        $conn->bind($stmt, 'iis', [$clickId, $owner, DedupeKey::legacy()]);
-        $baseline = $conn->fetchOne($stmt);
-        if ($baseline !== null) {
-            $left = abs(Amount::toUnits((string) $baseline['click_payout']));
-            $taken = $conn->prepareRead(
-                'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0'
-            );
-            $conn->bind($taken, 'ii', [(int) $baseline['conv_id'], $owner]);
-            foreach ($conn->fetchAll($taken) as $row) {
-                $left -= abs(Amount::toUnits((string) $row['click_payout']));
-            }
+        $conn->bind($stmt, 'iis', [$conversionId, $owner, DedupeKey::legacy()]);
+        $row = $conn->fetchOne($stmt);
 
-            return $left > 0 ? $left : null;
-        }
-
-        $managed = $conn->prepareRead(
-            "SELECT 1 FROM 202_conversion_logs WHERE click_id = ?"
-            . " AND (superseded_reason IS NULL OR superseded_reason <> 'pre_ledger') LIMIT 1"
-        );
-        $conn->bind($managed, 'i', [$clickId]);
-        if ($conn->fetchOne($managed) !== null) {
-            return null;
-        }
-        $lead = $conn->prepareRead(
-            'SELECT c.click_payout FROM 202_clicks AS c LEFT JOIN 202_clicks_rotator AS r ON r.click_id = c.click_id'
-            . ' WHERE c.click_id = ? AND c.user_id = ? AND c.click_lead = 1 ' . LatestVisit::orderBy('c', 'r')
-            . ' LIMIT 1'
-        );
-        $conn->bind($lead, 'ii', [$clickId, $owner]);
-        $row = $conn->fetchOne($lead);
-        $value = $row === null ? 0 : Amount::toUnits((string) $row['click_payout']);
-
-        return $value > 0 ? $value : null;
+        return $row === null ? null : abs(Amount::toUnits((string) $row['click_payout']));
     }
 
     /** The outcome with a sentence added to its answer. */

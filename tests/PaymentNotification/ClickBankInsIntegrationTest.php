@@ -511,10 +511,14 @@ final class ClickBankInsIntegrationTest extends TestCase
         // Another pre-upgrade receipt takes back at most what is left.
         $rebill = $this->post(['receipt' => 'OLDBILL1', 'totalAccountAmount' => '-20.00'] + $refund, self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $rebill);
-        self::assertStringContainsString('by 17, all that is left of it: this RFND states 20.00', $rebill->message);
+        self::assertStringContainsString('by 17, all that was left of it: this RFND states 20.00', $rebill->message);
         self::assertSame('0.00000', self::clickPayout());
+        // Its retry, once nothing is left, is still that refund, not one with nothing to reverse.
+        $retry = $this->post(['attemptCount' => 2, 'receipt' => 'OLDBILL1', 'totalAccountAmount' => '-20.00'] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $retry);
         $more = $this->post(['receipt' => 'OLDBILL2', 'totalAccountAmount' => '-5.00'] + $refund, self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::NOTHING_TO_REVERSE, 404, $more);
+        self::assertStringContainsString('Nothing is left of the value click', $more->message);
         self::assertCount(3, self::conversions());
     }
 
@@ -639,7 +643,8 @@ final class ClickBankInsIntegrationTest extends TestCase
     public function testARefundOfMoreThanTheSaleTakesBackTheWholeSale(): void
     {
         $this->post([], self::FIRST_KEY);
-        $refund = ['transactionType' => 'RFND', 'totalAccountAmount' => '-50.00'];
+        // Its time fixed, so a retry a second later is the same notification.
+        $refund = ['transactionType' => 'RFND', 'totalAccountAmount' => '-50.00', 'transactionTime' => self::stated(time())];
 
         $outcome = $this->post($refund, self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);
