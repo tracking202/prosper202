@@ -293,6 +293,12 @@ final class LinkAssistantTest extends TestCase
                 'add',
                 null,
             ],
+            'Zaxaa: an existing sid segment' => [
+                'https://zaxaa.com/o/12345678/1/mine',
+                'https://zaxaa.com/o/12345678/1/[[subid]]',
+                'replace',
+                'mine',
+            ],
             'Zaxaa: a trailing slash' => [
                 'https://zaxaa.com/o/12345678/0/',
                 'https://zaxaa.com/o/12345678/0/[[subid]]',
@@ -345,6 +351,7 @@ final class LinkAssistantTest extends TestCase
             ],
             'Zanox, merged into Awin' => ['https://ad.zanox.com/ppc/?12345C67890&ULP=https://shop.example'],
             'a shop path shaped like /c/a/b/c is not an impact.com link' => ['https://shop.example/c/shoes/men/boots'],
+            'a Zaxaa id segment is not a 0/1 flag followed by a sub id' => ['https://zaxaa.com/o/1/10'],
             'a network host in a parameter value' => ['https://shop.example/?r=hop.clickbank.net'],
             'a network link in a parameter value' => ['https://shop.example/go?u=https://www.ebay.com/itm/1?campid=5'],
             'a network path in the fragment' => ['https://shop.example/#/click-1-2'],
@@ -383,18 +390,12 @@ final class LinkAssistantTest extends TestCase
 
     public function testThePageScriptSuggestsWhatTheClassSuggests(): void
     {
-        $found = trim((string) shell_exec('command -v node 2>/dev/null'));
-        if ($found === '') {
-            // CI's runners carry node: a skip there would leave the seam unchecked.
-            if (getenv('CI') !== false && getenv('CI') !== '') {
-                self::fail('node is not on PATH in CI; the page script must be compared with the class');
-            }
-            self::markTestSkipped('node is not installed; the page script cannot be run here');
-        }
+        $found = self::node();
         $urls = array_merge(
             array_column(self::networkLinks(), 1),
             array_column(self::placements(), 0),
             array_column(self::noSuggestion(), 0),
+            self::longLinks(),
         );
         $input = tempnam(sys_get_temp_dir(), 'p202-la');
         self::assertNotFalse($input);
@@ -460,8 +461,91 @@ final class LinkAssistantTest extends TestCase
             $boxes = substr_count($html, 'data-p202-link-assistant="#' . $id . '"');
             self::assertSame(1, $boxes, "$id has one suggestion box");
         }
+        // The page needs a database to render; its call is one template line
+        // of its own, at the top level, like the Setup script tag beside it.
         $page = (string) file_get_contents(dirname(__DIR__, 2) . '/tracking202/setup/aff_campaigns.php');
-        self::assertSame(1, substr_count($page, 'p202_setup_link_assistant_script($base)'));
+        $line = '~^<\?php echo p202_setup_link_assistant_script\(\$base\); \?>$~m';
+        self::assertSame(1, preg_match_all($line, $page));
+        self::assertSame(1, preg_match_all('~^<\?php echo p202_setup_script_tag\(\$base\); \?>$~m', $page));
+    }
+
+    /**
+     * Pasted links can be long; no pattern may backtrack into a PCRE error,
+     * which would read as "no network" on one side only.
+     *
+     * @return list<string>
+     */
+    private static function longLinks(): array
+    {
+        $params = str_repeat('x=1&', 4000);
+
+        return [
+            'https://www.ebay.com/itm/1?' . $params . 'campid=5',
+            'https://www.ebay.com/itm/1?' . $params,
+            'https://shop.example/' . str_repeat('c/', 4000) . '?' . $params,
+        ];
+    }
+
+    public function testALongLinkIsReadWithoutAPatternError(): void
+    {
+        self::assertSame('ebay', LinkAssistant::suggest(self::longLinks()[0])['network'] ?? null);
+        foreach (self::longLinks() as $link) {
+            LinkAssistant::suggest($link);
+            self::assertSame(PREG_NO_ERROR, preg_last_error(), preg_last_error_msg());
+            foreach (LinkAssistant::networks() as $network) {
+                self::assertNotFalse(preg_match(LinkAssistant::regex($network['match']), $link), $network['id']);
+            }
+        }
+    }
+
+    /**
+     * The page wiring, run against a stand-in document: a typed link shows
+     * the box, the field changes only on the button, "No thanks" hides it.
+     */
+    public function testThePageWiringSuggestsAndAppliesOnlyOnAClick(): void
+    {
+        $node = self::node();
+        $input = tempnam(sys_get_temp_dir(), 'p202-la');
+        self::assertNotFalse($input);
+        try {
+            $json = json_encode(LinkAssistant::networks(), JSON_THROW_ON_ERROR);
+            self::assertNotFalse(file_put_contents($input, $json));
+            $command = escapeshellarg($node)
+                . ' ' . escapeshellarg(__DIR__ . '/link-assistant-dom-harness.js')
+                . ' ' . escapeshellarg(dirname(__DIR__, 2) . '/202-js/p202-link-assistant.js')
+                . ' ' . escapeshellarg($input) . ' 2>&1';
+            exec($command, $lines, $status);
+        } finally {
+            @unlink($input);
+        }
+        $out = implode("\n", $lines);
+        self::assertSame(0, $status, "the page wiring ran under node: $out");
+        $seen = json_decode($out, true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame(['hidden' => true, 'buttons' => []], $seen['atLoad']);
+        self::assertSame(['hidden' => false, 'buttons' => ['Add [[subid]]', 'No thanks']], $seen['typed']);
+        self::assertSame('https://paykstrt.com/1/2', $seen['valueBeforeClick'], 'nothing changes before the click');
+        self::assertTrue($seen['sameButtonAfterChange'], 'the blur before a click does not rebuild the button');
+        self::assertSame('https://paykstrt.com/1/2?tid=[[subid]]', $seen['valueAfterClick']);
+        self::assertSame(['hidden' => true, 'buttons' => []], $seen['afterApply']);
+        self::assertSame(['hidden' => false, 'buttons' => ['Replace', 'No thanks']], $seen['replace']);
+        self::assertSame(['hidden' => true, 'buttons' => []], $seen['afterDismiss']);
+        $kept = 'https://network.go2cloud.org/aff_c?offer_id=1&aff_id=2&aff_sub=mine';
+        self::assertSame($kept, $seen['valueAfterDismiss'], 'No thanks leaves the field alone');
+        self::assertSame(['hidden' => true, 'buttons' => []], $seen['unknown']);
+    }
+
+    private static function node(): string
+    {
+        $found = trim((string) shell_exec('command -v node 2>/dev/null'));
+        if ($found === '') {
+            // CI's runners carry node: a skip there would leave the seam unchecked.
+            if (getenv('CI') !== false && getenv('CI') !== '') {
+                self::fail('node is not on PATH in CI; the page script must be run');
+            }
+            self::markTestSkipped('node is not installed; the page script cannot be run here');
+        }
+
+        return $found;
     }
 
     public function testThePageCarriesTheTableAndTheScript(): void
@@ -471,8 +555,9 @@ final class LinkAssistantTest extends TestCase
         $table = '~<script type="application/json" id="p202-link-networks">(.*?)</script>~';
         self::assertSame(1, preg_match($table, $html, $m));
         self::assertSame(LinkAssistant::networks(), json_decode($m[1], true, 512, JSON_THROW_ON_ERROR));
-        $src = 'https://track.example/p202/202-js/p202-link-assistant.js?v=1';
-        self::assertStringContainsString('<script src="' . $src . '" defer></script>', $html);
+        $hash = substr((string) md5_file(dirname(__DIR__, 2) . '/202-js/p202-link-assistant.js'), 0, 12);
+        $src = 'https://track.example/p202/202-js/p202-link-assistant.js?v=' . $hash;
+        self::assertStringContainsString('<script src="' . $src . '" defer></script>', $html, 'versioned by content');
         self::assertSame(
             '<div class="mt-2" data-p202-link-assistant="#aff_campaign_url" hidden></div>',
             p202_setup_link_assistant('aff_campaign_url')

@@ -42,7 +42,7 @@ final class LinkAssistant
         ['id' => 'warriorplus', 'name' => 'WarriorPlus', 'param' => 'sid', 'place' => 'segment',
             'match' => 'warriorplus\.com/o2/[av]/\w+/\w+'],
         ['id' => 'zaxaa', 'name' => 'Zaxaa', 'param' => 'sid', 'place' => 'segment',
-            'match' => 'zaxaa\.com/o/[0-9]+/[0-1]'],
+            'match' => 'zaxaa\.com/o/[0-9]+/[0-1](/|\?|$)'],
         ['id' => 'rakuten', 'name' => 'Rakuten Advertising', 'param' => 'u1', 'place' => 'query',
             'match' => 'click\.linksynergy\.com/(fs-bin/click|deeplink)\?id='],
         ['id' => 'shareasale', 'name' => 'ShareASale', 'param' => 'afftrack', 'place' => 'query',
@@ -54,7 +54,7 @@ final class LinkAssistant
         ['id' => 'linkconnector', 'name' => 'LinkConnector', 'param' => 'atid', 'place' => 'query',
             'match' => 'linkconnector\.com/ta\.php\?lc='],
         ['id' => 'ebay', 'name' => 'eBay Partner Network', 'param' => 'customid', 'place' => 'query',
-            'match' => '//(www\.|m\.)?ebay\.[a-z.]+/[^?#]*\?([^#]*&)?campid=[0-9]+'],
+            'match' => '//(www\.|m\.)?ebay\.[a-z.]+/[^#]*[?&]campid=[0-9]+'],
         ['id' => 'partnerize', 'name' => 'Partnerize', 'param' => 'pubref', 'place' => 'pair',
             'match' => 'prf\.hn/click/camref:\w+'],
         ['id' => 'flexoffers', 'name' => 'FlexOffers', 'param' => 'fobs', 'place' => 'query',
@@ -218,7 +218,7 @@ final class LinkAssistant
         }
         $end = $m[0][1] + strlen($m[0][0]);
         $value = trim(substr($path, $end), '/');
-        $suggested = substr($path, 0, $end) . '/' . self::TOKEN . $query . $fragment;
+        $suggested = rtrim(substr($path, 0, $end), '/') . '/' . self::TOKEN . $query . $fragment;
 
         return [$suggested, $value === '' ? 'add' : 'replace', $value === '' ? null : $value];
     }

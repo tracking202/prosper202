@@ -61,7 +61,7 @@
         }
         var end = m.index + m[0].length;
         var value = path.slice(end).replace(/^\/+|\/+$/g, '');
-        return [path.slice(0, end) + '/' + TOKEN + query + fragment, value === '' ? 'add' : 'replace', value === '' ? null : value];
+        return [path.slice(0, end).replace(/\/+$/, '') + '/' + TOKEN + query + fragment, value === '' ? 'add' : 'replace', value === '' ? null : value];
     }
 
     function isLinkOf(url, pattern) {

@@ -234,7 +234,9 @@ function p202_setup_link_assistant_script(string $base): string
         \Prosper202\Setup\LinkAssistant::networks(),
         JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
     );
-    $src = rtrim($base, '/') . '/202-js/p202-link-assistant.js?v=1';
+    // Versioned by content: a cached script must not run a newer table.
+    $hash = @md5_file(dirname(__DIR__, 3) . '/202-js/p202-link-assistant.js');
+    $src = rtrim($base, '/') . '/202-js/p202-link-assistant.js?v=' . ($hash === false ? '0' : substr($hash, 0, 12));
 
     return '<script type="application/json" id="p202-link-networks">' . $networks . '</script>'
         . '<script src="' . p202_setup_e($src) . '" defer></script>';
