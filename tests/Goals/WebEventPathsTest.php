@@ -46,6 +46,7 @@ final class WebEventPathsTest extends TestCase
         'tracking202/static/paykickstart.php' => 'PayKickstart\'s IPN names its own events',
         // JVZoo's JVZIPN names its own transaction types (SALE, RFND, ...).
         'tracking202/static/jvzoo.php' => 'JVZoo\'s JVZIPN names its own events',
+        'tracking202/static/zpn.php' => 'Zaxaa\'s ZPN names its own transaction types',
     ];
 
     /**
@@ -180,7 +181,7 @@ final class WebEventPathsTest extends TestCase
             static fn (string $p): string => substr($p, strlen(self::root()) + 1),
             glob(self::root() . '/tracking202/static/*.php') ?: []
         );
-        $builders = ['tracking202/static/cb202.php', 'tracking202/static/jvzoo.php', 'tracking202/static/paykickstart.php'];
+        $builders = ['tracking202/static/cb202.php', 'tracking202/static/jvzoo.php', 'tracking202/static/paykickstart.php', 'tracking202/static/zpn.php'];
         self::assertSame($builders, array_values(array_filter(
             $endpoints,
             static fn (string $relative): bool => self::constructions(self::tokens($relative)) !== []
