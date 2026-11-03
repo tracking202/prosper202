@@ -205,6 +205,12 @@ final class LegacySetup
         if (is_bool($value)) {
             return $value ? '1' : '0';
         }
+        if (is_float($value)) {
+            // (string) 0.00001 is "1.0E-5"; a DECIMAL column never had an exponent.
+            $fixed = rtrim(rtrim(sprintf('%.10F', $value), '0'), '.');
+
+            return $fixed === '-0' ? '0' : $fixed;
+        }
 
         return is_scalar($value) ? (string) $value : $value;
     }

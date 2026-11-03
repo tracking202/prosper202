@@ -46,6 +46,14 @@ final class LegacySetupEndpointsTest extends TestCase
         );
     }
 
+    public function testMoneyNeverTakesAnExponent(): void
+    {
+        self::assertSame(
+            ['0.00001', '12.5', '-0.25', '1', '0', '999999.99'],
+            LegacySetup::legacyValues([0.00001, 12.5, -0.25, 1.0, 0.0, 999999.99])
+        );
+    }
+
     public function testAnUnknownMethodIsRefusedBeforeTheDatabase(): void
     {
         self::assertSame(
