@@ -112,8 +112,12 @@ jobs:
           echo "The database did not become ready in time" >&2
           exit 1
 
+      # A hang fails the step (not the job), so the logs below are still kept;
+      # --debug names each test as it starts, so they show which one hung.
       - name: Run every integration suite
+        timeout-minutes: 20
         env:
+          P202_PHPUNIT: vendor/bin/phpunit --debug
           P202_TEST_DB_HOST: 127.0.0.1
           P202_TEST_DB_PORT: 3306
           P202_TEST_DB_USER: root
