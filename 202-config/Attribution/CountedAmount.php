@@ -111,9 +111,9 @@ final class CountedAmount
     {
         $r = self::reversalsAlias($row);
 
-        return "LEFT JOIN (SELECT reverses_conv_id, COUNT(*) AS n, SUM(click_payout) AS amount"
+        return "LEFT JOIN (SELECT user_id, reverses_conv_id, COUNT(*) AS n, SUM(click_payout) AS amount"
             . ' FROM 202_conversion_logs WHERE reverses_conv_id IS NOT NULL AND deleted = 0 AND payable = 1'
-            . " GROUP BY reverses_conv_id) $r ON $r.reverses_conv_id = $row.conv_id";
+            . " GROUP BY user_id, reverses_conv_id) $r ON $r.reverses_conv_id = $row.conv_id AND $r.user_id = $row.user_id";
     }
 
     private static function reversalsAlias(string $row): string
