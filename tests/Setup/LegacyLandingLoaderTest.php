@@ -33,5 +33,8 @@ final class LegacyLandingLoaderTest extends TestCase
         self::assertStringContainsString("d.getElementById('upxif')", $legacy);
         // The old snippet's own id, for browsers without currentScript.
         self::assertStringContainsString("d.getElementById('t202js')", $legacy);
+        // A 1.9.56 snippet's deferred pixel stays on (landing.php's p202_defpixel).
+        self::assertStringContainsString("own.get('defpixel') === '1' ? '&p202_defpixel=1' : ''", $legacy);
+        self::assertStringContainsString('&p202_defpixel=1', LandingPageCode::loader('//t.example/', '42', true));
     }
 }

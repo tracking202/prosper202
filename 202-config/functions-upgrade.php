@@ -4653,12 +4653,14 @@ class UPGRADE
                 \Prosper202\Database\Tables\ClickTables::purLinkPixelFires(),
                 \Prosper202\Database\Tables\GoalTables::purLinkGoalSubjects(),
             ]);
-            if (!$step_ok) {
-                error_log('Prosper202 upgrade: PurLink tables could not be installed; leaving version at 1.9.79 so the next run retries.');
-            } elseif (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
-                $prosper202_version = '1.9.80';
+            if ($step_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
+                    $prosper202_version = '1.9.80';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                }
             } else {
-                error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                error_log('Prosper202 upgrade: PurLink tables could not be installed; leaving version at 1.9.79 so the next run retries.');
             }
         }
 

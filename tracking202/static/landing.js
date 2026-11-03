@@ -10,11 +10,13 @@
   if (!m) {
     return;
   }
-  // defpixel and rsid from old snippets are dropped: landing.php ignores them.
-  var lpip = new URLSearchParams(m[2] || '').get('lpip') || '';
+  // defpixel=1 (the deferred pixel) is carried over; rsid is dropped.
+  var own = new URLSearchParams(m[2] || '');
+  var lpip = own.get('lpip') || '';
+  var defpixel = own.get('defpixel') === '1' ? '&p202_defpixel=1' : '';
   var t202id = new URLSearchParams(window.location.search).get('t202id') || '';
   var s = d.createElement('script');
-  s.src = m[1] + 'landing.php?lpip=' + encodeURIComponent(lpip) + '&t202id=' + encodeURIComponent(t202id);
+  s.src = m[1] + 'landing.php?lpip=' + encodeURIComponent(lpip) + '&t202id=' + encodeURIComponent(t202id) + defpixel;
   s.async = true;
   s.id = 'upxif';
   var first = d.getElementsByTagName('script')[0];

@@ -5,7 +5,7 @@ through your tracker, and still records the click-out and credits the
 conversion. It is your campaign URL itself, used as the link on your page: the
 landing page code fills in `[[subid]]` and the other tokens there.
 
-PurLinks were a paid 1.9.56 feature and came back in 1.9.81. Pages built for
+PurLinks were a paid 1.9.56 feature and came back in 1.9.80. Pages built for
 1.9.56 keep working; see [Upgrading from 1.9.56](#upgrading-from-1956).
 
 ## Setting one up
@@ -131,5 +131,5 @@ URL, a cookie or a referrer, and the requests send no cookies.
 - Pages carrying the 1.9.56 snippet keep working, including `defpixel=1`.
 - 1.9.56 SubIDs (`<click>-<offer>`) that networks send back after the upgrade
   are still accepted, for a click already on that offer.
-- The 1.9.81 upgrade creates the tables PurLinks need; there is nothing to
+- The 1.9.80 upgrade creates the tables PurLinks need; there is nothing to
   migrate.
