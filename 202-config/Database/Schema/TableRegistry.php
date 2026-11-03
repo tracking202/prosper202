@@ -56,6 +56,7 @@ final class TableRegistry
     public const string CLICKS_ROTATOR = '202_clicks_rotator';
     public const string CLICKS_TOTAL = '202_clicks_total';
     public const string CLICK_LATEST_VISITS = '202_click_latest_visits';
+    public const string PURLINK_EXIT_ORDER = '202_purlink_exit_order';
     public const string RECLICK_BACKFILL = '202_reclick_backfill';
     public const string CLICKS_FILTER_REASON = '202_clicks_filter_reason';
 
@@ -210,6 +211,7 @@ final class TableRegistry
     public const string GOAL_VERSIONS = '202_goal_versions';
     public const string CAMPAIGN_GOALS = '202_campaign_goals';
     public const string GOAL_SUBJECTS = '202_goal_subjects';
+    public const string PURLINK_GOAL_SUBJECTS = '202_purlink_goal_subjects';
     public const string GOAL_EVENTS = '202_goal_events';
     public const string GOAL_PROGRESS = '202_goal_progress';
     public const string GOAL_OUTCOMES = '202_goal_outcomes';

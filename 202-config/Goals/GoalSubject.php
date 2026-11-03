@@ -20,6 +20,7 @@ final class GoalSubject
 {
     public const CLICK = 'click';
     public const INSTALL = 'install';
+    public const PURLINK = 'purlink';
 
     /**
      * @param array<int, int> $rebases goal id => version
@@ -43,11 +44,14 @@ final class GoalSubject
          */
         public readonly ?FastGoalPolicy $fastGoals = null,
     ) {
-        if ($type !== self::CLICK && $type !== self::INSTALL) {
-            throw new \InvalidArgumentException('subject type must be click or install, got "' . $type . '"');
+        if ($type !== self::CLICK && $type !== self::INSTALL && $type !== self::PURLINK) {
+            throw new \InvalidArgumentException('subject type must be click, install or purlink, got "' . $type . '"');
         }
         if ($id <= 0) {
             throw new \InvalidArgumentException('subject id must be a positive integer');
+        }
+        if ($type === self::PURLINK && (($clickId ?? 0) <= 0 || ($campaignId ?? 0) <= 0)) {
+            throw new \InvalidArgumentException('a PurLink goal subject needs its click and campaign');
         }
     }
 

@@ -467,6 +467,7 @@ echo p202ClickCookieJs([
     'tracking202outbound' => (string) $outbound_site_url,
 ]);
 echo p202MintPersonalizationCookieJs($db, (int) $mysql['user_id'], $_GET, (int) $click_id, trackingEnabled());
+echo \Prosper202\Click\PurLinkPageview::forDatabase($_GET, trackingEnabled(), (int) $click_id, (int) $mysql['landing_page_id'], (int) $mysql['user_id'], $db);
 ?>
 
 }());

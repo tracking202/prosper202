@@ -427,6 +427,8 @@ if (!function_exists('p202RecordConversion')) {
      *        LTV customer identity (see p202ExtractCustomer); [] = unlinked.
      * @param list<array<string,mixed>> $items Product line items for the
      *        revenue ledger event (see p202ExtractItems); [] = none.
+     * @param string|null $purLinkSubid verified again under the route transaction when supplied
+     * @param string|null $purLinkKey installation signing key for that SubID
      * @return array{conv_id:int, duplicate:bool, transaction_id:string, dedupe_key:string, payout:string, reverses_conv_id:int}
      *         conv_id is 0 when the source click no longer exists (no orphan
      *         row is written) or an id-less hit found the click already
@@ -445,7 +447,9 @@ if (!function_exists('p202RecordConversion')) {
         string $clickPayout,
         string $transactionId = '',
         array $customer = [],
-        array $items = []
+        array $items = [],
+        ?string $purLinkSubid = null,
+        ?string $purLinkKey = null,
     ): array {
         $clickId = (int) ($log['click_id'] ?? 0);
         if ($clickId <= 0) {
@@ -479,6 +483,9 @@ if (!function_exists('p202RecordConversion')) {
             'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
             'user_agent'      => (string) ($log['user_agent'] ?? ''),
         ];
+        if (isset($log['expected_campaign_id'])) {
+            $data['expected_campaign_id'] = (int) $log['expected_campaign_id'];
+        }
         if ($usePixelPayout) {
             // An explicit amount. Without one the writer applies the campaign's
             // default — the click's current value in replace mode, the
@@ -543,16 +550,24 @@ if (!function_exists('p202RecordConversion')) {
             $data['items'] = $items;
         }
 
-        $result = $repo->record(
-            (int) ($log['user_id'] ?? 0),
-            $data,
-            $matchedBy,
-            function (int $lockedClickId, float $payout) use ($db, $clickCpa): void {
-                if (!p202ApplyConversionClickSide($db, $lockedClickId, $clickCpa)) {
-                    throw new \RuntimeException('p202RecordConversion: click update failed for click ' . $lockedClickId);
-                }
+        $clickSideUpdate = function (int $lockedClickId, float $payout) use ($db, $clickCpa): void {
+            if (!p202ApplyConversionClickSide($db, $lockedClickId, $clickCpa)) {
+                throw new \RuntimeException('p202RecordConversion: click update failed for click ' . $lockedClickId);
             }
-        );
+        };
+        if ($purLinkSubid !== null) {
+            if ($purLinkKey === null) {
+                throw new \InvalidArgumentException('A signed PurLink requires an installation key');
+            }
+            $result = (new \Prosper202\Click\PurLinkExit($conn))->recordConversion(
+                $purLinkSubid, time(), $purLinkKey, $data, $matchedBy, $clickSideUpdate
+            );
+            if ($result === null) {
+                throw new \Prosper202\Conversion\PurLinkCampaignChanged('PurLink no longer matches its click and campaign');
+            }
+        } else {
+            $result = $repo->record((int) ($log['user_id'] ?? 0), $data, $matchedBy, $clickSideUpdate);
+        }
 
         // The report row (202_dataengine) is re-rolled by the repository's
         // record() after its commit, for this path and every other writer
@@ -1041,7 +1056,7 @@ if (!function_exists('p202RecordWebEvent')) {
      * @param \Prosper202\Conversion\Ledger\MatchMethod $matchedBy how the
      *        endpoint found the click, which the event and the ledger rows it
      *        reaches carry (GoalEngine::ingest())
-     * @param array{user_id?: int, campaign_id?: int, browser?: bool, trusted?: bool} $opts
+     * @param array{user_id?: int, campaign_id?: int, expected_campaign_id?: int, browser?: bool, trusted?: bool} $opts
      *        user_id: the click must belong to that owner (px scope);
      *        campaign_id: some visit of it must be on that campaign (pb
      *        scope, p202ClickVisitedCampaign()). browser: a browser renders the
@@ -1094,7 +1109,13 @@ if (!function_exists('p202RecordWebEvent')) {
         $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, (bool) ($opts['browser'] ?? false));
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         try {
-            $result = $engine->ingest($click['user_id'], $engine->clickSubject($click['user_id'], $clickId), [$event], $matchedBy);
+            $result = $engine->ingest(
+                $click['user_id'],
+                $engine->clickSubject($click['user_id'], $clickId),
+                [$event],
+                $matchedBy,
+                expectedCampaignId: $opts['expected_campaign_id'] ?? null,
+            );
         } catch (\Prosper202\Goals\GoalEngineException $e) {
             if ($e->reason === \Prosper202\Goals\GoalEngineException::EVENT_CONFLICT) {
                 return ['status' => 'refused', 'code' => 409, 'message' => $e->getMessage()];
@@ -1111,6 +1132,82 @@ if (!function_exists('p202RecordWebEvent')) {
             p202LinkConversionIdentity($db, $clickId, $get);
         }
 
+        return ['status' => 'recorded', 'event_id' => $event->eventId, 'result' => $result, 'markup' => $notifier->markup()];
+    }
+}
+
+if (!function_exists('p202RecordPurLinkWebEvent')) {
+    /**
+     * A signed PurLink goal event: resolve its offer and write its isolated
+     * subject, event and outcomes in the same click transaction. A campaign
+     * without goals rolls that route back so the normal signed conversion
+     * writer can record its plain conversion atomically instead.
+     *
+     * @param array<string, mixed> $get
+     * @return array<string, mixed>|null
+     */
+    function p202RecordPurLinkWebEvent(mysqli $db, string $subid, string $key, array $get): ?array
+    {
+        if (!\Prosper202\Goals\WebEvents::requested($get)) {
+            return null;
+        }
+        $now = time();
+        $claims = \Prosper202\Click\PurLinkSubid::verify($subid, $now, $key);
+        if ($claims === null) {
+            return ['status' => 'not_found', 'reason' => 'unknown_click'];
+        }
+        $conn = new \Prosper202\Database\Connection($db);
+        $events = new \Prosper202\Goals\WebEvents($conn);
+        $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, false);
+        $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
+        $event = null;
+        try {
+            $done = (new \Prosper202\Click\PurLinkExit($conn))->convert(
+                $subid,
+                $now,
+                $key,
+                function (int $user, int $click, int $campaign, string $payout) use ($conn, $events, $engine, $claims, $get, $now, &$event): array {
+                    if (!$events->campaignEvaluatesGoals($user, $campaign, $now)) {
+                        throw new \Prosper202\Goals\PurLinkNoGoals();
+                    }
+                    if (p202ExtractReversal($get)['reversal']) {
+                        throw new \Prosper202\Goals\PurLinkEventReversal();
+                    }
+                    $event = \Prosper202\Goals\WebEvents::fromQuery($get, p202ExtractTransactionId($get), $now, true);
+                    $subject = (new \Prosper202\Goals\PurLinkGoalSubjects($conn))->forRouteInTransaction(
+                        $user, $click, $claims['landing_page_id'], $campaign
+                    );
+                    if ($subject === null) {
+                        throw new \Prosper202\Goals\GoalEngineException('PurLink subject not found', \Prosper202\Goals\GoalEngineException::NOT_FOUND);
+                    }
+                    return $engine->ingestPurLinkInTransaction($user, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+                }
+            );
+        } catch (\Prosper202\Goals\PurLinkNoGoals) {
+            return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
+        } catch (\Prosper202\Goals\PurLinkEventReversal) {
+            return ['status' => 'refused', 'code' => 422, 'message' => 'An event cannot also be a reversal: send status=reversed with the transaction id of the conversion it reverses, and no event.'];
+        } catch (\Prosper202\Goals\InvalidGoalDefinition $error) {
+            return ['status' => 'invalid', 'errors' => $error->errors(), 'message' => $error->getMessage()];
+        } catch (\Prosper202\Goals\GoalEngineException $error) {
+            if ($error->reason === \Prosper202\Goals\GoalEngineException::EVENT_CONFLICT) {
+                return ['status' => 'refused', 'code' => 409, 'message' => $error->getMessage()];
+            }
+            if ($error->reason === \Prosper202\Goals\GoalEngineException::EVENT_CAP) {
+                return ['status' => 'refused', 'code' => 422, 'message' => $error->getMessage()];
+            }
+            if ($error->reason === \Prosper202\Goals\GoalEngineException::NOT_FOUND) {
+                return ['status' => 'not_found', 'reason' => 'unknown_click'];
+            }
+            throw $error;
+        }
+        if ($done === null || $event === null) {
+            return ['status' => 'not_found', 'reason' => 'unknown_click'];
+        }
+        $result = $engine->finishPurLinkIngest($claims['user_id'], $done);
+        if ($result['accepted'] !== []) {
+            p202LinkConversionIdentity($db, $claims['click_id'], $get);
+        }
         return ['status' => 'recorded', 'event_id' => $event->eventId, 'result' => $result, 'markup' => $notifier->markup()];
     }
 }

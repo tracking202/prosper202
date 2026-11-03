@@ -150,6 +150,9 @@ $p202TrackerHostJs = $p202Js((string) parse_url($baseUrl, PHP_URL_HOST));
 $p202CampaignCaptureJs = $p202Js($p202CampaignCapture);
 $p202CustomVarsJs = $p202Js($t202CustomVars);
 $p202BeaconFinishedJs = $p202Js(!$p202SendsBeacon);
+$p202PurLinkRequestedJs = $p202Js($p202SendsBeacon && isset($identityRow) && ($_GET['p202_purlink'] ?? null) === '1');
+$p202PurLinkBaseJs = $p202Js($baseUrl);
+$p202PurLinkAdvancedJs = $p202Js(isset($identityRow) && (int) $identityRow['landing_page_type'] === 1);
 $p202ServerDataJs = $p202Js($t202ServerData, true);
 $p202ClientParamMapJs = $p202Js($t202ClientParamMap);
 ?>
@@ -285,6 +288,7 @@ var p202ConsentParam = p202PhpParam(_params, P202_CONSENT_KEY);
 var p202Refused = p202ConsentParam !== undefined
     && (p202ConsentParam === null || p202ConsentParam.replace(/^[ \t\n\r\0\x0B]+|[ \t\n\r\0\x0B]+$/g, '') !== '1');
 if (p202Refused || (window.p202 && window.p202.consent === false)) {
+    var p202PurLinkInitialRefusal = true;
     p202Store('set', P202_CONSENT_KEY, '0');
     p202Store('del', P202_LPID_KEY);
 }
@@ -294,12 +298,83 @@ window.p202.consent = function(given) {
 	if (given === false) {
 		p202Store('set', P202_CONSENT_KEY, '0');
 		p202Store('del', P202_LPID_KEY);
+        p202PurLinkRevoked = true;
+        p202PurLinkPending = null;
+        p202ConfigurePurLinks(null);
 	} else if (given === true) {
 		p202Store('del', P202_CONSENT_KEY);
+        p202PurLinkRevoked = false;
 	}
 	return p202ConsentGiven();
 };
 window.p202.lpid = p202Lpid;
+
+// The record response and browser module load independently. Keep the
+// capability in this closure until both arrive, and fence it on revocation.
+var p202PurLinkEnabled = <?php echo $p202PurLinkRequestedJs; ?>;
+var p202PurLinkBase = <?php echo $p202PurLinkBaseJs; ?>;
+var p202PurLinkAdvanced = <?php echo $p202PurLinkAdvancedJs; ?>;
+var p202PurLinkPage = <?php echo $lpip_js; ?>;
+var p202PurLinkPending = null;
+var p202PurLinkReporter = null;
+var p202PurLinkReporterProof = null;
+var p202PurLinkRevoked = !!p202PurLinkInitialRefusal || !p202ConsentGiven();
+function p202PurLinkFallback(offer) {
+    if (offer) { return p202PurLinkBase + 'tracking202/redirect/go.php?acip=' + t202Enc(offer); }
+    return p202PurLinkAdvanced ? null : p202PurLinkBase + 'tracking202/redirect/go.php?lpip=' + t202Enc(p202PurLinkPage);
+}
+function p202ConfigurePurLinks(pageview) {
+    if (!p202PurLinkEnabled || !window.p202PurLink) { return; }
+    var currentProof = pageview && pageview.exitProof;
+    if (p202PurLinkReporter && (!currentProof || currentProof !== p202PurLinkReporterProof || p202PurLinkRevoked)) {
+        p202PurLinkReporter.cancel();
+        p202PurLinkReporter = null;
+        p202PurLinkReporterProof = null;
+    }
+    var config = {
+        // Click-out ordering and signed goal events must be complete before
+        // direct navigation can be switched on.
+        directEnabled: false,
+        fallback: p202PurLinkFallback,
+        tokens: {t202kw: t202kw, c1: c1, c2: c2, c3: c3, c4: c4,
+            utm_source: utm_source, utm_medium: utm_medium, utm_campaign: utm_campaign,
+            utm_term: utm_term, utm_content: utm_content}
+    };
+    if (pageview && pageview.exitProof && !p202PurLinkRevoked && p202ConsentGiven()) {
+        try {
+            var prepare = window.p202PurLink.createPreparer(p202PurLinkBase + 'tracking202/static/purlink-prepare.php', pageview.exitProof);
+            if (!p202PurLinkReporter) {
+                p202PurLinkReporter = window.p202PurLink.createReporter(
+                    p202PurLinkBase + 'tracking202/static/purlink-exit.php', pageview.exitProof,
+                    function () { return !p202PurLinkRevoked && p202ConsentGiven(); }
+                );
+                p202PurLinkReporterProof = pageview.exitProof;
+            }
+            config.report = p202PurLinkReporter;
+            config.prepareOffer = function (offer) {
+                if (p202PurLinkAdvanced && !offer) { return Promise.reject(new Error('Offer required')); }
+                return prepare(offer);
+            };
+        } catch (e) { /* The normal redirect remains available. */ }
+    }
+    window.p202PurLink.init(config);
+}
+if (p202PurLinkEnabled) {
+    window.p202PurLinkPageview = function (pageview) {
+        if (p202PurLinkRevoked || !p202ConsentGiven() || !pageview || typeof pageview.exitProof !== 'string') { return; }
+        p202PurLinkPending = pageview;
+        p202ConfigurePurLinks(p202PurLinkPending);
+    };
+    if (window.p202PurLink) {
+        p202ConfigurePurLinks(null);
+    } else {
+        var p202PurLinkScript = document.createElement('script');
+        p202PurLinkScript.async = true;
+        p202PurLinkScript.src = p202PurLinkBase + '202-js/p202-purlink.js';
+        p202PurLinkScript.onload = function () { p202ConfigurePurLinks(p202PurLinkPending); };
+        (document.head || document.getElementsByTagName('script')[0].parentNode).appendChild(p202PurLinkScript);
+    }
+}
 
 // Links into the tracker carry the id (or the refusal) when they are
 // followed, so a later click through this page joins the same visitor.
@@ -403,12 +478,13 @@ function p202SendBeacon() {
 		// bare presence flag '1' (conservative: treated as usable).
 		"p13n_have=" + t202Enc(readCookie('tracking202p13nh') || (readCookie('tracking202p13n') ? '1' : '0'))
 	];
+    if (<?php echo $p202PurLinkRequestedJs; ?>) { parts.push('p202_purlink=1'); }
 	for (var i = 0; i < customVarNames.length; i++) {
 		parts.push(customVarNames[i] + "=" + t202Enc(customVarValues[i]));
 	}
 	// First-party identity: the refusal, or this site's visitor id when the
 	// campaign captures identity (nothing at all when it does not).
-	if (!p202ConsentGiven()) {
+	if (!p202ConsentGiven() || p202PurLinkRevoked) {
 		parts.push("p202_consent=0");
 	} else {
 		var p202Id = p202Lpid();

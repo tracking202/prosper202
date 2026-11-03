@@ -191,6 +191,14 @@ only its outcomes write conversions; the others count in the funnel.
 
 ## Re-evaluation
 
+PurLink outcomes use `subject_type=purlink`. Each subject is one click's
+landing page and offer, so events and retries from different offers remain
+separate. The outcome's `purlink` object identifies its `click_id` and
+`landing_page_id`. Use `subject_type=purlink` on outcome listing or
+re-evaluation to select them. The existing defaults remain unchanged: to re-evaluate both
+ordinary click events and PurLink events, run and paginate each subject type
+separately. `next_after` is a subject ID within the selected type.
+
 An edit leaves history alone. `GET /goals/{id}/reevaluation` previews, per
 subject — a click with events on the campaigns the goal applies to, or with
 `subject_type=install` (the default for a registration or account goal) an

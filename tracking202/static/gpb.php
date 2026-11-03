@@ -19,8 +19,44 @@ $mysql['click_id'] = 0;
 // subid of 0 fell back to "the last click from this IP" — for a
 // server-to-server postback, the network's own server.
 $parsedClickId = p202ParseClickId($_GET['subid'] ?? null) ?? p202ParseClickId($_GET['sid'] ?? null);
+$legacyPurLink = null;
+$signedPurLink = null;
+$signedPurLinkValue = null;
+$purLinkKey = null;
+$rawSubid = $_GET['subid'] ?? $_GET['sid'] ?? null;
+if ($parsedClickId === null && is_string($rawSubid) && str_starts_with($rawSubid, 'p1.')) {
+    try {
+        $purLinkKey = \Api\V3\Apps\Android\InstallTokenKey::load($db);
+        if ($purLinkKey === null) {
+            throw new \RuntimeException('installation token key is missing');
+        }
+        $signedPurLink = \Prosper202\Click\PurLinkSubid::verify($rawSubid, time(), $purLinkKey);
+    } catch (\Throwable $keyError) {
+        error_log('gpb: signed PurLink verification unavailable: ' . $keyError->getMessage());
+        p202RespondJsonError(503, 'Service unavailable');
+    }
+    if ($signedPurLink === null) {
+        p202RespondJsonError(404, 'SubID not found');
+    }
+    $parsedClickId = $signedPurLink['click_id'];
+    $signedPurLinkValue = $rawSubid;
+}
 if ($parsedClickId === null) {
-	p202RespondJsonError(404, 'SubID not found');
+    $legacyValue = $_GET['subid'] ?? $_GET['sid'] ?? null;
+    if (is_string($legacyValue)) {
+        try {
+            $legacyPurLink = (new \Prosper202\Click\PurLinkLegacySubid(
+                \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+            ))->resolve($legacyValue);
+        } catch (\Throwable $legacyError) {
+            error_log('gpb: legacy PurLink lookup failed: ' . $legacyError->getMessage());
+            p202RespondJsonError(500, 'Failed to read SubID');
+        }
+    }
+    if ($legacyPurLink === null) {
+        p202RespondJsonError(404, 'SubID not found');
+    }
+    $parsedClickId = $legacyPurLink['click_id'];
 }
 $mysql['click_id'] = (string) $parsedClickId;
 
@@ -31,7 +67,7 @@ if ($cvar_sql_result === false) {
     record_mysql_error($db, $cvar_sql);
 }
 $cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
-if (!$cvar_sql_row) {
+if (!$cvar_sql_row || ($signedPurLink !== null && (int) $cvar_sql_row['user_id'] !== $signedPurLink['user_id'])) {
 	p202RespondJsonError(404, 'Click data not found');
 }
 // The traffic source and cost, whose pixels announce it: the first visit's,
@@ -122,7 +158,12 @@ $mysql['conv_time'] = $conv_time;
 // campaign without goals records its plain conversion below, as it always
 // has, with the event's name kept on the row.
 try {
-	$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['browser' => false]);
+    $webEvent = $signedPurLinkValue !== null
+        ? p202RecordPurLinkWebEvent($db, $signedPurLinkValue, $purLinkKey, $_GET)
+        : p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, [
+            'browser' => false,
+            'expected_campaign_id' => $legacyPurLink['campaign_id'] ?? null,
+        ]);
 } catch (\Throwable $webEventError) {
 	error_log('gpb: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
 	p202RespondJsonError(500, 'Failed to record event');
@@ -139,6 +180,7 @@ try {
 		$db,
 		[
 			'click_id'        => (int) $mysql['click_id'],
+            'expected_campaign_id' => $legacyPurLink['campaign_id'] ?? null,
 			'user_id'         => (string) ($cvar_sql_row['user_id'] ?? '0'),
 			'conv_time'       => $conv_time,
 			'ip'              => p202StoredVisitorIp(),
@@ -165,8 +207,12 @@ try {
 		($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
 		p202ExtractTransactionId($_GET),
 		p202ExtractCustomer($_GET),
-		p202ExtractItems($_GET)
+		p202ExtractItems($_GET),
+        $signedPurLinkValue,
+        $purLinkKey,
 	);
+} catch (\Prosper202\Conversion\PurLinkCampaignChanged $campaignError) {
+    p202RespondJsonError(404, 'SubID no longer matches the campaign');
 } catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
 	p202RespondJsonError(
 		$reversalError->kind === \Prosper202\Conversion\Ledger\ReversalException::CONFLICT ? 422 : 404,

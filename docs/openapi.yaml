@@ -4514,7 +4514,7 @@ paths:
       description: Every time a click (or install) reached the goal. Outcomes retired by a replay or a re-evaluation are never listed.
       operationId: listGoalOutcomes
       parameters:
-        - {name: subject_type, in: query, schema: {type: string, enum: [click, install]}}
+        - {name: subject_type, in: query, schema: {type: string, enum: [click, install, purlink]}}
         - {name: subject_id, in: query, schema: {type: integer}}
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
@@ -4614,8 +4614,9 @@ paths:
       summary: Preview a re-evaluation
       description: |
         Per subject of one `subject_type` — a click that has events on the
-        campaigns the goal applies to, or (`install`) an Android install of
-        the goal's registration, of the account, or on those campaigns —
+        campaigns the goal applies to, (`purlink`) a separate event stream for
+        one click and offer, or (`install`) an Android install of the goal's
+        registration, of the account, or on those campaigns —
         the outcome rows that would be retired and written under `version`
         (default the current one), and what happens to each retired row's
         conversion (`supersede` by the new row, or `delete` where the new
@@ -4630,14 +4631,16 @@ paths:
         Changes nothing. At most `limit` (default 100, max 1000) subjects
         after `after`; `next_after` continues. `subject_type` defaults to
         `click` for a campaign goal and `install` for a registration or
-        account goal. The built-in install goal is never re-evaluated
+        account goal. Re-evaluate `purlink` separately when those offer streams
+        also need updating; its `next_after` is scoped to that subject type.
+        The built-in install goal is never re-evaluated
         (`422`).
       operationId: previewGoalReevaluation
       parameters:
         - {name: version, in: query, schema: {type: integer}}
         - {name: limit, in: query, schema: {type: integer, default: 100, maximum: 1000}}
         - {name: after, in: query, schema: {type: integer}}
-        - {name: subject_type, in: query, schema: {type: string, enum: [click, install]}}
+        - {name: subject_type, in: query, schema: {type: string, enum: [click, install, purlink]}}
       responses:
         "200":
           description: The plan
@@ -4675,7 +4678,7 @@ paths:
                 version: {type: integer}
                 limit: {type: integer, maximum: 1000}
                 after: {type: integer}
-                subject_type: {type: string, enum: [click, install]}
+                subject_type: {type: string, enum: [click, install, purlink]}
       responses:
         "200":
           description: What was done
@@ -15789,7 +15792,7 @@ components:
       type: object
       properties:
         outcome_id: {type: integer}
-        subject_type: {type: string, enum: [click, install]}
+        subject_type: {type: string, enum: [click, install, purlink]}
         subject_id: {type: integer}
         goal_id: {type: integer}
         version: {type: integer}
@@ -15803,6 +15806,12 @@ components:
         payable: {type: boolean}
         campaign_id: {type: integer, nullable: true}
         app_registration_id: {type: integer, nullable: true, description: "An install subject's app registration"}
+        purlink:
+          type: object
+          description: Present for a PurLink subject; identifies the original click and landing page.
+          properties:
+            click_id: {type: integer}
+            landing_page_id: {type: integer}
         conversion_id: {type: integer, nullable: true}
 
     GoalReevaluationResponse:
@@ -15813,7 +15822,7 @@ components:
           properties:
             goal_id: {type: integer}
             version: {type: integer}
-            subject_type: {type: string, enum: [click, install]}
+            subject_type: {type: string, enum: [click, install, purlink]}
             applied: {type: boolean}
             goals:
               type: array

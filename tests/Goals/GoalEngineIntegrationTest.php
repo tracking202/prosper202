@@ -24,6 +24,181 @@ final class GoalEngineIntegrationTest extends TestCase
 
     private const T = 1_650_000_000;
 
+    public function testPurLinkOffersKeepTheirGoalEventsAndLedgerRowsSeparate(): void
+    {
+        $this->campaign(7);
+        $this->campaign(8);
+        $this->click(100, 7);
+        $this->click(101, 7);
+        $goal = $this->goal(7, ['name' => 'Signup', 'trigger' => ['event' => 'signup'], 'value' => ['type' => 'fixed', 'amount' => 3]]);
+        $this->goals->attach(1, 8, $goal, null, true, $this->clock);
+        $page = 777001;
+        self::fixture("DELETE FROM 202_landing_pages WHERE landing_page_id=$page");
+        self::fixture("INSERT INTO 202_landing_pages SET landing_page_id=$page, user_id=1, aff_campaign_id=0, landing_page_type=1, landing_page_nickname='goal streams', landing_page_url='https://example.test/', landing_page_time=1");
+        self::fixture("UPDATE 202_clicks SET landing_page_id=$page WHERE click_id IN (100,101)");
+        $subjects = new \Prosper202\Goals\PurLinkGoalSubjects($this->conn);
+        $write = function (int $campaign, \Prosper202\Goals\GoalEvent $event) use ($subjects, $page): array {
+            return $this->conn->transaction(function () use ($subjects, $page, $campaign, $event): array {
+                $subject = $subjects->forRouteInTransaction(1, 100, $page, $campaign);
+                self::assertNotNull($subject);
+                return $this->engine->ingestPurLinkInTransaction(1, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+            });
+        };
+        $first = $write(7, $this->event('same-id', 'signup', self::T + 10));
+        $second = $write(8, $this->event('same-id', 'signup', self::T + 10));
+        self::assertSame(['same-id'], $this->engine->finishPurLinkIngest(1, $first)['accepted']);
+        self::assertSame(['same-id'], $this->engine->finishPurLinkIngest(1, $second)['accepted']);
+        $rows = self::$db->query('SELECT campaign_id,click_payout,dedupe_key FROM 202_conversion_logs WHERE click_id=100 ORDER BY conv_id')->fetch_all(MYSQLI_ASSOC);
+        self::assertCount(2, $rows);
+        self::assertSame(['7', '8'], array_column($rows, 'campaign_id'));
+        self::assertSame(['3.00000', '3.00000'], array_column($rows, 'click_payout'));
+        self::assertNotSame($rows[0]['dedupe_key'], $rows[1]['dedupe_key']);
+        self::assertCount(2, self::$db->query('SELECT subject_id FROM 202_purlink_goal_subjects WHERE click_id=100')->fetch_all(MYSQLI_ASSOC));
+        $retry = $write(8, $this->event('same-id', 'signup', self::T + 10));
+        self::assertSame(['same-id'], $this->engine->finishPurLinkIngest(1, $retry)['duplicates']);
+        $late = $write(7, $this->event('late-view', 'view', self::T));
+        self::assertTrue($this->engine->finishPurLinkIngest(1, $late)['replayed']);
+        self::assertSame('2', self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=100')->fetch_row()[0]);
+        self::assertSame('1', self::$db->query("SELECT COUNT(*) FROM 202_goal_events e JOIN 202_purlink_goal_subjects s ON s.subject_id=e.subject_id WHERE e.subject_type='purlink' AND s.campaign_id=8")->fetch_row()[0]);
+
+        try {
+            $this->conn->transaction(function () use ($subjects, $page): void {
+                $subject = $subjects->forRouteInTransaction(1, 101, $page, 8);
+                self::assertNotNull($subject);
+                $this->engine->ingestPurLinkInTransaction(1, $subject, [$this->event('rollback', 'signup', self::T)], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+                throw new \RuntimeException('rollback');
+            });
+            self::fail('the transaction was not rolled back');
+        } catch (\RuntimeException $error) {
+            self::assertSame('rollback', $error->getMessage());
+        }
+        self::assertSame('0', self::$db->query('SELECT COUNT(*) FROM 202_purlink_goal_subjects WHERE click_id=101')->fetch_row()[0]);
+        self::assertCount(0, $this->ledger(101));
+    }
+
+    public function testPurLinkGoalReevaluationIsPaginatedAndKeepsOfferAttribution(): void
+    {
+        $this->campaign(7);
+        $this->campaign(8);
+        $this->click(100, 7);
+        $goal = $this->goal(7, ['name' => 'Signup', 'trigger' => ['event' => 'signup'], 'value' => ['type' => 'fixed', 'amount' => 3]]);
+        $this->goals->attach(1, 8, $goal, null, true, $this->clock);
+        $page = 777003;
+        self::fixture("DELETE FROM 202_landing_pages WHERE landing_page_id=$page");
+        self::fixture("INSERT INTO 202_landing_pages SET landing_page_id=$page,user_id=1,aff_campaign_id=0,landing_page_type=1,landing_page_nickname='reevaluate',landing_page_url='https://example.test/',landing_page_time=1");
+        self::fixture("UPDATE 202_clicks SET landing_page_id=$page WHERE click_id=100");
+        $subjects = new \Prosper202\Goals\PurLinkGoalSubjects($this->conn);
+        foreach ([7, 8] as $campaign) {
+            $done = $this->conn->transaction(function () use ($subjects, $page, $campaign): array {
+                $subject = $subjects->forRouteInTransaction(1, 100, $page, $campaign);
+                self::assertNotNull($subject);
+                return $this->engine->ingestPurLinkInTransaction(1, $subject,
+                    [$this->event('same-id', 'signup', self::T + 1)], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+            });
+            $this->engine->finishPurLinkIngest(1, $done);
+        }
+        $this->clock += 100;
+        $this->goals->addVersion(1, $goal, \Prosper202\Goals\GoalDefinition::parse(
+            ['name' => 'Signup', 'trigger' => ['event' => 'signup'], 'value' => ['type' => 'fixed', 'amount' => 5]], $goal
+        ), $this->clock);
+        $before = $this->ledger(100);
+        $preview = $this->engine->reevaluate(1, $goal, null, false, 1, 0, \Prosper202\Goals\GoalSubject::PURLINK);
+        self::assertSame('purlink', $preview['subject_type']);
+        self::assertCount(1, $preview['subjects']);
+        self::assertNotNull($preview['next_after']);
+        self::assertSame(1, $preview['totals']['retire']);
+        self::assertSame($before, $this->ledger(100), 'preview does not change the ledger');
+        $first = $this->engine->reevaluate(1, $goal, null, true, 1, 0, \Prosper202\Goals\GoalSubject::PURLINK);
+        self::assertSame($preview['next_after'], $first['next_after']);
+        self::assertSame('8.00000', $this->clickState(100)['payout']);
+        $last = $this->engine->reevaluate(1, $goal, null, true, 1, $first['next_after'], \Prosper202\Goals\GoalSubject::PURLINK);
+        self::assertNull($last['next_after']);
+        self::assertSame('10.00000', $this->clickState(100)['payout']);
+        $rows = self::$db->query("SELECT campaign_id,click_payout FROM 202_conversion_logs WHERE click_id=100 AND superseded_by IS NULL AND deleted=0 ORDER BY campaign_id")->fetch_all(MYSQLI_ASSOC);
+        self::assertSame([['campaign_id'=>'7','click_payout'=>'5.00000'], ['campaign_id'=>'8','click_payout'=>'5.00000']], $rows);
+        $again = $this->engine->reevaluate(1, $goal, null, true, 10, 0, \Prosper202\Goals\GoalSubject::PURLINK);
+        self::assertSame(0, $again['totals']['retire'] + $again['totals']['write']);
+        // A late event replays only the first offer and keeps its rebase.
+        $late = $this->conn->transaction(function () use ($subjects, $page): array {
+            $subject = $subjects->forRouteInTransaction(1, 100, $page, 7);
+            self::assertNotNull($subject);
+            return $this->engine->ingestPurLinkInTransaction(1, $subject,
+                [$this->event('late-view', 'view', self::T)], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+        });
+        self::assertTrue($this->engine->finishPurLinkIngest(1, $late)['replayed']);
+        self::assertSame('10.00000', $this->clickState(100)['payout']);
+        $live = self::$db->query("SELECT campaign_id,goal_version FROM 202_goal_outcomes WHERE subject_type='purlink' AND superseded_at IS NULL ORDER BY campaign_id")->fetch_all(MYSQLI_ASSOC);
+        self::assertSame([['campaign_id'=>'7','goal_version'=>'2'], ['campaign_id'=>'8','goal_version'=>'2']], $live);
+        // Retained historical outcomes can still be listed after click data
+        // retention, but cannot be re-evaluated without their original click.
+        self::fixture('DELETE FROM 202_clicks WHERE click_id=100');
+        $withoutClick = $this->engine->reevaluate(1, $goal, null, false, 10, 0, \Prosper202\Goals\GoalSubject::PURLINK);
+        self::assertSame([], $withoutClick['subjects']);
+    }
+
+    public function testPurLinkGoalSubjectsEnforceOwnerAndSimplePageCampaign(): void
+    {
+        $this->campaign(7);
+        $this->campaign(8);
+        $this->click(100, 7);
+        $page = 777002;
+        self::fixture("DELETE FROM 202_landing_pages WHERE landing_page_id=$page");
+        self::fixture("INSERT INTO 202_landing_pages SET landing_page_id=$page, user_id=1, aff_campaign_id=7, landing_page_type=0, landing_page_nickname='simple scope', landing_page_url='https://example.test/', landing_page_time=1");
+        self::fixture("UPDATE 202_clicks SET landing_page_id=$page WHERE click_id=100");
+        $subjects = new \Prosper202\Goals\PurLinkGoalSubjects($this->conn);
+        self::assertNull($this->conn->transaction(fn () => $subjects->forRouteInTransaction(1, 100, $page, 8)));
+        self::assertNull($this->conn->transaction(fn () => $subjects->forRouteInTransaction(2, 100, $page, 7)));
+        self::assertNull($this->conn->transaction(fn () => $subjects->forRouteInTransaction(1, 100, $page + 1, 7)));
+        self::assertSame('0', self::$db->query('SELECT COUNT(*) FROM 202_purlink_goal_subjects')->fetch_row()[0]);
+        $subject = $this->conn->transaction(fn () => $subjects->forRouteInTransaction(1, 100, $page, 7));
+        self::assertNotNull($subject);
+        $again = $this->conn->transaction(fn () => $subjects->forRouteInTransaction(1, 100, $page, 7));
+        self::assertSame($subject->id, $again->id);
+        $forged = new \Prosper202\Goals\GoalSubject(\Prosper202\Goals\GoalSubject::PURLINK, $subject->id, $subject->clickAt, null, [], 100, 8);
+        try {
+            $this->conn->transaction(fn () => $this->engine->ingestPurLinkInTransaction(1, $forged,
+                [$this->event('forged', 'signup', self::T)], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID));
+            self::fail('a subject naming a different campaign was accepted');
+        } catch (GoalEngineException $error) {
+            self::assertSame(GoalEngineException::NOT_FOUND, $error->reason);
+        }
+        self::assertSame('0', self::$db->query('SELECT COUNT(*) FROM 202_goal_events')->fetch_row()[0]);
+    }
+
+    public function testCampaignScopedEventChecksTheCurrentClickUnderLock(): void
+    {
+        $this->campaign(7);
+        $this->campaign(8);
+        $this->click(100, 7);
+        $this->goal(7, ['name' => 'Signup', 'trigger' => ['event' => 'signup'], 'value' => ['type' => 'fixed', 'amount' => 3]]);
+        $subject = $this->engine->clickSubject(1, 100);
+        $event = $this->event('pur-link-event', 'signup', self::T + 1);
+
+        // A route changes after the endpoint reads its subject but before
+        // the engine locks it. The old link must not store an event at all.
+        foreach (['202_clicks', '202_clicks_spy'] as $table) {
+            self::fixture('UPDATE ' . $table . ' SET aff_campaign_id=8 WHERE click_id=100');
+        }
+        try {
+            $this->engine->ingest(1, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, expectedCampaignId: 7);
+            self::fail('a stale campaign was accepted');
+        } catch (GoalEngineException $error) {
+            self::assertSame(GoalEngineException::NOT_FOUND, $error->reason);
+        }
+        self::assertSame('0', self::$db->query('SELECT COUNT(*) AS n FROM 202_goal_events')->fetch_assoc()['n']);
+        self::assertCount(0, $this->ledger(100));
+
+        foreach (['202_clicks', '202_clicks_spy'] as $table) {
+            self::fixture('UPDATE ' . $table . ' SET aff_campaign_id=7 WHERE click_id=100');
+        }
+        $result = $this->engine->ingest(1, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, expectedCampaignId: 7);
+        self::assertSame(['pur-link-event'], $result['accepted']);
+        self::assertSame(['lead' => 1, 'payout' => '3.00000'], $this->clickState(100));
+        $again = $this->engine->ingest(1, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, expectedCampaignId: 7);
+        self::assertSame(['pur-link-event'], $again['duplicates']);
+        self::assertCount(1, $this->ledger(100));
+    }
+
     public function testAWebFunnelReachesTwoGoalsWithTwoLedgerRowsAndARolledUpValue(): void
     {
         $this->campaign(7, 'accumulate');
