@@ -55,7 +55,7 @@ final class MilestoneWiringTest extends TestCase
         $root = dirname(__DIR__, 2);
         $calls = 0;
         foreach (['tracking202', '202-account', '202-config'] as $dir) {
-            $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . '/' . $dir, FilesystemIterator::SKIP_DOTS));
+            $files = new RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root . '/' . $dir));
             foreach ($files as $file) {
                 if ($file->getExtension() !== 'php' || str_contains($file->getPathname(), '/Messaging/')) {
                     continue;
