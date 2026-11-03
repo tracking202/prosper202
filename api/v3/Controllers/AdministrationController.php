@@ -34,8 +34,8 @@ use Prosper202\User\SignInOutcome;
  * - GET  /system/isp-lookup               the MaxMind ISP and carrier lookup
  *   PUT  /system/isp-lookup               switch
  * - GET  /system/integrations             the IPN / postback URLs to paste
- *                                         into ClickBank, JVZoo, Zaxaa, Slack
- *                                         and PayKickstart
+ *                                         into ClickBank, JVZoo, Zaxaa and
+ *                                         PayKickstart
  *
  * The role permissions are the pages' (access_to_settings, and
  * access_to_api_integrations for the integrations), checked by the routes on
@@ -89,7 +89,6 @@ final class AdministrationController
         'jvzoo' => ['JVZoo', 'Affiliate IPN URL', JVZooRole::SCRIPT, JVZooKey::COLUMN, 'role=affiliate'],
         'jvzoo_vendor' => ['JVZoo', 'Vendor JVZIPN URL', JVZooRole::SCRIPT, JVZooKey::COLUMN, 'role=vendor'],
         'zaxaa' => ['Zaxaa', 'ZPN URL', 'tracking202/static/zpn.php', 'zaxaa_api_signature'],
-        'slack' => ['Slack', 'Prosper202 webhook', 'tracking202/static/slack.php', 'user_slack_incoming_webhook'],
         'paykickstart' => [
             'PayKickstart', 'IPN URL', 'tracking202/static/paykickstart.php', 'paykickstart_ipn_secret_keys',
         ],
