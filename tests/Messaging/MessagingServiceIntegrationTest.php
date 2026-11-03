@@ -221,6 +221,45 @@ final class MessagingServiceIntegrationTest extends TestCase
     }
 
     /**
+     * An event is tried MAX_PUSH_ATTEMPTS (5) times before it is given up on.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testAnEventIsGivenUpOnlyAfterItsFifthFailedAttempt(): void
+    {
+        $probe = stream_socket_server('tcp://127.0.0.1:0');
+        $this->assertNotFalse($probe);
+        $closed = (string) stream_socket_get_name($probe, false);
+        fclose($probe);
+        define('MESSAGING_API_URL', 'http://' . $closed . '/api/v3/messaging');
+        $log = tempnam(sys_get_temp_dir(), 'p202-messaging-sync-');
+        $this->assertIsString($log);
+        ini_set('error_log', $log);
+        $db = $this->connect();
+        $this->seedUsers($db);
+        $service = new \MessagingService($db, 1, (array) \MessagingService::identityFor($db, 1));
+
+        $service->recordEvent('created_tracker');
+        for ($attempt = 1; $attempt <= 4; $attempt++) {
+            $this->assertSame(\MessagingService::SYNC_FAILED, $service->sync(true));
+            $this->assertSame(
+                [['pending', (string) $attempt]],
+                $db->query('SELECT delivery_status, sync_attempts FROM 202_messaging_events')->fetch_all(),
+                "still pending after attempt $attempt"
+            );
+        }
+        $this->assertSame(\MessagingService::SYNC_FAILED, $service->sync(true));
+        $this->assertSame(
+            [['failed', '5']],
+            $db->query('SELECT delivery_status, sync_attempts FROM 202_messaging_events')->fetch_all(),
+            'given up after the fifth attempt'
+        );
+        $this->assertSame(\MessagingService::SYNC_IDLE, $service->sync(true), 'a failed event is not tried again');
+        unlink($log);
+    }
+
+    /**
      * @runInSeparateProcess
      * @preserveGlobalState disabled
      */
