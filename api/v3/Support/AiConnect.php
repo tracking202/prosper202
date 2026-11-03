@@ -316,6 +316,18 @@ final class AiConnect
         };
     }
 
+    /**
+     * What the MCP server knows a connection's watchers by: HMAC-SHA256 of
+     * WATCHER_TOKEN_INFO keyed with the key, hex. One-way from the key, so an
+     * install that stores keys hashed can keep it from the key's creation.
+     */
+    public static function watcherToken(string $apiKey): string
+    {
+        return hash_hmac('sha256', self::WATCHER_TOKEN_INFO, $apiKey);
+    }
+
+    public const WATCHER_TOKEN_INFO = 'p202-mcp watchers v1';
+
     /** Records an approval and returns its one-time code. */
     public static function approve(
         ServerStateStore $store,

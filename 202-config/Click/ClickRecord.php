@@ -200,6 +200,8 @@ final readonly class ClickRecord
         // '' for a counted one, a bot or a re-click
         public string $clickFilterReason = '',
         public int $clickFilterEntryId = 0,
+        // 202_clicks_publisher: the publisher a publisher link credits (PublisherCredit), 0 for none
+        public int $publisherUserId = 0,
     ) {
         foreach (['clickId' => $clickId, 'userId' => $userId, 'clickTime' => $clickTime] as $field => $value) {
             if ($value < 1) {
@@ -243,6 +245,11 @@ final readonly class ClickRecord
         if ($clickFilterEntryId < 0 || ($clickFilterEntryId !== 0) !== $listed) {
             throw new InvalidArgumentException(
                 "A click's clickFilterEntryId names the list entry of a filter_list click, not $clickFilterEntryId"
+            );
+        }
+        if ($publisherUserId < 0 || $publisherUserId === $userId) {
+            throw new InvalidArgumentException(
+                "A click's publisherUserId is another user's id or 0, not $publisherUserId"
             );
         }
         if (!in_array($clickCloaking, [-1, 0, 1], true)) {

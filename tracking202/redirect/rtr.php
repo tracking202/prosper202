@@ -546,6 +546,10 @@ $mysql['click_alp'] = 0;
 
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_id); 
 $mysql['user_id'] = $db->real_escape_string((string)$user_id);
+// A publisher link credits a publisher the account granted; any other id is
+// ignored. A re-click keeps its first visit's credit.
+$rtrPublisher = $reClick === null ? p202ClickPublisher($db, (int) $user_id, $_GET) : null;
+$mysql['publisher_user_id'] = (string) ($rtrPublisher['user_id'] ?? 0);
 
 //lets determine if cloaking is on
 $cloaking_on = false;
@@ -636,6 +640,10 @@ if ((int) $rule['aff_campaign_id'] > 0) {
 }
 $rtrIdentity = p202ClickIdentity($_GET, $rtrCampaignAllows);
 
+// The credit is written after the click's rows, so its token is filled here.
+if ($rtrPublisher !== null && is_string($redirect_site_url)) {
+	$redirect_site_url = str_ireplace('[[t202pubid]]', rawurlencode($rtrPublisher['public_id']), $redirect_site_url);
+}
 // Inside the transaction: the placeholders are read back from the rows just
 // written. A plain closure: it hands the resolved URL out.
 $rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $user_id, $locationRepo): int {

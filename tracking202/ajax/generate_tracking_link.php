@@ -130,6 +130,23 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 		die(p202_flash('bad', 'That campaign belongs to a different category.'));
 	}
 
+	// A publisher link (t202pubid) names a publisher this account may credit,
+	// re-checked here: the posted user id is a claim. Not stored on the tracker.
+	$publisherParam = '';
+	$rawPublisher = $_POST['publisher_id'] ?? '';
+	if (!is_string($rawPublisher)) {
+		die(p202_flash('bad', 'That publisher was sent more than once.'));
+	}
+	if ($rawPublisher !== '' && $rawPublisher !== '0') {
+		$linkPublisher = preg_match('/^[1-9]\d{0,9}$/D', $rawPublisher) === 1
+			? (new \Prosper202\Click\PublisherCredit($ownedConn))->grantableById((int) $_SESSION['user_id'], (int) $rawPublisher)
+			: null;
+		if ($linkPublisher === null) {
+			die(p202_flash('bad', 'That publisher cannot be credited on your links: it needs the Publisher role, and to be switched on, in User management.'));
+		}
+		$publisherParam = '&' . \Prosper202\Click\PublisherCredit::PARAMETER . '=' . rawurlencode($linkPublisher['public_id']);
+	}
+
     // The link an edit replaces, by its public id read exactly and compared as
     // a number: compared as text, `12abc` named link 12, which was deleted and
     // written again from this form. An edit of anything but one of this
@@ -568,12 +585,12 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
     $onLinkBase = false;
     if (($_POST['method_of_promotion'] ?? '') == 'directlink') {
         $trackingLinkParts[] = $linkBase . 'tracking202/redirect/dl.php?t202id=' . $tracker_id_public
-            . $tracking_variable_string;
+            . $publisherParam . $tracking_variable_string;
         $onLinkBase = true;
     }
     if (($_POST['tracker_type'] ?? '') == 2) {
         $trackingLinkParts[] = $linkBase . 'tracking202/redirect/rtr.php?t202id=' . $tracker_id_public
-            . $tracking_variable_string;
+            . $publisherParam . $tracking_variable_string;
         $onLinkBase = true;
     }
     if ((($_POST['method_of_promotion'] ?? '') == 'landingpage') or (($_POST['tracker_type'] ?? '') == 1)) {
@@ -587,7 +604,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
         // The variables go before the page's #fragment: after it, a browser
         // never sends them, and the click arrives with no keyword or c1-c4.
         // GET /trackers/{id}/url builds the same link.
-        $destination_url .= 't202id=' . $tracker_id_public . $tracking_variable_string;
+        $destination_url .= 't202id=' . $tracker_id_public . $publisherParam . $tracking_variable_string;
         if (!empty($parsed_url['fragment'])) {
             $destination_url .= '#' . $parsed_url['fragment'];
         }
