@@ -537,7 +537,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             $sql =
                 'SELECT c.landing_page_id FROM ' . LatestVisit::of('?') . ' AS c'
                     . ' JOIN 202_landing_pages AS lp ON lp.landing_page_id = c.landing_page_id'
-                    . ' AND lp.user_id = c.user_id AND lp.landing_page_deleted = 0'
+                    . ' AND lp.user_id = c.user_id' . ($exit->deletedRecordsCount ? '' : ' AND lp.landing_page_deleted = 0')
                     . ' WHERE c.user_id = ? AND lp.landing_page_id = ?';
             $types = 'iii';
             $values = [$exit->clickId, $exit->userId, $exit->landingPageId];
@@ -559,7 +559,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         if ($offer !== null) {
             $stmt = $this->conn->prepareWrite(
                 'SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ?'
-                    . ($exit->landingPageId !== null ? ' AND aff_campaign_deleted = 0' : '')
+                    . ($exit->landingPageId !== null && !$exit->deletedRecordsCount ? ' AND aff_campaign_deleted = 0' : '')
             );
             $this->conn->bind($stmt, 'ii', [$offer->campaignId, $exit->userId]);
             if ($this->conn->fetchOne($stmt) === null) {

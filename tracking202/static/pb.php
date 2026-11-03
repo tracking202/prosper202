@@ -34,23 +34,15 @@ p202ApplyOwnerPrivacy($aff_campaign_row['user_id'] ?? null);
 // An exact positive integer, or nothing: "123.9" must not become click 123.
 $click_id = p202ParseClickId($_GET['subid'] ?? null);
 // A PurLink SubID must name this postback's campaign. The signed
-// click-offer-mac form routes its click to the offer first, so a conversion
-// that beats the browser's click-out report still matches; the unsigned
-// 1.9.56 click-offer form only names a click already on the offer.
+// click-offer-mac form records on its offer, routing the click there in the
+// same transaction, so one that beats the browser's click-out report (or
+// follows another offer's sale) still counts; its goal events go to the
+// offer's own subject, as on gpb.php. The unsigned 1.9.56
+// click-offer form only names a click already on the offer.
 $pbRawSubid = $_GET['subid'] ?? null;
 $pbSignedSubid = $click_id === null ? p202VerifyPurLinkSubid($db, $pbRawSubid, 'pb') : null;
 if ($pbSignedSubid !== null) {
     if ($pbSignedSubid['claims']['campaign_public_id'] !== $pbCampaignId) {
-        p202RespondJsonError(404, 'Unknown subid for this campaign');
-    }
-    try {
-        $pbRouted = (new \Prosper202\Click\PurLinkExit(new \Prosper202\Database\Connection($db)))
-            ->route($pbRawSubid, $pbSignedSubid['key']);
-    } catch (\Throwable $routeError) {
-        error_log('pb: PurLink routing failed: ' . $routeError->getMessage());
-        p202RespondJsonError(500, 'Failed to record conversion');
-    }
-    if (!$pbRouted) {
         p202RespondJsonError(404, 'Unknown subid for this campaign');
     }
     $click_id = $pbSignedSubid['claims']['click_id'];
@@ -68,7 +60,9 @@ if ($click_id === null) {
 // by the campaign's goals. A campaign without goals records its plain
 // conversion below, as always, with the event's name kept on the row.
 try {
-	$webEvent = p202RecordWebEvent($db, $click_id, $_GET, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['campaign_id' => (int) $aff_campaign_row['aff_campaign_id'], 'browser' => false]);
+	$webEvent = $pbSignedSubid !== null
+		? p202RecordPurLinkWebEvent($db, (string) $pbRawSubid, $pbSignedSubid['key'], $_GET)
+		: p202RecordWebEvent($db, $click_id, $_GET, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['campaign_id' => (int) $aff_campaign_row['aff_campaign_id'], 'browser' => false]);
 } catch (\Throwable $webEventError) {
 	error_log('pb: event recording failed for click ' . $click_id . ': ' . $webEventError->getMessage());
 	p202RespondJsonError(500, 'Failed to record event');
@@ -93,7 +87,12 @@ try {
 		'user_agent'     => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
 		'source'         => \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value,
 		'event_name'     => $webEvent['event_name'] ?? null,
+		// A signed SubID records on its own offer, routed in the same transaction.
+		'purlink_subid'  => $pbSignedSubid !== null ? (string) $pbRawSubid : null,
+		'purlink_key'    => $pbSignedSubid['key'] ?? null,
 	] + p202ExtractReversal($_GET));
+} catch (\Prosper202\Conversion\PurLinkCampaignChanged $campaignError) {
+	p202RespondJsonError(404, 'Unknown subid for this campaign');
 } catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
 	// Said to the sender in its own words: which transaction, and for a
 	// second reversal of one sale, the reversal already on file.

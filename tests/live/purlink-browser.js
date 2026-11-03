@@ -227,6 +227,10 @@ const accepted = (status) => status === 200 || status === 202;
     await Promise.all([page.waitForURL('http://offer.example/c**'), page.click('#c')]);
     check(await waitFor(() => value('SELECT aff_campaign_id FROM 202_clicks WHERE click_id=' + advClick) === String(OFFER_C.id)), 'then a click on C moves the click to C');
     check(accepted(await postback(subidOf(hrefB), { txid: 'e2e-b' })), 'a conversion for B still arrives with B\'s SubID');
+    const pb = (acip, subid, txid) => fetch(BASE + '/tracking202/static/pb.php?' + new URLSearchParams({ acip, subid, txid })).then((r) => r.status);
+    check(accepted(await pb(String(OFFER_C.pub), subidOf(hrefC), 'e2e-pb-c')), 'pb.php takes C\'s SubID on C\'s campaign postback');
+    check(value('SELECT campaign_id FROM 202_conversion_logs WHERE click_id=' + advClick + " AND transaction_id='e2e-pb-c'") === String(OFFER_C.id), 'and credits C');
+    check((await pb(String(OFFER_C.pub), subidOf(hrefB), 'e2e-pb-wrong')) === 404, 'B\'s SubID on C\'s postback is refused');
     check(value('SELECT campaign_id FROM 202_conversion_logs WHERE click_id=' + advClick + " AND transaction_id='e2e-b'") === String(OFFER_B.id), 'and is credited to B');
 
     console.log('Deferred pixel');

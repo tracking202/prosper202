@@ -354,7 +354,9 @@ function p202ConfigurePurLinks(pageview) {
             gclid: t202GetVar('gclid'), gbraid: t202GetVar('gbraid'), wbraid: t202GetVar('wbraid'),
             ttclid: t202GetVar('ttclid'), msclkid: t202GetVar('msclkid'), fbclid: t202GetVar('fbclid'),
             referer: document.referrer || null, referrer: document.referrer || null,
-            random: String(Math.floor(Math.random() * 1000000000))}
+            random: String(Math.floor(Math.random() * 1000000000)),
+            // 1.9.56 listed [[sourceid]] but nothing on the page knows it: fill it empty.
+            sourceid: ''}
     };
     if (pageview && pageview.exitProof && !p202PurLinkRevoked && p202ConsentGiven()) {
         try {

@@ -177,7 +177,7 @@ final class PurLinkExit
      * @return array{claims: array{click_id: int, landing_page_id: int, user_id: int, expires?: int},
      *     campaign_id: int, campaign_public_id: int, payout: string}|null
      */
-    private function resolveClaims(array $claims, mixed $campaignPublicId): ?array
+    private function resolveClaims(array $claims, mixed $campaignPublicId, bool $deletedRecordsCount = false): ?array
     {
         $campaign = null;
         if ($campaignPublicId !== null && $campaignPublicId !== '') {
@@ -190,7 +190,7 @@ final class PurLinkExit
         $stmt = $this->conn->prepareWrite(
             'SELECT lp.landing_page_type, lp.aff_campaign_id FROM ' . LatestVisit::of('?') . ' AS c'
                 . ' JOIN 202_landing_pages AS lp ON lp.landing_page_id = c.landing_page_id'
-                . ' AND lp.user_id = c.user_id AND lp.landing_page_deleted = 0'
+                . ' AND lp.user_id = c.user_id' . ($deletedRecordsCount ? '' : ' AND lp.landing_page_deleted = 0')
                 . ' WHERE lp.landing_page_id = ? AND lp.user_id = ?'
         );
         $this->conn->bind($stmt, 'iii', [$claims['click_id'], $claims['landing_page_id'], $claims['user_id']]);
@@ -211,7 +211,7 @@ final class PurLinkExit
         }
         $stmt = $this->conn->prepareWrite(
             'SELECT aff_campaign_id, aff_campaign_id_public, aff_campaign_payout FROM 202_aff_campaigns'
-                . ' WHERE ' . $where . ' AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1'
+                . ' WHERE ' . $where . ' AND user_id = ?' . ($deletedRecordsCount ? '' : ' AND aff_campaign_deleted = 0') . ' LIMIT 1'
         );
         $this->conn->bind($stmt, 'ii', [$id, $claims['user_id']]);
         $offer = $this->conn->fetchOne($stmt);
@@ -252,7 +252,9 @@ final class PurLinkExit
                 if ($click === null) {
                     return null;
                 }
-                $route = $this->resolveClaims($claims, $claims['campaign_public_id']);
+                // The SubID's MAC already proves the route: a page or campaign
+                // deleted since must not lose the network's later postbacks.
+                $route = $this->resolveClaims($claims, $claims['campaign_public_id'], true);
                 if ($route === null) {
                     return null;
                 }
@@ -266,6 +268,7 @@ final class PurLinkExit
                         ? null : new OfferRoute($route['campaign_id'], $route['payout']),
                     cloaking: 0,
                     landingPageId: $claims['landing_page_id'],
+                    deletedRecordsCount: true,
                 ));
                 if (!$recorded) {
                     return null;

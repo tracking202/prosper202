@@ -952,8 +952,12 @@ if (!function_exists('p202RecordLegacyConversion')) {
         if (isset($opts['user_id']) && (int) $click['user_id'] !== (int) $opts['user_id']) {
             return $none + ['reason' => 'foreign_click'];
         }
+        // A signed PurLink SubID proves its offer: the writer routes the click
+        // there and records together, even after another offer converted it.
+        $purLinkSubid = isset($opts['purlink_subid'], $opts['purlink_key'])
+            ? [(string) $opts['purlink_subid'], (string) $opts['purlink_key']] : null;
         if (
-            isset($opts['campaign_id'])
+            $purLinkSubid === null && isset($opts['campaign_id'])
             && !p202ClickVisitedCampaign($conn, $clickId, (int) $click['user_id'], (int) $opts['campaign_id'])
         ) {
             return $none + ['reason' => 'campaign_mismatch'];
@@ -996,7 +1000,11 @@ if (!function_exists('p202RecordLegacyConversion')) {
             (string) ($click['click_cpa'] ?? ''),
             $usePixelPayout,
             $usePixelPayout ? $payout : '',
-            $transactionId
+            $transactionId,
+            [],
+            [],
+            $purLinkSubid[0] ?? null,
+            $purLinkSubid[1] ?? null,
         );
 
         // conv_id 0 with duplicate = the writer's under-lock gate: another

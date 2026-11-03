@@ -50,8 +50,10 @@ final class PurLinkGoalSubjects
             $stmt = $this->conn->prepareWrite(
                 'SELECT lp.landing_page_type, lp.aff_campaign_id FROM ' . LatestVisit::of('?') . ' AS c'
                 . ' JOIN 202_landing_pages lp ON lp.landing_page_id=c.landing_page_id AND lp.user_id=c.user_id'
-                . ' JOIN 202_aff_campaigns ac ON ac.aff_campaign_id=? AND ac.user_id=c.user_id AND ac.aff_campaign_deleted=0'
-                . ' WHERE c.user_id=? AND lp.landing_page_id=? AND lp.landing_page_deleted=0'
+                // A signed SubID proved this route: a page or campaign deleted
+                // since still owns the postbacks its clicks bring.
+                . ' JOIN 202_aff_campaigns ac ON ac.aff_campaign_id=? AND ac.user_id=c.user_id'
+                . ' WHERE c.user_id=? AND lp.landing_page_id=?'
             );
             $this->conn->bind($stmt, 'iiii', [$clickId, $campaignId, $userId, $pageId]);
             $page = $this->conn->fetchOne($stmt);

@@ -466,6 +466,49 @@ final class ClickExitIntegrationTest extends TestCase
         self::q("UPDATE 202_aff_campaigns SET payout_mode = 'replace' WHERE aff_campaign_id = " . self::$campaign);
     }
 
+    public function testASignedSubidStillConvertsAfterItsPageAndCampaignAreDeleted(): void
+    {
+        $clickId = self::FIRST_CLICK + 72;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'ended',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+        $conn = new Connection(self::requireScratch());
+        $exit = new PurLinkExit($conn);
+        $subid = $exit->subid($proof, '11101', $now, $key);
+        self::assertIsString($subid);
+
+        // The campaign ends: its page and campaign are deleted, and the
+        // network's postbacks keep coming. The SubID's MAC proves the route.
+        self::q("UPDATE 202_landing_pages SET landing_page_deleted = 1 WHERE landing_page_id = $page");
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = ' . self::$campaign);
+        try {
+            self::assertNull($exit->subid($proof, '11101', $now, $key), 'a deleted page prepares no new SubID');
+            self::assertFalse($exit->record($proof, '11101', $now, $key), 'nor records a new click-out');
+            self::assertTrue($exit->route($subid, $key), 'pb.php routes the late postback');
+            $late = $exit->recordConversion($subid, $key, [
+                'transaction_id' => 'after-delete', 'skip_bridge' => true,
+            ], MatchMethod::CLICK_ID);
+            self::assertIsArray($late);
+            self::assertSame(
+                ['campaign_id' => (string) self::$campaign],
+                self::one('SELECT campaign_id FROM 202_conversion_logs WHERE conv_id = ' . (int) $late['convId'])
+            );
+            $subject = $conn->transaction(static fn () => (new \Prosper202\Goals\PurLinkGoalSubjects($conn))
+                ->forRouteInTransaction(self::OWNER, $clickId, $page, self::$campaign));
+            self::assertNotNull($subject, 'goal events of the deleted page still find their subject');
+        } finally {
+            self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 0 WHERE aff_campaign_id = ' . self::$campaign);
+            self::q("DELETE FROM 202_purlink_goal_subjects WHERE click_id = $clickId");
+        }
+    }
+
     public function testDeferredPixelsFireEachServerConversionOnceForItsOwnPageview(): void
     {
         $clickId = self::FIRST_CLICK + 70;

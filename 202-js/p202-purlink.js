@@ -7,6 +7,7 @@
     var listening = false;
     var observer = null;
     var inputTemplates = new WeakMap();
+    var warned = new WeakSet();
     var preparation = Object.create(null);
     var generation = 0;
     var tokenPattern = /(?:\[\[|%5b%5b)([a-z0-9_]+)(?:\]\]|%5d%5d)/gi;
@@ -216,7 +217,16 @@
             rendered = direct ? destination(template, subid) :
                 (typeof options.fallback === 'function' ? options.fallback(offer) : null);
         } catch (e) { return; }
-        if (typeof rendered !== 'string' || rendered === '') { return; }
+        if (typeof rendered !== 'string' || rendered === '') {
+            // An advanced page's PurLink must name its offer (acip=); say so
+            // once rather than leave a literal [[subid]] in the link silently.
+            if (needsSubid && !offer && !warned.has(element) && window.console && typeof window.console.warn === 'function') {
+                warned.add(element);
+                window.console.warn('Prosper202 PurLink: this link has [[subid]] but no acip= naming its offer, ' +
+                    'so it cannot be tracked. Copy the offer\'s PurLink from Get LP Code.', element);
+            }
+            return;
+        }
         try {
             var parsed = new URL(rendered, document.baseURI);
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') { return; }
