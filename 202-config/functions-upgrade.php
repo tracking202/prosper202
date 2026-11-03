@@ -4646,13 +4646,22 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.79') {
 
-            // 1.9.80 changes no schema yet, so its step only records the
-            // version. A schema change for 1.9.80 belongs in this block,
-            // reconciled before the version is written.
-            if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
-                $prosper202_version = '1.9.80';
+            // A schema change for 1.9.80 belongs in this block, reconciled
+            // before the version is written.
+            $step_ok = _upgrade_measurement_tables([
+                // The publisher a publisher link's click is credited to
+                // (Prosper202\Click\PublisherCredit).
+                \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
+            ]);
+            if ($step_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
+                    $prosper202_version = '1.9.80';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                }
             } else {
-                error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                error_log('Prosper202 upgrade: a table of the 1.9.80 step could not be reconciled (the list above);'
+                    . ' leaving version at 1.9.79 so the next run retries.');
             }
         }
 
