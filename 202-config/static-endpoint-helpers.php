@@ -585,6 +585,30 @@ if (!function_exists('p202RecordConversion')) {
     }
 }
 
+if (!function_exists('p202PostbackRequest')) {
+    /**
+     * A server postback's parameters: the query string's, with a form-encoded
+     * body's for any name the query leaves out or blank (paid 1.9.56 gpb.php
+     * read a POST body, and its URLs carry blank `amount=&subid=`).
+     * Body names are lowercased, as connect2.php does $_GET's.
+     *
+     * @param array<array-key,mixed> $query $_GET
+     * @param array<array-key,mixed> $body  $_POST (empty unless a form-encoded POST)
+     * @return array<array-key,mixed>
+     */
+    function p202PostbackRequest(array $query, array $body): array
+    {
+        $request = $query;
+        foreach (array_change_key_case($body, CASE_LOWER) as $name => $value) {
+            if (!array_key_exists($name, $request) || $request[$name] === '') {
+                $request[$name] = $value;
+            }
+        }
+
+        return $request;
+    }
+}
+
 if (!function_exists('p202ParseClickId')) {
     /**
      * A click id from untrusted input (a cookie, a query parameter, a
