@@ -158,6 +158,11 @@ final class SubidBatch
                         . ' write it as ' . $fields[1] . $fields[2] . ' or ' . $fields[1] . '.' . $fields[2]
                         . ' (if ' . $fields[2] . ' is the transaction id, write the payout with its decimals, as ' . $fields[1] . '.00)';
                 }
+                // "1.250,00" splits into a payout of 1.250 and a transaction id of 00.
+                if ($error === null && preg_match('/^\d{1,3}(?:\.\d{3})+$/D', $fields[1]) === 1 && preg_match('/^\d{1,2}$/D', $fields[2] ?? '') === 1) {
+                    $error = 'payout "' . $fields[1] . ',' . $fields[2] . '" looks like an amount written with a dot for thousands and a comma for decimals:'
+                        . ' write it as ' . str_replace('.', '', $fields[1]) . '.' . $fields[2];
+                }
             }
             if ($error === null && ($fields[2] ?? '') !== '') {
                 $error = self::transactionIdError($fields[2]);
@@ -267,7 +272,13 @@ final class SubidBatch
             return null;
         }
 
-        return (new \DateTimeImmutable('now', $zone))->setDate($year, $month, $day)->setTime($hour, $minute, $second)->getTimestamp();
+        $at = (new \DateTimeImmutable('now', $zone))->setDate($year, $month, $day)->setTime($hour, $minute, $second);
+        // A wall time the clocks skipped (spring forward) is moved by PHP; it never happened.
+        if ($at->format('Y-n-j G:i:s') !== sprintf('%d-%d-%d %d:%02d:%02d', $year, $month, $day, $hour, $minute, $second)) {
+            return null;
+        }
+
+        return $at->getTimestamp();
     }
 
     /**

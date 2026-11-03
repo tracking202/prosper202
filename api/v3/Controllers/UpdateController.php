@@ -196,18 +196,18 @@ final class UpdateController
         $items = self::subidList($payload);
         $errors = [];
         $defaultPayout = null;
-        if (array_key_exists('payout', $payload) && $payload['payout'] !== null) {
+        if (array_key_exists('payout', $payload)) {
             $raw = $payload['payout'];
             $defaultPayout = is_string($raw) ? trim($raw) : (is_int($raw) || is_float($raw) ? (string) $raw : null);
             $problem = $defaultPayout === null
-                ? 'must be a number or a decimal string such as "12.50", got ' . get_debug_type($raw)
+                ? 'must be a number or a decimal string such as "12.50" (omit it for each campaign\'s payout), got ' . get_debug_type($raw)
                 : SubidBatch::payoutError($defaultPayout);
             if ($problem !== null) {
                 $errors['payout'] = $problem;
             }
         }
         $zoneName = null;
-        if (array_key_exists('timezone', $payload) && $payload['timezone'] !== null) {
+        if (array_key_exists('timezone', $payload)) {
             $zoneName = $payload['timezone'];
             if (!is_string($zoneName) || !AccountZone::isZone($zoneName)) {
                 $errors['timezone'] = 'must be a time zone name such as "America/New_York" (the times in the lines are read in it; omit it for the account\'s)';

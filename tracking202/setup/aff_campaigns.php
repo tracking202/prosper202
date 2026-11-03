@@ -198,7 +198,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 	if (! $error) {
 		try {
 			$campaignStored = \Prosper202\Setup\CampaignCurrency::store($accountCurrency, $campaignCurrency, $aff_campaign_payout,
-				static fn (string $from, string $to, string $amount): ?string => \Prosper202\User\ExchangeRates::convert($from, $to, $amount));
+				static fn (string $from, string $to, string $amount): ?string => \Prosper202\User\ExchangeRates::convert($from, $to, $amount),
+				$editing == true && is_array($aff_campaign_row) ? $aff_campaign_row : null);
 		} catch (\RuntimeException $e) {
 			// The form escapes the text when it shows it.
 			$error['aff_campaign_currency'] = '<div class="error">' . $e->getMessage()

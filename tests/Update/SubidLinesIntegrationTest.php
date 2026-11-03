@@ -146,6 +146,8 @@ final class SubidLinesIntegrationTest extends TestCase
         $refused = [
             [['subids' => ["$e"], 'payout' => '$5'], 'payout'],
             [['subids' => ["$e"], 'timezone' => 'Mars/Olympus'], 'timezone'],
+            [['subids' => ["$e"], 'payout' => null], 'payout'],
+            [['subids' => ["$e"], 'timezone' => null], 'timezone'],
             [['subids' => ["$e", "$e, 1, tx, someday"]], 'subids.1'],
         ];
         foreach ($refused as [$body, $field]) {

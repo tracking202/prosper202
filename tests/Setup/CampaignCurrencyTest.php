@@ -82,4 +82,27 @@ final class CampaignCurrencyTest extends TestCase
         self::assertSame(['currency' => 'EUR', 'payout' => '9.00'], CampaignCurrency::shown($row, 'EUR'));
         self::assertSame(['currency' => 'EUR', 'payout' => ''], CampaignCurrency::shown([], 'EUR'), 'a new campaign');
     }
+
+    /** Renaming a campaign does not re-price it: the stored conversion is kept. */
+    public function testASaveThatKeepsTheForeignAmountKeepsTheConversion(): void
+    {
+        $row = ['aff_campaign_currency' => 'GBP', 'aff_campaign_payout' => '13.41', 'aff_campaign_foreign_payout' => '10.00'];
+        $never = static function (): ?string {
+            self::fail('no rate is asked for');
+        };
+        self::assertSame(
+            ['currency' => 'GBP', 'payout' => '13.41', 'foreign_payout' => '10.00'],
+            CampaignCurrency::store('USD', 'GBP', '10', $never, $row)
+        );
+        self::assertSame(
+            ['currency' => 'GBP', 'payout' => '16.00', 'foreign_payout' => '12.00'],
+            CampaignCurrency::store('USD', 'GBP', '12', static fn (): ?string => '16.00', $row),
+            'a new amount is converted'
+        );
+        self::assertSame(
+            ['currency' => 'EUR', 'payout' => '11.18', 'foreign_payout' => '10.00'],
+            CampaignCurrency::store('USD', 'EUR', '10', static fn (): ?string => '11.18', $row),
+            'so is the same amount in another currency'
+        );
+    }
 }

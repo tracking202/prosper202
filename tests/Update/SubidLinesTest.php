@@ -115,6 +115,7 @@ final class SubidLinesTest extends TestCase
         yield 'thousands separator' => ['1,250.00', 'thousands separator'];
         yield 'thousands separator, no decimals' => ['1,250', 'thousands separator'];
         yield 'decimal comma' => ['12,50', 'decimal comma'];
+        yield 'dot thousands, comma decimals' => ['1.250,00', 'a dot for thousands'];
         yield 'exponent' => ['1e3', 'is not a number'];
         yield 'negative' => ['-5', 'is negative'];
         yield 'a million' => ['1000000', 'too large'];
@@ -184,5 +185,16 @@ final class SubidLinesTest extends TestCase
         $entry = self::read(['940001, 12.00, 50'])[0];
         self::assertNull($entry['status']);
         self::assertSame('50', $entry['transaction_id']);
+    }
+
+    /** 2:30 AM on 8 March 2026 never happened in New York: the clocks went from 2:00 to 3:00. */
+    public function testAWallTimeTheClocksSkippedIsRefused(): void
+    {
+        $zone = new \DateTimeZone('America/New_York');
+        self::assertNull(SubidBatch::parseTime('03/08/2026 2:30:00 AM', $zone));
+        self::assertSame(
+            (new \DateTimeImmutable('2026-03-08 03:30:00', $zone))->getTimestamp(),
+            SubidBatch::parseTime('03/08/2026 3:30:00 AM', $zone)
+        );
     }
 }

@@ -24,12 +24,16 @@ final class CampaignCurrency
     /**
      * What to store for $payout typed in $campaignCurrency.
      *
+     * A save that leaves the foreign amount and currency as stored keeps the
+     * stored conversion: renaming a campaign does not re-price it.
+     *
      * @param callable(string $from, string $to, string $amount): ?string $convert
      *        $amount in $from, in $to; null when no rate could be had
+     * @param array<string, mixed>|null $stored the campaign's row, when editing
      * @return array{currency: string, payout: string, foreign_payout: string}
      * @throws \RuntimeException when the payout cannot be converted; nothing may be stored then
      */
-    public static function store(string $accountCurrency, string $campaignCurrency, string $payout, callable $convert): array
+    public static function store(string $accountCurrency, string $campaignCurrency, string $payout, callable $convert, ?array $stored = null): array
     {
         // 0 is 0 in any currency, so it needs no rate and is kept as the account's.
         if ($campaignCurrency === $accountCurrency || (float) $payout == 0.0) {
@@ -39,6 +43,11 @@ final class CampaignCurrency
             throw new \RuntimeException('A payout in another currency must be more than 0 and less than 1,000,000.');
         }
         $payout = number_format((float) $payout, 2, '.', '');
+        if ($stored !== null && (string) ($stored['aff_campaign_currency'] ?? '') === $campaignCurrency
+            && is_numeric($stored['aff_campaign_foreign_payout'] ?? null) && number_format((float) $stored['aff_campaign_foreign_payout'], 2, '.', '') === $payout
+            && is_numeric($stored['aff_campaign_payout'] ?? null) && (float) $stored['aff_campaign_payout'] > 0) {
+            return ['currency' => $campaignCurrency, 'payout' => number_format((float) $stored['aff_campaign_payout'], 2, '.', ''), 'foreign_payout' => $payout];
+        }
         $converted = $convert($campaignCurrency, $accountCurrency, $payout);
         if ($converted === null || !is_numeric($converted) || (float) $converted <= 0 || (float) $converted >= self::PAYOUT_LIMIT) {
             throw new \RuntimeException('No exchange rate from ' . $campaignCurrency . ' to ' . $accountCurrency . ' could be had just now.');

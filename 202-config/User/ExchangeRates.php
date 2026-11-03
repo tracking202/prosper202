@@ -33,6 +33,16 @@ final class ExchangeRates
     }
 
     /**
+     * The service's form fields for converting $amount from $from into $to.
+     *
+     * @return array{currency: string, payout_currency: string, payout: string}
+     */
+    public static function requestFields(string $from, string $to, string $amount): array
+    {
+        return ['currency' => $from, 'payout_currency' => $to, 'payout' => $amount];
+    }
+
+    /**
      * The service's answer for $amount in $from converted into $to:
      * ['exchange_payout' => number], or null. It converts `payout` FROM
      * `currency` INTO `payout_currency` (checked live 2026-11-03: GBP 10 =>
@@ -48,11 +58,7 @@ final class ExchangeRates
         }
         curl_setopt_array($ch, [
             CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => http_build_query([
-                'currency' => $from,
-                'payout_currency' => $to,
-                'payout' => $amount,
-            ]),
+            CURLOPT_POSTFIELDS => http_build_query(self::requestFields($from, $to, $amount)),
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
