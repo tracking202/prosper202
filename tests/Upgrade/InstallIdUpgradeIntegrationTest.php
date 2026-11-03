@@ -123,7 +123,7 @@ final class InstallIdUpgradeIntegrationTest extends TestCase
 
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
-        self::assertSame([['version' => '1.9.79']], self::all('SELECT version FROM 202_version'));
+        self::assertSame([['version' => '1.9.80']], self::all('SELECT version FROM 202_version'));
         $secrets = self::secrets();
         self::assertSame(['android_install_token', 'install_id'], array_keys($secrets));
         self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/D', $secrets['install_id']);
