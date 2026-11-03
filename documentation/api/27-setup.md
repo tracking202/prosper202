@@ -100,10 +100,106 @@ page's own script writes the same strings; a test runs it and compares):
 HTML attribute or a JavaScript string is refused: whitespace, quotes, `<`, `>`,
 `\`, `&` and control characters.
 
+Every URL ends with the account's postback token, `&p202_token=…`, minted the
+first time a URL is handed out; the answer also carries it as
+`postback_token`, with `token_required` ([below](#postback-authentication)).
+
 ```bash
 curl -H "Authorization: Bearer $KEY" \
   "https://your-domain.com/api/v3/conversions/postback-code?subid=%7Baff_sub%7D&amount=%7Bpayout%7D"
 ```
+
+## Postback authentication
+
+Click ids count up. Without authentication, anyone who can guess one can send
+`gpb.php?subid=<id>` and record a sale, or `&status=reversed` and take one
+back. So each account has a **postback token**, 32 hex characters, which every
+pixel and postback URL Setup hands out carries as `p202_token`.
+
+| Setting | What happens |
+| ------- | ------------ |
+| `token_required: true` | `pb.php`, `gpb.php`, `px.php`, `gpx.php` and `upx.php` refuse a request for this account's campaign or click that carries neither the token nor a valid signature: `403` with a JSON message, nothing recorded. `gpx.php` has sent its image already, so it only logs the refusal. |
+| `token_required: false` | A request without credentials is accepted, as before 1.9.80. |
+| either | A wrong token or signature is refused: `403`. One account's token opens nothing of another account's. |
+
+Accounts that existed when the install upgraded to 1.9.80 start with
+`token_required: false`, so the postbacks their networks already call keep
+converting: copy the URLs again from Setup (they now carry the token), give
+them to your networks, then require the token. An account made after 1.9.80
+starts with it on.
+
+The token is stored encrypted (AES-256-GCM, under a key kept in the database's
+deployment secrets) and shown on Setup › Postback / Pixel and Account › API
+Integrations › Postback authentication. It is a URL parameter, so it lands in
+the logs of whoever relays the request; rotate it if it leaks. **A pixel runs
+in the visitor's browser, so its token can be read on the advertiser's
+page.** That still stops anyone forging conversions blind by counting click
+ids, which is the attack it is for; it does not stop someone who has seen the
+page. A sender that can sign should sign.
+
+| Method | Path | Body | Permission |
+| ------ | ---- | ---- | ---------- |
+| `GET` | `/conversions/postback-auth` | — | `access_to_setup_section` |
+| `PUT` | `/conversions/postback-auth` | `{"token_required": true}` | `access_to_api_integrations` |
+| `POST` | `/conversions/postback-auth/rotate` | `{"grace_hours": 168}` (0–720, default 168) | `access_to_api_integrations` |
+
+A rotation makes a new token; the old one keeps working for `grace_hours`
+(`previous_token_valid_until`) while you change the URLs at your networks.
+`0` stops it at once. Two tokens work at most: a token an earlier rotation
+kept working is dropped.
+
+### Signed postbacks
+
+A sender that can compute an HMAC (your own server, a CRM webhook you
+script) sends `p202_ts` and `p202_sig` instead of the token, so the token
+never travels:
+
+- `p202_ts`: Unix seconds; it must be within 300 seconds of the server's
+  clock.
+- `p202_sig`: lower-case hex HMAC-SHA256, keyed with the token (its 32
+  characters as text), of
+
+  ```
+  P202-POSTBACK-V1\n<endpoint>\n<canonical query>
+  ```
+
+  `<endpoint>` is `pb`, `gpb`, `px`, `gpx` or `upx`. `<canonical query>` is
+  every parameter of the URL except `p202_sig` (`p202_ts` included): each
+  name and value decoded, then percent-encoded as RFC 3986 says (PHP's
+  `rawurlencode()`: letters, digits and `-._~` as they are, a space as
+  `%20`), written `name=value`, sorted by name and then by value as bytes,
+  and joined with `&`. A parameter sent twice is in it twice.
+
+Inside the window the same signed request can be sent again; the conversion
+is deduplicated as a network's retry is, by its transaction id (or once per
+click without one). Send a transaction id.
+
+```php
+$token = '…';                                    // GET /conversions/postback-auth
+$params = ['subid' => '123', 'amount' => '9.99', 'txid' => 'A-1', 'p202_ts' => (string) time()];
+$pairs = [];
+foreach ($params as $name => $value) {
+    $pairs[] = [rawurlencode($name), rawurlencode($value)];
+}
+usort($pairs, fn ($a, $b) => strcmp($a[0], $b[0]) ?: strcmp($a[1], $b[1]));
+$canonical = implode('&', array_map(fn ($p) => $p[0] . '=' . $p[1], $pairs));
+$params['p202_sig'] = hash_hmac('sha256', "P202-POSTBACK-V1\ngpb\n" . $canonical, $token);
+$url = 'https://track.example.com/tracking202/static/gpb.php?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+```
+
+For `subid=123&amount=9.99&txid=A-1&p202_ts=1800000000` to `gpb`, the string
+signed is:
+
+```
+P202-POSTBACK-V1
+gpb
+amount=9.99&p202_ts=1800000000&subid=123&txid=A-1
+```
+
+A PurLink SubID's signature says which click and offer the SubID names; it
+does not authenticate the postback, and the token is required all the same.
+Payment notifications (ClickBank, JVZoo, PayKickstart, Zaxaa) verify their
+own signatures and are not affected.
 
 ## A traffic source's custom variables — `/ppc-networks/{id}/variables`
 
@@ -206,6 +302,9 @@ p202 landing-page code 12                                    # simple page
 p202 landing-page code 14 --offer campaign:3 --offer rotator:2
 p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}'
 p202 conversion pixel --type universal
+p202 conversion postback-auth get                            # the token, and how to sign
+p202 conversion postback-auth set --token-required 1
+p202 conversion postback-auth rotate --grace-hours 168
 p202 ppc-network variable create 3 --name 'Ad id' --parameter adid --placeholder '{ad_id}'
 p202 ppc-account pixel create 4 --type-id 4 --code 'https://network.example/pb?click=[[subid]]'
 ```

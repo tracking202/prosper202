@@ -15,6 +15,9 @@ List, inspect, manually create, and delete conversions.
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
 | `GET` | `/conversions/postback-code` | The conversion pixels and postback URLs Setup › Postback / Pixel shows ([Setup API](27-setup.md)) |
+| `GET` | `/conversions/postback-auth` | The postback token those URLs carry, whether it is required, and how to sign ([Setup API](27-setup.md#postback-authentication)) |
+| `PUT` | `/conversions/postback-auth` | Require the token, or accept postbacks without it |
+| `POST` | `/conversions/postback-auth/rotate` | Replace the token, the old one working for a grace period |
 
 Marking or deleting subids in bulk, resetting a campaign's subids and
 uploading a revenue report — the UI's Update section — are in the

@@ -814,6 +814,25 @@ with every method's totals over the campaigns it lists; `--json` is
 `GET /conversions/match-methods`. The PHP CLI's `conversion:match-methods`
 prints the same.
 
+### Postback authentication: the token your postback URLs carry
+
+```bash
+p202 conversion postback-auth get
+p202 conversion postback-auth set --token-required 1
+p202 conversion postback-auth rotate --grace-hours 168
+```
+
+Click ids count up, so a bare postback URL lets anyone who guesses one record
+or reverse a conversion. The postback and pixel URLs (`conversion
+postback-url`, `conversion pixel`) carry the account's token as
+`p202_token`. With `--token-required 1` the postback and pixel endpoints
+refuse a request without it or a signature (`p202_ts` + `p202_sig`; `get`
+prints the parameters, and the [Setup API](../documentation/api/27-setup.md#postback-authentication)
+how to sign). A wrong token is refused either way. Accounts from before
+1.9.80 start with it off, later ones with it on. `rotate` makes a new token;
+the old one keeps working for `--grace-hours` (0 stops it at once).
+`conversion simulate` sends the token with its postback.
+
 ### Offline conversion files for Google Ads and Microsoft Advertising
 
 ```bash
