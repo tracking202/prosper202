@@ -14,6 +14,12 @@ use PHPUnit\Framework\TestCase;
  */
 final class LegacySetupEndpointsTest extends TestCase
 {
+    public static function setUpBeforeClass(): void
+    {
+        // Api\V1 has no PSR-4 entry of its own; Api\ would look in api/V1/.
+        require_once dirname(__DIR__, 3) . '/api/v1/LegacySetup.php';
+    }
+
     public function testEveryResourceHasItsIndexAndNamesItself(): void
     {
         $root = dirname(__DIR__, 3);

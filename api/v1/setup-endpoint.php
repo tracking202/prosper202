@@ -9,6 +9,8 @@ include_once dirname(__DIR__, 2) . '/202-config.php';
 $p202OutageFallback = true;
 include_once dirname(__DIR__, 2) . '/202-config/connect2.php';
 require_once dirname(__DIR__) . '/legacy/functions.php';
+// Api\V1 has no PSR-4 entry: Api\ maps to api/, which would look in api/V1/.
+require_once __DIR__ . '/LegacySetup.php';
 
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
