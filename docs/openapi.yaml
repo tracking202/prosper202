@@ -10667,6 +10667,11 @@ paths:
         refused: whitespace, quotes, `<`, `>`, `\`, `&` and control characters.
         `campaign_id` must be one of the caller's live campaigns in a live
         category (the page's list). Any other query parameter is refused.
+
+        Every URL ends with the account's postback token, `&p202_token=…`
+        (`postback_token`, minted the first time a URL is handed out); an
+        account that requires it refuses a postback or pixel without it
+        (`token_required`, see `GET /conversions/postback-auth`).
       operationId: getPostbackCode
       parameters:
         - name: amount
@@ -10714,6 +10719,119 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /conversions/postback-auth:
+    get:
+      tags: [Setup]
+      summary: Get the account's postback token and whether postbacks must carry it
+      description: |
+        Postback authentication, as Account > API Integrations > Postback
+        authentication shows it. Click ids count up, so a bare postback URL
+        lets anyone who guesses one record or reverse a conversion. The
+        postback and pixel URLs Setup hands out carry the account's token as
+        `p202_token` (minted here the first time, as handing out a URL mints
+        it). When `token_required` is true, `pb.php`, `gpb.php`, `px.php`,
+        `gpx.php` and `upx.php` refuse a request for this account's campaign
+        or click that carries neither the token nor a valid signature: 403
+        with a JSON message, nothing recorded (`gpx.php` has already sent its
+        image, so it only logs). A wrong token is refused whatever the
+        setting. Accounts that existed before 1.9.80 start with it off; an
+        account made later starts with it on.
+
+        Signed form, for a sender that can compute an HMAC: send `p202_ts`
+        (Unix seconds, within `window_seconds` of the server's clock) and
+        `p202_sig`, the lower-case hex HMAC-SHA256, keyed with the token, of
+        `P202-POSTBACK-V1` + newline + the endpoint (`gpb`, `upx`, ...) +
+        newline + the canonical query: every parameter except `p202_sig`
+        (`p202_ts` included), each name and value decoded and then encoded
+        as RFC 3986 says (rawurlencode; a space is `%20`), joined
+        `name=value`, sorted by name and then value as bytes, joined with
+        `&`. The token itself is not sent.
+      operationId: getPostbackAuth
+      responses:
+        "200":
+          description: The account's postback authentication
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PostbackAuth"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Setup]
+      summary: Require the postback token, or accept postbacks without it
+      description: |
+        `token_required` true refuses every postback and pixel of the account
+        that carries neither the token nor a signature; false accepts them
+        again (a wrong token is still refused). Asks for the role permission
+        access_to_api_integrations, as the page does.
+      operationId: updatePostbackAuth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token_required]
+              additionalProperties: false
+              properties:
+                token_required:
+                  type: boolean
+      responses:
+        "200":
+          description: The account's postback authentication, as changed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PostbackAuth"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /conversions/postback-auth/rotate:
+    post:
+      tags: [Setup]
+      summary: Replace the postback token
+      description: |
+        A new token. The old one keeps working for `grace_hours` (0 to 720,
+        168 when omitted), so the URLs at the networks can be changed one by
+        one; 0 stops it at once, for a token that leaked. A token an earlier
+        rotation kept working is dropped: two work at most. Every URL handed
+        out after this carries the new token. Asks for the role permission
+        access_to_api_integrations.
+      operationId: rotatePostbackToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                grace_hours:
+                  type: integer
+                  minimum: 0
+                  maximum: 720
+                  default: 168
+      responses:
+        "200":
+          description: The account's postback authentication, with the new token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PostbackAuth"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
   /ppc-networks/{id}/variables:
     parameters:
       - $ref: "#/components/parameters/resourceId"
@@ -11610,6 +11728,46 @@ components:
           additionalProperties:
             type: string
 
+    PostbackAuth:
+      type: object
+      properties:
+        token_required:
+          type: boolean
+        token:
+          type: string
+          example: "0123456789abcdef0123456789abcdef"
+        token_created_at:
+          type: integer
+          description: Unix seconds
+        previous_token_valid_until:
+          type: integer
+          nullable: true
+          description: When the token the last rotation replaced stops working; null when none works
+        parameter:
+          type: string
+          example: p202_token
+        signing:
+          type: object
+          properties:
+            algorithm:
+              type: string
+              example: HMAC-SHA256
+            version:
+              type: string
+              example: P202-POSTBACK-V1
+            timestamp_parameter:
+              type: string
+              example: p202_ts
+            signature_parameter:
+              type: string
+              example: p202_sig
+            window_seconds:
+              type: integer
+              example: 300
+            endpoints:
+              type: array
+              items:
+                type: string
     PostbackCode:
       type: object
       properties:
@@ -11626,15 +11784,22 @@ components:
         campaign_id:
           type: integer
           nullable: true
+        postback_token:
+          type: string
+          description: The account's postback token, which every URL here carries as p202_token
+          example: "0123456789abcdef0123456789abcdef"
+        token_required:
+          type: boolean
+          description: Whether the account refuses postbacks and pixels without the token or a signature
         simple:
           type: object
           properties:
             pixel:
               type: string
-              example: '<img height="1" width="1" border="0" style="display: none;" src="https://track.example.com/tracking202/static/gpx.php?amount=&subid={aff_sub}" />'
+              example: '<img height="1" width="1" border="0" style="display: none;" src="https://track.example.com/tracking202/static/gpx.php?amount=&subid={aff_sub}&p202_token=0123456789abcdef0123456789abcdef" />'
             postback_url:
               type: string
-              example: "https://track.example.com/tracking202/static/gpb.php?amount={payout}&subid={aff_sub}"
+              example: "https://track.example.com/tracking202/static/gpb.php?amount={payout}&subid={aff_sub}&p202_token=0123456789abcdef0123456789abcdef"
         advanced:
           type: object
           properties:
@@ -11642,7 +11807,7 @@ components:
               type: string
             postback_url:
               type: string
-              example: "https://track.example.com/tracking202/static/gpb.php?amount={payout}&cid=12&subid={aff_sub}"
+              example: "https://track.example.com/tracking202/static/gpb.php?amount={payout}&cid=12&subid={aff_sub}&p202_token=0123456789abcdef0123456789abcdef"
         universal:
           type: object
           properties:

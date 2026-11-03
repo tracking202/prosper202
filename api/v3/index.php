@@ -490,7 +490,16 @@ try {
             $code = \Api\V3\Controllers\SetupCodeController::class;
             $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode(PathId::of($ctx), $queryParams));
             $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams));
+            // The token the postback code carries, and how to sign a postback.
+            $r->get('/conversions/postback-auth', fn() => $crud(\Api\V3\Controllers\PostbackAuthController::class)->show());
         }, [$setupSection]);
+        // Postback authentication's writes: what Account › API Integrations
+        // asks for to change it, as the page does.
+        $router->group('/conversions/postback-auth', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\PostbackAuthController::class;
+            $r->put('', fn() => $crud($cls)->update($payload));
+            $r->post('/rotate', fn() => $crud($cls)->rotate($payload));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_api_integrations'); }]);
         $router->group('/ppc-networks/{id}/variables', function (Router $r) use ($crud, $idempotent, $payload) {
             $vars = \Api\V3\Controllers\PpcNetworkVariablesController::class;
             $r->get('', fn($ctx) => $crud($vars)->list(PathId::of($ctx)));

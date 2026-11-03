@@ -256,6 +256,38 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		p202_account_redirect('202-account/api-integrations.php');
 	}
 
+	// Postback authentication (Prosper202\Conversion\PostbackAuth): require
+	// the token, allow postbacks without it, or rotate it.
+	$pbAction = $_POST['postback_auth_action'] ?? null;
+	if (in_array($pbAction, ['require', 'allow', 'rotate'], true)) {
+		$pbStore = new \Prosper202\Conversion\PostbackAuth\PostbackAuthStore(new \Prosper202\Database\Connection($db));
+		$pbGrace = $_POST['grace_hours'] ?? null;
+		$pbHours = ['0' => 0, '24' => 24, '168' => 168, '720' => 720];
+		if ($pbAction === 'rotate' && !(is_string($pbGrace) && isset($pbHours[$pbGrace]))) {
+			p202_account_flash('bad', 'Choose how long the old token keeps working: not at all, a day, a week or 30 days.');
+			p202_account_redirect('202-account/api-integrations.php#postback-auth');
+		}
+		try {
+			if ($pbAction === 'rotate') {
+				$pbStore->rotate((int) $_SESSION['user_id'], $pbHours[(string) $pbGrace] * 3600, time());
+				p202_account_flash('ok', $pbHours[(string) $pbGrace] === 0
+					? 'Your postback token was replaced; the old one stopped working. Copy your postback URLs and pixels again from Setup › Postback / Pixel.'
+					: 'Your postback token was replaced; the old one keeps working for ' . ($pbHours[(string) $pbGrace] / 24)
+						. ' day(s) while you change the URLs at your networks.');
+			} else {
+				$pbStore->setRequired((int) $_SESSION['user_id'], $pbAction === 'require', time());
+				$pbStore->ensureToken((int) $_SESSION['user_id'], time());
+				p202_account_flash('ok', $pbAction === 'require'
+					? 'Postbacks and pixels without your token or a signature are now refused.'
+					: 'Postbacks and pixels without a token are accepted again; a wrong token is still refused.');
+			}
+		} catch (Throwable $pbError) {
+			error_log('api-integrations.php: postback authentication: ' . $pbError->getMessage());
+			p202_account_flash('bad', 'This could not be saved just now; nothing changed. Try again.');
+		}
+		p202_account_redirect('202-account/api-integrations.php#postback-auth');
+	}
+
 	// The four key cards: one secret each; a field left empty keeps the saved one.
 	$keyCards = [
 		'change_cb_key' => ['cb_key', 'cb_key',
@@ -715,6 +747,16 @@ $keyIntegrations = [
 ];
 $cb_crypto_ok = function_exists('openssl_decrypt');
 
+// The account's postback token, minted on first view as every place that
+// hands out a postback URL mints it.
+$pbAuth = null;
+try {
+	$pbAuth = (new \Prosper202\Conversion\PostbackAuth\PostbackAuthStore(new \Prosper202\Database\Connection($db)))
+		->ensureToken((int) $_SESSION['user_id'], time());
+} catch (Throwable $pbReadError) {
+	error_log('api-integrations.php: the postback token could not be read: ' . $pbReadError->getMessage());
+}
+
 template_top('API Integrations');
 ?>
 
@@ -729,6 +771,65 @@ template_top('API Integrations');
 <?php echo p202_account_render_flashes($flashExtra); ?>
 
 <div class="row g-4">
+	<div class="col-12">
+		<section class="p202-panel" id="postback-auth">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Postback authentication</h2>
+				<?php if ($pbAuth === null) { ?>
+					<span class="p202-pill p202-pill--warn">Unreadable</span>
+				<?php } elseif ($pbAuth->required) { ?>
+					<span class="p202-pill p202-pill--good">Required</span>
+				<?php } else { ?>
+					<span class="p202-pill p202-pill--warn">Not required</span>
+				<?php } ?>
+			</div>
+			<div class="p202-panel__body">
+				<?php if ($pbAuth === null) { ?>
+					<p class="text-danger">Your postback settings could not be read just now. Reload the page; if it persists, see the server's error log.</p>
+				<?php } else {
+					$pbPrevious = $pbAuth->previousValidUntil(time()); ?>
+					<p class="text-secondary">Click ids count up, so anyone who can guess one could record or reverse a
+						conversion with a bare postback URL. Your postback URLs and pixels carry this account's token as
+						<code>p202_token</code>; when the token is required, a postback or pixel without it, or with
+						another account's, is refused (403) and nothing is recorded. A wrong token is refused even when it
+						is not required. A sender that can compute an HMAC can sign each request with
+						<code>p202_ts</code> and <code>p202_sig</code> instead, so the token never travels.</p>
+					<p class="text-secondary">A pixel runs in the visitor's browser, so its token can be read on the
+						advertiser's page: it stops guessing, not someone who saw the page. Rotate the token if it leaked.</p>
+					<p class="mb-1"><span class="text-secondary">Token:</span> <code data-postback-token><?php echo $e((string) $pbAuth->token); ?></code>
+						<?php if ($pbAuth->tokenCreatedAt !== null) { ?><span class="text-secondary">made <?php echo $e(date('M j, Y g:i a', $pbAuth->tokenCreatedAt)); ?></span><?php } ?></p>
+					<?php if ($pbPrevious !== null) { ?>
+						<p class="mb-1"><span class="text-secondary">The token it replaced keeps working until</span> <?php echo $e(date('M j, Y g:i a', $pbPrevious)); ?>.</p>
+					<?php } ?>
+					<p>Copy the URLs that carry it from <a href="<?php echo $e($base . 'tracking202/setup/get_postback.php'); ?>">Setup › Postback / Pixel</a>.</p>
+					<div class="d-flex flex-wrap gap-3 align-items-end">
+						<form method="post" action="<?php echo $e($self . '#postback-auth'); ?>"<?php echo $pbAuth->required ? ''
+							: ' data-p202-confirm="' . $e('Require the token? Every postback and pixel your networks call without it will be refused from now on: give them the URLs from Setup › Postback / Pixel first.') . '"'; ?>>
+							<?php echo p202_account_token_field(); ?>
+							<input type="hidden" name="postback_auth_action" value="<?php echo $pbAuth->required ? 'allow' : 'require'; ?>">
+							<button class="btn btn-secondary" type="submit"><?php echo $pbAuth->required
+								? 'Accept postbacks without a token' : 'Require the token'; ?></button>
+						</form>
+						<form method="post" action="<?php echo $e($self . '#postback-auth'); ?>"
+							data-p202-confirm="<?php echo $e('Replace your postback token? Every URL and pixel you gave out carries the old one: change them at your networks before it stops working.'); ?>">
+							<?php echo p202_account_token_field(); ?>
+							<input type="hidden" name="postback_auth_action" value="rotate">
+							<label class="form-label" for="grace_hours">The old token keeps working</label>
+							<div class="input-group">
+								<select class="form-select" id="grace_hours" name="grace_hours">
+									<option value="168" selected>for 7 days</option>
+									<option value="24">for 1 day</option>
+									<option value="720">for 30 days</option>
+									<option value="0">not at all (it leaked)</option>
+								</select>
+								<button class="btn btn-secondary" type="submit">Rotate token</button>
+							</div>
+						</form>
+					</div>
+				<?php } ?>
+			</div>
+		</section>
+	</div>
 	<div class="col-12">
 		<section class="p202-panel" id="dni">
 			<div class="p202-panel__head">
