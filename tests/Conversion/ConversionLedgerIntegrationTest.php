@@ -801,15 +801,15 @@ final class ConversionLedgerIntegrationTest extends TestCase
         $this->record(101, ['payout' => '10', 'transaction_id' => 'A-1']);
         $this->record(101, ['payout' => '-4', 'transaction_id' => 'A-1']);
         $sql = 'SELECT c.conv_id, ' . \Prosper202\Attribution\CountedAmount::sql('c')
-            . ' AS amount FROM 202_conversion_logs c ORDER BY c.conv_id';
+            . ' AS amount FROM 202_conversion_logs c '
+            . \Prosper202\Attribution\CountedAmount::reversalsJoin('c') . ' ORDER BY c.conv_id';
         $indexed = self::$db->query($sql)->fetch_all(MYSQLI_ASSOC);
-        $version = (string) self::$db->server_info;
-        if (!str_contains(strtolower($version), 'mariadb') && version_compare($version, '8.0.20', '>=')) {
-            $plan = self::$db->query('EXPLAIN ' . $sql)->fetch_all(MYSQLI_ASSOC);
-            $reversal = array_values(array_filter($plan, static fn (array $row): bool => $row['table'] === 'c_r'));
-            self::assertCount(1, $reversal);
-            self::assertSame('reverses_conv_id', $reversal[0]['key']);
-        }
+        // No lookup per conversion, on any engine: that shape read the whole ledger per row on MariaDB 11 (M4R1).
+        $plan = self::$db->query('EXPLAIN ' . $sql)->fetch_all(MYSQLI_ASSOC);
+        self::assertSame([], array_values(array_filter(
+            $plan,
+            static fn (array $row): bool => str_contains(strtoupper((string) $row['select_type']), 'DEPENDENT')
+        )), 'a dependent subquery in the plan');
         self::assertTrue(self::$db->query('ALTER TABLE 202_conversion_logs DROP INDEX reverses_conv_id'));
         try {
             $unindexed = self::$db->query($sql)->fetch_all(MYSQLI_ASSOC);
@@ -851,7 +851,8 @@ final class ConversionLedgerIntegrationTest extends TestCase
             'SELECT c.conv_id, c.click_payout, c.payable, c.deleted, c.superseded_reason, c.reverses_conv_id, '
             . \Prosper202\Attribution\CountedAmount::sql('c') . ' AS counted_sql, '
             . \Prosper202\Attribution\CountedAmount::sqlOrNull('c') . ' AS counted_or_null'
-            . ' FROM 202_conversion_logs c ORDER BY c.conv_id'
+            . ' FROM 202_conversion_logs c '
+            . \Prosper202\Attribution\CountedAmount::reversalsJoin('c') . ' ORDER BY c.conv_id'
         )->fetch_all(MYSQLI_ASSOC);
         self::assertCount(9, $rows);
         $seen = [];

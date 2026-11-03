@@ -1,0 +1,2 @@
+-- Fixed: On MariaDB 11, offline conversion files and the Android install report could take hours on a large conversion ledger: each conversion's refunds were looked up by re-reading the whole ledger, because MariaDB ignores the MySQL index hint that kept that lookup fast. Live refunds are now totalled once per read and matched to their sale by key, on MySQL and MariaDB alike, with or without the index.
+app: Fixed: Offline conversion files no longer stall on MariaDB 11.
