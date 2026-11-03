@@ -71,6 +71,20 @@ final class ApiUsageTest extends TestCase
         $this->assertStringEndsWith(':7:cli:2026-11-03', $one);
     }
 
+    public function test_a_database_name_that_cannot_be_read_gives_no_key(): void
+    {
+        $db = $this->createMock(mysqli::class);
+        $db->method('query')->willReturn(false);
+        $hadName = $GLOBALS['dbname'] ?? null;
+        unset($GLOBALS['dbname']);
+        try {
+            $this->expectException(\RuntimeException::class);
+            ApiUsage::dayKey($db, 7, ApiUsage::CLIENT_CLI, '2026-11-03');
+        } finally {
+            $GLOBALS['dbname'] = $hadName;
+        }
+    }
+
     public function test_failed_requests_and_missing_users_record_nothing_and_read_nothing(): void
     {
         $db = $this->createMock(mysqli::class);

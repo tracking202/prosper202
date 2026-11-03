@@ -70,9 +70,13 @@ final class ApiUsage
         $database = $GLOBALS['dbname'] ?? null;
         if (!is_string($database) || $database === '') {
             $found = $db->query('SELECT DATABASE()');
-            $database = $found instanceof mysqli_result ? (string) ($found->fetch_row()[0] ?? '') : '';
-            if ($database === '') {
+            if (!($found instanceof mysqli_result)) {
                 throw new \RuntimeException('the database name could not be read');
+            }
+            $database = (string) ($found->fetch_row()[0] ?? '');
+            $found->free();
+            if ($database === '') {
+                throw new \RuntimeException('no database is selected');
             }
         }
 
