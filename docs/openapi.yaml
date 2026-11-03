@@ -901,8 +901,9 @@ paths:
         The URL to paste into ClickBank (INS), JVZoo (two URLs, both verified
         with the JVZIPN secret key: `jvzoo`, `?role=affiliate`, for an
         affiliate's Affiliate IPN, and `jvzoo_vendor`, `?role=vendor`, for a
-        product's JVZIPN v1 URL), Zaxaa (ZPN) and PayKickstart (the
-        product IPN, set under each product's IPN Integration tab), on this
+        product's JVZIPN v1 URL), Zaxaa (ZPN), PayKickstart (the
+        product IPN, set under each product's IPN Integration tab) and
+        Shopify (the order and refund webhooks), on this
         install's tracking base (user 1's tracking
         domain or this server's name, and the install's path — the base
         tracker links use), and whether the caller has stored the secret
@@ -933,7 +934,7 @@ paths:
                           properties:
                             integration:
                               type: string
-                              enum: [clickbank, jvzoo, jvzoo_vendor, zaxaa, paykickstart]
+                              enum: [clickbank, jvzoo, jvzoo_vendor, zaxaa, paykickstart, shopify]
                             name:
                               type: string
                             label:
@@ -13031,7 +13032,7 @@ components:
     ConversionSource:
       type: string
       description: What produced a ledger row.
-      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, paykickstart, jvzoo, app_install, goal, legacy_baseline]
+      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, paykickstart, jvzoo, shopify, app_install, goal, legacy_baseline]
 
     MatchMethod:
       type: string
@@ -15096,6 +15097,7 @@ components:
         lpo_site_key: {$ref: "#/components/schemas/StoredSecret"}
         lpo_bridge_config: {$ref: "#/components/schemas/StoredSecret"}
         paykickstart_ipn_secret_keys: {$ref: "#/components/schemas/StoredSecret"}
+        shopify_webhook_secret: {$ref: "#/components/schemas/StoredSecret"}
 
     UserPreferencesUpdate:
       type: object
@@ -15195,6 +15197,16 @@ components:
                 other than the comma. The list replaces every stored key, since
                 none can be read back; "" removes them all. A key that is not one
                 is a 422 naming it by its place in the list.
+            - $ref: "#/components/schemas/StoredSecret"
+        shopify_webhook_secret:
+          oneOf:
+            - type: string
+              maxLength: 250
+              description: >-
+                The secret Shopify signs the store's webhooks with, which
+                tracking202/static/shopify.php verifies X-Shopify-Hmac-Sha256
+                with, stored trimmed; "" removes it. 16 to 250 letters, digits
+                and punctuation; anything else is a 422.
             - $ref: "#/components/schemas/StoredSecret"
         user_ltv_customer_cparam: {type: integer, enum: [0, 1, 2, 3, 4], description: "c1-c4 carries a customer id; 0 off."}
         user_ltv_personalization_fields: {type: string, maxLength: 500, description: "Comma list of first_name, last_name, company, city, country, cf:<field_key>, rec:next_offer."}

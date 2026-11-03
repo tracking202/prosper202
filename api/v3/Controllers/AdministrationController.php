@@ -17,6 +17,7 @@ use Prosper202\GeoIp\RefreshStore;
 use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\JVZoo\JVZooRole;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
+use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 use Prosper202\User\SignInOutcome;
 
 /**
@@ -92,6 +93,7 @@ final class AdministrationController
         'paykickstart' => [
             'PayKickstart', 'IPN URL', 'tracking202/static/paykickstart.php', 'paykickstart_ipn_secret_keys',
         ],
+        'shopify' => ['Shopify', 'Webhook URL', 'tracking202/static/shopify.php', ShopifyWebhookSecret::COLUMN],
     ];
 
     private readonly Connection $conn;
@@ -680,7 +682,7 @@ final class AdministrationController
             $base = TrackingBaseUrl::buildForResponse((string) ($domain['user_tracking_domain'] ?? ''), $server ?? $_SERVER, dirname(__DIR__, 3));
             $prefs = $this->one(
                 'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_incoming_webhook,
-                        paykickstart_ipn_secret_keys
+                        paykickstart_ipn_secret_keys, shopify_webhook_secret
                  FROM 202_users_pref WHERE user_id = ? LIMIT 1',
                 'i',
                 [$this->userId]
@@ -704,6 +706,11 @@ final class AdministrationController
                     // The key the endpoint signs with: one it cannot use is not stored.
                     $jvzooKey = $prefs[$secret] ?? null;
                     $entry['secret_stored'] = JVZooKey::stored(is_string($jvzooKey) ? $jvzooKey : null) !== null;
+                }
+                if ($secret === ShopifyWebhookSecret::COLUMN) {
+                    $shopifySecret = $prefs[$secret] ?? null;
+                    $entry['secret_stored'] = ShopifyWebhookSecret::stored(is_string($shopifySecret) ? $shopifySecret : null)
+                        !== null;
                 }
                 if ($key === 'paykickstart') {
                     // One key for each PayKickstart campaign; never the keys.

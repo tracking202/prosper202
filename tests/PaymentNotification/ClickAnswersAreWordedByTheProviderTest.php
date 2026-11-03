@@ -18,6 +18,7 @@ use Prosper202\PaymentNotification\PayKickstart\PayKickstartAdapter;
 use Prosper202\PaymentNotification\Processor;
 use Prosper202\PaymentNotification\ProviderAdapter;
 use Prosper202\PaymentNotification\Response;
+use Prosper202\PaymentNotification\Shopify\ShopifyAdapter;
 use Prosper202\PaymentNotification\Verification;
 use Tests\Support\SourceScan;
 
@@ -76,6 +77,7 @@ final class ClickAnswersAreWordedByTheProviderTest extends TestCase
             'JVZoo affiliate' => new JVZooAdapter(JVZooRole::AFFILIATE),
             'JVZoo vendor' => new JVZooAdapter(JVZooRole::VENDOR),
             'ClickBank' => new ClickBankAdapter(),
+            'Shopify' => new ShopifyAdapter(),
         ];
     }
 

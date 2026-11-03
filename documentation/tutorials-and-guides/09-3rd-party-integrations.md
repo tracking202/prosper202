@@ -224,6 +224,37 @@ Each notification is logged in the server's error log in one line: the
 outcome, the type, the click, the receipt and the account, never the key or
 the buyer's details.
 
+## Shopify
+
+Prosper202 records each Shopify order on the click that sent the buyer, at the
+order's `total_price`, and a refund takes back what it returned, from Shopify's
+webhooks. Under **Account › API integrations › Shopify**:
+
+1. On your store, add the click id to the cart as the line item property
+   `t202subid` (or `_t202subid`, which checkout hides), filled from the
+   tracker's `[[subid]]`. Prosper202 reads it from the first line item that
+   carries it, as paid 1.9.56 did.
+2. In Shopify, under **Settings › Notifications › Webhooks**, create a JSON
+   webhook for **Order payment** (or **Order creation**) and one for **Refund
+   create**, both to the page's Webhook URL
+   (`https://<your tracking domain>/tracking202/static/shopify.php`). Webhooks
+   already pointed at the global postback (`tracking202/static/gpb.php`) by a
+   paid 1.9.56 install keep working: a request carrying Shopify's headers is
+   handed to the same code.
+3. Store the secret Shopify shows under the webhooks list ("Your webhooks will
+   be signed with …"), or a custom app's client secret, on the page. Each
+   webhook's `X-Shopify-Hmac-Sha256` is checked against it, and the account
+   whose secret verifies it is the one it records for. A webhook no stored
+   secret verifies, or one that arrives before any secret is stored, is
+   refused (`403`) and logged with the reason; nothing is recorded.
+
+An order counts once, under its order id, whichever of Order creation and
+Order payment arrives first. A test order and other topics are acknowledged
+and record nothing. A refund reverses the order on the click of a refunded line
+item, or, when it names none, the click the order was recorded on; one that
+returns no money (a restock) records nothing. An order in a currency other
+than the account's is refused (`422`): Prosper202 does not convert it.
+
 ## Slack Integration
 
 If you love using Slack and use it often as part of your workflow, then you might want to integrate Prosper into Slack. Our team uses Slack and we thought what could we do to help improve the process. By integrating Prosper202 into Slack, it will enable you to know exactly what every team member does in Prosper202 as soon as it happens? These notifications could then trigger a meaningful conversation.

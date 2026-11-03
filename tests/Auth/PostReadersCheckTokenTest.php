@@ -64,6 +64,8 @@ final class PostReadersCheckTokenTest extends TestCase
             . ' its HMAC signature with a stored IPN secret key (no session to forge a request from)',
         'tracking202/static/jvzoo.php' => 'JVZoo\'s JVZIPN, posted by its server and authenticated by its cverify'
             . ' with a stored JVZIPN secret key (no session to forge a request from)',
+        'tracking202/static/shopify.php' => 'Shopify\'s order webhooks, posted by its server and authenticated by'
+            . ' their HMAC signature with a stored webhook secret (no session to forge a request from)',
         'tracking202/static/p13n.php' => 'a public endpoint authenticated by a personalization bearer token, cross-origin by design (no session to forge a request from)',
         'tracking202/static/p13n_event.php' => 'a public beacon authenticated by a personalization bearer token, cross-origin by design (no session to forge a request from)',
     ];
