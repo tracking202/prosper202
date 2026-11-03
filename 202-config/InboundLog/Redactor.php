@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace Prosper202\InboundLog;
 
 /**
- * What the log keeps of a request's fields: every name, and a value only
+ * What the log keeps of a request's fields: every name (unless it holds an
+ * email or IP address), and a value only
  * when its endpoint is known to send that field (KEEP) and the value names
  * no person (email, IP address). Every other value is redacted, so a field a
  * provider adds later is hidden until it is listed here.
@@ -73,12 +74,16 @@ final class Redactor
                 break;
             }
             $name = (string) $name;
-            $out[self::text($name, 64)] = in_array($name, $keep, true) ? self::value($value, 0) : self::REDACTED;
+            $shown = self::namesAPerson($name) ? '_redacted_name_' . $kept : self::text($name, 64);
+            $out[$shown] = in_array($name, $keep, true) ? self::value($value, 0) : self::REDACTED;
             $kept++;
         }
 
         return $out;
     }
+
+    /** Stored when the fields could not be encoded, so a lost body never reads as none. */
+    public const UNREADABLE = '{"_unreadable":true}';
 
     /** The fields as the log stores them: JSON, at most MAX_BYTES; null for none. */
     public static function encode(array $redacted): ?string
@@ -89,10 +94,10 @@ final class Redactor
         while (true) {
             $json = json_encode($redacted, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
             if ($json === false) {
-                return null;
+                return self::UNREADABLE;
             }
             if (strlen($json) <= self::MAX_BYTES || count($redacted) <= 1) {
-                return strlen($json) <= self::MAX_BYTES ? $json : null;
+                return strlen($json) <= self::MAX_BYTES ? $json : self::UNREADABLE;
             }
             $more = (int) ($redacted['_more_fields'] ?? 0);
             unset($redacted['_more_fields']);
@@ -109,8 +114,10 @@ final class Redactor
             }
             $out = [];
             foreach (array_slice($value, 0, self::MAX_FIELDS, true) as $k => $v) {
-                $hidden = preg_match(self::SECRET_NAME, (string) $k) !== 0 || preg_match(self::VISITOR_NAME, (string) $k) !== 0;
-                $out[self::text((string) $k, 64)] = $hidden ? self::REDACTED : self::value($v, $depth + 1);
+                $k = (string) $k;
+                $hidden = preg_match(self::SECRET_NAME, $k) !== 0 || preg_match(self::VISITOR_NAME, $k) !== 0;
+                $shown = self::namesAPerson($k) ? '_redacted_name_' . count($out) : self::text($k, 64);
+                $out[$shown] = $hidden || $shown !== self::text($k, 64) ? self::REDACTED : self::value($v, $depth + 1);
             }
 
             return $out;

@@ -116,5 +116,13 @@ final class RedactorTest extends TestCase
         self::assertIsString($json);
         self::assertLessThanOrEqual(Redactor::MAX_BYTES, strlen($json));
         self::assertNull(Redactor::encode([]));
+        self::assertSame(Redactor::UNREADABLE, Redactor::encode(['subid' => str_repeat('x', Redactor::MAX_BYTES + 1)]));
+    }
+
+    public function testANameHoldingAnEmailOrAddressIsNotKept(): void
+    {
+        $kept = Redactor::fields(['jane@northwind.example' => '1', 'subid' => '9001', '198.51.100.7' => 'x'], 'pb');
+
+        self::assertSame(['_redacted_name_0' => Redactor::REDACTED, 'subid' => '9001', '_redacted_name_2' => Redactor::REDACTED], $kept);
     }
 }

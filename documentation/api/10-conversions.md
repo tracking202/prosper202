@@ -115,8 +115,10 @@ each group's clicks and cost.
 the sender got and why: the same list as Setup › Inbound Log. It needs the
 role's access to the Setup section. An admin also gets the requests no
 account could be found for (an unknown campaign, a signature no stored key
-verifies), with `user_id` null. The newest 5,000 requests per account are
-kept, and the newest 1,000 no account was found for. A request no account
+verifies), with `user_id` null. Each account's newest 5,000 accepted
+requests are kept, and apart from them its newest 5,000 refused ones, so a
+flood of refusals cannot push out a recorded conversion; and the newest 1,000
+no account was found for. A request no account
 was found for, or one that was refused, is logged at most 60 times a minute
 per account.
 

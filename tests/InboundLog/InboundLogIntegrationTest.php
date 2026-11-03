@@ -265,12 +265,13 @@ final class InboundLogIntegrationTest extends TestCase
     /** Rows for $user with outcome $outcome, received at 1..$count, inserted by doubling. */
     private static function seed(int $user, int $count, string $outcome = 'unknown_campaign'): void
     {
-        $columns = 'user_id, received_at, endpoint, method, http_status, outcome, reason';
-        self::q("INSERT INTO 202_inbound_log ($columns) VALUES ($user, 1, 'pb', 'GET', 200, '$outcome', '')");
+        $columns = 'user_id, received_at, endpoint, method, http_status, outcome, accepted, reason';
+        $accepted = $user > 0 && in_array($outcome, InboundLog::ACCEPTED_OUTCOMES, true) ? 1 : 0;
+        self::q("INSERT INTO 202_inbound_log ($columns) VALUES ($user, 1, 'pb', 'GET', 200, '$outcome', $accepted, '')");
         for ($have = 1; $have < $count; $have *= 2) {
             self::q("INSERT INTO 202_inbound_log ($columns) SELECT user_id, received_at + $have, endpoint, method,"
-                . " http_status, outcome, reason FROM 202_inbound_log WHERE user_id = $user AND received_at + $have <= $count"
-                . ' ORDER BY inbound_id');
+                . " http_status, outcome, accepted, reason FROM 202_inbound_log WHERE user_id = $user AND accepted = $accepted"
+                . " AND received_at + $have <= $count ORDER BY inbound_id");
         }
     }
 
@@ -317,10 +318,26 @@ final class InboundLogIntegrationTest extends TestCase
         self::assertFalse($log->append(new Entry('pb', 'GET', 404, 'unknown_click', '', self::ACCOUNT), $now + 59));
         self::assertTrue($log->append(new Entry('pb', 'GET', 200, 'recorded', '', self::ACCOUNT), $now + 59),
             'a conversion is always logged');
-        self::assertTrue($log->append(new Entry('pb', 'GET', 404, 'unknown_click', '', self::ACCOUNT), $now + 59),
-            'and opens the account\'s window again');
+        self::assertFalse($log->append(new Entry('pb', 'GET', 404, 'unknown_click', '', self::ACCOUNT), $now + 59),
+            'and does not reopen the refusals\' window');
         self::assertTrue($log->append(new Entry('pb', 'GET', 200, 'unknown_campaign', '', 0), $now + 60), 'a minute on');
+        self::assertTrue($log->append(new Entry('pb', 'GET', 404, 'unknown_click', '', self::ACCOUNT), $now + 60));
         self::assertSame([0 => 61, self::ACCOUNT => 62], self::counts());
+    }
+
+    /** A flood of refusals aimed at an account (a public acip) evicts only refusals. */
+    public function testRefusalsCannotEvictAnAccountsAcceptedRequests(): void
+    {
+        $db = self::requireScratch();
+        self::seed(self::ACCOUNT, 3000, 'recorded');
+        self::seed(self::ACCOUNT, 20000, 'unknown_click');
+
+        (new InboundLog($db))->prune();
+
+        $kept = $db->query('SELECT outcome, COUNT(*) FROM 202_inbound_log WHERE user_id = ' . self::ACCOUNT
+            . ' GROUP BY outcome ORDER BY outcome');
+        self::assertInstanceOf(\mysqli_result::class, $kept);
+        self::assertSame([['recorded', '3000'], ['unknown_click', (string) InboundLog::KEEP_REFUSED]], $kept->fetch_all());
     }
 
     public function testAPayKickstartNotificationKeepsNoLicenceKeyOrBuyerDetail(): void

@@ -15,8 +15,11 @@ if (!function_exists('p202RespondJsonError')) {
 
 if (!function_exists('p202InboundLogWatch')) {
     /** Logs this postback or pixel request when it ends (Prosper202\InboundLog\RequestLog). */
-    function p202InboundLogWatch(mysqli $db, string $endpoint): void
+    function p202InboundLogWatch(mixed $db, string $endpoint): void
     {
+        if (!$db instanceof mysqli) {
+            return; // no database: the endpoint answers its own outage
+        }
         try {
             \Prosper202\InboundLog\RequestLog::watch($db, $endpoint, (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'), $_GET);
         } catch (\Throwable $e) {

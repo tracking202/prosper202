@@ -380,7 +380,8 @@ final class ConversionTables
      * The postbacks, pixels and payment notifications this install answered,
      * and what became of each (Prosper202\InboundLog). user_id 0 is a request
      * no account could be found for. Bounded per account by the hourly prune
-     * (InboundLog::KEEP_PER_ACCOUNT); fields hold the request with every
+     * (InboundLog::KEEP_PER_ACCOUNT accepted, KEEP_REFUSED refused: accepted
+     * is 1 for an account's accepted request); fields hold the request with every
      * secret and visitor value redacted. From 1.9.80, added by its rung.
      */
     public static function inboundLog(): SchemaDefinition
@@ -395,13 +396,15 @@ final class ConversionTables
                 `method` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
                 `http_status` smallint(5) unsigned NOT NULL,
                 `outcome` varchar(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `accepted` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 `reason` varchar(500) NOT NULL DEFAULT '',
                 `click_id` bigint(20) unsigned DEFAULT NULL,
                 `conversion_id` int(11) unsigned DEFAULT NULL,
                 `transaction_id` varchar(255) DEFAULT NULL,
                 `fields` text,
                 PRIMARY KEY (`inbound_id`),
-                KEY `user_recent` (`user_id`,`inbound_id`)
+                KEY `user_recent` (`user_id`,`inbound_id`),
+                KEY `user_kind_recent` (`user_id`,`accepted`,`inbound_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

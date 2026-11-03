@@ -10,8 +10,10 @@ use Prosper202\Database\Schema\TableRegistry;
 /**
  * The postbacks, pixels and payment notifications this install answered
  * (202_inbound_log): written once per request, read by Setup › Inbound Log
- * and GET /conversions/inbound-log, pruned hourly to KEEP_PER_ACCOUNT rows
- * per account and KEEP_UNATTRIBUTED for requests no account was found for.
+ * and GET /conversions/inbound-log, pruned hourly to each account's newest
+ * KEEP_PER_ACCOUNT accepted and KEEP_REFUSED refused requests (so a flood of
+ * refusals never evicts an accepted one) and KEEP_UNATTRIBUTED for requests
+ * no account was found for.
  *
  * Writing never fails the request it records: one insert, and any error is
  * logged and dropped. A request nothing vouches for (no account, or refused)
@@ -21,6 +23,8 @@ use Prosper202\Database\Schema\TableRegistry;
 final class InboundLog
 {
     public const KEEP_PER_ACCOUNT = 5000;
+    /** An account's refused requests kept, apart from its accepted ones. */
+    public const KEEP_REFUSED = 5000;
     /** Rows kept for requests no account could be found for (user_id 0). */
     public const KEEP_UNATTRIBUTED = 1000;
     /** Unattributed or refused requests logged per account a minute; the rest are not logged. */
@@ -48,22 +52,23 @@ final class InboundLog
             $now ??= time();
             $userId = max(0, $entry->userId);
             $conn = new Connection($this->db);
-            $unbacked = $userId === 0 || !in_array($entry->outcome, self::ACCEPTED_OUTCOMES, true);
-            if ($unbacked && $this->unbackedCapReached($conn, $userId, $now)) {
+            $accepted = $userId > 0 && in_array($entry->outcome, self::ACCEPTED_OUTCOMES, true);
+            if (!$accepted && $this->unbackedCapReached($conn, $userId, $now)) {
                 return false;
             }
             $stmt = $conn->prepareWrite(
                 'INSERT INTO ' . TableRegistry::INBOUND_LOG
-                . ' (user_id, received_at, endpoint, method, http_status, outcome, reason, click_id, conversion_id, transaction_id, fields)'
-                . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                . ' (user_id, received_at, endpoint, method, http_status, outcome, accepted, reason, click_id, conversion_id, transaction_id, fields)'
+                . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
-            $conn->bind($stmt, 'iississiiss', [
+            $conn->bind($stmt, 'iissisisiiss', [
                 $userId,
                 $now,
                 substr($entry->endpoint, 0, 24),
                 substr($entry->method, 0, 8),
                 $entry->httpStatus,
                 substr($entry->outcome, 0, 32),
+                $accepted ? 1 : 0,
                 mb_substr($entry->reason, 0, 500, 'UTF-8'),
                 $entry->clickId,
                 $entry->conversionId,
@@ -80,26 +85,17 @@ final class InboundLog
         }
     }
 
-    /** The account's newest UNBACKED_PER_MINUTE rows are all unbacked and from the last minute. */
+    /** UNBACKED_PER_MINUTE of the account's unaccepted rows arrived in the last minute. */
     private function unbackedCapReached(Connection $conn, int $userId, int $now): bool
     {
         $stmt = $conn->prepareWrite(
-            'SELECT outcome, received_at FROM ' . TableRegistry::INBOUND_LOG
-            . ' WHERE user_id = ? ORDER BY inbound_id DESC LIMIT ' . self::UNBACKED_PER_MINUTE
+            'SELECT received_at FROM ' . TableRegistry::INBOUND_LOG
+            . ' WHERE user_id = ? AND accepted = 0 ORDER BY inbound_id DESC LIMIT 1 OFFSET ' . (self::UNBACKED_PER_MINUTE - 1)
         );
         $conn->bind($stmt, 'i', [$userId]);
-        $rows = $conn->fetchAll($stmt);
-        if (count($rows) < self::UNBACKED_PER_MINUTE) {
-            return false;
-        }
-        foreach ($rows as $row) {
-            if ((int) $row['received_at'] <= $now - 60
-                || ($userId > 0 && in_array((string) $row['outcome'], self::ACCEPTED_OUTCOMES, true))) {
-                return false;
-            }
-        }
+        $row = $conn->fetchOne($stmt);
 
-        return true;
+        return $row !== null && (int) $row['received_at'] > $now - 60;
     }
 
     /**
@@ -151,11 +147,11 @@ final class InboundLog
     }
 
     /**
-     * Deletes each account's rows beyond its newest KEEP_PER_ACCOUNT, and the
-     * unattributed ones beyond KEEP_UNATTRIBUTED, until caught up or $seconds
-     * have passed; answers how many rows went. Each round takes one batch from
-     * every account over its cap, the unattributed rows last, so no account
-     * waits on another's backlog.
+     * Deletes each account's accepted rows beyond its newest KEEP_PER_ACCOUNT,
+     * its refused ones beyond KEEP_REFUSED and the unattributed ones beyond
+     * KEEP_UNATTRIBUTED, until caught up or $seconds have passed; answers how
+     * many rows went. Each round takes one batch from every bucket over its
+     * cap, the unattributed rows last, so no account waits on another's backlog.
      */
     public function prune(float $seconds = self::PRUNE_SECONDS): int
     {
@@ -165,13 +161,15 @@ final class InboundLog
         do {
             $behind = false;
             $over = $conn->prepareWrite(
-                'SELECT user_id FROM ' . TableRegistry::INBOUND_LOG . ' GROUP BY user_id'
-                . ' HAVING COUNT(*) > IF(user_id = 0, ?, ?) ORDER BY user_id = 0, user_id'
+                'SELECT user_id, accepted FROM ' . TableRegistry::INBOUND_LOG . ' GROUP BY user_id, accepted'
+                . ' HAVING COUNT(*) > IF(user_id = 0, ?, IF(accepted = 1, ?, ?)) ORDER BY user_id = 0, user_id, accepted DESC'
             );
-            $conn->bind($over, 'ii', [self::KEEP_UNATTRIBUTED, self::KEEP_PER_ACCOUNT]);
+            $conn->bind($over, 'iii', [self::KEEP_UNATTRIBUTED, self::KEEP_PER_ACCOUNT, self::KEEP_REFUSED]);
             foreach ($conn->fetchAll($over) as $row) {
                 $userId = (int) $row['user_id'];
-                $gone = $this->pruneBatch($conn, $userId, $userId === 0 ? self::KEEP_UNATTRIBUTED : self::KEEP_PER_ACCOUNT);
+                $accepted = (int) $row['accepted'];
+                $keep = $userId === 0 ? self::KEEP_UNATTRIBUTED : ($accepted === 1 ? self::KEEP_PER_ACCOUNT : self::KEEP_REFUSED);
+                $gone = $this->pruneBatch($conn, $userId, $accepted, $keep);
                 $deleted += $gone;
                 $behind = $behind || $gone === self::PRUNE_BATCH;
                 if (microtime(true) >= $deadline) {
@@ -183,22 +181,23 @@ final class InboundLog
         return $deleted;
     }
 
-    /** One delete of the account's rows older than its newest $keep. */
-    private function pruneBatch(Connection $conn, int $userId, int $keep): int
+    /** One delete of the bucket's rows older than its newest $keep. */
+    private function pruneBatch(Connection $conn, int $userId, int $accepted, int $keep): int
     {
         $cut = $conn->prepareWrite(
             'SELECT inbound_id FROM ' . TableRegistry::INBOUND_LOG
-            . ' WHERE user_id = ? ORDER BY inbound_id DESC LIMIT 1 OFFSET ?'
+            . ' WHERE user_id = ? AND accepted = ? ORDER BY inbound_id DESC LIMIT 1 OFFSET ?'
         );
-        $conn->bind($cut, 'ii', [$userId, $keep - 1]);
+        $conn->bind($cut, 'iii', [$userId, $accepted, $keep - 1]);
         $oldestKept = $conn->fetchOne($cut);
         if ($oldestKept === null) {
             return 0;
         }
         $delete = $conn->prepareWrite(
-            'DELETE FROM ' . TableRegistry::INBOUND_LOG . ' WHERE user_id = ? AND inbound_id < ? LIMIT ' . self::PRUNE_BATCH
+            'DELETE FROM ' . TableRegistry::INBOUND_LOG
+            . ' WHERE user_id = ? AND accepted = ? AND inbound_id < ? LIMIT ' . self::PRUNE_BATCH
         );
-        $conn->bind($delete, 'ii', [$userId, (int) $oldestKept['inbound_id']]);
+        $conn->bind($delete, 'iii', [$userId, $accepted, (int) $oldestKept['inbound_id']]);
 
         return $conn->executeUpdate($delete);
     }
