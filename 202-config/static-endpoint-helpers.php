@@ -164,11 +164,14 @@ if (!function_exists('p202ExtractTransactionId')) {
      * which means "no idempotency key available" (the conversion is still
      * recorded, it just cannot be de-duplicated on retry).
      *
+     * `t202txid` is the name paid 1.9.56 pixels and postbacks send; it is read
+     * last so it never outranks a modern name.
+     *
      * @param array<string,mixed> $source Typically $_GET.
      */
     function p202ExtractTransactionId(array $source): string
     {
-        foreach (['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid'] as $key) {
+        foreach (['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'] as $key) {
             if (array_key_exists($key, $source) && is_scalar($source[$key])) {
                 $value = trim((string) $source[$key]);
                 if ($value !== '') {
