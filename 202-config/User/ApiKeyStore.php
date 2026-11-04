@@ -302,7 +302,7 @@ final class ApiKeyStore
     {
         try {
             $rows = $conn->fetchAll($conn->prepareRead(
-                "SELECT user_id, key_hash FROM 202_api_keys WHERE key_hash IS NOT NULL AND api_key = ''"
+                "SELECT user_id, key_hash FROM 202_api_keys WHERE key_hash IS NOT NULL AND CHAR_LENGTH(api_key) = 0"
             ));
             foreach ($rows as $row) {
                 $update = $conn->prepareWrite(
