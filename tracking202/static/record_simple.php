@@ -417,6 +417,19 @@ $clickIdentity = p202ClickIdentity(
 if ($rsParallelClick !== null) {
     // The page's identity signals go to the click it took.
     $clickIdentity->attach($conn, (int) $mysql['user_id'], $click_id, $rsParallelClick->clickTime);
+    // The template's hit (pt.php) that finds the page's click brings the
+    // tracker's cost, keyword and c1-c4 the page's URL did not carry.
+    if (($ptTemplateHit ?? false) === true) {
+        try {
+            \Prosper202\Click\ParallelTrackingClick::fillFromTemplate(
+                $conn,
+                \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity)
+            );
+        } catch (\Throwable $rsFillError) {
+            error_log('Prosper202 parallel tracking: the template\'s values for click ' . $click_id
+                . ' could not be written: ' . $rsFillError->getMessage());
+        }
+    }
 } else {
     $rsClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
     try {

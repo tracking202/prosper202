@@ -84,7 +84,9 @@ final class GoogleAdsParallelTracking
             && strtolower($parts['scheme'] ?? '') === 'https'
             && in_array(strtolower($parts['host'] ?? ''), self::SUBSTITUTE_HOSTS, true)
             && !isset($parts['port'])
-            && str_starts_with($parts['path'] ?? '', '/asnc/');
+            && str_starts_with($parts['path'] ?? '', '/asnc/')
+            // No dot segment (raw or encoded): /asnc/../ leaves /asnc/ once a browser resolves it.
+            && preg_match('~(^|/)\.{1,2}(/|$)|%2e~i', (string) $parts['path']) !== 1;
     }
 
     private static function sameSite(string $url, string $landingPageUrl): bool

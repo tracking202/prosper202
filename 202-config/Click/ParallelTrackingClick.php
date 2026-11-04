@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Prosper202\Click;
 
+use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Database\Connection;
+use Prosper202\Report\RollupDirty;
 
 /**
  * A Google Ads click already recorded for a landing page, found by its gclid:
@@ -64,6 +66,69 @@ final readonly class ParallelTrackingClick
             (string) $row['aff_campaign_id'],
             (int) $row['click_time']
         );
+    }
+
+    /**
+     * The template's hit (pt.php) found a click the page's script recorded
+     * first: Google sends both requests at once, so the page often wins. The
+     * template carries what the page's URL does not (its tracker's cost and
+     * traffic source, the keyword, text ad and c1-c4), so those go onto the
+     * page's click; a value the template does not bring (0) keeps the
+     * click's. Written under the click's lock, as every ledger writer takes
+     * it, and the click is marked for the rollup since its cost changed.
+     */
+    public static function fillFromTemplate(Connection $conn, ClickRecord $template): void
+    {
+        $clickId = $template->clickId;
+        $userId = $template->userId;
+        (new MysqlConversionLedger($conn))->clickTransaction($clickId, $userId, static function (?array $locked) use (
+            $conn,
+            $template,
+            $clickId,
+            $userId
+        ): void {
+            if ($locked === null) {
+                return;
+            }
+            foreach (['202_clicks', '202_clicks_spy'] as $table) {
+                self::write(
+                    $conn,
+                    'UPDATE ' . $table . ' SET ppc_account_id = IF(? = 0, ppc_account_id, ?),'
+                        . ' click_cpc = IF(? = 0, click_cpc, ?) WHERE click_id = ? AND user_id = ?',
+                    'iissii',
+                    [
+                        $template->ppcAccountId, $template->ppcAccountId,
+                        $template->clickCpc, $template->clickCpc, $clickId, $userId,
+                    ]
+                );
+            }
+            self::write(
+                $conn,
+                'UPDATE 202_clicks_advance SET keyword_id = IF(? = 0, keyword_id, ?),'
+                    . ' text_ad_id = IF(? = 0, text_ad_id, ?) WHERE click_id = ?',
+                'iiiii',
+                [$template->keywordId, $template->keywordId, $template->textAdId, $template->textAdId, $clickId]
+            );
+            self::write(
+                $conn,
+                'INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES (?, ?, ?, ?, ?)'
+                    . ' ON DUPLICATE KEY UPDATE c1_id = IF(VALUES(c1_id) = 0, c1_id, VALUES(c1_id)),'
+                    . ' c2_id = IF(VALUES(c2_id) = 0, c2_id, VALUES(c2_id)),'
+                    . ' c3_id = IF(VALUES(c3_id) = 0, c3_id, VALUES(c3_id)),'
+                    . ' c4_id = IF(VALUES(c4_id) = 0, c4_id, VALUES(c4_id))',
+                'iiiii',
+                [$clickId, $template->c1Id, $template->c2Id, $template->c3Id, $template->c4Id]
+            );
+            RollupDirty::click($conn, $userId, $clickId);
+        });
+    }
+
+    /** @param list<int|string> $values */
+    private static function write(Connection $conn, string $sql, string $types, array $values): void
+    {
+        $stmt = $conn->prepareWrite($sql);
+        $conn->bind($stmt, $types, $values);
+        $conn->executeUpdate($stmt);
     }
 
     /** @return array<string, mixed>|null */

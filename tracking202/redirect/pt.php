@@ -43,13 +43,22 @@ if ($ptTracker['landing_page_id_public'] === null) {
     die();
 }
 
+// The page's own parameters, passed on encoded: a decoded '#' or line break
+// would move the click ids into the fragment or void the Location header.
+$ptPassOn = [];
+foreach (array_diff_key($_GET, ['lpurl' => true, 'gb' => true]) as $ptKey => $ptValue) {
+    if (is_string($ptValue)) {
+        $ptPassOn[rawurlencode((string) $ptKey)] = rawurlencode($ptValue);
+    }
+}
+
 // Where the caller goes: Google's stand-in for {lpurl}, or the page with the
 // ad's click ids, so its script finds this click.
 $ptLocation = \Prosper202\Click\GoogleAdsParallelTracking::redirectTarget(
     (string) $ptTracker['landing_page_url'],
     ClickRequest::string($_GET, 'lpurl'),
     ClickRequest::adClickIds($_GET),
-    (string) getPrePopVars(array_diff_key($_GET, ['lpurl' => true, 'gb' => true]), true)
+    (string) getPrePopVars($ptPassOn, true)
 );
 
 // A page with no address: nowhere to send the caller, so nothing is recorded.
@@ -83,17 +92,22 @@ if ($ptRecorder === 'record_simple.php') {
     }
 }
 
+// The redirect is queued before recording: a write failure (record_mysql_error())
+// keeps a queued Location, so the caller still reaches the page, as dl.php's does.
+p202NoStore();
+header('Location: ' . $ptLocation, true, 302);
+
 if ($ptRecorder === null) {
     error_log('Prosper202 pt.php: landing page ' . $ptLandingPageId . ' of tracker ' . $ptTrackerId
         . ' has no recorder (type or campaign), so no click was recorded');
 } else {
-    // The recorder answers with the page's script; nobody here runs it.
+    // The recorder answers with the page's script; nobody here runs it. It
+    // knows it runs for the template, which may find the page's click first.
+    $ptTemplateHit = true;
     ob_start();
     include substr(__DIR__, 0, -21) . '/tracking202/static/' . $ptRecorder;
     ob_end_clean();
 }
 
-p202NoStore();
 header('Content-Type: text/html; charset=UTF-8');
-header('Location: ' . $ptLocation, true, 302);
 die();

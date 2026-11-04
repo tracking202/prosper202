@@ -247,6 +247,50 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         self::assertStringContainsString('pci.php?pci=' . $click['click_id_public'], $body);
     }
 
+    /**
+     * Google sends the template's hit and the visitor at once, so the page's
+     * script often records first: the template's hit then takes that click
+     * and gives it the tracker's cost, the keyword and c1-c4.
+     */
+    public function testATemplateHitAfterThePagesScriptFillsThePagesClick(): void
+    {
+        $before = self::clicks();
+        [$status, $headers] = self::get(
+            '/tracking202/static/record_simple.php?lpip=' . (self::SIMPLE_LP + self::PUBLIC) . '&gclid=G-pf-1',
+            'https://shop.example/landing?x=1&gclid=G-pf-1'
+        );
+        self::assertSame(200, $status, $headers . $this->serverLog());
+        self::assertSame($before + 1, self::clicks(), 'the page records its click');
+        $page = self::clickWithGclid('G-pf-1');
+        self::assertNull($page['keyword']);
+        self::assertSame('0.00000', (string) $page['click_cpc']);
+
+        [$status, $headers] = self::get(
+            self::pt(self::SIMPLE_TRACKER, '&c1=autumn&t202kw=trail%20boots&gclid=G-pf-1'),
+            'https://www.google.com/'
+        );
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertSame('https://shop.example/landing?x=1&gclid=G-pf-1', self::location($headers));
+        self::assertSame($before + 1, self::clicks(), 'the template takes the page\'s click');
+        $click = self::clickWithGclid('G-pf-1');
+        self::assertSame($page['click_id'], $click['click_id']);
+        self::assertSame('trail boots', $click['keyword']);
+        self::assertSame('autumn', $click['c1']);
+        self::assertSame('0.25000', (string) $click['click_cpc'], 'the tracker\'s cost');
+        $dirty = (int) self::requireScratch()->query(
+            'SELECT COUNT(*) FROM 202_attribution_rollup_dirty_clicks WHERE click_id = ' . (int) $click['click_id']
+        )->fetch_row()[0];
+        self::assertGreaterThan(0, $dirty, 'the rollup recomputes the click\'s cost');
+    }
+
+    /** A passed-on value with '#' or a line break stays in the query, encoded. */
+    public function testPassedOnValuesAreEncoded(): void
+    {
+        [$status, $headers] = self::get(self::pt(self::SIMPLE_TRACKER, '&adg=a%23b%0D%0AX-Evil:1&gclid=G-enc-1'));
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertSame('https://shop.example/landing?x=1&adg=a%23b%0D%0AX-Evil%3A1&gclid=G-enc-1', self::location($headers));
+    }
+
     public function testAnAdvancedPagesTemplateClickIsTakenByItsScript(): void
     {
         [$status, $headers] = self::get(self::pt(self::ADVANCED_TRACKER, '&t202kw=boots&gclid=G-adv-1'));

@@ -75,6 +75,9 @@ final class GoogleAdsParallelTrackingTest extends TestCase
         yield 'a look-alike of Google' => ['https://www.google.com.elsewhere.example/asnc/x'];
         yield 'Google, not its stand-in' => ['https://www.google.com/url?q=https://elsewhere.example/'];
         yield 'the stand-in over http' => ['http://www.google.com/asnc/x'];
+        yield 'out of the stand-in by a dot segment' => ['https://www.google.com/asnc/../url?q=https://elsewhere.example/'];
+        yield 'out of the stand-in by an encoded dot segment' => ['https://www.google.com/asnc/%2e%2E/amp/s/elsewhere.example/'];
+        yield 'a dot segment ending the path' => ['https://www.google.com/asnc/x/..'];
         yield 'a user in the authority' => ['https://elsewhere.example@shop.example/landing'];
         yield 'a backslash' => ['https://elsewhere.example\\@shop.example/landing'];
         yield 'not http' => ['javascript://shop.example/%0Aalert(1)'];
