@@ -77,6 +77,7 @@ $offer = static fn (string $name, int $n): string => (string) ($_POST[$name . $n
 	echo '<h3 class="p202-section__title">1. Landing page code</h3>'
 		. '<p>Put this right above the <code>&lt;/body&gt;</code> tag of <strong>only</strong> the page your visitors first arrive on, not in a template every page of the site includes.</p>';
 	echo p202_setup_code_box($javascript_code, ['long' => true]);
+	echo p202_setup_lp_check(get_absolute_url(), (string) ($_SESSION['token'] ?? ''), (int) $landing_page_row['landing_page_id']);
 
 	echo '<h3 class="p202-section__title">2. Link out to each offer</h3>'
 		. '<p>Each offer has its own outbound link. Use it as that offer\'s link on your page, or save its PHP redirect as a page on your site and link to that.</p>';
