@@ -67,11 +67,11 @@ final class ApiKeyStoreTest extends TestCase
     public function testAKeyIsMatchedByItsHashOrExactlyWhereNotYetHashed(): void
     {
         [$sql, $types, $values] = ApiKeyStore::matchKey(self::db(true), self::KEY, 'k');
-        self::assertSame('(k.key_hash = ? OR (k.key_hash IS NULL AND k.api_key COLLATE utf8mb4_bin = ?))', $sql);
+        self::assertSame('(k.key_hash = ? OR (k.key_hash IS NULL AND CONVERT(k.api_key USING utf8mb4) COLLATE utf8mb4_bin = ?))', $sql);
         self::assertSame(['ss', [hash('sha256', self::KEY), self::KEY]], [$types, $values]);
 
         [$sql, $types, $values] = ApiKeyStore::matchKey(self::db(false), self::KEY);
-        self::assertSame(['api_key COLLATE utf8mb4_bin = ?', 's', [self::KEY]], [$sql, $types, $values]);
+        self::assertSame(['CONVERT(api_key USING utf8mb4) COLLATE utf8mb4_bin = ?', 's', [self::KEY]], [$sql, $types, $values]);
     }
 
     public function testAnEmptyKeyIsNeverLookedUpSinceEveryHashedRowsApiKeyIsEmpty(): void
@@ -114,7 +114,7 @@ final class ApiKeyStoreTest extends TestCase
         $literal = ApiKeyStore::fillPlaceholders($sql, $values, 'addslashes');
 
         self::assertSame(
-            "(k.key_hash = '" . hash('sha256', "a?b'c") . "' OR (k.key_hash IS NULL AND k.api_key COLLATE utf8mb4_bin = 'a?b\\'c'))",
+            "(k.key_hash = '" . hash('sha256', "a?b'c") . "' OR (k.key_hash IS NULL AND CONVERT(k.api_key USING utf8mb4) COLLATE utf8mb4_bin = 'a?b\\'c'))",
             $literal
         );
     }

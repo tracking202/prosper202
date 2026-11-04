@@ -109,6 +109,39 @@ final class ApiKeyHashUpgradeIntegrationTest extends TestCase
         self::assertSame($rows, self::keyRows(), 'a second run changes nothing');
     }
 
+    /**
+     * A 202_api_keys made before 1.9.55 has the server's default charset
+     * (latin1 on MySQL 5.x); a key in it authenticates before and after the
+     * rung, and the rung hashes it.
+     */
+    public function testAKeyInALatin1TableWorksAndIsHashed(): void
+    {
+        self::q('RENAME TABLE 202_api_keys TO 202_api_keys_ca14_saved');
+        try {
+            self::q('CREATE TABLE 202_api_keys LIKE 202_api_keys_ca14_saved');
+            $this->asOf1979();
+            self::q('ALTER TABLE 202_api_keys CONVERT TO CHARACTER SET latin1 COLLATE latin1_swedish_ci');
+            self::row('202_api_keys', ['user_id' => self::USER, 'api_key' => self::PLAIN, 'scope' => null,
+                'label' => null, 'created_at' => 1]);
+
+            $before = self::connection();
+            self::assertSame(self::USER, Auth::fromRequest(['Authorization' => 'Bearer ' . self::PLAIN], $before)->userId());
+            $this->assertRefused(strtolower(self::PLAIN), $before, 'a latin1 lookup is exact too');
+
+            [$out, $err] = self::upgrade();
+            self::assertSame('RETURNED true', $out, $err);
+            $rows = self::keyRows();
+            self::assertSame(['', ApiKeyStore::hash(self::PLAIN)], [$rows[0]['api_key'], $rows[0]['key_hash']]);
+
+            $after = self::connection();
+            self::assertSame(self::USER, Auth::fromRequest(['Authorization' => 'Bearer ' . self::PLAIN], $after)->userId());
+            $this->assertRefused(strtolower(self::PLAIN), $after, 'a key differing in case is another key');
+        } finally {
+            self::q('DROP TABLE IF EXISTS 202_api_keys');
+            self::q('RENAME TABLE 202_api_keys_ca14_saved TO 202_api_keys');
+        }
+    }
+
     public function testAKeyMadeAfterTheUpgradeIsStoredHashedAndManagedByKeyOrRef(): void
     {
         $db = self::connection();

@@ -98,7 +98,10 @@ final class ApiKeyStore
     }
 
     /**
-     * The condition that finds the row of $key, exactly.
+     * The condition that finds the row of $key, exactly. api_key is
+     * converted first: a 202_api_keys made before 1.9.55 took the server's
+     * default charset (latin1 or utf8mb3), and naming utf8mb4_bin on such a
+     * column is an error, not a comparison.
      *
      * @return array{0: string, 1: string, 2: list<string>} SQL, bind types, values
      */
@@ -109,10 +112,10 @@ final class ApiKeyStore
         }
         $c = $alias === '' ? '' : $alias . '.';
         if (!Auth::apiKeyHashColumnExists($db)) {
-            return [$c . 'api_key COLLATE utf8mb4_bin = ?', 's', [$key]];
+            return ['CONVERT(' . $c . 'api_key USING utf8mb4) COLLATE utf8mb4_bin = ?', 's', [$key]];
         }
         return [
-            '(' . $c . 'key_hash = ? OR (' . $c . 'key_hash IS NULL AND ' . $c . 'api_key COLLATE utf8mb4_bin = ?))',
+            '(' . $c . 'key_hash = ? OR (' . $c . 'key_hash IS NULL AND CONVERT(' . $c . 'api_key USING utf8mb4) COLLATE utf8mb4_bin = ?))',
             'ss',
             [self::hash($key), $key],
         ];
@@ -242,7 +245,7 @@ final class ApiKeyStore
             try {
                 $update = $conn->prepareWrite(
                     "UPDATE 202_api_keys SET key_hash = ?, key_prefix = ?, watcher_token = ?, api_key = ''"
-                    . ' WHERE user_id = ? AND key_hash IS NULL AND api_key COLLATE utf8mb4_bin = ?'
+                    . ' WHERE user_id = ? AND key_hash IS NULL AND CONVERT(api_key USING utf8mb4) COLLATE utf8mb4_bin = ?'
                 );
                 $conn->bind($update, 'sssis', [
                     self::hash($key),
@@ -258,6 +261,23 @@ final class ApiKeyStore
                 $ok = false;
             }
         }
-        return $ok;
+        if (!$ok) {
+            return false;
+        }
+        // An UPDATE that matched no row (an odd legacy byte sequence) is not
+        // an error, so count what is left whole rather than trust the loop.
+        try {
+            $left = (int) ($conn->fetchOne($conn->prepareRead(
+                "SELECT COUNT(*) AS n FROM 202_api_keys WHERE key_hash IS NULL AND api_key <> ''"
+            ))['n'] ?? 0);
+        } catch (QueryException $e) {
+            error_log('Prosper202 upgrade: the API keys left whole could not be counted: ' . $e->getMessage());
+            return false;
+        }
+        if ($left > 0) {
+            error_log('Prosper202 upgrade: ' . $left . ' API key(s) are still stored whole');
+            return false;
+        }
+        return true;
     }
 }
