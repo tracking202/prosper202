@@ -78,7 +78,9 @@ final class PostbackRequestTest extends TestCase
     public static function aliasCrossings(): iterable
     {
         $txid = static fn (array $r): string => p202ExtractTransactionId($r);
-        $orderNames = ['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'];
+        // Providers run before setUpBeforeClass().
+        self::setUpBeforeClass();
+        $orderNames = \P202_ORDER_NUMBER_NAMES;
         foreach ($orderNames as $queryName) {
             foreach ($orderNames as $bodyName) {
                 if ($queryName !== $bodyName) {
@@ -95,6 +97,10 @@ final class PostbackRequestTest extends TestCase
             static fn (array $r): array => p202ExtractItems($r), [['sku' => 'A']]];
         yield 'product: query product_id, body sku' => ['product_id', 'sku',
             static fn (array $r): array => p202ExtractItems($r), [['external_product_id' => 'A']]];
+        $signature = static fn (array $r): mixed => $r['cust_sig'] ?? null;
+        yield 'customer signature: query cust, body cust_sig' => ['cust', 'cust_sig', $signature, null];
+        yield 'customer signature: query cust_sig, body cust' => ['cust_sig', 'cust',
+            static fn (array $r): array => p202ExtractCustomer($r), []];
     }
 
     /**
@@ -112,6 +118,22 @@ final class PostbackRequestTest extends TestCase
     public function testABlankQueryAliasLeavesTheBodysGroupIn(): void
     {
         self::assertSame('B', p202ExtractTransactionId(p202PostbackRequest(['t202txid' => ''], ['order_id' => 'B'])));
+    }
+
+    public function testAWhitespaceQueryValueIsBlankAsTheReadersSeeIt(): void
+    {
+        self::assertSame('B', p202ExtractTransactionId(p202PostbackRequest(['txid' => ' '], ['order_id' => 'B'])));
+        self::assertSame('42', p202PostbackRequest(['subid' => ' '], ['subid' => '42'])['subid']);
+        self::assertSame(['customer_ref' => 'B'], p202ExtractCustomer(p202PostbackRequest(['cust' => "\t"], ['cust' => 'B'])));
+    }
+
+    public function testAQueryConsentSwitchKeepsTheBodysOutEvenWhenBlank(): void
+    {
+        $refused = p202PostbackRequest(['subid' => '5', 'p202_consent' => ''], ['p202_consent' => '1']);
+        self::assertSame('', $refused['p202_consent']);
+        self::assertFalse(\Prosper202\Identity\RequestSignals::consentGiven($refused));
+        $given = p202PostbackRequest(['subid' => '5', 'p202_consent' => '1'], ['p202_consent' => '0']);
+        self::assertTrue(\Prosper202\Identity\RequestSignals::consentGiven($given));
     }
 
     public function testGpbReadsEveryParameterFromTheMergedRequest(): void

@@ -211,6 +211,19 @@ final class GlobalPostbackFormPostIntegrationTest extends TestCase
         self::assertSame([[(string) self::CLICK, '8.00000', 'ord-query']], self::conversions());
     }
 
+    public function testAReversalSentInTheBodyReversesTheSale(): void
+    {
+        [$status, $body] = self::gpb(['subid' => (string) self::CLICK, 'amount' => '10', 'txid' => 'ord-rev']);
+        self::assertSame(200, $status, $body);
+        [$status, $body] = self::gpb([], [
+            'subid' => (string) self::CLICK, 'txid' => 'ord-rev', 'status' => 'reversed',
+        ]);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame([[(string) self::CLICK, '10.00000', 'ord-rev'], [(string) self::CLICK, '-10.00000', 'ord-rev']],
+            self::conversions());
+    }
+
     public function testAMalformedBodyClickIdRecordsNothing(): void
     {
         [$status, $body] = self::gpb([], ['subid' => self::CLICK . '.0', 'amount' => '5']);
