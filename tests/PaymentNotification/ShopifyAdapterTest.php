@@ -217,16 +217,32 @@ final class ShopifyAdapterTest extends TestCase
 
     public function testShopifyIsAnsweredWithA2xxForRefusalsARetryCannotChange(): void
     {
+        $adapter = new ShopifyAdapter();
         foreach ([OutcomeKind::MALFORMED, OutcomeKind::UNKNOWN_CLICK, OutcomeKind::CONFLICT,
-            OutcomeKind::CURRENCY_MISMATCH, OutcomeKind::UNSUPPORTED_BODY] as $kind) {
-            self::assertSame(200, ShopifyAdapter::deliveryStatus($kind), $kind->value);
+            OutcomeKind::CURRENCY_MISMATCH, OutcomeKind::UNSUPPORTED_BODY, OutcomeKind::NOTHING_TO_REVERSE] as $kind) {
+            self::assertSame(200, $adapter->deliveryStatus($kind), $kind->value);
         }
-        // A refund that arrived before its order: Shopify's retry lands once the order has.
-        self::assertSame(404, ShopifyAdapter::deliveryStatus(OutcomeKind::NOTHING_TO_REVERSE));
-        self::assertSame(403, ShopifyAdapter::deliveryStatus(OutcomeKind::UNVERIFIED));
-        self::assertSame(500, ShopifyAdapter::deliveryStatus(OutcomeKind::FAILED));
-        self::assertSame(503, ShopifyAdapter::deliveryStatus(OutcomeKind::UPGRADE_PENDING));
-        self::assertSame(405, ShopifyAdapter::deliveryStatus(OutcomeKind::METHOD_NOT_ALLOWED));
+        self::assertSame(403, $adapter->deliveryStatus(OutcomeKind::UNVERIFIED));
+        self::assertSame(500, $adapter->deliveryStatus(OutcomeKind::FAILED));
+        self::assertSame(503, $adapter->deliveryStatus(OutcomeKind::UPGRADE_PENDING));
+        self::assertSame(405, $adapter->deliveryStatus(OutcomeKind::METHOD_NOT_ALLOWED));
+    }
+
+    /** A sale not on file: retried while the order may still arrive, then accepted so the subscription stays. */
+    public function testARefundWhoseSaleIsNotOnFileIsRetriedOnlyWhileItIsRecent(): void
+    {
+        $refundAt = strtotime('2026-11-03T14:00:01Z');
+        foreach ([60 => 404, ShopifyAdapter::RETRY_WINDOW - 1 => 404, ShopifyAdapter::RETRY_WINDOW => 200,
+            86400 => 200] as $after => $status) {
+            $adapter = new ShopifyAdapter(null, $refundAt + $after);
+            self::parse(self::webhook('refunds/create', self::refund()), $adapter);
+            self::assertSame($status, $adapter->deliveryStatus(OutcomeKind::NOTHING_TO_REVERSE), "$after s after");
+        }
+
+        // An order's time is not a refund's.
+        $order = new ShopifyAdapter(null, strtotime('2026-11-01T15:15:02Z') + 60);
+        self::parse(self::webhook('orders/paid', self::order()), $order);
+        self::assertSame(200, $order->deliveryStatus(OutcomeKind::NOTHING_TO_REVERSE));
     }
 
     public function testATotalTheLedgerCannotHoldIsRefused(): void

@@ -145,9 +145,33 @@ final class ShopifyWebhookIntegrationTest extends TestCase
 
     private function receive(InboundRequest $request): Outcome
     {
-        $db = self::requireScratch();
+        return $this->answer($request)[0];
+    }
 
-        return (new Receiver(new ShopifyAdapter($db), $db))->receive($request);
+    /**
+     * The outcome and the status Shopify is sent, at a given time.
+     *
+     * @return array{0: Outcome, 1: int}
+     */
+    private function answer(InboundRequest $request, ?int $now = null): array
+    {
+        $db = self::requireScratch();
+        $receiver = new Receiver(new ShopifyAdapter($db, $now), $db);
+        $outcome = $receiver->receive($request);
+
+        return [$outcome, $receiver->status($outcome)];
+    }
+
+    private static function recordClick(int $click): void
+    {
+        (new MysqlClickRepository(new Connection(self::requireScratch())))->recordClick(new ClickRecord(
+            clickId: $click,
+            userId: self::ACCOUNT,
+            clickTime: strtotime('2026-11-01T14:00:00Z'),
+            affCampaignId: self::CAMPAIGN,
+            clickPayout: '0',
+            recordsCampaignRows: false,
+        ));
     }
 
     /** @return list<array<string, string|null>> */
@@ -302,7 +326,7 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         $changed = $this->deliver('orders/paid', self::order(['total_price' => '64.00']));
 
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $changed);
-        self::assertSame(200, ShopifyAdapter::deliveryStatus($changed->kind), 'not retried until Shopify drops it');
+        self::assertSame(200, (new ShopifyAdapter())->deliveryStatus($changed->kind), 'not retried until Shopify drops it');
         self::assertSame(['59.00000'], array_column(self::conversions(), 'click_payout'));
     }
 
@@ -320,26 +344,21 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         $this->deliver('orders/paid', self::order());
         $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]));
 
-        $second = $this->deliver('refunds/create', ShopifyAdapterTest::refund(['id' => 9100002, 'refund_line_items' => []]));
+        [$second, $status] = $this->answer(ShopifyAdapterTest::webhook('refunds/create',
+            ShopifyAdapterTest::refund(['id' => 9100002, 'refund_line_items' => []])));
 
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $second);
-        self::assertSame(200, ShopifyAdapter::deliveryStatus($second->kind));
+        self::assertSame(200, $status);
         self::assertSame(['59.00000', '-20.00000'], array_column(self::conversions(), 'click_payout'));
-        self::assertStringContainsString('Shopify notification: conflict (409), refunds/create (refund)',
+        // The log names the status Shopify was sent.
+        self::assertStringContainsString('Shopify notification: conflict (200), refunds/create (refund)',
             (string) file_get_contents($this->log));
     }
 
     public function testARefundOfAnOrderOnTwoClicksIsRefused(): void
     {
         $this->deliver('orders/paid', self::order());
-        (new MysqlClickRepository(new Connection(self::requireScratch())))->recordClick(new ClickRecord(
-            clickId: self::CLICK + 1,
-            userId: self::ACCOUNT,
-            clickTime: strtotime('2026-11-01T14:00:00Z'),
-            affCampaignId: self::CAMPAIGN,
-            clickPayout: '0',
-            recordsCampaignRows: false,
-        ));
+        self::recordClick(self::CLICK + 1);
         $this->deliver('orders/paid', self::order([], self::CLICK + 1));
 
         $outcome = $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]));
@@ -347,6 +366,64 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $outcome);
         self::assertStringContainsString('recorded on more than one click', $outcome->message);
         self::assertCount(2, self::conversions());
+    }
+
+    /**
+     * A refund naming a click with no sale under its order: retried for an
+     * hour (the order may be late), then accepted, so a refund of an order
+     * that will never arrive does not fail until Shopify drops the webhook.
+     */
+    public function testARefundWhoseSaleIsNotOnFileIsRetriedOnlyWhileRecent(): void
+    {
+        $refund = ShopifyAdapterTest::webhook('refunds/create', ShopifyAdapterTest::refund([
+            'refund_line_items' => [['id' => 1, 'line_item' => self::order()['line_items'][0]]],
+        ]));
+        $refundAt = strtotime('2026-11-03T14:00:01Z');
+
+        [$recent, $retried] = $this->answer($refund, $refundAt + 120);
+        self::assertOutcome(OutcomeKind::NOTHING_TO_REVERSE, 404, $recent);
+        self::assertSame(404, $retried);
+
+        [$old, $accepted] = $this->answer($refund, $refundAt + 86400);
+        self::assertSame(OutcomeKind::NOTHING_TO_REVERSE, $old->kind);
+        self::assertSame(200, $accepted);
+        self::assertStringContainsString('Shopify notification: nothing_to_reverse (200)',
+            (string) file_get_contents($this->log));
+        self::assertSame([], self::conversions());
+    }
+
+    /** An order is recorded on its first click; a refund of another item carrying another click takes it back. */
+    public function testARefundOfAnotherItemReversesTheOrdersSale(): void
+    {
+        self::recordClick(self::CLICK + 1);
+        $second = ['id' => 13003, 'title' => 'Ceramic pour-over dripper', 'quantity' => 1, 'price' => '5.00',
+            'properties' => [['name' => 't202subid', 'value' => (string) (self::CLICK + 1)]]];
+        $order = self::order();
+        $order['line_items'][] = $second;
+        $this->deliver('orders/paid', $order);
+
+        $outcome = $this->deliver('refunds/create', ShopifyAdapterTest::refund([
+            'refund_line_items' => [['id' => 2, 'line_item' => $second]],
+        ]));
+
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);
+        self::assertSame([[(string) self::CLICK, '59.00000'], [(string) self::CLICK, '-20.00000']],
+            array_map(static fn (array $r): array => [$r['click_id'], $r['click_payout']], self::conversions()));
+    }
+
+    /** Another source's conversion under the same id is not the order. */
+    public function testARefundFindsOnlyTheOrdersShopifySale(): void
+    {
+        self::recordClick(self::CLICK + 1);
+        $this->deliver('orders/paid', self::order());
+        $this->deliver('orders/paid', self::order([], self::CLICK + 1));
+        self::q("UPDATE 202_conversion_logs SET source = 'postback' WHERE click_id = " . (self::CLICK + 1));
+
+        $outcome = $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]));
+
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);
+        self::assertSame([(string) self::CLICK, (string) (self::CLICK + 1), (string) self::CLICK],
+            array_column(self::conversions(), 'click_id'));
     }
 
     /** gpb.php, run as the server runs it, hands a request with Shopify's headers to shopify.php. */
@@ -381,6 +458,73 @@ final class ShopifyWebhookIntegrationTest extends TestCase
             array_intersect_key($answer, ['error' => 1, 'code' => 1, 'outcome' => 1]));
         self::assertStringContainsString('is not a JSON object', (string) $answer['msg']);
         self::assertSame([], self::conversions());
+    }
+
+    /**
+     * shopify.php and gpb.php served by `php -S` over the 202-config.php the
+     * integration job writes: the signed body is the one read from
+     * php://input, and the status is the one sent on the wire.
+     */
+    public function testTheServedEndpointsRecordWhatTheRequestBodySays(): void
+    {
+        $root = dirname(__DIR__, 2);
+        if (!is_file($root . '/202-config.php')) {
+            self::markTestSkipped('no 202-config.php for the served tree (tests/run-integration-suites.sh writes one)');
+        }
+        $probe = stream_socket_server('tcp://127.0.0.1:0');
+        self::assertIsResource($probe);
+        $name = (string) stream_socket_get_name($probe, false);
+        $port = (int) substr($name, strrpos($name, ':') + 1);
+        fclose($probe);
+        $server = proc_open(
+            [PHP_BINARY, '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . $this->log,
+                '-S', "127.0.0.1:$port", '-t', $root],
+            [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
+            $pipes
+        );
+        self::assertIsResource($server);
+        try {
+            for ($i = 0; $i < 50; $i++) {
+                $socket = @fsockopen('127.0.0.1', $port);
+                if ($socket !== false) {
+                    fclose($socket);
+                    break;
+                }
+                usleep(100000);
+            }
+            $post = static function (string $page, InboundRequest $webhook) use ($port): array {
+                $headers = [];
+                foreach ($webhook->headers as $header => $value) {
+                    $headers[] = $header . ': ' . $value;
+                }
+                $body = @file_get_contents("http://127.0.0.1:$port/tracking202/static/$page", false,
+                    stream_context_create(['http' => ['method' => 'POST', 'ignore_errors' => true, 'timeout' => 20,
+                        'header' => [...$headers, 'Content-Type: application/json'], 'content' => $webhook->body]]));
+                $status = (int) (explode(' ', $http_response_header[0] ?? '')[1] ?? 0);
+                $answer = json_decode((string) $body, true);
+                self::assertIsArray($answer, (string) $body);
+
+                return [$status, $answer['outcome'] ?? null];
+            };
+
+            self::assertSame([200, 'recorded'], $post('shopify.php',
+                ShopifyAdapterTest::webhook('orders/paid', self::order())));
+            self::assertSame([200, 'reversed'], $post('gpb.php',
+                ShopifyAdapterTest::webhook('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]))));
+            self::assertSame(['59.00000', '-20.00000'], array_column(self::conversions(), 'click_payout'));
+
+            // A refund made just now of an order not on file is retried.
+            $now = gmdate('Y-m-d\TH:i:s\Z');
+            self::assertSame([404, 'nothing_to_reverse'], $post('shopify.php', ShopifyAdapterTest::webhook(
+                'refunds/create',
+                ShopifyAdapterTest::refund(['id' => 9100009, 'order_id' => 5550009999999, 'created_at' => $now,
+                    'processed_at' => $now,
+                    'refund_line_items' => [['id' => 1, 'line_item' => self::order()['line_items'][0]]]])
+            )));
+        } finally {
+            proc_terminate($server);
+            proc_close($server);
+        }
     }
 
     private static string $runnerErr = '';

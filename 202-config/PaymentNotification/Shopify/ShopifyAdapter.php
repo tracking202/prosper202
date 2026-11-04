@@ -9,6 +9,7 @@ use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
+use Prosper202\PaymentNotification\AnswersWithItsOwnStatus;
 use Prosper202\PaymentNotification\ClickField;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
@@ -29,11 +30,11 @@ use Prosper202\PaymentNotification\Verification;
  * order under its id at its total_price, so a store sending both counts it once. The click is the
  * t202subid line item property (or _t202subid, which the checkout hides)
  * that paid 1.9.56's gpb.php read. refunds/create reverses the order by what
- * its successful refund transactions returned, on the click of a refunded
- * line item or, when it names none, the click the order was recorded on.
+ * its successful refund transactions returned, on the click the order was
+ * recorded on or, when it is not on file, the click of a refunded line item.
  * A test order and every other topic are acknowledged and record nothing.
  */
-final class ShopifyAdapter implements ProviderAdapter
+final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
 {
     public const HMAC_HEADER = 'X-Shopify-Hmac-Sha256';
     public const TOPIC_HEADER = 'X-Shopify-Topic';
@@ -49,14 +50,23 @@ final class ShopifyAdapter implements ProviderAdapter
     /** A Shopify REST id: a positive integer. */
     private const ID = '/^[1-9]\d{0,19}$/D';
 
+    /** How long after a refund whose sale is not on file it is answered 404, inside Shopify's retries. */
+    public const RETRY_WINDOW = 3600;
+
     /** The request verify() verified, and the accounts it verified for, which parse() reads. */
     private ?InboundRequest $verified = null;
 
     /** @var list<int> */
     private array $accounts = [];
 
-    /** @param \mysqli|null $db where a refund that names no click finds its order's (null: it is not looked up) */
-    public function __construct(private readonly ?\mysqli $db = null)
+    /** When the refund parse() read happened, or null when it read no refund. */
+    private ?int $refundAt = null;
+
+    /**
+     * @param \mysqli|null $db where a refund finds the click its order was recorded on (null: not looked up)
+     * @param int|null $now the time deliveryStatus() compares a refund's with (null: the clock's)
+     */
+    public function __construct(private readonly ?\mysqli $db = null, private readonly ?int $now = null)
     {
     }
 
@@ -137,17 +147,20 @@ final class ShopifyAdapter implements ProviderAdapter
 
     /**
      * The status Shopify is answered with. A refusal a retry cannot change
-     * (400, 404 for a click, 409, 415, 422) is answered 200, the outcome
-     * staying in the body ("error": true) and the log: Shopify retries a
-     * non-2xx answer and removes an API-made subscription after 8 failures in
-     * a row, which would lose every later order to one bad cart. A refund
-     * whose sale is not on file yet keeps its 404, so Shopify's retry lands
-     * once the order has arrived; every other status is kept.
+     * (400, 404, 409, 415, 422) is answered 200, the outcome staying in the
+     * body ("error": true) and the log: Shopify retries a non-2xx answer and
+     * removes an API-made subscription after 8 failures in a row, which would
+     * lose every later order to one bad cart. A refund whose sale is not on
+     * file keeps its 404 for RETRY_WINDOW after the refund, so a retry lands
+     * once an order that is late arrives; later it is answered 200, since the
+     * order may never come (placed before the secret was stored). Every other
+     * status is kept.
      */
-    public static function deliveryStatus(OutcomeKind $kind): int
+    public function deliveryStatus(OutcomeKind $kind): int
     {
         $status = Response::status($kind);
-        if ($kind === OutcomeKind::NOTHING_TO_REVERSE) {
+        if ($kind === OutcomeKind::NOTHING_TO_REVERSE && $this->refundAt !== null
+            && ($this->now ?? time()) - $this->refundAt < self::RETRY_WINDOW) {
             return $status;
         }
 
@@ -165,6 +178,7 @@ final class ShopifyAdapter implements ProviderAdapter
         if ($request !== $this->verified) {
             throw new \LogicException('ShopifyAdapter::parse() reads the request verify() verified');
         }
+        $this->refundAt = null;
         $topic = trim((string) $request->header(self::TOPIC_HEADER));
         if ($topic === '') {
             throw self::malformed('The webhook carries no ' . self::TOPIC_HEADER . ' header naming its topic.');
@@ -264,6 +278,9 @@ final class ShopifyAdapter implements ProviderAdapter
                 }
             }
         }
+        $at = self::time($refund['processed_at'] ?? null, 'processed_at')
+            ?? self::time($refund['created_at'] ?? null, 'created_at');
+        $this->refundAt = $at;
 
         return new Notification(
             NotificationKind::REFUND,
@@ -272,8 +289,8 @@ final class ShopifyAdapter implements ProviderAdapter
             $orderId,
             self::plain(Amount::fromUnits($units)),
             $currency,
-            self::clickOf($refunded) ?? $this->clickOfOrder($orderId),
-            self::time($refund['processed_at'] ?? null, 'processed_at') ?? self::time($refund['created_at'] ?? null, 'created_at')
+            $this->clickOfOrder($orderId, self::clickOf($refunded)),
+            $at
         );
     }
 
@@ -318,33 +335,40 @@ final class ShopifyAdapter implements ProviderAdapter
     }
 
     /**
-     * The click the order was recorded on, among the accounts whose secret
-     * verified the refund; null when it is on none. On more than one click,
-     * the refund cannot say which it takes back, and is refused.
+     * The click the refund takes the sale back from: the one the order was
+     * recorded on by a Shopify webhook, among the accounts whose secret
+     * verified the refund, whichever item is refunded (the order is recorded
+     * on its first item's click); the refunded item's click when the order
+     * is on none. On more than one click and not on the item's, the refund
+     * cannot say which it takes back, and is refused.
      */
-    private function clickOfOrder(string $orderId): ?int
+    private function clickOfOrder(string $orderId, ?int $named): ?int
     {
         if ($this->db === null || $this->accounts === []) {
-            return null;
+            return $named;
         }
         $conn = new Connection($this->db);
         $in = implode(', ', array_fill(0, count($this->accounts), '?'));
         $stmt = $conn->prepareRead(
-            'SELECT DISTINCT click_id FROM 202_conversion_logs WHERE transaction_id = ? AND reverses_conv_id IS NULL'
-            . ' AND deleted = 0 AND user_id IN (' . $in . ') LIMIT 2'
+            'SELECT DISTINCT click_id FROM 202_conversion_logs WHERE transaction_id = ? AND source = ?'
+            . ' AND reverses_conv_id IS NULL AND deleted = 0 AND user_id IN (' . $in . ')'
         );
-        $conn->bind($stmt, 's' . str_repeat('i', count($this->accounts)), [$orderId, ...$this->accounts]);
-        $rows = $conn->fetchAll($stmt);
-
-        if (count($rows) > 1) {
-            throw Refusal::of(
-                OutcomeKind::CONFLICT,
-                'Order ' . $orderId . ' is recorded on more than one click and the refund names no line item, so it'
-                . ' cannot say which sale it takes back; nothing was recorded.'
-            );
+        $conn->bind($stmt, 'ss' . str_repeat('i', count($this->accounts)), [
+            $orderId, ConversionSource::SHOPIFY->value, ...$this->accounts,
+        ]);
+        $clicks = array_map(static fn (array $row): int => (int) $row['click_id'], $conn->fetchAll($stmt));
+        if (count($clicks) === 1) {
+            return $clicks[0];
+        }
+        if ($clicks === [] || in_array($named, $clicks, true)) {
+            return $named;
         }
 
-        return $rows === [] ? null : (int) $rows[0]['click_id'];
+        throw Refusal::of(
+            OutcomeKind::CONFLICT,
+            'Order ' . $orderId . ' is recorded on more than one click, so the refund cannot say which sale it'
+            . ' takes back; nothing was recorded.'
+        );
     }
 
     /** @param array<string, mixed> $body */

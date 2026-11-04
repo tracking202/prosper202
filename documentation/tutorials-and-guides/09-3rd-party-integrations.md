@@ -251,19 +251,23 @@ webhooks. Under **Account › API integrations › Shopify**:
 An order counts once, under its order id. Order creation records only an order
 already paid when it is placed (not a bank transfer, cash on delivery or a held
 card), so subscribe to Order payment. A test order and other topics are
-acknowledged and record nothing. A refund reverses the order on the click of a
-refunded line item, or, when it names none, the click the order was recorded
-on; one that returns no money (a restock) records nothing. The ledger reverses
-a sale once, so a second refund of the same order is refused.
+acknowledged and record nothing. A refund reverses the order on the click it
+was recorded on, whichever item it refunds, or, when the order is not on file,
+on the click of a refunded line item; one that returns no money (a restock)
+records nothing. A refund that names no click and whose order is not on file
+records nothing. The ledger reverses a sale once, so a second refund of the
+same order is refused.
 
 A webhook that verifies but cannot be recorded (a cart value that is not a
 click id, a click of another account, an order in a currency other than the
 account's, a changed total, a second refund) is logged with the reason and
 answered `200` with the outcome in the body: Shopify retries any other answer
 and removes a subscription made through its API after 8 failures in a row,
-which would lose every later order. A refund of an order not recorded yet is
-answered `404`, so Shopify's retry reverses it once the order has arrived, and
-an unverified webhook is answered `403`.
+which would lose every later order. A refund naming a click whose order is not
+recorded is answered `404` for an hour after the refund, so Shopify's retry
+reverses it if the order arrives late, and `200` after that (an order placed
+before the secret was stored never arrives). An unverified webhook is answered
+`403`. The server log names the status each webhook was answered with.
 
 ## Zaxaa
 
