@@ -538,10 +538,10 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             $sql =
                 'SELECT c.landing_page_id FROM ' . LatestVisit::of('?') . ' AS c'
                     . ' JOIN 202_landing_pages AS lp ON lp.landing_page_id = c.landing_page_id'
-                    . ' AND lp.user_id = c.user_id' . ($exit->deletedRecordsCount ? '' : ' AND lp.landing_page_deleted = 0')
+                    . ' AND lp.user_id = c.user_id AND (? = 1 OR lp.landing_page_deleted = 0)'
                     . ' WHERE c.user_id = ? AND lp.landing_page_id = ?';
-            $types = 'iii';
-            $values = [$exit->clickId, $exit->userId, $exit->landingPageId];
+            $types = 'iiii';
+            $values = [$exit->clickId, $exit->deletedRecordsCount ? 1 : 0, $exit->userId, $exit->landingPageId];
             $offer = $exit->offer;
             if ($offer !== null) {
                 // A simple page can only send its own campaign; an advanced

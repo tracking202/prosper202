@@ -190,10 +190,10 @@ final class PurLinkExit
         $stmt = $this->conn->prepareWrite(
             'SELECT lp.landing_page_type, lp.aff_campaign_id FROM ' . LatestVisit::of('?') . ' AS c'
                 . ' JOIN 202_landing_pages AS lp ON lp.landing_page_id = c.landing_page_id'
-                . ' AND lp.user_id = c.user_id' . ($deletedRecordsCount ? '' : ' AND lp.landing_page_deleted = 0')
+                . ' AND lp.user_id = c.user_id AND (? = 1 OR lp.landing_page_deleted = 0)'
                 . ' WHERE lp.landing_page_id = ? AND lp.user_id = ?'
         );
-        $this->conn->bind($stmt, 'iii', [$claims['click_id'], $claims['landing_page_id'], $claims['user_id']]);
+        $this->conn->bind($stmt, 'iiii', [$claims['click_id'], $deletedRecordsCount ? 1 : 0, $claims['landing_page_id'], $claims['user_id']]);
         $page = $this->conn->fetchOne($stmt);
         if ($page === null) {
             return null;

@@ -370,14 +370,16 @@ final class ClickExitIntegrationTest extends TestCase
         $exit = new PurLinkExit(new Connection(self::requireScratch()));
         $subid = $exit->subid($proof, '11101', $now, $key);
         self::assertIsString($subid);
+        $e = null;
         try {
             $exit->convert($subid, $key, static function (): never {
                 throw new \RuntimeException('conversion failed');
             });
-            self::fail('The failure was swallowed');
-        } catch (\RuntimeException $e) {
-            self::assertSame('conversion failed', $e->getMessage());
+        } catch (\RuntimeException $caught) {
+            $e = $caught;
         }
+        self::assertNotNull($e, 'The failure was swallowed');
+        self::assertSame('conversion failed', $e->getMessage());
         self::assertSame('0', self::state($clickId)['click_out']);
         self::assertSame('4', self::state($clickId)['aff_campaign_id']);
         self::assertSame('2.50000', self::state($clickId)['click_payout']);
@@ -693,13 +695,15 @@ final class ClickExitIntegrationTest extends TestCase
         $exit = new PurLinkExit(new Connection(self::requireScratch()));
         $subid = $exit->subid($proof, '11101', $now, $key);
         self::assertIsString($subid);
+        $error = null;
         try {
             $exit->recordConversion($subid, $key, ['transaction_id' => 'callback-rollback', 'skip_bridge' => true],
                 MatchMethod::CLICK_ID, static function (): void { throw new \RuntimeException('failed click update'); });
-            self::fail('a failed click update must roll back the conversion');
-        } catch (\RuntimeException $error) {
-            self::assertSame('failed click update', $error->getMessage());
+        } catch (\RuntimeException $caught) {
+            $error = $caught;
         }
+        self::assertNotNull($error, 'a failed click update must roll back the conversion');
+        self::assertSame('failed click update', $error->getMessage());
         self::assertSame(['campaign_id' => '4'], self::one("SELECT aff_campaign_id AS campaign_id FROM 202_clicks WHERE click_id = $clickId"));
         self::assertSame(['n' => '0'], self::one("SELECT COUNT(*) AS n FROM 202_conversion_logs WHERE click_id = $clickId"));
         $called = 0;

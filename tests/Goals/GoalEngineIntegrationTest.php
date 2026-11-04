@@ -61,6 +61,7 @@ final class GoalEngineIntegrationTest extends TestCase
         self::assertSame('2', self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=100')->fetch_row()[0]);
         self::assertSame('1', self::$db->query("SELECT COUNT(*) FROM 202_goal_events e JOIN 202_purlink_goal_subjects s ON s.subject_id=e.subject_id WHERE e.subject_type='purlink' AND s.campaign_id=8")->fetch_row()[0]);
 
+        $error = null;
         try {
             $this->conn->transaction(function () use ($subjects, $page): void {
                 $subject = $subjects->forRouteInTransaction(1, 101, $page, 8);
@@ -68,10 +69,11 @@ final class GoalEngineIntegrationTest extends TestCase
                 $this->engine->ingestPurLinkInTransaction(1, $subject, [$this->event('rollback', 'signup', self::T)], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
                 throw new \RuntimeException('rollback');
             });
-            self::fail('the transaction was not rolled back');
-        } catch (\RuntimeException $error) {
-            self::assertSame('rollback', $error->getMessage());
+        } catch (\RuntimeException $caught) {
+            $error = $caught;
         }
+        self::assertNotNull($error, 'the transaction was not rolled back');
+        self::assertSame('rollback', $error->getMessage());
         self::assertSame('0', self::$db->query('SELECT COUNT(*) FROM 202_purlink_goal_subjects WHERE click_id=101')->fetch_row()[0]);
         self::assertCount(0, $this->ledger(101));
     }
