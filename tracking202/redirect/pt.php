@@ -30,7 +30,9 @@ if ($ptTrackerId !== null) {
         record_mysql_error($db, 'reading tracker ' . $ptTrackerId, $ptReadError->getMessage());
     }
 }
-if ($ptTracker === null) {
+// A tracker naming another account's page is neither a page's nor a direct link.
+if ($ptTracker === null
+    || ($ptTracker['landing_page_id_public'] === null && (int) $ptTracker['landing_page_id'] !== 0)) {
     p202NoStore();
     http_response_code(404);
     die();

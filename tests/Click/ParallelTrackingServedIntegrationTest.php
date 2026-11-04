@@ -31,6 +31,7 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
     private const SIMPLE_TRACKER = 4131;
     private const ADVANCED_TRACKER = 4132;
     private const DIRECT_TRACKER = 4133;
+    private const FOREIGN_PAGE_TRACKER = 4134;
     private const PUBLIC = 100000;
 
     /** @var resource|null */
@@ -153,6 +154,8 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         $tracker(self::SIMPLE_TRACKER, self::CAMPAIGN, self::SIMPLE_LP);
         $tracker(self::ADVANCED_TRACKER, self::CAMPAIGN, self::ADVANCED_LP);
         $tracker(self::DIRECT_TRACKER, self::CAMPAIGN, 0);
+        // A legacy row naming another account's page.
+        $tracker(self::FOREIGN_PAGE_TRACKER, self::CAMPAIGN, self::OTHER_LP);
     }
 
     /**
@@ -428,6 +431,16 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         [$status, $headers] = self::get(self::pt(self::DIRECT_TRACKER, $query));
         self::assertSame(302, $status, $headers . $this->serverLog());
         self::assertSame('dl.php?t202id=' . (self::DIRECT_TRACKER + self::PUBLIC) . $query, self::location($headers));
+    }
+
+    /** A tracker whose page is another account's is not a direct link: nothing is recorded or followed. */
+    public function testATrackerNamingAnotherAccountsPageIsRefused(): void
+    {
+        $before = self::clicks();
+        [$status, $headers] = self::get(self::pt(self::FOREIGN_PAGE_TRACKER, '&c1=a&gclid=G-fp-1'));
+        self::assertSame(404, $status, $headers . $this->serverLog());
+        self::assertNull(self::location($headers));
+        self::assertSame($before, self::clicks());
     }
 
     public function testALinkThatNamesNoTrackerRecordsNothing(): void

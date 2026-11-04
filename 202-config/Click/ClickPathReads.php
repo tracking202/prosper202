@@ -169,7 +169,8 @@ final readonly class ClickPathReads
     /**
      * A tracker's landing page (pt.php, the Google Ads tracking template),
      * when the page is the tracker's account's; landing_page_id_public is
-     * null for a tracker with none.
+     * null for a tracker with none (landing_page_id 0) and for one whose
+     * page is another account's (landing_page_id set).
      *
      * @return Row|null
      */
@@ -181,6 +182,7 @@ final readonly class ClickPathReads
 
         return $this->setupRow(
             'SELECT tr.user_id,
+                    tr.landing_page_id,
                     lp.landing_page_id_public,
                     lp.landing_page_type,
                     lp.landing_page_url
