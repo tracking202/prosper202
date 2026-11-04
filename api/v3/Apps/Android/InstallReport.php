@@ -234,11 +234,12 @@ final class InstallReport
         }
 
         $names = [];
+        $joins = \Prosper202\Attribution\CountedAmount::reversalsJoin('lc');
         $sql = 'SELECT ' . $expr . ' AS grp, o.goal_id, COUNT(*) AS outcomes, SUM(o.too_fast) AS fast,'
             . ' COALESCE(SUM(CASE WHEN o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
             . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
-            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN
+            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN . ' ' . $joins
             . " WHERE o.user_id = ? AND o.subject_type = 'install' AND o.superseded_at IS NULL AND " . $gate
             . ' AND ' . implode(' AND ', $scopedWhere)
             . ' GROUP BY grp, o.goal_id';
@@ -280,6 +281,7 @@ final class InstallReport
         // The trust classes are counted per install (DISTINCT), so an
         // install that reached a repeating goal three times is one install
         // at that step; `goals_reached` counts the outcomes.
+        $joins = \Prosper202\Attribution\CountedAmount::reversalsJoin('lc');
         $sql = 'SELECT o.goal_id,'
             . ' COUNT(DISTINCT CASE WHEN ' . $gate . ' THEN o.subject_id END) AS installs,'
             . ' COUNT(DISTINCT CASE WHEN i.trusted = 1 THEN o.subject_id END) AS trusted_count,'
@@ -291,7 +293,7 @@ final class InstallReport
             . ' COALESCE(SUM(CASE WHEN ' . $gate . ' AND o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
             . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
-            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN
+            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN . ' ' . $joins
             . " WHERE o.user_id = ? AND o.subject_type = 'install' AND o.superseded_at IS NULL"
             . ' AND ' . implode(' AND ', $where)
             . ' GROUP BY o.goal_id ORDER BY installs DESC, o.goal_id LIMIT ?';
@@ -351,6 +353,7 @@ final class InstallReport
             + ['match_states' => [], 'integrity_states' => [], 'goals_reached' => 0, 'fast_goals' => 0, 'revenue' => 0.0, 'events' => []];
 
         foreach (['match_states' => 'i.match_state', 'integrity_states' => 'i.integrity_state'] as $field => $column) {
+            $joins = \Prosper202\Attribution\CountedAmount::reversalsJoin('lc');
             $sql = 'SELECT ' . $column . ' AS state, COUNT(*) AS n FROM 202_app_installs i ' . self::CLICK_JOIN
                 . ' WHERE ' . $whereSql . ' GROUP BY state';
             foreach ($this->fetchAll($sql, $types, $binds) as $row) {
@@ -363,7 +366,7 @@ final class InstallReport
             . ' COALESCE(SUM(CASE WHEN o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
             . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
-            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN
+            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN . ' ' . $joins
             . " WHERE o.user_id = ? AND o.subject_type = 'install' AND o.superseded_at IS NULL AND " . $gate
             . ' AND ' . $whereSql . ' GROUP BY o.goal_id',
             'i' . $types,

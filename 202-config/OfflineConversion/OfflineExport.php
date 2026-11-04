@@ -196,6 +196,7 @@ final class OfflineExport
             . ' THEN EXISTS (SELECT 1 FROM 202_clicks AS oc WHERE oc.click_id = cl.click_id AND oc.user_id = cl.user_id'
             . ' AND oc.click_time BETWEEN ? AND ?) END AS owned'
             . ' FROM 202_conversion_logs AS cl'
+            . ' ' . CountedAmount::reversalsJoin('cl')
             . ' LEFT JOIN 202_offline_conversion_names AS cn ON cn.user_id = cl.user_id AND cn.platform = ?'
             . ' AND cn.aff_campaign_id = cl.campaign_id'
             . ' LEFT JOIN 202_offline_conversion_names AS dn ON dn.user_id = cl.user_id AND dn.platform = ?'

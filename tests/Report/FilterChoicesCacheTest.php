@@ -200,6 +200,9 @@ final class FilterChoicesCacheTest extends TestCase
                 throw new RuntimeException('database offline');
             });
             self::fail('The database error must propagate.');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (RuntimeException $error) {
             self::assertSame('database offline', $error->getMessage());
         }

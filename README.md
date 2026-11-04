@@ -48,6 +48,16 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - Composer (installs from source only; the release zip bundles `vendor/`)
 - Go 1.27.3+ (optional, to build the Go CLI from source; the release zip bundles its binaries)
 
+### Supported versions
+
+The versions every change is tested against in CI. Versions between the minimum and these should work; anything else is untested.
+
+| Component | Tested in CI | Minimum (refused below) | Notes |
+|-----------|--------------|-------------------------|-------|
+| PHP | 8.3, 8.4, 8.5 | 8.3 | Unit tests on all three; integration tests on 8.3 |
+| MySQL | 8.0, 8.4 LTS | 8.0 | MySQL 8.0 reached end of life in April 2026; use 8.4 LTS for new installs |
+| MariaDB | 11.4 LTS | 10.6 | |
+
 ## Installation
 
 There are two tracks. Pick by what you have access to:

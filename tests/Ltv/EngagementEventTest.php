@@ -26,6 +26,9 @@ final class EngagementEventTest extends TestCase
             try {
                 MysqlEngagementRepository::normalizeEventName($bad);
                 self::fail('Expected rejection for ' . var_export($bad, true));
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException) {
                 $this->addToAssertionCount(1);
             }
@@ -203,6 +206,9 @@ final class EngagementEventTest extends TestCase
             try {
                 MysqlEngagementRepository::parseScoreWeights($raw);
                 self::fail('Expected rejection for ' . var_export($raw, true));
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException) {
                 $this->addToAssertionCount(1);
             }
