@@ -197,7 +197,7 @@ var rotatorDeleteCmd = &cobra.Command{
 // criteriaJSONHint and redirectsJSONHint say what the server takes for a
 // rule's criteria and redirects (RotatorsController::ruleParts).
 const (
-	criteriaJSONHint  = `A JSON array of {"type","statement","value"}: type country, region, city, isp, ip, platform, device or browser; statement is or is_not; value comma-separated (countries as "United States(US)", see ` + "`p202 rotator criteria-values`" + `; ip as single IPv4 or IPv6 addresses, no ranges).`
+	criteriaJSONHint  = `A JSON array of {"type","statement","value"}: type country, region, eu, city, isp, fraud, ip, iprange, browser, platform, device, visitor, c1-c4, t202kw, referer or utm_source/medium/campaign/term/content; statement is or is_not; value comma-separated (countries as "United States(US)", see ` + "`p202 rotator criteria-values`" + `; ip as single IPv4 or IPv6 addresses, iprange as 203.0.113.0/24, 203.0.113.* or a-b).`
 	redirectsJSONHint = `A JSON array of {"redirect_url" | "redirect_campaign" | "redirect_lp", "weight" (0-100), "name"}: one destination each.`
 	// everyVisitorHint says how to write the rule a missing criterion would
 	// have made: the redirects read a rule with no criterion as every visitor.

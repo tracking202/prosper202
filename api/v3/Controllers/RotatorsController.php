@@ -304,8 +304,11 @@ class RotatorsController
     /** The payload keys of a rule redirect. */
     private const REDIRECT_KEYS = ['url' => 'redirect_url', 'campaign' => 'redirect_campaign', 'lp' => 'redirect_lp'];
 
-    /** The criteria rtr.php and offrtr.php evaluate; any other type never matches. */
-    private const CRITERIA_TYPES = ['country', 'region', 'city', 'isp', 'ip', 'platform', 'device', 'browser'];
+    /** The criteria rtr.php and offrtr.php evaluate (CriterionMatcher::TYPES); any other type never matches. */
+    private const CRITERIA_TYPES = [
+        'country', 'region', 'eu', 'city', 'isp', 'fraud', 'ip', 'iprange', 'browser', 'platform', 'device', 'visitor',
+        'c1', 'c2', 'c3', 'c4', 't202kw', 'referer', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+    ];
 
     /**
      * One destination — a rotator's default or a rule redirect — read from
@@ -713,6 +716,10 @@ class RotatorsController
                 return null;
             }
             $value = IpCriterion::normalize($value)['value'];
+        } elseif (($refused = Criterion::refusal($type, $value)) !== null) {
+            // An IP range or a fixed set's value that would never match.
+            $refuse('A ' . $type . ' criterion cannot hold this value', ["$at.value" => $refused]);
+            return null;
         }
 
         return $stated ? ['type' => $type, 'statement' => $statement, 'value' => $value] : null;

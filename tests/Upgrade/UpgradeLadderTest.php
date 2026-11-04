@@ -757,6 +757,15 @@ final class UpgradeLadderTest extends TestCase
         $open = $this->nextSignificant($tokens, $call + 1, $to);
         $close = $open !== null && $tokens[$open]['text'] === '(' ? $this->matchingParen($tokens, $open) : null;
         $end = $close !== null && $close <= $to ? $this->nextSignificant($tokens, $close + 1, $to) : null;
+        // `… && $other_ok;` only narrows success to "this and an earlier
+        // step both succeeded" (the paid 1.9.56 baseline in the 1.9.79 step),
+        // so it is the one addition allowed; `|| …` and anything else are not.
+        if ($end !== null && $tokens[$end]['text'] === '&&') {
+            $other = $this->nextSignificant($tokens, $end + 1, $to);
+            $after = $other === null ? null : $this->nextSignificant($tokens, $other + 1, $to);
+            $end = $other !== null && $tokens[$other]['id'] === T_VARIABLE
+                && $after !== null && $tokens[$after]['text'] === ';' ? $after : null;
+        }
         $this->assertTrue(
             $equals !== null && $tokens[$equals]['text'] === '='
             && $variable !== null && $tokens[$variable]['id'] === T_VARIABLE
