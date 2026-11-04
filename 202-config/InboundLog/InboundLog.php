@@ -11,14 +11,16 @@ use Prosper202\Database\Schema\TableRegistry;
  * The postbacks, pixels and payment notifications this install answered
  * (202_inbound_log): written once per request, read by Setup › Inbound Log
  * and GET /conversions/inbound-log, pruned hourly to each account's newest
- * KEEP_PER_ACCOUNT accepted and KEEP_REFUSED refused requests (so a flood of
- * refusals never evicts an accepted one) and KEEP_UNATTRIBUTED for requests
- * no account was found for.
+ * KEEP_PER_ACCOUNT requests that wrote something (BACKED_OUTCOMES) and its
+ * newest KEEP_REFUSED others, and KEEP_UNATTRIBUTED for requests no account
+ * was found for. A flood of refusals or of replays (duplicate, already_lead)
+ * never evicts a request that wrote a conversion or event.
  *
  * Writing never fails the request it records: one insert, and any error is
- * logged and dropped. A request nothing vouches for (no account, or refused)
- * is written at most UNBACKED_PER_MINUTE times a minute per account, so a
- * flood cannot outgrow the prune.
+ * logged and dropped. A request that wrote nothing (no account, refused, or
+ * a replay) is written at most UNBACKED_PER_MINUTE times a minute per
+ * account, so a flood cannot outgrow the prune. Only a request that wrote a
+ * row, which a sender cannot repeat at will, goes uncapped.
  */
 final class InboundLog
 {
@@ -39,6 +41,13 @@ final class InboundLog
     /** Outcomes that leave nothing to fix; every other one is listed as refused. */
     public const ACCEPTED_OUTCOMES = ['recorded', 'reversed', 'duplicate', 'test', 'ignored', 'event_recorded'];
 
+    /**
+     * Accepted outcomes that wrote a conversion or event (the accepted column
+     * is 1). The others, a replayed transaction id included, wrote nothing and
+     * can be sent at any rate, so they are capped and pruned with the refusals.
+     */
+    public const BACKED_OUTCOMES = ['recorded', 'reversed', 'event_recorded'];
+
     public const ENDPOINTS = ['pb', 'gpb', 'px', 'gpx', 'upx', 'clickbank', 'jvzoo', 'paykickstart'];
 
     public function __construct(private readonly \mysqli $db)
@@ -52,7 +61,7 @@ final class InboundLog
             $now ??= time();
             $userId = max(0, $entry->userId);
             $conn = new Connection($this->db);
-            $accepted = $userId > 0 && in_array($entry->outcome, self::ACCEPTED_OUTCOMES, true);
+            $accepted = $userId > 0 && in_array($entry->outcome, self::BACKED_OUTCOMES, true);
             if (!$accepted && $this->unbackedCapReached($conn, $userId, $now)) {
                 return false;
             }
@@ -72,7 +81,7 @@ final class InboundLog
                 mb_substr($entry->reason, 0, 500, 'UTF-8'),
                 $entry->clickId,
                 $entry->conversionId,
-                $entry->transactionId === null ? null : mb_substr($entry->transactionId, 0, 255, 'UTF-8'),
+                $entry->transactionId === null ? null : mb_substr(Redactor::scalar($entry->transactionId), 0, 255, 'UTF-8'),
                 Redactor::encode($entry->fields),
             ]);
             $conn->executeInsert($stmt);
@@ -85,7 +94,7 @@ final class InboundLog
         }
     }
 
-    /** UNBACKED_PER_MINUTE of the account's unaccepted rows arrived in the last minute. */
+    /** UNBACKED_PER_MINUTE of the account's unbacked rows (accepted = 0) arrived in the last minute. */
     private function unbackedCapReached(Connection $conn, int $userId, int $now): bool
     {
         $stmt = $conn->prepareWrite(
@@ -147,8 +156,8 @@ final class InboundLog
     }
 
     /**
-     * Deletes each account's accepted rows beyond its newest KEEP_PER_ACCOUNT,
-     * its refused ones beyond KEEP_REFUSED and the unattributed ones beyond
+     * Deletes each account's backed rows beyond its newest KEEP_PER_ACCOUNT,
+     * its other ones beyond KEEP_REFUSED and the unattributed ones beyond
      * KEEP_UNATTRIBUTED, until caught up or $seconds have passed; answers how
      * many rows went. Each round takes one batch from every bucket over its
      * cap, the unattributed rows last, so no account waits on another's backlog.

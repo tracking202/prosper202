@@ -73,6 +73,16 @@ final class RedactorTest extends TestCase
         self::assertSame(['sku' => 'TEE-01', 'buyer' => Redactor::REDACTED], $kept['product_id']);
     }
 
+    public function testAnAddressThatEndsASentenceIsRedacted(): void
+    {
+        $kept = Redactor::fields(['product_name' => 'ordered from 203.0.113.9.', 'event' => 'v1.2.3.4.5'], 'gpx');
+
+        self::assertSame(Redactor::REDACTED, $kept['product_name']);
+        self::assertSame('v1.2.3.4.5', $kept['event'], 'a longer dotted number is not an address');
+        self::assertSame('NW-1001', Redactor::scalar('NW-1001'));
+        self::assertSame(Redactor::REDACTED, Redactor::scalar('203.0.113.9'));
+    }
+
     public function testAUrlEncodedEmailIsRedacted(): void
     {
         $kept = Redactor::fields([

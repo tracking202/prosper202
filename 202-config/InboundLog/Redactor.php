@@ -52,7 +52,8 @@ final class Redactor
     private const SECRET_NAME = '/sig|secret|key|token|hash|hmac|verif|pass|^pw|auth|cred|nonce|cipher|licen|^iv$|^notification$/i';
     private const VISITOR_NAME = '/mail|name|phone|addr|street|city|zip|postal|card|birth|ssn|agent|refer|^cust$|customer|buyer|(^|[^a-z])ip($|[^a-z])/i';
     private const EMAIL_VALUE = '/[^@\s]@[^@\s]+\.[a-z]{2,}/i';
-    private const IPV4_VALUE = '/(^|[^0-9.])(\d{1,3}\.){3}\d{1,3}($|[^0-9.])/';
+    /** A trailing full stop ends a sentence, not the address: "from 203.0.113.9." is one. */
+    private const IPV4_VALUE = '/(^|[^0-9.])(\d{1,3}\.){3}\d{1,3}($|[^0-9.]|\.(?![0-9]))/';
 
     private function __construct()
     {
@@ -104,6 +105,12 @@ final class Redactor
             array_pop($redacted);
             $redacted['_more_fields'] = $more + 1;
         }
+    }
+
+    /** One value kept outside fields (the transaction id): redacted when it holds an email or IP. */
+    public static function scalar(string $value): string
+    {
+        return self::namesAPerson($value) ? self::REDACTED : $value;
     }
 
     private static function value(mixed $value, int $depth): mixed

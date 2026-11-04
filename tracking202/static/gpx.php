@@ -79,6 +79,9 @@ if (is_numeric($mysql['click_id'])) {
 		\Prosper202\InboundLog\RequestLog::current()?->legacyResult('unknown_click');
 		return;
 	}
+	// The click's account owns this request's log row, the event path's included.
+	\Prosper202\InboundLog\RequestLog::current()?->account($cpa_row['user_id'] ?? null);
+	\Prosper202\InboundLog\RequestLog::current()?->click((int) $mysql['click_id']);
 
 	// An event (plan §2.2): stored on the click and evaluated by its goals.
 	// The image has already been sent, so a refusal is logged. The event

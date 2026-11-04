@@ -266,7 +266,7 @@ final class InboundLogIntegrationTest extends TestCase
     private static function seed(int $user, int $count, string $outcome = 'unknown_campaign'): void
     {
         $columns = 'user_id, received_at, endpoint, method, http_status, outcome, accepted, reason';
-        $accepted = $user > 0 && in_array($outcome, InboundLog::ACCEPTED_OUTCOMES, true) ? 1 : 0;
+        $accepted = $user > 0 && in_array($outcome, InboundLog::BACKED_OUTCOMES, true) ? 1 : 0;
         self::q("INSERT INTO 202_inbound_log ($columns) VALUES ($user, 1, 'pb', 'GET', 200, '$outcome', $accepted, '')");
         for ($have = 1; $have < $count; $have *= 2) {
             self::q("INSERT INTO 202_inbound_log ($columns) SELECT user_id, received_at + $have, endpoint, method,"
@@ -338,6 +338,47 @@ final class InboundLogIntegrationTest extends TestCase
             . ' GROUP BY outcome ORDER BY outcome');
         self::assertInstanceOf(\mysqli_result::class, $kept);
         self::assertSame([['recorded', '3000'], ['unknown_click', (string) InboundLog::KEEP_REFUSED]], $kept->fetch_all());
+    }
+
+    /**
+     * The review's case: anyone with one converted click can replay its
+     * transaction id, and each replay answers duplicate. Replays are capped
+     * like refusals and pruned with them, so they never push out the
+     * account's recorded conversions.
+     */
+    public function testReplaysOfOneTransactionAreCappedAndCannotEvictRecordedRows(): void
+    {
+        $db = self::requireScratch();
+        $log = new InboundLog($db);
+        $now = 1793000000;
+        for ($i = 0; $i < 3; $i++) {
+            self::assertTrue($log->append(new Entry('gpb', 'GET', 200, 'recorded', '', self::ACCOUNT, self::CLICK, null, 'NW-' . $i), $now));
+        }
+        for ($i = 0; $i < InboundLog::UNBACKED_PER_MINUTE; $i++) {
+            self::assertTrue($log->append(new Entry('gpb', 'GET', 200, 'duplicate', '', self::ACCOUNT, self::CLICK, null, 'NW-0'), $now));
+        }
+        self::assertFalse($log->append(new Entry('gpb', 'GET', 200, 'duplicate', '', self::ACCOUNT, self::CLICK, null, 'NW-0'), $now + 59),
+            'the 61st replay in a minute is not logged');
+        self::assertFalse($log->append(new Entry('pb', 'GET', 200, 'already_lead', '', self::ACCOUNT), $now + 59));
+        self::assertTrue($log->append(new Entry('gpb', 'GET', 200, 'recorded', '', self::ACCOUNT, self::CLICK, null, 'NW-9'), $now + 59),
+            'a new conversion still is');
+        $listed = self::rows(self::ACCOUNT, false, ['outcome' => 'duplicate'])[0];
+        self::assertTrue($listed['accepted'], 'a replay is still listed as accepted, not refused');
+
+        self::seed(self::ACCOUNT, 20000, 'duplicate');
+        $log->prune();
+
+        $kept = $db->query('SELECT outcome, COUNT(*) FROM 202_inbound_log WHERE user_id = ' . self::ACCOUNT
+            . ' GROUP BY outcome ORDER BY outcome');
+        self::assertInstanceOf(\mysqli_result::class, $kept);
+        self::assertSame([['duplicate', (string) InboundLog::KEEP_REFUSED], ['recorded', '4']], $kept->fetch_all());
+    }
+
+    public function testATransactionIdHoldingAnEmailIsNotKept(): void
+    {
+        $log = new InboundLog(self::requireScratch());
+        self::assertTrue($log->append(new Entry('pb', 'GET', 200, 'recorded', '', self::ACCOUNT, self::CLICK, null, 'pat@contoso.example')));
+        self::assertSame(Redactor::REDACTED, self::rows(self::ACCOUNT, false)[0]['transaction_id']);
     }
 
     public function testAPayKickstartNotificationKeepsNoLicenceKeyOrBuyerDetail(): void

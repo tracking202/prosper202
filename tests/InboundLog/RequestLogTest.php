@@ -101,6 +101,20 @@ final class RequestLogTest extends TestCase
         self::assertNull(RequestLog::current());
     }
 
+    /** A web event's row belongs to the click's account, like a conversion's (gpx used to log it as user 0). */
+    public function testTheEventPathsNameTheAccountBeforeTheyRecord(): void
+    {
+        $root = dirname(__DIR__, 2);
+        foreach (['gpx', 'upx'] as $endpoint) {
+            $source = (string) file_get_contents("$root/tracking202/static/$endpoint.php");
+            $account = strpos($source, 'RequestLog::current()?->account(');
+            $event = strpos($source, 'p202RecordWebEvent(');
+            self::assertNotFalse($account, "$endpoint.php names the account");
+            self::assertNotFalse($event, "$endpoint.php records events");
+            self::assertLessThan($event, $account, "$endpoint.php names the account before the event path");
+        }
+    }
+
     public function testEveryClassicEndpointIsWatched(): void
     {
         $root = dirname(__DIR__, 2);

@@ -66,7 +66,7 @@ template_top('Inbound Log');
     <div class="p202-page-header__icon"><i class="bi bi-inbox"></i></div>
     <div class="p202-page-header__text">
         <h1 class="p202-page-header__title">Inbound Log</h1>
-        <p class="p202-page-header__desc">Every postback, pixel and payment notification this install answered, and why one that recorded nothing was refused. The newest <?php echo number_format(InboundLog::KEEP_PER_ACCOUNT); ?> are kept; signatures, keys, addresses and buyers' details never are.</p>
+        <p class="p202-page-header__desc">Every postback, pixel and payment notification this install answered, and why one that recorded nothing was refused. The newest <?php echo number_format(InboundLog::KEEP_PER_ACCOUNT); ?> that recorded something are kept, and the newest <?php echo number_format(InboundLog::KEEP_REFUSED); ?> others; signatures, keys, addresses and buyers' details never are.</p>
     </div>
 </div>
 

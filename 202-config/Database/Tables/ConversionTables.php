@@ -380,8 +380,9 @@ final class ConversionTables
      * The postbacks, pixels and payment notifications this install answered,
      * and what became of each (Prosper202\InboundLog). user_id 0 is a request
      * no account could be found for. Bounded per account by the hourly prune
-     * (InboundLog::KEEP_PER_ACCOUNT accepted, KEEP_REFUSED refused: accepted
-     * is 1 for an account's accepted request); fields hold the request with every
+     * (InboundLog::KEEP_PER_ACCOUNT backed, KEEP_REFUSED others: accepted
+     * is 1 for an account's request that wrote a conversion or event,
+     * InboundLog::BACKED_OUTCOMES); fields hold the request with every
      * secret and visitor value redacted. From 1.9.80, added by its rung.
      */
     public static function inboundLog(): SchemaDefinition
