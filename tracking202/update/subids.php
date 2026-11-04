@@ -25,6 +25,7 @@ $refusedLines = [];
 $marked = 0;
 $ignored = [];
 $alreadyMarked = [];
+$deletedEarlier = [];
 $repeated = [];
 
 $conn = new Connection($db);
@@ -64,6 +65,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			foreach ($result['lines'] as $line) {
 				if ($line['status'] === SubidBatch::NOT_A_SUBID || $line['status'] === SubidBatch::NOT_FOUND) {
 					$ignored[] = $line['subid'];
+				} elseif ($line['status'] === SubidBatch::ALREADY_CONVERTED && ($line['deleted'] ?? false)) {
+					$deletedEarlier[] = $line['subid'] . (isset($line['transaction_id']) ? ' (' . $line['transaction_id'] . ')' : '');
 				} elseif ($line['status'] === SubidBatch::ALREADY_CONVERTED) {
 					$alreadyMarked[] = $line['subid'] . (isset($line['transaction_id']) ? ' (' . $line['transaction_id'] . ')' : '');
 				} elseif ($line['status'] === SubidBatch::DUPLICATE_IN_LIST) {
@@ -101,6 +104,10 @@ if ($success) {
 	}
 	if ($alreadyMarked !== []) {
 		echo p202_flash('info', 'Already recorded, so left as they were: ' . p202_update_list_sentence($alreadyMarked) . '.');
+	}
+	if ($deletedEarlier !== []) {
+		echo p202_flash('warn', 'Recorded before and deleted since, so not recorded again: ' . p202_update_list_sentence($deletedEarlier)
+			. '. A deleted sale keeps its transaction id; give the sale a new transaction id to record it.');
 	}
 	if ($repeated !== []) {
 		echo p202_flash('info', 'Repeats of an earlier line, recorded once: ' . p202_update_list_sentence($repeated) . '.');

@@ -114,6 +114,15 @@ final class SubidLinesIntegrationTest extends TestCase
 
         $preview = $batch->markPreview(self::USER, ["$a, 1, order-1", "$a, 1, order-3"], null, $zone);
         self::assertSame([SubidBatch::ALREADY_CONVERTED, SubidBatch::WOULD_MARK], array_column($preview['lines'], 'status'));
+
+        // Deleted since (Delete Subids): the sale keeps its id, so the line
+        // records nothing and says it was deleted, in the preview and the write.
+        $batch->clear(self::USER, [(string) $a]);
+        $preview = $batch->markPreview(self::USER, ["$a, 12.50, order-1"], null, $zone);
+        self::assertSame([[SubidBatch::ALREADY_CONVERTED, true]], array_map(static fn (array $l): array => [$l['status'], $l['deleted'] ?? false], $preview['lines']));
+        $replay = $batch->mark(self::USER, ["$a, 12.50, order-1", "$b"], null, $zone);
+        self::assertSame([[SubidBatch::ALREADY_CONVERTED, true], [SubidBatch::ALREADY_CONVERTED, false]], array_map(static fn (array $l): array => [$l['status'], $l['deleted'] ?? false], $replay['lines']));
+        self::assertSame([], self::rows($a));
     }
 
     public function testALineThatCannotBeReadStopsTheWholeList(): void

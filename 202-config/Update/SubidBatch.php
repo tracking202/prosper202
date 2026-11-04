@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Update;
 
 use Prosper202\Click\ClickId;
+use Prosper202\Click\FirstVisit;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\BatchInterrupted;
 use Prosper202\Conversion\Ledger\ConversionSource;
@@ -309,6 +310,8 @@ final class SubidBatch
      * once_per_click: a click that is already a lead changes nothing. A line
      * with one records that sale, once: the same id on the same click again
      * is already_converted, and another id is another sale, as a postback's.
+     * A sale recorded and deleted since keeps its id: its line is
+     * already_converted with deleted true, and nothing is recorded.
      *
      * @param list<mixed> $items
      * @param string|null $defaultPayout payoutError() must have accepted it
@@ -368,6 +371,11 @@ final class SubidBatch
                 $entries[$i]['status'] = self::NOT_FOUND;
             } elseif ($result['duplicate']) {
                 $entries[$i]['status'] = self::ALREADY_CONVERTED;
+                if ($result['deleted'] ?? false) {
+                    // Recorded before and deleted since: the deleted row keeps
+                    // its key, so nothing is recorded, and the line says so.
+                    $entries[$i]['deleted'] = true;
+                }
             } else {
                 $entries[$i]['status'] = self::MARKED;
                 $marked++;
@@ -405,7 +413,12 @@ final class SubidBatch
             $click = $clicks[(int) $entry['click_id']] ?? null;
             if ($click === null) {
                 $entries[$i]['status'] = self::NOT_FOUND;
-            } elseif (isset($entry['transaction_id']) ? $this->transactionOnFile((int) $entry['click_id'], $entry['transaction_id']) : (int) $click['click_lead'] === 1) {
+            } elseif (isset($entry['transaction_id']) && ($onFile = $this->transactionOnFile((int) $entry['click_id'], $entry['transaction_id'])) !== null) {
+                $entries[$i]['status'] = self::ALREADY_CONVERTED;
+                if ($onFile === 'deleted') {
+                    $entries[$i]['deleted'] = true;
+                }
+            } elseif (!isset($entry['transaction_id']) && (int) $click['click_lead'] === 1) {
                 $entries[$i]['status'] = self::ALREADY_CONVERTED;
             } else {
                 $entries[$i]['status'] = self::WOULD_MARK;
@@ -708,18 +721,23 @@ final class SubidBatch
                 $timed[(int) $entry['click_id']][] = $i;
             }
         }
-        foreach (array_chunk(array_keys($timed), self::PREVIEW_CHUNK) as $chunk) {
-            $stmt = $this->conn->prepareWrite(
-                'SELECT click_id, MIN(click_time) AS click_time FROM 202_clicks WHERE user_id = ? AND click_id IN ('
-                . implode(', ', array_fill(0, count($chunk), '?')) . ') GROUP BY click_id'
-            );
-            $this->conn->bind($stmt, 'i' . str_repeat('i', count($chunk)), array_merge([$userId], $chunk));
-            foreach ($this->conn->fetchAll($stmt) as $row) {
-                foreach ($timed[(int) $row['click_id']] ?? [] as $i) {
-                    if ((int) $entries[$i]['conv_time'] < (int) $row['click_time']) {
-                        $entries[$i]['status'] = self::INVALID_LINE;
-                        $entries[$i]['error'] = 'time is before the click (' . gmdate('Y-m-d H:i:s', (int) $row['click_time']) . ' UTC)';
-                    }
+        if ($timed === []) {
+            return $entries;
+        }
+        // One click's first visit at a time: FirstVisit::of() is one click's,
+        // and fetchOne() closes the statement.
+        foreach ($timed as $clickId => $lines) {
+            $stmt = $this->conn->prepareWrite('SELECT first_visit.click_time FROM ' . FirstVisit::of('?')
+                . ' AS first_visit WHERE first_visit.user_id = ?');
+            $this->conn->bind($stmt, 'ii', [$clickId, $userId]);
+            $row = $this->conn->fetchOne($stmt);
+            if ($row === null) {
+                continue;
+            }
+            foreach ($lines as $i) {
+                if ((int) $entries[$i]['conv_time'] < (int) $row['click_time']) {
+                    $entries[$i]['status'] = self::INVALID_LINE;
+                    $entries[$i]['error'] = 'time is before the click (' . gmdate('Y-m-d H:i:s', (int) $row['click_time']) . ' UTC)';
                 }
             }
         }
@@ -727,13 +745,18 @@ final class SubidBatch
         return $entries;
     }
 
-    /** Whether the click holds a row keyed by this transaction id, deleted or not, as record()'s replay check reads it. */
-    private function transactionOnFile(int $clickId, string $transactionId): bool
+    /**
+     * The row the click holds keyed by this transaction id, as record()'s
+     * replay check reads it: 'live', 'deleted' (it keeps its key, so the id
+     * is not recorded again), or null when there is none.
+     */
+    private function transactionOnFile(int $clickId, string $transactionId): ?string
     {
-        $stmt = $this->conn->prepareWrite('SELECT 1 FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ? LIMIT 1');
+        $stmt = $this->conn->prepareWrite('SELECT deleted FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ? LIMIT 1');
         $this->conn->bind($stmt, 'is', [$clickId, DedupeKey::transaction($transactionId)]);
+        $row = $this->conn->fetchOne($stmt);
 
-        return $this->conn->fetchOne($stmt) !== null;
+        return $row === null ? null : ((int) $row['deleted'] === 1 ? 'deleted' : 'live');
     }
 
     /**
