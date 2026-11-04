@@ -21,6 +21,9 @@ $p202Tabs[] = ['SpyPage', 'tracking202/spy', 'Spy', $p202Nav2 === 'spy'];
 if ($userObj->hasPermission('access_to_update_section')) {
 	$p202Tabs[] = ['UpdatePage', 'tracking202/update', 'Update', $p202Nav2 === 'update'];
 }
+if ($userObj->hasPermission('access_to_setup_section')) {
+    $p202Tabs[] = ['ConversionLogsPage', 'tracking202/logs/', 'Conversion Logs', $p202Nav2 === 'logs'];
+}
 ?>
 <nav class="p202c-tabs" aria-label="Prosper202 CS sections">
 	<ul id="second-nav" class="p202c-tabs__list">
