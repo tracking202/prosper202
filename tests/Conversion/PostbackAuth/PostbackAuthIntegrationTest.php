@@ -131,6 +131,8 @@ final class PostbackAuthIntegrationTest extends TestCase
             try {
                 self::store()->settings($user);
                 self::fail("a sealed value moved into $column of account $user opened");
+            } catch (\PHPUnit\Framework\AssertionFailedError $f) {
+                throw $f;
             } catch (\RuntimeException $e) {
                 self::assertStringContainsString('does not decrypt', $e->getMessage());
             }
