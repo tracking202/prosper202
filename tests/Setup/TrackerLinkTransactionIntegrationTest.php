@@ -8,9 +8,9 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * Get Links' save (tracking202/ajax/generate_tracking_link.php) writes a
- * tracker in one Connection::transaction(): an edit deletes the tracker and
- * inserts it again, and a failure after the DELETE must leave the tracker
- * the account had. The page runs as the account in a process of its own
+ * tracker in one Connection::transaction(): an edit updates the tracker in
+ * place, under the tracker_id the API and CLI hold, and a failure must leave
+ * the tracker the account had. The page runs as the account in a process of its own
  * (fixtures/page-runner.php), as the web server runs it.
  *
  * Needs a 202-config.php (connect.php exits without one) and P202_TEST_DB_*.
@@ -28,6 +28,8 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
     private const REFUSED_CAMPAIGN = 990082;
     private const NETWORK = 990081;
     private const LANDING_PAGE = 990081;
+    /** The campaign an edit moves a link to. */
+    private const SECOND_CAMPAIGN = 990084;
     /** Another account, with a link of its own. */
     private const OTHER = 990083;
     private const THEIR_LINK = 99008399;
@@ -87,7 +89,7 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         self::q('DELETE FROM 202_trackers WHERE user_id = ' . self::USER);
     }
 
-    public function testALinkIsSavedAndAnEditReplacesItWhole(): void
+    public function testAnEditUpdatesTheLinkInPlaceUnderTheIdItHad(): void
     {
         $out = self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
         $created = self::trackers();
@@ -95,18 +97,26 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         $public = (int) $created[0]['tracker_id_public'];
         self::assertGreaterThan(0, $public, 'the public id was written in the same transaction');
         self::assertStringContainsString('t202id=' . $public, $out);
+        self::assertSame('0.10000', $created[0]['click_cpc']);
 
         $out = self::save([
-            'aff_campaign_id' => (string) self::CAMPAIGN,
+            'aff_campaign_id' => (string) self::SECOND_CAMPAIGN,
             'click_cloaking' => '1',
+            'cost_type' => 'cpa',
+            'cpa_dollars' => '1',
+            'cpa_cents' => '25',
             'edit_tracker' => '1',
             'tracker_id' => (string) $public,
         ]);
         $edited = self::trackers();
-        self::assertCount(1, $edited, $out);
-        self::assertNotSame($created[0]['tracker_id'], $edited[0]['tracker_id'], 'an edit writes the tracker again');
+        self::assertCount(1, $edited, 'the edit added no row: ' . $out);
+        self::assertSame($created[0]['tracker_id'], $edited[0]['tracker_id'], 'the tracker_id the API and CLI hold survives');
         self::assertSame((string) $public, $edited[0]['tracker_id_public'], 'under the public id it had');
+        self::assertStringContainsString('t202id=' . $public, $out);
+        self::assertSame((string) self::SECOND_CAMPAIGN, $edited[0]['aff_campaign_id']);
         self::assertSame('1', $edited[0]['click_cloaking']);
+        self::assertSame('1.25000', $edited[0]['click_cpa']);
+        self::assertSame('', $edited[0]['click_cpc'], 'the cost type not sent is cleared, as a new link has it');
     }
 
     /**
@@ -145,13 +155,13 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         self::assertStringNotContainsString('pt.php', $out);
     }
 
-    public function testAnEditThatFailsAfterItsDeleteLeavesTheTrackerAsItWas(): void
+    public function testAnEditThatFailsLeavesTheTrackerAsItWas(): void
     {
         self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
         $before = self::trackers();
         self::assertCount(1, $before);
 
-        self::q("CREATE TRIGGER p202_test_refuse_tracker BEFORE INSERT ON 202_trackers FOR EACH ROW
+        self::q("CREATE TRIGGER p202_test_refuse_tracker BEFORE UPDATE ON 202_trackers FOR EACH ROW
             IF NEW.aff_campaign_id = " . self::REFUSED_CAMPAIGN . " THEN
                 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'tracker refused by the test';
             END IF");
@@ -170,7 +180,7 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         self::assertInstanceOf(\mysqli_result::class, $refused);
         self::assertSame('1', (string) $refused->fetch_row()[0], 'the failure the page recorded is the trigger\'s');
         self::assertStringNotContainsString('t202id=', $out, 'no link for a save that failed');
-        self::assertSame($before, self::trackers(), 'the DELETE rolled back with the failed INSERT');
+        self::assertSame($before, self::trackers(), 'the failed edit rolled back');
     }
 
     /** @return iterable<string, array{string}> the link's public id as a format, `%d` */
@@ -213,7 +223,7 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
 
         self::assertStringContainsString('That tracking link is not one of yours, or it was removed.', $out);
         self::assertStringNotContainsString('t202id=', $out, 'no link for an edit that was refused');
-        self::assertSame($before, self::trackers(), 'nothing was deleted, replaced or added');
+        self::assertSame($before, self::trackers(), 'nothing was changed or added');
     }
 
     /**
@@ -237,7 +247,7 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         ]);
 
         self::assertStringContainsString('That tracking link is not one of yours, or it was removed.', $out);
-        self::assertSame($theirs, self::trackers(self::OTHER), 'the other account\'s link is not deleted or replaced');
+        self::assertSame($theirs, self::trackers(self::OTHER), 'the other account\'s link is not changed');
         self::assertSame($mine, self::trackers(), 'and this account\'s are as they were');
     }
 
@@ -296,7 +306,7 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
             'aff_campaign_id' => self::CAMPAIGN, 'landing_page_nickname' => 'Landing', 'landing_page_type' => 0,
             'landing_page_url' => 'https://shop.example/landing?x=1', 'landing_page_time' => $t,
         ]);
-        foreach ([self::CAMPAIGN, self::REFUSED_CAMPAIGN] as $campaign) {
+        foreach ([self::CAMPAIGN, self::REFUSED_CAMPAIGN, self::SECOND_CAMPAIGN] as $campaign) {
             self::row('202_aff_campaigns', [
                 'aff_campaign_id' => $campaign, 'user_id' => $u, 'aff_network_id' => self::NETWORK,
                 'aff_campaign_name' => 'Offer ' . $campaign, 'aff_campaign_url' => 'https://offer.example/' . $campaign,
@@ -308,7 +318,7 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
     /** @return list<array<string, string>> the account's trackers, or another account's */
     private static function trackers(int $user = self::USER): array
     {
-        $found = self::requireScratch()->query('SELECT tracker_id, tracker_id_public, aff_campaign_id, click_cloaking'
+        $found = self::requireScratch()->query('SELECT tracker_id, tracker_id_public, aff_campaign_id, click_cloaking, click_cpc, click_cpa'
             . ' FROM 202_trackers'
             . ' WHERE user_id = ' . $user . ' ORDER BY tracker_id');
         self::assertInstanceOf(\mysqli_result::class, $found);
