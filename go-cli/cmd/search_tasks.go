@@ -46,6 +46,8 @@ var searchTasks = []searchTask{
 			"tail clicks", "stream clicks", "monitor traffic", "clicks as they arrive", "clicks as they come in", "incoming clicks"}},
 	{Run: "p202 click list", Pages: []string{"Visitors"},
 		Phrases: []string{"visitor log", "recent clicks", "click history", "individual clicks"}},
+	{Run: "p202 conversion list", Pages: []string{"Conversion Logs"},
+		Phrases: []string{"conversion log", "conversion history", "recent conversions", "individual conversions", "every conversion"}},
 
 	// Setup
 	{Run: "p202 ppc-network list", Pages: []string{"Setup › Traffic Sources"},
