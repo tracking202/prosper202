@@ -9,15 +9,14 @@ $slack = false;
 
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 202_users.user_name AS username, 202_users_pref.maxmind_isp, 202_users_pref.user_slack_incoming_webhook AS url FROM 202_users_pref LEFT JOIN 202_users ON (202_users.user_id = '".$mysql['user_own_id']."') WHERE 202_users_pref.user_id='1'";
+$user_sql = "SELECT 202_users.user_name AS username, 202_users_pref.maxmind_isp FROM 202_users_pref LEFT JOIN 202_users ON (202_users.user_id = '".$mysql['user_own_id']."') WHERE 202_users_pref.user_id='1'";
 $user_result = $db->query($user_sql);
 if ($user_result === false) {
     record_mysql_error($user_sql);
 }
 $user_row = p202FetchRow($user_result, $user_sql);
 
-if (!empty($user_row['url'])) 
-	$slack = new Slack($user_row['url']);
+$slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 
 /*
  * Setup › Redirector's two server calls: the rule-value suggestions and saving

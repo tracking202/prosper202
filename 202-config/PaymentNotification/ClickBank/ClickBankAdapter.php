@@ -280,13 +280,7 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
     /** The account's own Slack webhook, or null when it has none. */
     public static function slackWebhook(Connection $conn, int $accountId): ?string
     {
-        $stmt = $conn->prepareRead(
-            'SELECT user_slack_incoming_webhook FROM 202_users_pref WHERE user_id = ? LIMIT 1'
-        );
-        $conn->bind($stmt, 'i', [$accountId]);
-        $url = $conn->fetchOne($stmt)['user_slack_incoming_webhook'] ?? null;
-
-        return is_string($url) && trim($url) !== '' ? trim($url) : null;
+        return \Prosper202\Notifications\SlackWebhook::ofAccount($conn, $accountId);
     }
 
     /**
