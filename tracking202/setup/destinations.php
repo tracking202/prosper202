@@ -179,7 +179,7 @@ echo p202_setup_error_flashes($errors, $formFields);
                     </div>
                     <?php if ($test !== null && (int) $test['id'] === $id) {
                         echo p202_flash($test['valid'] ? 'ok' : 'bad', $test['valid']
-                            ? 'GA4\'s validation endpoint accepted the test event. Nothing was recorded in your property.'
+                            ? 'GA4\'s validation endpoint accepted the test event. Nothing was recorded in your property. It does not check the API secret: confirm the first real conversions in GA4\'s Realtime report.'
                             : 'The test was refused: ' . ($test['messages'] !== [] ? implode(' ', $test['messages']) : (string) ($test['reason'] ?? 'no reason given')));
                     } ?>
                     <?php if ($canSeeLog && isset($recent[$id])) { ?>

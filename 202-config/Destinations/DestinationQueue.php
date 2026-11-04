@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Destinations;
 
 use Prosper202\Conversion\TrafficSourcePixels;
+use Prosper202\DataEngine\IpAddressSql;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Schema\TableRegistry;
 use Prosper202\Http\EuropeanVisitor;
@@ -136,13 +137,22 @@ final class DestinationQueue
                     continue;
                 }
                 $tried++;
+                $threw = false;
                 try {
                     [$status, $result] = $this->deliver($destination, (int) $row['conv_id'], $now);
                 } catch (\JsonException | DestinationInputException $e) {
                     // This row's data, not the run's: it fails alone (CLAUDE.md #24).
                     [$status, $result] = ['failed', new SendResult(false, false, null, 'not sent: ' . $e->getMessage())];
+                } catch (\Throwable $e) {
+                    if (Connection::isRetryableLockError($e)) {
+                        throw $e;
+                    }
+                    // Counted as a try, so a row that always throws ends failed rather than blocking the queue.
+                    error_log('destinations: delivery ' . $after . ' could not be sent: ' . $e->getMessage());
+                    $threw = true;
+                    [$status, $result] = ['pending', new SendResult(false, true, null, 'not sent: ' . get_class($e) . ' while reading the conversion; tried again later')];
                 }
-                if ($result !== null && $result->unanswered()) {
+                if (!$threw && $result->unanswered()) {
                     $unanswered[$destination['host']] = true;
                 }
                 if ($status === 'pending' && $attempts >= NotificationOutbox::MAX_ATTEMPTS) {
@@ -203,13 +213,23 @@ final class DestinationQueue
     private function deliver(array $destination, int $convId, int $now): array
     {
         $userId = $destination['user_id'];
-        $stmt = $this->conn->prepareRead('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.customer_id, ip.ip_address
-            FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id
+        // The primary, not a replica: a row a lagging replica lacks is not a deleted one.
+        $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, '
+            . IpAddressSql::address('ip', 'ip6') . ' AS ip_address
+            FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
+            . IpAddressSql::join('ip', 'ip6') . '
             WHERE cl.conv_id = ? AND cl.user_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'ii', [$convId, $userId]);
         $conv = $this->conn->fetchOne($stmt);
         if ($conv === null || (int) $conv['deleted'] === 1) {
             return ['cancelled', new SendResult(false, false, null, 'the conversion was deleted before this was sent')];
+        }
+        if ($conv['superseded_by'] !== null) {
+            return ['cancelled', new SendResult(false, false, null, 'the conversion was replaced by conversion ' . (int) $conv['superseded_by'] . ' before this was sent')];
+        }
+        $campaigns = $destination['settings']['campaign_ids'] ?? [];
+        if (is_array($campaigns) && $campaigns !== [] && !in_array((int) $conv['campaign_id'], $campaigns, true)) {
+            return ['cancelled', new SendResult(false, false, null, 'the conversion\'s campaign is not one this destination sends')];
         }
         $ip = (string) ($conv['ip_address'] ?? '');
         $setting = PrivacySetting::forAccount($this->conn, $userId);
@@ -219,7 +239,7 @@ final class DestinationQueue
                 : 'withheld: your privacy setting holds back visitors who may be in Europe, and this click\'s address is not placed outside it')];
         }
         $clickId = (int) $conv['click_id'];
-        $tokens = TrafficSourcePixels::clickTokens($this->conn, $userId, $clickId)['tokens'] ?? [];
+        $tokens = TrafficSourcePixels::clickTokens($this->conn, $userId, $clickId, true)['tokens'] ?? [];
         [$customerRef, $emails, $phones] = $this->customer($destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
         $transactionId = trim((string) ($conv['transaction_id'] ?? ''));
         $facts = new ConversionFacts(
@@ -252,15 +272,19 @@ final class DestinationQueue
         if ($customerId <= 0) {
             return [null, [], []];
         }
-        $stmt = $this->conn->prepareRead('SELECT primary_ref, email, phone FROM `' . TableRegistry::CUSTOMERS . '` WHERE customer_id = ? AND user_id = ? LIMIT 1');
+        $stmt = $this->conn->prepareWrite('SELECT primary_ref, email, phone FROM `' . TableRegistry::CUSTOMERS . '` WHERE customer_id = ? AND user_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
         $row = $this->conn->fetchOne($stmt);
         if ($row === null) {
             return [null, [], []];
         }
+        // The customer's ref can be an email address: it goes only where the hashes may.
         $send = ($settings['send_user_data'] ?? false) === true && ($settings['consent']['ad_user_data'] ?? null) !== 'denied';
-        $email = $send ? PiiHash::email($row['email'] ?? null) : null;
-        $phone = $send ? PiiHash::phone($row['phone'] ?? null) : null;
+        if (!$send) {
+            return [null, [], []];
+        }
+        $email = PiiHash::email($row['email'] ?? null);
+        $phone = PiiHash::phone($row['phone'] ?? null);
 
         return [(string) $row['primary_ref'], $email === null ? [] : [$email], $phone === null ? [] : [$phone]];
     }
@@ -291,7 +315,7 @@ final class DestinationQueue
 
     private function currency(int $userId): string
     {
-        $stmt = $this->conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
+        $stmt = $this->conn->prepareWrite('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'i', [$userId]);
 
         return \Api\V3\Controllers\UsersController::normalizeCurrency($this->conn->fetchOne($stmt)['user_account_currency'] ?? null);

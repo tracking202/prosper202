@@ -4389,7 +4389,8 @@ paths:
         validation endpoint now, and records it in the delivery log as kind
         `test`. For GA4 that is `/debug/mp/collect`, which checks the event
         and records nothing in your property; `messages` lists what GA4
-        found wrong, and `valid` is true when it found nothing.
+        found wrong, and `valid` is true when it found nothing. It does not
+        check the API secret.
       operationId: testDestination
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}

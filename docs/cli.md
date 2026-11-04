@@ -1091,7 +1091,8 @@ p202 destination delete 1 --dry-run
 | `--param name=field` | An extra event parameter from a click field (repeatable) |
 | `--campaign-id N` | Only this campaign's conversions (repeatable); none for every campaign |
 | `--send-user-data` | Send SHA-256 hashes of the customer's normalised email and E.164 phone, never the raw values |
-| `--ad-user-data`, `--ad-personalization` | Google's consent signals as you state them: `granted` or `denied` |
+| `--all-campaigns` | Every campaign again (clears `--campaign-id`) |
+| `--ad-user-data`, `--ad-personalization` | Google's consent signals as you state them: `granted`, `denied`, or `unset` to stop sending one |
 
 A conversion goes out with the minutely cron job and is retried with backoff,
 8 tries in all. A visitor your privacy setting holds back is `withheld`, never

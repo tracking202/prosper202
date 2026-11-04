@@ -40,7 +40,7 @@ final class DestinationsIntegrationTest extends TestCase
     protected function setUp(): void
     {
         $this->databaseSetUp();
-        foreach (['202_destinations', '202_destination_deliveries', '202_customers', '202_clicks_advance', '202_ips'] as $t) {
+        foreach (['202_destinations', '202_destination_deliveries', '202_customers', '202_clicks_advance', '202_ips', '202_ips_v6'] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
         self::fixture('DELETE FROM 202_users_pref WHERE user_id IN (1, 2)');
@@ -64,9 +64,16 @@ final class DestinationsIntegrationTest extends TestCase
         return new DestinationStore(new Connection(self::$db), [Ga4Destination::TYPE => new Ga4Destination(new WebhookSender($guard, $transport))]);
     }
 
+    /** @var list<string> addresses the privacy check was asked about */
+    private array $asked = [];
+
     private function worker(bool $mayBeEuropean = true): DestinationQueue
     {
-        return new DestinationQueue(new Connection(self::$db), $this->store(), static fn (string $ip): bool => $mayBeEuropean);
+        return new DestinationQueue(new Connection(self::$db), $this->store(), function (string $ip) use ($mayBeEuropean): bool {
+            $this->asked[] = $ip;
+
+            return $mayBeEuropean;
+        });
     }
 
     /** @param array<string, mixed> $settings */
@@ -179,6 +186,8 @@ final class DestinationsIntegrationTest extends TestCase
         $this->record(101, 'ORD-6');
         self::assertSame(1, $this->worker(mayBeEuropean: false)->sendDue(10, 5, time() + 1)['sent']);
 
+        self::assertSame(['198.51.100.7', ''], $this->asked, 'the click\'s address, and none for a click without one');
+
         self::fixture("UPDATE 202_users_pref SET user_pref_privacy='all' WHERE user_id=1");
         $this->click(102);
         $this->record(102, 'ORD-7');
@@ -203,12 +212,13 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertStringContainsString('sha256_email_address', $summary, 'the log names the identifiers sent');
         self::assertStringNotContainsString(hash('sha256', 'jane.doe@example.com'), $summary, 'and never their values');
 
-        $this->store()->update(1, $on, ['settings' => ['measurement_id' => 'G-ABC123', 'send_user_data' => true, 'consent' => ['ad_user_data' => 'denied']]], time());
+        $this->store()->update(1, $on, ['settings' => ['measurement_id' => 'G-ABC123', 'send_user_data' => true, 'user_id_source' => 'customer', 'consent' => ['ad_user_data' => 'denied']]], time());
         $this->click(101);
         $second = $this->record(101, 'ORD-9');
         self::fixture("UPDATE 202_conversion_logs SET customer_id=9 WHERE conv_id=$second");
         $this->worker()->sendDue(10, 5, time() + 1);
         self::assertArrayNotHasKey('user_data', $this->bodies[1], 'ad_user_data denied sends no hashed data');
+        self::assertArrayNotHasKey('user_id', $this->bodies[1], 'nor the customer\'s ref, which can be an email address');
     }
 
     public function testDeletesCancelWhatWasNotSent(): void
@@ -259,5 +269,51 @@ final class DestinationsIntegrationTest extends TestCase
         ));
         self::assertNull($this->worker()->testFire(2, $id, time()), 'another account\'s destination is not found');
         self::assertSame(0, array_sum($this->worker()->sendDue(10, 5, time() + 1)), 'the worker sends no test row');
+    }
+
+    public function testAnIpv6ClicksAddressIsTheOneAskedAboutAndAnUnplaceableOneIsWithheld(): void
+    {
+        $id = $this->destination();
+        self::fixture("UPDATE 202_users_pref SET user_pref_privacy='eu' WHERE user_id=1");
+        self::fixture("INSERT INTO 202_ips_v6 SET ip_id=3, ip_address=INET6_ATON('2001:db8::7')");
+        self::fixture("INSERT INTO 202_ips SET ip_id=6, ip_address='3'");
+        self::fixture('INSERT INTO 202_clicks_advance SET click_id=100, ip_id=6');
+        $this->click(100);
+        $this->record(100, 'ORD-20');
+        self::assertSame(1, $this->worker(mayBeEuropean: false)->sendDue(10, 5, time() + 1)['sent']);
+        self::assertSame(['2001:db8::7'], $this->asked, 'the IPv6 address, not its row id');
+
+        // The real check: GeoIP cannot place a click with no address, so it is held back.
+        $this->click(101);
+        $this->record(101, 'ORD-21');
+        $real = new DestinationQueue(new Connection(self::$db), $this->store());
+        self::assertSame(1, $real->sendDue(10, 5, time() + 1)['withheld']);
+        self::assertSame('withheld', self::deliveries($id)[1]['status']);
+    }
+
+    public function testAnUnpaidOrReplacedConversionIsNotSent(): void
+    {
+        $id = $this->destination();
+        $this->click(100);
+        (new MysqlConversionRepository(new Connection(self::$db)))->record(1, [
+            'click_id' => 100, 'payout' => '5', 'transaction_id' => 'LEAD-1', 'source' => 'api', 'payable' => false,
+        ], MatchMethod::CLICK_ID);
+        self::assertSame([], self::deliveries($id), 'a row that is not paid is not a sale');
+
+        $this->click(101);
+        $convId = $this->record(101, 'ORD-22');
+        self::fixture("UPDATE 202_conversion_logs SET superseded_by=999 WHERE conv_id=$convId");
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['cancelled']);
+        self::assertSame([], $this->bodies);
+    }
+
+    public function testACampaignFilterChangedAfterQueueingIsHonouredAtSend(): void
+    {
+        $id = $this->destination();
+        $this->click(100);
+        $this->record(100, 'ORD-23');
+        $this->store()->update(1, $id, ['settings' => ['measurement_id' => 'G-ABC123', 'campaign_ids' => [31]]], time());
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['cancelled']);
+        self::assertSame([], $this->bodies);
     }
 }

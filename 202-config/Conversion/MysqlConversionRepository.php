@@ -626,10 +626,17 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             );
         }
 
-        // The account's destinations (ad platforms), queued in this
-        // transaction as the outbox is; a reversal or a negative amount is not a sale.
-        if ($reverses === null && $amountUnits >= 0) {
-            (new DestinationQueue($this->conn))->queueConversion($userId, $convId, $campaignId, time());
+        // The account's destinations (ad platforms), queued in this transaction; only a
+        // paid sale. A failure to queue is logged and loses the send, never the conversion.
+        if ($reverses === null && $amountUnits >= 0 && $payable) {
+            try {
+                $this->conn->withSavepoint(fn (): int => (new DestinationQueue($this->conn))->queueConversion($userId, $convId, $campaignId, time()));
+            } catch (Throwable $e) {
+                if (Connection::isRetryableLockError($e) || $this->conn->isRollbackOnly()) {
+                    throw $e;
+                }
+                error_log('Conversion ' . $convId . ' was recorded but not queued for its destinations: ' . $e->getMessage());
+            }
         }
 
         if ($clickSideUpdate !== null) {

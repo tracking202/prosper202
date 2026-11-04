@@ -115,7 +115,11 @@ final class DestinationStore
         $settings = self::decode((string) $row['settings']);
         $credentials = null;
         if (array_key_exists('settings', $patch) || array_key_exists('credentials', $patch)) {
-            $settings = $patch['settings'] ?? $settings;
+            // A null is refused below, never read as "keep" (CLAUDE.md #4).
+            $settings = array_key_exists('settings', $patch) ? $patch['settings'] : $settings;
+            if (array_key_exists('credentials', $patch) && !is_array($patch['credentials'])) {
+                throw new DestinationInputException('credentials', 'credentials must be an object; leave it out to keep the stored ones.');
+            }
             $given = $patch['credentials'] ?? null;
             if (!is_array($settings) || ($given !== null && !is_array($given))) {
                 throw new DestinationInputException(is_array($settings) ? 'credentials' : 'settings', 'settings and credentials must be objects.');

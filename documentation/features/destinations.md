@@ -17,9 +17,10 @@ Set them up on **Setup › Destinations**, with `p202 destination`, or through
 
 1. A conversion is recorded (pixel, postback, API, upload or a goal). In the
    same database transaction, it is queued once for every enabled
-   destination of the account that takes its campaign. A replayed
-   postback is a duplicate and queues nothing; a reversal or a negative
-   amount is not a sale and is not sent.
+   destination of the account that takes its campaign. Only a paid sale is
+   queued: a replayed postback is a duplicate, and a reversal, a negative
+   amount or a goal outcome tracked but not paid is not sent. A conversion
+   deleted or replaced before it goes out is cancelled.
 2. The minutely cron job (`202-cronjobs/index.php`, which every default
    deployment runs) sends what is due. A send that fails is tried again 1
    minute later, then 2, 4, … up to 6 hours apart, 8 tries in all. A
@@ -38,7 +39,8 @@ Set them up on **Setup › Destinations**, with `p202 destination`, or through
 | `cancelled` | The conversion or the destination was deleted before it went out. |
 
 A destination you turn off queues nothing; what it had queued waits and goes
-out when you turn it on again. A deleted destination's unsent rows are
+out when you turn it on again (a GA4 event by then more than 72 hours old
+fails instead). A deleted destination's unsent rows are
 cancelled, and its credentials erased.
 
 ## Privacy and personal data
@@ -77,7 +79,7 @@ receives twice once), at the conversion's own time.
 | Setting | |
 | --- | --- |
 | `client_id_source` | GA4 joins an event to a browser session only through the `_ga` client id. Prosper202 does not see that cookie, so either your landing page passes the id on a click variable (`c1`–`c4`) or Prosper202 sends `p202.<click id>` (`click`, the default), which records the conversion and its value but not the session's source. |
-| `user_id_source` | `customer` sends the LTV customer's reference as `user_id`. |
+| `user_id_source` | `customer` sends the LTV customer's reference as `user_id`, only with hashed user data on and `ad_user_data` not denied: a reference can be an email address. |
 | `params` | Extra event parameters, each from a click field: `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `keyword`, `c1`–`c4`, `campaign_id`, `click_id`. |
 | `campaign_ids` | Only these campaigns' conversions; empty for every campaign. |
 
@@ -86,9 +88,10 @@ fails with that reason.
 
 **Test it**: *send test* (or `p202 destination test <id>`) posts a made-up
 purchase to GA4's validation endpoint (`/debug/mp/collect`), which checks it
-and records nothing in your property, and shows what GA4 found wrong. The
-regular endpoint answers "accepted" even for an event it drops, so test after
-every change.
+and records nothing in your property, and shows what GA4 found wrong. It checks
+the event, not the API secret, and the regular endpoint answers "accepted"
+even for an event it drops: after a test, confirm the first real conversions
+in GA4's Realtime report.
 
 ## CLI
 

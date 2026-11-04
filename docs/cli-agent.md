@@ -925,8 +925,8 @@ p202 destination list [--json]                          # Setup › Destinations
 p202 destination get <id> [--json]
 p202 destination create --name S --measurement-id G-XXXX --api-secret-file FILE|-   # GA4 Measurement Protocol
                        [--event-name purchase] [--client-id-source click|c1|c2|c3|c4] [--user-id-source none|customer]
-                       [--param name=field]... [--campaign-id N]... [--send-user-data]
-                       [--ad-user-data granted|denied] [--ad-personalization granted|denied] [--json]
+                       [--param name=field]... [--campaign-id N]... | [--all-campaigns] [--send-user-data]
+                       [--ad-user-data granted|denied|unset] [--ad-personalization granted|denied|unset] [--json]
 p202 destination update <id> [--enable|--disable] [--name S] [any create flag]   # only the flags given change
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
 p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]

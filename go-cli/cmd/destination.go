@@ -22,7 +22,7 @@ import (
 var (
 	destinationIDPattern   = regexp.MustCompile(`^[1-9][0-9]{0,9}$`)
 	destinationParamFields = []string{"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "keyword", "c1", "c2", "c3", "c4", "campaign_id", "click_id"}
-	destinationConsent     = newEnum([]string{"granted", "denied"}, enumHint("What you state for Google's consent signal; leave it out to send none."))
+	destinationConsent     = newEnum([]string{"granted", "denied", "unset"}, enumHint("What you state for Google's consent signal; unset stops sending it."))
 )
 
 const destinationListHint = "`p202 destination list` shows your destinations and their ids."
@@ -108,6 +108,12 @@ func destinationSettings(cmd *cobra.Command, base map[string]interface{}) (map[s
 		}
 		s["params"] = params
 	}
+	if all, _ := cmd.Flags().GetBool("all-campaigns"); all {
+		if cmd.Flags().Changed("campaign-id") {
+			return nil, validationError("--all-campaigns and --campaign-id are exclusive").WithHint("Give one of them.")
+		}
+		s["campaign_ids"] = []int{}
+	}
 	if cmd.Flags().Changed("campaign-id") {
 		raw, _ := cmd.Flags().GetStringArray("campaign-id")
 		ids := []int{}
@@ -129,7 +135,11 @@ func destinationSettings(cmd *cobra.Command, base map[string]interface{}) (map[s
 		consent = map[string]interface{}{}
 	}
 	for flag, key := range map[string]string{"ad-user-data": "ad_user_data", "ad-personalization": "ad_personalization"} {
-		if v := enumValue(cmd, flag); v != "" {
+		switch v := enumValue(cmd, flag); v {
+		case "":
+		case "unset":
+			delete(consent, key)
+		default:
 			consent[key] = v
 		}
 	}
@@ -248,7 +258,7 @@ var destinationUpdateCmd = &cobra.Command{
 		if enable || disable {
 			body["enabled"] = enable
 		}
-		settingsFlags := []string{"measurement-id", "event-name", "client-id-source", "user-id-source", "param", "campaign-id", "send-user-data", "ad-user-data", "ad-personalization"}
+		settingsFlags := []string{"measurement-id", "event-name", "client-id-source", "user-id-source", "param", "campaign-id", "all-campaigns", "send-user-data", "ad-user-data", "ad-personalization"}
 		changed := false
 		for _, f := range settingsFlags {
 			changed = changed || cmd.Flags().Changed(f)
@@ -369,6 +379,7 @@ func destinationSettingFlags(cmd *cobra.Command) {
 	cmd.Flags().String("user-id-source", "", "Send a user_id, one of {values}: customer sends the LTV customer's ref")
 	cmd.Flags().StringArray("param", nil, "An event parameter as name=field (repeatable), field one of: "+strings.Join(destinationParamFields, ", "))
 	cmd.Flags().StringArray("campaign-id", nil, "Only this campaign's conversions (repeatable); none for every campaign")
+	cmd.Flags().Bool("all-campaigns", false, "Every campaign's conversions (clears --campaign-id)")
 	cmd.Flags().Bool("send-user-data", false, "Send SHA-256 hashes of the customer's email and phone (never the raw values)")
 	cmd.Flags().String("ad-user-data", "", "Google consent signal you state, one of {values}")
 	cmd.Flags().String("ad-personalization", "", "Google consent signal you state, one of {values}")
