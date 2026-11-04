@@ -33,6 +33,11 @@ use Tests\Support\SourceScan;
  * WebhookGuard::checkSync()) pins its own requests: they are GET, PUT and
  * DELETE as well as POST, and read answers of megabytes, which neither sender
  * does. Its values are in tests/Api/V3/RemoteApiClientTest.
+ *
+ * Setup\LandingPageCheck (Get LP Code's Check my page) reads a page's body,
+ * so it has its own transfer, but takes every option from
+ * PostbackSender::curlOptions() and only adds the user agent, Accept and
+ * encoding: it never names CURLOPT_RESOLVE.
  */
 final class PinnedRequestsCarryTheHardeningSetTest extends TestCase
 {
@@ -68,6 +73,10 @@ final class PinnedRequestsCarryTheHardeningSetTest extends TestCase
                 self::assertArrayHasKey($option, $names, "$path does not set $option");
             }
         }
+
+        $check = '202-config/Setup/LandingPageCheck.php';
+        self::assertArrayHasKey($check, $files, "$check is gone; update this test");
+        self::assertStringContainsString('PostbackSender::curlOptions($target', $files[$check], $check . " pins through PostbackSender's options");
 
         $cron = '202-cronjobs/process_dataengine_job.php';
         self::assertArrayHasKey($cron, $files, "$cron is gone; update this test");

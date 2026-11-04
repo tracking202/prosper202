@@ -134,6 +134,9 @@ final class AbuseLimitsIntegrationTest extends TestCase
             try {
                 $settler->settleOne($id);
                 self::fail('a pending install needs the key');
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException $e) {
                 self::assertNotInstanceOf(MissingInstallKey::class, $e, 'the read\'s own failure, not "no key"');
                 self::assertStringContainsString('install-token key lookup failed', $e->getMessage());
@@ -400,6 +403,9 @@ final class AbuseLimitsIntegrationTest extends TestCase
         try {
             $this->install(self::body(self::U1, 'p202=' . self::tokenFor(100)));
             self::fail('the planted failure reaches the caller');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertStringContainsString('planted failure', $e->getMessage() . ($e->getPrevious()?->getMessage() ?? ''));
         } finally {
@@ -437,6 +443,9 @@ final class AbuseLimitsIntegrationTest extends TestCase
             (new InstallIntake(self::$db, fn (): int => $this->clock, null, null, $quota))
                 ->receive(self::TOKEN, (string) json_encode(self::body(self::U1, 'p202=' . self::tokenFor(100))), '203.0.113.9');
             self::fail('the planted failure reaches the caller');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertStringContainsString('planted failure', $e->getMessage() . ($e->getPrevious()?->getMessage() ?? ''));
             self::assertStringNotContainsString('refund store', $e->getMessage());
@@ -488,6 +497,9 @@ final class AbuseLimitsIntegrationTest extends TestCase
         try {
             $this->events(self::U1, self::batch('y', 48));
             self::fail('the planted failure reaches the caller');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertStringContainsString('planted failure', $e->getMessage() . ($e->getPrevious()?->getMessage() ?? ''));
         } finally {

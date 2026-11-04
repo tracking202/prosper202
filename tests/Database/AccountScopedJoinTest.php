@@ -76,6 +76,7 @@ final class AccountScopedJoinTest extends TestCase
     private const OFFER_CLICK = 'tied in its WHERE (`2ac.user_id = 2c.user_id`, the offer\'s account), which the'
         . ' scan cannot read past the latest-visit ORDER BY appended to it';
     private const SAME_CLICK_CONVERSIONS = 'conversions of one click (`x.click_id = row.click_id`, or a reversal of the row): a conversion is recorded only on its own account\'s click (MysqlConversionRepository::recordLocked() locks `click_id = ? AND user_id = ?`), so every row of a click is that click\'s account\'s';
+    private const GROUPED_REVERSALS = 'CountedAmount::reversalsJoin(): the reversals are grouped by (user_id, reverses_conv_id) and joined on both, `r.reverses_conv_id = row.conv_id AND r.user_id = row.user_id`, so a reversal counts only against its own account\'s sale';
     private const JOURNEY_TOUCH = 'a credit\'s or journey\'s click: every touch is the conversion\'s own click (recorded only on the account\'s own click) or one JourneyBuilder read from the account\'s own visitor rows (`cv.user_id = ?`), and credits are computed only from journeys';
     private const VISITOR_CLICK = 'the click of the account\'s own visitor row (`cv.user_id = ?`): 202_clicks_visitor is keyed by click_id and written for the click with the click\'s owner (IdentityGraph::attachClick())';
     private const CREDIT_CONVERSION = 'the conversion a credit belongs to; the WHERE returned beside this join (creditSource(), effectiveSource()) is `cl.user_id = ?`';
@@ -181,7 +182,7 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_aff_campaigns | oc.attribution_model_id = om.model_id' => self::MODEL_OVERRIDE,
         ],
         '202-config/Attribution/CountedAmount.php' => [
-            'alias built at runtime | 202_conversion_logs | $r' => self::SAME_CLICK_CONVERSIONS,
+            'no user_id tie | 202_conversion_logs | reverses_conv_id IS NOT NULL AND deleted = 0 AND payable = 1' => self::GROUPED_REVERSALS,
         ],
         '202-config/Attribution/JourneyBuilder.php' => [
             'no user_id tie | 202_clicks | c.click_id = cv.click_id' => self::VISITOR_CLICK,
