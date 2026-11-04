@@ -36,20 +36,26 @@ final class ClickRecordBuilder
 
     /**
      * A redirector click (rtr.php): its route from rotator_id, rule_id and
-     * rule_redirect_id, and no ad click id, UTM or variable rows.
+     * rule_redirect_id. A new click ($campaignRows) records its ad click ids,
+     * UTM values and tracking variables as a direct link's does; a re-click
+     * records none, keeping its first visit's (recordReClick()).
      *
      * @param array<string, mixed> $mysql
      * @throws InvalidArgumentException naming the key whose value its column cannot hold
      */
-    public static function forRedirector(array $mysql, int $clickId, ?ClickIdentity $identity = null): ClickRecord
-    {
+    public static function forRedirector(
+        array $mysql,
+        int $clickId,
+        ?ClickIdentity $identity = null,
+        bool $campaignRows = false
+    ): ClickRecord {
         $route = new RotatorRoute(
             self::int($mysql, 'rotator_id'),
             self::int($mysql, 'rule_id'),
             self::int($mysql, 'rule_redirect_id'),
         );
 
-        return self::build($mysql, $clickId, $identity, $route);
+        return self::build($mysql, $clickId, $identity, $route, $campaignRows);
     }
 
     /** @param array<string, mixed> $mysql */
@@ -57,9 +63,10 @@ final class ClickRecordBuilder
         array $mysql,
         int $clickId,
         ?ClickIdentity $identity,
-        ?RotatorRoute $route
+        ?RotatorRoute $route,
+        bool $redirectorCampaignRows = false
     ): ClickRecord {
-        $campaignRows = $route === null;
+        $campaignRows = $route === null || $redirectorCampaignRows;
 
         return new ClickRecord(
             clickId: $clickId,

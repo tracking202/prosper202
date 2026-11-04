@@ -106,6 +106,9 @@ final class SignInRecordIntegrationTest extends TestCase
         try {
             self::record()->record(self::USER, '198.51.100.8', 1, 1);
             self::fail('a sign-in the database refused to record was answered');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('the sign-in update is refused', $e->getMessage());
         } finally {
@@ -125,6 +128,9 @@ final class SignInRecordIntegrationTest extends TestCase
         try {
             self::record()->record(self::USER, '198.51.100.9', 1, 1);
             self::fail('a sign-in whose address could not be stored was answered');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('202_ips', $e->getMessage());
         } finally {

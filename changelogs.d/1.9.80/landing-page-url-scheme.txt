@@ -1,0 +1,2 @@
+-- Fixed: POST and PUT /api/v3/landing-pages refuse a landing_page_url that does not start with http:// or https:// (422, naming the field), as Setup > Landing Pages always has. The API took '//lp.example.com/x' and 'lp.example.com/x', and the tracking link built from the first came out http:// even behind a TLS proxy. Pages saved that way before keep working; edit their URL to add the scheme.
+app: Fixed: The API refuses a landing page URL without http:// or https://, as the Landing Pages page does.

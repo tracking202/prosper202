@@ -9,8 +9,8 @@ name: Release
 # YAML.
 #
 # Every action is pinned to a full commit SHA: a tag such as @v2 can be moved
-# to other code, and this job holds contents: write over the zip customers
-# install. Dependabot (.github/dependabot.yml) proposes the updates.
+# to other code, and the publish job holds contents: write and the signing
+# key over the zip customers install. Dependabot (.github/dependabot.yml) proposes the updates.
 #
 # Flow: bump 202-config/version.php -> git tag vX.Y.Z -> git push --tags
 
@@ -21,7 +21,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write   # create the Release and upload the zip asset
+  contents: read   # each job asks for what it needs
 
 jobs:
   release:
@@ -30,6 +30,12 @@ jobs:
     # Composer. The image is named rather than "latest" so a newer PHP cannot
     # arrive unannounced, and the check below fails the build if it ever does.
     runs-on: ubuntu-24.04
+    # Composer runs third-party code here, so this job never sees the signing
+    # key and needs no write token; the publish job signs and publishes.
+    permissions:
+      contents: read
+    outputs:
+      notes_path: ${{ steps.notes.outputs.path }}
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,7 +45,7 @@ jobs:
       - name: Check the runner's PHP and Composer
         # 8.3 matches composer.json's platform pin. The extensions are the ext-*
         # requirements in composer.lock's runtime packages, plus tokenizer for
-        # build/scripts/release-tree.php.
+        # build/scripts/release-tree.php and sodium for the signing step.
         run: |
           php -v
           composer --version
@@ -50,7 +56,7 @@ jobs:
               exit(1);
           }
           $missing = array_filter(
-              ['openssl', 'pcre', 'json', 'curl', 'libxml', 'simplexml', 'iconv', 'tokenizer'],
+              ['openssl', 'pcre', 'json', 'curl', 'libxml', 'simplexml', 'iconv', 'tokenizer', 'sodium'],
               fn ($e) => !extension_loaded($e)
           );
           if ($missing) {
@@ -104,10 +110,15 @@ jobs:
         id: build
         run: |
           bash build/scripts/package-release.sh
-          zip_path="$(ls dist/prosper202-*.zip)"
+          version="$(php -r 'require "202-config/version.php"; echo PROSPER202_VERSION;')"
+          zip_path="dist/prosper202-${version}.zip"
+          upgrade_zip_path="dist/prosper202-${version}-upgrade.zip"
           sha256="$(sha256sum "${zip_path}" | cut -d' ' -f1)"
-          echo "zip_path=${zip_path}" >> "$GITHUB_OUTPUT"
-          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
+          {
+            echo "zip_path=${zip_path}"
+            echo "upgrade_zip_path=${upgrade_zip_path}"
+            echo "sha256=${sha256}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Summarize release artifact
         if: always()
@@ -122,20 +133,62 @@ jobs:
               echo "| Artifact | \`$(basename "${zip_path}")\` |"
               echo "| Size | $(du -h "${zip_path}" | cut -f1) |"
               echo "| SHA256 | \`${{ steps.build.outputs.sha256 }}\` |"
+              echo "| Upgrade zip | \`$(basename "${{ steps.build.outputs.upgrade_zip_path }}")\` |"
             else
               echo "> ❌ Build did not produce a zip. Review the job log above."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish GitHub Release
-        # Only publish on a tag push. A workflow_dispatch run from a branch has
-        # no release tag, so it builds + summarizes the artifact (per
-        # RELEASING.md) without invoking action-gh-release, which would fail.
+      - name: Keep the zips for the publish job
         if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-zips
+          path: dist/prosper202-*.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    # Signs the zips and publishes the Release. Only a v* tag gets here, and
+    # the key is a secret of the release environment (RELEASING.md, "Signed
+    # releases"), so a run waits for its required reviewer before it starts.
+    # A workflow_dispatch run from a branch builds and summarizes only.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write   # create the Release and upload the zip assets
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch the zips
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-zips
+          path: dist
+
+      - name: Sign the release
+        # Installs' 1-click upgraders refuse a zip without a valid signature by
+        # the key in 202-config/Update/ReleaseSignature.php. A missing secret,
+        # or one that does not match that key, fails the release.
+        env:
+          P202_RELEASE_SIGNING_KEY: ${{ secrets.P202_RELEASE_SIGNING_KEY }}
+        run: |
+          php -m | grep -qx sodium || { echo "::error::runner PHP lacks sodium" >&2; exit 1; }
+          version="$(php -r 'require "202-config/version.php"; echo PROSPER202_VERSION;')"
+          php build/scripts/sign-release.php sign \
+            "dist/prosper202-${version}.zip" \
+            "dist/prosper202-${version}-upgrade.zip"
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          files: dist/prosper202-*.zip
-          body_path: ${{ steps.notes.outputs.path }}
+          files: |
+            dist/prosper202-*.zip
+            dist/prosper202-*.zip.sig
+          body_path: ${{ needs.release.outputs.notes_path }}
           fail_on_unmatched_files: true
 
   # Publish the production container image (the Dockerfile's default `app`
@@ -152,8 +205,13 @@ jobs:
     # Publish only after the release job succeeds: its tag-vs-version.php check
     # and artifact build are the release validation — without this dependency a
     # bad tag could still ship an image (and move `latest`) with no
-    # corresponding GitHub Release.
-    needs: release
+    # corresponding GitHub Release. On a tag it also waits for publish; a
+    # manual run from a branch skips publish and still builds the image.
+    needs: [release, publish]
+    if: >-
+      always() && needs.release.result == 'success'
+      && (needs.publish.result == 'success'
+          || (needs.publish.result == 'skipped' && !startsWith(github.ref, 'refs/tags/v')))
     permissions:
       contents: read
       packages: write

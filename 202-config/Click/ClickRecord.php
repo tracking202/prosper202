@@ -15,9 +15,10 @@ use Prosper202\Repository\StoredText;
  *
  * $recordsCampaignRows: whether the click's path records the ad platforms'
  * click ids, UTM values and tracking variables (202_google,
- * 202_clicks_variable). The redirector records none, and writes no rows
- * there: the rollup reads a missing row as NULL, which a row of zeros would
- * turn into 0.
+ * 202_clicks_variable). A new click records them, a redirector's included
+ * (from 1.9.80); a redirector's re-click records none, keeping its first
+ * visit's. A redirector click recorded before 1.9.80 has no rows there,
+ * which the rollup reads as NULL where a click with the rows reads 0.
  */
 final readonly class ClickRecord
 {
