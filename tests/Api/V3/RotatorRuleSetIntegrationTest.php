@@ -829,6 +829,9 @@ final class RotatorRuleSetIntegrationTest extends TestCase
                 ['rule_name' => 'boom', 'criteria' => [['type' => 'country', 'value' => 'ALL']], 'redirects' => [['redirect_url' => 'https://x.example/']]],
             ]);
             self::fail('the planted failure did not fail the set');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertStringNotContainsString('was accepted', $e->getMessage());
             self::assertNotInstanceOf(ValidationException::class, $e);

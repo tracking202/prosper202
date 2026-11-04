@@ -211,9 +211,9 @@ final class ClickUrlTokensInstanceTest extends TestCase
     /**
      * An advanced landing page's click keeps the ad click ids its script
      * sent, and its offer link (off.php) reads them back from the click's
-     * rows. A redirector records none of them, as it records no UTM values.
+     * rows. A redirector's new click keeps them too, as a direct link's does.
      */
-    public function testAnAdvancedPagesOfferLinkReadsTheIdsBackAndARedirectorKeepsNone(): void
+    public function testAnAdvancedPagesOfferLinkReadsTheIdsBackAndARedirectorKeepsThem(): void
     {
         $ids = ['gclid' => 'G-' . self::$run] + self::AD_CLICK_IDS;
         $advanced = (string) (self::createRow('landing-pages', [
@@ -239,7 +239,7 @@ final class ClickUrlTokensInstanceTest extends TestCase
         self::assertSame($ids, array_intersect_key(self::tokens($headers), $ids), 'read back for the offer URL');
 
         $viaRotator = self::clickRow(self::click('tracking202/redirect/rtr.php', self::$viaRotator, $ids)['subid']);
-        self::assertSame(array_fill_keys(array_keys($ids), null), array_intersect_key($viaRotator, $ids));
+        self::assertSame($ids, array_intersect_key($viaRotator, $ids), 'the redirector\'s click keeps them');
     }
 
     /**
@@ -247,7 +247,7 @@ final class ClickUrlTokensInstanceTest extends TestCase
      * its 350 (a VARCHAR counts characters, not bytes), is stored cut,
      * and the offer URL carries it as stored. A
      * redirector fills its URL from the stored click, so its keyword and c1
-     * are what was stored (it records no UTM values); the direct link and the
+     * and UTM values are what was stored; the direct link and the
      * simple landing page fill theirs before the click is written, through
      * the cut the repository stores with.
      */
@@ -274,8 +274,7 @@ final class ClickUrlTokensInstanceTest extends TestCase
         $keywordIds = [];
         foreach ($paths as $path => $click) {
             $tokens = $click();
-            $sent = $path === 'redirector' ? array_diff_key($stored, ['utm_source' => 1]) : $stored;
-            self::assertSame($sent, array_intersect_key($tokens, $sent), $path);
+            self::assertSame($stored, array_intersect_key($tokens, $stored), $path);
             // The keyword the click names is the one the URL carried, and the
             // lookup finds it again: cut by the server alone, the whole value
             // matched no row, and every such click stored the keyword anew.

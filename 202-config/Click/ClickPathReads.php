@@ -230,6 +230,7 @@ final readonly class ClickPathReads
                     u.user_timezone,
                     up.user_keyword_searched_or_bidded,
                     up.user_pref_dynamic_bid,
+                    up.user_pref_referer_data,
                     up.maxmind_isp,
                     lp.landing_page_url,
                     lp.landing_page_id AS default_landing_page_id

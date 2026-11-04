@@ -69,6 +69,9 @@ final class AccountProfileAndKeysTest extends TestCase
         try {
             p202_account_save_profile(new Connection($db), 7, 'a@example.com', 'Europe/Berlin', self::PREFS);
             self::fail('a failed preferences write was reported as saved');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $expected) {
             self::assertNotSame('', $expected->getMessage());
         }

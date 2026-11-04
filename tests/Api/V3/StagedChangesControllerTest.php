@@ -309,6 +309,9 @@ final class StagedChangesControllerTest extends TestCase
                 throw new \RuntimeException('validation failed downstream');
             });
             $this->fail('dispatch exception must propagate');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException) {
             // expected
         }
