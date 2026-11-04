@@ -10668,9 +10668,12 @@ paths:
         `campaign_id` must be one of the caller's live campaigns in a live
         category (the page's list). Any other query parameter is refused.
 
-        Every URL ends with the account's postback token, `&p202_token=…`
-        (`postback_token`, minted the first time a URL is handed out). The
-        account's mode (`postback_auth_mode`, see
+        For a key with `conversions:write`, every URL ends with the account's
+        postback token, `&p202_token=…` (`postback_token`, minted the first
+        time a URL is handed out). The token alone records and reverses
+        conversions, so a key without `conversions:write` gets the URLs
+        without it: `postback_token` is null and `postback_token_withheld`
+        says why. The account's mode (`postback_auth_mode`, see
         `GET /conversions/postback-auth`) says whether a postback or pixel
         without it is refused; in `signed` mode these URLs are refused as
         they are, and pixels, which cannot sign, are refused.
@@ -10741,7 +10744,14 @@ paths:
         message and nothing recorded (`gpx.php` has already sent its image,
         so it only logs). Accounts that existed before 1.9.80 start at
         `off`; an account made later starts at `token`. Asks for the role
-        permission access_to_api_integrations: it hands out the secret.
+        permission access_to_api_integrations and the key scope
+        `conversions:write`, read included: the token and the secret record
+        and reverse conversions.
+
+        A token or secret stored but unreadable (its encryption key missing
+        from the install, or a value that does not open) is replaced by a
+        new one here, by `PUT` and by `rotate`; `recovered` names what was
+        replaced, and the old ones stopped working.
 
         Signed form: send `p202_ts` (Unix seconds, within `window_seconds`
         of the server's clock) and `p202_sig`, the lower-case hex
@@ -10773,8 +10783,9 @@ paths:
         signature is still refused); `token` refuses one that carries
         neither the token nor a signature; `signed` refuses one that is not
         signed with the signing secret, the token alone and every pixel
-        included. Asks for the role permission access_to_api_integrations,
-        as the page does.
+        included. The mode and any credential minted with it are stored
+        together or not at all. Asks for the role permission
+        access_to_api_integrations, as the page does, and `conversions:write`.
       operationId: updatePostbackAuth
       requestBody:
         required: true
@@ -10812,7 +10823,13 @@ paths:
         omitted), so the URLs at the networks, or the servers that sign, can
         be moved one by one; 0 stops it at once, for one that leaked. One an
         earlier rotation kept working is dropped: two of each work at most.
-        Asks for the role permission access_to_api_integrations.
+        One that could not be read is replaced without a grace period, and
+        the other credential too when it cannot be read (`recovered`). Asks
+        for the role permission access_to_api_integrations and
+        `conversions:write`. Honors `Idempotency-Key`: a retry answers the
+        first rotation instead of rotating again. The recorded answer keeps
+        no credential, so a replay shows the token and secret as they are
+        now (`idempotent_replay: true`).
       operationId: rotatePostbackToken
       requestBody:
         required: false
@@ -10841,6 +10858,9 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/PostbackAuth"
+                  idempotent_replay:
+                    type: boolean
+                    description: Present (`true`) when the response is an `Idempotency-Key` replay.
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -11768,6 +11788,21 @@ components:
           type: integer
           nullable: true
           description: When the signing secret the last rotation replaced stops working; null when none works
+        recovered:
+          type: object
+          nullable: true
+          description: Set when a stored credential could not be read and this call replaced it; null otherwise
+          properties:
+            credentials:
+              type: array
+              items:
+                type: string
+                enum: [token, signing_secret]
+            key_recreated:
+              type: boolean
+              description: The install's credential encryption key was missing and a new one was made
+            message:
+              type: string
         parameter:
           type: string
           example: p202_token
@@ -11811,8 +11846,17 @@ components:
           nullable: true
         postback_token:
           type: string
-          description: The account's postback token, which every URL here carries as p202_token
+          nullable: true
+          description: The account's postback token, which every URL here carries as p202_token; null for a key without conversions:write
           example: "0123456789abcdef0123456789abcdef"
+        postback_token_withheld:
+          type: string
+          nullable: true
+          description: Why the URLs leave out the token (a key without conversions:write); null when they carry it
+        postback_auth_recovered:
+          type: string
+          nullable: true
+          description: Set when the account's stored credentials could not be read and new ones were made for these URLs
         postback_auth_mode:
           type: string
           enum: ["off", token, signed]

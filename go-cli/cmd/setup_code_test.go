@@ -206,6 +206,22 @@ const postbackAnswer = `{"data":{"scheme":"https","base_url":"https://t.example/
 "advanced":{"pixel":"<img src=\"https://t.example/tracking202/static/gpx.php?amount={payout}&cid=3&subid={aff_sub}\" />","postback_url":"https://t.example/tracking202/static/gpb.php?amount={payout}&cid=3&subid={aff_sub}"},
 "universal":{"javascript":"<script>var vars202={}</script>","iframe":"<iframe src=\"https://t.example/tracking202/static/upx.php?amount={payout}&subid={aff_sub}\"></iframe>"}}}`
 
+// A key without conversions:write gets the URLs without the token, and is told why on stderr.
+func TestPostbackURLSaysWhyTheTokenIsLeftOut(t *testing.T) {
+	withheld := "These URLs leave out p202_token: this API key may read conversions but not write them."
+	answer := strings.Replace(postbackAnswer, `"campaign_id":3,`, `"campaign_id":3,"postback_token":null,"postback_token_withheld":"`+withheld+`",`, 1)
+	newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) { return 200, answer })
+	for _, args := range [][]string{{"conversion", "postback-url"}, {"conversion", "pixel"}} {
+		stdout, stderr, err := executeCommand(args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if !strings.Contains(stderr, withheld) || strings.Contains(stdout, withheld) {
+			t.Errorf("%v: the reason belongs on stderr; stdout %q stderr %q", args, stdout, stderr)
+		}
+	}
+}
+
 func TestPostbackURLPrintsTheURLAloneFromTheServer(t *testing.T) {
 	_, seen := newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) { return 200, postbackAnswer })
 

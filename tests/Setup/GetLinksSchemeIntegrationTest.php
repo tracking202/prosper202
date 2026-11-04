@@ -275,7 +275,7 @@ final class GetLinksSchemeIntegrationTest extends TestCase
         self::saveDomain($saved);
         $server = self::server($https);
         $out = self::page('tracking202/setup/get_postback.php', $server);
-        $api = (new SetupCodeController($db, self::USER))->postbackCode([], $server);
+        $api = (new SetupCodeController($db, self::USER))->postbackCode([], $server, true);
         // Both carry the account's postback token, the one the page minted
         // (Prosper202\Conversion\PostbackAuth).
         $token = (string) $api['data']['postback_token'];

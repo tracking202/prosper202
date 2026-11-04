@@ -172,7 +172,7 @@ var conversionSimulateCmd = &cobra.Command{
 		if !pass {
 			if pbRes.StatusCode == 403 && auth.Token == "" {
 				return withHint(partialFailureError("postback returned HTTP %d — conversions from this network would not record", pbRes.StatusCode),
-					"%s", "The account requires its postback token or a signature, which this key may not read (it needs access_to_api_integrations); `p202 conversion postback-auth get` with such a key shows them.")
+					"%s", "The account requires its postback token or a signature, which this key may not read (it needs access_to_api_integrations and the conversions:write scope); `p202 conversion postback-auth get` with such a key shows them.")
 			}
 			return partialFailureError("postback returned HTTP %d — conversions from this network would not record", pbRes.StatusCode)
 		}

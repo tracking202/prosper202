@@ -37,6 +37,10 @@ use Prosper202\Setup\PostbackCode;
  */
 final class SetupCodeController
 {
+    public const TOKEN_WITHHELD = 'These URLs leave out p202_token: this API key may read conversions but not write them,'
+        . ' and the token records and reverses them. Use a key with conversions:write, or copy the URLs from'
+        . ' Setup › Postback / Pixel.';
+
     use StatementHelpers;
     use TrackingBaseLookup;
 
@@ -117,11 +121,17 @@ final class SetupCodeController
     /**
      * GET /conversions/postback-code.
      *
+     * The URLs carry the account's postback token only for a caller that may
+     * write conversions ($withToken: index.php passes whether the key has
+     * conversions:write), since the token alone records and reverses them.
+     * For any other the URLs leave it out and postback_token_withheld says
+     * why; nothing is minted or opened for it.
+     *
      * @param array<string, mixed> $query the query string, as sent
      * @param array<string, mixed>|null $server the request ($_SERVER)
      * @return array{data: array<string, mixed>}
      */
-    public function postbackCode(array $query, ?array $server = null): array
+    public function postbackCode(array $query, ?array $server = null, bool $withToken = false): array
     {
         self::refuseUnknown($query, ['amount', 'subid', 'campaign_id', 'scheme'], 'GET /conversions/postback-code takes amount, subid, campaign_id and scheme');
         $errors = [];
@@ -165,10 +175,13 @@ final class SetupCodeController
         }
         $root = $base . 'tracking202/static/';
         // Every URL carries the account's postback token, minted the first
-        // time one is handed out (Prosper202\Conversion\PostbackAuth).
-        $auth = (new PostbackAuthStore(new Connection($this->db)))->ensureCredentials($this->userId, time());
-        $token = (string) $auth->token;
-        $snippets = PostbackCode::snippets($root, $values['amount'], $campaignId === null ? '' : (string) $campaignId, $values['subid'], $token);
+        // time one is handed out (Prosper202\Conversion\PostbackAuth), for a
+        // caller that may write conversions.
+        $store = new PostbackAuthStore(new Connection($this->db));
+        $auth = $withToken ? $store->ensureCredentials($this->userId, time()) : null;
+        $mode = $auth === null ? $store->mode($this->userId) : $auth->mode;
+        $token = $auth === null ? null : (string) $auth->token;
+        $snippets = PostbackCode::snippets($root, $values['amount'], $campaignId === null ? '' : (string) $campaignId, $values['subid'], (string) $token);
 
         return ['data' => [
             'scheme' => substr($base, 0, (int) strpos($base, '://')),
@@ -177,7 +190,9 @@ final class SetupCodeController
             'subid' => $values['subid'],
             'campaign_id' => $campaignId,
             'postback_token' => $token,
-            'postback_auth_mode' => $auth->mode->value,
+            'postback_token_withheld' => $auth === null ? self::TOKEN_WITHHELD : null,
+            'postback_auth_mode' => $mode->value,
+            'postback_auth_recovered' => $auth?->recoveryNotice(),
         ] + $snippets];
     }
 

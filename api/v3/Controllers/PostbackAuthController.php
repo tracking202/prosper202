@@ -27,8 +27,11 @@ use Prosper202\Database\Connection;
  *   "signing_secret", "grace_hours": 0-720}`, a new one, the old one working
  *   that many hours more (token and 168 when omitted).
  *
- * Every route asks for what the page asks, access_to_api_integrations
- * (index.php): the read hands out the signing secret.
+ * Every route asks for what the page asks, access_to_api_integrations,
+ * and for conversions:write, the read included (index.php): the token and
+ * the secret record and reverse conversions, so a key that may only read
+ * them is not given either. A credential stored but unreadable is replaced
+ * by a new one on any of the three, and `recovered` says so.
  */
 final class PostbackAuthController
 {
@@ -63,10 +66,8 @@ final class PostbackAuthController
             ]);
         }
         $now ??= time();
-        $store = $this->store();
-        $store->setMode($this->userId, $mode, $now);
 
-        return ['data' => self::shape($store->ensureCredentials($this->userId, $now), $now)];
+        return ['data' => self::shape($this->store()->setMode($this->userId, $mode, $now), $now)];
     }
 
     /**
@@ -94,9 +95,43 @@ final class PostbackAuthController
             throw new ValidationException('Invalid rotation', $errors);
         }
         $now ??= time();
-        $this->store()->rotate($this->userId, $credential, $hours * 3600, $now);
 
-        return ['data' => self::shape($this->store()->ensureCredentials($this->userId, $now), $now)];
+        return ['data' => self::shape($this->store()->rotate($this->userId, $credential, $hours * 3600, $now), $now)];
+    }
+
+    /**
+     * A rotation's answer as an Idempotency-Key records it: without the token
+     * and the secret, which are never kept in the server-state store (as an
+     * API key's create is not). withCredentials() puts them back.
+     *
+     * @param array<string, mixed> $answer
+     * @return array<string, mixed>
+     */
+    public static function withoutCredentials(array $answer): array
+    {
+        if (is_array($answer['data'] ?? null)) {
+            $answer['data']['token'] = null;
+            $answer['data']['signing_secret'] = null;
+        }
+
+        return $answer;
+    }
+
+    /**
+     * A recorded rotation's answer with the credentials as they are now: the
+     * ones that rotation made, unless another has replaced them since.
+     *
+     * @param array<string, mixed> $answer
+     * @return array<string, mixed>
+     */
+    public function withCredentials(array $answer, ?int $now = null): array
+    {
+        $now ??= time();
+        $recorded = is_array($answer['data'] ?? null) ? $answer['data'] : [];
+        $answer['data'] = self::shape($this->store()->ensureCredentials($this->userId, $now), $now);
+        $answer['data']['recovered'] = $recorded['recovered'] ?? $answer['data']['recovered'];
+
+        return $answer;
     }
 
     /** @return array<string, mixed> */
@@ -110,6 +145,11 @@ final class PostbackAuthController
             'signing_secret' => $settings->secret,
             'signing_secret_created_at' => $settings->secretCreatedAt,
             'previous_signing_secret_valid_until' => $settings->previousSecretValidUntil($now),
+            'recovered' => $settings->replacedUnreadable === [] ? null : [
+                'credentials' => array_map(static fn (PostbackCredential $c): string => $c->value, $settings->replacedUnreadable),
+                'key_recreated' => $settings->keyRecreated,
+                'message' => $settings->recoveryNotice(),
+            ],
             'parameter' => PostbackToken::PARAMETER,
             'signing' => [
                 'algorithm' => 'HMAC-SHA256',

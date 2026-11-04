@@ -100,10 +100,12 @@ page's own script writes the same strings; a test runs it and compares):
 HTML attribute or a JavaScript string is refused: whitespace, quotes, `<`, `>`,
 `\`, `&` and control characters.
 
-Every URL ends with the account's postback token, `&p202_token=…`, minted the
-first time a URL is handed out; the answer also carries it as
-`postback_token`, with the account's mode as `postback_auth_mode`
-([below](#postback-authentication)). In `signed` mode these URLs are refused
+For a key with `conversions:write`, every URL ends with the account's postback
+token, `&p202_token=…`, minted the first time a URL is handed out; the answer
+also carries it as `postback_token`, with the account's mode as
+`postback_auth_mode` ([below](#postback-authentication)). The token records
+and reverses conversions, so a key without `conversions:write` gets the URLs
+without it: `postback_token` is `null` and `postback_token_withheld` says why. In `signed` mode these URLs are refused
 as they are: sign them, and pixels cannot be used.
 
 ```bash
@@ -153,15 +155,29 @@ the attack it is for; it does not stop someone who has seen the page. A
 sender that can sign should sign, and `signed` mode keeps a token read off a
 page from opening anything.
 
-| Method | Path | Body | Permission |
+| Method | Path | Body | Permission and key scope |
 | ------ | ---- | ---- | ---------- |
-| `GET` | `/conversions/postback-auth` | — | `access_to_api_integrations` |
-| `PUT` | `/conversions/postback-auth` | `{"mode": "token"}` (`off`, `token` or `signed`) | `access_to_api_integrations` |
-| `POST` | `/conversions/postback-auth/rotate` | `{"credential": "token", "grace_hours": 168}` (`token` or `signing_secret`; 0–720 hours, default 168) | `access_to_api_integrations` |
+| `GET` | `/conversions/postback-auth` | — | `access_to_api_integrations`, `conversions:write` |
+| `PUT` | `/conversions/postback-auth` | `{"mode": "token"}` (`off`, `token` or `signed`) | `access_to_api_integrations`, `conversions:write` |
+| `POST` | `/conversions/postback-auth/rotate` | `{"credential": "token", "grace_hours": 168}` (`token` or `signing_secret`; 0–720 hours, default 168) | `access_to_api_integrations`, `conversions:write` |
 
-The read hands out the signing secret, so it asks what the page asks.
-`GET /conversions/postback-code` answers the token (`postback_token`) and
-the mode (`postback_auth_mode`) with the snippets, under Setup's permission.
+The read hands out the token and the signing secret, which record and
+reverse conversions, so it asks what the page asks and a key that may write
+conversions. `GET /conversions/postback-code` answers the token
+(`postback_token`) and the mode (`postback_auth_mode`) with the snippets,
+under Setup's permission, to a key with `conversions:write` only. The mode
+and the credentials it needs are saved together or not at all. The rotation
+honors `Idempotency-Key`: a retry answers the first rotation instead of
+rotating again (a replay shows the credentials as they are now, since the
+recorded answer keeps none).
+
+If a stored token or secret cannot be read (the key that encrypts them was
+lost from the database, or a value was altered), a postback that presents it
+is answered `500`, never let through, while one that presents nothing is
+still decided by the mode, so `off` keeps working. Opening Account › API
+Integrations, Setup › Postback / Pixel, any of the three routes above, or a
+rotation replaces it with a new one, and the answer says so (`recovered`):
+the old ones stopped working, so copy your URLs again.
 
 A rotation makes a new token or signing secret; the old one keeps working
 for `grace_hours` (`previous_token_valid_until`,
