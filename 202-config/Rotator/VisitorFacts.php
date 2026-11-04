@@ -120,6 +120,29 @@ final class VisitorFacts
     }
 
     /**
+     * The same visitor with their own link's facts as the landing page
+     * recorded them on the click (RecordedLink), for offrtr.php.
+     *
+     * @param array<string, string> $query c1-c4 and the utm values
+     */
+    public function withLink(array $query, string $keyword, string $referer): self
+    {
+        return new self(
+            $this->ip,
+            $this->geo,
+            $this->isp,
+            $this->os,
+            $this->device,
+            $this->browser,
+            $query,
+            $keyword,
+            $referer,
+            $this->filteredCheck,
+            $this->fraudCheck,
+        );
+    }
+
+    /**
      * A query value as the click stores it: '' when absent or a list, %20 as
      * a space; null when the request is not the visitor's link.
      */
