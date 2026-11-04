@@ -87,6 +87,9 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
             '202_aff_campaigns' => 'aff_campaign_id'] as $table => $id) {
             self::q("DELETE FROM $table WHERE $id BETWEEN 3900 AND 3999");
         }
+        self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_network_id BETWEEN 3900 AND 3999');
+        self::q('DELETE FROM 202_ppc_accounts WHERE ppc_account_id BETWEEN 3900 AND 3999');
+        self::q('DELETE FROM 202_ppc_networks WHERE ppc_network_id BETWEEN 3900 AND 3999');
         self::q('DELETE FROM 202_users_pref WHERE user_id IN (' . self::OWNER . ', ' . self::OTHER . ')');
         self::q('DELETE FROM 202_users WHERE user_id IN (' . self::OWNER . ', ' . self::OTHER . ')');
     }
@@ -151,6 +154,19 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         }
         $tracker(3939, self::OWNER, 3914, 0, 0);
         $tracker(3940, self::OWNER, 3915, 0, 0);
+        // A traffic source whose network defines a tracking variable, on a
+        // rotator's link (T9TM).
+        self::row('202_ppc_networks', ['ppc_network_id' => 3951, 'user_id' => self::OWNER,
+            'ppc_network_name' => 'source 3951', 'ppc_network_time' => time()]);
+        self::row('202_ppc_accounts', ['ppc_account_id' => 3952, 'user_id' => self::OWNER, 'ppc_network_id' => 3951,
+            'ppc_account_name' => 'account 3952', 'ppc_account_time' => time()]);
+        self::row('202_ppc_network_variables', ['ppc_network_id' => 3951, 'name' => 'Placement',
+            'parameter' => 'placement', 'placeholder' => '{placement}']);
+        self::row('202_trackers', [
+            'tracker_id' => 3941, 'user_id' => self::OWNER, 'tracker_id_public' => 3941 + 100000,
+            'aff_campaign_id' => 0, 'text_ad_id' => 0, 'ppc_account_id' => 3952, 'landing_page_id' => 0,
+            'rotator_id' => 3912, 'click_cloaking' => 0, 'tracker_time' => time(),
+        ]);
     }
 
     protected function setUp(): void
@@ -230,6 +246,40 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         $sites = self::newestClickSites();
         self::assertSame('https://referer.example/page?q=1', $sites['click_referer_site_url_id']);
         self::assertStringContainsString('rtr.php?t202id=' . (3932 + 100000) . '&c1=visit-1', (string) $sites['click_outbound_site_url_id']);
+    }
+
+    /**
+     * A redirector link keeps the ad platforms' click ids, the UTM values and
+     * the traffic source's tracking variables, as a direct link does (T9TM);
+     * a re-click keeps its first visit's.
+     */
+    public function testARedirectorClickKeepsItsAdClickIdsUtmsAndVariables(): void
+    {
+        $db = self::requireScratch();
+        $path = '/tracking202/redirect/rtr.php?t202id=' . (3941 + 100000) . '&gclid=Cj0-rtr-test&ttclid=tt-rtr'
+            . '&utm_source=newsletter&utm_campaign=spring%20sale&placement=sidebar';
+        [$status, $headers] = self::get($path);
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        $clickId = (int) $db->query('SELECT MAX(click_id) FROM 202_clicks WHERE user_id = ' . self::OWNER)->fetch_row()[0];
+
+        $google = $db->query('SELECT g.gclid, g.ttclid, g.utm_medium_id, us.utm_source, uc.utm_campaign FROM 202_google AS g'
+            . ' LEFT JOIN 202_utm_source AS us ON us.utm_source_id = g.utm_source_id'
+            . ' LEFT JOIN 202_utm_campaign AS uc ON uc.utm_campaign_id = g.utm_campaign_id'
+            . ' WHERE g.click_id = ' . $clickId)->fetch_all(MYSQLI_ASSOC);
+        self::assertSame([['gclid' => 'Cj0-rtr-test', 'ttclid' => 'tt-rtr', 'utm_medium_id' => '0',
+            'utm_source' => 'newsletter', 'utm_campaign' => 'spring sale']], $google, $this->serverLog());
+
+        $variable = $db->query('SELECT v.variable FROM 202_clicks_variable AS cv'
+            . ' JOIN 202_variable_sets AS vs ON vs.variable_set_id = cv.variable_set_id'
+            . ' JOIN 202_custom_variables AS v ON FIND_IN_SET(v.custom_variable_id, vs.variables)'
+            . ' WHERE cv.click_id = ' . $clickId)->fetch_all(MYSQLI_NUM);
+        self::assertSame([['sidebar']], $variable, 'the traffic source\'s variable is kept');
+
+        // A re-click from the same address keeps the first visit's rows.
+        [$status] = self::get('/tracking202/redirect/rtr.php?t202id=' . (3941 + 100000) . '&lpr=1&gclid=Cj0-second');
+        self::assertSame(302, $status, $this->serverLog());
+        $rows = $db->query('SELECT gclid FROM 202_google WHERE click_id = ' . $clickId)->fetch_all(MYSQLI_NUM);
+        self::assertSame([['Cj0-rtr-test']], $rows, 'one row, the first visit\'s');
     }
 
     /** dl.php: the visit's URLs are stored, and capture follows the tracker's campaign. */

@@ -138,6 +138,9 @@ final class TrackerPublicIdIntegrationTest extends TestCase
         try {
             TrackerPublicId::generate(self::$db, $always);
             self::fail('a generator that only finds taken ids answered one');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('No free tracker public id', $e->getMessage());
         }

@@ -84,6 +84,9 @@ final class UserManagementSaveTest extends TestCase
         try {
             p202_account_save_user(new Connection($db), null, self::USER, 3);
             self::fail("a failed write to $failing was reported as saved");
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $expected) {
             self::assertNotInstanceOf(\DomainException::class, $expected);
         }
@@ -136,6 +139,9 @@ final class UserManagementSaveTest extends TestCase
         try {
             p202_account_save_user(new Connection($db), 9, self::USER, 4);
             self::fail('a failed role write was reported as saved');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $expected) {
         }
         self::assertSame(1, $db->statementsContaining('UPDATE `202_users` SET')[0]->executeCount, 'the user row was written');
@@ -161,6 +167,9 @@ final class UserManagementSaveTest extends TestCase
                 throw new \RuntimeException('no default model');
             });
             self::fail('a failed first row was reported as saved');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $expected) {
         }
         self::assertTrue($db->rollbackCalled, 'the account was rolled back with it');

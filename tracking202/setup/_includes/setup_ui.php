@@ -136,6 +136,21 @@ function p202_setup_token_field(string $token): string
 }
 
 /**
+ * "Check my page" under a landing page's code: posts the page's id to
+ * ajax/check_landing_code.php and shows the answer below the button.
+ */
+function p202_setup_lp_check(string $base, string $token, int $landingPageId): string
+{
+    return '<form method="post" class="mb-2" action="' . p202_setup_e($base . 'tracking202/ajax/check_landing_code.php') . '" data-p202-ajax-target="#lp-check-result">'
+        . p202_setup_token_field($token)
+        . '<input type="hidden" name="landing_page_id" value="' . $landingPageId . '">'
+        . '<button type="submit" class="btn btn-secondary btn-sm"><i class="bi bi-search"></i> Check my page</button>'
+        . ' <span class="form-text">Once the code is on your page, this fetches the page and looks for it.</span>'
+        . '</form>'
+        . '<div id="lp-check-result" class="mb-3" aria-live="polite"></div>';
+}
+
+/**
  * A read-only code box with a Copy button: the kit's `.p202-code`.
  *
  * $value is the raw snippet; it is escaped here. `long` caps a many-line
@@ -213,6 +228,38 @@ function p202_setup_placeholders(string $targetId, string $remember): string
         . '<summary>Tracking placeholders <span class="p202-disclosure__hint">click one to insert it where the cursor is</span></summary>'
         . '<div class="p202-disclosure__body"><div class="p202-toolbar">' . $buttons . '</div></div>'
         . '</details>';
+}
+
+/**
+ * The Link Assistant's suggestion box for a URL field (202-js/p202-link-assistant.js).
+ * It stays hidden until the field holds a known network's link.
+ */
+function p202_setup_link_assistant(string $targetId): string
+{
+    return '<div class="mt-2" data-p202-link-assistant="#' . p202_setup_e($targetId) . '" hidden></div>';
+}
+
+/**
+ * The Link Assistant's network table and script, printed once per page.
+ * JSON_HEX_TAG keeps the table from closing its own <script>.
+ */
+function p202_setup_link_assistant_script(string $base): string
+{
+    $networks = json_encode(
+        \Prosper202\Setup\LinkAssistant::networks(),
+        JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+    );
+    // Versioned by content: a cached script must not run a newer table, so
+    // with no hash to version it the page goes without the assistant.
+    $hash = @md5_file(dirname(__DIR__, 3) . '/202-js/p202-link-assistant.js');
+    if ($hash === false) {
+        error_log('Link Assistant: 202-js/p202-link-assistant.js is unreadable; the campaign page goes without it');
+        return '';
+    }
+    $src = rtrim($base, '/') . '/202-js/p202-link-assistant.js?v=' . substr($hash, 0, 12);
+
+    return '<script type="application/json" id="p202-link-networks">' . $networks . '</script>'
+        . '<script src="' . p202_setup_e($src) . '" defer></script>';
 }
 
 /**

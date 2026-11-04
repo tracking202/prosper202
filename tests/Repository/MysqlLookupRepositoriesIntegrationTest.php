@@ -285,6 +285,9 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
             try {
                 $repo->findOrCreateCustomVar($name, 'v');
                 self::fail(var_export($name, true) . ' was taken as a custom variable name');
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (RuntimeException $e) {
                 self::assertStringStartsWith('Invalid custom variable name', $e->getMessage());
             }

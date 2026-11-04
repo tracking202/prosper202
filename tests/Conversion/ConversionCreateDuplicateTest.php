@@ -192,6 +192,9 @@ final class ConversionCreateDuplicateTest extends TestCase
         try {
             $this->post($db, $payload);
             self::fail('a duplicate that cannot be read back must fail');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertNotInstanceOf(\Api\V3\Exception\WriteCommittedException::class, $e, 'nothing was written: ' . $e->getMessage());
             self::assertInstanceOf(\Api\V3\Exception\DatabaseException::class, $e);

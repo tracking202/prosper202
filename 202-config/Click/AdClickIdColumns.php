@@ -80,7 +80,8 @@ final class AdClickIdColumns
             throw new \InvalidArgumentException("$clickId is not a column");
         }
 
-        return "(SELECT MAX(g_ids.$id) FROM 202_google AS g_ids WHERE g_ids.click_id = $clickId)";
+        // FORCE INDEX: MariaDB 11 can pick a full scan per row here (M4R1); PRIMARY (click_id, …) always exists.
+        return "(SELECT MAX(g_ids.$id) FROM 202_google AS g_ids FORCE INDEX (PRIMARY) WHERE g_ids.click_id = $clickId)";
     }
 
     /** Whether a URL has a [[token]] for one of them. */

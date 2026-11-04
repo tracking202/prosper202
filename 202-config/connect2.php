@@ -663,6 +663,31 @@ function rotateTrackerUrl($db, $tracker_row)
 }
 
 /**
+ * The publisher a click request's publisher link (t202pubid) credits, when the
+ * link's account granted it (Prosper202\Click\PublisherCredit), else null and
+ * the click stays the account's alone. A failed read is logged and credits no one:
+ * the visitor goes on.
+ *
+ * @return array{user_id: int, public_id: string}|null
+ */
+function p202ClickPublisher(mysqli $db, int $ownerUserId, array $query): ?array
+{
+    $publicId = \Prosper202\Click\PublisherCredit::requested($query);
+    if ($publicId === null) {
+        return null;
+    }
+    try {
+        return (new \Prosper202\Click\PublisherCredit(\Prosper202\Repository\LookupRepositoryFactory::connection($db)))
+            ->forClick($ownerUserId, $publicId);
+    } catch (\RuntimeException $e) {
+        error_log('Prosper202 publisher credit: reading the publisher of a link of user ' . $ownerUserId
+            . ' failed, so the click is credited to no publisher: ' . $e->getMessage());
+
+        return null;
+    }
+}
+
+/**
  * The URL tokens of one click, from the values it is recorded with: what
  * replaceTrackerPlaceholders() reads back from the click's rows, or what an
  * endpoint that redirects before writing them holds (dl.php,
@@ -838,9 +863,22 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
         );
     }
 
+    // A click a publisher link credited names that publisher (PublisherCredit).
+    $publisherPublicId = null;
+    if ($click_row !== [] && stripos((string) $url, '[[t202pubid]]') !== false) {
+        try {
+            $publisherPublicId = (new \Prosper202\Click\PublisherCredit(
+                \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+            ))->publicIdOfClick((int) $tokenClickId);
+        } catch (\RuntimeException $e) {
+            error_log('Prosper202 publisher credit: reading click ' . $tokenClickId
+                . '\'s publisher failed, so [[t202pubid]] is the account\'s own: ' . $e->getMessage());
+        }
+    }
+
     return replaceClickPlaceholders($url, (string) $click_id, [
         'keyword' => $click_row['keyword'] ?? null,
-        't202pubid' => $click_row['user_public_publisher_id'] ?? null,
+        't202pubid' => $publisherPublicId ?? $click_row['user_public_publisher_id'] ?? null,
         'c1' => $click_row['c1'] ?? null,
         'c2' => $click_row['c2'] ?? null,
         'c3' => $click_row['c3'] ?? null,

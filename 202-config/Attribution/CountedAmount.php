@@ -74,8 +74,7 @@ final class CountedAmount
      * of() answers null — including a row that is not there (a LEFT JOIN
      * that found nothing). The same rule, so a report summing this and one
      * reading of() agree; ConversionLedgerIntegrationTest runs both over the
-     * same rows. `$row` must be a plain alias; the reversals are read by a
-     * correlated subquery aliased `$row`_r.
+     * same rows. The read must also join reversalsJoin($row).
      */
     public static function sql(string $row): string
     {
@@ -86,29 +85,44 @@ final class CountedAmount
      * of() in SQL as it answers: the counted amount, or NULL where of()
      * answers null, so a read can tell a conversion that does not count from
      * one that counts for 0 (the offline conversion files send the second and
-     * not the first). sql() is this with 0 for NULL.
+     * not the first). sql() is this with 0 for NULL. The read must also join
+     * reversalsJoin($row).
      */
     public static function sqlOrNull(string $row): string
     {
-        if (preg_match('/^[a-z][a-z0-9_]*$/D', $row) !== 1) {
-            throw new \InvalidArgumentException('not a table alias: ' . $row);
-        }
-        $r = $row . '_r';
-
-        // MySQL 8 can choose a full ledger scan for each conversion when most
-        // reverses_conv_id values are NULL. This hint keeps the lookup indexed;
-        // servers without optimizer-hint support (or the index) ignore it.
-        $indexHint = "/*+ INDEX($r reverses_conv_id) */";
+        $r = self::reversalsAlias($row);
+        $sum = "$row.click_payout + COALESCE($r.amount, 0)";
 
         return "(CASE WHEN $row.conv_id IS NULL OR $row.reverses_conv_id IS NOT NULL"
             . " OR ($row.superseded_reason IS NOT NULL AND $row.superseded_reason <> '')"
             . " OR $row.payable <> 1 OR $row.deleted <> 0 THEN NULL"
-            . " ELSE (SELECT $indexHint CASE WHEN COUNT($r.conv_id) > 0"
-            . " AND $row.click_payout + COALESCE(SUM($r.click_payout), 0) <= 0 THEN NULL"
-            . " ELSE $row.click_payout + COALESCE(SUM($r.click_payout), 0) END"
-            . " FROM 202_conversion_logs $r"
-            . " WHERE $r.reverses_conv_id = $row.conv_id AND $r.deleted = 0 AND $r.payable = 1)"
-            . ' END)';
+            . " WHEN COALESCE($r.n, 0) > 0 AND $sum <= 0 THEN NULL"
+            . " ELSE $sum END)";
+    }
+
+    /**
+     * The join sql() and sqlOrNull() read the row's live reversals from, to
+     * follow the join or FROM that names `$row`: every live reversal summed
+     * once per sale it reverses, then matched by key. A per-conversion
+     * subquery here read the whole ledger for each conversion on MariaDB 11,
+     * which ignores MySQL's index hints (M4R1); this is one read either way.
+     */
+    public static function reversalsJoin(string $row): string
+    {
+        $r = self::reversalsAlias($row);
+
+        return "LEFT JOIN (SELECT user_id, reverses_conv_id, COUNT(*) AS n, SUM(click_payout) AS amount"
+            . ' FROM 202_conversion_logs WHERE reverses_conv_id IS NOT NULL AND deleted = 0 AND payable = 1'
+            . " GROUP BY user_id, reverses_conv_id) $r ON $r.reverses_conv_id = $row.conv_id AND $r.user_id = $row.user_id";
+    }
+
+    private static function reversalsAlias(string $row): string
+    {
+        if (preg_match('/^[a-z][a-z0-9_]*$/D', $row) !== 1) {
+            throw new \InvalidArgumentException('not a table alias: ' . $row);
+        }
+
+        return $row . '_r';
     }
 
     /**

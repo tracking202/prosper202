@@ -149,4 +149,14 @@ final class SetupUiHelpersTest extends TestCase
         self::assertStringContainsString('Added.', $html);
         self::assertStringNotContainsString('Removed.', $html, 'only the value 1 raises a flash');
     }
+
+    public function testCheckMyPagePostsTheLandingPageWithTheToken(): void
+    {
+        $html = p202_setup_lp_check('/p202/', 'tok"en', 42);
+        self::assertStringContainsString('<form method="post" class="mb-2" action="/p202/tracking202/ajax/check_landing_code.php" data-p202-ajax-target="#lp-check-result">', $html);
+        self::assertStringContainsString('<input type="hidden" name="token" value="tok&quot;en">', $html);
+        self::assertStringContainsString('<input type="hidden" name="landing_page_id" value="42">', $html);
+        self::assertStringContainsString('Check my page</button>', $html);
+        self::assertStringContainsString('<div id="lp-check-result"', $html, 'the answer has somewhere to go');
+    }
 }
