@@ -228,6 +228,8 @@ abstract class Controller
      *    a date: under strict SQL mode MySQL answered it with an error (a
      *    500), and without it stored 0000-00-00. A DATE column that can hold
      *    NULL is cleared with null, as any nullable field is.
+     *  - 's' with 'format' => 'http_url': starts with http:// or https://,
+     *    the rule the setup page holds the same field to (HttpUrlPrefix).
      *
      * @param array<array-key, mixed> $payload the request body as decoded
      * @param array<string, mixed>|null $current the record an update changes
@@ -324,6 +326,12 @@ abstract class Controller
                     $clean[$col] = (string) $value;
                     if (isset($def['max_length']) && mb_strlen($clean[$col]) > $def['max_length']) {
                         $errors[$col] = "Field '$col' exceeds max length of {$def['max_length']}";
+                        unset($clean[$col]);
+                        break;
+                    }
+                    // The page's rule for the same field (HttpUrlPrefix), so the two accept the same values.
+                    if (($def['format'] ?? null) === 'http_url' && !\Prosper202\Http\HttpUrlPrefix::accepts($clean[$col])) {
+                        $errors[$col] = "Field '$col' " . \Prosper202\Http\HttpUrlPrefix::MESSAGE;
                         unset($clean[$col]);
                     }
                     break;

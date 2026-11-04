@@ -19,6 +19,7 @@ use Prosper202\PaymentNotification\Processor;
 use Prosper202\PaymentNotification\ProviderAdapter;
 use Prosper202\PaymentNotification\Response;
 use Prosper202\PaymentNotification\Verification;
+use Prosper202\PaymentNotification\Zaxaa\ZaxaaAdapter;
 use Tests\Support\SourceScan;
 
 /**
@@ -76,6 +77,7 @@ final class ClickAnswersAreWordedByTheProviderTest extends TestCase
             'JVZoo affiliate' => new JVZooAdapter(JVZooRole::AFFILIATE),
             'JVZoo vendor' => new JVZooAdapter(JVZooRole::VENDOR),
             'ClickBank' => new ClickBankAdapter(),
+            'Zaxaa' => new ZaxaaAdapter(),
         ];
     }
 

@@ -9,7 +9,8 @@
 #   "Download the release, not the git clone."
 #
 # Usage: build/scripts/package-release.sh
-# Output: dist/prosper202-<version>.zip  (+ a printed SHA256)
+# Output: dist/prosper202-<version>.zip and dist/prosper202-<version>-upgrade.zip
+#         (the same tree without the prosper202/ prefix, for the 1-click upgraders)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -123,11 +124,19 @@ rm -f "$ZIP_PATH"
 echo "==> Creating $ZIP_PATH ..."
 ( cd "$STAGE_ROOT" && zip -rq "$ZIP_PATH" prosper202 )
 
+# The 1-click upgraders extract at the install root, so they get the same tree
+# with no prosper202/ prefix; the Release workflow signs both zips.
+UPGRADE_ZIP_PATH="$DIST_DIR/prosper202-${VERSION}-upgrade.zip"
+rm -f "$UPGRADE_ZIP_PATH"
+echo "==> Creating $UPGRADE_ZIP_PATH ..."
+( cd "$STAGE" && zip -rqX "$UPGRADE_ZIP_PATH" . )
+
 echo ""
 echo "Release artifact ready:"
 echo "  $ZIP_PATH"
+echo "  $UPGRADE_ZIP_PATH"
 if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$ZIP_PATH"
+    sha256sum "$ZIP_PATH" "$UPGRADE_ZIP_PATH"
 elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$ZIP_PATH"
+    shasum -a 256 "$ZIP_PATH" "$UPGRADE_ZIP_PATH"
 fi

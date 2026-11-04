@@ -49,6 +49,7 @@ final class ClickRetentionIntegrationTest extends TestCase
         '202_identity_observations' => "signal_type = 'cookie', signal_hash = SHA2('{id}', 256), observed_at = {t}",
         '202_clicks_visitor' => 'user_id = {u}, visitor_key = {id}, click_time = {t}',
         '202_clicks_filter_reason' => "filter_reason = 'repeat_visit'",
+        '202_clicks_publisher' => 'publisher_user_id = {u}',
         '202_click_latest_visits' => 'click_time = {t}',
     ];
 
@@ -454,6 +455,9 @@ final class ClickRetentionIntegrationTest extends TestCase
         try {
             $this->retention()->runAutomatic(PHP_INT_MAX);
             self::fail('a batch that cannot delete from every table is an error');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertStringContainsString($missing, $e->getMessage());
         } finally {

@@ -222,6 +222,9 @@ final class RtrReClickValuesIntegrationTest extends TestCase
         try {
             self::claims($reClick, self::USER + 1);
             self::fail('a click that is not the account\'s has no claims to read');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('has no row', $e->getMessage());
         }

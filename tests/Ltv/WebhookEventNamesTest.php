@@ -65,6 +65,9 @@ final class WebhookEventNamesTest extends TestCase
             try {
                 $this->repo($write)->create(7, 'https://8.8.8.8/hooks/p202', [$name, 'conversion.recorded']);
                 self::fail("\"$name\" was accepted");
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException $e) {
                 $refused = '"' . $name . '" is not an event this install sends';
                 self::assertStringContainsString($refused, $e->getMessage());
@@ -100,6 +103,9 @@ final class WebhookEventNamesTest extends TestCase
         try {
             $this->repo($write)->create(7, 'https://8.8.8.8/hooks/p202', [$eventName]);
             self::fail('Malformed event name "' . $eventName . '" must be rejected');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('namespaced lowercase slug', $e->getMessage());
             self::assertSame([], $write->statementsContaining('INSERT INTO 202_ltv_webhooks'), 'nothing may be written for a rejected name');
@@ -130,6 +136,9 @@ final class WebhookEventNamesTest extends TestCase
         try {
             $repo->enqueue(7, 'not a slug', ['k' => 'v']);
             self::fail('Expected RuntimeException');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertSame([], $read->preparedSql, 'the well-formedness check must short-circuit before DB work');
         }
