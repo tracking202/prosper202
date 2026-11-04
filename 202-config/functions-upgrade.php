@@ -7,6 +7,18 @@ if (!class_exists('DataEngine')) {
     include_once(__DIR__ . '/class-dataengine.php');
 }
 
+// p202FailedQueryMessage() and p202RedactedStatement(), for a failed statement's log line.
+require_once __DIR__ . '/mysql-error-args.php';
+
+if (!defined('_UPGRADE_ALREADY_APPLIED')) {
+    /**
+     * Errors a re-run of an applied step answers, which the steps rely on being
+     * quiet: the table, column or key is already there (1050, 1060, 1061, 1068),
+     * or the one dropped already gone (1091).
+     */
+    define('_UPGRADE_ALREADY_APPLIED', [1050, 1060, 1061, 1068, 1091]);
+}
+
 if (!function_exists('_upgrade_query_run')) {
     /**
      * Testable core of the upgrade query runner. Kept free of globals, real sleeps
@@ -67,7 +79,12 @@ if (!function_exists('_upgrade_query_run')) {
             }
 
             // Non-transient failure: preserve _mysqli_query()'s legacy contract so the
-            // upgrade's "ignore already-applied" steps behave exactly as before.
+            // upgrade's "ignore already-applied" steps behave exactly as before. Every
+            // other failure is logged with its errno, message and statement, redacted.
+            if (!in_array($errno, _UPGRADE_ALREADY_APPLIED, true)) {
+                error_log('Prosper202 upgrade: statement failed [errno ' . $errno . ']: '
+                    . p202FailedQueryMessage($errno, $error) . ' | ' . p202RedactedStatement($sql));
+            }
             return false;
         }
     }
@@ -4646,13 +4663,22 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.79') {
 
-            // 1.9.80 changes no schema yet, so its step only records the
-            // version. A schema change for 1.9.80 belongs in this block,
-            // reconciled before the version is written.
-            if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
-                $prosper202_version = '1.9.80';
+            // A schema change for 1.9.80 belongs in this block, reconciled
+            // before the version is written.
+            $step_ok = _upgrade_measurement_tables([
+                // The publisher a publisher link's click is credited to
+                // (Prosper202\Click\PublisherCredit).
+                \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
+            ]);
+            if ($step_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
+                    $prosper202_version = '1.9.80';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                }
             } else {
-                error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                error_log('Prosper202 upgrade: a table of the 1.9.80 step could not be reconciled (the list above);'
+                    . ' leaving version at 1.9.79 so the next run retries.');
             }
         }
 

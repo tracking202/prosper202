@@ -160,6 +160,18 @@ final class Processor
         string $transactionId,
         string $amount
     ): Outcome {
+        if ($provider instanceof SignsThePaymentNotTheClick
+            && $this->resignedSale($provider, $clickId, $transactionId, $amount, $owner)
+        ) {
+            return new Outcome(
+                OutcomeKind::CONFLICT,
+                'Transaction ' . $transactionId . ': this ' . $n->event . ' carries the signature of a sale already'
+                . ' recorded under another click or transaction id, so it is not a new payment. Nothing was recorded.',
+                null,
+                $owner
+            );
+        }
+
         [$time, $dated] = self::dated($n->occurredAt, $this->latestVisitTime($clickId), 'the click');
         $result = $this->record($clickId, $owner, $provider, $request, [
             'transaction_id' => $transactionId,
@@ -462,6 +474,58 @@ final class Processor
             'time' => (int) $row['conv_time'],
             'units' => abs(Amount::toUnits((string) $row['click_payout'])),
         ];
+    }
+
+    /**
+     * Whether a sale of the account under this provider, on another click or
+     * another transaction id, has the same signed payment text: the same
+     * signed body re-aimed at another click, or with digits moved between its
+     * transaction id and amount. The same id on the same click is the
+     * writer's duplicate, answered as such.
+     */
+    private function resignedSale(
+        SignsThePaymentNotTheClick $provider,
+        int $clickId,
+        string $transactionId,
+        string $amount,
+        int $owner
+    ): bool {
+        $signed = $provider->signedPayment($transactionId, $amount);
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead(
+            'SELECT conv_id, click_id, transaction_id, click_payout FROM 202_conversion_logs'
+            . ' WHERE user_id = ? AND source = ? AND reverses_conv_id IS NULL AND transaction_id IS NOT NULL'
+            . ' AND transaction_id = LEFT(?, CHAR_LENGTH(transaction_id))'
+        );
+        $conn->bind($stmt, 'iss', [$owner, $provider->source()->value, $signed]);
+        foreach ($conn->fetchAll($stmt) as $row) {
+            $onFile = (string) $row['transaction_id'];
+            if ((int) $row['click_id'] === $clickId && $onFile === $transactionId) {
+                continue;
+            }
+            $rest = substr($signed, strlen($onFile));
+            try {
+                $same = $rest !== '' && Amount::toUnits($rest) === abs(Amount::toUnits((string) $row['click_payout']));
+            } catch (\InvalidArgumentException) {
+                $same = false;
+            }
+            if ($same) {
+                error_log(sprintf(
+                    'Payment notification: transaction %s on click %d is signed like conversion %d (transaction %s on'
+                    . ' click %d) of account %d; refused as a re-aimed copy.',
+                    $transactionId,
+                    $clickId,
+                    (int) $row['conv_id'],
+                    $onFile,
+                    (int) $row['click_id'],
+                    $owner
+                ));
+
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

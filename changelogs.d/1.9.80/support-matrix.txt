@@ -1,0 +1,1 @@
+-- Changed: Prosper202 is now tested on PHP 8.4 and 8.5, MySQL 8.4 LTS and MariaDB 11.4 LTS as well as PHP 8.3 and MySQL 8.0, and the README lists the tested versions. MySQL 8.0 reached end of life in April 2026: use 8.4 LTS for new installs.

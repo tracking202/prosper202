@@ -390,6 +390,9 @@ final class NestedBodyValuesIntegrationTest extends TestCase
                 'external_sub_id' => 'nested-s1', 'amount' => 9, 'customer_ref' => 'nested-5', 'customer_crm' => 'Ann',
             ]);
             self::fail('a customer_crm string was read as none');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertSame('customer_crm must be an object of CRM fields', $e->getMessage());
         }
@@ -401,6 +404,9 @@ final class NestedBodyValuesIntegrationTest extends TestCase
                 'customer_ref' => 'nested-6', 'items' => 'SKU-A',
             ], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
             self::fail('items that are not a list were skipped');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertSame('items must be a list of line items', $e->getMessage());
         }

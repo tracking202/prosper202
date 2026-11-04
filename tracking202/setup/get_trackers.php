@@ -107,6 +107,13 @@ foreach (p202_setup_rows($db, "SELECT pa.ppc_account_id, pa.ppc_account_name, pn
 	$accountOptions[$group]['options'][(string) $account['ppc_account_id']] = ['label' => (string) $account['ppc_account_name'], 'data' => ['source' => (string) $account['ppc_network_id']]];
 }
 
+// Publishers this account may credit on a link (t202pubid): users with the
+// Publisher role, offered only to an account that may grant it.
+$publisherOptions = [];
+foreach ((new \Prosper202\Click\PublisherCredit(new \Prosper202\Database\Connection($db)))->grantable($uid) as $publisher) {
+	$publisherOptions[(string) $publisher['user_id']] = $publisher['name'];
+}
+
 // The form's starting values: a tracker being edited, or the common case.
 $row = $showEdit ? $edit_tracker_row : [];
 $trackerType = '0';
@@ -323,6 +330,16 @@ $nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rota
 						<input type="hidden" name="ppc_network_id" value="<?php echo p202_setup_e($pick('ppc_network_id')); ?>" data-p202-sync-from="#ppc_account_id" data-p202-sync-attr="source">
 						<div class="form-text">Grouped by traffic source. Without one, clicks on this link report under no source.</div>
 					</div>
+
+					<?php if ($publisherOptions !== []) { ?>
+						<div class="mb-3">
+							<label class="form-label" for="publisher_id">Publisher</label>
+							<select class="form-select" id="publisher_id" name="publisher_id">
+								<?php echo p202_setup_options($publisherOptions, '', 'None', ''); ?>
+							</select>
+							<div class="form-text">For a link you hand to a publisher: each click on it records the publisher, and [[t202pubid]] in your offer URL sends their publisher id. Publishers are users with the Publisher role in User management.</div>
+						</div>
+					<?php } ?>
 
 					<fieldset class="mb-3">
 						<legend class="form-label">Cost</legend>

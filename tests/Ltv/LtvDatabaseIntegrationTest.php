@@ -263,6 +263,9 @@ final class LtvDatabaseIntegrationTest extends TestCase
         try {
             $companies->delete(1, $companyId);
             self::fail('delete must be blocked by pending unstamped customers');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('pending entity linking', $e->getMessage());
         }
@@ -284,6 +287,9 @@ final class LtvDatabaseIntegrationTest extends TestCase
         try {
             $companies->delete(1, $companyId);
             self::fail('delete must be blocked by attached customers');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('attached customer', $e->getMessage());
         }
@@ -674,6 +680,9 @@ final class LtvDatabaseIntegrationTest extends TestCase
         try {
             $crm->upsert(1, ['customer_ref' => 'req-1', 'first_name' => 'Ada']);
             self::fail('a save omitting a required custom field must be rejected');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('required', $e->getMessage());
         }
@@ -693,6 +702,9 @@ final class LtvDatabaseIntegrationTest extends TestCase
         try {
             $crm->upsert(1, ['customer_id' => $id, 'custom_fields' => ['plan_tier' => '']]);
             self::fail('clearing a required field must be rejected');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('required', $e->getMessage());
         }
@@ -838,6 +850,9 @@ final class LtvDatabaseIntegrationTest extends TestCase
         try {
             $companies->delete(1, $busy);
             self::fail('a company with a customer attached must not delete');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertSame($refusal, $e->getMessage(), 'the preview reports the delete\'s own refusal');
         }
@@ -903,6 +918,9 @@ final class LtvDatabaseIntegrationTest extends TestCase
         try {
             $companies->create(1, 'Other Co', 'unique-dom.example.com');
             self::fail('a second company may not claim the same domain');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('already belongs', $e->getMessage());
         }
@@ -1384,6 +1402,9 @@ CHILD;
         try {
             $crm->upsert(1, ['customer_ref' => 'atomic-1', 'email' => 'not-an-email']);
             self::fail('invalid email must be rejected');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('email', $e->getMessage());
         }
@@ -1394,6 +1415,9 @@ CHILD;
         try {
             $crm->upsert(1, ['customer_ref' => 'atomic-2', 'custom_fields' => ['no_such_field' => 1]]);
             self::fail('unknown custom field must be rejected');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException) {
             $this->addToAssertionCount(1);
         }
@@ -1427,6 +1451,9 @@ CHILD;
         try {
             $subs->recordEvent(1, 'SUB-RSV', 'renewal', ['idempotency_key' => 'backfill:conv:3']);
             self::fail('reserved key must be rejected on subscription events too');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('reserved', $e->getMessage());
         }
@@ -1450,6 +1477,9 @@ CHILD;
         try {
             $customers->resolveOrCreateByAlias(1, 'nonsense', 'norm-2', [], null, 1700000000);
             self::fail('unsupported alias type must be rejected');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('customer_ref_type', $e->getMessage());
         }
@@ -1477,6 +1507,9 @@ CHILD;
         try {
             $customers->resolveOrCreateByAlias(1, 'email_md5', 'not-a-digest', [], null, 1700000000);
             self::fail('malformed email_md5 must be rejected');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('hex digest', $e->getMessage());
         }

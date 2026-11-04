@@ -544,8 +544,53 @@ if ($reClick !== null) {
 $mysql['click_id'] = (string) $click_id;
 $mysql['click_alp'] = 0;
 
+// A new click keeps the ad platforms' click ids, its UTM values and the
+// traffic source's tracking variables, as a direct link's does (dl.php), so
+// [[gclid]] and the UTM tokens fill and the reports group it. A re-click
+// keeps its first visit's: recordReClick() writes none of these rows.
+$rtrCampaignRows = $reClick === null;
+if ($rtrCampaignRows) {
+	foreach (ClickRequest::adClickIds($_GET) as $rtrAdClickIdName => $rtrAdClickId) {
+		$mysql[$rtrAdClickIdName] = $rtrAdClickId;
+	}
+	foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as $rtrUtmName) {
+		$rtrUtm = str_replace('%20', ' ', ClickRequest::text($_GET, $rtrUtmName));
+		$mysql[$rtrUtmName . '_id'] = (string) ($rtrUtm !== '' ? $trackingRepo->findOrCreateUtm($rtrUtm, $rtrUtmName) : 0);
+	}
+	// The variables the click's traffic source defines (Setup › Traffic
+	// Sources), read as ClickPathReads reads a tracker's: the account's own
+	// traffic source account, its network's live variables.
+	$rtrVariables = memcache_mysql_fetch_assoc(
+		$db,
+		"SELECT (SELECT GROUP_CONCAT(v.ppc_variable_id ORDER BY v.ppc_variable_id)
+		           FROM 202_ppc_network_variables AS v
+		          WHERE v.ppc_network_id = pn.ppc_network_id AND v.deleted = 0) AS ppc_variable_ids,
+		        (SELECT GROUP_CONCAT(v.parameter ORDER BY v.ppc_variable_id)
+		           FROM 202_ppc_network_variables AS v
+		          WHERE v.ppc_network_id = pn.ppc_network_id AND v.deleted = 0) AS parameters
+		   FROM 202_ppc_accounts AS ppc
+		   JOIN 202_ppc_networks AS pn ON pn.ppc_network_id = ppc.ppc_network_id AND pn.user_id = ppc.user_id
+		  WHERE ppc.ppc_account_id = '" . $mysql['ppc_account_id'] . "'
+		    AND ppc.user_id = '" . $db->real_escape_string((string) $user_id) . "'"
+	);
+	$rtrVariableIds = [];
+	foreach (\Prosper202\Click\TrackerVariables::pairs(is_array($rtrVariables) ? $rtrVariables : []) as [$rtrParameter, $rtrVariableId]) {
+		$rtrValue = str_replace('%20', ' ', ClickRequest::text($_GET, $rtrParameter));
+		if ($rtrValue !== '') {
+			$rtrVariableIds[] = $trackingRepo->findOrCreateVariable($rtrValue, $rtrVariableId);
+		}
+	}
+	$mysql['variable_set_id'] = (string) ($rtrVariableIds === []
+		? 0
+		: $trackingRepo->findOrCreateVariableSet(implode(',', $rtrVariableIds)));
+}
+
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_id); 
 $mysql['user_id'] = $db->real_escape_string((string)$user_id);
+// A publisher link credits a publisher the account granted; any other id is
+// ignored. A re-click keeps its first visit's credit.
+$rtrPublisher = $reClick === null ? p202ClickPublisher($db, (int) $user_id, $_GET) : null;
+$mysql['publisher_user_id'] = (string) ($rtrPublisher['user_id'] ?? 0);
 
 //lets determine if cloaking is on
 $cloaking_on = false;
@@ -636,6 +681,10 @@ if ((int) $rule['aff_campaign_id'] > 0) {
 }
 $rtrIdentity = p202ClickIdentity($_GET, $rtrCampaignAllows);
 
+// The credit is written after the click's rows, so its token is filled here.
+if ($rtrPublisher !== null && is_string($redirect_site_url)) {
+	$redirect_site_url = str_ireplace('[[t202pubid]]', rawurlencode($rtrPublisher['public_id']), $redirect_site_url);
+}
 // Inside the transaction: the placeholders are read back from the rows just
 // written. A plain closure: it hands the resolved URL out.
 $rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $user_id, $locationRepo): int {
@@ -644,7 +693,7 @@ $rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $use
 };
 // Built outside the try: a record the builder refuses is a bug, not a
 // database failure, and the uncaught handler logs it as one.
-$rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity);
+$rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity, $rtrCampaignRows);
 try {
     // The site URL lookup caches the ids of the rows it inserts: held until
     // the transaction commits, and dropped with a rollback.

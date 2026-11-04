@@ -1,0 +1,1 @@
+-- Fixed: 71 tests called fail() inside a try whose catch took RuntimeException, Exception or Throwable. PHPUnit's failure is a RuntimeException, so each one caught its own failure and passed whatever the code did. Each now rethrows a failed assertion before its broad catch, and tests/Support/FailInBroadCatchTest refuses the shape anywhere under tests/.
