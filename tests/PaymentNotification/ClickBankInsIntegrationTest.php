@@ -522,6 +522,27 @@ final class ClickBankInsIntegrationTest extends TestCase
         self::assertCount(3, self::conversions());
     }
 
+    /** A click 1.9.56 left below 0 carried nothing over: a refund naming no sale takes nothing from a later sale. */
+    public function testARefundNamingNoSaleTakesNothingFromAClickCarriedOverBelowZero(): void
+    {
+        self::q("UPDATE 202_clicks SET click_lead = 1, click_payout = '-10.00' WHERE click_id = " . self::CLICK);
+        self::assertOutcome(
+            OutcomeKind::RECORDED,
+            200,
+            $this->post(['receipt' => 'NEWSALE1', 'totalAccountAmount' => '30.00'], self::FIRST_KEY)
+        );
+        $before = self::clickPayout();
+
+        $refund = $this->post([
+            'transactionType' => 'RFND', 'receipt' => 'OLDSALE1', 'totalAccountAmount' => '-10.00',
+            'transactionTime' => self::stated(time()),
+        ], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::NOTHING_TO_REVERSE, 404, $refund);
+        self::assertStringContainsString('Nothing is left of the value click', $refund->message);
+        self::assertSame($before, self::clickPayout());
+        self::assertCount(2, self::conversions());
+    }
+
     /** Only a value carried from before the upgrade is taken back from: a click the ledger valued is not. */
     public function testARefundNamingNoSaleOnAClickTheLedgerValuedStillFindsNothing(): void
     {

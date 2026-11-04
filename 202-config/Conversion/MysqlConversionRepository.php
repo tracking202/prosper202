@@ -697,9 +697,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     }
 
     /**
-     * What is left of a legacy baseline, in positive units, read under the
-     * click's lock: nothing once a later sale superseded it, else its value
-     * less what live reversals took back from it.
+     * What is left of a legacy baseline, in units, read under the click's
+     * lock: nothing once a later sale superseded it or when it carried no
+     * value above 0, else its value less what live reversals took back.
      *
      * @param array<string, mixed> $baseline from carriedValue()
      */
@@ -708,7 +708,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         if ($baseline['superseded_reason'] !== null) {
             return 0;
         }
-        $left = abs(Amount::toUnits((string) $baseline['click_payout']));
+        // Signed: 1.9.56 could leave a click below 0, which leaves nothing.
+        $left = Amount::toUnits((string) $baseline['click_payout']);
         $stmt = $this->conn->prepareWrite(
             'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0'
         );
