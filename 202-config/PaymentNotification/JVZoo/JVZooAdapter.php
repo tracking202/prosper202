@@ -12,6 +12,7 @@ use Prosper202\PaymentNotification\ClickField;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
+use Prosper202\PaymentNotification\Outcome;
 use Prosper202\PaymentNotification\OutcomeKind;
 use Prosper202\PaymentNotification\ProviderAdapter;
 use Prosper202\PaymentNotification\Refusal;
@@ -178,9 +179,17 @@ final class JVZooAdapter implements ProviderAdapter
 
     public function parse(InboundRequest $request): Notification
     {
-        $notification = $this->read($request);
-
-        return $this->roleless ? $notification->withNote(self::ROLELESS_NOTE) : $notification;
+        if (!$this->roleless) {
+            return $this->read($request);
+        }
+        try {
+            return $this->read($request)->withNote(self::ROLELESS_NOTE);
+        } catch (Refusal $refusal) {
+            $o = $refusal->outcome;
+            throw new Refusal(
+                new Outcome($o->kind, $o->message . ' ' . self::ROLELESS_NOTE, $o->conversionId, $o->accountId)
+            );
+        }
     }
 
     private function read(InboundRequest $request): Notification

@@ -444,6 +444,10 @@ final class JVZooAdapterTest extends TestCase
         // The vendor's subid is not read at the URL with no role.
         $vendorOnly = $roleless->parse(self::request(self::sale(['caffitid' => '', 'cvendthru' => 'subid=42'])));
         self::assertNull($vendorOnly->clickId);
+        // A notification it cannot read is refused saying how the URL was read, too.
+        $refusal = self::refusal(static fn () => $roleless->parse(self::request(self::sale(['ctransaction' => '']))));
+        self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
+        self::assertStringEndsWith(' ' . JVZooAdapter::ROLELESS_NOTE, $refusal->outcome->message);
     }
 
     public function testTheRoleIsReadFromTheQueryExactly(): void
