@@ -27,6 +27,10 @@ use Prosper202\OfflineConversion\StoredRow;
  *
  * Reads are tri-state (CLAUDE.md #11): settings, PostbackAuthSettings::none()
  * for an account with no row, and a throw for a row that cannot be read.
+ * The mode is read without opening anything (mode()), and settings() opens
+ * only the credentials asked for, so a value that cannot be read stops only
+ * a request that presents that credential; ensureCredentials(), rotate()
+ * and setMode() replace it with a new one.
  * Every read is on the primary, so a credential rotated a moment ago is
  * refused at once.
  */
@@ -36,8 +40,17 @@ final class PostbackAuthStore
     public const MAX_GRACE_SECONDS = 30 * 86400;
     public const DEFAULT_GRACE_SECONDS = 7 * 86400;
     private const CIPHER = 'aes-256-gcm';
+    /** How an owner recovers from a credential that cannot be read; each of these replaces it. */
+    private const RECOVERY = 'rotate both credentials (Account › API Integrations › Postback authentication, or'
+        . ' POST /conversions/postback-auth/rotate) to make new ones';
     private const COLUMNS = 'auth_mode, token_sealed, token_created_at, previous_token_sealed, previous_token_expires_at,'
         . ' secret_sealed, secret_created_at, previous_secret_sealed, previous_secret_expires_at';
+    /** Each credential's columns: current, made at, the one it replaced, that one's end. */
+    private const COLUMN = [
+        'token' => ['token_sealed', 'token_created_at', 'previous_token_sealed', 'previous_token_expires_at'],
+        'signing_secret' => ['secret_sealed', 'secret_created_at', 'previous_secret_sealed', 'previous_secret_expires_at'],
+    ];
+
     /** Each credential's write, its columns spelled out: current, made at, the one it replaced, that one's end. */
     private const WRITES = [
         'token' => 'UPDATE `202_postback_auth` SET token_sealed = ?, token_created_at = ?, previous_token_sealed = ?,'
@@ -50,39 +63,55 @@ final class PostbackAuthStore
     {
     }
 
-    public function settings(int $userId): PostbackAuthSettings
+    /**
+     * The account's mode, read without opening any credential: what deciding
+     * a request that presents none needs, so an unreadable credential never
+     * stands in the way of an account in mode off.
+     */
+    public function mode(int $userId): PostbackAuthMode
     {
-        $stmt = $this->conn->prepareWrite(
-            'SELECT ' . self::COLUMNS . ' FROM `' . TableRegistry::POSTBACK_AUTH . '` WHERE user_id = ? LIMIT 1'
-        );
-        $this->conn->bind($stmt, 'i', [$userId]);
-        $row = $this->conn->fetchOne($stmt);
+        $row = $this->row($userId, false);
 
-        return $row === null ? PostbackAuthSettings::none() : $this->fromRow($userId, $row);
+        return $row === null ? PostbackAuthMode::TOKEN : self::modeOf($userId, $row);
+    }
+
+    /**
+     * The account's settings with $credentials opened (both by default); the
+     * others are left null, so checking a token never needs the signing
+     * secret to open. A sealed value that does not open throws.
+     *
+     * @param list<PostbackCredential>|null $credentials
+     */
+    public function settings(int $userId, ?array $credentials = null): PostbackAuthSettings
+    {
+        $row = $this->row($userId, false);
+        if ($row === null) {
+            return PostbackAuthSettings::none();
+        }
+
+        return $this->fromRow($userId, $row, $credentials ?? PostbackCredential::cases());
     }
 
     /**
      * The account's settings with a token and a signing secret in them: the
-     * ones it has, or ones minted now. What every place that hands out a
+     * ones it has, or ones minted now. One stored but unreadable (its key
+     * missing, or a value that does not open) is replaced by a new one, as
+     * is a missing key; the result says so (replacedUnreadable,
+     * keyRecreated, recoveryNotice()). What every place that hands out a
      * postback URL or shows the secret calls.
      */
     public function ensureCredentials(int $userId, int $now): PostbackAuthSettings
     {
-        $settings = $this->settings($userId);
-        if ($settings->token !== null && $settings->secret !== null) {
-            return $settings;
+        $row = $this->row($userId, false);
+        if ($row !== null) {
+            self::modeOf($userId, $row);
+            $key = self::hasSealed($row) ? $this->loadKey() : null;
+            if ($key !== null && $this->allReadable($userId, $row, $key)) {
+                return $this->fromRow($userId, $row, PostbackCredential::cases());
+            }
         }
 
-        return $this->conn->transaction(function () use ($userId, $now): PostbackAuthSettings {
-            $locked = $this->lockRow($userId, $now);
-            foreach ([PostbackCredential::TOKEN, PostbackCredential::SIGNING_SECRET] as $credential) {
-                if (self::current($locked, $credential) === null) {
-                    $this->writeCredential($userId, $credential, self::generate($credential), null, null, $now);
-                }
-            }
-
-            return $this->settings($userId);
-        });
+        return $this->conn->transaction(fn (): PostbackAuthSettings => $this->ensureLocked($userId, $now, $this->lockRow($userId, $now)));
     }
 
     /**
@@ -90,7 +119,9 @@ final class PostbackAuthStore
      * replaces keeps working that long, so the URLs or the senders already
      * using it can be moved one by one; with 0 it stops at once (one that
      * leaked). One an earlier rotation kept working is dropped: two work at
-     * most.
+     * most. One that cannot be read is replaced without a grace period (it
+     * already works nowhere), and so is the other credential when it cannot
+     * be read: rotating is how an owner recovers from an unreadable one.
      */
     public function rotate(int $userId, PostbackCredential $credential, int $graceSeconds, int $now): PostbackAuthSettings
     {
@@ -99,8 +130,10 @@ final class PostbackAuthStore
         }
 
         return $this->conn->transaction(function () use ($userId, $credential, $graceSeconds, $now): PostbackAuthSettings {
-            $locked = $this->lockRow($userId, $now);
-            $old = self::current($locked, $credential);
+            $row = $this->lockRow($userId, $now);
+            $hadKey = $this->loadKey();
+            $current = self::COLUMN[$credential->value][0];
+            $old = $hadKey === null ? null : self::tryOpen($row[$current] ?? null, $hadKey, $userId, $credential);
             $keep = $graceSeconds > 0 && $old !== null;
             $this->writeCredential(
                 $userId,
@@ -108,28 +141,69 @@ final class PostbackAuthStore
                 self::generate($credential),
                 $keep ? $old : null,
                 $keep ? $now + $graceSeconds : null,
+                $now,
                 $now
             );
+            $unreadable = ($row[$current] ?? null) !== null && $old === null ? [$credential] : [];
+            $settings = $this->ensureLocked($userId, $now, $this->lockRow($userId, $now), $hadKey === null && self::hasSealed($row));
 
-            return $this->settings($userId);
+            return $settings->withRecovery(array_merge($unreadable, $settings->replacedUnreadable), $settings->keyRecreated);
         });
     }
 
+    /**
+     * The mode, and credentials to go with it, in one transaction: either
+     * both are stored or neither is, so a failure leaves the mode as it was.
+     */
     public function setMode(int $userId, PostbackAuthMode $mode, int $now): PostbackAuthSettings
     {
-        $stmt = $this->conn->prepareWrite(
-            'INSERT INTO `' . TableRegistry::POSTBACK_AUTH . '` (user_id, auth_mode, updated_at) VALUES (?, ?, ?)'
-            . ' ON DUPLICATE KEY UPDATE auth_mode = VALUES(auth_mode), updated_at = VALUES(updated_at)'
-        );
-        $this->conn->bind($stmt, 'isi', [$userId, $mode->value, $now]);
-        $this->conn->executeUpdate($stmt);
+        return $this->conn->transaction(function () use ($userId, $mode, $now): PostbackAuthSettings {
+            $this->lockRow($userId, $now);
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE `' . TableRegistry::POSTBACK_AUTH . '` SET auth_mode = ?, updated_at = ? WHERE user_id = ?'
+            );
+            $this->conn->bind($stmt, 'sii', [$mode->value, $now, $userId]);
+            $this->conn->executeUpdate($stmt);
 
-        return $this->settings($userId);
+            return $this->ensureLocked($userId, $now, $this->lockRow($userId, $now));
+        });
     }
 
-    private static function current(PostbackAuthSettings $settings, PostbackCredential $credential): ?string
+    /**
+     * ensureCredentials() inside the caller's transaction, on the account's
+     * locked row as read: each credential that is missing or does not open
+     * is minted anew, and a previous one that does not open is dropped.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function ensureLocked(int $userId, int $now, array $row, ?bool $keyWasMissing = null): PostbackAuthSettings
     {
-        return $credential === PostbackCredential::TOKEN ? $settings->token : $settings->secret;
+        self::modeOf($userId, $row);
+        $hadKey = $this->loadKey();
+        $replaced = [];
+        foreach (PostbackCredential::cases() as $credential) {
+            [$currentColumn, $createdColumn, $previousColumn] = self::COLUMN[$credential->value];
+            $current = self::tryOpen($row[$currentColumn] ?? null, $hadKey, $userId, $credential);
+            if ($current === null) {
+                if (($row[$currentColumn] ?? null) !== null) {
+                    $replaced[] = $credential;
+                }
+                $this->writeCredential($userId, $credential, self::generate($credential), null, null, $now, $now);
+                continue;
+            }
+            if (($row[$previousColumn] ?? null) !== null
+                && self::tryOpen($row[$previousColumn], $hadKey, $userId, $credential) === null) {
+                // Its grace cannot be honoured: it opens nowhere.
+                $this->writeCredential($userId, $credential, $current, null, null,
+                    StoredRow::nullableInt($row, $createdColumn) ?? $now, $now);
+            }
+        }
+        $keyRecreated = $keyWasMissing ?? ($hadKey === null && self::hasSealed($row));
+        $stored = $this->row($userId, true) ?? throw new \RuntimeException(
+            'The postback settings of account ' . $userId . ' were written but cannot be read back'
+        );
+
+        return $this->fromRow($userId, $stored, PostbackCredential::cases())->withRecovery($replaced, $keyRecreated);
     }
 
     private static function generate(PostbackCredential $credential): string
@@ -137,8 +211,25 @@ final class PostbackAuthStore
         return $credential === PostbackCredential::TOKEN ? PostbackToken::generate() : PostbackSigningSecret::generate();
     }
 
-    /** The account's row, made with the table's defaults when missing, locked for this transaction. */
-    private function lockRow(int $userId, int $now): PostbackAuthSettings
+    /** @return array<string, mixed>|null the account's row as stored, locked when $forUpdate */
+    private function row(int $userId, bool $forUpdate): ?array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT ' . self::COLUMNS . ' FROM `' . TableRegistry::POSTBACK_AUTH . '` WHERE user_id = ? '
+            . ($forUpdate ? 'FOR UPDATE' : 'LIMIT 1')
+        );
+        $this->conn->bind($stmt, 'i', [$userId]);
+
+        return $this->conn->fetchOne($stmt);
+    }
+
+    /**
+     * The account's row, made with the table's defaults when missing, locked
+     * for this transaction, as stored: nothing in it is opened.
+     *
+     * @return array<string, mixed>
+     */
+    private function lockRow(int $userId, int $now): array
     {
         $insert = $this->conn->prepareWrite(
             'INSERT INTO `' . TableRegistry::POSTBACK_AUTH . '` (user_id, updated_at) VALUES (?, ?)'
@@ -146,16 +237,10 @@ final class PostbackAuthStore
         );
         $this->conn->bind($insert, 'ii', [$userId, $now]);
         $this->conn->executeUpdate($insert);
-        $stmt = $this->conn->prepareWrite(
-            'SELECT ' . self::COLUMNS . ' FROM `' . TableRegistry::POSTBACK_AUTH . '` WHERE user_id = ? FOR UPDATE'
-        );
-        $this->conn->bind($stmt, 'i', [$userId]);
-        $row = $this->conn->fetchOne($stmt);
-        if ($row === null) {
-            throw new \RuntimeException('The postback settings of account ' . $userId . ' were written but cannot be read back');
-        }
 
-        return $this->fromRow($userId, $row);
+        return $this->row($userId, true) ?? throw new \RuntimeException(
+            'The postback settings of account ' . $userId . ' were written but cannot be read back'
+        );
     }
 
     private function writeCredential(
@@ -164,13 +249,14 @@ final class PostbackAuthStore
         string $value,
         ?string $previous,
         ?int $previousExpiresAt,
+        int $createdAt,
         int $now
     ): void {
         $key = $this->ensureKey();
         $stmt = $this->conn->prepareWrite(self::WRITES[$credential->value]);
         $this->conn->bind($stmt, 'sisiii', [
             self::seal($value, $key, $userId, $credential),
-            $now,
+            $createdAt,
             $previous === null ? null : self::seal($previous, $key, $userId, $credential),
             $previousExpiresAt,
             $now,
@@ -180,7 +266,7 @@ final class PostbackAuthStore
     }
 
     /** @param array<string, mixed> $row */
-    private function fromRow(int $userId, array $row): PostbackAuthSettings
+    private static function modeOf(int $userId, array $row): PostbackAuthMode
     {
         $mode = PostbackAuthMode::tryFrom(StoredRow::text($row, 'auth_mode'));
         if ($mode === null) {
@@ -188,16 +274,57 @@ final class PostbackAuthStore
             throw new \UnexpectedValueException('auth_mode of account ' . $userId . ' is not one of '
                 . implode(', ', PostbackAuthMode::values()));
         }
+
+        return $mode;
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function hasSealed(array $row): bool
+    {
+        foreach (self::COLUMN as [$current, , $previous]) {
+            if (($row[$current] ?? null) !== null || ($row[$previous] ?? null) !== null) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $row */
+    private function allReadable(int $userId, array $row, string $key): bool
+    {
+        foreach (PostbackCredential::cases() as $credential) {
+            [$current, , $previous] = self::COLUMN[$credential->value];
+            if (self::tryOpen($row[$current] ?? null, $key, $userId, $credential) === null) {
+                return false;
+            }
+            if (($row[$previous] ?? null) !== null && self::tryOpen($row[$previous], $key, $userId, $credential) === null) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @param list<PostbackCredential> $credentials the ones to open; the others are left null
+     */
+    private function fromRow(int $userId, array $row, array $credentials): PostbackAuthSettings
+    {
+        $mode = self::modeOf($userId, $row);
         $sealed = [];
-        foreach (['token_sealed', 'previous_token_sealed', 'secret_sealed', 'previous_secret_sealed'] as $column) {
-            if (($row[$column] ?? null) !== null) {
-                $sealed[$column] = StoredRow::text($row, $column);
+        foreach ($credentials as $credential) {
+            foreach ([self::COLUMN[$credential->value][0], self::COLUMN[$credential->value][2]] as $column) {
+                if (($row[$column] ?? null) !== null) {
+                    $sealed[$column] = StoredRow::text($row, $column);
+                }
             }
         }
         $key = $sealed === [] ? null : $this->loadKey();
         if ($sealed !== [] && $key === null) {
             throw new \RuntimeException('Account ' . $userId . ' has postback credentials but their encryption key is missing'
-                . ' from 202_deployment_secrets; rotate the token and the signing secret to make new ones');
+                . ' from 202_deployment_secrets; ' . self::RECOVERY);
         }
         $open = static function (string $column, PostbackCredential $credential) use ($sealed, $key, $userId): ?string {
             return isset($sealed[$column]) ? self::open($sealed[$column], (string) $key, $userId, $credential) : null;
@@ -238,19 +365,31 @@ final class PostbackAuthStore
     /** @throws \RuntimeException for a value that is not v1, does not verify for this account and kind, or is not of its shape */
     public static function open(string $sealed, #[\SensitiveParameter] string $key, int $userId, PostbackCredential $credential): string
     {
-        $raw = str_starts_with($sealed, 'v1.') ? base64_decode(substr($sealed, 3), true) : false;
-        if ($raw === false || strlen($raw) < 29) {
-            throw new \RuntimeException('The stored postback ' . $credential->value . ' of account ' . $userId . ' is not a v1 ciphertext');
-        }
-        $value = openssl_decrypt(substr($raw, 28), self::CIPHER, $key, OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16), self::aad($userId, $credential));
-        $wellFormed = $value !== false && ($credential === PostbackCredential::TOKEN
-            ? PostbackToken::isWellFormed($value) : PostbackSigningSecret::isWellFormed($value));
-        if (!$wellFormed) {
-            throw new \RuntimeException('The stored postback ' . $credential->value . ' of account ' . $userId . ' does not decrypt'
-                . ' (wrong key, altered, or copied from another account); rotate it to make a new one');
+        if (!str_starts_with($sealed, 'v1.')) {
+            throw new \RuntimeException('The stored postback ' . $credential->value . ' of account ' . $userId
+                . ' is not a v1 ciphertext; ' . self::RECOVERY);
         }
 
-        return (string) $value;
+        return self::tryOpen($sealed, $key, $userId, $credential) ?? throw new \RuntimeException('The stored postback '
+            . $credential->value . ' of account ' . $userId . ' does not decrypt (wrong key, altered, or copied from'
+            . ' another account); ' . self::RECOVERY);
+    }
+
+    /** The value, or null when there is none, no key, or it does not open as this account's $credential. */
+    private static function tryOpen(mixed $sealed, #[\SensitiveParameter] ?string $key, int $userId, PostbackCredential $credential): ?string
+    {
+        if (!is_string($sealed) || $key === null || !str_starts_with($sealed, 'v1.')) {
+            return null;
+        }
+        $raw = base64_decode(substr($sealed, 3), true);
+        if ($raw === false || strlen($raw) < 29) {
+            return null;
+        }
+        $value = openssl_decrypt(substr($raw, 28), self::CIPHER, $key, OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16), self::aad($userId, $credential));
+        $wellFormed = is_string($value) && ($credential === PostbackCredential::TOKEN
+            ? PostbackToken::isWellFormed($value) : PostbackSigningSecret::isWellFormed($value));
+
+        return $wellFormed ? $value : null;
     }
 
     /** The key, minted first if absent. An existing key is never replaced. */

@@ -175,7 +175,8 @@ final class PostbackAuthIntegrationTest extends TestCase
         }
         self::assertNotNull(self::store()->settings(self::A)->token, 'the credentials stay');
         self::assertSame(PostbackAuthMode::OFF, self::store()->setMode(self::B, PostbackAuthMode::OFF, self::NOW)->mode, 'a row is made for an account without one');
-        self::assertNull(self::store()->settings(self::B)->token);
+        self::assertNotNull(self::store()->settings(self::B)->token, 'with the credentials, in the same transaction');
+        self::assertSame(PostbackAuthMode::OFF, self::store()->mode(self::B));
 
         self::q("UPDATE 202_postback_auth SET auth_mode = 'maybe' WHERE user_id = " . self::A);
         $this->expectException(\UnexpectedValueException::class);
@@ -305,19 +306,145 @@ final class PostbackAuthIntegrationTest extends TestCase
         self::assertSame(1, self::conversions(self::B), 'signed only: the pixel\'s token alone converts nothing');
     }
 
-    public function testAFailedReadIsNeverAPass(): void
+    public function testAMissingKeyFailsClosedUntilARotationMakesNewCredentials(): void
     {
-        self::store()->ensureCredentials(self::B, time());
-        $key = self::$db->query("SELECT secret_value FROM 202_deployment_secrets WHERE secret_name = 'postback_token'")->fetch_row()[0];
+        $old = self::store()->ensureCredentials(self::B, time());
+        self::store()->ensureCredentials(self::A, time());
+        self::store()->setMode(self::A, PostbackAuthMode::OFF, time());
+        $key = self::key();
         self::q("DELETE FROM 202_deployment_secrets WHERE secret_name = 'postback_token'");
         try {
-            [$status, $body] = self::hit('gpb', self::B, []);
+            // Token mode: the old token is refused with 500, never a pass; nothing presented is a 403, decided by the mode alone.
+            [$status, $body] = self::hit('gpb', self::B, ['p202_token' => (string) $old->token]);
             self::assertSame(500, $status, $body);
             self::assertStringContainsString('Failed to check postback authentication', $body);
+            [$status, $body] = self::hit('gpb', self::B, []);
+            self::assertSame(403, $status, $body);
             self::assertSame(0, self::conversions(self::B));
+            // Off mode keeps accepting a postback without credentials.
+            [$status, $body] = self::hit('gpb', self::A, []);
+            self::assertContains($status, [200, 202], 'off, key missing: ' . $body);
+            self::assertSame(1, self::conversions(self::A));
+            self::assertSame(PostbackAuthMode::TOKEN, self::store()->mode(self::B), 'the mode reads without the key');
+
+            $rotated = self::store()->rotate(self::B, PostbackCredential::TOKEN, 3600, time());
+            self::assertSame([PostbackCredential::TOKEN, PostbackCredential::SIGNING_SECRET], $rotated->replacedUnreadable);
+            self::assertTrue($rotated->keyRecreated);
+            self::assertStringContainsString('stopped working', (string) $rotated->recoveryNotice());
+            self::assertNotSame($old->token, $rotated->token);
+            self::assertNotSame($old->secret, $rotated->secret);
+            self::assertNull($rotated->previousTokenValidUntil(time()), 'an old token that cannot be read is not kept');
+            self::assertNotSame($key, self::key(), 'a new key');
+
+            [$status, $body] = self::hit('gpb', self::B, ['p202_token' => (string) $rotated->token]);
+            self::assertContains($status, [200, 202], 'the new token: ' . $body);
+            self::assertSame(1, self::conversions(self::B));
+            [$status] = self::hit('gpb', self::B, ['p202_token' => (string) $old->token]);
+            self::assertSame(403, $status, 'the old token stopped working');
+            self::assertSame(1, self::conversions(self::B));
+            [$status, $body] = self::hit('gpb', self::A, []);
+            self::assertContains($status, [200, 202], 'off, after the new key: ' . $body);
+            self::assertSame(2, self::conversions(self::A));
+
+            // A's values were sealed under the lost key: its next read replaces them, and says so.
+            $a = self::store()->ensureCredentials(self::A, time());
+            self::assertSame([PostbackCredential::TOKEN, PostbackCredential::SIGNING_SECRET], $a->replacedUnreadable);
+            self::assertFalse($a->keyRecreated, 'the key was made again once, by B\'s rotation');
+            self::assertSame([], self::store()->ensureCredentials(self::A, time())->replacedUnreadable, 'and only once');
         } finally {
+            self::q("DELETE FROM 202_deployment_secrets WHERE secret_name = 'postback_token'");
             self::q("INSERT INTO 202_deployment_secrets SET secret_name = 'postback_token', secret_value = " . self::str($key)
                 . ', created_at = 0');
+        }
+    }
+
+    public function testAValueThatDoesNotOpenFailsClosedUntilItIsReplaced(): void
+    {
+        $old = self::store()->ensureCredentials(self::B, time());
+        $sealedB = self::$db->query('SELECT token_sealed FROM 202_postback_auth WHERE user_id = ' . self::B)->fetch_row()[0];
+        self::store()->ensureCredentials(self::A, time());
+        // A's own sealed token, copied onto B: well formed, and it does not open as B's.
+        $foreign = self::$db->query('SELECT token_sealed FROM 202_postback_auth WHERE user_id = ' . self::A)->fetch_row()[0];
+        self::assertNotSame($sealedB, $foreign);
+        self::q('UPDATE 202_postback_auth SET token_sealed = ' . self::str((string) $foreign) . ' WHERE user_id = ' . self::B);
+
+        [$status, $body] = self::hit('gpb', self::B, ['p202_token' => (string) $old->token]);
+        self::assertSame(500, $status, $body);
+        $signed = self::signed('gpb', self::B, (string) $old->secret, time());
+        [$status, $body] = self::runQuery('gpb', $signed);
+        self::assertContains($status, [200, 202], 'a signature needs only the secret, which still opens: ' . $body);
+        self::assertSame(1, self::conversions(self::B));
+
+        $ensured = self::store()->ensureCredentials(self::B, time());
+        self::assertSame([PostbackCredential::TOKEN], $ensured->replacedUnreadable);
+        self::assertFalse($ensured->keyRecreated);
+        self::assertSame($old->secret, $ensured->secret, 'the secret that opens is kept');
+        self::assertNotSame($old->token, $ensured->token);
+        [$status, $body] = self::hit('gpb', self::B, ['p202_token' => (string) $ensured->token]);
+        self::assertContains($status, [200, 202], $body);
+        self::assertSame(2, self::conversions(self::B));
+    }
+
+    public function testAModeThatCannotBeSavedWithItsCredentialsIsNotSaved(): void
+    {
+        self::store()->setMode(self::B, PostbackAuthMode::OFF, time());
+        $key = self::key();
+        self::q("UPDATE 202_deployment_secrets SET secret_value = 'not hex' WHERE secret_name = 'postback_token'");
+        self::q('UPDATE 202_postback_auth SET token_sealed = NULL WHERE user_id = ' . self::B);
+        try {
+            $refused = null;
+            try {
+                self::store()->setMode(self::B, PostbackAuthMode::SIGNED, time());
+            } catch (\RuntimeException $e) {
+                $refused = $e->getMessage();
+            }
+            self::assertStringContainsString('not 64 lower-case hex', (string) $refused, 'a mode was saved without the credential it needs');
+            self::assertSame(PostbackAuthMode::OFF, self::store()->mode(self::B), 'the mode is as it was');
+        } finally {
+            self::q('UPDATE 202_deployment_secrets SET secret_value = ' . self::str($key) . " WHERE secret_name = 'postback_token'");
+        }
+        $saved = self::store()->setMode(self::B, PostbackAuthMode::SIGNED, time());
+        self::assertSame(PostbackAuthMode::SIGNED, $saved->mode);
+        self::assertNotNull($saved->token, 'the missing token was made with it');
+    }
+
+    /**
+     * pb.php authenticates the campaign's account, and the click comes from
+     * subid: account A's campaign and token, naming B's click, convert
+     * nothing of B's and say no more than an unknown click would.
+     */
+    public function testOneAccountsCampaignAndTokenConvertNothingOfAnothersClick(): void
+    {
+        $a = (string) self::store()->ensureCredentials(self::A, time())->token;
+        self::store()->ensureCredentials(self::B, time());
+        $acip = (string) self::CAMPAIGN[self::A][1];
+        $theirs = (string) self::CLICK[self::B];
+        $unknown = self::runQuery('pb', http_build_query(['acip' => $acip, 'subid' => '99030999', 'p202_token' => $a, 'txid' => 'x-0']));
+        self::assertSame(404, $unknown[0], $unknown[1]);
+        foreach ([[], ['status' => 'reversed'], ['event' => 'purchase']] as $extra) {
+            $query = http_build_query(['acip' => $acip, 'subid' => $theirs, 'p202_token' => $a, 'txid' => 'x-' . ++self::$tx] + $extra);
+            [$status, $body] = self::runQuery('pb', $query);
+            self::assertSame(404, $status, json_encode($extra) . ': ' . $body);
+            self::assertSame($unknown[1], $body, 'the answer an unknown click gets, nothing of B\'s');
+        }
+        self::assertSame(0, self::conversions(self::B));
+
+        // A row from before the campaign check that ties B's click to A's campaign changes nothing.
+        $click = self::CLICK[self::B];
+        foreach (['202_clicks', '202_clicks_spy'] as $table) {
+            self::q("UPDATE $table SET aff_campaign_id = " . self::CAMPAIGN[self::A][0] . " WHERE click_id = $click");
+        }
+        LatestVisit::refresh(new Connection(self::$db), $click);
+        try {
+            [$status, $body] = self::runQuery('pb', http_build_query(['acip' => $acip, 'subid' => $theirs, 'p202_token' => $a, 'txid' => 'x-legacy']));
+            self::assertSame(404, $status, $body);
+            self::assertSame($unknown[1], $body);
+            self::assertSame(0, self::conversions(self::B));
+        } finally {
+            foreach (['202_clicks', '202_clicks_spy'] as $table) {
+                self::q("UPDATE $table SET aff_campaign_id = " . self::CAMPAIGN[self::B][0] . " WHERE click_id = $click");
+            }
+            LatestVisit::refresh(new Connection(self::$db), $click);
         }
     }
 
@@ -346,6 +473,11 @@ final class PostbackAuthIntegrationTest extends TestCase
     }
 
     // ── helpers ─────────────────────────────────────────────────────────
+
+    private static function key(): string
+    {
+        return (string) self::$db->query("SELECT secret_value FROM 202_deployment_secrets WHERE secret_name = 'postback_token'")->fetch_row()[0];
+    }
 
     private static function conversions(int $owner): int
     {

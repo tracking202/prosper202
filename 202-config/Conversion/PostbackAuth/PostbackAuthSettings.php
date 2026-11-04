@@ -22,13 +22,62 @@ final class PostbackAuthSettings
         public readonly ?int $secretCreatedAt = null,
         public readonly ?string $previousSecret = null,
         public readonly ?int $previousSecretExpiresAt = null,
+        /** @var list<PostbackCredential> stored ones that could not be read, replaced by new ones on this call */
+        public readonly array $replacedUnreadable = [],
+        /** Whether this call made a new encryption key because the stored one was missing. */
+        public readonly bool $keyRecreated = false,
     ) {
     }
 
     /** An account with no row: one made from 1.9.80 on, before it was ever handed a token. */
     public static function none(): self
     {
-        return new self(PostbackAuthMode::TOKEN, null, null, null, null);
+        return self::modeOnly(PostbackAuthMode::TOKEN);
+    }
+
+    /** The mode with no credential read: what deciding a request that presents none needs. */
+    public static function modeOnly(PostbackAuthMode $mode): self
+    {
+        return new self($mode, null, null, null, null);
+    }
+
+    /** @param list<PostbackCredential> $replaced */
+    public function withRecovery(array $replaced, bool $keyRecreated): self
+    {
+        return new self(
+            $this->mode,
+            $this->token,
+            $this->tokenCreatedAt,
+            $this->previousToken,
+            $this->previousTokenExpiresAt,
+            $this->secret,
+            $this->secretCreatedAt,
+            $this->previousSecret,
+            $this->previousSecretExpiresAt,
+            $replaced,
+            $keyRecreated,
+        );
+    }
+
+    /** What the owner must be told when unreadable credentials were replaced, or null when none were. */
+    public function recoveryNotice(): ?string
+    {
+        if ($this->replacedUnreadable === []) {
+            return null;
+        }
+        $names = array_map(
+            static fn (PostbackCredential $c): string => $c === PostbackCredential::TOKEN ? 'postback token' : 'signing secret',
+            $this->replacedUnreadable
+        );
+        $what = implode(' and ', $names);
+
+        return ($this->keyRecreated
+            ? 'The key that encrypts postback credentials was missing from this install, so a new key was made and your '
+            : 'Your stored ')
+            . $what . ' could not be read, so new ' . (count($names) > 1 ? 'ones were' : 'one was')
+            . ' made. The previous ' . (count($names) > 1 ? 'ones' : 'one') . ' stopped working: copy your postback URLs and pixels again from'
+            . ' Setup › Postback / Pixel' . (in_array(PostbackCredential::SIGNING_SECRET, $this->replacedUnreadable, true)
+                ? ', and give the new signing secret to everything that signs.' : '.');
     }
 
     /**

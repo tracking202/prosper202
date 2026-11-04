@@ -70,6 +70,9 @@ template_top('Pixel And Postback URLs');
 <?php if ($postbackAuth === null) { ?>
 <div class="alert alert-danger" role="alert">Your postback token could not be read just now, so these URLs carry none, and an account that requires one refuses them. Reload the page; if it persists, see the server's error log.</div>
 <?php } else { ?>
+<?php if ($postbackAuth->recoveryNotice() !== null) { ?>
+<div class="alert alert-warning" role="alert"><?php echo p202_setup_e((string) $postbackAuth->recoveryNotice()); ?></div>
+<?php } ?>
 <p class="p202-decided mb-3"><i class="bi bi-shield-lock"></i> <?php echo match ($postbackAuth->mode) {
 	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN => 'Your account accepts only postbacks and pixels that carry its token (<code>p202_token</code>), as these URLs do, or a signature.',
 	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Your account also accepts postbacks and pixels without a token. These URLs carry it; once your networks use them, require it.',

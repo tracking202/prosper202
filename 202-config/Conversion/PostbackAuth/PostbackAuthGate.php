@@ -21,6 +21,8 @@ use Prosper202\Database\Connection;
  * - Mode signed: a signature is needed; the token alone is refused. A pixel
  *   is fetched by a browser and cannot sign, so every pixel is refused.
  * - A row that cannot be read throws: the caller answers 500, never a pass.
+ *   Only what the request presents is opened: a request presenting nothing
+ *   is decided by the mode alone.
  *
  * A PurLink SubID's MAC is not authentication here: it says which click and
  * offer the SubID names, not who sent the postback.
@@ -49,7 +51,20 @@ final class PostbackAuthGate
             return new PostbackAuthRefusal('credentials_malformed', $presented->problem);
         }
 
-        return self::decide($this->store->settings($userId), $presented, $endpoint, $now);
+        if ($presented->presentsNothing()) {
+            // The mode decides alone: nothing sealed is opened, so mode off
+            // keeps working while a credential cannot be read.
+            return self::decide(PostbackAuthSettings::modeOnly($this->store->mode($userId)), $presented, $endpoint, $now);
+        }
+        $needed = [];
+        if ($presented->token !== null) {
+            $needed[] = PostbackCredential::TOKEN;
+        }
+        if ($presented->isSigned()) {
+            $needed[] = PostbackCredential::SIGNING_SECRET;
+        }
+
+        return self::decide($this->store->settings($userId, $needed), $presented, $endpoint, $now);
     }
 
     /** check()'s decision for the account's settings as read. */

@@ -276,22 +276,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			p202_account_redirect('202-account/api-integrations.php#postback-auth');
 		}
 		try {
+			$pbSaved = null;
 			if ($pbAction === 'rotate' && $pbCredential !== null && is_string($pbGrace)) {
-				$pbStore->rotate($pbUser, $pbCredential, $pbHours[$pbGrace] * 3600, time());
+				$pbSaved = $pbStore->rotate($pbUser, $pbCredential, $pbHours[$pbGrace] * 3600, time());
 				$pbWhat = $pbCredential === \Prosper202\Conversion\PostbackAuth\PostbackCredential::TOKEN ? 'postback token' : 'signing secret';
-				p202_account_flash('ok', $pbHours[$pbGrace] === 0
+				// An old one that could not be read was not kept, whatever the grace.
+				$pbKept = $pbCredential === \Prosper202\Conversion\PostbackAuth\PostbackCredential::TOKEN
+					? $pbSaved->previousTokenValidUntil(time()) : $pbSaved->previousSecretValidUntil(time());
+				p202_account_flash('ok', $pbKept === null
 					? 'Your ' . $pbWhat . ' was replaced; the old one stopped working.'
 						. ($pbWhat === 'postback token' ? ' Copy your postback URLs and pixels again from Setup › Postback / Pixel.' : ' Give the new one to everything that signs.')
 					: 'Your ' . $pbWhat . ' was replaced; the old one keeps working for ' . ($pbHours[$pbGrace] / 24)
 						. ' day(s) while you move to the new one.');
 			} elseif ($pbMode !== null) {
-				$pbStore->setMode($pbUser, $pbMode, time());
-				$pbStore->ensureCredentials($pbUser, time());
+				// The mode and its credentials are saved together or not at all.
+				$pbSaved = $pbStore->setMode($pbUser, $pbMode, time());
 				p202_account_flash('ok', match ($pbMode) {
 					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Postbacks and pixels without credentials are accepted again; a wrong token or signature is still refused.',
 					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN => 'Postbacks and pixels without your token or a signature are now refused.',
 					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED => 'Only signed postbacks are accepted now: the token alone is refused, and so is every pixel.',
 				});
+			}
+			if ($pbSaved?->recoveryNotice() !== null) {
+				p202_account_flash('bad', (string) $pbSaved->recoveryNotice());
 			}
 		} catch (Throwable $pbError) {
 			error_log('api-integrations.php: postback authentication: ' . $pbError->getMessage());
@@ -801,6 +808,9 @@ template_top('API Integrations');
 				<?php if ($pbAuth === null) { ?>
 					<p class="text-danger">Your postback settings could not be read just now. Reload the page; if it persists, see the server's error log.</p>
 				<?php } else {
+					if ($pbAuth->recoveryNotice() !== null) { ?>
+					<div class="alert alert-warning" role="alert"><?php echo $e((string) $pbAuth->recoveryNotice()); ?></div>
+					<?php }
 					$pbNow = time();
 					$pbModes = [
 						'off' => ['Not required', 'Postbacks and pixels without credentials are accepted, as before 1.9.80. A wrong token or signature is still refused.'],
