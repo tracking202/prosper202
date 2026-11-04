@@ -81,6 +81,8 @@ SQL
 
 [ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G)")" = 7 ] || { echo "seeding the clicks failed (a previous run left rows behind?)" >&2; exit 2; }
 
+# The postbacks and pixels below carry no token: their accounts accept that (guard.sh).
+Q "$(p202_postback_auth_off_sql)"
 rows()   { Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$1 AND deleted=0"; }
 lead()   { Q "SELECT click_lead FROM 202_clicks WHERE click_id=$1"; }
 payout() { Q "SELECT click_payout FROM 202_clicks WHERE click_id=$1"; }

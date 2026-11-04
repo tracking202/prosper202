@@ -220,6 +220,8 @@ for c in $CLICK $CLICK_UPX; do
     INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES ($c, 0, 0, 0, 0);"
 done
 
+# The postbacks and pixels below carry no token: their accounts accept that (guard.sh).
+Q "$(p202_postback_auth_off_sql)"
 STATUS=$(curl -sS -o "$OUT/gpb.out" -w '%{http_code}' "$BASE/tracking202/static/gpb.php?subid=$CLICK&amount=3&txid=PB-1")
 eq "$STATUS" 202 "gpb.php answers 202, as it does for a click whose source has a postback pixel"
 has "$OUT/gpb.out" '"msg":"Postback successful"' "with the answer it always gave"

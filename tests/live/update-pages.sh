@@ -155,6 +155,8 @@ seed_click $C6 "$CA" 0 "$D10" 0
 cpc()   { Q "SELECT GROUP_CONCAT(click_cpc ORDER BY click_id) FROM 202_clicks WHERE click_id IN ($CLICKS)"; }
 rows()  { Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$1 AND deleted=0"; }
 lead()  { Q "SELECT click_lead FROM 202_clicks WHERE click_id=$1"; }
+# The postbacks and pixels below carry no token: their accounts accept that (guard.sh).
+Q "$(p202_postback_auth_off_sql)"
 gpb()   { curl -sS -o /dev/null -w '%{http_code}' "$BASE/tracking202/static/gpb.php?$1"; }
 
 say "login"

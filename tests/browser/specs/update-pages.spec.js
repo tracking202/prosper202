@@ -226,8 +226,9 @@ module.exports = {
       name: 'Reset Campaign Subids: saying no clears nothing, saying yes clears the category',
       async run(ctx) {
         const { app, ui, db, expect, state, config } = ctx;
-        await ui.page.request.get(config.base + '/tracking202/static/gpb.php?subid=' + C1 + '&amount=2&txid=U5BR1');
-        await ui.page.request.get(config.base + '/tracking202/static/gpb.php?subid=' + C2 + '&amount=2&txid=U5BR2');
+        const token = await app.postbackToken();
+        await ui.page.request.get(config.base + '/tracking202/static/gpb.php?subid=' + C1 + '&amount=2&txid=U5BR1&p202_token=' + token);
+        await ui.page.request.get(config.base + '/tracking202/static/gpb.php?subid=' + C2 + '&amount=2&txid=U5BR2&p202_token=' + token);
         const live = (id) => db.value('SELECT COUNT(*) FROM 202_conversion_logs WHERE deleted=0 AND click_id=' + id);
         expect.eq(live(C1) + '/' + live(C2), '1/1', 'a conversion in each category');
         await app.goto(UPDATE + 'clear-subids.php');

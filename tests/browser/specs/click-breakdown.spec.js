@@ -126,9 +126,10 @@ module.exports = {
     if (clicks.length < 2) {
       throw new Error('the fixture has no replace campaign with two unconverted clicks today; seed it (tests/fixtures/agent-eval/seed.sh) first');
     }
+    const token = await app.postbackToken();
     for (const [click, amounts] of [[clicks[0], ['3', '4']], [clicks[1], ['6']]]) {
       for (let i = 0; i < amounts.length; i++) {
-        const response = await ui.page.request.get(config.base + '/tracking202/static/gpb.php?subid=' + click + '&amount=' + amounts[i] + '&txid=breakdown-spec-' + click + '-' + (i + 1));
+        const response = await ui.page.request.get(config.base + '/tracking202/static/gpb.php?subid=' + click + '&amount=' + amounts[i] + '&txid=breakdown-spec-' + click + '-' + (i + 1) + '&p202_token=' + token);
         if (response.status() >= 400) {
           throw new Error('the postback for click ' + click + ' answered ' + response.status());
         }

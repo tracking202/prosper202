@@ -273,6 +273,8 @@ click() { # $1 jar, $2 query, $3 client IP; prints the click id the request reco
   after=$(Q "SELECT COALESCE(MAX(click_id),0) FROM 202_clicks")
   [ "$after" != "$before" ] && echo "$after" || echo ""
 }
+# The postbacks and pixels below carry no token: their accounts accept that (guard.sh).
+Q "$(p202_postback_auth_off_sql)"
 gpb() { curl -s -o /dev/null -w '%{http_code}' "$BASE/tracking202/static/gpb.php?$1"; }
 convid() { Q "SELECT conv_id FROM 202_conversion_logs WHERE click_id=$1 AND transaction_id='$2'"; }
 A1=$(click "$OUT/a" "t202id=$T1" 198.51.100.110); sleep 1

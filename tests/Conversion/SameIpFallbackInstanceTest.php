@@ -35,7 +35,7 @@ final class SameIpFallbackInstanceTest extends TestCase
     private static string $base = '';
     private static ?string $setupError = null;
     private static string $run = '';
-    /** @var array<string, array{key: string, user: int, campaign: int, acip: string, tracker: string, tag: string}> */
+    /** @var array<string, array{key: string, user: int, campaign: int, acip: string, tracker: string, tag: string, token: string}> */
     private static array $accounts = [];
     /** @var array<string, mixed>|null user 1's two settings as found */
     private static ?array $restoreA = null;
@@ -79,7 +79,7 @@ final class SameIpFallbackInstanceTest extends TestCase
         }
     }
 
-    /** @return array{key: string, user: int, campaign: int, acip: string, tracker: string, tag: string} */
+    /** @return array{key: string, user: int, campaign: int, acip: string, tracker: string, tag: string, token: string} */
     private static function setUpAccount(string $key, int $user, string $tag): array
     {
         $run = self::$run;
@@ -98,6 +98,8 @@ final class SameIpFallbackInstanceTest extends TestCase
             'key' => $key, 'user' => $user, 'campaign' => (int) $campaign['aff_campaign_id'],
             'acip' => (string) $campaign['aff_campaign_id_public'], 'tracker' => (string) $tracker['tracker_id_public'],
             'tag' => $tag,
+            // The account's postback token, which a pixel carries (an account made on 1.9.80 or later requires it).
+            'token' => (string) self::call($key, 'GET', '/conversions/postback-auth')['data']['token'],
         ];
     }
 
@@ -125,9 +127,9 @@ final class SameIpFallbackInstanceTest extends TestCase
     public function testAClickTheRequestNamesIsMatchedByItsIdOrItsCookie(): void
     {
         $a = self::$accounts['A'];
-        self::pixel('gpx.php?subid=%d&amount=1', $click = self::click($a));
+        self::pixel('gpx.php?subid=%d&amount=1&p202_token=' . $a['token'], $click = self::click($a));
         self::assertSame(['click_id'], self::methodsOf($a, $click));
-        self::pixel('gpx.php?amount=1', $click = self::click($a), 'tracking202subid=' . $click);
+        self::pixel('gpx.php?amount=1&p202_token=' . $a['token'], $click = self::click($a), 'tracking202subid=' . $click);
         self::assertSame(['cookie'], self::methodsOf($a, $click));
     }
 
@@ -182,7 +184,7 @@ final class SameIpFallbackInstanceTest extends TestCase
         self::setPrefs($b, ['user_pref_same_ip_fallback' => 0]);
         $own = self::click($b);
         $first = self::click($a);
-        self::pixel('gpx.php?cid=' . $b['campaign'] . '&amount=1', 0);
+        self::pixel('gpx.php?cid=' . $b['campaign'] . '&amount=1&p202_token=' . $b['token'], 0);
         self::assertSame([], self::methodsOf($b, $own), 'B has the fallback off');
         self::assertSame([], self::methodsOf($a, $first), 'and A\'s setting does not reach B\'s pixel');
     }
@@ -199,10 +201,12 @@ final class SameIpFallbackInstanceTest extends TestCase
     /** @return list<string> */
     private static function addressOnlyPixels(array $account): array
     {
+        $token = '&p202_token=' . $account['token'];
+
         return [
-            'gpx.php?cid=' . $account['campaign'] . '&amount=1',
-            'upx.php?cid=' . $account['campaign'] . '&amount=1',
-            'px.php?acip=' . $account['acip'],
+            'gpx.php?cid=' . $account['campaign'] . '&amount=1' . $token,
+            'upx.php?cid=' . $account['campaign'] . '&amount=1' . $token,
+            'px.php?acip=' . $account['acip'] . $token,
         ];
     }
 

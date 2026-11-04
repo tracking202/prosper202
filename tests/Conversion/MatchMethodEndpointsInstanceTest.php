@@ -44,6 +44,8 @@ final class MatchMethodEndpointsInstanceTest extends TestCase
     private static int $campaign = 0;
     private static string $acip = '';
     private static string $tracker = '';
+    /** The account's postback token, which every pixel and postback here carries. */
+    private static string $token = '';
     /** @var array<string, mixed>|null user 1's settings as found */
     private static ?array $restore = null;
 
@@ -81,7 +83,8 @@ final class MatchMethodEndpointsInstanceTest extends TestCase
             self::$tracker = (string) (self::createRow('trackers', [
                 'aff_campaign_id' => self::$campaign, 'ppc_account_id' => $account, 'click_cpc' => '0.10',
             ])['tracker_id_public'] ?? '');
-            if (self::$tracker === '' || self::$acip === '') {
+            self::$token = (string) (self::get('conversions/postback-auth')['data']['token'] ?? '');
+            if (self::$tracker === '' || self::$acip === '' || self::$token === '') {
                 throw new \RuntimeException('The campaign or the tracker was answered without its public id.');
             }
         } catch (\RuntimeException $e) {
@@ -200,7 +203,8 @@ final class MatchMethodEndpointsInstanceTest extends TestCase
         if ($cookie !== null) {
             $options[CURLOPT_COOKIE] = $cookie;
         }
-        [$status, $headers, $body] = self::request(self::$base . '/tracking202/static/' . sprintf($path, $click), $options);
+        $url = self::$base . '/tracking202/static/' . sprintf($path, $click) . '&p202_token=' . self::$token;
+        [$status, $headers, $body] = self::request($url, $options);
         self::assertSame(200, $status, "$path: $headers$body");
 
         return $click;
