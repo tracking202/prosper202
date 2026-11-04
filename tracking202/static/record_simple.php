@@ -421,8 +421,7 @@ if ($rsParallelClick !== null) {
     // tracker's cost, keyword and c1-c4 the page's URL did not carry.
     if (($ptTemplateHit ?? false) === true) {
         try {
-            \Prosper202\Click\ParallelTrackingClick::fillFromTemplate(
-                $conn,
+            $clickRepo->fillFromTemplate(
                 \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity)
             );
         } catch (\Throwable $rsFillError) {
