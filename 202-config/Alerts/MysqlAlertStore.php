@@ -115,6 +115,32 @@ final class MysqlAlertStore
         return $sent;
     }
 
+    /** 202_alert_state's row for the run's cursor: no account is user 0. */
+    private const CURSOR_KIND = 'run_cursor';
+
+    /** The last account the previous run reached, 0 when none. */
+    public function cursor(): int
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT incident_key FROM 202_alert_state WHERE user_id = 0 AND aff_campaign_id = 0 AND alert_kind = ?'
+        );
+        $this->conn->bind($stmt, 's', [self::CURSOR_KIND]);
+        $row = $this->conn->fetchOne($stmt);
+
+        return $row === null ? 0 : (int) $row['incident_key'];
+    }
+
+    public function saveCursor(int $userId, int $now): void
+    {
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_alert_state (user_id, aff_campaign_id, alert_kind, incident_key, alerted_at)'
+            . ' VALUES (0, 0, ?, ?, ?)'
+            . ' ON DUPLICATE KEY UPDATE incident_key = VALUES(incident_key), alerted_at = VALUES(alerted_at)'
+        );
+        $this->conn->bind($stmt, 'sii', [self::CURSOR_KIND, $userId, $now]);
+        $this->conn->executeUpdate($stmt);
+    }
+
     public static function incidentId(Alert $alert): string
     {
         return $alert->kind->stateKey() . ':' . $alert->campaignId;

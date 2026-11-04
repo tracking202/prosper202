@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Alerts;
 
 use Api\V3\Controllers\UsersController;
+use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\Report\AccountZone;
 
@@ -18,6 +19,15 @@ use Prosper202\Report\AccountZone;
  */
 final class AccountActivity
 {
+    /**
+     * Sources that record a batch at once, not conversions as they happen:
+     * left out of the rhythm (CampaignActivity), still conversions today.
+     */
+    public const BATCH_SOURCES = [ConversionSource::SUBID_UPLOAD, ConversionSource::REVENUE_UPLOAD];
+
+    /** Milliseconds a week's read may take on MySQL (MariaDB ignores the hint). */
+    public const READ_MS = 20000;
+
     /**
      * @param array<int, CampaignActivity> $campaigns by campaign id
      */
@@ -69,22 +79,34 @@ final class AccountActivity
             return new self($userId, $now, $timezone, $dayStart, $currency, []);
         }
 
-        // A reversal is not a conversion arriving; every other row is, payable or not.
+        // A reversal is not a conversion arriving, nor is a pre-ledger
+        // value's baseline row; every other row is, payable or not.
+        $batch = array_map(static fn (ConversionSource $s): string => $s->value, self::BATCH_SOURCES);
+        $live = 'source NOT IN (' . implode(', ', array_fill(0, count($batch), '?')) . ')';
         $stmt = $conn->prepareRead(
-            'SELECT campaign_id, COUNT(*) AS conversions, MIN(conv_time) AS first_at, MAX(conv_time) AS last_at,'
+            'SELECT /*+ MAX_EXECUTION_TIME(' . self::READ_MS . ') */ campaign_id,'
+            . " SUM($live) AS conversions,"
+            . " COUNT(DISTINCT CASE WHEN $live THEN conv_time DIV 3600 END) AS hours,"
+            . " MIN(CASE WHEN $live THEN conv_time END) AS first_at,"
+            . " MAX(CASE WHEN $live THEN conv_time END) AS last_at,"
             . ' SUM(conv_time >= ?) AS today'
             . ' FROM 202_conversion_logs'
             . ' WHERE user_id = ? AND conv_time >= ? AND conv_time <= ? AND deleted = 0 AND reverses_conv_id IS NULL'
+            . ' AND source <> ?'
             . ' GROUP BY campaign_id'
         );
-        $conn->bind($stmt, 'iiii', [$dayStart, $userId, $from, $now]);
+        $conn->bind($stmt, str_repeat('s', 4 * count($batch)) . 'iiiis', [
+            ...$batch, ...$batch, ...$batch, ...$batch,
+            $dayStart, $userId, $from, $now, ConversionSource::LEGACY_BASELINE->value,
+        ]);
         $conversions = [];
         foreach ($conn->fetchAll($stmt) as $row) {
             $conversions[(int) $row['campaign_id']] = $row;
         }
 
         $stmt = $conn->prepareRead(
-            'SELECT aff_campaign_id, SUM(CASE WHEN click_filtered = 0 THEN clicks ELSE 0 END) AS real_clicks,'
+            'SELECT /*+ MAX_EXECUTION_TIME(' . self::READ_MS . ') */ aff_campaign_id,'
+            . ' SUM(CASE WHEN click_filtered = 0 THEN clicks ELSE 0 END) AS real_clicks,'
             . ' MAX(CASE WHEN click_filtered = 0 AND clicks > 0 THEN click_time END) AS last_real_click,'
             . ' SUM(CASE WHEN click_time >= ? THEN clicks ELSE 0 END) AS clicks_today,'
             . ' SUM(CASE WHEN click_time >= ? THEN cost ELSE 0 END) AS cost_today'
@@ -109,6 +131,7 @@ final class AccountActivity
                 $id,
                 $name,
                 (int) ($c['conversions'] ?? 0),
+                (int) ($c['hours'] ?? 0),
                 isset($c['first_at']) ? (int) $c['first_at'] : null,
                 isset($c['last_at']) ? (int) $c['last_at'] : null,
                 (int) ($c['today'] ?? 0),

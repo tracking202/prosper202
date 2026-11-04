@@ -7,12 +7,15 @@ namespace Prosper202\Alerts;
 use Prosper202\Database\Connection;
 
 /**
- * A steady campaign that stopped converting while it kept buying clicks:
- * no conversion for gapMultiple times its usual gap (an hour at least), as
- * many times its usual clicks per conversion arrived since its last one,
- * and a real click within the last RECENT_CLICK seconds (a paused campaign
- * is not losing money). The incident is the campaign's last conversion, so
- * the next conversion re-arms it.
+ * A steady campaign that stopped converting while it kept buying clicks.
+ * Steady is a live conversion in at least minConversions distinct hours of
+ * the window (uploads and bursts are not a rhythm: CampaignActivity). It
+ * alerts after no conversion for gapMultiple times its usual gap between
+ * converting hours (an hour at least), with as many times its usual real
+ * clicks per converting hour arrived since its last one, and a real click
+ * within the last RECENT_CLICK seconds (a paused campaign is not losing
+ * money). The incident is the campaign's last conversion, so the next
+ * conversion re-arms it.
  */
 final class ConversionsStoppedDetector implements AlertDetector
 {
@@ -29,9 +32,9 @@ final class ConversionsStoppedDetector implements AlertDetector
         $alerts = [];
         foreach ($activity->campaigns as $campaign) {
             $gap = $campaign->usualGap();
-            $perConversion = $campaign->clicksPerConversion();
+            $perConversion = $campaign->clicksPerArrival();
             $last = $campaign->lastConversionAt;
-            $steady = $campaign->conversions >= $settings->minConversions;
+            $steady = $campaign->arrivalHours >= $settings->minConversions;
             if (!$steady || $gap === null || $perConversion === null || $last === null) {
                 continue;
             }
@@ -55,7 +58,7 @@ final class ConversionsStoppedDetector implements AlertDetector
                 $last,
                 sprintf(
                     '%s (campaign #%d) has had no conversion for %s, %s times its usual gap of %s, while %s real clicks'
-                    . ' arrived (it usually converts about 1 in %s). Check its postback or pixel.',
+                    . ' arrived (usually about %s real clicks between conversions). Check its postback or pixel.',
                     $campaign->name,
                     $campaign->campaignId,
                     AlertText::duration($silence),
@@ -69,8 +72,9 @@ final class ConversionsStoppedDetector implements AlertDetector
                     'seconds_without_conversion' => $silence,
                     'usual_gap_seconds' => (int) round($gap),
                     'clicks_since_last_conversion' => $clicksSince,
-                    'usual_clicks_per_conversion' => round($perConversion, 2),
+                    'usual_clicks_per_converting_hour' => round($perConversion, 2),
                     'conversions_last_7_days' => $campaign->conversions,
+                    'converting_hours_last_7_days' => $campaign->arrivalHours,
                     'gap_multiple' => $settings->gapMultiple,
                 ]
             );

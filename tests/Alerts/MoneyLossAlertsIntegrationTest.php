@@ -24,7 +24,7 @@ use Prosper202\Notifications\SlackWebhook;
  *
  * Skips unless a scratch database is configured (P202_TEST_DB_HOST, ...); it
  * installs the schema there and writes users 7811-7813, campaigns
- * 781101-781108, clicks 978110000 on, and their conversions, settings and
+ * 781101-781112, clicks 978110000 on, and their conversions, settings and
  * webhooks. 7811 has settings of its own, 7812 turned alerts off, and 7813
  * has no settings row (alerts on) and nowhere to send them.
  *
@@ -47,6 +47,11 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
     private const CONVERTED_TODAY = 781106;
     private const OTHERS = 781107;
     private const QUIET_STOPPED = 781108;
+    private const BOT_TAIL = 781109;
+    private const BOT_FLOOD = 781110;
+    private const UPLOADED = 781111;
+    private const BULK_API = 781112;
+    private const SLACK_ADDRESS = '203.0.113.10';
     private const OWNER_SLACK = 'https://hooks.slack.com/services/T0/B0/ownerSecretPath';
     private const OTHER_SLACK = 'https://hooks.slack.com/services/T0/B0/otherSecretPath';
     private const ZONE = 'Asia/Kolkata';
@@ -87,6 +92,10 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
             self::CONVERTED_TODAY => [self::OWNER, 'Demo Requests'],
             self::OTHERS => [self::OTHER, 'Other Shop'],
             self::QUIET_STOPPED => [self::QUIET, 'Quiet Shop'],
+            self::BOT_TAIL => [self::OWNER, 'Bot Tail'],
+            self::BOT_FLOOD => [self::OWNER, 'Bot Flood'],
+            self::UPLOADED => [self::OWNER, 'Uploaded Daily'],
+            self::BULK_API => [self::OWNER, 'Bulk API'],
             ] as $id => [$user, $name]
         ) {
             self::row('202_aff_campaigns', ['aff_campaign_id' => $id, 'user_id' => $user, 'aff_network_id' => 1,
@@ -115,6 +124,34 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         // The other account's campaign, the same as the stopped one, with alerts off.
         self::conversions(self::OTHER, self::OTHERS, range($now - 30 * $hour, $now - 11 * $hour, $hour));
         self::clicks(self::OTHER, self::OTHERS, range($now - 30 * $hour, $now - 300, 360));
+        // Rows that are not a conversion arriving, an hour ago: if any
+        // counted, the stopped campaign would read as converting.
+        $last = self::conversions(self::OWNER, self::STOPPED, [$now - 30 * $hour]);
+        self::conversions(self::OWNER, self::STOPPED, [$now - 3600], "reverses_conv_id = $last");
+        self::conversions(self::OWNER, self::STOPPED, [$now - 3600], 'deleted = 1');
+        self::conversions(self::OWNER, self::STOPPED, [$now - 3600], "source = 'legacy_baseline'");
+        self::conversions(self::OWNER, self::STOPPED, [$now - 3600], "source = 'subid_upload'");
+        // Stopped, real clicks until three hours ago, then only filtered
+        // ones: no real click lately, so not alerted.
+        self::conversions(self::OWNER, self::BOT_TAIL, range($now - 30 * $hour, $now - 11 * $hour, $hour));
+        self::clicks(self::OWNER, self::BOT_TAIL, range($now - 30 * $hour, $now - 3 * $hour, 360));
+        self::clicks(self::OWNER, self::BOT_TAIL, range($now - 2 * $hour + 60, $now - 60, 120), 0.0, 1);
+        // Stopped, one real click since and a flood of filtered ones: too
+        // few real clicks since to be alerted.
+        self::conversions(self::OWNER, self::BOT_FLOOD, range($now - 30 * $hour, $now - 11 * $hour, $hour));
+        self::clicks(self::OWNER, self::BOT_FLOOD, range($now - 30 * $hour, $now - 11 * $hour, 360));
+        self::clicks(self::OWNER, self::BOT_FLOOD, [$now - 300]);
+        self::clicks(self::OWNER, self::BOT_FLOOD, range($now - 11 * $hour + 60, $now - 60, 60), 0.0, 1);
+        // Update Subids once a day, 12 conversions in one second each time,
+        // the last 13 hours ago, and steady real clicks: no live rhythm.
+        // The same through the API: three arrivals, not 36, so not steady.
+        foreach ([self::UPLOADED => "source = 'subid_upload'", self::BULK_API => "source = 'api'"] as $id => $source) {
+            foreach ([61, 37, 13] as $ago) {
+                self::conversions(self::OWNER, $id, array_fill(0, 12, $now - $ago * $hour), $source);
+            }
+            self::clicks(self::OWNER, $id, range($now - 70 * $hour, $now - 300, 360));
+        }
+
         // An account with no email, no Slack and no webhook.
         self::conversions(self::QUIET, self::QUIET_STOPPED, range($now - 30 * $hour, $now - 11 * $hour, $hour));
         self::clicks(self::QUIET, self::QUIET_STOPPED, range($now - 30 * $hour, $now - 300, 360));
@@ -124,6 +161,8 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         $today = $dayStart + intdiv($now - $dayStart, 2);
         self::clicks(self::OWNER, self::OVER_CAP, [$dayStart - 60], 500.0);
         self::clicks(self::OWNER, self::OVER_CAP, [$today, $today, $today], 40.0);
+        // A filtered click was paid for too.
+        self::clicks(self::OWNER, self::OVER_CAP, [$today], 30.0, 1);
         self::clicks(self::OWNER, self::CONVERTED_TODAY, [$today, $today, $today, $today], 40.0);
         self::conversions(self::OWNER, self::CONVERTED_TODAY, [$today]);
 
@@ -157,6 +196,7 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         foreach (['202_alert_state', '202_ltv_webhook_deliveries', '202_alert_settings'] as $table) {
             self::q("DELETE FROM $table WHERE user_id IN (" . self::USERS . ')');
         }
+        self::q('DELETE FROM 202_alert_state WHERE user_id = 0');
         $this->settings(self::OWNER, new AlertSettings(true, true, true, true, 5, 10, '100.00'));
         $this->settings(self::OTHER, new AlertSettings(false, true, true, true, 5, 10, '100.00'));
     }
@@ -187,7 +227,7 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         );
         self::assertStringContainsString('usual gap of 1 h', $texts[0]);
         self::assertStringStartsWith(
-            '*Spend with no conversions*: Quote Requests (campaign #' . self::OVER_CAP . ') has cost EUR 120.00 today',
+            '*Spend with no conversions*: Quote Requests (campaign #' . self::OVER_CAP . ') has cost EUR 150.00 today',
             $texts[1]
         );
         self::assertStringContainsString('daily cap of EUR 100.00', $texts[1]);
@@ -208,14 +248,15 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         self::assertSame(self::STOPPED, $stopped['campaign_id']);
         self::assertSame(self::$now - 11 * 3600, $stopped['last_conversion_at']);
         self::assertSame(3600, $stopped['usual_gap_seconds']);
-        self::assertSame(20, $stopped['conversions_last_7_days']);
+        self::assertSame(21, $stopped['conversions_last_7_days']);
         $since = array_filter(
             range(self::$now - 30 * 3600, self::$now - 300, 360),
             static fn (int $t): bool => $t > self::$now - 11 * 3600
         );
         self::assertSame(count($since), $stopped['clicks_since_last_conversion']);
         $cap = json_decode((string) $deliveries[1]['payload'], true, 512, JSON_THROW_ON_ERROR)['data'];
-        self::assertSame(120, (int) round($cap['cost_today']), 'only today\'s cost, in the account\'s zone');
+        $cost = (int) round($cap['cost_today']);
+        self::assertSame(150, $cost, 'today\'s cost in the account\'s zone, filtered clicks too');
         self::assertSame('EUR', $cap['currency']);
         self::assertSame(self::ZONE, $cap['timezone']);
 
@@ -368,17 +409,57 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         self::assertSame(0, $this->runAlerts(self::$now)['sent'], 'eleven hours is less than twelve times an hour');
     }
 
+    public function testUploadsAndBurstsAreNotARhythm(): void
+    {
+        $this->runAlerts(self::$now);
+
+        $named = array_map(
+            static fn (array $o): string => self::slackText((string) $o[CURLOPT_POSTFIELDS]),
+            $this->posted
+        );
+        foreach (['Uploaded Daily', 'Bulk API', 'Bot Tail', 'Bot Flood', 'Paused Promo'] as $quiet) {
+            foreach ($named as $text) {
+                self::assertStringNotContainsString($quiet, $text);
+            }
+        }
+        $stopped = json_decode((string) self::deliveries()[0]['payload'], true, 512, JSON_THROW_ON_ERROR)['data'];
+        self::assertSame(self::STOPPED, $stopped['campaign_id']);
+        self::assertSame(self::$now - 11 * 3600, $stopped['last_conversion_at'], 'no row an hour ago counted');
+        self::assertSame(21, $stopped['conversions_last_7_days']);
+        self::assertSame(20, $stopped['converting_hours_last_7_days'], 'two arrivals in one hour are one');
+    }
+
+    public function testEachRunStartsAfterTheAccountTheLastOneReached(): void
+    {
+        $store = new MysqlAlertStore(new Connection(self::$db));
+        $store->saveCursor(self::OWNER, self::$now);
+
+        $this->runAlerts(self::$now);
+        self::assertSame(self::OWNER, $store->cursor(), 'the quiet account came first, then the owner');
+
+        $store->saveCursor(self::QUIET, self::$now);
+        $this->runAlerts(self::$now + 60);
+        self::assertSame(self::QUIET, $store->cursor(), 'from the quiet account, the owner first');
+
+        $conn = new Connection(self::$db);
+        $none = (new AlertRun($conn, new AlertNotifier($conn)))->run(self::$now, time() - 1);
+        self::assertSame(0, $none['accounts'], 'a run out of time reaches nobody');
+        self::assertSame(self::QUIET, $store->cursor(), 'and moves nothing');
+    }
+
     /** @return array{accounts: int, sent: int, failed: int, unsent: int, errors: int} */
     private function runAlerts(int $now, ?string $settingsUrl = null): array
     {
         $transport = function (array $options): array {
             $this->posted[] = $options;
 
-            return ['status' => $this->slackStatus, 'error' => null, 'primary_ip' => '93.184.216.34',
+            return ['status' => $this->slackStatus, 'error' => null, 'primary_ip' => self::SLACK_ADDRESS,
                 'location' => null, 'body' => $this->slackStatus === 200 ? 'ok' : 'internal_error'];
         };
-        $resolve = static fn (string $host): array => $host === 'hooks.slack.com' ? ['93.184.216.34'] : [];
-        $slack = new SlackWebhook(new WebhookSender(new WebhookGuard($resolve, ''), $transport));
+        $resolve = static fn (string $host): array => $host === 'hooks.slack.com' ? [self::SLACK_ADDRESS] : [];
+        // A documentation address stands in for Slack's, admitted as an operator's own network would be.
+        $guard = new WebhookGuard($resolve, self::SLACK_ADDRESS . '/32');
+        $slack = new SlackWebhook(new WebhookSender($guard, $transport));
         $mailer = function (string $to, string $subject, string $body, string $headers): bool {
             $this->mailed[] = [$to, $subject, $body, $headers];
 
@@ -415,31 +496,33 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
      * One conversion per time, each on a click of its own; the last id.
      *
      * @param list<int> $times
+     * @param string $set more columns, as SQL (`deleted = 1`)
      */
-    private static function conversions(int $user, int $campaign, array $times): int
+    private static function conversions(int $user, int $campaign, array $times, string $set = ''): int
     {
         foreach ($times as $time) {
             $click = self::$clickId++;
             self::$convId = self::insert('INSERT INTO 202_conversion_logs SET click_id = ' . $click
                 . ', campaign_id = ' . $campaign . ', click_payout = 10, user_id = ' . $user
                 . ', click_time = ' . ($time - 60) . ', conv_time = ' . $time
-                . ", time_difference = '', pixel_type = 0, user_agent = '', dedupe_key = 'k$click'");
+                . ", time_difference = '', pixel_type = 0, user_agent = '', dedupe_key = 'k$click'"
+                . ($set !== '' ? ', ' . $set : ''));
         }
 
         return self::$convId;
     }
 
     /**
-     * One report row per time, a real click costing $cost.
+     * One report row per time, a click costing $cost, real unless $filtered.
      *
      * @param list<int> $times
      */
-    private static function clicks(int $user, int $campaign, array $times, float $cost = 0.0): void
+    private static function clicks(int $user, int $campaign, array $times, float $cost = 0.0, int $filtered = 0): void
     {
         $rows = [];
         foreach ($times as $time) {
             $rows[] = '(' . $user . ', ' . self::$clickId++ . ', ' . $time . ', 1, ' . $campaign
-                . ', 1, 1, 0, 0, ' . $cost . ')';
+                . ', 1, 1, ' . $filtered . ', 0, ' . $cost . ')';
         }
         foreach (array_chunk($rows, 500) as $chunk) {
             self::q('INSERT INTO 202_dataengine (user_id, click_id, click_time, ppc_account_id, aff_campaign_id,'

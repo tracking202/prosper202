@@ -12,16 +12,23 @@ turns them off stays off through later upgrades.
 
 ## What is alerted
 
-**Conversions stopped.** A campaign is *steady* when it had at least the
-minimum number of conversions in the last 7 days (10 by default). Its usual
-gap is the time from its first to its last conversion in those days, over the
-gaps between them, and its usual clicks per conversion are its real clicks
-over its conversions. It is alerted when all of these hold:
+**Conversions stopped.** This alert watches conversions as they arrive:
+postbacks, pixels and the API. Conversions recorded by an upload (Update
+Subids, revenue and conversion uploads) and the values carried over from
+before 1.9.79 are left out, because a batch arrives in one second and says
+nothing about when its conversions happened. Arrivals are counted in hours,
+so a burst within one hour counts once.
+
+A campaign is *steady* when its conversions arrived in at least the minimum
+number of different hours in the last 7 days (10 by default). Its usual gap
+is the time from its first to its last converting hour in those days, over the
+gaps between them. Its usual clicks per converting hour are its real clicks
+over those hours. It is alerted when all of these hold:
 
 - no conversion for the multiple you set (5 by default) times its usual gap,
   and at least an hour;
-- at least that multiple times its usual clicks per conversion arrived since
-  its last conversion (real clicks: the click filter's are left out);
+- at least that multiple times its usual clicks per converting hour arrived
+  since its last conversion (real clicks: the click filter's are left out);
 - a real click in the last two hours, so a paused campaign is not alerted.
 
 The campaign's next conversion ends the incident; if it goes quiet again, it
@@ -29,7 +36,8 @@ is alerted again.
 
 **Spend with no conversions.** With a daily cost cap set (0 is no cap), a
 campaign whose cost today reaches the cap with no conversion today is alerted,
-at most once a day. "Today" is your account's day in its time zone, and cost
+at most once a day. Any conversion recorded today counts, an upload included.
+"Today" is your account's day in its time zone, and cost
 is every click's, filtered clicks included, since each was paid for.
 
 Conversions are counted by when they arrived. A reversal does not count as

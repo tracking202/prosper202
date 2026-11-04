@@ -48,7 +48,7 @@ function p202_alerts_post(\mysqli $db, int $userId, array $post): array
     if ($settings === null) {
         $labels = [
             'enabled' => 'Alerts', 'notify_slack' => 'Slack', 'notify_email' => 'Email', 'notify_webhook' => 'Webhooks',
-            'gap_multiple' => 'The multiple of the usual gap', 'min_conversions' => 'The conversions a week',
+            'gap_multiple' => 'The multiple of the usual gap', 'min_conversions' => 'The converting hours a week',
             'daily_cost_cap' => 'The daily cost cap',
         ];
         foreach ($errors as $field => $why) {
@@ -193,8 +193,13 @@ function p202_alerts_card(AlertSettings $settings, array $contact, array $errors
             . AlertSettings::GAP_MULTIPLE_MAX . '; 5 by default.',
             'maxlength="2"'
         )
-        . $number('min_conversions', 'Conversions a week to be steady', 'A campaign with fewer conversions in the last '
-            . AlertSettings::LOOKBACK_DAYS . ' days is not checked for this. 10 by default.', 'maxlength="4"')
+        . $number(
+            'min_conversions',
+            'Converting hours a week to be steady',
+            'A campaign whose conversions arrived in fewer different hours of the last ' . AlertSettings::LOOKBACK_DAYS
+            . ' days is not checked for this. Uploaded conversions do not count. 10 by default.',
+            'maxlength="4"'
+        )
         . $number(
             'daily_cost_cap',
             'Daily cost cap per campaign',

@@ -77,11 +77,21 @@ final class AlertRun
             $report['errors']++;
         }
 
-        foreach ($accounts as $userId => $settings) {
+        // Each run starts after the account the last one reached, so a run
+        // that runs out of time does not leave the same accounts out every hour.
+        $cursor = $store->cursor();
+        $ids = array_keys($accounts);
+        $after = array_values(array_filter($ids, static fn (int $id): bool => $id > $cursor));
+        $ordered = [...$after, ...array_values(array_filter($ids, static fn (int $id): bool => $id <= $cursor))];
+        $reached = null;
+        foreach ($ordered as $userId) {
+            $settings = $accounts[$userId];
             if (time() >= $deadline) {
-                error_log('Money-loss alerts: the run\'s time was up with accounts left; they are checked next hour');
+                error_log('Money-loss alerts: the run\'s time was up with accounts left;'
+                    . ' the next run starts with them');
                 break;
             }
+            $reached = $userId;
             $report['accounts']++;
             try {
                 $this->runAccount($store, $userId, $settings, $now, $report);
@@ -90,6 +100,9 @@ final class AlertRun
                 error_log('Money-loss alerts: account ' . $userId . ' could not be checked: '
                     . get_class($e) . ': ' . $e->getMessage());
             }
+        }
+        if ($reached !== null) {
+            $store->saveCursor($reached, $now);
         }
 
         return $report;

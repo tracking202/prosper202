@@ -10,9 +10,10 @@ namespace Prosper202\Alerts;
  * webhooks only where one subscribed to the alerts' events. Turning them off
  * stores a row with enabled 0.
  *
- * A campaign is steady when it had at least minConversions conversions in the
- * last LOOKBACK_DAYS; its usual gap is the time between its first and last of
- * them over the gaps between. dailyCostCap 0 is no cap.
+ * A campaign is steady when live conversions arrived in at least
+ * minConversions distinct hours of the last LOOKBACK_DAYS; its usual gap is
+ * the time between its first and last converting hour over the gaps between
+ * (ConversionsStoppedDetector). dailyCostCap 0 is no cap.
  */
 final class AlertSettings
 {

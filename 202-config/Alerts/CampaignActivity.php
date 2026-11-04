@@ -10,6 +10,12 @@ namespace Prosper202\Alerts;
  * click time (202_dataengine, the reports' rows). Real clicks are the ones
  * the click filter left in; cost is every click's, filtered ones included,
  * since every one was paid for.
+ *
+ * The rhythm (conversions, arrivalHours, first and last) is live arrivals
+ * only: an upload records a batch in one second, which says nothing about
+ * when its conversions happened (AccountActivity::BATCH_SOURCES). It is
+ * measured in distinct arrival hours, so a burst is one arrival.
+ * conversionsToday counts every conversion recorded today, uploads included.
  */
 final class CampaignActivity
 {
@@ -17,6 +23,7 @@ final class CampaignActivity
         public readonly int $campaignId,
         public readonly string $name,
         public readonly int $conversions = 0,
+        public readonly int $arrivalHours = 0,
         public readonly ?int $firstConversionAt = null,
         public readonly ?int $lastConversionAt = null,
         public readonly int $conversionsToday = 0,
@@ -28,21 +35,22 @@ final class CampaignActivity
     }
 
     /**
-     * Seconds between conversions over the window: from the first to the
-     * last, over the gaps between them. Null with fewer than two.
+     * Seconds between converting hours over the window: from the first hour
+     * to the last, over the gaps between them. Null with fewer than two.
      */
     public function usualGap(): ?float
     {
-        if ($this->conversions < 2 || $this->firstConversionAt === null || $this->lastConversionAt === null) {
+        if ($this->arrivalHours < 2 || $this->firstConversionAt === null || $this->lastConversionAt === null) {
             return null;
         }
+        $span = (intdiv($this->lastConversionAt, 3600) - intdiv($this->firstConversionAt, 3600)) * 3600;
 
-        return ($this->lastConversionAt - $this->firstConversionAt) / ($this->conversions - 1);
+        return $span / ($this->arrivalHours - 1);
     }
 
-    /** Real clicks per conversion over the window; null with no conversion. */
-    public function clicksPerConversion(): ?float
+    /** Real clicks per converting hour over the window; null with none. */
+    public function clicksPerArrival(): ?float
     {
-        return $this->conversions > 0 ? $this->realClicks / $this->conversions : null;
+        return $this->arrivalHours > 0 ? $this->realClicks / $this->arrivalHours : null;
     }
 }

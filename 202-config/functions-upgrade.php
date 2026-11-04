@@ -4649,8 +4649,9 @@ class UPGRADE
             // A schema change for 1.9.80 belongs in this block, reconciled
             // before the version is written.
             $step_ok = _upgrade_measurement_tables([
-                // The money-loss alerts' settings per account, off with no
-                // row, and the incident each was last sent for (Prosper202\Alerts).
+                // The money-loss alerts' settings per account (no row is on;
+                // a row with enabled 0 is off), and the incident each was last
+                // sent for (Prosper202\Alerts).
                 \Prosper202\Database\Tables\UserTables::alertSettings(),
                 \Prosper202\Database\Tables\UserTables::alertState(),
                 // 202_conversion_logs gains user_conv_time, the alerts' read of
