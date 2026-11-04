@@ -29,6 +29,7 @@ final class OutboundCallsHaveTimeoutsTest extends TestCase
         '202-config/GeoIp/GuardedCurlTransport.php' =>
             "pinnedOptions(): PostbackSender::curlOptions()'s connect limit, its own TIMEOUT",
         'api/v3/Support/RemoteApiClient.php' => 'curlOptions(): CONNECT_TIMEOUT and REQUEST_TIMEOUT',
+        '202-config/Setup/LandingPageCheck.php' => "curlOptions(): PostbackSender::curlOptions()'s limits, capped at TIMEOUT",
         '202-cronjobs/process_dataengine_job.php' => 'DataEngine\\SelfCall::curlOptions(): CONNECT_TIMEOUT and TIMEOUT',
     ];
 
@@ -75,10 +76,9 @@ final class OutboundCallsHaveTimeoutsTest extends TestCase
             self::assertMatchesRegularExpression('/CURLOPT_CONNECTTIMEOUT\s*=>/', $sources[$path], $path);
             self::assertMatchesRegularExpression('/CURLOPT_TIMEOUT\s*=>/', $sources[$path], $path);
         }
-        self::assertStringContainsString(
-            'PostbackSender::curlOptions(',
-            $sources['202-config/GeoIp/GuardedCurlTransport.php']
-        );
+        foreach (['202-config/GeoIp/GuardedCurlTransport.php', '202-config/Setup/LandingPageCheck.php'] as $path) {
+            self::assertStringContainsString('PostbackSender::curlOptions(', $sources[$path], $path);
+        }
     }
 
     public function testTheScanFindsAnUnboundedRequest(): void
