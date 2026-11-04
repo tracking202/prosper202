@@ -649,6 +649,16 @@ case "$ask" in
         printf 'Saved the key: %s PayKickstart IPN secret key(s) stored, per `p202 system integrations`. Paste %s into the IPN Integration tab of each product, and make the campaign'"'"'s offer URL your PayKickstart checkout link with subid=[[subid]] added, so each IPN names the click its sale is recorded on.\n' \
             "$(printf '%s' "$entry" | jq -r '.keys_stored')" "$(printf '%s' "$entry" | jq -r '.url')"
         ;;
+    *Shopify*"webhooks are signed with"*)
+        # The store's signing secret verifies the Shopify webhook URL; the
+        # reply never repeats it.
+        secret=$(printf '%s' "$ask" | sed -n 's/.*signed with \([^ ]*\)\. .*/\1/p')
+        uid=$(p202 config test --json | jq -r '.data.user_id')
+        p202 user prefs update "$uid" --shopify-webhook-secret "$secret" --json >/dev/null
+        entry=$(p202 system integrations --json | jq -c '.data.integrations[] | select(.integration=="shopify")')
+        printf 'Saved your Shopify webhook secret (stored: %s, per `p202 system integrations`). In Shopify under Settings > Notifications > Webhooks, point the Order payment and Refund create JSON webhooks at %s, and add the click id to the cart as the line item property t202subid, filled from the tracker'"'"'s [[subid]], so each order is recorded on the click that sent the buyer.\n' \
+            "$(printf '%s' "$entry" | jq -r '.secret_stored')" "$(printf '%s' "$entry" | jq -r '.url')"
+        ;;
     *JVZoo*"Affiliate IPN"*)
         # One JVZIPN key verifies both JVZoo URLs; an affiliate pastes the
         # affiliate one, whose click is the tid. The reply never repeats the key.
