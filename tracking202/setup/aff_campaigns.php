@@ -161,7 +161,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 
 	// The payout's currency. A post without the field (an older form, a
 	// script) is in the account currency, as the page took it before.
-	$campaignCurrency = array_key_exists('aff_campaign_currency', $_POST) ? strtoupper(trim((string) $_POST['aff_campaign_currency'])) : $accountCurrency;
+	// A list in place of the code is no currency, refused below.
+	$campaignCurrency = array_key_exists('aff_campaign_currency', $_POST)
+		? (is_string($_POST['aff_campaign_currency']) ? strtoupper(trim($_POST['aff_campaign_currency'])) : '')
+		: $accountCurrency;
 
 	//check to see if they are the owners of this affiliate network
 	$mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_id']);
@@ -456,7 +459,8 @@ if (($_SERVER['REQUEST_METHOD'] == 'POST') and !$goalPost and (!isset($add_succe
 	if (isset($_POST['aff_network_id'])) {
 		$selected['aff_network_id'] = $_POST['aff_network_id'];
 	}
-	$html = array_map(htmlentities(...), $_POST);
+	// A list in place of a field is shown as empty, not a fatal.
+	$html = array_map(static fn ($value) => is_string($value) ? htmlentities($value) : '', $_POST);
 }
 
 // Post-redirect-get: a saved or removed campaign answers with a redirect, so
@@ -495,7 +499,7 @@ foreach ($categoryRows as $category) {
 // copied, or a blank campaign.
 $posted = $_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost;
 $source = $posted ? $_POST : (is_array($aff_campaign_row) ? $aff_campaign_row : []);
-$field = static fn (string $name): string => (string) ($source[$name] ?? '');
+$field = static fn (string $name): string => is_scalar($source[$name] ?? null) ? (string) $source[$name] : '';
 $values = [
 	'aff_campaign_id' => $posted ? $field('aff_campaign_id') : (string) ($editing || $copying ? ($_GET['edit_aff_campaign_id'] ?? $_GET['copy_aff_campaign_id'] ?? '') : ''),
 	'aff_network_id' => $field('aff_network_id'),

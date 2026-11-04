@@ -13363,7 +13363,7 @@ components:
           oneOf:
             - type: string
             - type: number
-          description: The payout of every line that gives none (a plain decimal, 0 or more, below 1,000,000). Omitted, those lines record the campaign's.
+          description: The payout of every line that gives none (a plain decimal from 0 to 999999.99). Omitted, those lines record the campaign's.
           example: "4.25"
         timezone:
           type: string

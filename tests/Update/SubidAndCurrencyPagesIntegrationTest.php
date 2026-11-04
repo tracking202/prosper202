@@ -127,7 +127,7 @@ final class SubidAndCurrencyPagesIntegrationTest extends TestCase
 
     /**
      * @param array<string, string> $get
-     * @param array<string, string> $post
+     * @param array<string, string|list<string>> $post
      */
     private static function page(string $page, array $get = [], array $post = []): string
     {
@@ -172,16 +172,17 @@ final class SubidAndCurrencyPagesIntegrationTest extends TestCase
     public function testTheSubidsPageRecordsEachLinesFields(): void
     {
         [$a, $b] = self::CLICKS;
+        // After the clicks (two days ago) and before now, whatever the day.
+        $when = (new \DateTimeImmutable('-1 day', new \DateTimeZone('Europe/London')))->setTime(14, 30);
         $out = self::page('tracking202/update/subids.php', [], [
             'token' => 'SESSION',
-            'subids' => "$a, 12.50, order-1, 11/02/2026 2:30:00 PM\r\n$b\r\n$b",
+            'subids' => "$a, 12.50, order-1, " . $when->format('m/d/Y g:i:s A') . "\r\n$b\r\n$b",
             'subid_payout' => '4.25',
             'subid_timezone' => 'Europe/London',
         ]);
         self::assertStringContainsString('2 subid(s) marked as converted', $out);
         self::assertStringContainsString('Repeats of an earlier line, recorded once: line 3', $out);
-        $london = (new \DateTimeImmutable('2026-11-02 14:30:00', new \DateTimeZone('Europe/London')))->getTimestamp();
-        self::assertSame([['payout' => 12.5, 'tx' => 'order-1', 'time' => $london]], self::rows($a));
+        self::assertSame([['payout' => 12.5, 'tx' => 'order-1', 'time' => $when->getTimestamp()]], self::rows($a));
         self::assertSame(4.25, self::rows($b)[0]['payout'], 'the default payout');
 
         $again = self::page('tracking202/update/subids.php', [], ['token' => 'SESSION', 'subids' => "$a, 12.50, order-1", 'subid_timezone' => 'Europe/London']);
@@ -234,5 +235,13 @@ final class SubidAndCurrencyPagesIntegrationTest extends TestCase
             'aff_campaign_payout' => '15', 'aff_campaign_currency' => 'XYZ', 'payout_mode' => 'replace',
         ]);
         self::assertStringContainsString('Choose a currency from the list.', $refused);
+
+        // A currency sent as a list is refused like any other value, without a warning.
+        $listed = self::page('tracking202/setup/aff_campaigns.php', ['edit_aff_campaign_id' => (string) $id], [
+            'token' => 'SESSION', 'aff_campaign_id' => (string) $id, 'aff_network_id' => (string) self::$network,
+            'aff_campaign_name' => 'Pound Offer', 'aff_campaign_url' => 'https://shop.example/offer',
+            'aff_campaign_payout' => '15', 'aff_campaign_currency' => ['GBP'], 'payout_mode' => 'replace',
+        ]);
+        self::assertStringContainsString('Choose a currency from the list.', $listed);
     }
 }

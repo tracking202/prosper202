@@ -55,8 +55,8 @@ final class SubidBatch
     public const DUPLICATE_IN_LIST = 'duplicate_in_list';
     public const INVALID_LINE = 'invalid_line';
 
-    /** A line's payout must be below this (the ledger's decimal(11,5)). */
-    private const PAYOUT_LIMIT = '1000000';
+    /** The largest payout a click's report row holds (202_dataengine.payout is decimal(8,2)). */
+    private const PAYOUT_MAX = '999999.99';
 
     /** 202_conversion_logs.transaction_id is varchar(255). */
     private const TRANSACTION_ID_MAX = 255;
@@ -152,9 +152,9 @@ final class SubidBatch
             if ($error === null && ($fields[1] ?? '') !== '') {
                 $error = self::payoutError($fields[1]);
                 $entry['payout'] = $fields[1];
-                // "1,250", "1,250.00" and "12,50" split into a payout and a short numeric
+                // "1,250", "1,250.00", "12,5" and "1000,50" split into a payout and a short numeric
                 // transaction id; a payout written with its decimals ("12.00, 50") is not refused.
-                if ($error === null && preg_match('/^\d{1,3}$/D', $fields[1]) === 1 && preg_match('/^\d{2,3}(?:\.\d{1,2})?$/D', $fields[2] ?? '') === 1) {
+                if ($error === null && preg_match('/^\d+$/D', $fields[1]) === 1 && preg_match('/^\d{1,3}(?:\.\d{1,2})?$/D', $fields[2] ?? '') === 1) {
                     $error = 'payout "' . $fields[1] . ',' . $fields[2] . '" looks like an amount with a thousands separator or a decimal comma:'
                         . ' write it as ' . $fields[1] . $fields[2] . ' or ' . $fields[1] . '.' . $fields[2]
                         . ' (if ' . $fields[2] . ' is the transaction id, write the payout with its decimals, as ' . $fields[1] . '.00)';
@@ -210,12 +210,15 @@ final class SubidBatch
         if (preg_match('/^-\s*\d/', $payout) === 1) {
             return 'payout "' . $payout . '" is negative; a reversal is not recorded here';
         }
-        if (preg_match('/^(\d+)(?:\.\d{1,5})?$/D', $payout, $m) !== 1) {
+        if (preg_match('/^(\d+)(?:\.(\d{1,5}))?$/D', $payout, $m) !== 1) {
             return 'payout "' . $payout . '" is not a number: write it as digits with a decimal point (at most five decimals), such as 12.50, with no currency sign or thousands separator';
         }
         // Compared as text: a long run of digits is no int.
-        if (strlen(ltrim($m[1], '0')) >= strlen(self::PAYOUT_LIMIT)) {
-            return 'payout "' . $payout . '" is too large: it must be less than ' . self::PAYOUT_LIMIT;
+        $whole = ltrim($m[1], '0');
+        $fraction = str_pad($m[2] ?? '', 5, '0');
+        [$maxWhole, $maxFraction] = explode('.', self::PAYOUT_MAX);
+        if (strlen($whole) > strlen($maxWhole) || ($whole === $maxWhole && strcmp($fraction, str_pad($maxFraction, 5, '0')) > 0)) {
+            return 'payout "' . $payout . '" is too large: it can be at most ' . self::PAYOUT_MAX;
         }
 
         return null;

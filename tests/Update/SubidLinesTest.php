@@ -115,10 +115,16 @@ final class SubidLinesTest extends TestCase
         yield 'thousands separator' => ['1,250.00', 'thousands separator'];
         yield 'thousands separator, no decimals' => ['1,250', 'thousands separator'];
         yield 'decimal comma' => ['12,50', 'decimal comma'];
+        yield 'decimal comma, one decimal' => ['12,5', 'decimal comma'];
+        yield 'decimal comma, one-digit amount' => ['7,5', 'decimal comma'];
+        yield 'decimal comma, four-digit amount' => ['1000,50', 'decimal comma'];
+        yield 'decimal comma, zero cents' => ['2500,00', 'decimal comma'];
         yield 'dot thousands, comma decimals' => ['1.250,00', 'a dot for thousands'];
         yield 'exponent' => ['1e3', 'is not a number'];
         yield 'negative' => ['-5', 'is negative'];
         yield 'a million' => ['1000000', 'too large'];
+        yield 'rounds to a million in the report' => ['999999.995', 'too large'];
+        yield 'past the report column' => ['999999.99001', 'too large'];
         yield 'twenty digits' => ['99999999999999999999', 'too large'];
         yield 'six decimals' => ['1.123456', 'is not a number'];
     }
@@ -168,6 +174,8 @@ final class SubidLinesTest extends TestCase
     {
         self::assertNull(SubidBatch::payoutError('0'));
         self::assertNull(SubidBatch::payoutError('999999.99'));
+        self::assertNull(SubidBatch::payoutError('999999.99000'));
+        self::assertNull(SubidBatch::payoutError('0999999.98999'));
         self::assertNotNull(SubidBatch::payoutError('12,50'));
         self::assertNotNull(SubidBatch::payoutError(''));
     }
