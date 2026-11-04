@@ -296,6 +296,9 @@ final class LtvGuardsTest extends TestCase
             try {
                 MysqlCustomerRepository::assertExternalIdempotencyKey($key);
                 self::fail($key . ' must be rejected — it squats an internal namespace');
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException $e) {
                 self::assertStringContainsString('reserved', $e->getMessage());
             }
@@ -341,6 +344,9 @@ final class LtvGuardsTest extends TestCase
             try {
                 \Prosper202\Ltv\MysqlCustomerRepository::canonicalizeAliasValue($type, $bad);
                 self::fail("malformed $type digest must be rejected");
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException $e) {
                 self::assertStringContainsString('hex digest', $e->getMessage());
             }

@@ -761,6 +761,10 @@ class UsersController
 
     public function deleteApiKey(int $userId, string $apiKey): void
     {
+        // An AI connection's watchers end first; best effort, the key goes either way.
+        if (!(new \Api\V3\Support\AiWatchers())->stopBeforeDelete($this->db, $userId, $apiKey)) {
+            error_log('p202: API key delete: the MCP server did not confirm that the key\'s watchers stopped');
+        }
         $stmt = $this->prepare('DELETE FROM 202_api_keys WHERE user_id = ? AND api_key = ?');
         $this->bind($stmt, 'is', $userId, $apiKey);
         $this->execute($stmt, 'Failed to delete API key');

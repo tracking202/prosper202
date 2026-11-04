@@ -100,6 +100,9 @@ final class InstallIdIntegrationTest extends TestCase
         try {
             InstallId::of(self::$db);
             self::fail('a stored value that is not an id was read as one');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('not 64 lower-case hex characters', $e->getMessage());
         }
@@ -112,6 +115,9 @@ final class InstallIdIntegrationTest extends TestCase
         try {
             InstallId::of(self::$db);
             self::fail('an unreadable id was answered');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringStartsWith('The install id could not be read', $e->getMessage());
             self::assertStringContainsString(
@@ -131,6 +137,9 @@ final class InstallIdIntegrationTest extends TestCase
         try {
             $conn->transaction(static fn (): string => InstallId::of(self::$db));
             self::fail('an id was minted inside a transaction');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('no install id yet', $e->getMessage());
         }

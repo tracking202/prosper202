@@ -48,6 +48,16 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - Composer (installs from source only; the release zip bundles `vendor/`)
 - Go 1.27.3+ (optional, to build the Go CLI from source; the release zip bundles its binaries)
 
+### Supported versions
+
+The versions every change is tested against in CI. Versions between the minimum and these should work; anything else is untested.
+
+| Component | Tested in CI | Minimum (refused below) | Notes |
+|-----------|--------------|-------------------------|-------|
+| PHP | 8.3, 8.4, 8.5 | 8.3 | Unit tests on all three; integration tests on 8.3 |
+| MySQL | 8.0, 8.4 LTS | 8.0 | MySQL 8.0 reached end of life in April 2026; use 8.4 LTS for new installs |
+| MariaDB | 11.4 LTS | 10.6 | |
+
 ## Installation
 
 There are two tracks. Pick by what you have access to:
@@ -347,6 +357,10 @@ stops taking traffic, then upgrade — through `202-config/upgrade.php`, or the
 pages say the same above their button. From 1.9.55, the 1-click page replaces
 the files and then sends you to the upgrade page for the database step, which
 checks the database server's version before it changes anything.
+The 1-click upgrade installs only a release signed by Tracking202: it downloads
+over HTTPS from my.tracking202.com, checks the zip's signature before writing
+anything, and refuses a download that does not verify, saying why. It needs
+PHP's sodium extension.
 
 On a large install the upgrade page can outlast a proxy's time limit (a million
 conversions takes one to two minutes). The upgrade keeps running on the server:

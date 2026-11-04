@@ -54,7 +54,7 @@ if (!empty($user_row['url']))
 // Account/key settings require the same permission that gates their UI; reject
 // forged requests from users who lack it (the password-change flow is excluded
 // because every user may change their own password).
-$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry'];
+$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry'];
 $personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key', 'test_click_filter'];
 $wantsPersonalSettingsAction = false;
 foreach ($personalSettingsPost as $personalSettingsAction) {
@@ -121,6 +121,8 @@ if (isset($_POST['remove_rest_api_key'])) {
 	}
 	$keyUserId = (int)$_SESSION['user_id'];
 	$removeKey = (string)($_POST['rest_api_key'] ?? '');
+    // An AI connection's watchers end first; best effort, the key goes either way.
+    $watchersEnded = (new \Api\V3\Support\AiWatchers())->stopBeforeDelete($db, $keyUserId, $removeKey);
 	// scope to owner
     try {
         $keyConn = new \Prosper202\Database\Connection($db);
@@ -141,6 +143,26 @@ if (isset($_POST['remove_rest_api_key'])) {
 		$slack->push('user_removed_app_api_key', ['user' => $username]);
 
 	p202_account_flash('ok', 'API key revoked. Anything still using it is refused from now on.');
+    if (!$watchersEnded) {
+        p202_account_flash('warn', 'Tracking202\'s MCP server did not confirm that this key\'s watchers stopped;'
+            . ' without the key they can read nothing more.');
+    }
+    p202_account_redirect('202-account/account.php#api-keys');
+}
+
+if (isset($_POST['stop_ai_watcher'])) {
+    if (!AUTH::check_csrf_token()) {
+        p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+        p202_account_redirect('202-account/account.php#api-keys');
+    }
+    $stopped = p202_account_stop_ai_watcher(
+        $db,
+        (int)$_SESSION['user_id'],
+        (string)($_POST['rest_api_key'] ?? ''),
+        (string)($_POST['watcher_id'] ?? ''),
+        new \Api\V3\Support\AiWatchers()
+    );
+    p202_account_flash($stopped['kind'], $stopped['text']);
 	p202_account_redirect('202-account/account.php#api-keys');
 }
 
@@ -788,6 +810,21 @@ if ($canPersonal) {
 	}
 }
 
+// Each AI connection's watchers, from Tracking202's MCP server; no AI key, no call.
+$aiWatchers = p202_account_ai_watchers($apiKeys, new \Api\V3\Support\AiWatchers());
+$watchedCampaigns = [];
+foreach ($aiWatchers as $keyWatchers) {
+    foreach ($keyWatchers ?? [] as $watcher) {
+        $watchedCampaigns[] = (int)$watcher['campaignId'];
+    }
+}
+try {
+    $campaignNames = p202_account_campaign_names($db, (int)$_SESSION['user_id'], $watchedCampaigns);
+} catch (Throwable $namesUnreadable) {
+    error_log('Account page: watched campaigns could not be read: ' . $namesUnreadable->getMessage());
+    $campaignNames = [];
+}
+
 // The click filter as stored, and an address test asked of it.
 $clickFilterView = $canPersonal ? p202_click_filter_view($db, (int) $_SESSION['user_id'], $_GET) : null;
 $pageFlashes = array_merge($pageFlashes, $clickFilterView['flashes'] ?? []);
@@ -1083,6 +1120,11 @@ echo p202_account_render_flashes($extraFlashes);
 										<button class="btn btn-outline-danger btn-sm" type="submit">Revoke…</button>
 									</form>
 								</div>
+                                <?php if (array_key_exists($keyValue, $aiWatchers)) {
+                                    $keyWatchers = $aiWatchers[$keyValue];
+                                    $stopAt = get_absolute_url() . '202-account/account.php#api-keys';
+                                    echo p202_account_render_watchers($keyValue, $keyWatchers, $campaignNames, $stopAt);
+                                } ?>
 							</div>
 						<?php } ?>
 					<?php } ?>

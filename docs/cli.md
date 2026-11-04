@@ -785,7 +785,7 @@ p202 conversion list --all
 | `--time-from`   |         | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset |
 | `--time-to`     |         | End, inclusive: the same forms |
 | `--click-id`    |         | Only this click's conversions |
-| `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `app_install`, `goal`, `legacy_baseline` |
+| `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `zaxaa`, `app_install`, `goal`, `legacy_baseline` |
 | `--match-method` |        | Only conversions whose click was found this way: `click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown` |
 | `--goal`        |         | Only this goal's outcomes (every version) |
 | `--all`         | false   | Fetch all rows across pages |
@@ -1427,7 +1427,7 @@ p202 rotator rule-create 5 \
 | `--rule-name`      | Yes      | Rule name                  |
 | `--splittest`      | No       | Enable split test (0 or 1) |
 | `--status`         | No       | 1 active (default), 0 created paused |
-| `--criteria-json`  | Yes, or `--country` | Criteria as JSON array: `type` country, region, city, isp, ip, platform, device or browser; `statement` is or is_not; `value` comma-separated, countries as `United States(US)`, `ip` as single IPv4/IPv6 addresses (no ranges), `ALL` for every visitor |
+| `--criteria-json`  | Yes, or `--country` | Criteria as JSON array: `type` country, region, eu, city, isp, fraud, ip, iprange, browser, platform, device, visitor, c1-c4, t202kw, referer or utm_source/medium/campaign/term/content; `statement` is or is_not; `value` comma-separated, countries as `United States(US)`, `ip` as single IPv4/IPv6 addresses (`iprange` for ranges), `ALL` for every visitor |
 | `--country`        | Yes, or `--criteria-json` | An ISO country code (`US`): a country `is` criterion |
 | `--redirects-json` | Yes, or `--redirect-campaign` | Redirects as JSON array: each with exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`, plus `weight` (0-100) and `name` |
 | `--redirect-campaign` | Yes, or `--redirects-json` | A campaign id: one redirect to it at full weight |

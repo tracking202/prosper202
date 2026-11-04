@@ -9,7 +9,7 @@ use Prosper202\Database\Connection;
 
 /**
  * One payment provider's notifications (PayKickstart's IPN, JVZoo's JVZIPN,
- * ClickBank's INS): where its secrets are stored, how a request is verified
+ * ClickBank's INS, Zaxaa's ZPN): where its secrets are stored, how a request is verified
  * against them, how a verified request reads as a Notification, and which
  * field carries the click. Recording, and the answers about the click, are
  * the Processor's, the same for every provider.

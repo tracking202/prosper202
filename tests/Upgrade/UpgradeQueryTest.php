@@ -107,6 +107,9 @@ final class UpgradeQueryTest extends TestCase
         try {
             _upgrade_query_run($conn, 'ALTER TABLE x', $this->sleeper(), $this->aborter());
             $this->fail('Expected the exhausted-transient path to invoke onExhausted (which throws here).');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (RuntimeException $e) {
             $this->assertSame('aborted:1205', $e->getMessage());
         }
@@ -147,6 +150,50 @@ final class UpgradeQueryTest extends TestCase
         $this->assertTrue($result);
         $this->assertSame(2, $conn->queryCount);
         $this->assertSame([1], $this->sleeps);
+    }
+
+    /**
+     * A failure that is not an applied step's re-run is logged with its errno,
+     * the server's message and the statement, both redacted (ZD0S).
+     */
+    public function testAPermanentFailureIsLoggedWithItsErrnoAndRedactedStatement(): void
+    {
+        $log = $this->captureLog(function (): void {
+            $conn = new FakeUpgradeConnection([1146]);
+            self::assertFalse(_upgrade_query_run($conn, "INSERT INTO 202_customers SET email = 'jo@example.com'",
+                $this->sleeper(), $this->aborter()));
+        });
+
+        self::assertStringContainsString('Prosper202 upgrade: statement failed [errno 1146]', $log);
+        self::assertStringContainsString('INSERT INTO 202_customers', $log);
+        self::assertStringNotContainsString('jo@example.com', $log, 'the quoted value is redacted');
+    }
+
+    public function testAnAlreadyAppliedStepStaysQuiet(): void
+    {
+        foreach ([1050, 1060, 1061, 1068, 1091] as $errno) {
+            $log = $this->captureLog(function () use ($errno): void {
+                $conn = new FakeUpgradeConnection([$errno]);
+                self::assertFalse(_upgrade_query_run($conn, 'ALTER TABLE x ADD COLUMN y int', $this->sleeper(), $this->aborter()));
+            });
+            self::assertSame('', $log, "errno $errno is a re-run's answer");
+        }
+    }
+
+    /** What $fn wrote with error_log(). */
+    private function captureLog(callable $fn): string
+    {
+        $file = tempnam(sys_get_temp_dir(), 'upq');
+        $previous = ini_set('error_log', (string) $file);
+        try {
+            $fn();
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+        $log = (string) file_get_contents((string) $file);
+        unlink((string) $file);
+
+        return $log;
     }
 
     public function testPermanentMysqliExceptionReturnsFalse(): void

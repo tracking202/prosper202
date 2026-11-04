@@ -459,6 +459,9 @@ final class AttributionWorkerIntegrationTest extends TestCase
         try {
             AttributionWorker::runExclusive(new Connection($none), 1);
             self::fail('a worker with no database took a lock');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('needs a selected database', $e->getMessage());
         } finally {
@@ -479,6 +482,9 @@ final class AttributionWorkerIntegrationTest extends TestCase
         try {
             AttributionWorker::runExclusive(new Connection($victim), 1, 200, $clock);
             self::fail('the run did not fail');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertSame('the run failed first', $e->getMessage(), get_class($e) . ': ' . $e->getMessage());
         }

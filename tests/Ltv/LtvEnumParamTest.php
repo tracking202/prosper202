@@ -110,6 +110,9 @@ final class LtvEnumParamTest extends TestCase
             try {
                 $repo->customers(new LtvQuery(7), $sort, $dir, 50, 0);
                 self::fail("$sort $dir was read as some other order");
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException $e) {
                 self::assertStringContainsString('Invalid ' . $named, $e->getMessage());
             }

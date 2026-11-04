@@ -317,6 +317,9 @@ final class UserDeletionPurgesAttributionTest extends TestCase
         try {
             (new UserDataPurge(self::$db, $this->files()))->deleteUser(1);
             $this->fail('a purge with a failing statement reported success');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             $this->assertStringContainsString('was not deleted', $e->getMessage());
         } finally {

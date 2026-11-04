@@ -118,6 +118,9 @@ final class AccountViewsTest extends TestCase
             try {
                 MysqlCustomerRepository::assertAmountSignMatchesType($orderType, -5.0);
                 self::fail("negative {$orderType} must be rejected");
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException) {
                 $this->addToAssertionCount(1);
             }

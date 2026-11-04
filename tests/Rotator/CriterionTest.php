@@ -7,6 +7,7 @@ namespace Tests\Rotator;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Rotator\Criterion;
 use Prosper202\Rotator\IpCriterion;
+use Prosper202\Rotator\IpRange;
 use Tests\Support\SourceScan;
 
 /**
@@ -81,6 +82,17 @@ final class CriterionTest extends TestCase
         yield 'not an address' => ['ip', '203.0.113.500', IpCriterion::refusal('203.0.113.500'), ''];
         yield 'a country beside ALL' => ['country', 'US, ALL', null, 'US,ALL'];
         yield 'a country list' => ['country', 'United States(US), Canada(CA)', null, 'United States(US),Canada(CA)'];
+        yield 'IP ranges' => ['iprange', '203.0.113.0/24, 192.0.2.*', null, '203.0.113.0/24,192.0.2.*'];
+        yield 'not an IP range' => ['iprange', '203.0.113.0/24, 198.51.100.0/99', IpRange::refusal('198.51.100.0/99'), ''];
+        yield 'eu, as 1.9.56 stored it' => ['eu', 'true', null, 'true'];
+        yield 'eu Unknown in any case' => ['eu', 'unknown', null, 'unknown'];
+        yield 'eu maybe' => ['eu', 'maybe', '"maybe" never matches a eu rule: use true or false or Unknown.', ''];
+        yield 'fraud' => ['fraud', 'TRUE', null, 'TRUE'];
+        yield 'fraud unknown' => ['fraud', 'Unknown', '"Unknown" never matches a fraud rule: use true or false.', ''];
+        yield 'visitor, as 1.9.56 stored it' => ['visitor', 'filtered', null, 'filtered'];
+        yield 'visitor bot' => ['visitor', 'bot', '"bot" never matches a visitor rule: use filtered or unique.', ''];
+        yield 'a referer pattern' => ['referer', 'search\\.example', null, 'search\\.example'];
+        yield 'a c1 value' => ['c1', 'spring, summer', null, 'spring,summer'];
     }
 
     /**
