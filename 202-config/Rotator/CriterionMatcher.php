@@ -18,8 +18,9 @@ namespace Prosper202\Rotator;
  * or visitor criterion that cannot be decided (no IPQualityScore key or
  * answer, a failed read) matches neither way: 1.9.56 read an unknown score
  * as "not fraud", which sent every visitor down a "not fraud" rule. So does
- * an IP range none of whose values can be read, and a statement other than
- * is or is_not.
+ * an IP range none of whose values can be read, a statement other than
+ * is or is_not, and a c1-c4, utm, keyword or referer criterion on the
+ * offer redirector, whose request is not the visitor's link.
  */
 final class CriterionMatcher
 {
@@ -102,6 +103,9 @@ final class CriterionMatcher
                 }
                 return $read && !$is;
             case 'referer':
+                if ($visitor->referer === null) {
+                    return false;
+                }
                 $hit = false;
                 foreach ($values as $pattern) {
                     if (self::refererMatches($pattern, $visitor->referer)) {
@@ -123,15 +127,16 @@ final class CriterionMatcher
             case 'c3':
             case 'c4':
                 $param = $visitor->param($type);
-                return $param !== '' && self::listed($param, $values) === $is;
+                return $param !== null && $param !== '' && self::listed($param, $values) === $is;
             case 'utm_source':
             case 'utm_medium':
             case 'utm_campaign':
             case 'utm_term':
             case 'utm_content':
-                return self::listed($visitor->param($type), $values) === $is;
+                $param = $visitor->param($type);
+                return $param !== null && self::listed($param, $values) === $is;
             case 't202kw':
-                return self::listed($visitor->keyword, $values) === $is;
+                return $visitor->keyword !== null && self::listed($visitor->keyword, $values) === $is;
         }
 
         $actual = self::visitorValue($type, $visitor);

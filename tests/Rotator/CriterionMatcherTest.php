@@ -217,6 +217,27 @@ final class CriterionMatcherTest extends TestCase
         self::assertTrue(CriterionMatcher::criterion('t202kw', 'is', 'crm demo', $visitor));
     }
 
+    /**
+     * The offer redirector's request is the landing page's ?rpi= link: its
+     * query and referer are not the visitor's, so a rule on the link's
+     * values is skipped there, whatever the statement, and the rest still read.
+     */
+    public function testWithoutTheLinkItsValuesMatchNeitherWay(): void
+    {
+        $offer = self::visitor()->withoutLinkFacts();
+        foreach (['c1' => 'spring', 'utm_source' => 'newsletter', 'utm_term' => 'crm software', 't202kw' => 'crm trial',
+            'referer' => 'search\.example'] as $type => $value) {
+            self::assertFalse(CriterionMatcher::criterion($type, 'is', $value, $offer), "$type is");
+            self::assertFalse(CriterionMatcher::criterion($type, 'is_not', 'facebook', $offer), "$type is_not");
+            self::assertTrue(CriterionMatcher::criterion($type, 'is', $value, self::visitor()), "$type on the visitor's own link");
+        }
+        self::assertTrue(CriterionMatcher::criterion('utm_source', 'is', 'ALL', $offer), 'ALL still matches everyone');
+        self::assertTrue(CriterionMatcher::criterion('country', 'is', 'Germany(DE)', $offer), 'geo still reads');
+        self::assertTrue(CriterionMatcher::criterion('iprange', 'is', '203.0.113.0/24', $offer), 'the address still reads');
+        self::assertTrue(CriterionMatcher::criterion('visitor', 'is', 'unique', $offer), 'the verdict still reads');
+        self::assertNull($offer->param('c1'));
+    }
+
     public function testARuleMatchesWhenEveryCriterionDoes(): void
     {
         $visitor = self::visitor();

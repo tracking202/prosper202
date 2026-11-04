@@ -10,7 +10,9 @@ use Prosper202\Click\ClickRequest;
  * What a redirector rule can ask about a visitor (CriterionMatcher), as
  * rtr.php and offrtr.php know it. Whether the click is filtered and its
  * fraud score cost a write or a network call, so each is asked only when a
- * rule needs it, and once; null is "could not tell".
+ * rule needs it, and once; null is "could not tell". The link's query,
+ * keyword and referer are null when the request is not the visitor's own
+ * link (offrtr.php, see withoutLinkFacts()).
  */
 final class VisitorFacts
 {
@@ -19,7 +21,7 @@ final class VisitorFacts
 
     /**
      * @param array<string, mixed> $geo getGeoData()'s answer
-     * @param array<array-key, mixed> $query the request's query
+     * @param ?array<array-key, mixed> $query the request's query; null when it is not the visitor's link
      * @param \Closure(): ?bool $filteredCheck whether the click is (to be) recorded as filtered
      * @param \Closure(): ?bool $fraudCheck whether IPQualityScore scores the visitor as fraud
      */
@@ -30,9 +32,9 @@ final class VisitorFacts
         public readonly string $os,
         public readonly string $device,
         public readonly string $browser,
-        public readonly array $query,
-        public readonly string $keyword,
-        public readonly string $referer,
+        public readonly ?array $query,
+        public readonly ?string $keyword,
+        public readonly ?string $referer,
         private readonly \Closure $filteredCheck,
         private readonly \Closure $fraudCheck,
     ) {
@@ -93,9 +95,40 @@ final class VisitorFacts
         );
     }
 
-    /** A query value as the click stores it: '' when absent or a list, %20 as a space. */
-    public function param(string $name): string
+    /**
+     * The same visitor without the facts only their own link carries: its
+     * c1-c4, utm and keyword values and the page they came from. offrtr.php
+     * is reached from a landing page by go.php?rpi= or offrtr.php?rpi=,
+     * which carry none of them, and its referer is the landing page; a
+     * rule on any of them there cannot be decided, so it is skipped.
+     */
+    public function withoutLinkFacts(): self
     {
+        return new self(
+            $this->ip,
+            $this->geo,
+            $this->isp,
+            $this->os,
+            $this->device,
+            $this->browser,
+            null,
+            null,
+            null,
+            $this->filteredCheck,
+            $this->fraudCheck,
+        );
+    }
+
+    /**
+     * A query value as the click stores it: '' when absent or a list, %20 as
+     * a space; null when the request is not the visitor's link.
+     */
+    public function param(string $name): ?string
+    {
+        if ($this->query === null) {
+            return null;
+        }
+
         return str_replace('%20', ' ', ClickRequest::text($this->query, $name));
     }
 

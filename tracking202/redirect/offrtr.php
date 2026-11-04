@@ -137,7 +137,9 @@ if( !$detect->isMobile() && !$detect->isTablet() ){
 
 $default = true;
 
-// A visitor rule reads the click as the landing page recorded it.
+// A visitor rule reads the click as the landing page recorded it. The
+// request is the landing page's offer link, not the visitor's own, so a
+// c1-c4, utm, keyword or referer rule cannot be decided here and is skipped.
 $offrtrVisitor = p202RotatorVisitor(
 	$db,
 	(int) $rotator_row['user_id'],
@@ -163,7 +165,7 @@ $offrtrVisitor = p202RotatorVisitor(
 
 		return $row === null ? null : (string) ($row['click_filtered'] ?? '0') === '1';
 	}
-);
+)->withoutLinkFacts();
 
 foreach ($rule_row as $rule) {
 	$mysql['rule_id'] = $db->real_escape_string((string)$rule['rule_id']);

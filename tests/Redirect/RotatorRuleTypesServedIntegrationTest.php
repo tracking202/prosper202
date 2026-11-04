@@ -212,7 +212,12 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
         self::assertStringStartsWith('https://filtered.example/', self::location($second), 'a repeat visit is filtered');
     }
 
-    /** offrtr.php, a landing page's offer link, reads the same rules through the same matcher. */
+    /**
+     * offrtr.php, a landing page's offer link, reads the same rules through
+     * the same matcher, but its request is the landing page's ?rpi= link, not
+     * the visitor's: a c1-c4, utm, keyword or referer rule is skipped there,
+     * whatever that request carries, and the visitor rule decides.
+     */
     public function testTheOfferLinkMatchesTheSameRules(): void
     {
         $ip = '198.51.100.17';
@@ -221,11 +226,10 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
             ->fetch_row()[0] ?? 0);
         self::assertGreaterThan(0, $click, 'the redirector link recorded a click' . $this->serverLog());
         $offer = '/tracking202/redirect/offrtr.php?rpi=' . (self::ROTATOR + self::PUBLIC);
-        foreach (['&utm_source=newsletter' => 'https://utm.example/', '&c1=spring' => 'https://c1.example/',
-            '' => 'https://unique.example/'] as $query => $expected) {
-            [$status, $headers] = self::get($offer . $query, $ip, '', 'tracking202subid=' . $click);
+        foreach (['', '&utm_source=newsletter', '&c1=spring', '&t202kw=crm%20trial'] as $query) {
+            [$status, $headers] = self::get($offer . $query, $ip, 'https://www.partner.example/landing', 'tracking202subid=' . $click);
             self::assertSame(302, $status, $query . $headers . $this->serverLog());
-            self::assertStringStartsWith($expected, self::location($headers), $query . $headers);
+            self::assertStringStartsWith('https://unique.example/', self::location($headers), $query . $headers);
         }
     }
 }
