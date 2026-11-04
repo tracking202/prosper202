@@ -7,6 +7,7 @@ namespace Tests\Setup;
 use Api\V3\Controllers\SetupCodeController;
 use Api\V3\Controllers\TrackersController;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Conversion\PostbackAuth\PostbackToken;
 
 /**
  * Get Links and Setup › Postback / Pixel hand out the URLs the API hands out
@@ -274,8 +275,12 @@ final class GetLinksSchemeIntegrationTest extends TestCase
         self::saveDomain($saved);
         $server = self::server($https);
         $out = self::page('tracking202/setup/get_postback.php', $server);
-        $expected = $base . 'tracking202/static/gpb.php?amount=&subid=';
         $api = (new SetupCodeController($db, self::USER))->postbackCode([], $server);
+        // Both carry the account's postback token, the one the page minted
+        // (Prosper202\Conversion\PostbackAuth).
+        $token = (string) $api['data']['postback_token'];
+        self::assertTrue(PostbackToken::isWellFormed($token), 'the API gives the account\'s postback token');
+        $expected = $base . 'tracking202/static/gpb.php?amount=&subid=' . PostbackToken::queryPart($token);
         self::assertSame($expected, $api['data']['simple']['postback_url'], 'the API');
         $shown = preg_match('~id="unsecure_postback">([^<]*)</pre>~', $out, $m);
         self::assertSame(1, $shown, 'the postback URL is shown');

@@ -7,11 +7,14 @@ declare(strict_types=1);
  * server runs it, in a process of its own, against the scratch database,
  * and prints `STATUS <code>` and then the body it answered.
  *
- * The endpoint is included at file scope after a stand-in for 202-config.php's
- * DB class, connected to the scratch database (connect2.php includes the
- * config file only once, and there is none in a checkout). The request is
- * the raw query string, set as the server sets QUERY_STRING and parsed into
- * $_GET as PHP parses it.
+ * The endpoint is included at file scope once 202-config.php's DB class is
+ * there, connected to the scratch database: the checkout's own 202-config.php
+ * when it has one (tests/run-integration-suites.sh writes one), loaded inside
+ * a function so its variables do not replace the scratch database's, as
+ * page-runner.php does, and refused unless it connects there; otherwise a
+ * stand-in for its DB class. connect2.php includes the config file only once,
+ * so its own include is then a no-op. The request is the raw query string,
+ * set as the server sets QUERY_STRING and parsed into $_GET as PHP parses it.
  *
  * argv: <pb | gpb | px | gpx | upx>
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_TEST_QUERY (the raw
@@ -28,10 +31,6 @@ if (PHP_SAPI !== 'cli') {
 $root = dirname(__DIR__, 3);
 if (!in_array($endpoint, ['pb', 'gpb', 'px', 'gpx', 'upx'], true)) {
     fwrite(STDERR, "no endpoint '$endpoint'\n");
-    exit(2);
-}
-if (is_file($root . '/202-config.php')) {
-    fwrite(STDERR, "this checkout has a 202-config.php, whose DB class would connect elsewhere\n");
     exit(2);
 }
 
@@ -57,30 +56,44 @@ $dbpass = (string) (getenv('P202_TEST_DB_PASS') ?: '');
 $dbname = (string) getenv('P202_TEST_DB_NAME');
 $mchost = '';
 
-class DB
-{
-    private static ?self $instance = null;
-    private \mysqli $connection;
-
-    public static function getInstance(): self
-    {
-        return self::$instance ??= new self();
+if (is_file($root . '/202-config.php')) {
+    (static function (string $config): void {
+        ob_start();
+        require_once $config;
+        ob_end_clean();
+    })($root . '/202-config.php');
+    $at = DB::getInstance()->getConnection()->query('SELECT DATABASE()');
+    $current = $at instanceof mysqli_result ? (string) ($at->fetch_row()[0] ?? '') : '';
+    if ($dbname === '' || $current !== $dbname) {
+        fwrite(STDERR, "this checkout's 202-config.php connected to '$current', not the scratch database '$dbname'\n");
+        exit(2);
     }
-
-    private function __construct()
+} else {
+    class DB
     {
-        [$host, $port] = explode(':', $GLOBALS['dbhost']) + [1 => '3306'];
-        $this->connection = new \mysqli($host, $GLOBALS['dbuser'], $GLOBALS['dbpass'], $GLOBALS['dbname'], (int) $port);
-    }
+        private static ?self $instance = null;
+        private \mysqli $connection;
 
-    public function getConnection(): \mysqli
-    {
-        return $this->connection;
-    }
+        public static function getInstance(): self
+        {
+            return self::$instance ??= new self();
+        }
 
-    public function getConnectionro(): \mysqli
-    {
-        return $this->connection;
+        private function __construct()
+        {
+            [$host, $port] = explode(':', $GLOBALS['dbhost']) + [1 => '3306'];
+            $this->connection = new \mysqli($host, $GLOBALS['dbuser'], $GLOBALS['dbpass'], $GLOBALS['dbname'], (int) $port);
+        }
+
+        public function getConnection(): \mysqli
+        {
+            return $this->connection;
+        }
+
+        public function getConnectionro(): \mysqli
+        {
+            return $this->connection;
+        }
     }
 }
 

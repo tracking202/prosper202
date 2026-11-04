@@ -556,7 +556,9 @@ if (!function_exists('_upgrade_postback_auth_table')) {
      * and the next run starts again. A table already there is left to the
      * reconciler, with every row and choice in it; this runs on whichever
      * step first meets the table (the 1.9.75 step reconciles every
-     * conversion table, on an install older than 1.9.76).
+     * conversion table, on an install older than 1.9.76). A database with
+     * no 202_users has no account to keep converting, and gets the table
+     * without rows.
      */
     function _upgrade_postback_auth_table(\Prosper202\Database\Schema\SchemaDefinition $definition): bool
     {
@@ -570,13 +572,22 @@ if (!function_exists('_upgrade_postback_auth_table')) {
         if ($exists) {
             return true;
         }
+        $users = _upgrade_query("SHOW TABLES LIKE '202\\_users'");
+        if (!$users instanceof \mysqli_result) {
+            error_log('Prosper202 upgrade: could not read whether 202_users exists; 202_postback_auth will be made on the next run.');
+            return false;
+        }
+        $hasAccounts = $users->num_rows > 0;
+        $users->free();
         $steps = [
             'DROP TABLE IF EXISTS `202_postback_auth_building`',
             str_replace('`202_postback_auth`', '`202_postback_auth_building`', $definition->createStatement),
-            'INSERT INTO `202_postback_auth_building` (user_id, auth_mode, updated_at)'
-                . " SELECT u.user_id, 'off', UNIX_TIMESTAMP() FROM `202_users` AS u",
-            'RENAME TABLE `202_postback_auth_building` TO `202_postback_auth`',
         ];
+        if ($hasAccounts) {
+            $steps[] = 'INSERT INTO `202_postback_auth_building` (user_id, auth_mode, updated_at)'
+                . " SELECT u.user_id, 'off', UNIX_TIMESTAMP() FROM `202_users` AS u";
+        }
+        $steps[] = 'RENAME TABLE `202_postback_auth_building` TO `202_postback_auth`';
         foreach ($steps as $sql) {
             if (_upgrade_query($sql) === false) {
                 error_log('Prosper202 upgrade: failed to make 202_postback_auth with a row for each account; the next run retries.');
