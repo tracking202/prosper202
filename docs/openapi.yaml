@@ -13032,7 +13032,7 @@ components:
     ConversionSource:
       type: string
       description: What produced a ledger row.
-      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, paykickstart, jvzoo, shopify, app_install, goal, legacy_baseline]
+      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, paykickstart, jvzoo, shopify, zaxaa, app_install, goal, legacy_baseline]
 
     MatchMethod:
       type: string

@@ -195,6 +195,9 @@ if ($memcacheWorking) {
 
 //set the timezone to the users timezone
 $mysql['user_id'] = $db->real_escape_string((string)($tracker_row['user_id'] ?? '0'));
+// A publisher link credits a publisher the account granted; any other id is ignored.
+$dlPublisher = p202ClickPublisher($db, (int) ($tracker_row['user_id'] ?? 0), $_GET);
+$mysql['publisher_user_id'] = (string) ($dlPublisher['user_id'] ?? 0);
 
 //now this sets timezone
 date_default_timezone_set($tracker_row['user_timezone']);
@@ -390,7 +393,7 @@ $earlyGeoData = preg_match('/\[\[(country|country_code|region|city)\]\]/i', (str
     : null;
 $redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $click_id, [
     'keyword' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword($keyword),
-    't202pubid' => $tracker_row['user_public_publisher_id'] ?? '',
+    't202pubid' => $dlPublisher['public_id'] ?? $tracker_row['user_public_publisher_id'] ?? '',
     'c1' => $clickCustom['c1'],
     'c2' => $clickCustom['c2'],
     'c3' => $clickCustom['c3'],

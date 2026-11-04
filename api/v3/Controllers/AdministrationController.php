@@ -16,6 +16,7 @@ use Prosper202\GeoIp\CityDatabase;
 use Prosper202\GeoIp\RefreshStore;
 use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\JVZoo\JVZooRole;
+use Prosper202\PaymentNotification\Zaxaa\ZaxaaSignature;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 use Prosper202\User\SignInOutcome;
@@ -35,8 +36,8 @@ use Prosper202\User\SignInOutcome;
  * - GET  /system/isp-lookup               the MaxMind ISP and carrier lookup
  *   PUT  /system/isp-lookup               switch
  * - GET  /system/integrations             the IPN / postback URLs to paste
- *                                         into ClickBank, JVZoo, Zaxaa and
- *                                         PayKickstart
+ *                                         into ClickBank, JVZoo, Zaxaa,
+ *                                         PayKickstart and Shopify
  *
  * The role permissions are the pages' (access_to_settings, and
  * access_to_api_integrations for the integrations), checked by the routes on
@@ -89,7 +90,7 @@ final class AdministrationController
         'clickbank' => ['ClickBank', 'INS URL', 'tracking202/static/cb202.php', 'cb_key'],
         'jvzoo' => ['JVZoo', 'Affiliate IPN URL', JVZooRole::SCRIPT, JVZooKey::COLUMN, 'role=affiliate'],
         'jvzoo_vendor' => ['JVZoo', 'Vendor JVZIPN URL', JVZooRole::SCRIPT, JVZooKey::COLUMN, 'role=vendor'],
-        'zaxaa' => ['Zaxaa', 'ZPN URL', 'tracking202/static/zpn.php', 'zaxaa_api_signature'],
+        'zaxaa' => ['Zaxaa', 'ZPN URL', 'tracking202/static/zpn.php', ZaxaaSignature::COLUMN],
         'paykickstart' => [
             'PayKickstart', 'IPN URL', 'tracking202/static/paykickstart.php', 'paykickstart_ipn_secret_keys',
         ],
@@ -711,6 +712,10 @@ final class AdministrationController
                     $shopifySecret = $prefs[$secret] ?? null;
                     $entry['secret_stored'] = ShopifyWebhookSecret::stored(is_string($shopifySecret) ? $shopifySecret : null)
                         !== null;
+                }
+                if ($secret === ZaxaaSignature::COLUMN) {
+                    $zaxaa = $prefs[$secret] ?? null;
+                    $entry['secret_stored'] = ZaxaaSignature::stored(is_string($zaxaa) ? $zaxaa : null) !== null;
                 }
                 if ($key === 'paykickstart') {
                     // One key for each PayKickstart campaign; never the keys.

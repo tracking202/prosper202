@@ -18,7 +18,7 @@ System health checks, diagnostics, and administration.
 | `GET` `PUT` | `/system/retention` | Admin + `access_to_settings` | Automatic click-data deletion (days), and any scheduled one-off deletion |
 | `POST` | `/system/retention/delete-before` | Admin + `access_to_settings` | Schedule the deletion of click data from before a day (`?dry_run=1` previews) |
 | `GET` `PUT` | `/system/isp-lookup` | Admin + `access_to_settings` | MaxMind ISP and carrier lookup |
-| `GET` | `/system/integrations` | Admin + `access_to_api_integrations` | The notification URLs to paste into ClickBank, JVZoo, Zaxaa, PayKickstart |
+| `GET` | `/system/integrations` | Admin + `access_to_api_integrations` | The notification URLs to paste into ClickBank, JVZoo, Zaxaa, PayKickstart, Shopify |
 | `GET` | `/system/traffic-source-owners` | Admin + `access_to_settings` | Traffic sources another user's traffic source accounts name (taken by Setup's rename before 1.9.79); Account › Settings shows the same in a notice and a panel |
 | `POST` | `/system/traffic-source-owners/repair` | Admin + `access_to_settings`, and a user who may act on both users | Move one back, or every one the report names a user for |
 | `POST` | `/system/traffic-source-owners/split` | Admin + `access_to_settings`, and a user who may act on each user it names | Give each user whose accounts name a source a copy of their own: what clears a source accounts of more than one user name |

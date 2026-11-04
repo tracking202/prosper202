@@ -558,6 +558,9 @@ final class IntegrityIntegrationTest extends TestCase
         try {
             (new AppRegistrationsController(self::$db, 1))->delete(5);
             self::fail('a delete whose row write failed reported success');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertNotInstanceOf(\Api\V3\Exception\WriteCommittedException::class, $e, 'nothing committed');
         } finally {

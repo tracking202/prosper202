@@ -21,6 +21,7 @@ enum ConversionSource: string
     case PAYKICKSTART = 'paykickstart';
     case JVZOO = 'jvzoo';
     case SHOPIFY = 'shopify';
+    case ZAXAA = 'zaxaa';
     case APP_INSTALL = 'app_install';
     case GOAL = 'goal';
     case LEGACY_BASELINE = 'legacy_baseline';
@@ -56,6 +57,7 @@ enum ConversionSource: string
             self::PAYKICKSTART => 'PayKickstart',
             self::JVZOO => 'JVZoo',
             self::SHOPIFY => 'Shopify',
+            self::ZAXAA => 'Zaxaa',
             self::APP_INSTALL => 'App install',
             self::GOAL => 'Goal',
             self::LEGACY_BASELINE => 'Value before the ledger',

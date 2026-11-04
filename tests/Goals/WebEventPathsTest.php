@@ -48,6 +48,7 @@ final class WebEventPathsTest extends TestCase
         'tracking202/static/jvzoo.php' => 'JVZoo\'s JVZIPN names its own events',
         // Shopify's webhook topics (orders/paid, refunds/create).
         'tracking202/static/shopify.php' => 'Shopify\'s webhooks name their own topics',
+        'tracking202/static/zpn.php' => 'Zaxaa\'s ZPN names its own transaction types',
     ];
 
     /**
@@ -184,7 +185,7 @@ final class WebEventPathsTest extends TestCase
         );
         $builders = [
             'tracking202/static/cb202.php', 'tracking202/static/jvzoo.php', 'tracking202/static/paykickstart.php',
-            'tracking202/static/shopify.php',
+            'tracking202/static/zpn.php', 'tracking202/static/shopify.php',
         ];
         self::assertSame($builders, array_values(array_filter(
             $endpoints,
