@@ -292,7 +292,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				// The mode and its credentials are saved together or not at all.
 				$pbSaved = $pbStore->setMode($pbUser, $pbMode, time());
 				p202_account_flash('ok', match ($pbMode) {
-					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Postbacks and pixels without credentials are accepted again; a wrong token or signature is still refused.',
+					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Every postback and pixel is accepted again, with or without credentials.',
 					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN => 'Postbacks and pixels without your token or a signature are now refused.',
 					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED => 'Only signed postbacks are accepted now: the token alone is refused, and so is every pixel.',
 				});
@@ -813,7 +813,7 @@ template_top('API Integrations');
 					<?php }
 					$pbNow = time();
 					$pbModes = [
-						'off' => ['Not required', 'Postbacks and pixels without credentials are accepted, as before 1.9.80. A wrong token or signature is still refused.'],
+						'off' => ['Not required', 'Every postback and pixel is accepted, as before 1.9.80, with or without the token.'],
 						'token' => ['Token or signature', 'A postback or pixel must carry the token (as the URLs in Setup › Postback / Pixel do) or a signature.'],
 						'signed' => ['Signed postbacks only', 'Only a request signed with the signing secret is accepted; the token alone is refused. Pixels cannot sign, so every pixel is refused.'],
 					];
@@ -826,7 +826,7 @@ template_top('API Integrations');
 						conversion with a bare postback URL. Your postback URLs and pixels carry this account's token as
 						<code>p202_token</code>. A sender that can compute an HMAC can instead sign each request with
 						<code>p202_ts</code> and <code>p202_sig</code>, keyed with the signing secret below, which no URL ever
-						carries. A wrong token or signature is refused whatever you choose here.</p>
+						carries. Unless authentication is off, a wrong token or signature is refused.</p>
 					<p class="text-secondary">A pixel runs in the visitor's browser, so its token can be read on the
 						advertiser's page: it stops guessing, not someone who saw the page. A pixel cannot sign, so
 						<strong>Signed postbacks only</strong> refuses every pixel.</p>

@@ -130,10 +130,10 @@ The account's **mode** says what `pb.php`, `gpb.php`, `px.php`, `gpx.php` and
 
 | `mode` | What happens |
 | ------ | ------------ |
-| `off` | A request without credentials is accepted, as before 1.9.80. |
+| `off` | Every request is accepted, as before 1.9.80, whatever credentials it carries: refusing a stale or wrong token would stop no one (leaving it out passes) and would lose the conversions of URLs that still carry a replaced token. |
 | `token` | The token or a valid signature is needed. |
 | `signed` | Only a valid signature is accepted. The token alone is refused, with a message naming the signing secret. **A pixel cannot sign** (the visitor's browser loads it), so `px.php`, `gpx.php` and `upx.php` are refused too unless the request is signed. |
-| any | A wrong token or signature is refused. One account's token or secret opens nothing of another account's. |
+| `token`, `signed` | A wrong token or signature is refused. One account's token or secret opens nothing of another account's. |
 
 A refusal is `403` with a JSON message, and nothing is recorded. `gpx.php` has
 sent its image already, so it only logs the refusal.
@@ -174,7 +174,7 @@ recorded answer keeps none).
 If a stored token or secret cannot be read (the key that encrypts them was
 lost from the database, or a value was altered), a postback that presents it
 is answered `500`, never let through, while one that presents nothing is
-still decided by the mode, so `off` keeps working. Opening Account › API
+still decided by the mode, and `off` accepts both. Opening Account › API
 Integrations, Setup › Postback / Pixel, any of the three routes above, or a
 rotation replaces it with a new one, and the answer says so (`recovered`):
 the old ones stopped working, so copy your URLs again.

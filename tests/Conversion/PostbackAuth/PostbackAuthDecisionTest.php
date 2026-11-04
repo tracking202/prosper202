@@ -118,9 +118,19 @@ final class PostbackAuthDecisionTest extends TestCase
             'an account with no row (made from 1.9.80 on) needs the token or a signature');
     }
 
-    public function testAPresentedTokenIsCheckedInEveryMode(): void
+    public function testModeOffAcceptsAnyCredentialItIsSent(): void
     {
-        foreach (PostbackAuthMode::cases() as $mode) {
+        $off = self::mode(PostbackAuthMode::OFF);
+        foreach (['p202_token=' . self::OLD, 'p202_token=nope', 'p202_token=' . self::TOKEN, 'p202_sig=abc'] as $query) {
+            self::assertNull($this->decide($off, $this->query($query)), $query . ': a stale URL keeps converting');
+        }
+        $withToken = PostbackSignature::signedQuery('gpb', ['subid' => '12'], self::TOKEN, self::NOW);
+        self::assertNull($this->decide($off, PresentedCredentials::fromQueryString($withToken)), 'a wrong signature');
+    }
+
+    public function testAPresentedTokenIsCheckedUnlessTheModeIsOff(): void
+    {
+        foreach ([PostbackAuthMode::TOKEN, PostbackAuthMode::SIGNED] as $mode) {
             $settings = self::mode($mode);
             self::assertSame('token_wrong', $this->decide($settings, $this->query('p202_token=' . self::OLD))?->reason, $mode->value);
             self::assertSame('token_wrong', $this->decide($settings, $this->query('p202_token=nope'))?->reason, $mode->value);
@@ -162,7 +172,7 @@ final class PostbackAuthDecisionTest extends TestCase
 
     public function testASignatureIsCheckedAgainstTheSigningSecretNotTheToken(): void
     {
-        foreach (PostbackAuthMode::cases() as $mode) {
+        foreach ([PostbackAuthMode::TOKEN, PostbackAuthMode::SIGNED] as $mode) {
             $settings = self::mode($mode);
             $signed = PostbackSignature::signedQuery('gpb', ['subid' => '12'], self::SECRET, self::NOW);
             self::assertNull($this->decide($settings, PresentedCredentials::fromQueryString($signed)), $mode->value);

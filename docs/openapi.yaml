@@ -10739,8 +10739,8 @@ paths:
         `upx.php` require of a request for this account's campaign or click:
         `off` (nothing), `token` (the token or a valid signature) or
         `signed` (a valid signature only: the token alone is refused, and so
-        is every pixel, which a browser cannot sign). A wrong token or
-        signature is refused in every mode. A refusal is 403 with a JSON
+        is every pixel, which a browser cannot sign). Under `token` and
+        `signed` a wrong token or signature is refused. A refusal is 403 with a JSON
         message and nothing recorded (`gpx.php` has already sent its image,
         so it only logs). Accounts that existed before 1.9.80 start at
         `off`; an account made later starts at `token`. Asks for the role
@@ -10779,8 +10779,8 @@ paths:
       tags: [Setup]
       summary: Choose what the account's postbacks and pixels must carry
       description: |
-        `mode`: `off` accepts requests without credentials (a wrong token or
-        signature is still refused); `token` refuses one that carries
+        `mode`: `off` accepts every request (a stale or wrong token too, since
+        leaving it out would pass); `token` refuses one that carries
         neither the token nor a signature; `signed` refuses one that is not
         signed with the signing secret, the token alone and every pixel
         included. The mode and any credential minted with it are stored

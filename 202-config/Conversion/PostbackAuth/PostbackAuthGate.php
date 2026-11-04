@@ -12,11 +12,13 @@ use Prosper202\Database\Connection;
  * campaign (pb, px) or click (gpb, gpx, upx) the request names, before
  * anything is written.
  *
- * - A request presenting a token or a signature is held to it whatever the
- *   mode: a wrong one is refused, never read as absent. The token is
- *   checked against the URL token, a signature against the signing secret.
  * - Mode off (every account already there at the 1.9.80 upgrade, until its
- *   owner changes it): a request presenting nothing passes.
+ *   owner changes it): every request passes and nothing is opened. Refusing
+ *   a wrong token there would stop no one (leaving it out passes) and would
+ *   lose the conversions of URLs still carrying a replaced token.
+ * - Otherwise a request presenting a token or a signature is held to it: a
+ *   wrong one is refused, never read as absent. The token is checked
+ *   against the URL token, a signature against the signing secret.
  * - Mode token: the token or a signature is needed.
  * - Mode signed: a signature is needed; the token alone is refused. A pixel
  *   is fetched by a browser and cannot sign, so every pixel is refused.
@@ -46,15 +48,20 @@ final class PostbackAuthGate
         if ($userId <= 0) {
             return new PostbackAuthRefusal('no_account', 'The request names no account this install can authenticate it for.');
         }
+        // Mode off accepts every request and opens nothing: a stale token on a
+        // network's URL keeps converting, and a credential that cannot be read
+        // stops nothing.
+        $mode = $this->store->mode($userId);
+        if ($mode === PostbackAuthMode::OFF) {
+            return null;
+        }
         $presented = PresentedCredentials::fromQueryString($queryString);
         if ($presented->problem !== null) {
             return new PostbackAuthRefusal('credentials_malformed', $presented->problem);
         }
 
         if ($presented->presentsNothing()) {
-            // The mode decides alone: nothing sealed is opened, so mode off
-            // keeps working while a credential cannot be read.
-            return self::decide(PostbackAuthSettings::modeOnly($this->store->mode($userId)), $presented, $endpoint, $now);
+            return self::decide(PostbackAuthSettings::modeOnly($mode), $presented, $endpoint, $now);
         }
         $needed = [];
         if ($presented->token !== null) {
@@ -70,6 +77,9 @@ final class PostbackAuthGate
     /** check()'s decision for the account's settings as read. */
     public static function decide(PostbackAuthSettings $settings, PresentedCredentials $presented, string $endpoint, int $now): ?PostbackAuthRefusal
     {
+        if ($settings->mode === PostbackAuthMode::OFF) {
+            return null;
+        }
         if ($presented->problem !== null) {
             return new PostbackAuthRefusal('credentials_malformed', $presented->problem);
         }

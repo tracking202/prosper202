@@ -251,14 +251,14 @@ final class PostbackAuthIntegrationTest extends TestCase
         self::assertContains($status, [200, 202], 'signed, signed only: ' . $body);
         self::assertSame(3, self::conversions($owner));
 
-        // Off: nothing presented converts, and a wrong token is still refused.
+        // Off: anything converts, a stale or wrong token too (leaving it out would).
         self::store()->setMode($owner, PostbackAuthMode::OFF, time());
         [$status, $body] = self::hit($endpoint, $owner, []);
         self::assertContains($status, [200, 202], $body);
         self::assertSame(4, self::conversions($owner));
-        [$status] = self::hit($endpoint, $owner, ['p202_token' => $theirs]);
-        self::assertSame(403, $status);
-        self::assertSame(4, self::conversions($owner));
+        [$status, $body] = self::hit($endpoint, $owner, ['p202_token' => $theirs]);
+        self::assertContains($status, [200, 202], 'a wrong token, off: ' . $body);
+        self::assertSame(5, self::conversions($owner));
     }
 
     public function testTheCampaignPixelRefusesBeforeItWrites(): void
@@ -309,7 +309,7 @@ final class PostbackAuthIntegrationTest extends TestCase
     public function testAMissingKeyFailsClosedUntilARotationMakesNewCredentials(): void
     {
         $old = self::store()->ensureCredentials(self::B, time());
-        self::store()->ensureCredentials(self::A, time());
+        $oldA = self::store()->ensureCredentials(self::A, time());
         self::store()->setMode(self::A, PostbackAuthMode::OFF, time());
         $key = self::key();
         self::q("DELETE FROM 202_deployment_secrets WHERE secret_name = 'postback_token'");
@@ -321,10 +321,13 @@ final class PostbackAuthIntegrationTest extends TestCase
             [$status, $body] = self::hit('gpb', self::B, []);
             self::assertSame(403, $status, $body);
             self::assertSame(0, self::conversions(self::B));
-            // Off mode keeps accepting a postback without credentials.
+            // Off mode keeps accepting a postback without credentials, and one whose token can no longer be checked.
             [$status, $body] = self::hit('gpb', self::A, []);
             self::assertContains($status, [200, 202], 'off, key missing: ' . $body);
             self::assertSame(1, self::conversions(self::A));
+            [$status, $body] = self::hit('gpb', self::A, ['p202_token' => (string) $oldA->token]);
+            self::assertContains($status, [200, 202], 'off, key missing, the old token: ' . $body);
+            self::assertSame(2, self::conversions(self::A));
             self::assertSame(PostbackAuthMode::TOKEN, self::store()->mode(self::B), 'the mode reads without the key');
 
             $rotated = self::store()->rotate(self::B, PostbackCredential::TOKEN, 3600, time());
@@ -344,7 +347,7 @@ final class PostbackAuthIntegrationTest extends TestCase
             self::assertSame(1, self::conversions(self::B));
             [$status, $body] = self::hit('gpb', self::A, []);
             self::assertContains($status, [200, 202], 'off, after the new key: ' . $body);
-            self::assertSame(2, self::conversions(self::A));
+            self::assertSame(3, self::conversions(self::A));
 
             // A's values were sealed under the lost key: its next read replaces them, and says so.
             $a = self::store()->ensureCredentials(self::A, time());

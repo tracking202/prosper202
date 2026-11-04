@@ -38,8 +38,8 @@ var conversionPostbackAuthCmd = &cobra.Command{
 		"with p202_ts and p202_sig keyed with the signing secret, which no URL carries. The mode says\n" +
 		"what gpb.php, pb.php, upx.php, px.php and gpx.php require: off (nothing; accounts from before\n" +
 		"1.9.80 start here), token (the token or a signature; new accounts) or signed (a signature only:\n" +
-		"the token alone is refused, and so is every pixel, which cannot sign). A wrong token or\n" +
-		"signature is refused in every mode. A pixel's token can be read on the advertiser's page: it\n" +
+		"the token alone is refused, and so is every pixel, which cannot sign). Under token and\n" +
+		"signed a wrong token or signature is refused; off accepts any. A pixel's token can be read on the advertiser's page: it\n" +
 		"stops guessing, not someone who saw the page.",
 }
 
@@ -70,8 +70,8 @@ var conversionPostbackAuthSetCmd = &cobra.Command{
 	Long: "--mode token refuses every postback and pixel of your account that carries neither the token\n" +
 		"nor a signature: give your networks the postbacks from `p202 conversion postback-url` first.\n" +
 		"--mode signed accepts only a signature keyed with the signing secret: the token alone is\n" +
-		"refused, and every pixel too, since a browser cannot sign. --mode off accepts requests without\n" +
-		"credentials; a wrong one is still refused. Needs a role with access_to_api_integrations.",
+		"refused, and every pixel too, since a browser cannot sign. --mode off accepts every request,\n" +
+		"a stale or wrong token included. Needs a role with access_to_api_integrations.",
 	Example: "  p202 conversion postback-auth set --mode token\n" +
 		"  p202 conversion postback-auth set --mode signed",
 	Args: cobra.NoArgs,
