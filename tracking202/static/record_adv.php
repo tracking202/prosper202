@@ -322,6 +322,13 @@ if ($clickIsBot) {
 // Pre-allocate click_id so we can compute click_id_public and site URLs
 $conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
 $clickRepo = new \Prosper202\Click\MysqlClickRepository($conn);
+// One gclid's template hit and page view record one at a time (released below).
+$raParallelLock = \Prosper202\Click\ParallelTrackingClick::hold(
+    $conn,
+    (int) $mysql['user_id'],
+    (int) $mysql['landing_page_id'],
+    (string) ($mysql['gclid'] ?? '')
+);
 // A Google Ads click the tracking template (pt.php) recorded for this page is this visit's click.
 $raParallelClick = \Prosper202\Click\ParallelTrackingClick::find(
     $conn,
@@ -410,6 +417,7 @@ if ($raParallelClick !== null) {
         record_mysql_error($db, 'recording click ' . $click_id, $raWriteError->getMessage());
     }
 }
+\Prosper202\Click\ParallelTrackingClick::release($conn, $raParallelLock);
 
 
 //set the cookie

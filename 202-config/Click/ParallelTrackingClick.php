@@ -21,6 +21,9 @@ final readonly class ParallelTrackingClick
     /** The template's hit and the page's script arrive seconds apart; a reload soon after is the same visit. */
     public const WINDOW = 600;
 
+    /** Seconds a visit waits for the other request of its click to finish recording. */
+    public const LOCK_WAIT = 3;
+
     private function __construct(
         public int $clickId,
         public string $clickIdPublic,
@@ -64,6 +67,55 @@ final readonly class ParallelTrackingClick
             (string) $row['aff_campaign_id'],
             (int) $row['click_time']
         );
+    }
+
+    /**
+     * Holds the gclid's lock (GET_LOCK) until release(): the template's hit
+     * and the page's script arrive together, and without it each could miss
+     * the other's click and both record one. The name, or null when there is
+     * nothing to hold or the lock was not had within LOCK_WAIT seconds: the
+     * visit then records as it would without it.
+     */
+    public static function hold(Connection $conn, int $userId, int $landingPageId, string $gclid): ?string
+    {
+        $gclid = ClickRecord::storedGclid($gclid);
+        if ($userId < 1 || $landingPageId < 1 || $gclid === '') {
+            return null;
+        }
+        $name = self::lockName($userId, $landingPageId, $gclid);
+        try {
+            $stmt = $conn->prepareWrite('SELECT GET_LOCK(?, ?) AS got');
+            $conn->bind($stmt, 'si', [$name, self::LOCK_WAIT]);
+            $got = $conn->fetchOne($stmt);
+        } catch (\Throwable $e) {
+            error_log('Prosper202 parallel tracking: the lock for landing page ' . $landingPageId
+                . ' could not be taken: ' . $e->getMessage());
+
+            return null;
+        }
+
+        return $got !== null && (int) ($got['got'] ?? 0) === 1 ? $name : null;
+    }
+
+    /** Lets go of hold()'s lock; the connection's end releases it too. */
+    public static function release(Connection $conn, ?string $name): void
+    {
+        if ($name === null) {
+            return;
+        }
+        try {
+            $stmt = $conn->prepareWrite('SELECT RELEASE_LOCK(?) AS released');
+            $conn->bind($stmt, 's', [$name]);
+            $conn->fetchOne($stmt);
+        } catch (\Throwable $e) {
+            error_log('Prosper202 parallel tracking: the lock ' . $name . ' could not be released: ' . $e->getMessage());
+        }
+    }
+
+    /** GET_LOCK names are server-wide and at most 64 characters. */
+    public static function lockName(int $userId, int $landingPageId, string $gclid): string
+    {
+        return 'p202pt:' . md5($userId . ':' . $landingPageId . ':' . ClickRecord::storedGclid($gclid));
     }
 
     /** @return array<string, mixed>|null */

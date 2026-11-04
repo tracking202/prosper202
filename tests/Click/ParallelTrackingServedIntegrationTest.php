@@ -60,7 +60,10 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
             [PHP_BINARY, '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . self::$log,
                 '-S', "127.0.0.1:$port", '-t', $root],
             [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
-            $pipes
+            $pipes,
+            null,
+            // Workers, so two requests of one click can be in flight at once.
+            array_merge(getenv(), ['PHP_CLI_SERVER_WORKERS' => '4'])
         );
         self::$base = "http://127.0.0.1:$port";
         for ($i = 0; $i < 50; $i++) {
@@ -281,6 +284,56 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
             'SELECT COUNT(*) FROM 202_attribution_rollup_dirty_clicks WHERE click_id = ' . (int) $click['click_id']
         )->fetch_row()[0];
         self::assertGreaterThan(0, $dirty, 'the rollup recomputes the click\'s cost');
+    }
+
+    /**
+     * The template's hit and the page's script in flight together record one
+     * click: each waits for the gclid's lock, so the second finds the first's
+     * click. The test holds the lock to start both before either records.
+     */
+    public function testATemplateHitAndPageViewTogetherRecordOneClick(): void
+    {
+        $db = self::requireScratch();
+        $lock = self::str(\Prosper202\Click\ParallelTrackingClick::lockName(self::OWNER, self::SIMPLE_LP, 'G-tog-1'));
+        self::assertSame('1', (string) $db->query("SELECT GET_LOCK($lock, 0)")->fetch_row()[0]);
+        $before = self::clicks();
+
+        $multi = curl_multi_init();
+        $handles = [];
+        foreach ([
+            [self::pt(self::SIMPLE_TRACKER, '&c1=winter&t202kw=snow%20boots&gclid=G-tog-1'), 'https://www.google.com/'],
+            ['/tracking202/static/record_simple.php?lpip=' . (self::SIMPLE_LP + self::PUBLIC) . '&gclid=G-tog-1',
+                'https://shop.example/landing?x=1&gclid=G-tog-1'],
+        ] as [$path, $referer]) {
+            $ch = curl_init(self::$base . $path);
+            curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_REFERER => $referer,
+                CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0 Safari/537.36']);
+            curl_multi_add_handle($multi, $ch);
+            $handles[] = $ch;
+        }
+        $until = microtime(true) + 1.0;
+        do {
+            curl_multi_exec($multi, $running);
+            curl_multi_select($multi, 0.05);
+        } while ($running > 0 && microtime(true) < $until);
+        self::assertSame($before, self::clicks(), 'neither records while the other may be recording');
+
+        $db->query("SELECT RELEASE_LOCK($lock)");
+        do {
+            curl_multi_exec($multi, $running);
+            curl_multi_select($multi, 0.05);
+        } while ($running > 0);
+        foreach ($handles as $ch) {
+            self::assertLessThan(400, (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE), $this->serverLog());
+            curl_multi_remove_handle($multi, $ch);
+        }
+        curl_multi_close($multi);
+
+        self::assertSame($before + 1, self::clicks(), 'one click for the two requests');
+        $click = self::clickWithGclid('G-tog-1');
+        self::assertSame('snow boots', $click['keyword']);
+        self::assertSame('winter', $click['c1']);
+        self::assertSame('0.25000', (string) $click['click_cpc'], 'the tracker\'s cost');
     }
 
     /** A passed-on value with '#' or a line break stays in the query, encoded. */
