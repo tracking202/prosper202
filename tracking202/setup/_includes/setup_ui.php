@@ -231,6 +231,38 @@ function p202_setup_placeholders(string $targetId, string $remember): string
 }
 
 /**
+ * The Link Assistant's suggestion box for a URL field (202-js/p202-link-assistant.js).
+ * It stays hidden until the field holds a known network's link.
+ */
+function p202_setup_link_assistant(string $targetId): string
+{
+    return '<div class="mt-2" data-p202-link-assistant="#' . p202_setup_e($targetId) . '" hidden></div>';
+}
+
+/**
+ * The Link Assistant's network table and script, printed once per page.
+ * JSON_HEX_TAG keeps the table from closing its own <script>.
+ */
+function p202_setup_link_assistant_script(string $base): string
+{
+    $networks = json_encode(
+        \Prosper202\Setup\LinkAssistant::networks(),
+        JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+    );
+    // Versioned by content: a cached script must not run a newer table, so
+    // with no hash to version it the page goes without the assistant.
+    $hash = @md5_file(dirname(__DIR__, 3) . '/202-js/p202-link-assistant.js');
+    if ($hash === false) {
+        error_log('Link Assistant: 202-js/p202-link-assistant.js is unreadable; the campaign page goes without it');
+        return '';
+    }
+    $src = rtrim($base, '/') . '/202-js/p202-link-assistant.js?v=' . substr($hash, 0, 12);
+
+    return '<script type="application/json" id="p202-link-networks">' . $networks . '</script>'
+        . '<script src="' . p202_setup_e($src) . '" defer></script>';
+}
+
+/**
  * <option>s for a native select, flat or grouped.
  *
  * $options is value => label, or value => ['label' => …, 'data' => [name =>
