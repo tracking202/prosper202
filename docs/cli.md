@@ -1057,6 +1057,46 @@ first 1,000; the summary counts every skipped line by reason).
 (`delete-subids` also `delete_individual_subids`), refuse `--staged`, and are
 safe to run again.
 
+## Destinations
+
+Send each new conversion to your ad platforms from your own server as it is
+recorded, starting with Google Analytics 4 (Measurement Protocol). The same
+as Setup › Destinations and `/api/v3/destinations`; the full guide is
+`documentation/features/destinations.md`.
+
+```bash
+printf %s "$GA4_API_SECRET" | p202 destination create --name "Online store GA4" \
+    --measurement-id G-ABC123 --api-secret-file - --param campaign=utm_campaign
+p202 destination test 1
+p202 destination deliveries 1 --status failed
+p202 destination update 1 --campaign-id 12 --send-user-data
+p202 destination update 1 --disable
+p202 destination delete 1 --dry-run
+```
+
+| Command | Description |
+|---------|-------------|
+| `destination list` / `get <id>` | Destinations and their settings; credentials are never shown, only `credentials_set` |
+| `destination create` | Add a GA4 destination: `--name`, `--measurement-id`, `--api-secret-file` (a file, or `-` for piped stdin; never a flag value) |
+| `destination update <id>` | `--enable` / `--disable`, `--name`, any setting flag, or a new `--api-secret-file`; only the flags given change |
+| `destination test <id>` | Send a made-up conversion to GA4's validation endpoint, which records nothing; prints `valid` and GA4's `messages` |
+| `destination deliveries <id>` | The delivery log: `--status pending\|sent\|failed\|withheld\|cancelled`, `--kind conversion\|test`, `--conv-id`, `--limit`, `--offset` |
+| `destination delete <id>` | Delete it (`--dry-run` previews, `--force` skips the prompt); what it has not sent is cancelled |
+
+| Setting flag | Description |
+|------|-------------|
+| `--event-name` | GA4 event name, `purchase` by default |
+| `--client-id-source` | `click` (sends `p202.<click id>`) or `c1`–`c4`, the click variable your landing page puts the `_ga` client id in |
+| `--user-id-source` | `customer` sends the LTV customer's reference as `user_id` |
+| `--param name=field` | An extra event parameter from a click field (repeatable) |
+| `--campaign-id N` | Only this campaign's conversions (repeatable); none for every campaign |
+| `--send-user-data` | Send SHA-256 hashes of the customer's normalised email and E.164 phone, never the raw values |
+| `--ad-user-data`, `--ad-personalization` | Google's consent signals as you state them: `granted` or `denied` |
+
+A conversion goes out with the minutely cron job and is retried with backoff,
+8 tries in all. A visitor your privacy setting holds back is `withheld`, never
+sent.
+
 ## Reports
 
 All report commands (`report summary|breakdown|timeseries|daypart|weekpart|crosstab|breakeven|losers|winners`,

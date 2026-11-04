@@ -227,6 +227,7 @@ final readonly class Auth
         'apps',
         'goals',
         'events',
+        'destinations',
         'users',
         'system',
         'sync',

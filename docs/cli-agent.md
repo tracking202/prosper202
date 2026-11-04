@@ -918,6 +918,26 @@ p202 conversion pixel  [--type simple|advanced|universal] [--iframe] [--campaign
                        [--amount S] [--subid S] [--scheme http|https] [--json]   # the pixel
 ```
 
+### Destinations (conversions to ad platforms)
+
+```
+p202 destination list [--json]                          # Setup › Destinations; credentials never shown (credentials_set)
+p202 destination get <id> [--json]
+p202 destination create --name S --measurement-id G-XXXX --api-secret-file FILE|-   # GA4 Measurement Protocol
+                       [--event-name purchase] [--client-id-source click|c1|c2|c3|c4] [--user-id-source none|customer]
+                       [--param name=field]... [--campaign-id N]... [--send-user-data]
+                       [--ad-user-data granted|denied] [--ad-personalization granted|denied] [--json]
+p202 destination update <id> [--enable|--disable] [--name S] [any create flag]   # only the flags given change
+p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
+p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]
+                       [--conv-id N] [--limit 50] [--offset 0] [--json]    # the log; meta.summary counts by status
+p202 destination delete <id> [--force] [--dry-run] [--json]                # unsent rows cancelled; the log stays
+```
+
+The API secret is read from a file or piped stdin (`-`), never a flag value. `--staged` is refused: the
+routes are not stageable. A `withheld` delivery was held back by the privacy setting and is never retried;
+`failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called).
+
 ### Reports
 
 ```

@@ -4669,6 +4669,10 @@ class UPGRADE
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
+                // The ad platforms conversions are sent to, and their delivery
+                // log (Prosper202\Destinations).
+                \Prosper202\Database\Tables\ConversionTables::destinations(),
+                \Prosper202\Database\Tables\ConversionTables::destinationDeliveries(),
             ]);
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {

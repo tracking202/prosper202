@@ -187,6 +187,8 @@ tags:
     description: Customer lifetime value — customers, companies, revenue, subscriptions, products, custom fields, webhooks and integrations (scopes `ltv:read` / `ltv:write`)
   - name: Sync
     description: Server-side sync between Prosper202 instances — plans, jobs, the change feed and the audit trail (admin, scopes `sync:read` / `sync:write`)
+  - name: Destinations
+    description: Ad platforms (GA4 first) the account's conversions are sent to from this server, a test fire, and each one's delivery log (scopes destinations:read / destinations:write; role permission access_to_setup_section)
   - name: Events
     description: Web events — what a click went on to do, reported by click id and evaluated by its campaign's goals (also `event=` on pixels and postbacks, and `p202.track()` on landing pages)
 
@@ -4243,6 +4245,234 @@ paths:
           description: The export is not failed.
 
   # ─── Goals ───────────────────────────────────────────────────────────
+
+  /destinations:
+    get:
+      tags: [Destinations]
+      summary: List the ad platforms conversions are sent to
+      description: |
+        The account's destinations. Credentials are never served;
+        `credentials_set` says whether they are stored. Role permission
+        `access_to_setup_section`.
+      operationId: listDestinations
+      responses:
+        "200":
+          description: Destinations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Destination"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Destinations]
+      summary: Add a destination
+      description: |
+        Every new conversion of the account (or of `settings.campaign_ids`)
+        is queued for it in the conversion's own transaction and sent by the
+        minutely cron job from this server. `type` is `ga4` (Google Analytics 4
+        Measurement Protocol). Unknown keys in `settings` and `credentials`
+        are refused. At most 25 per account.
+      operationId: createDestination
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, name, settings, credentials]
+              properties:
+                type: {type: string, enum: [ga4]}
+                name: {type: string, maxLength: 100}
+                settings:
+                  $ref: "#/components/schemas/DestinationSettings"
+                credentials:
+                  $ref: "#/components/schemas/DestinationCredentials"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Destination"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /destinations/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Destinations]
+      summary: One destination
+      operationId: getDestination
+      responses:
+        "200":
+          description: The destination
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Destination"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Destinations]
+      summary: Change a destination
+      description: |
+        Send any of `name`, `enabled`, `settings` (replaces the settings
+        whole) and `credentials` (replaces them whole; leave it out to keep
+        the stored ones). A disabled destination queues nothing; what it
+        already queued waits and is sent once it is enabled again.
+      operationId: updateDestination
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string, maxLength: 100}
+                enabled: {type: boolean}
+                settings:
+                  $ref: "#/components/schemas/DestinationSettings"
+                credentials:
+                  $ref: "#/components/schemas/DestinationCredentials"
+      responses:
+        "200":
+          description: The destination as it now is
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Destination"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Destinations]
+      summary: Delete a destination
+      description: Its credentials are erased and what it queued and did not send is cancelled. Its delivery log stays.
+      operationId: deleteDestination
+      responses:
+        "204":
+          description: Deleted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /destinations/{id}/test:
+    post:
+      tags: [Destinations]
+      summary: Send a test conversion
+      description: |
+        Sends a made-up conversion (no visitor's data) to the platform's
+        validation endpoint now, and records it in the delivery log as kind
+        `test`. For GA4 that is `/debug/mp/collect`, which checks the event
+        and records nothing in your property; `messages` lists what GA4
+        found wrong, and `valid` is true when it found nothing.
+      operationId: testDestination
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: The platform's verdict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      delivery_id: {type: integer}
+                      valid: {type: boolean}
+                      status_code: {type: integer, nullable: true}
+                      messages: {type: array, items: {type: string}}
+                      reason: {type: string, nullable: true}
+                      sent:
+                        type: object
+                        description: What was sent, without identifiers' values
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /destinations/{id}/deliveries:
+    get:
+      tags: [Destinations]
+      summary: A destination's delivery log
+      description: |
+        Newest first. `status` is `pending` (waiting, or backing off after
+        a failed attempt; 8 attempts in all, 1 minute doubling to 6 hours
+        apart), `sent`, `failed` (attempts ran out, the platform refused it,
+        or the request was refused before it was sent), `withheld` (your
+        privacy setting holds this visitor back, so nothing was sent) or
+        `cancelled` (the conversion or the destination was deleted first).
+        `summary` is what was sent, without identifiers' values.
+        `meta.summary` counts every status under the same filters except
+        `status`. Role permissions `access_to_setup_section` and
+        `access_to_campaign_data`.
+      operationId: listDestinationDeliveries
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: status, in: query, schema: {type: string, enum: [pending, sent, failed, withheld, cancelled]}}
+        - {name: kind, in: query, schema: {type: string, enum: [conversion, test]}}
+        - {name: conv_id, in: query, schema: {type: integer}}
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+        - {name: limit, in: query, schema: {type: integer, default: 50, maximum: 500}}
+        - {name: offset, in: query, schema: {type: integer, default: 0}}
+      responses:
+        "200":
+          description: Deliveries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DestinationDelivery"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+                  meta:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          pending: {type: integer}
+                          sent: {type: integer}
+                          failed: {type: integer}
+                          withheld: {type: integer}
+                          cancelled: {type: integer}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /goals:
     get:
@@ -16753,6 +16983,86 @@ components:
             revenue:
               type: number
 
+    Destination:
+      type: object
+      description: An ad platform the account's conversions are sent to.
+      properties:
+        destination_id: {type: integer}
+        type: {type: string, enum: [ga4]}
+        name: {type: string}
+        enabled: {type: boolean}
+        settings:
+          $ref: "#/components/schemas/DestinationSettings"
+        credentials_set:
+          type: boolean
+          description: Whether credentials are stored. They are never served.
+        created_at: {type: integer}
+        updated_at: {type: integer}
+    DestinationSettings:
+      type: object
+      description: |
+        What is sent and when. Every type takes `campaign_ids`,
+        `send_user_data` and `consent`; GA4 takes the rest.
+      properties:
+        campaign_ids:
+          type: array
+          items: {type: integer}
+          description: Only these campaigns' conversions; empty for every campaign.
+        send_user_data:
+          type: boolean
+          default: false
+          description: |
+            Send the conversion's LTV customer email and phone, normalised
+            and SHA-256 hashed on this server; the raw values never leave it.
+            Phone numbers are sent only in E.164 form (+ and country code).
+        consent:
+          type: object
+          description: |
+            What you state for Google's consent signals; Prosper202 records
+            no visitor's consent. With ad_user_data denied, no hashed data is sent.
+          properties:
+            ad_user_data: {type: string, enum: [granted, denied], nullable: true}
+            ad_personalization: {type: string, enum: [granted, denied], nullable: true}
+        measurement_id:
+          type: string
+          description: GA4 web stream Measurement ID (G-…).
+        event_name: {type: string, default: purchase}
+        client_id_source:
+          type: string
+          enum: [click, c1, c2, c3, c4]
+          default: click
+          description: |
+            Where the GA client id is. click sends p202.<click id>, which
+            records the conversion but does not join the browser session; a
+            c variable carries the _ga client id your landing page passed.
+        user_id_source: {type: string, enum: [none, customer], default: none}
+        params:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [utm_source, utm_medium, utm_campaign, utm_term, utm_content, keyword, c1, c2, c3, c4, campaign_id, click_id]
+          description: GA4 event parameter name to the click field it carries.
+    DestinationCredentials:
+      type: object
+      description: Write-only, encrypted at rest.
+      properties:
+        api_secret:
+          type: string
+          description: GA4 Measurement Protocol API secret.
+    DestinationDelivery:
+      type: object
+      properties:
+        delivery_id: {type: integer}
+        conv_id: {type: integer, nullable: true, description: null for a test}
+        kind: {type: string, enum: [conversion, test]}
+        status: {type: string, enum: [pending, sent, failed, withheld, cancelled]}
+        attempts: {type: integer}
+        next_attempt_at: {type: integer}
+        last_status_code: {type: integer, nullable: true}
+        last_error: {type: string, nullable: true}
+        summary: {type: object, nullable: true}
+        created_at: {type: integer}
+        sent_at: {type: integer, nullable: true}
     AppNotification:
       type: object
       description: One traffic-source postback an app install's goal queued (the notification outbox).

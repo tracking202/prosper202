@@ -1,0 +1,263 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Destinations;
+
+use PHPUnit\Framework\TestCase;
+use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Attribution\WebhookSender;
+use Prosper202\Conversion\Ledger\MatchMethod;
+use Prosper202\Conversion\MysqlConversionRepository;
+use Prosper202\Database\Connection;
+use Prosper202\Destinations\DestinationQueue;
+use Prosper202\Destinations\DestinationStore;
+use Prosper202\Destinations\Ga4Destination;
+use Tests\Apps\Android\AndroidDatabase;
+
+/**
+ * Destinations against a real server: a conversion recorded through the
+ * ledger's one writer is queued for each enabled destination in its own
+ * transaction, and the worker sends it through the guarded sender (a
+ * stubbed resolver and transport), retries, fails, withholds and cancels as
+ * the outbox does. Credentials are sealed and bound to their destination.
+ *
+ * @group integration
+ */
+final class DestinationsIntegrationTest extends TestCase
+{
+    use AndroidDatabase {
+        setUp as private databaseSetUp;
+    }
+
+    private const SECRET = 'Sx9-secretAPIvalue';
+
+    /** @var list<array<string, mixed>> decoded bodies the transport was handed */
+    private array $bodies = [];
+    /** @var list<array<string, mixed>> answers the transport gives, in order (then 204) */
+    private array $answers = [];
+
+    protected function setUp(): void
+    {
+        $this->databaseSetUp();
+        foreach (['202_destinations', '202_destination_deliveries', '202_customers', '202_clicks_advance', '202_ips'] as $t) {
+            self::$db->query('TRUNCATE TABLE ' . $t);
+        }
+        self::fixture('DELETE FROM 202_users_pref WHERE user_id IN (1, 2)');
+        self::fixture("INSERT INTO 202_users_pref SET user_id=1, user_pref_privacy='disabled', user_account_currency='USD'");
+        self::fixture("INSERT INTO 202_users_pref SET user_id=2, user_pref_privacy='disabled', user_account_currency='USD'");
+        $this->campaign(31, null);
+        $this->campaign(40, null, user: 2);
+        $this->bodies = [];
+        $this->answers = [];
+    }
+
+    private function store(): DestinationStore
+    {
+        $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.10'], '203.0.113.0/24');
+        $transport = function (array $options): array {
+            $this->bodies[] = json_decode((string) $options[CURLOPT_POSTFIELDS], true);
+
+            return (array_shift($this->answers) ?? []) + ['status' => 204, 'error' => null, 'primary_ip' => '203.0.113.10', 'location' => null, 'body' => ''];
+        };
+
+        return new DestinationStore(new Connection(self::$db), [Ga4Destination::TYPE => new Ga4Destination(new WebhookSender($guard, $transport))]);
+    }
+
+    private function worker(bool $mayBeEuropean = true): DestinationQueue
+    {
+        return new DestinationQueue(new Connection(self::$db), $this->store(), static fn (string $ip): bool => $mayBeEuropean);
+    }
+
+    /** @param array<string, mixed> $settings */
+    private function destination(array $settings = [], int $user = 1): int
+    {
+        return (int) $this->store()->create($user, Ga4Destination::TYPE, 'Store GA4', $settings + ['measurement_id' => 'G-ABC123'], ['api_secret' => self::SECRET], time())['destination_id'];
+    }
+
+    private function record(int $click, string $tx, int $user = 1): int
+    {
+        $result = (new MysqlConversionRepository(new Connection(self::$db)))->record($user, [
+            'click_id' => $click, 'payout' => '19.90', 'transaction_id' => $tx, 'source' => 'api',
+        ], MatchMethod::CLICK_ID);
+
+        return (int) $result['convId'];
+    }
+
+    /** @return list<array<string, mixed>> */
+    private static function deliveries(int $destinationId): array
+    {
+        return self::$db->query("SELECT conv_id, kind, status, attempts, next_attempt_at, last_status_code, last_error FROM 202_destination_deliveries
+            WHERE destination_id = $destinationId ORDER BY delivery_id")->fetch_all(MYSQLI_ASSOC);
+    }
+
+    public function testANewConversionIsQueuedOnceForEachEnabledDestinationThatTakesItsCampaign(): void
+    {
+        $all = $this->destination();
+        $other = $this->destination(['campaign_ids' => [31]]);
+        $off = $this->destination();
+        $this->store()->update(1, $off, ['enabled' => false], time());
+        $foreign = $this->destination(['measurement_id' => 'G-OTHER1'], 2);
+
+        $this->click(100);
+        $convId = $this->record(100, 'ORD-1');
+        self::assertGreaterThan(0, $convId);
+        $rows = self::deliveries($all);
+        self::assertCount(1, $rows, 'the positive control: an enabled destination for every campaign queues it');
+        self::assertSame([(string) $convId, 'conversion', 'pending', '0'], [$rows[0]['conv_id'], $rows[0]['kind'], $rows[0]['status'], $rows[0]['attempts']]);
+        self::assertSame([], self::deliveries($other), 'a destination for another campaign');
+        self::assertSame([], self::deliveries($off), 'a disabled destination');
+        self::assertSame([], self::deliveries($foreign), 'another account\'s destination');
+
+        // A replay is a duplicate and queues nothing; a reversal is not a sale.
+        $this->record(100, 'ORD-1');
+        (new MysqlConversionRepository(new Connection(self::$db)))->record(1, [
+            'click_id' => 100, 'transaction_id' => 'ORD-1', 'reversal' => true, 'source' => 'api',
+        ], MatchMethod::CLICK_ID);
+        self::assertCount(1, self::deliveries($all));
+    }
+
+    public function testTheWorkerRetriesWithBackoffThenSends(): void
+    {
+        $id = $this->destination(['params' => ['campaign' => 'utm_campaign']]);
+        $this->click(100);
+        $convId = $this->record(100, 'ORD-2');
+        $now = time() + 1;
+
+        $this->answers = [['status' => 503, 'body' => 'busy']];
+        self::assertSame(1, $this->worker()->sendDue(10, 5, $now)['retrying']);
+        $row = self::deliveries($id)[0];
+        self::assertSame(['pending', '1', '503', (string) ($now + 60)], [$row['status'], $row['attempts'], $row['last_status_code'], $row['next_attempt_at']]);
+        self::assertSame(0, array_sum($this->worker()->sendDue(10, 5, $now + 30)), 'not due again before its backoff');
+
+        self::assertSame(1, $this->worker()->sendDue(10, 5, $now + 61)['sent']);
+        $row = self::deliveries($id)[0];
+        self::assertSame(['sent', '2'], [$row['status'], $row['attempts']]);
+        self::assertCount(2, $this->bodies);
+        $event = $this->bodies[1]['events'][0];
+        self::assertSame(['purchase', 'USD', 19.9, 'ORD-2'], [$event['name'], $event['params']['currency'], $event['params']['value'], $event['params']['transaction_id']]);
+        self::assertSame('p202.100', $this->bodies[1]['client_id']);
+        self::assertSame(0, array_sum($this->worker()->sendDue(10, 5, $now + 9999)), 'a sent row is never sent again');
+        self::assertSame((string) $convId, self::deliveries($id)[0]['conv_id']);
+    }
+
+    public function testARefusalFailsAtOnceAndAHostThatDoesNotAnswerIsSkippedForTheRun(): void
+    {
+        $id = $this->destination();
+        $this->click(100);
+        $this->click(101);
+        $this->record(100, 'ORD-3');
+        $this->record(101, 'ORD-4');
+
+        $this->answers = [['status' => 0, 'error' => 'Operation timed out']];
+        $out = $this->worker()->sendDue(10, 5, time() + 1);
+        self::assertSame(['retrying' => 1, 'sent' => 0], ['retrying' => $out['retrying'], 'sent' => $out['sent']]);
+        self::assertCount(1, $this->bodies, 'the second row waits: its host gave no answer this run');
+        self::assertSame(['1', '0'], array_column(self::deliveries($id), 'attempts'));
+
+        $this->answers = [['status' => 400, 'body' => 'bad'], ['status' => 400, 'body' => 'bad']];
+        $out = $this->worker()->sendDue(10, 5, time() + 3600);
+        self::assertSame(2, $out['failed']);
+        self::assertSame(['failed', 'failed'], array_column(self::deliveries($id), 'status'));
+    }
+
+    public function testTheVisitorsPrivacyWithholdsTheSend(): void
+    {
+        $id = $this->destination();
+        self::fixture("INSERT INTO 202_ips SET ip_id=5, ip_address='198.51.100.7'");
+        self::fixture('INSERT INTO 202_clicks_advance SET click_id=100, ip_id=5');
+        $this->click(100);
+        $this->record(100, 'ORD-5');
+
+        self::fixture("UPDATE 202_users_pref SET user_pref_privacy='eu' WHERE user_id=1");
+        self::assertSame(1, $this->worker(mayBeEuropean: true)->sendDue(10, 5, time() + 1)['withheld']);
+        self::assertSame([], $this->bodies, 'nothing is sent for a visitor who may be in Europe');
+        self::assertStringContainsString('privacy setting', (string) self::deliveries($id)[0]['last_error']);
+
+        // Positive control: the same setting sends a visitor placed outside Europe.
+        $this->click(101);
+        $this->record(101, 'ORD-6');
+        self::assertSame(1, $this->worker(mayBeEuropean: false)->sendDue(10, 5, time() + 1)['sent']);
+
+        self::fixture("UPDATE 202_users_pref SET user_pref_privacy='all' WHERE user_id=1");
+        $this->click(102);
+        $this->record(102, 'ORD-7');
+        self::assertSame(1, $this->worker(mayBeEuropean: false)->sendDue(10, 5, time() + 1)['withheld']);
+        self::assertCount(1, $this->bodies);
+    }
+
+    public function testHashedUserDataGoesOnlyWhenTurnedOnAndConsentIsNotDenied(): void
+    {
+        self::fixture("INSERT INTO 202_customers SET customer_id=9, user_id=1, primary_ref='cust-9', email='Jane.Doe@Example.com', phone='+1 555 123 4567',
+            first_seen_time=1, last_activity_time=1, created_at=1, updated_at=1");
+        $on = $this->destination(['send_user_data' => true, 'user_id_source' => 'customer']);
+        $this->click(100);
+        $convId = $this->record(100, 'ORD-8');
+        self::fixture("UPDATE 202_conversion_logs SET customer_id=9 WHERE conv_id=$convId");
+        $this->worker()->sendDue(10, 5, time() + 1);
+        self::assertSame([hash('sha256', 'jane.doe@example.com')], $this->bodies[0]['user_data']['sha256_email_address']);
+        self::assertSame([hash('sha256', '+15551234567')], $this->bodies[0]['user_data']['sha256_phone_number']);
+        self::assertSame('cust-9', $this->bodies[0]['user_id']);
+        self::assertStringNotContainsString('Example.com', (string) json_encode($this->bodies[0]));
+        $summary = (string) self::$db->query("SELECT summary FROM 202_destination_deliveries WHERE destination_id = $on")->fetch_row()[0];
+        self::assertStringContainsString('sha256_email_address', $summary, 'the log names the identifiers sent');
+        self::assertStringNotContainsString(hash('sha256', 'jane.doe@example.com'), $summary, 'and never their values');
+
+        $this->store()->update(1, $on, ['settings' => ['measurement_id' => 'G-ABC123', 'send_user_data' => true, 'consent' => ['ad_user_data' => 'denied']]], time());
+        $this->click(101);
+        $second = $this->record(101, 'ORD-9');
+        self::fixture("UPDATE 202_conversion_logs SET customer_id=9 WHERE conv_id=$second");
+        $this->worker()->sendDue(10, 5, time() + 1);
+        self::assertArrayNotHasKey('user_data', $this->bodies[1], 'ad_user_data denied sends no hashed data');
+    }
+
+    public function testDeletesCancelWhatWasNotSent(): void
+    {
+        $id = $this->destination();
+        $this->click(100);
+        $this->click(101);
+        $gone = $this->record(100, 'ORD-10');
+        $this->record(101, 'ORD-11');
+        self::fixture("UPDATE 202_conversion_logs SET deleted=1 WHERE conv_id=$gone");
+        $out = $this->worker()->sendDue(10, 5, time() + 1);
+        self::assertSame([1, 1], [$out['cancelled'], $out['sent']]);
+
+        $this->click(102);
+        $this->record(102, 'ORD-12');
+        self::assertTrue($this->store()->delete(1, $id, time()));
+        self::assertSame('cancelled', self::deliveries($id)[2]['status']);
+        self::assertNull($this->store()->get(1, $id));
+        self::assertFalse($this->store()->delete(1, $id, time()), 'a second delete finds nothing');
+    }
+
+    public function testCredentialsAreSealedAndBoundToTheirDestination(): void
+    {
+        $a = $this->destination();
+        $b = $this->destination(['measurement_id' => 'G-SECOND1']);
+        $stored = (string) self::$db->query("SELECT credentials FROM 202_destinations WHERE destination_id = $a")->fetch_row()[0];
+        self::assertStringStartsWith('v1.', $stored);
+        self::assertStringNotContainsString(self::SECRET, $stored);
+        self::assertSame(self::SECRET, $this->store()->forSending(1, $a)['credentials']['api_secret']);
+        self::assertTrue($this->store()->get(1, $a)['credentials_set']);
+        self::assertStringNotContainsString(self::SECRET, (string) json_encode($this->store()->list(1)));
+        self::assertNull($this->store()->forSending(2, $a), 'another account cannot read it');
+
+        self::fixture("UPDATE 202_destinations SET credentials='" . self::$db->real_escape_string($stored) . "' WHERE destination_id = $b");
+        $this->expectException(\RuntimeException::class);
+        $this->store()->forSending(1, $b);
+    }
+
+    public function testATestFireIsLoggedAndNeverQueuesAConversion(): void
+    {
+        $id = $this->destination();
+        $this->answers = [['status' => 200, 'body' => '{"validationMessages":[]}']];
+        $result = $this->worker()->testFire(1, $id, time());
+        self::assertTrue($result['valid']);
+        self::assertSame([['conv_id' => null, 'kind' => 'test', 'status' => 'sent']], array_map(
+            static fn (array $r): array => ['conv_id' => $r['conv_id'], 'kind' => $r['kind'], 'status' => $r['status']],
+            self::deliveries($id)
+        ));
+        self::assertNull($this->worker()->testFire(2, $id, time()), 'another account\'s destination is not found');
+        self::assertSame(0, array_sum($this->worker()->sendDue(10, 5, time() + 1)), 'the worker sends no test row');
+    }
+}
