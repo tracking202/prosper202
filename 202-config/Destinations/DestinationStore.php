@@ -256,7 +256,13 @@ final class DestinationStore
      */
     private static function shape(array $row): array
     {
-        $settings = self::decode((string) $row['settings']);
+        try {
+            $settings = self::decode((string) $row['settings']);
+        } catch (\JsonException | \RuntimeException) {
+            // One unreadable row is shown as such, not a failed list (CLAUDE.md #24).
+            error_log('destinations: the settings of destination ' . (int) $row['destination_id'] . ' cannot be read');
+            $settings = ['settings_invalid' => true];
+        }
 
         return [
             'destination_id' => (int) $row['destination_id'],
@@ -274,7 +280,7 @@ final class DestinationStore
     private function writeCredentials(int $userId, int $destinationId, array $credentials): void
     {
         $sealed = $credentials === [] ? '' : self::seal(self::json($credentials), $this->key(true), $destinationId, $userId);
-        $update = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATIONS . '` SET credentials = ? WHERE destination_id = ? AND user_id = ?');
+        $update = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATIONS . '` SET credentials = ? WHERE destination_id = ? AND user_id = ? AND deleted_at IS NULL');
         $this->conn->bind($update, 'sii', [$sealed, $destinationId, $userId]);
         $this->conn->execute($update);
     }

@@ -80,7 +80,7 @@ receives twice once), at the conversion's own time.
 | --- | --- |
 | `client_id_source` | GA4 joins an event to a browser session only through the `_ga` client id. Prosper202 does not see that cookie, so either your landing page passes the id on a click variable (`c1`–`c4`) or Prosper202 sends `p202.<click id>` (`click`, the default), which records the conversion and its value but not the session's source. |
 | `user_id_source` | `customer` sends the LTV customer's reference as `user_id`, only with hashed user data on and `ad_user_data` not denied: a reference can be an email address. |
-| `params` | Extra event parameters, each from a click field: `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `keyword`, `c1`–`c4`, `campaign_id`, `click_id`. |
+| `params` | Extra event parameters, each from a click field: `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `keyword`, `c1`–`c4`, `campaign_id`, `click_id`. They carry whatever your links put in those fields, as is, whatever the hashed-data and consent settings: do not map one that holds an email address or other personal data. |
 | `campaign_ids` | Only these campaigns' conversions; empty for every campaign. |
 
 GA4 takes events up to 72 hours old, so a conversion still unsent after that

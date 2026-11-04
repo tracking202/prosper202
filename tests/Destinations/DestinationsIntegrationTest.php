@@ -43,6 +43,9 @@ final class DestinationsIntegrationTest extends TestCase
         foreach (['202_destinations', '202_destination_deliveries', '202_customers', '202_clicks_advance', '202_ips', '202_ips_v6'] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
+        self::fixture('DELETE FROM 202_users WHERE user_id IN (1, 2)');
+        self::fixture("INSERT INTO 202_users SET user_id=1, user_name='store-owner', user_email='owner@example.com', user_active=1, user_deleted=0");
+        self::fixture("INSERT INTO 202_users SET user_id=2, user_name='saas-owner', user_email='saas@example.com', user_active=1, user_deleted=0");
         self::fixture('DELETE FROM 202_users_pref WHERE user_id IN (1, 2)');
         self::fixture("INSERT INTO 202_users_pref SET user_id=1, user_pref_privacy='disabled', user_account_currency='USD'");
         self::fixture("INSERT INTO 202_users_pref SET user_id=2, user_pref_privacy='disabled', user_account_currency='USD'");
@@ -315,5 +318,17 @@ final class DestinationsIntegrationTest extends TestCase
         $this->store()->update(1, $id, ['settings' => ['measurement_id' => 'G-ABC123', 'campaign_ids' => [31]]], time());
         self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['cancelled']);
         self::assertSame([], $this->bodies);
+    }
+
+    public function testASwitchedOffAccountsConversionsWait(): void
+    {
+        $id = $this->destination();
+        $this->click(100);
+        $this->record(100, 'ORD-24');
+        self::fixture('UPDATE 202_users SET user_active=0 WHERE user_id=1');
+        self::assertSame(0, array_sum($this->worker()->sendDue(10, 5, time() + 1)));
+        self::assertSame('pending', self::deliveries($id)[0]['status']);
+        self::fixture('UPDATE 202_users SET user_active=1 WHERE user_id=1');
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['sent'], 'the positive control: active again, it is sent');
     }
 }

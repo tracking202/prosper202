@@ -99,6 +99,7 @@ final class DestinationQueue
                 $stmt = $this->conn->prepareWrite("SELECT q.delivery_id, q.user_id, q.destination_id, q.conv_id, q.attempts
                     FROM 202_destination_deliveries q
                     JOIN 202_destinations d ON d.destination_id = q.destination_id AND d.user_id = q.user_id AND d.enabled = 1 AND d.deleted_at IS NULL
+                    JOIN 202_users u ON u.user_id = q.user_id AND u.user_active = 1 AND u.user_deleted = 0
                     WHERE q.status = 'pending' AND q.kind = 'conversion' AND q.next_attempt_at <= ? AND q.delivery_id > ? ORDER BY q.delivery_id LIMIT ?");
             } catch (\Throwable $e) {
                 // Code deployed before the upgrade made the table: nothing is queued yet.
@@ -239,7 +240,11 @@ final class DestinationQueue
                 : 'withheld: your privacy setting holds back visitors who may be in Europe, and this click\'s address is not placed outside it')];
         }
         $clickId = (int) $conv['click_id'];
-        $tokens = TrafficSourcePixels::clickTokens($this->conn, $userId, $clickId, true)['tokens'] ?? [];
+        $click = TrafficSourcePixels::clickTokens($this->conn, $userId, $clickId, true);
+        if ($click === null) {
+            return ['failed', new SendResult(false, false, null, 'not sent: the conversion\'s click ' . $clickId . ' is not found')];
+        }
+        $tokens = $click['tokens'];
         [$customerRef, $emails, $phones] = $this->customer($destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
         $transactionId = trim((string) ($conv['transaction_id'] ?? ''));
         $facts = new ConversionFacts(

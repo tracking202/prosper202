@@ -21,7 +21,7 @@ final class Ga4Destination implements DestinationType
     public const MAX_AGE_SECONDS = 72 * 3600;
     public const CLIENT_ID_SOURCES = ['click', 'c1', 'c2', 'c3', 'c4'];
     public const USER_ID_SOURCES = ['none', 'customer'];
-    /** Click fields an event parameter may carry: none identifies a person. */
+    /** Click fields an event parameter may carry; c1-c4, keyword and utm_* hold what your links put there. */
     public const PARAM_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'keyword', 'c1', 'c2', 'c3', 'c4', 'campaign_id', 'click_id'];
     private const RESERVED_EVENTS = [
         'ad_activeview', 'ad_click', 'ad_exposure', 'ad_query', 'ad_reward', 'adunit_exposure', 'app_background', 'app_clear_data',
