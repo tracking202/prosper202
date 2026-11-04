@@ -504,7 +504,9 @@ final class NotificationOutbox implements OutcomeNotificationSink
                     $out['sent']++;
                     continue;
                 }
-                if (!$result->isRefused()) {
+                // Only a host that gave no answer (a timeout, no connection) waits
+                // for the next run; one that answered, even with an error, is not slow.
+                if (!$result->isRefused() && $result->status === null) {
                     $unanswered[$origin] = true;
                 }
                 $error = mb_strimwidth($result->reason, 0, 255, '…', 'UTF-8');
