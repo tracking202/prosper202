@@ -246,6 +246,9 @@ final class RtrReClickRetryIntegrationTest extends TestCase
                 }
             );
             self::fail('the failure reaches the caller');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertSame($failure, $e);
         }

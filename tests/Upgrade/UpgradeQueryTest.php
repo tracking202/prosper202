@@ -107,6 +107,9 @@ final class UpgradeQueryTest extends TestCase
         try {
             _upgrade_query_run($conn, 'ALTER TABLE x', $this->sleeper(), $this->aborter());
             $this->fail('Expected the exhausted-transient path to invoke onExhausted (which throws here).');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (RuntimeException $e) {
             $this->assertSame('aborted:1205', $e->getMessage());
         }
