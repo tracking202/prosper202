@@ -95,8 +95,9 @@ final class DestinationQueue
             // Paged by id, so rows passed over this run do not fill the next page (CLAUDE.md #37).
             try {
                 // A switched-off destination's rows are not read at all: they wait, however many there are.
-                $stmt = $this->conn->prepareWrite('SELECT q.delivery_id, q.user_id, q.destination_id, q.conv_id, q.attempts FROM `' . TableRegistry::DESTINATION_DELIVERIES
-                    . '` q JOIN `' . TableRegistry::DESTINATIONS . "` d ON d.destination_id = q.destination_id AND d.user_id = q.user_id AND d.enabled = 1 AND d.deleted_at IS NULL
+                $stmt = $this->conn->prepareWrite("SELECT q.delivery_id, q.user_id, q.destination_id, q.conv_id, q.attempts
+                    FROM 202_destination_deliveries q
+                    JOIN 202_destinations d ON d.destination_id = q.destination_id AND d.user_id = q.user_id AND d.enabled = 1 AND d.deleted_at IS NULL
                     WHERE q.status = 'pending' AND q.kind = 'conversion' AND q.next_attempt_at <= ? AND q.delivery_id > ? ORDER BY q.delivery_id LIMIT ?");
             } catch (\Throwable $e) {
                 // Code deployed before the upgrade made the table: nothing is queued yet.
