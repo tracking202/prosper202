@@ -89,9 +89,9 @@ final class ApiKeyHashUpgradeIntegrationTest extends TestCase
         self::assertSame($fresh, self::shape(), 'the table is the installed one');
 
         $rows = self::keyRows();
-        self::assertSame(['', '', ApiKeyStore::hash(self::PLAIN), ApiKeyStore::hash(self::AI)],
-            [$rows[0]['api_key'], $rows[1]['api_key'], $rows[0]['key_hash'], $rows[1]['key_hash']],
-            'no key is left whole');
+        self::assertSame([ApiKeyStore::hash(self::PLAIN), ApiKeyStore::hash(self::AI)],
+            [$rows[0]['key_hash'], $rows[1]['key_hash']], 'no key is left whole');
+        self::assertPlaceholders($rows);
         self::assertSame(['aB3dE5gH', '1f2e3d4c'], [$rows[0]['key_prefix'], $rows[1]['key_prefix']]);
         self::assertSame([null, AiConnect::watcherToken(self::AI)], [$rows[0]['watcher_token'], $rows[1]['watcher_token']],
             'the AI connection keeps the token its watchers are known by');
@@ -131,7 +131,8 @@ final class ApiKeyHashUpgradeIntegrationTest extends TestCase
             [$out, $err] = self::upgrade();
             self::assertSame('RETURNED true', $out, $err);
             $rows = self::keyRows();
-            self::assertSame(['', ApiKeyStore::hash(self::PLAIN)], [$rows[0]['api_key'], $rows[0]['key_hash']]);
+            self::assertSame(ApiKeyStore::hash(self::PLAIN), $rows[0]['key_hash']);
+            self::assertPlaceholders($rows);
 
             $after = self::connection();
             self::assertSame(self::USER, Auth::fromRequest(['Authorization' => 'Bearer ' . self::PLAIN], $after)->userId());
@@ -150,7 +151,8 @@ final class ApiKeyHashUpgradeIntegrationTest extends TestCase
         $key = (string) $made['api_key'];
 
         $row = self::keyRows()[0];
-        self::assertSame(['', ApiKeyStore::hash($key), substr($key, 0, 8)], [$row['api_key'], $row['key_hash'], $row['key_prefix']]);
+        self::assertSame([ApiKeyStore::hash($key), substr($key, 0, 8)], [$row['key_hash'], $row['key_prefix']]);
+        self::assertPlaceholders([$row]);
 
         $listed = $users->listApiKeys(self::USER)['data'][0];
         self::assertSame(substr($key, 0, 8) . str_repeat('*', 24), $listed['api_key']);
@@ -176,6 +178,42 @@ final class ApiKeyHashUpgradeIntegrationTest extends TestCase
         $this->assertRefused($key, $db, 'a revoked key is refused');
         self::assertSame([200, ['data' => ['revoked' => true]]], AiConnect::revoke($db, self::PLAIN));
         self::assertSame([], self::keyRows());
+    }
+
+    /**
+     * A hashed row left with api_key '' by a pre-release build gets a
+     * placeholder when the rung runs.
+     */
+    public function testARowHashedWithAnEmptyKeyIsGivenAPlaceholder(): void
+    {
+        self::row('202_api_keys', ['user_id' => self::USER, 'api_key' => '', 'key_hash' => ApiKeyStore::hash(self::PLAIN),
+            'key_prefix' => 'aB3dE5gH', 'created_at' => 1]);
+        self::q('DELETE FROM 202_version');
+        self::row('202_version', ['version' => '1.9.79']);
+
+        [$out, $err] = self::upgrade();
+        self::assertSame('RETURNED true', $out, $err);
+        self::assertPlaceholders(self::keyRows());
+        self::assertSame(self::USER, Auth::fromRequest(['Authorization' => 'Bearer ' . self::PLAIN], self::connection())->userId());
+    }
+
+    /**
+     * No hashed row's api_key is '' or shared: 1.9.79's v1/v2 lookup,
+     * `WHERE k.api_key = '<sent key>'` with the key defaulting to '', put
+     * back over the upgrade, must find no row for an empty key.
+     *
+     * @param list<array<string, mixed>> $rows
+     */
+    private static function assertPlaceholders(array $rows): void
+    {
+        $keys = array_column($rows, 'api_key');
+        foreach ($keys as $key) {
+            self::assertMatchesRegularExpression('/^![0-9a-f]{64}$/D', (string) $key);
+        }
+        self::assertSame($keys, array_values(array_unique($keys)), 'each row its own placeholder');
+        $old = self::$db->query("SELECT k.user_id FROM 202_api_keys k WHERE k.api_key = ''");
+        self::assertInstanceOf(\mysqli_result::class, $old);
+        self::assertSame(0, $old->num_rows, "1.9.79's lookup of an empty key finds no row");
     }
 
     private function asOf1979(): void

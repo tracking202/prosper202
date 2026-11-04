@@ -14,8 +14,9 @@ use Prosper202\Database\Exceptions\QueryException;
  * The REST API keys in 202_api_keys, written, found and shown in one place.
  *
  * From 1.9.80 a key is stored as its SHA-256 (key_hash) and its first
- * PREFIX_LENGTH characters (key_prefix); api_key is left empty, so a copy of
- * the database holds no usable key. An AI connection's key also stores the
+ * PREFIX_LENGTH characters (key_prefix); api_key holds a random placeholder
+ * (placeholder()), so a copy of the database holds no usable key and a 1.9.79
+ * reader put back over the upgrade, which matches api_key, finds no key. An AI connection's key also stores the
  * token its watchers are known by (watcher_token, AiConnect::watcherToken()),
  * which cannot be computed once the key is gone. A key is matched byte for
  * byte: the old lookup ran under utf8mb4_general_ci and folded case.
@@ -34,6 +35,9 @@ final class ApiKeyStore
 
     private const REF_PATTERN = '/^[0-9a-f]{64}$/D';
 
+    /** Starts every placeholder; no key P202 makes contains it. */
+    public const PLACEHOLDER_MARK = '!';
+
     public static function hash(string $key): string
     {
         return hash('sha256', $key);
@@ -48,6 +52,15 @@ final class ApiKeyStore
     public static function masked(string $prefix): string
     {
         return $prefix . str_repeat('*', 24);
+    }
+
+    /**
+     * What a hashed row keeps in api_key: never '', which an older reader's
+     * `api_key = '<sent key>'` matches when no key is sent.
+     */
+    public static function placeholder(): string
+    {
+        return self::PLACEHOLDER_MARK . bin2hex(random_bytes(32));
     }
 
     public static function isRef(string $ref): bool
@@ -77,8 +90,10 @@ final class ApiKeyStore
     /** @param array<string, mixed> $row read with columns() */
     public static function prefixOf(array $row): string
     {
-        $prefix = (string) ($row['key_prefix'] ?? '');
-        return $prefix !== '' ? $prefix : self::prefix((string) ($row['api_key'] ?? ''));
+        if ((string) ($row['key_hash'] ?? '') !== '') {
+            return (string) ($row['key_prefix'] ?? '');
+        }
+        return self::prefix((string) ($row['api_key'] ?? ''));
     }
 
     /**
@@ -89,9 +104,9 @@ final class ApiKeyStore
      */
     public static function watcherTokenOf(array $row): ?string
     {
-        $token = (string) ($row['watcher_token'] ?? '');
-        if ($token !== '') {
-            return $token;
+        if ((string) ($row['key_hash'] ?? '') !== '') {
+            $token = (string) ($row['watcher_token'] ?? '');
+            return $token !== '' ? $token : null;
         }
         $key = (string) ($row['api_key'] ?? '');
         return $key !== '' ? AiConnect::watcherToken($key) : null;
@@ -195,7 +210,7 @@ final class ApiKeyStore
         };
 
         if (Auth::apiKeyHashColumnExists($db)) {
-            $add('api_key', 's', '');
+            $add('api_key', 's', self::placeholder());
             $add('key_hash', 's', self::hash($key));
             $add('key_prefix', 's', self::prefix($key));
             $add('watcher_token', 's', AiConnect::isConnectionLabel($label) ? AiConnect::watcherToken($key) : null);
@@ -244,13 +259,14 @@ final class ApiKeyStore
             $label = isset($row['label']) ? (string) $row['label'] : null;
             try {
                 $update = $conn->prepareWrite(
-                    "UPDATE 202_api_keys SET key_hash = ?, key_prefix = ?, watcher_token = ?, api_key = ''"
+                    "UPDATE 202_api_keys SET key_hash = ?, key_prefix = ?, watcher_token = ?, api_key = ?"
                     . ' WHERE user_id = ? AND key_hash IS NULL AND CONVERT(api_key USING utf8mb4) COLLATE utf8mb4_bin = ?'
                 );
-                $conn->bind($update, 'sssis', [
+                $conn->bind($update, 'ssssis', [
                     self::hash($key),
                     self::prefix($key),
                     AiConnect::isConnectionLabel($label) ? AiConnect::watcherToken($key) : null,
+                    self::placeholder(),
                     (int) $row['user_id'],
                     $key,
                 ]);
@@ -261,7 +277,7 @@ final class ApiKeyStore
                 $ok = false;
             }
         }
-        if (!$ok) {
+        if (!$ok || !self::fillEmptiedKeys($conn)) {
             return false;
         }
         // An UPDATE that matched no row (an odd legacy byte sequence) is not
@@ -276,6 +292,27 @@ final class ApiKeyStore
         }
         if ($left > 0) {
             error_log('Prosper202 upgrade: ' . $left . ' API key(s) are still stored whole');
+            return false;
+        }
+        return true;
+    }
+
+    /** A row hashed by a pre-release build kept api_key ''; give it a placeholder. */
+    private static function fillEmptiedKeys(Connection $conn): bool
+    {
+        try {
+            $rows = $conn->fetchAll($conn->prepareRead(
+                "SELECT user_id, key_hash FROM 202_api_keys WHERE key_hash IS NOT NULL AND api_key = ''"
+            ));
+            foreach ($rows as $row) {
+                $update = $conn->prepareWrite(
+                    "UPDATE 202_api_keys SET api_key = ? WHERE user_id = ? AND key_hash = ? AND api_key = ''"
+                );
+                $conn->bind($update, 'sis', [self::placeholder(), (int) $row['user_id'], (string) $row['key_hash']]);
+                $conn->executeUpdate($update);
+            }
+        } catch (QueryException $e) {
+            error_log('Prosper202 upgrade: an emptied API key could not be given a placeholder: ' . $e->getMessage());
             return false;
         }
         return true;

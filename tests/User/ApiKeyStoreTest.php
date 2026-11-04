@@ -32,8 +32,12 @@ final class ApiKeyStoreTest extends TestCase
 
         $insert = $db->statementsContaining('INSERT INTO 202_api_keys')[0];
         self::assertStringContainsString('(user_id, api_key, key_hash, key_prefix, watcher_token, scope, created_at)', $insert->sql);
-        self::assertSame([7, '', hash('sha256', self::KEY), '01234567', null, 'reports:read', 100], $insert->boundValues);
+        $values = $insert->boundValues;
+        self::assertMatchesRegularExpression('/^![0-9a-f]{64}$/D', $values[1], 'api_key holds a placeholder, never the key or empty');
+        $values[1] = 'PLACEHOLDER';
+        self::assertSame([7, 'PLACEHOLDER', hash('sha256', self::KEY), '01234567', null, 'reports:read', 100], $values);
         self::assertNotContains(self::KEY, $insert->boundValues);
+        self::assertNotSame(ApiKeyStore::placeholder(), ApiKeyStore::placeholder());
     }
 
     public function testAnAiConnectionsKeyStoresTheTokenItsWatchersAreKnownBy(): void
@@ -105,6 +109,9 @@ final class ApiKeyStoreTest extends TestCase
         self::assertSame(AiConnect::watcherToken(self::KEY), ApiKeyStore::watcherTokenOf($whole));
         self::assertSame('tok', ApiKeyStore::watcherTokenOf($hashed));
         self::assertNull(ApiKeyStore::watcherTokenOf(['api_key' => '', 'key_hash' => 'h', 'watcher_token' => null]));
+        $placeholder = ['api_key' => ApiKeyStore::placeholder(), 'key_hash' => 'h', 'key_prefix' => 'abcd1234', 'watcher_token' => null];
+        self::assertNull(ApiKeyStore::watcherTokenOf($placeholder), 'a placeholder is not a key');
+        self::assertSame(['h', 'abcd1234'], [ApiKeyStore::ref($placeholder), ApiKeyStore::prefixOf($placeholder)]);
         self::assertSame('01234567' . str_repeat('*', 24), ApiKeyStore::masked('01234567'));
     }
 
