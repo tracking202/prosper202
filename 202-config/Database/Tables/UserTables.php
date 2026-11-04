@@ -332,8 +332,9 @@ final class UserTables
     /**
      * IPQualityScore's fraud score of an address, per account
      * (Prosper202\Fraud\IpqsScoring): reused for a day, so a repeat visitor
-     * costs one lookup, and kept for 30 days to show why a click was filtered.
-     * ip_id is the click's 202_ips row. From 1.9.80, added by its rung.
+     * costs one lookup, then deleted; why a click was filtered stays in
+     * 202_clicks_filter_reason. ip_id is the click's 202_ips row. From
+     * 1.9.80, added by its rung.
      */
     public static function ipqsScores(): SchemaDefinition
     {

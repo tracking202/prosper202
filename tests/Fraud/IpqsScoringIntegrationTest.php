@@ -48,7 +48,7 @@ final class IpqsScoringIntegrationTest extends TestCase
             return;
         }
         self::$stub = new IpqsStub();
-        foreach (['US', 'BR', 'DE', 'GB', 'CH', 'NO', 'non'] as $code) {
+        foreach (['US', 'BR', 'DE', 'GB', 'CH', 'NO', 'RE', 'non'] as $code) {
             self::$countries[$code] = self::insert('INSERT INTO 202_locations_country SET country_code = '
                 . self::str($code) . ', country_name = ' . self::str('ipqs ' . $code));
         }
@@ -204,6 +204,19 @@ final class IpqsScoringIntegrationTest extends TestCase
         self::assertSame(self::FRAUD, self::filtered($outside));
         self::assertSame(6, $report['held']);
         self::assertSame(['203.0.113.53' => '99'], self::cached(self::OWNER), 'nothing is recorded of a held click');
+    }
+
+    public function testAVisitorFromAnEuOutermostRegionIsHeld(): void
+    {
+        self::$stub->scores(['203.0.113.67' => 99]);
+        $reunion = $this->click(self::OWNER, '203.0.113.67', 'RE');
+
+        $report = $this->score();
+
+        self::assertSame([], self::$stub->addresses(), 'Réunion is the EU: never sent');
+        self::assertSame(self::COUNTED, self::filtered($reunion));
+        self::assertSame(1, $report['held']);
+        self::assertSame([], self::cached(self::OWNER));
     }
 
     public function testEachAccountUsesItsOwnKeyAndCache(): void

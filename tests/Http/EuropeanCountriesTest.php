@@ -17,6 +17,22 @@ final class EuropeanCountriesTest extends TestCase
         }
     }
 
+    /** @return iterable<string, array{string}> */
+    public static function territories(): iterable
+    {
+        foreach (['RE', 'GP', 'MQ', 'GF', 'YT', 'MF', 'AX', 'GI', 'IM', 'JE', 'GG', 'SJ'] as $code) {
+            yield $code => [$code];
+        }
+    }
+
+    /** @dataProvider territories */
+    public function testATerritoryGeoIpNamesApartIsHeld(string $code): void
+    {
+        self::assertContains($code, EuropeanCountries::TERRITORIES);
+        self::assertFalse(EuropeanCountries::isOutside($code));
+        self::assertFalse(EuropeanCountries::isOutside(strtolower($code)));
+    }
+
     /** @return iterable<string, array{?string}> */
     public static function unplaced(): iterable
     {

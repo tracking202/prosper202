@@ -32,7 +32,11 @@ What is sent, and what is not:
 - **Never a visitor from the EU, the EEA, the UK or Switzerland, nor one whose
   country is unknown.** The country is the one GeoIP recorded for the click;
   those clicks are not sent, not scored and stay as they were. There is no
-  setting that changes this.
+  setting that changes this. Places GeoIP records under codes of their own
+  count as Europe too: the EU's outermost regions (Réunion, Guadeloupe,
+  Martinique, French Guiana, Mayotte, Saint Martin) and Åland, and, to stay
+  on the safe side, Gibraltar, the Isle of Man, Jersey, Guernsey and Svalbard
+  and Jan Mayen.
 - Nothing is sent for an account without a key, and an address is looked up
   at most once a day per account: a repeat visitor uses the score already
   fetched, which saves your IPQS credits.

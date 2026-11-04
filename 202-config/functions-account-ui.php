@@ -475,7 +475,8 @@ function p202_ipqs_card_note(\mysqli $db, int $userId, bool $keySaved): string
         . ' the EU, the EEA, the UK and Switzerland is sent to IPQualityScore (ipqualityscore.com, in the USA) for'
         . ' fraud prevention. Nothing else about the click is sent, an address is looked up at most once a day, and'
         . ' its score is deleted after 24 hours. Visitors from the EU, the EEA, the UK and Switzerland, and visitors'
-        . ' whose country is unknown, are never sent and are not scored.</p>';
+        . ' whose country is unknown, are never sent and are not scored. That includes the EU\'s outermost regions'
+        . ' and Åland, Gibraltar, the Isle of Man, Jersey, Guernsey, and Svalbard and Jan Mayen.</p>';
     if (!$keySaved) {
         return $note;
     }
