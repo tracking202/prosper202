@@ -130,6 +130,23 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 		die(p202_flash('bad', 'That campaign belongs to a different category.'));
 	}
 
+	// A publisher link (t202pubid) names a publisher this account may credit,
+	// re-checked here: the posted user id is a claim. Not stored on the tracker.
+	$publisherParam = '';
+	$rawPublisher = $_POST['publisher_id'] ?? '';
+	if (!is_string($rawPublisher)) {
+		die(p202_flash('bad', 'That publisher was sent more than once.'));
+	}
+	if ($rawPublisher !== '' && $rawPublisher !== '0') {
+		$linkPublisher = preg_match('/^[1-9]\d{0,9}$/D', $rawPublisher) === 1
+			? (new \Prosper202\Click\PublisherCredit($ownedConn))->grantableById((int) $_SESSION['user_id'], (int) $rawPublisher)
+			: null;
+		if ($linkPublisher === null) {
+			die(p202_flash('bad', 'That publisher cannot be credited on your links: it needs the Publisher role, and to be switched on, in User management.'));
+		}
+		$publisherParam = '&' . \Prosper202\Click\PublisherCredit::PARAMETER . '=' . rawurlencode($linkPublisher['public_id']);
+	}
+
     // The link an edit replaces, by its public id read exactly and compared as
     // a number: compared as text, `12abc` named link 12, which was deleted and
     // written again from this form. An edit of anything but one of this
@@ -235,11 +252,8 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
     $storedDomain = p202StoredTrackingDomain();
     $linkBase = p202TrackingBaseForResponse($storedDomain);
 
-    // The transaction opens BEFORE the edit path's DELETE. Editing a tracker is
-    // implemented as delete-then-recreate, and with the DELETE outside the
-    // transaction any failure of the INSERT/UPDATE below (or of begin itself)
-    // destroyed the user's tracker and never replaced it -- the rollback could
-    // not reach a row deleted in autocommit.
+    // An edit updates the tracker in place, so its tracker_id (the id the API
+    // and CLI hold) survives; a new link is inserted and given its public id.
     //
     // A failed statement inside goes to record_mysql_error($db, ...), which rolls
     // the transaction back and exits (it is `never`); a failed begin or commit is
@@ -257,11 +271,35 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
             $get_tracker_row
         ): array {
             if (isset($get_tracker_result) && $get_tracker_result->num_rows > 0) {
-                $drop_tracker = "DELETE FROM 202_trackers WHERE tracker_id = '".$get_tracker_row['tracker_id']."'"
-                    . " AND user_id = '" . $mysql['user_id'] . "'";
-                if (!$db->query($drop_tracker)) {
-                    record_mysql_error($db, $drop_tracker);
+                $edit_tracker_id = $db->real_escape_string((string)$get_tracker_row['tracker_id']);
+                // Lock the row first: a link removed since it was read is refused, not recreated.
+                $lock_sql = "SELECT `tracker_id` FROM `202_trackers`
+                            WHERE `tracker_id`='".$edit_tracker_id."' AND `user_id`='".$mysql['user_id']."'
+                            FOR UPDATE";
+                $locked = $db->query($lock_sql);
+                if (!$locked) {
+                    record_mysql_error($db, $lock_sql);
                 }
+                if ($locked->num_rows !== 1) {
+                    die(p202_flash('bad', 'That tracking link is not one of yours, or it was removed.'));
+                }
+                // Every column the form owns, the unsent cost type cleared as an insert left it.
+                $edit_sql = "UPDATE `202_trackers`
+                            SET			`aff_campaign_id`='".$mysql['aff_campaign_id']."',
+                                        `text_ad_id`='".$mysql['text_ad_id']."',
+                                        `ppc_account_id`='".$mysql['ppc_account_id']."',
+                                        `click_cpc`=" . (isset($mysql['click_cpc']) ? "'".$mysql['click_cpc']."'" : 'NULL') . ",
+                                        `click_cpa`=" . (isset($mysql['click_cpa']) ? "'".$mysql['click_cpa']."'" : 'NULL') . ",
+                                        `landing_page_id`='".$mysql['landing_page_id']."',
+                                        `rotator_id`='".$mysql['rotator_id']."',
+                                        `click_cloaking`='".$mysql['click_cloaking']."',
+                                        `tracker_time`='".$mysql['tracker_time']."'
+                            WHERE		`tracker_id`='".$edit_tracker_id."' AND `user_id`='".$mysql['user_id']."'";
+                if (!$db->query($edit_sql)) {
+                    record_mysql_error($db, $edit_sql);
+                }
+
+                return [['tracker_id' => $get_tracker_row['tracker_id']], (string) $get_tracker_row['tracker_id_public']];
             }
 
             $tracker_sql = "INSERT INTO `202_trackers`
@@ -284,22 +322,18 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
             $tracker_row['tracker_id'] = $db->insert_id;
             $mysql['tracker_id'] = $db->real_escape_string((string)$tracker_row['tracker_id']);
 
-            if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
-                $mysql['tracker_id_public'] = $db->real_escape_string((string)$get_tracker_row['tracker_id_public']);
-            } else {
-                // A digit, the tracker's id, a digit, as every Get Links link has
-                // been -- drawn until no tracker in any account holds it: the click
-                // endpoints find a tracker by this id alone (TrackerPublicId).
-                try {
-                    $tracker_id_public = \Prosper202\Setup\TrackerPublicId::forPage(
-                        $db,
-                        (int) $tracker_row['tracker_id']
-                    );
-                } catch (\RuntimeException $e) {
-                    record_mysql_error($db, 'choosing a free tracker public id', $e->getMessage());
-                }
-                $mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
+            // A digit, the tracker's id, a digit, as every Get Links link has
+            // been -- drawn until no tracker in any account holds it: the click
+            // endpoints find a tracker by this id alone (TrackerPublicId).
+            try {
+                $tracker_id_public = \Prosper202\Setup\TrackerPublicId::forPage(
+                    $db,
+                    (int) $tracker_row['tracker_id']
+                );
+            } catch (\RuntimeException $e) {
+                record_mysql_error($db, 'choosing a free tracker public id', $e->getMessage());
             }
+            $mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
 
             $tracker_id_public = $mysql['tracker_id_public'];
 
@@ -561,12 +595,12 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
     $onLinkBase = false;
     if (($_POST['method_of_promotion'] ?? '') == 'directlink') {
         $trackingLinkParts[] = $linkBase . 'tracking202/redirect/dl.php?t202id=' . $tracker_id_public
-            . $tracking_variable_string;
+            . $publisherParam . $tracking_variable_string;
         $onLinkBase = true;
     }
     if (($_POST['tracker_type'] ?? '') == 2) {
         $trackingLinkParts[] = $linkBase . 'tracking202/redirect/rtr.php?t202id=' . $tracker_id_public
-            . $tracking_variable_string;
+            . $publisherParam . $tracking_variable_string;
         $onLinkBase = true;
     }
     if ((($_POST['method_of_promotion'] ?? '') == 'landingpage') or (($_POST['tracker_type'] ?? '') == 1)) {
@@ -580,7 +614,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
         // The variables go before the page's #fragment: after it, a browser
         // never sends them, and the click arrives with no keyword or c1-c4.
         // GET /trackers/{id}/url builds the same link.
-        $destination_url .= 't202id=' . $tracker_id_public . $tracking_variable_string;
+        $destination_url .= 't202id=' . $tracker_id_public . $publisherParam . $tracking_variable_string;
         if (!empty($parsed_url['fragment'])) {
             $destination_url .= '#' . $parsed_url['fragment'];
         }

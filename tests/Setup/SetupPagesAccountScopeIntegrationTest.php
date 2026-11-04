@@ -458,4 +458,30 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
         self::assertStringContainsString('id="p202-getting-started"', $out, 'A has no source or category of its own: the Get Started card is still shown');
         self::assertMatchesRegularExpression('/Add a traffic source/', $out, 'with its first step not done');
     }
+
+    /**
+     * Check my page reads only the account's own landing page: another
+     * account's is refused before any fetch, and the account's own is
+     * fetched from its saved URL (mine.example never resolves).
+     */
+    public function testCheckMyPageReadsOnlyTheAccountsOwnLandingPage(): void
+    {
+        $check = static fn (int $id): string => self::page('tracking202/ajax/check_landing_code.php', [],
+            ['landing_page_id' => (string) $id, 'token' => 'p202pagerunnertoken'], ['P202_TEST_AJAX' => '1']);
+
+        $theirs = $check(self::OTHER);
+        self::assertStringContainsString('That landing page is not yours, or it was removed.', $theirs);
+        self::assertShowsNothingOfTheOtherAccount($theirs, 'Check my page');
+
+        self::q('UPDATE 202_landing_pages SET landing_page_id_public = ' . self::USER . ' WHERE landing_page_id = ' . self::USER);
+        try {
+            $mine = $check(self::USER);
+        } finally {
+            self::q('UPDATE 202_landing_pages SET landing_page_id_public = NULL WHERE landing_page_id = ' . self::USER);
+        }
+        self::assertStringNotContainsString('not yours', $mine);
+        self::assertStringContainsString('Your page was not fetched: mine.example does not resolve to an address from this server.', $mine);
+
+        self::assertStringContainsString('Choose a landing page', $check(0), 'an id that is not one is refused by name');
+    }
 }

@@ -252,6 +252,9 @@ final class CachedDecoratorTest extends TestCase
         try {
             (new CachedTrackingRepository($inner, $cache, 'h'))->findOrCreateKeyword('k');
             self::fail('The inner repository\'s failure was not passed on');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (RuntimeException $e) {
             self::assertSame('the database refused', $e->getMessage());
         }

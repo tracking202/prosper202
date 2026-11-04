@@ -94,6 +94,10 @@ final class RequestHostSourceTest extends TestCase
             'the INS / IPN / ZPN / webhook endpoints shown to the signed-in user to paste into a network',
         ],
         'tracking202/ajax/generate_tracking_link.php' => [1, 'the tracking link built for the signed-in user'],
+        'tracking202/ajax/check_landing_code.php' => [
+            1,
+            "Check my page's host for the code, the one get_landing_code.php wrote it with, in the answer to the signed-in user",
+        ],
         'tracking202/ajax/get_adv_landing_code.php' => [1, 'the landing-page code shown to the signed-in user'],
         'tracking202/ajax/get_landing_code.php' => [1, 'the landing-page code shown to the signed-in user'],
         'tracking202/setup/get_postback.php' => [1, 'the pixel and postback URLs shown to the signed-in user'],

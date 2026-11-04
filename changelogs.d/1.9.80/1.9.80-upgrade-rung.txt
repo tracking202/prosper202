@@ -1,1 +1,1 @@
--- Changed: The database upgrade gains its 1.9.79 -> 1.9.80 step, which records the version only (1.9.80 changes no schema yet), and the downgrade guard moves to 1.9.80.
+-- Changed: The database upgrade gains its 1.9.79 -> 1.9.80 step, and the downgrade guard moves to 1.9.80.

@@ -24,7 +24,7 @@ CLICK_TABLES = (
     "202_clicks_spy", "202_clicks_tracking", "202_clicks_variable",
     "202_clicks_rotator", "202_cpa_trackers", "202_google", "202_bing",
     "202_facebook", "202_dataengine", "202_identity_observations",
-    "202_clicks_visitor", "202_clicks_filter_reason",
+    "202_clicks_visitor", "202_clicks_filter_reason", "202_clicks_publisher",
     "202_click_latest_visits", "202_clicks",
 )
 REQUIRED_TABLES = CLICK_TABLES + (

@@ -71,6 +71,7 @@ echo p202_standalone_requirements([
     ['MySQL partitioning', $partition_support === null ? 'Could not be checked' : ($partition_support === 0 ? 'Disabled' : 'Enabled'), $tone($partition_support === 1, 'neutral'), 'Recommended for better performance with large datasets'],
     ['PHP Memcache or Memcached', $memcacheInstalled ? 'Installed' : 'Missing', $tone($memcacheInstalled, 'warn'), 'Recommended for BlazerCache'],
     ['PHP ZipArchive', class_exists('ZipArchive') ? 'Available' : 'Not available', $tone(class_exists('ZipArchive'), 'neutral'), 'Required for the 1-Click Upgrade feature'],
+    ['PHP sodium', function_exists('sodium_crypto_sign_verify_detached') ? 'Available' : 'Not available', $tone(function_exists('sodium_crypto_sign_verify_detached'), 'neutral'), 'Required for the 1-Click Upgrade feature (checks the release signature)'],
     ['PHP OpenSSL', extension_loaded('openssl') ? 'Installed' : 'Missing', $tone(extension_loaded('openssl'), 'warn'), 'Required for Enhanced Account Security and ClickBank sales notifications'],
 ]);
 if (!$version_error) { ?>
