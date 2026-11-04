@@ -111,7 +111,8 @@ final class ClickPathUncaughtTest extends TestCase
             $logged
         );
         self::assertStringContainsString('mysqli_sql_exception: Incorrect integer value: ? at row 1', $logged);
-        self::assertStringContainsString('{closure}()', $logged, 'the frames are listed');
+        // PHP 8.5 names a closure's frame {closure:file:line}; earlier versions {closure}.
+        self::assertMatchesRegularExpression('/\{closure(?::[^}]*)?\}\(\)/', $logged, 'the frames are listed');
         self::assertStringNotContainsString('s3cr3t', $logged);
     }
 

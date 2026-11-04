@@ -91,7 +91,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['landing_page_url'] = '<div class="error">What is the URL of your landing page?</div>';
 	}
 
-	if (isset($_POST['landing_page_url']) && !empty($_POST['landing_page_url']) && (!str_starts_with((string) $_POST['landing_page_url'], 'http://')) and (!str_starts_with((string) $_POST['landing_page_url'], 'https://'))) {
+	// The API holds landing_page_url to the same rule ('format' => 'http_url').
+	if (isset($_POST['landing_page_url']) && !empty($_POST['landing_page_url']) && !\Prosper202\Http\HttpUrlPrefix::accepts((string) $_POST['landing_page_url'])) {
 		if (!isset($error['landing_page_url'])) {
 			$error['landing_page_url'] = '';
 		}

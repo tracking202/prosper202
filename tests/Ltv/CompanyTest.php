@@ -56,6 +56,9 @@ final class CompanyTest extends TestCase
             try {
                 MysqlCompanyRepository::normalizeDomain($bad);
                 self::fail('Expected rejection for ' . var_export($bad, true));
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException) {
                 $this->addToAssertionCount(1);
             }
@@ -209,6 +212,9 @@ final class CompanyTest extends TestCase
         try {
             $repo->merge(7, 3, 3);
             self::fail('self-merge must be rejected');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException) {
             $this->addToAssertionCount(1);
         }
