@@ -151,6 +151,9 @@ final class MessagingTransportAllowlistTest extends TestCase
                 try {
                     new \ChatPassClient($url);
                     self::fail("$name: ChatPassClient accepted $url");
+                } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                    // A failed assertion is the test's verdict, never the error this catch is for.
+                    throw $failed;
                 } catch (\RuntimeException $e) {
                     self::assertStringContainsString('refusing to send credentials in cleartext', $e->getMessage(), $name);
                 }

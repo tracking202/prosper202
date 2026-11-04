@@ -124,6 +124,9 @@ final class ServiceAccountCredentialTest extends TestCase
             try {
                 $open();
                 self::fail($name . ': opened');
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException $e) {
                 self::assertStringNotContainsString('PRIVATE', $e->getMessage(), $name);
             }

@@ -266,6 +266,9 @@ final class ConnectionTest extends TestCase
                 throw new RuntimeException('boom');
             });
             $this->fail('Expected exception was not thrown');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (RuntimeException $e) {
             $this->assertSame('boom', $e->getMessage());
         }

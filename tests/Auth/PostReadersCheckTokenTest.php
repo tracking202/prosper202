@@ -67,6 +67,8 @@ final class PostReadersCheckTokenTest extends TestCase
         'tracking202/static/gpb.php' => 'the global postback, sent by a network\'s server: a form-encoded body'
             . ' carries the same parameters as the query string, which it already accepts unauthenticated'
             . ' (no session to forge a request from)',
+        'tracking202/static/zpn.php' => 'Zaxaa\'s ZPN, posted by its server and authenticated by its hash_key'
+            . ' with a stored Zaxaa API signature (no session to forge a request from)',
         'tracking202/static/p13n.php' => 'a public endpoint authenticated by a personalization bearer token, cross-origin by design (no session to forge a request from)',
         'tracking202/static/p13n_event.php' => 'a public beacon authenticated by a personalization bearer token, cross-origin by design (no session to forge a request from)',
     ];

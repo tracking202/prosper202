@@ -1,0 +1,5 @@
+# Upgrade notes for installs coming from paid 1.9.56.
+-- Changed: Upgrading from paid 1.9.56: a pixel or postback that sends no order number converts a click once, so a second sale or upsell on the same click is not counted. Fill in t202txid (or txid) with the order number on every pixel and postback that should count repeat sales.
+app: Changed: From paid 1.9.56: to count repeat sales on one click, send the order number in t202txid.
+-- Changed: Upgrading from paid 1.9.56: an order number sent again for the same click is counted once. In 1.9.56 the same t202txid was counted again unless the pixel also sent t202dedupe=1; t202dedupe is no longer read. Send a distinct order number for each sale.
+app: Changed: From paid 1.9.56: the same order number sent twice for one click counts once; t202dedupe is no longer read.

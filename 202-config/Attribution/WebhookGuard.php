@@ -63,6 +63,9 @@ final class WebhookGuard
 {
     public const MAX_URL_LENGTH = 500;
 
+    /** checkPage()'s kind, which its sentences name. */
+    private const PAGE = 'landing page';
+
     /**
      * IPv4 blocks refused, with the sentence each gets. [network, prefix, why, never allowlisted]
      *
@@ -224,6 +227,23 @@ final class WebhookGuard
     }
 
     /**
+     * The postback rules for a landing page that Setup › Get LP Code fetches
+     * to look for its code (Setup\LandingPageCheck), worded for that page.
+     *
+     * @throws WebhookUnresolved when the host resolves to nothing
+     * @throws WebhookRefused with the reason, which names the host and never the path or query
+     */
+    public function checkPage(string $url): WebhookTarget
+    {
+        $m = self::postbackParts($url, false, self::PAGE);
+        assert($m !== null);
+        $target = $this->target($url, $m, self::defaultPort($m['scheme']), self::PAGE, true);
+        assert($target !== null);
+
+        return $target;
+    }
+
+    /**
      * What checkPostback() refuses without asking a resolver, for the
      * places a postback URL is saved: null when nothing is, else why. With
      * $template, the URL is a pixel's code before its [[tokens]] are filled,
@@ -251,20 +271,21 @@ final class WebhookGuard
      * @return array<string, string>|null
      * @throws WebhookRefused
      */
-    private static function postbackParts(string $url, bool $template): ?array
+    private static function postbackParts(string $url, bool $template, string $kind = 'postback'): ?array
     {
+        $page = $kind === self::PAGE;
         if (preg_match('~^https?://~i', $url, $scheme) !== 1) {
-            throw new WebhookRefused(
-                'The postback URL must start with http:// or https://; the postback sender calls nothing else.'
-            );
+            throw new WebhookRefused($page
+                ? 'The landing page URL must start with http:// or https://.'
+                : 'The postback URL must start with http:// or https://; the postback sender calls nothing else.');
         }
         $rest = substr($url, strlen($scheme[0]));
         $authority = substr($rest, 0, strcspn($rest, '/?#'));
         if (str_contains($authority, '@')) {
-            throw new WebhookRefused(
-                'The postback URL has a user name or password before its host ("…@"), which is not accepted: '
-                . 'put a network\'s key in the path or the query.'
-            );
+            throw new WebhookRefused($page
+                ? 'The landing page URL has a user name or password before its host ("…@"), which this check does not send.'
+                : 'The postback URL has a user name or password before its host ("…@"), which is not accepted: '
+                . 'put a network\'s key in the path or the query.');
         }
         if ($template && str_contains($authority, '[[')) {
             return null;
@@ -273,7 +294,7 @@ final class WebhookGuard
             . '(?::(?<port>[0-9]{1,5}))?(?<rest>[/?#][^\x00-\x20\x7F]*)?$~iD';
         if (preg_match($pattern, $url, $m) !== 1) {
             throw new WebhookRefused(
-                'The postback URL is not in the form http(s)://host[:port]/path?query: spaces and control characters '
+                'The ' . $kind . ' URL is not in the form http(s)://host[:port]/path?query: spaces and control characters '
                 . 'are not accepted, and the host is a name of letters, digits, dots and hyphens, an IPv4 address, '
                 . 'or an IPv6 address in brackets.'
             );
@@ -608,7 +629,7 @@ final class WebhookGuard
         if ($why !== null) {
             throw new WebhookRefused(
                 ($named === $address ? $address : $named . ' resolves to ' . $address) . ', ' . $why
-                . '. ' . ucfirst($kind) . 's are only sent to public addresses.'
+                . '. ' . self::publicOnly($kind, 'addresses')
             );
         }
     }
@@ -756,6 +777,13 @@ final class WebhookGuard
         return $host;
     }
 
+    private static function publicOnly(string $kind, string $what): string
+    {
+        return $kind === self::PAGE
+            ? 'Landing pages are only fetched from public ' . $what . '.'
+            : ucfirst($kind) . 's are only sent to public ' . $what . '.';
+    }
+
     private static function assertHostname(string $host, string $kind): void
     {
         if (strlen($host) > 253) {
@@ -779,7 +807,7 @@ final class WebhookGuard
         }
         if ($last === 'localhost' || $last === 'local' || $last === 'internal') {
             throw new WebhookRefused(
-                $host . ' is a local name (.' . $last . '). ' . ucfirst($kind) . 's are only sent to public host names.'
+                $host . ' is a local name (.' . $last . '). ' . self::publicOnly($kind, 'host names')
             );
         }
     }

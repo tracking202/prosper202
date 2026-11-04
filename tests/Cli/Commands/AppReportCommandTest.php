@@ -78,6 +78,9 @@ final class AppReportCommandTest extends TestCase
         try {
             AppReportCommand::params(self::input($options));
             self::fail('refused nothing');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString($says, $e->getMessage());
         }

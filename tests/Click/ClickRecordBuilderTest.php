@@ -71,6 +71,7 @@ final class ClickRecordBuilderTest extends TestCase
         'click_redirect_site_url_id' => ['clickRedirectSiteUrlId', '145', 145],
         'click_filter_reason' => ['clickFilterReason', 'filter_list', 'filter_list'],
         'click_filter_entry_id' => ['clickFilterEntryId', '146', 146],
+        'publisher_user_id' => ['publisherUserId', '31', 31],
     ];
 
     private const FLAGS = [
@@ -359,6 +360,33 @@ final class ClickRecordBuilderTest extends TestCase
         );
         self::assertSame(42, $click->userId);
         self::assertSame(111, $click->keywordId);
+    }
+
+    /**
+     * A new redirector click records its ad click ids, UTM values and
+     * tracking variables, as a direct link's does (T9TM); a re-click (the
+     * default) records none, keeping its first visit's.
+     */
+    public function testANewRedirectorClickRecordsItsCampaignRows(): void
+    {
+        $mysql = ['rotator_id' => '7', 'rule_id' => '8', 'rule_redirect_id' => '9', 'gclid' => 'Cj0KCQ-test',
+            'ttclid' => 'tt-1', 'utm_source_id' => '21', 'utm_medium_id' => '22', 'utm_campaign_id' => '23',
+            'utm_term_id' => '24', 'utm_content_id' => '25', 'variable_set_id' => '31'] + self::given();
+        $click = ClickRecordBuilder::forRedirector($mysql, 9003, null, true);
+
+        self::assertEquals(new RotatorRoute(7, 8, 9), $click->rotator);
+        self::assertTrue($click->recordsCampaignRows);
+        self::assertSame(
+            [31, 'Cj0KCQ-test', 'tt-1', 21, 22, 23, 24, 25],
+            [
+                $click->variableSetId, $click->gclid, $click->ttclid, $click->utmSourceId, $click->utmMediumId,
+                $click->utmCampaignId, $click->utmTermId, $click->utmContentId,
+            ]
+        );
+
+        $reClick = ClickRecordBuilder::forRedirector($mysql, 9003);
+        self::assertFalse($reClick->recordsCampaignRows);
+        self::assertSame([0, '', 0], [$reClick->variableSetId, $reClick->gclid, $reClick->utmSourceId]);
     }
 
     /** The rotator's default has no rule and no redirect. */

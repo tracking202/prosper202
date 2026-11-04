@@ -1,0 +1,2 @@
+-- Fixed: A redirector link (rtr.php) keeps the click's ad platform click ids (gclid, gbraid, wbraid, ttclid, msclkid, fbclid), its UTM values and the traffic source's tracking variables, as a direct link does, so they reach the reports, [[gclid]] and the [[utm_*]] tokens in the redirect URL, and the conversion pixels and postbacks. A re-click keeps its first visit's. Redirector clicks recorded before keep none.
+app: Fixed: Redirector links keep the gclid, UTM values and tracking variables, as direct links do.
