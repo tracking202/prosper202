@@ -254,10 +254,11 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
             $get_tracker_row
         ): array {
             if (isset($get_tracker_result) && $get_tracker_result->num_rows > 0) {
-                $edit_where = "`tracker_id`='".$db->real_escape_string((string)$get_tracker_row['tracker_id'])."'"
-                    . " AND `user_id`='".$mysql['user_id']."'";
+                $edit_tracker_id = $db->real_escape_string((string)$get_tracker_row['tracker_id']);
                 // Lock the row first: a link removed since it was read is refused, not recreated.
-                $lock_sql = "SELECT `tracker_id` FROM `202_trackers` WHERE " . $edit_where . " FOR UPDATE";
+                $lock_sql = "SELECT `tracker_id` FROM `202_trackers`
+                            WHERE `tracker_id`='".$edit_tracker_id."' AND `user_id`='".$mysql['user_id']."'
+                            FOR UPDATE";
                 $locked = $db->query($lock_sql);
                 if (!$locked) {
                     record_mysql_error($db, $lock_sql);
@@ -276,7 +277,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
                                         `rotator_id`='".$mysql['rotator_id']."',
                                         `click_cloaking`='".$mysql['click_cloaking']."',
                                         `tracker_time`='".$mysql['tracker_time']."'
-                            WHERE		" . $edit_where;
+                            WHERE		`tracker_id`='".$edit_tracker_id."' AND `user_id`='".$mysql['user_id']."'";
                 if (!$db->query($edit_sql)) {
                     record_mysql_error($db, $edit_sql);
                 }
