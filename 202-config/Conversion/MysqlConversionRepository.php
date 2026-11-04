@@ -705,7 +705,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      */
     private function carriedLeft(array $baseline, int $userId): int
     {
-        if ($baseline['superseded_reason'] !== null) {
+        if ($baseline['superseded_reason'] !== null && $baseline['superseded_reason'] !== '') {
             return 0;
         }
         // Signed: 1.9.56 could leave a click below 0, which leaves nothing.

@@ -543,6 +543,23 @@ final class ClickBankInsIntegrationTest extends TestCase
         self::assertCount(2, self::conversions());
     }
 
+    /** A baseline whose superseded reason is empty is live, as the reports count it. */
+    public function testARefundTakesBackFromABaselineWhoseSupersededReasonIsEmpty(): void
+    {
+        self::q("UPDATE 202_clicks SET click_lead = 1, click_payout = '47.00' WHERE click_id = " . self::CLICK);
+        $refund = [
+            'transactionType' => 'RFND', 'receipt' => 'OLDSALE1', 'totalAccountAmount' => '-10.00',
+            'transactionTime' => self::stated(time()),
+        ];
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($refund, self::FIRST_KEY));
+        self::q("UPDATE 202_conversion_logs SET superseded_reason = '' WHERE click_id = " . self::CLICK
+            . " AND source = 'legacy_baseline'");
+
+        $second = $this->post(['receipt' => 'OLDSALE2'] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $second);
+        self::assertSame('27.00000', self::clickPayout());
+    }
+
     /** Only a value carried from before the upgrade is taken back from: a click the ledger valued is not. */
     public function testARefundNamingNoSaleOnAClickTheLedgerValuedStillFindsNothing(): void
     {
