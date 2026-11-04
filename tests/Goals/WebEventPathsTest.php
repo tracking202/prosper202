@@ -185,7 +185,7 @@ final class WebEventPathsTest extends TestCase
         );
         $builders = [
             'tracking202/static/cb202.php', 'tracking202/static/jvzoo.php', 'tracking202/static/paykickstart.php',
-            'tracking202/static/zpn.php', 'tracking202/static/shopify.php',
+            'tracking202/static/shopify.php', 'tracking202/static/zpn.php',
         ];
         self::assertSame($builders, array_values(array_filter(
             $endpoints,
