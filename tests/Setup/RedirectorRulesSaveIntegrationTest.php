@@ -183,6 +183,19 @@ final class RedirectorRulesSaveIntegrationTest extends TestCase
         self::assertSame($before, self::snapshot());
     }
 
+    /** JK3D: a default_type the page does not know is refused before any write (it ran `UPDATE 202_rotators SET `). */
+    public function testAnUnknownDefaultTypeWritesNothing(): void
+    {
+        $before = self::snapshot();
+        foreach (['bogus', 'default_url', ''] as $type) {
+            $post = self::post();
+            $post['default_type'] = $type;
+
+            self::assertStringStartsWith('ERROR', trim(self::save($post)), $type);
+            self::assertSame($before, self::snapshot(), $type);
+        }
+    }
+
     /**
      * A criterion is checked and stored as the API checks and stores one: an
      * IP criterion that is not a list of addresses is refused with
