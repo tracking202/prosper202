@@ -69,6 +69,51 @@ final class PostbackRequestTest extends TestCase
         self::assertSame($expected, p202PostbackRequest($query, $body));
     }
 
+    /**
+     * The readers pick the first alias with a value, so a body alias that
+     * outranks the query's would win unless the whole group is kept out.
+     *
+     * @return iterable<string, array{string, string, callable(array<array-key, mixed>): mixed, mixed}>
+     */
+    public static function aliasCrossings(): iterable
+    {
+        $txid = static fn (array $r): string => p202ExtractTransactionId($r);
+        $orderNames = ['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'];
+        foreach ($orderNames as $queryName) {
+            foreach ($orderNames as $bodyName) {
+                if ($queryName !== $bodyName) {
+                    yield "order number: query $queryName, body $bodyName" => [$queryName, $bodyName, $txid, 'A'];
+                }
+            }
+        }
+        $customer = static fn (array $r): array => p202ExtractCustomer($r + ['cust' => 'c-1']);
+        yield 'customer: query customer_ref, body cust' => ['customer_ref', 'cust',
+            static fn (array $r): array => p202ExtractCustomer($r), ['customer_ref' => 'A']];
+        yield 'customer type: query customer_ref_type, body cust_type' => ['customer_ref_type', 'cust_type', $customer,
+            ['customer_ref' => 'c-1', 'customer_ref_type' => 'A']];
+        yield 'product: query sku, body product_id' => ['sku', 'product_id',
+            static fn (array $r): array => p202ExtractItems($r), [['sku' => 'A']]];
+        yield 'product: query product_id, body sku' => ['product_id', 'sku',
+            static fn (array $r): array => p202ExtractItems($r), [['external_product_id' => 'A']]];
+    }
+
+    /**
+     * @dataProvider aliasCrossings
+     * @param callable(array<array-key, mixed>): mixed $read
+     */
+    public function testAQueryAliasKeepsTheBodysWholeGroupOut(string $queryName, string $bodyName, callable $read, mixed $expected): void
+    {
+        $request = p202PostbackRequest(['subid' => '5', $queryName => 'A'], [$bodyName => 'B']);
+
+        self::assertSame($expected, $read($request));
+        self::assertArrayNotHasKey($bodyName, $request);
+    }
+
+    public function testABlankQueryAliasLeavesTheBodysGroupIn(): void
+    {
+        self::assertSame('B', p202ExtractTransactionId(p202PostbackRequest(['t202txid' => ''], ['order_id' => 'B'])));
+    }
+
     public function testGpbReadsEveryParameterFromTheMergedRequest(): void
     {
         $source = file_get_contents(dirname(__DIR__, 2) . '/' . self::GPB);

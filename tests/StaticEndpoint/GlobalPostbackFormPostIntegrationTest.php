@@ -200,6 +200,17 @@ final class GlobalPostbackFormPostIntegrationTest extends TestCase
         self::assertSame([[(string) self::CLICK, '6.00000', 'ord-sid']], self::conversions());
     }
 
+    public function testTheQuerysOrderNumberWinsOverAHigherRankedBodyAlias(): void
+    {
+        // A 1.9.56 URL with ?t202txid=[order], posted by a network sending its own order_id.
+        [$status, $body] = self::gpb(['subid' => (string) self::CLICK, 't202txid' => 'ord-query'], [
+            'amount' => '8', 'order_id' => 'ord-body', 'txid' => 'ord-body-2',
+        ]);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame([[(string) self::CLICK, '8.00000', 'ord-query']], self::conversions());
+    }
+
     public function testAMalformedBodyClickIdRecordsNothing(): void
     {
         [$status, $body] = self::gpb([], ['subid' => self::CLICK . '.0', 'amount' => '5']);

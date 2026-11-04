@@ -590,8 +590,10 @@ if (!function_exists('p202PostbackRequest')) {
      * A server postback's parameters: the query string's, with a form-encoded
      * body's for any name the query leaves out or blank (paid 1.9.56 gpb.php
      * read a POST body, and its URLs carry blank `amount=&subid=`).
-     * subid and sid name one click: a query naming it with either keeps the
-     * body's both out. Body names are lowercased, as connect2.php does $_GET's.
+     * Aliases of one value (subid/sid, the order-number names, ...) are one
+     * group: a query naming any member keeps all of the body's out, since the
+     * readers pick by alias rank. Body names are lowercased, as connect2.php
+     * does $_GET's.
      *
      * @param array<array-key,mixed> $query $_GET
      * @param array<array-key,mixed> $body  $_POST (empty unless a form-encoded POST)
@@ -600,8 +602,24 @@ if (!function_exists('p202PostbackRequest')) {
     function p202PostbackRequest(array $query, array $body): array
     {
         $body = array_change_key_case($body, CASE_LOWER);
-        if (($query['subid'] ?? '') !== '' || ($query['sid'] ?? '') !== '') {
-            unset($body['subid'], $body['sid']);
+        // The aliases gpb.php's click lookup and p202ExtractTransactionId,
+        // p202ExtractCustomer and p202ExtractItems read; keep them in step.
+        $groups = [
+            ['subid', 'sid'],
+            ['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'],
+            ['cust', 'customer_ref'],
+            ['cust_type', 'customer_ref_type'],
+            ['sku', 'product_id'],
+        ];
+        foreach ($groups as $group) {
+            foreach ($group as $name) {
+                if (($query[$name] ?? '') !== '') {
+                    foreach ($group as $alias) {
+                        unset($body[$alias]);
+                    }
+                    break;
+                }
+            }
         }
         $request = $query;
         foreach ($body as $name => $value) {
