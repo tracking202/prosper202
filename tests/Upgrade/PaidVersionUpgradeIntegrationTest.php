@@ -125,7 +125,7 @@ final class PaidVersionUpgradeIntegrationTest extends TestCase
     }
 
     /** What a paid 1.9.56 database has that a free one does not, and lacks that a free one has. */
-    private static function paidShape(): void
+    private static function paidShape(string $version = '1.9.56'): void
     {
         self::q('DROP TABLE user_data_feedback');
         self::q('ALTER TABLE 202_users MODIFY user_pass char(32) NOT NULL');
@@ -145,7 +145,7 @@ final class PaidVersionUpgradeIntegrationTest extends TestCase
         self::q('INSERT INTO 202_users SET user_id = ' . self::USER . ", user_name = 'paidupgrade',"
             . " user_email = 'paidupgrade@example.com', user_dash_email = '', user_pass = '" . self::LEGACY_HASH . "',"
             . " user_timezone = 'UTC', user_time_register = 0, install_hash = '', user_hash = ''");
-        self::stored('1.9.56');
+        self::stored($version);
     }
 
     private static function assertUpgradedToTheInstalledSchema(string $out, string $err): void
@@ -177,6 +177,19 @@ final class PaidVersionUpgradeIntegrationTest extends TestCase
         self::assertSame($hash, $pass);
 
         // The paid-only table is not the ladder's to touch.
+        self::assertSame('1', (string) self::$db->query('SELECT COUNT(*) FROM 202_clicks_purlink')->fetch_row()[0]);
+    }
+
+    public function testAPaidInstallAlreadyOn1979GetsThePaidBaselineToo(): void
+    {
+        // It passed the 1.9.56 step before that step carried the paid baseline.
+        self::paidShape('1.9.79');
+
+        [$out, $err] = self::upgrade();
+
+        self::assertUpgradedToTheInstalledSchema($out, $err);
+        $pass = self::$db->query('SELECT user_pass FROM 202_users WHERE user_id = ' . self::USER)->fetch_row()[0];
+        self::assertSame(self::LEGACY_HASH, $pass, 'the stored password is kept');
         self::assertSame('1', (string) self::$db->query('SELECT COUNT(*) FROM 202_clicks_purlink')->fetch_row()[0]);
     }
 
