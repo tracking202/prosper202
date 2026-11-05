@@ -372,6 +372,15 @@ if ($queue !== null && ((int) $queue['merges_failing'] > 0 || (int) $queue['merg
     }
     $mergeNote = implode('; ', $mergeParts) . ' (p202 attribution queue shows why).';
 }
+// The models whose recompute failed: each is tried again, and the other models' are not held up.
+$modelNote = null;
+$failingModels = $queue === null ? 0 : (int) ($queue['models_failing'] ?? 0);
+if ($failingModels > 0) {
+    $modelNote = $failingModels
+        . ($failingModels === 1 ? ' model failed to re-credit its' : ' models failed to re-credit their')
+        . ' conversions after a change; each is tried again, less often the longer it fails, and a conversion'
+        . ' not yet re-credited keeps its previous credits (p202 attribution queue shows why).';
+}
 $activeModels = array_values(array_filter($models, static fn (array $m): bool => $m['status'] === 'active'));
 $defaultModel = null;
 foreach ($models as $m) {
@@ -615,6 +624,16 @@ $modelSettings = static function (array $m): string {
             <span class="p202-pill p202-pill--bad">Failing</span>
             <span class="p202-strip__label">Visitors merged into one person</span>
             <span class="p202-strip__value"><?php echo $h($mergeNote); ?></span>
+        </div>
+    </div>
+    <?php } ?>
+
+    <?php if ($modelNote !== null) { ?>
+    <div class="p202-strip mb-3" id="attribution-model-recomputes">
+        <div class="p202-strip__row">
+            <span class="p202-pill p202-pill--bad">Failing</span>
+            <span class="p202-strip__label">Model changes</span>
+            <span class="p202-strip__value"><?php echo $h($modelNote); ?></span>
         </div>
     </div>
     <?php } ?>

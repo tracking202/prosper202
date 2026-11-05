@@ -4188,7 +4188,7 @@ paths:
       description: >-
         Conversions waiting to be attributed, failing ones with their last error and retry time, and
         identity merges and model changes not yet fanned out, with the merges that failed or were
-        retired and why (merge_rows).
+        retired and why (merge_rows), and the models whose recompute failed and why (model_rows).
       operationId: attributionQueue
       parameters:
         - name: limit
@@ -15569,6 +15569,12 @@ components:
             202-cronjobs/attribution-worker.php --retry-now.
         models_awaiting_recompute:
           type: integer
+          description: Models whose change the worker has not fanned out over the conversions yet, including the failing ones.
+        models_failing:
+          type: integer
+          description: >-
+            Of those, the models whose last recompute batch failed. Each is tried again, after a wait
+            that doubles to an hour, and the other models are not held up; model_rows says why.
         merge_rows:
           type: array
           description: The failing and retired merges, retired first, up to limit.
@@ -15591,6 +15597,28 @@ components:
               retired_at:
                 type: integer
                 nullable: true
+        model_rows:
+          type: array
+          description: The models whose recompute is failing, most failures first, up to limit.
+          items:
+            type: object
+            properties:
+              model_id:
+                type: integer
+              model_name:
+                type: string
+              requested_at:
+                type: integer
+                description: When the change that asked for the recompute was made
+              failures:
+                type: integer
+                description: Recompute batches of this model in a row that failed
+              last_error:
+                type: string
+                nullable: true
+              retry_at:
+                type: integer
+                description: When the model is next taken
         rows:
           type: array
           items:

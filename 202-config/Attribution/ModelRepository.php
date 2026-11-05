@@ -166,14 +166,21 @@ final class ModelRepository
              SET model_name = ?, model_slug = ?, model_type = ?, weighting_config = ?, lookback_days = ?,
                  status = ?, status_reason = NULL, is_default = ?, updated_at = ?,
                  recompute_requested_at = IF(?, ?, recompute_requested_at),
-                 recompute_cursor = IF(?, 0, recompute_cursor)
+                 recompute_cursor = IF(?, 0, recompute_cursor),
+                 recompute_failures = IF(?, 0, recompute_failures),
+                 recompute_retry_at = IF(?, 0, recompute_retry_at),
+                 recompute_error = IF(?, NULL, recompute_error)
              WHERE model_id = ? AND user_id = ?'
         );
-        $this->conn->bind($stmt, 'ssssisiiiiiii', [
+        $fresh = $recompute ? 1 : 0;
+        $this->conn->bind($stmt, 'ssssisiiiiiiiiii', [
             $name, $slug, $type->value, ModelConfig::encode($config), $lookbackDays,
             $status, $isDefault ? 1 : null, $now,
-            $recompute ? 1 : 0, $now,
-            $recompute ? 1 : 0,
+            $fresh, $now,
+            $fresh,
+            $fresh,
+            $fresh,
+            $fresh,
             $modelId, $userId,
         ]);
         $this->conn->executeUpdate($stmt);

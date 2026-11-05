@@ -4995,6 +4995,9 @@ class UPGRADE
                 // install seeds them (DataSeeder); a paid install's are kept.
                 \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelContentType(),
                 \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelClickEvents(),
+                // The attribution worker's turn for each model's recompute:
+                // the recompute_failures, recompute_retry_at and recompute_error columns.
+                \Prosper202\Database\Tables\AttributionTables::attributionModels(),
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();

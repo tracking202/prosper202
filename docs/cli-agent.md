@@ -1055,8 +1055,10 @@ Multi-touch attribution: credit for each conversion spread over the visitor's
 journey (their clicks, linked by first-party identity signals, across
 campaigns) under every active model. The worker computes credits from the
 conversion outbox every minute; `queue` shows what it has not processed yet,
-and the identity merges whose re-queue failed or was retired (`merges_failing`,
-`merges_retired`, `merge_rows` with each one's `last_error`).
+the identity merges whose re-queue failed or was retired (`merges_failing`,
+`merges_retired`, `merge_rows` with each one's `last_error`), and the models
+whose recompute after a change failed (`models_failing`, `model_rows` with
+each one's `last_error`).
 
 ```
 p202 attribution model list      [--type T] [--json]

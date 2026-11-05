@@ -23,7 +23,9 @@ use Throwable;
  * 2. Model changes. A model whose recompute_requested_at is set re-queues
  *    the account's attributed conversions from its cursor in batches:
  *    `rebuild_journey` for a journey built narrower than the account's
- *    widest lookback now needs, `model_changed` for the rest.
+ *    widest lookback now needs, `model_changed` for the rest. A model whose
+ *    batch fails waits its turn, as a failing merge does
+ *    (fanOutModelRecomputes()).
  * 3. The outbox. Pending rows are processed oldest first. Each conversion is
  *    handled in its own transaction, which rewrites its journey and credits
  *    and deletes the pending row only if its enqueue_seq is still the one
@@ -76,7 +78,7 @@ final class AttributionWorker
     /** A merge's wait after its second failure in a row, doubling with each one after it, up to MERGE_MAX_BACKOFF. */
     public const MERGE_FIRST_BACKOFF = 60;
     public const MERGE_MAX_BACKOFF = 3600;
-    /** 202_identity_merges.requeue_failures is a smallint unsigned; the count stops there rather than overflow. */
+    /** requeue_failures and recompute_failures are smallint unsigned; the count stops there rather than overflow. */
     private const MERGE_FAILURES_CEILING = 65535;
 
     private ModelRepository $models;
@@ -184,7 +186,9 @@ final class AttributionWorker
         $report->mergesRequeued = $merges['requeued'];
         $report->mergesFailed = $merges['failed'];
         $report->mergesRetired = $merges['retired'];
-        $report->modelsFannedOut = $this->fanOutModelRecomputes(10, $deadline);
+        $models = $this->fanOutModelRecomputes(10, $deadline);
+        $report->modelsFannedOut = $models['fanned_out'];
+        $report->modelsFailed = $models['failed'];
 
         while (($this->clock)() < $deadline) {
             $batch = $this->claim($batchSize);
@@ -378,70 +382,145 @@ final class AttributionWorker
     /**
      * Fan a model change out over the account's attributed conversions,
      * one batch per model per run, from the model's cursor.
+     *
+     * Each batch is one transaction and takes its turn (recompute_retry_at),
+     * as a merge does in requeueMerges(): a run takes the models whose turn
+     * has come, those never failed first, then by request time. A batch that
+     * fails is recorded on the model's row and passed, so the models after it
+     * and the outbox still run, and is taken again after mergeBackoff().
+     * Taken in request order with nothing recorded, one failing model was the
+     * head of every run, and its throw ended the run before the outbox.
+     *
+     * Nothing in a model's own rows is known to refuse its batch every time
+     * (its config is validated on write and on load, and an invalid one is
+     * marked and no longer computes), so a failure is the server's — a lock
+     * wait or deadlock with the outbox's writes, a lost connection — and the
+     * model is retried for as long as it lasts. An edit that asks for a new
+     * recompute starts its turns afresh (ModelRepository::update()).
+     *
+     * @return array{fanned_out: int, failed: int}
      */
-    public function fanOutModelRecomputes(int $limit = 10, ?int $deadline = null): int
+    public function fanOutModelRecomputes(int $limit = 10, ?int $deadline = null): array
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT model_id, user_id, recompute_requested_at, recompute_cursor
-             FROM 202_attribution_models WHERE recompute_requested_at IS NOT NULL
-             ORDER BY recompute_requested_at, model_id LIMIT ?'
+            'SELECT model_id, user_id, recompute_requested_at, recompute_cursor, recompute_failures
+             FROM 202_attribution_models
+             WHERE recompute_requested_at IS NOT NULL AND recompute_retry_at <= ?
+             ORDER BY recompute_retry_at, recompute_requested_at, model_id LIMIT ?'
         );
-        $this->conn->bind($stmt, 'i', [$limit]);
+        $this->conn->bind($stmt, 'ii', [($this->clock)(), $limit]);
         $requests = $this->conn->fetchAll($stmt);
 
-        $done = 0;
+        $out = ['fanned_out' => 0, 'failed' => 0];
         foreach ($requests as $req) {
-            $this->conn->transaction(function () use ($req): void {
-                $userId = (int) $req['user_id'];
-                $modelId = (int) $req['model_id'];
-                $requested = (int) $req['recompute_requested_at'];
-                $cursor = (int) $req['recompute_cursor'];
-                $needed = $this->journeyLookbackDays($this->models->activeModels($userId));
-
-                $stmt = $this->conn->prepareWrite(
-                    'SELECT conv_id, built_lookback_days FROM 202_attribution_journey_meta
-                     WHERE user_id = ? AND conv_id > ? ORDER BY conv_id LIMIT ?'
-                );
-                $this->conn->bind($stmt, 'iii', [$userId, $cursor, self::FAN_OUT_BATCH]);
-                $rows = $this->conn->fetchAll($stmt);
-
-                $rebuild = [];
-                $recompute = [];
-                foreach ($rows as $row) {
-                    if ((int) $row['built_lookback_days'] < $needed) {
-                        $rebuild[] = (int) $row['conv_id'];
-                    } else {
-                        $recompute[] = (int) $row['conv_id'];
-                    }
-                }
-                $this->enqueue($rebuild, self::REASON_REBUILD_JOURNEY, true);
-                $this->enqueue($recompute, self::REASON_MODEL_CHANGED, false);
-
-                // Compare-and-set on the request time: an edit that arrived
-                // meanwhile reset the cursor and must restart the fan-out.
-                if (count($rows) < self::FAN_OUT_BATCH) {
-                    $upd = $this->conn->prepareWrite(
-                        'UPDATE 202_attribution_models SET recompute_requested_at = NULL, recompute_cursor = 0
-                         WHERE model_id = ? AND recompute_requested_at = ?'
+            try {
+                $this->conn->transaction(fn () => $this->fanOutModel($req));
+                $out['fanned_out']++;
+            } catch (Throwable $e) {
+                if ($this->conn->rollbackFailed()) {
+                    // Its writes may still be pending on the handle, so nothing more runs on it.
+                    throw new WorkerHalted(
+                        'attribution worker stopped at the recompute of model ' . (int) $req['model_id'] . ': '
+                            . $e->getMessage(),
+                        0,
+                        $e
                     );
-                    $this->conn->bind($upd, 'ii', [$modelId, $requested]);
-                } else {
-                    $last = (int) $rows[count($rows) - 1]['conv_id'];
-                    $upd = $this->conn->prepareWrite(
-                        'UPDATE 202_attribution_models SET recompute_cursor = ?
-                         WHERE model_id = ? AND recompute_requested_at = ?'
-                    );
-                    $this->conn->bind($upd, 'iii', [$last, $modelId, $requested]);
                 }
-                $this->conn->executeUpdate($upd);
-            });
-            $done++;
+                $this->recordModelFailure($req, $e);
+                $out['failed']++;
+            }
             if ($deadline !== null && ($this->clock)() >= $deadline) {
                 break;
             }
         }
 
-        return $done;
+        return $out;
+    }
+
+    /**
+     * One batch of one model's fan-out, in the caller's transaction.
+     *
+     * @param array<string, mixed> $req
+     */
+    private function fanOutModel(array $req): void
+    {
+        $userId = (int) $req['user_id'];
+        $modelId = (int) $req['model_id'];
+        $requested = (int) $req['recompute_requested_at'];
+        $cursor = (int) $req['recompute_cursor'];
+        $needed = $this->journeyLookbackDays($this->models->activeModels($userId));
+
+        $stmt = $this->conn->prepareWrite(
+            'SELECT conv_id, built_lookback_days FROM 202_attribution_journey_meta
+             WHERE user_id = ? AND conv_id > ? ORDER BY conv_id LIMIT ?'
+        );
+        $this->conn->bind($stmt, 'iii', [$userId, $cursor, self::FAN_OUT_BATCH]);
+        $rows = $this->conn->fetchAll($stmt);
+
+        $rebuild = [];
+        $recompute = [];
+        foreach ($rows as $row) {
+            if ((int) $row['built_lookback_days'] < $needed) {
+                $rebuild[] = (int) $row['conv_id'];
+            } else {
+                $recompute[] = (int) $row['conv_id'];
+            }
+        }
+        $this->enqueue($rebuild, self::REASON_REBUILD_JOURNEY, true);
+        $this->enqueue($recompute, self::REASON_MODEL_CHANGED, false);
+
+        // Compare-and-set on the request time: an edit that arrived
+        // meanwhile reset the cursor and must restart the fan-out. A batch
+        // that went through ends the model's run of failures.
+        if (count($rows) < self::FAN_OUT_BATCH) {
+            $upd = $this->conn->prepareWrite(
+                'UPDATE 202_attribution_models SET recompute_requested_at = NULL, recompute_cursor = 0,
+                     recompute_failures = 0, recompute_retry_at = 0, recompute_error = NULL
+                 WHERE model_id = ? AND recompute_requested_at = ?'
+            );
+            $this->conn->bind($upd, 'ii', [$modelId, $requested]);
+        } else {
+            $last = (int) $rows[count($rows) - 1]['conv_id'];
+            $upd = $this->conn->prepareWrite(
+                'UPDATE 202_attribution_models SET recompute_cursor = ?,
+                     recompute_failures = 0, recompute_retry_at = 0, recompute_error = NULL
+                 WHERE model_id = ? AND recompute_requested_at = ?'
+            );
+            $this->conn->bind($upd, 'iii', [$last, $modelId, $requested]);
+        }
+        $this->conn->executeUpdate($upd);
+    }
+
+    /**
+     * Count a model's failed batch (its transaction rolled back) and give it
+     * its next turn after mergeBackoff(). A failure to record it is logged:
+     * the model then keeps the turn it had. Compare-and-set on the request
+     * time, so an edit that arrived meanwhile keeps the fresh turn it gave.
+     *
+     * @param array<string, mixed> $req
+     */
+    private function recordModelFailure(array $req, Throwable $e): void
+    {
+        $modelId = (int) $req['model_id'];
+        $failures = min((int) $req['recompute_failures'] + 1, self::MERGE_FAILURES_CEILING);
+        $wait = self::mergeBackoff($failures);
+        $message = mb_substr(get_class($e) . ': ' . $e->getMessage(), 0, 255);
+        error_log('p202 attribution: the recompute of model ' . $modelId . ' failed (' . $failures
+            . ' in a row; tried again ' . ($wait === 0 ? 'on the next run' : 'in ' . $wait . 's') . '): ' . $message);
+
+        try {
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_attribution_models SET recompute_failures = ?, recompute_retry_at = ?, recompute_error = ?
+                 WHERE model_id = ? AND recompute_requested_at = ?'
+            );
+            $this->conn->bind($stmt, 'iisii', [
+                $failures, ($this->clock)() + $wait, $message, $modelId, (int) $req['recompute_requested_at'],
+            ]);
+            $this->conn->executeUpdate($stmt);
+        } catch (Throwable $recordError) {
+            error_log('p202 attribution: the failure of model ' . $modelId
+                . '\'s recompute could not be recorded, so it keeps its turn: ' . $recordError->getMessage());
+        }
     }
 
     /**

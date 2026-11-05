@@ -96,6 +96,15 @@ lets the outbox grow, and the backlog is processed once it is fixed.
   since a person's keys are never removed. A lock wait or deadlock with the
   ledger, a lost connection or a missing table is retried for as long as it
   lasts. `--retry-now` makes failed and retired merges due again.
+- A model change takes its turn the same way
+  (`202_attribution_models.recompute_retry_at`): a run takes the models whose
+  recompute never failed first, then those whose retry is due. A batch that
+  fails is recorded on the model (`recompute_failures`, `recompute_error`)
+  and passed, so the models after it, the outbox and the rollup still run;
+  it is tried again on the next run, then after a minute, doubling to an
+  hour, for as long as the failure lasts. A conversion not yet re-credited
+  keeps its previous credits. Editing the model again starts its turns
+  afresh, and `--retry-now` makes every failing model due at once.
 - A stored model definition that no longer validates is marked
   `invalid` with the reason; the other models keep computing.
 - The report rollup never answers differently from the full computation: an
