@@ -257,6 +257,21 @@ final class CriterionMatcherTest extends TestCase
         self::assertTrue(CriterionMatcher::criterion('visitor', 'is', 'unique', $offer), 'the verdict still reads');
     }
 
+    /**
+     * The lookup tables are install-wide and case-insensitive: a recorded
+     * value carries the casing of whichever click stored it first, so the
+     * recorded link compares regardless of case, as the visitor's own did.
+     */
+    public function testTheRecordedLinkComparesRegardlessOfCase(): void
+    {
+        $offer = self::visitor()->withLink(['c1' => 'Spring', 'utm_source' => 'Newsletter'], 'CRM Trial', '');
+        self::assertTrue(CriterionMatcher::criterion('c1', 'is', 'spring', $offer));
+        self::assertTrue(CriterionMatcher::criterion('utm_source', 'is', 'newsletter', $offer));
+        self::assertFalse(CriterionMatcher::criterion('utm_source', 'is_not', 'newsletter', $offer));
+        self::assertTrue(CriterionMatcher::criterion('t202kw', 'is', 'crm trial', $offer));
+        self::assertFalse(CriterionMatcher::criterion('utm_source', 'is', 'Newsletter', self::visitor()), 'the visitor\'s own link is unchanged');
+    }
+
     public function testARuleMatchesWhenEveryCriterionDoes(): void
     {
         $visitor = self::visitor();

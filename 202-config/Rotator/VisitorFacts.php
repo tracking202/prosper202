@@ -37,6 +37,7 @@ final class VisitorFacts
         public readonly ?string $referer,
         private readonly \Closure $filteredCheck,
         private readonly \Closure $fraudCheck,
+        public readonly bool $recorded = false,
     ) {
     }
 
@@ -100,7 +101,8 @@ final class VisitorFacts
      * c1-c4, utm and keyword values and the page they came from. offrtr.php
      * is reached from a landing page by go.php?rpi= or offrtr.php?rpi=,
      * which carry none of them, and its referer is the landing page; a
-     * rule on any of them there cannot be decided, so it is skipped.
+     * rule on any of them there cannot be decided, so it is skipped, unless
+     * withLink() supplies them from the recorded click.
      */
     public function withoutLinkFacts(): self
     {
@@ -121,7 +123,10 @@ final class VisitorFacts
 
     /**
      * The same visitor with their own link's facts as the landing page
-     * recorded them on the click (RecordedLink), for offrtr.php.
+     * recorded them on the click (RecordedLink), for offrtr.php. The lookup
+     * tables are shared by every account and compare case-insensitively, so
+     * a recorded value carries the casing of whichever click stored it first:
+     * rules compare recorded values regardless of case ($recorded).
      *
      * @param array<string, string> $query c1-c4 and the utm values
      */
@@ -139,6 +144,7 @@ final class VisitorFacts
             $referer,
             $this->filteredCheck,
             $this->fraudCheck,
+            true,
         );
     }
 

@@ -93,6 +93,8 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
         self::q('DELETE FROM 202_last_ips WHERE user_id = ' . self::OWNER);
         self::q('DELETE FROM 202_users_pref WHERE user_id = ' . self::OWNER);
         self::q('DELETE FROM 202_users WHERE user_id = ' . self::OWNER);
+        self::q("DELETE FROM 202_utm_source WHERE utm_source = 'r7fx-cased'");
+        self::q("DELETE FROM 202_keywords WHERE keyword = 'r7fx cased kw'");
     }
 
     private static function seed(): void
@@ -111,6 +113,9 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
             'aff_campaign_id' => 0, 'text_ad_id' => 0, 'ppc_account_id' => 0, 'landing_page_id' => 0,
             'rotator_id' => self::ROTATOR, 'click_cloaking' => 0, 'tracker_time' => time(),
         ]);
+        // Another account's click stored these first, in other casing: the lookup is shared and case-insensitive.
+        self::q("INSERT INTO 202_utm_source SET utm_source = 'R7FX-Cased'");
+        self::q("INSERT INTO 202_keywords SET keyword = 'R7FX Cased KW'");
         // Tried in this order; the visitor rules match everyone else, so they come last.
         $rules = [
             // The account has no IPQualityScore key: the score is unknown, so this matches nobody.
@@ -119,6 +124,8 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
             7342 => ['c1', 'is', 'spring', 'https://c1.example/'],
             7343 => ['t202kw', 'is', 'crm trial', 'https://keyword.example/'],
             7344 => ['referer', 'is', 'partner\.example', 'https://referer.example/'],
+            7348 => ['utm_source', 'is', 'r7fx-cased', 'https://utm-cased.example/'],
+            7349 => ['t202kw', 'is', 'r7fx cased kw', 'https://keyword-cased.example/'],
             7345 => ['iprange', 'is', '192.0.2.0/24', 'https://range.example/'],
             7346 => ['visitor', 'is', 'filtered', 'https://filtered.example/'],
             7347 => ['visitor', 'is_not', 'filtered', 'https://unique.example/'],
@@ -228,6 +235,8 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
         yield 'c1 from the click' => ['&c1=spring', '', '198.51.100.22', '', 'https://c1.example/'];
         yield 'keyword from the click' => ['&t202kw=crm%20trial', '', '198.51.100.23', '', 'https://keyword.example/'];
         yield 'referer from the click' => ['', 'https://www.partner.example/post', '198.51.100.24', '', 'https://referer.example/'];
+        yield 'utm stored in other casing' => ['&utm_source=r7fx-cased', '', '198.51.100.26', '', 'https://utm-cased.example/'];
+        yield 'keyword stored in other casing' => ['&t202kw=r7fx%20cased%20kw', '', '198.51.100.27', '', 'https://keyword-cased.example/'];
         yield 'the offer request is not read' => ['', '', '198.51.100.25', '&utm_source=newsletter&c1=spring', 'https://unique.example/'];
     }
 
