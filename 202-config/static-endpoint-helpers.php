@@ -747,11 +747,13 @@ if (!function_exists('p202ClickIdFromRequest')) {
      *
      * @param array<string, mixed> $get
      * @param array<string, mixed> $cookies
-     * @return array{click_id: int|null, malformed: string|null, method: \Prosper202\Conversion\Ledger\MatchMethod|null}
+     * @return array{click_id: int|null, malformed: string|null, method: \Prosper202\Conversion\Ledger\MatchMethod|null, purlink: string|null}
      *         click_id null with malformed null: nothing named a click, the
      *         IP fallback may run. malformed set: the name of the value that
      *         was present and unreadable; record nothing. method is how the
      *         click was found (a parameter or a cookie), null when none was.
+     *         purlink: a signed PurLink SubID parameter, not yet verified
+     *         (p202PurLinkFromRequest()).
      */
     function p202ClickIdFromRequest(array $get, array $cookies, int $campaignId): array
     {
@@ -771,15 +773,48 @@ if (!function_exists('p202ClickIdFromRequest')) {
             if ($value === null || $value === '') {
                 continue;
             }
-            $clickId = p202ParseClickId(is_string($value) ? $value : (is_int($value) ? $value : null));
+            $value = is_string($value) ? $value : (is_int($value) ? $value : null);
+            // A parameter may be a signed PurLink SubID; a cookie only ever holds a click id.
+            $ref = $method === $parameter ? \Prosper202\Click\ClickRef::parse($value) : null;
+            $clickId = $ref?->clickId ?? p202ParseClickId($value);
             if ($clickId === null) {
-                return ['click_id' => null, 'malformed' => $name, 'method' => null];
+                return ['click_id' => null, 'malformed' => $name, 'method' => null, 'purlink' => null];
             }
 
-            return ['click_id' => $clickId, 'malformed' => null, 'method' => $method];
+            return ['click_id' => $clickId, 'malformed' => null, 'method' => $method, 'purlink' => $ref?->purLinkSubid];
         }
 
-        return ['click_id' => null, 'malformed' => null, 'method' => null];
+        return ['click_id' => null, 'malformed' => null, 'method' => null, 'purlink' => null];
+    }
+}
+
+if (!function_exists('p202PurLinkFromRequest')) {
+    /**
+     * The verified claims and key of the signed PurLink SubID a pixel request
+     * named (p202ClickIdFromRequest()'s purlink); null when it named none,
+     * false (logged) when it does not verify or cannot be checked now.
+     *
+     * @param array{purlink?: string|null} $requested
+     * @return array{claims: array{click_id: int, landing_page_id: int, user_id: int, campaign_public_id: int}, key: string}|false|null
+     */
+    function p202PurLinkFromRequest(mysqli $db, array $requested, string $endpoint): array|false|null
+    {
+        $subid = $requested['purlink'] ?? null;
+        if ($subid === null) {
+            return null;
+        }
+        try {
+            $verified = \Prosper202\Click\ClickRef::verify(new \Prosper202\Database\Connection($db), $subid);
+        } catch (\Throwable $error) {
+            error_log($endpoint . ': signed PurLink verification unavailable: ' . $error->getMessage());
+            return false;
+        }
+        if ($verified === null) {
+            error_log($endpoint . ': refusing a signed PurLink SubID that does not match its click');
+            return false;
+        }
+
+        return $verified;
     }
 }
 
@@ -1247,24 +1282,21 @@ if (!function_exists('p202VerifyPurLinkSubid')) {
      */
     function p202VerifyPurLinkSubid(mysqli $db, mixed $raw, string $endpoint): ?array
     {
-        if (\Prosper202\Click\PurLinkSubid::parse($raw) === null) {
+        $ref = \Prosper202\Click\ClickRef::parse($raw);
+        if ($ref === null || $ref->purLinkSubid === null) {
             return null;
         }
         try {
-            $key = \Api\V3\Apps\Android\InstallTokenKey::load($db);
-            if ($key === null) {
-                throw new \RuntimeException('installation token key is missing');
-            }
-            $claims = (new \Prosper202\Click\PurLinkExit(new \Prosper202\Database\Connection($db)))->claims($raw, $key);
+            $verified = \Prosper202\Click\ClickRef::verify(new \Prosper202\Database\Connection($db), $ref->purLinkSubid);
         } catch (\Throwable $error) {
             error_log($endpoint . ': signed PurLink verification unavailable: ' . $error->getMessage());
             p202RespondJsonError(503, 'Service unavailable');
         }
-        if ($claims === null) {
+        if ($verified === null) {
             p202RespondJsonError(404, 'SubID not found');
         }
 
-        return ['claims' => $claims, 'key' => $key];
+        return $verified;
     }
 }
 

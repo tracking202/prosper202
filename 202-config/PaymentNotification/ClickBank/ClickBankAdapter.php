@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification\ClickBank;
 
-use Prosper202\Click\ClickId;
+use Prosper202\Click\ClickRef;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
@@ -354,7 +354,7 @@ final class ClickBankAdapter implements
      *
      * @param array<string, mixed> $order
      */
-    private static function namedClick(array $order): ?int
+    private static function namedClick(array $order): ?ClickRef
     {
         $codes = $order['trackingCodes'] ?? [];
         if (!is_array($codes) || !array_is_list($codes)) {
@@ -378,9 +378,9 @@ final class ClickBankAdapter implements
         return null;
     }
 
-    private static function named(string $what, mixed $value, string $parameter): int
+    private static function named(string $what, mixed $value, string $parameter): ClickRef
     {
-        $clickId = ClickId::parse($value);
+        $clickId = ClickRef::parse($value);
         if ($clickId === null) {
             throw self::malformed(
                 $what . ' is "' . self::shown(is_scalar($value) ? (string) $value : gettype($value)) . '", which is'

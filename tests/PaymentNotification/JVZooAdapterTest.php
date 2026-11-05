@@ -195,6 +195,14 @@ final class JVZooAdapterTest extends TestCase
         self::assertNull(self::parsed(['ctranstime' => ''])->occurredAt, 'none stated: dated when it arrives');
     }
 
+    public function testASignedPurLinkSubidNamesItsClickForTheProcessorToVerify(): void
+    {
+        $affiliate = self::parsed(['caffitid' => '41-987-0123456789ab']);
+        self::assertSame([41, '41-987-0123456789ab'], [$affiliate->clickId, $affiliate->purLinkSubid]);
+        $vendor = self::parsed(['cvendthru' => 'subid=' . '41-987-0123456789ab'], JVZooRole::VENDOR);
+        self::assertSame([41, '41-987-0123456789ab'], [$vendor->clickId, $vendor->purLinkSubid]);
+    }
+
     public function testTheVendorsClickIsTheBuyLinksSubidAndTheTidIsNotRead(): void
     {
         $vendor = static fn (array $overrides): Notification => self::parsed($overrides, JVZooRole::VENDOR);

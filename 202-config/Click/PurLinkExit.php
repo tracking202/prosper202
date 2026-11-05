@@ -10,9 +10,9 @@ use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\MysqlConversionRepository;
 
 /**
- * Records a PurLink exit for the click and landing page named by its proof.
- * The public intake must deduplicate and order reports before calling this:
- * a delayed retry must not change an advanced page's newer offer selection.
+ * Records a PurLink exit for the click and landing page named by its proof,
+ * in page interaction order (recordOrdered()): a delayed retry must not
+ * change an advanced page's newer offer selection.
  */
 final class PurLinkExit
 {
@@ -21,32 +21,13 @@ final class PurLinkExit
     }
 
     /**
-     * The optional public campaign ID is required for advanced pages and,
-     * for simple pages, must name their campaign when present.
-     * Invalid, expired, or unrelated input records nothing.
-     */
-    public function record(string $proof, mixed $campaignPublicId, int $now, string $key): bool
-    {
-        $route = $this->resolve($proof, $campaignPublicId, $now, $key);
-        if ($route === null) {
-            return false;
-        }
-
-        return (new MysqlClickRepository($this->conn))->recordExit(new ClickExit(
-            $route['claims']['user_id'],
-            $route['claims']['click_id'],
-            offer: new OfferRoute($route['campaign_id'], $route['payout']),
-            cloaking: 0,
-            landingPageId: $route['claims']['landing_page_id'],
-        ));
-    }
-
-    /**
      * Record a browser exit in page interaction order. Reports with a smaller
      * sequence are stale; an exact retry is harmless. The proof's click lock
      * serializes the ordering row and the click rewrite with conversions.
+     * 'converted': the click-out is recorded, but the click had already
+     * converted, so its offer was not applied.
      *
-     * @return 'recorded'|'duplicate'|'stale'|'conflict'|'refused'
+     * @return 'recorded'|'converted'|'duplicate'|'stale'|'conflict'|'refused'
      */
     public function recordOrdered(string $proof, mixed $campaignPublicId, mixed $sequence, int $now, string $key): string
     {
@@ -84,12 +65,13 @@ final class PurLinkExit
                         return (int) $prior['campaign_id'] === $route['campaign_id'] ? 'duplicate' : 'conflict';
                     }
                 }
+                $converted = (int) $click['click_lead'] === 1;
                 $accepted = (new MysqlClickRepository($this->conn))->recordExitInTransaction(new ClickExit(
                     $claims['user_id'],
                     $claims['click_id'],
                     // Never rewrite an older visit of an already converted
                     // click, including those with mixed lead flags.
-                    offer: (int) $click['click_lead'] === 1 ? null : new OfferRoute($route['campaign_id'], $route['payout']),
+                    offer: $converted ? null : new OfferRoute($route['campaign_id'], $route['payout']),
                     cloaking: 0,
                     landingPageId: $claims['landing_page_id'],
                 ));
@@ -106,7 +88,7 @@ final class PurLinkExit
                     $route['campaign_id'], $claims['expires'],
                 ]);
                 $this->conn->executeUpdate($stmt);
-                return 'recorded';
+                return $converted ? 'converted' : 'recorded';
             }
         );
         try {
@@ -287,15 +269,6 @@ final class PurLinkExit
             }
             return $work();
         }
-    }
-
-    /**
-     * Route the click to a verified SubID's offer, as its click-out would,
-     * so a conversion writer that checks the campaign can follow.
-     */
-    public function route(string $subid, string $key): bool
-    {
-        return $this->convert($subid, $key, static fn (): bool => true) === true;
     }
 
     /**

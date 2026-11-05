@@ -25,6 +25,14 @@ if ($requestedClick['malformed'] !== null) {
     error_log('upx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
     exit;
 }
+// A signed PurLink SubID names its click once its MAC verifies, and records
+// on its offer (as on gpb.php); one that does not verify records nothing.
+$purLink = p202PurLinkFromRequest($db, $requestedClick, 'upx');
+if ($purLink === false) {
+    p202RespondJsonError(404, 'SubID not found');
+}
+$purLinkSubid = $purLink === null ? null : $requestedClick['purlink'];
+$purLinkKey = $purLink['key'] ?? null;
 // How the click was found, kept on the conversion (MatchMethod): the
 // parameter or the cookie that named it, or the address it was guessed from.
 $matchedBy = $requestedClick['method'] ?? \Prosper202\Conversion\Ledger\MatchMethod::SAME_IP;
@@ -159,7 +167,9 @@ if (is_numeric($mysql['click_id'])) {
 	// browser pixels of that notification are this response. A campaign
 	// without goals records its plain conversion below, as always.
 	try {
-		$webEvent = p202RecordWebEvent($db, $clickId, $_GET, $matchedBy, ['browser' => true]);
+		$webEvent = $purLinkSubid !== null
+			? p202RecordPurLinkWebEvent($db, $purLinkSubid, (string) $purLinkKey, $_GET)
+			: p202RecordWebEvent($db, $clickId, $_GET, $matchedBy, ['browser' => true]);
 	} catch (\Throwable $webEventError) {
 		error_log('upx: event recording failed for click ' . $clickId . ': ' . $webEventError->getMessage());
 		p202RespondJsonError(500, 'Failed to record event');
@@ -198,7 +208,9 @@ if (is_numeric($mysql['click_id'])) {
 		($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
 		p202ExtractTransactionId($_GET),
 		p202ExtractCustomer($_GET),
-		p202ExtractItems($_GET)
+		p202ExtractItems($_GET),
+		$purLinkSubid,
+		$purLinkKey,
 	);
 	} catch (\Throwable $conversionError) {
 		error_log('upx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());

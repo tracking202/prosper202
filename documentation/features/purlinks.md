@@ -80,9 +80,12 @@ The SubID a PurLink carries looks like `1234567-3121-a1b2c3d4e5f6`: the
 click, the offer, and a signature, about 25 characters of digits, letters
 and hyphens, so networks that limit SubID length or characters accept it. The
 signature means nobody can write a SubID that moves a click's conversion to
-another offer. It does not expire while the click exists. `gpb.php` and
-`pb.php` accept it; `pb.php` also checks that it names the postback's own
-campaign.
+another offer. It does not expire while the click exists. Everything that
+takes a SubID back accepts it and credits its offer: `gpb.php`, `pb.php`,
+`gpx.php`, `upx.php`, the ClickBank, JVZoo, PayKickstart, Zaxaa and Shopify
+notifications, revenue uploads and Update Subids. `pb.php` also checks that it
+names the postback's own campaign. A SubID whose signature does not match
+records nothing.
 
 ## The deferred pixel
 

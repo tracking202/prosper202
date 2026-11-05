@@ -223,15 +223,15 @@ final class ClickExitIntegrationTest extends TestCase
         $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
         $exit = new PurLinkExit(new Connection(self::requireScratch()));
 
-        self::assertFalse($exit->record($proof . 'x', null, $now, $key));
-        self::assertFalse($exit->record($proof, null, $now + 60, $key));
-        self::assertFalse($exit->record($proof, '11102', $now, $key));
-        self::assertFalse($exit->record($proof, '11103', $now, $key));
-        self::assertFalse($exit->record($proof, '11101e0', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof . 'x', null, '11', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, null, '12', $now + 60, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11102', '13', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11103', '14', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11101e0', '15', $now, $key));
         self::assertNull($exit->subid($proof, '11102', $now, $key));
         self::assertNull($exit->subid($proof, '11103', $now, $key));
         self::assertSame('0', self::state($clickId)['click_out']);
-        self::assertTrue($exit->record($proof, '11101', $now, $key));
+        self::assertSame('recorded', $exit->recordOrdered($proof, '11101', '16', $now, $key));
         self::assertSame('1', self::state($clickId)['click_out']);
         self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
     }
@@ -252,11 +252,11 @@ final class ClickExitIntegrationTest extends TestCase
         $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
         $exit = new PurLinkExit(new Connection(self::requireScratch()));
 
-        self::assertFalse($exit->record($proof, null, $now, $key));
-        self::assertFalse($exit->record($proof, '11102', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, null, '17', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11102', '18', $now, $key));
         self::assertNull($exit->subid($proof, '11102', $now, $key));
         self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = ' . self::$campaign);
-        self::assertFalse($exit->record($proof, '11101', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11101', '19', $now, $key));
         self::assertNull($exit->subid($proof, '11101', $now, $key));
         self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 0 WHERE aff_campaign_id = ' . self::$campaign);
         $subid = $exit->subid($proof, '11101', $now, $key);
@@ -272,7 +272,7 @@ final class ClickExitIntegrationTest extends TestCase
         self::assertNull($exit->claims(str_replace('-11101-', '-11102-', $subid), $key));
         self::assertNull($exit->claims($clickId . '-11101', $key));
         self::assertSame('0', self::state($clickId)['click_out']);
-        self::assertTrue($exit->record($proof, '11101', $now, $key));
+        self::assertSame('recorded', $exit->recordOrdered($proof, '11101', '20', $now, $key));
         self::assertSame('1', self::state($clickId)['click_out']);
         self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
     }
@@ -300,7 +300,8 @@ final class ClickExitIntegrationTest extends TestCase
             static fn (int $user, int $click, int $campaign, string $payout): array => [$user, $click, $campaign, $payout]
         );
         self::assertSame([self::OWNER, $clickId, self::$campaign, '7.25'], $seen);
-        self::assertTrue($exit->record($proof, '11101', $now, $key));
+        // The click had converted: its click-out is recorded, its offer is not, and the answer says so.
+        self::assertSame('converted', $exit->recordOrdered($proof, '11101', '21', $now, $key));
         self::assertSame('1', self::state($clickId)['click_out']);
         self::assertSame('4', self::state($clickId)['aff_campaign_id']);
         self::assertSame('2.50000', self::state($clickId)['click_payout']);
@@ -492,8 +493,8 @@ final class ClickExitIntegrationTest extends TestCase
         self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = ' . self::$campaign);
         try {
             self::assertNull($exit->subid($proof, '11101', $now, $key), 'a deleted page prepares no new SubID');
-            self::assertFalse($exit->record($proof, '11101', $now, $key), 'nor records a new click-out');
-            self::assertTrue($exit->route($subid, $key), 'pb.php routes the late postback');
+            self::assertSame('refused', $exit->recordOrdered($proof, '11101', '22', $now, $key), 'nor records a new click-out');
+            self::assertTrue($exit->convert($subid, $key, static fn (): bool => true), 'pb.php routes the late postback');
             $late = $exit->recordConversion($subid, $key, [
                 'transaction_id' => 'after-delete', 'skip_bridge' => true,
             ], MatchMethod::CLICK_ID);
@@ -752,7 +753,7 @@ final class ClickExitIntegrationTest extends TestCase
         // Once any visit converts, another exit records its ordering without
         // rewriting older visits or the paid click's current campaign.
         self::q("UPDATE 202_clicks SET click_lead=1 WHERE click_id=$clickId");
-        self::assertSame('recorded', $exit->recordOrdered($proof, '129979', '4', $now, $key));
+        self::assertSame('converted', $exit->recordOrdered($proof, '129979', '4', $now, $key));
         self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
         self::assertSame('4', self::one("SELECT sequence FROM 202_purlink_exit_order WHERE click_id=$clickId")['sequence']);
     }
