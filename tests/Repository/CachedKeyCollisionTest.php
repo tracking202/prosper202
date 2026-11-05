@@ -82,6 +82,9 @@ final class CachedKeyCollisionTest extends TestCase
         try {
             $cached->findOrCreateCustomVar('c1|x', 'y');
             self::fail('a name the repository refuses was answered from the cache');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringStartsWith('Invalid custom variable name', $e->getMessage());
         }
@@ -97,6 +100,9 @@ final class CachedKeyCollisionTest extends TestCase
         try {
             $cached->findOrCreateUtm('y', 'utm_source|x');
             self::fail('a type the repository refuses was answered from the cache');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringStartsWith('Invalid UTM type', $e->getMessage());
         }

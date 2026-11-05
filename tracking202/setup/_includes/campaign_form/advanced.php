@@ -63,7 +63,7 @@ $advancedSet = (string) $values['aff_campaign_cloaking'] === '1'
 					<div class="mb-2 mt-2">
 						<label class="form-label" for="<?php echo $field; ?>">Rotate URL #<?php echo $n; ?></label>
 						<input type="text" class="form-control font-monospace<?php echo p202_setup_invalid($errors, $field); ?>" id="<?php echo $field; ?>" name="<?php echo $field; ?>" value="<?php echo p202_setup_e($values[$field]); ?>" placeholder="https://">
-						<?php echo p202_setup_feedback($errors, $field); ?>
+						<?php echo p202_setup_feedback($errors, $field) . p202_setup_link_assistant($field); ?>
 					</div>
 				<?php } ?>
 			</div>

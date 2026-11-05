@@ -84,6 +84,7 @@ $error = [];
 	echo '<h3 class="p202-section__title">1. Landing page code</h3>'
 		. '<p>Put this right above the <code>&lt;/body&gt;</code> tag of <strong>only</strong> the page your visitors first arrive on, not in a template every page of the site includes.</p>';
 	echo p202_setup_code_box($javascript_code, ['long' => true]);
+	echo p202_setup_lp_check(get_absolute_url(), (string) ($_SESSION['token'] ?? ''), (int) $landing_page_row['landing_page_id']);
 
 	echo '<h3 class="p202-section__title">2. Link out to the offer</h3>'
 		. '<p>Choose one of the three. The simplest is the outbound link: use it as the link to the offer on your page.</p>';

@@ -33,6 +33,7 @@ final class ClickTables
             self::clickLatestVisits(),
             self::reClickBackfill(),
             self::clicksFilterReason(),
+            self::clicksPublisher(),
         ];
     }
 
@@ -285,6 +286,25 @@ final class ClickTables
                 `filter_reason` varchar(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
                 `entry_id` int(10) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`click_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The publisher a click arriving on a publisher link (t202pubid) is
+     * credited to (Prosper202\Click\PublisherCredit): one row per credited
+     * click from 1.9.80 on, written by MysqlClickRepository and deleted with
+     * the click (ClickRetention). The click itself stays its link's account's.
+     */
+    public static function clicksPublisher(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICKS_PUBLISHER,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICKS_PUBLISHER . "` (
+                `click_id` bigint(20) unsigned NOT NULL,
+                `publisher_user_id` mediumint(8) unsigned NOT NULL,
+                PRIMARY KEY (`click_id`),
+                KEY `publisher_user_id` (`publisher_user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

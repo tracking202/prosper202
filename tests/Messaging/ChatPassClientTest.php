@@ -99,6 +99,9 @@ final class ChatPassClientTest extends TestCase
         try {
             \ChatPassClient::parse($status, $body);
             self::fail('accepted: ' . $body);
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString($reason, $e->getMessage());
         }

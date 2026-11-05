@@ -35,6 +35,11 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             1,
             'a traffic source pixel: WebhookGuard::checkPostback() at every hop, pinned, no proxy',
         ],
+        '202-config/Setup/LandingPageCheck.php' => [
+            1,
+            "a landing page's saved URL (Get LP Code's Check my page): WebhookGuard::checkPage() at every hop,"
+            . " PostbackSender's pin, no proxy, body capped",
+        ],
         '202-config/Attribution/WebhookSender.php' => [
             1,
             'an export webhook, an LTV webhook delivery or a Slack notice (SlackWebhook): WebhookGuard::check(),'
@@ -53,6 +58,7 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             1,
             "Google's pinned endpoints; the override is loopback only",
         ],
+        '202-config/Update/ReleaseSignature.php' => [1, 'the fixed host my.tracking202.com, https only, redirects only to that host'],
         '202-config/Lpo/PairingClient.php' => [1, 'the operator constant LPO_SAAS_BASE_URL, https only, no redirects'],
         '202-config/Messaging/MessagingClient.class.php' => [
             1,
@@ -63,6 +69,7 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             'the operator constant CHAT_PASS_URL, https (http only to loopback)',
         ],
         'cli/ApiClient.php' => [1, "the PHP CLI's own configured server, on the operator's machine"],
+        '202-config/FraudDetectionIPQS.class.php' => [1, 'a fixed host, www.ipqualityscore.com'],
         '202-config/Fraud/IpqsClient.php' => [
             1,
             'a fixed host, www.ipqualityscore.com (IpqsClient::ORIGIN), https only, no redirects; the override is'
@@ -84,6 +91,11 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         '202-cronjobs/dni.php' => [1, self::FIXED],
         '202-appstore/index.php' => [1, self::FIXED],
         '202-resources/index.php' => [1, self::FIXED],
+        'api/v3/Support/AiWatchers.php' => [
+            1,
+            "Tracking202's MCP server: AiConnect::relayOrigin(), the fixed https://mcp.tracking202.com or the"
+            . ' operator constant P202_MCP_RELAY_ORIGIN, https (http only to loopback), no redirects',
+        ],
         'api/v3/Support/RemoteApiClient.php' => [
             1,
             "a sync profile's url: WebhookGuard::checkSync() at every request, pinned, no proxy, no redirects",

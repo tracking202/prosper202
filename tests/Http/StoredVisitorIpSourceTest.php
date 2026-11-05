@@ -48,7 +48,7 @@ final class StoredVisitorIpSourceTest extends TestCase
     private const ALLOWED = [
         '202-config/PaymentNotification/Processor.php' => [
             '$request->senderAddress' => 'a payment provider\'s notification (PayKickstart\'s IPN, JVZoo\'s'
-                . ' JVZIPN, ClickBank\'s INS): the address is the provider\'s server, never a visitor\'s'
+                . ' JVZIPN, ClickBank\'s INS, Zaxaa\'s ZPN): the address is the provider\'s server, never a visitor\'s'
                 . ' (InboundRequest::fromGlobals()), and connect.php, the endpoints\' bootstrap, has no privacy state',
         ],
         '202-config/functions-shared.php' => [

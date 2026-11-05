@@ -289,15 +289,18 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 				$latest_version = null;
 				$link = null;
 				$autoupgrade = false;
+				$signature = null;
 
 				if (is_array($item)) {
 					$latest_version = $item['title'] ?? null;
 					$link = $item['link'] ?? null;
 					$autoupgrade = $item['autoupgrade'] ?? 'false';
+					$signature = $item['signature'] ?? null;
 				} elseif (is_object($item)) {
 					$latest_version = $item->title ?? null;
 					$link = $item->link ?? null;
 					$autoupgrade = $item->autoupgrade ?? 'false';
+					$signature = $item->signature ?? null;
 				}
 
 				if ($latest_version === null) {
@@ -313,12 +316,7 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 					}
 
 					if ($autoupgrade == 'true' && $link !== null) {
-						$parsedLink = parse_url($link);
-						if (
-							!is_array($parsedLink)
-							|| ($parsedLink['scheme'] ?? '') !== 'https'
-							|| ($parsedLink['host'] ?? '') !== 'my.tracking202.com'
-						) {
+						if (\Prosper202\Update\ReleaseSignature::allowedUrl(is_string($link) ? $link : null) === null) {
 							$log .= 'Auto update rejected due to untrusted update source. ';
 							$_SESSION['upgrade_error_log'] = $log;
 							return true;
@@ -341,15 +339,38 @@ require_once __DIR__ . '/functions-standalone-ui.php';
                             // stop the download, the file swap or the ladder halfway.
                             ignore_user_abort(true);
                             set_time_limit(0);
-							$GetUpdate = @getData($link);
-							if ($GetUpdate) {
+							// Nothing is written until the download's signature checks out.
+							$notReady = \Prosper202\Update\ReleaseSignature::notReady();
+							$download = $notReady === null
+								? \Prosper202\Update\ReleaseSignature::download((string) $link)
+								: ['body' => null, 'error' => $notReady];
+							$GetUpdate = $download['body'];
+							$problem = $GetUpdate === null
+								? $download['error']
+								: \Prosper202\Update\ReleaseSignature::problem(
+									$GetUpdate,
+									is_string($signature) ? $signature : null
+								);
+							if ($problem !== null) {
+								$_SESSION['upgrade_error_log'] = $log . 'Auto update not installed: ' . $problem . ' ';
+								return true;
+							}
+							if ($GetUpdate !== null) {
 								$FilesUpdated = false;
 
 								if (temp_exists()) {
 									$downloadUpdate = @file_put_contents(__DIR__ . '/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
+									$zipFile = __DIR__ . '/temp/prosper202_' . $latest_version . '.zip';
+									$versionProblem = $downloadUpdate
+										? \Prosper202\Update\ReleaseSignature::versionProblem($zipFile, (string) $latest_version, (string) $version)
+										: null;
+									if ($versionProblem !== null) {
+										$_SESSION['upgrade_error_log'] = $log . 'Auto update not installed: ' . $versionProblem . ' ';
+										return true;
+									}
 									if ($downloadUpdate) {
 										$zip = new ZipArchive();
-										$zipResult = $zip->open(__DIR__ . '/temp/prosper202_' . $latest_version . '.zip');
+										$zipResult = $zip->open($zipFile);
 
 										if ($zipResult === TRUE) {
 											$basePath = realpath(dirname(__DIR__));

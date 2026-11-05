@@ -107,6 +107,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             );
         });
         $this->recordFilterReason($click);
+        $this->recordPublisher($click);
         $this->link($click);
     }
 
@@ -857,6 +858,28 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         } catch (\Throwable $e) {
             error_log('Prosper202 click filter: click ' . $click->clickId . '\'s filter reason ('
                 . $click->clickFilterReason . ') was not recorded: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * The publisher a publisher link credits (202_clicks_publisher), written as
+     * the filter reason is: after the click commits, a failure logged and never
+     * the click's. A re-click keeps its first visit's credit.
+     */
+    private function recordPublisher(ClickRecord $click): void
+    {
+        if ($click->publisherUserId === 0) {
+            return;
+        }
+        try {
+            $this->write(
+                'INSERT INTO 202_clicks_publisher (click_id, publisher_user_id) VALUES (?, ?)',
+                'ii',
+                [$click->clickId, $click->publisherUserId]
+            );
+        } catch (\Throwable $e) {
+            error_log('Prosper202 publisher credit: click ' . $click->clickId . '\'s publisher (user '
+                . $click->publisherUserId . ') was not recorded: ' . $e->getMessage());
         }
     }
 

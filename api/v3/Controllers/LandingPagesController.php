@@ -15,7 +15,8 @@ class LandingPagesController extends Controller
     protected function fields(): array
     {
         return [
-            'landing_page_url'      => ['type' => 's', 'required' => true, 'max_length' => 255],
+            // Held to Setup › Landing Pages' rule (HttpUrlPrefix).
+            'landing_page_url'      => ['type' => 's', 'format' => 'http_url', 'required' => true, 'max_length' => 255],
             'aff_campaign_id'       => ['type' => 'i', 'required' => true, 'range' => self::MEDIUMINT_UNSIGNED],
             'landing_page_nickname' => ['type' => 's', 'required' => true, 'max_length' => 50],
             'leave_behind_page_url' => ['type' => 's', 'nullable' => true, 'max_length' => 255],

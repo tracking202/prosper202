@@ -149,6 +149,9 @@ final class LtvFieldErrorsTest extends TestCase
                 throw $thrown;
             });
             self::fail('wrap() returned');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertInstanceOf($expected, $e, get_class($thrown) . ' became ' . get_class($e));
             if ($e instanceof ValidationException) {

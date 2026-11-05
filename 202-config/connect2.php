@@ -575,6 +575,54 @@ function p202RuleRedirectIsUsable(array $redirect): bool
     return !empty($redirect['redirect_url'])
         || ($redirect['auto_monetizer'] ?? null) != null;
 }
+
+/**
+ * What a redirector's rules can ask about this visitor, in rtr.php and
+ * offrtr.php alike (CriterionMatcher). The account's IPQualityScore key is
+ * read only when a fraud rule is tried; a failed read skips the rule and the
+ * visitor goes on.
+ *
+ * @param array<string, mixed> $geo getGeoData()'s answer
+ * @param object $ua the user-agent parser's result, device family as the scripts set it
+ * @param \Closure(): ?bool $filtered whether the click is, or is to be, recorded as filtered; null when unknown
+ */
+function p202RotatorVisitor(
+    \mysqli $db,
+    int $userId,
+    string $ip,
+    array $geo,
+    ?string $isp,
+    object $ua,
+    ?string $keywordPreference,
+    ?string $refererPreference,
+    \Closure $filtered
+): \Prosper202\Rotator\VisitorFacts {
+    return \Prosper202\Rotator\VisitorFacts::fromRequest(
+        $_GET,
+        $_SERVER,
+        $keywordPreference,
+        $refererPreference,
+        $ip,
+        $geo,
+        $isp,
+        (string) ($ua->os->family ?? ''),
+        (string) ($ua->device->family ?? ''),
+        (string) ($ua->ua->family ?? ''),
+        $filtered,
+        static function () use ($db, $userId, $ip): ?bool {
+            try {
+                $key = \Prosper202\Rotator\FraudScore::accountKey(\Prosper202\Repository\LookupRepositoryFactory::connection($db), $userId);
+            } catch (\Throwable $keyError) {
+                error_log("Redirector fraud rule: reading account $userId's IPQualityScore key failed ("
+                    . $keyError->getMessage() . '); the rule is skipped');
+
+                return null;
+            }
+
+            return \Prosper202\Rotator\FraudScore::isHigh($key, $ip, $_SERVER);
+        }
+    );
+}
 function rotateTrackerUrl($db, $tracker_row)
 {
 
@@ -611,6 +659,31 @@ function rotateTrackerUrl($db, $tracker_row)
     $num = $row5 !== null ? (int) $row5['rotation_num'] : 0;
 
     return $urls[$num];
+}
+
+/**
+ * The publisher a click request's publisher link (t202pubid) credits, when the
+ * link's account granted it (Prosper202\Click\PublisherCredit), else null and
+ * the click stays the account's alone. A failed read is logged and credits no one:
+ * the visitor goes on.
+ *
+ * @return array{user_id: int, public_id: string}|null
+ */
+function p202ClickPublisher(mysqli $db, int $ownerUserId, array $query): ?array
+{
+    $publicId = \Prosper202\Click\PublisherCredit::requested($query);
+    if ($publicId === null) {
+        return null;
+    }
+    try {
+        return (new \Prosper202\Click\PublisherCredit(\Prosper202\Repository\LookupRepositoryFactory::connection($db)))
+            ->forClick($ownerUserId, $publicId);
+    } catch (\RuntimeException $e) {
+        error_log('Prosper202 publisher credit: reading the publisher of a link of user ' . $ownerUserId
+            . ' failed, so the click is credited to no publisher: ' . $e->getMessage());
+
+        return null;
+    }
 }
 
 /**
@@ -789,9 +862,22 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
         );
     }
 
+    // A click a publisher link credited names that publisher (PublisherCredit).
+    $publisherPublicId = null;
+    if ($click_row !== [] && stripos((string) $url, '[[t202pubid]]') !== false) {
+        try {
+            $publisherPublicId = (new \Prosper202\Click\PublisherCredit(
+                \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+            ))->publicIdOfClick((int) $tokenClickId);
+        } catch (\RuntimeException $e) {
+            error_log('Prosper202 publisher credit: reading click ' . $tokenClickId
+                . '\'s publisher failed, so [[t202pubid]] is the account\'s own: ' . $e->getMessage());
+        }
+    }
+
     return replaceClickPlaceholders($url, (string) $click_id, [
         'keyword' => $click_row['keyword'] ?? null,
-        't202pubid' => $click_row['user_public_publisher_id'] ?? null,
+        't202pubid' => $publisherPublicId ?? $click_row['user_public_publisher_id'] ?? null,
         'c1' => $click_row['c1'] ?? null,
         'c2' => $click_row['c2'] ?? null,
         'c3' => $click_row['c3'] ?? null,

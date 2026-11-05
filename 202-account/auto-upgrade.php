@@ -32,6 +32,8 @@ $update_needed = false;
 $latest_version = $version;
 $download_link = '';
 $download_link_is_valid = false;
+$download_signature = '';
+$signature_problem = null;
 
 $rss_xml = getUrl('https://my.tracking202.com/clickserver/currentversion/paid/', 'GET', 10);
 if ($rss_xml === '') {
@@ -47,12 +49,8 @@ if ($rss_xml !== null) {
 			$update_needed = false;
 		} else {
 			$download_link = (string) $item->link;
-			$parsed_download_link = parse_url($download_link);
-			$download_link_is_valid =
-				is_array($parsed_download_link)
-				&& isset($parsed_download_link['scheme'], $parsed_download_link['host'])
-				&& strtolower($parsed_download_link['scheme']) === 'https'
-				&& strtolower($parsed_download_link['host']) === 'my.tracking202.com';
+			$download_signature = (string) $item->signature;
+			$download_link_is_valid = \Prosper202\Update\ReleaseSignature::allowedUrl($download_link) !== null;
 			if (version_compare($version, $latest_version) < 0) {
 				$update_needed = true;
 			}
@@ -107,18 +105,39 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 		}
 
 		if ($FilesUpdated !== false) {
-			$GetUpdate = @getData($download_link);
 			$log = "Downloading new update...\n";
+			// Nothing is written until the download's signature checks out.
+			$signature_problem = \Prosper202\Update\ReleaseSignature::notReady();
+			$download = $signature_problem === null
+				? \Prosper202\Update\ReleaseSignature::download($download_link)
+				: ['body' => null, 'error' => $signature_problem];
+			$GetUpdate = $download['body'];
+			$problem = $GetUpdate === null
+				? $download['error']
+				: \Prosper202\Update\ReleaseSignature::problem($GetUpdate, $download_signature);
+			if ($GetUpdate !== null) {
+				$signature_problem = $problem;
+			}
 
-			if ($GetUpdate) {
+			if ($problem !== null) {
+				$log .= $problem . "\nOperation aborted.";
+				$FilesUpdated = false;
+			} elseif ($GetUpdate !== null) {
 
 				if (temp_exists()) {
 					$log .= "Created /202-config/temp/ directory.\n";
 					$downloadUpdate = @file_put_contents(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
 					if ($downloadUpdate) {
 						$log .= "Update downloaded and saved!\n";
+						$zipFile = substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip';
+						// A signed release that is not the version offered, or not newer, is never extracted.
+						$signature_problem = \Prosper202\Update\ReleaseSignature::versionProblem($zipFile, $latest_version, (string) $version);
+						if ($signature_problem !== null) {
+							$log .= $signature_problem . "\nOperation aborted.";
+							$FilesUpdated = false;
+						}
 
-						$zip = @zip_open(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip');
+						$zip = $signature_problem === null ? @zip_open($zipFile) : false;
 
 						if ($zip) {
 							$log .= "\nUpdate process started...\n";
@@ -187,9 +206,6 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 					$log .= "Can't create /202-config/temp/ directory! Operation aborted.";
 					$FilesUpdated = false;
 				}
-			} else {
-				$log .= "Can't download new update from link: " . $download_link . " \nOperation aborted.";
-				$FilesUpdated = false;
 			}
 		}
 
@@ -249,6 +265,9 @@ template_top('1-Click Upgrade');
 					<span class="p202-pill">you have <?php echo $e($version); ?></span>
 				</div>
 				<div class="p202-panel__body">
+					<?php if ($signature_problem !== null) { ?>
+						<?php echo p202_flash('bad', $signature_problem . ' Nothing on this install was changed.'); ?>
+					<?php } ?>
 					<?php if ($submitted) { ?>
 						<label class="form-label" for="upgrade-log">What happened</label>
 						<textarea id="upgrade-log" rows="8" class="form-control font-monospace mb-3" readonly><?php echo htmlspecialchars($log, ENT_QUOTES, 'UTF-8'); ?></textarea>
