@@ -23,15 +23,14 @@ $copying = false;
 $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2up.maxmind_isp FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
+$user_sql = "SELECT 2u.user_name as username, 2up.maxmind_isp FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
 }
 $user_row = p202FetchRow($user_results, $user_sql);
 
-if (!empty($user_row['url']))
-	$slack = new Slack($user_row['url']);
+$slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 
 if (!empty($_POST['edit_rotator'])) {
 	$editing = true;
@@ -227,7 +226,7 @@ foreach (p202_setup_rows($db, "SELECT lp.landing_page_id, lp.landing_page_nickna
 	$pageOptions[(string) $page['landing_page_id']] = (string) $page['landing_page_nickname'] . ((string) $page['landing_page_type'] === '1' ? ' (advanced)' : ' (simple)');
 }
 
-$criterionTypes = ['country' => 'Country', 'region' => 'State/Region', 'city' => 'City', 'isp' => 'ISP/Carrier', 'ip' => 'IP address', 'browser' => 'Browser', 'platform' => 'OS', 'device' => 'Device type'];
+$criterionTypes = \Prosper202\Rotator\CriterionMatcher::TYPES;
 $suggestUrl = $base . 'tracking202/ajax/rotator.php?autocomplete=true&type=%TYPE%&query=%QUERY';
 
 /** Where a redirect or default goes, in words, for the list. */
@@ -264,6 +263,10 @@ foreach ($rotators as $rotator) {
 $criterionRow = static function (array $criterion) use ($criterionTypes, $ispEnabled, $suggestUrl): string {
 	$type = (string) ($criterion['type'] ?? 'country');
 	$typeOptions = '';
+	// A stored type the redirects do not read is shown as it is, not as the first option.
+	if (!isset($criterionTypes[$type])) {
+		$typeOptions .= '<option value="' . p202_setup_e($type) . '" selected>' . p202_setup_e($type . ' (unknown type: never matches)') . '</option>';
+	}
 	foreach ($criterionTypes as $value => $label) {
 		$disabled = $value === 'isp' && !$ispEnabled ? ' disabled' : '';
 		$typeOptions .= '<option value="' . $value . '"' . ($type === $value ? ' selected' : '') . $disabled . '>' . p202_setup_e($label) . ($disabled !== '' ? ' (needs MaxMind ISP)' : '') . '</option>';
@@ -503,6 +506,9 @@ if ($error) {
 			<template id="criterion-template"><?php echo $criterionRow([]); ?></template>
 			<template id="redirect-template"><?php echo $redirectRow([]); ?></template>
 			<datalist id="rotator-devices"><option value="bot">Bot</option><option value="mobile">Mobile</option><option value="tablet">Tablet</option><option value="desktop">Desktop</option></datalist>
+			<?php foreach (\Prosper202\Rotator\Criterion::FIXED_VALUES as $fixedType => $fixedValues) { ?>
+			<datalist id="rotator-<?php echo p202_setup_e($fixedType); ?>"><?php foreach ($fixedValues as $fixedValue) { ?><option value="<?php echo p202_setup_e($fixedValue); ?>"></option><?php } ?></datalist>
+			<?php } ?>
 
 			<p class="form-text">To split-test every visitor, give a rule one criterion with the value <code>ALL</code>.</p>
 			<div class="p202-form-actions">

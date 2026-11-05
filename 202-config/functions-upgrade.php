@@ -133,6 +133,23 @@ if (!function_exists('_upgrade_query')) {
     }
 }
 
+if (!function_exists('_upgrade_seed_bot202_facebook_pixel_lookups')) {
+    /**
+     * The Bot202 Facebook Pixel Assistant's lookup rows, as DataSeeder
+     * writes them on a fresh install, for the 1.9.80 rung; rows already
+     * there are kept. Logged, never fatal: the assistant reads its ids from
+     * FacebookPixelAssistantSettings, not from these rows.
+     */
+    function _upgrade_seed_bot202_facebook_pixel_lookups(): void
+    {
+        foreach (\Prosper202\Setup\FacebookPixelAssistantSettings::seedStatements() as $sql) {
+            if (_upgrade_query($sql) === false) {
+                error_log('Prosper202 upgrade: a Bot202 Facebook Pixel Assistant lookup row could not be written.');
+            }
+        }
+    }
+}
+
 if (!function_exists('_upgrade_seed_licence_answers')) {
     /**
      * Copy the licence answers cached on disk within the grace period into
@@ -601,6 +618,38 @@ if (!function_exists('_upgrade_same_ip_fallback')) {
         }
 
         return true;
+    }
+}
+
+if (!function_exists('_upgrade_1956_baseline')) {
+    /**
+     * The schema the free 1.9.55 -> 1.9.56 step brings: user_data_feedback and
+     * a 202_users.user_pass wide enough for hash_user_pass(). Idempotent, so
+     * the 1.9.56 step runs it too: a paid 1.9.56 install never ran the free one.
+     */
+    function _upgrade_1956_baseline(): bool
+    {
+        $ok = true;
+        if (_upgrade_query(\Prosper202\Database\Tables\CoreTables::userDataFeedback()->createStatement) === false) {
+            $ok = false;
+            error_log('Prosper202 upgrade: failed to create user_data_feedback');
+        }
+
+        // A failed probe is not "already wide" (error pattern #11). Only a
+        // (var)char narrower than 255 is widened; anything wider is left alone.
+        $check = _upgrade_query("SHOW COLUMNS FROM `202_users` LIKE 'user_pass'");
+        $column = $check instanceof mysqli_result ? $check->fetch_assoc() : null;
+        if (!is_array($column)) {
+            $ok = false;
+            error_log('Prosper202 upgrade: could not read 202_users.user_pass');
+        } elseif (preg_match('/^(?:var)?char\((\d+)\)/i', (string) $column['Type'], $width) === 1
+            && (int) $width[1] < 255
+            && _upgrade_query("ALTER TABLE `202_users` MODIFY `user_pass` varchar(255) NOT NULL") === false) {
+            $ok = false;
+            error_log('Prosper202 upgrade: failed to widen 202_users.user_pass');
+        }
+
+        return $ok;
     }
 }
 
@@ -3628,35 +3677,14 @@ class UPGRADE
             // Two differences between a 1.9.55 database and a fresh install
             // that nothing else in the ladder closed, found by
             // tests/live/upgrade-equals-install.sh from the real 1.9.55
-            // release. No install has run this rung (none exists above
-            // 1.9.55), so they are added here in place.
-            $rung_ok = true;
-
+            // release, added here in place (_upgrade_1956_baseline()).
             // user_data_feedback arrived in the installer during the 1.9.56
-            // line and no rung ever created it, so an upgraded install had
-            // no table for get_user_data_feedback() to read.
-            if (_upgrade_query(\Prosper202\Database\Tables\CoreTables::userDataFeedback()->createStatement) === false) {
-                $rung_ok = false;
-                error_log('Prosper202 upgrade: failed to create user_data_feedback');
-            }
-
-            // 1.9.55 stored a 32-character salted MD5 in char(32); the
-            // hash hash_user_pass() writes now is 60 characters or more.
-            // Only the login path widened the column, lazily, so until an
-            // account logged in, a password set any other way (a reset, a
-            // user created through the API or the CLI) did not fit.
-            // Widening is not lossy. A failed probe is not "already wide"
-            // (error pattern #11): it fails the rung.
-            $check = _upgrade_query("SHOW COLUMNS FROM `202_users` LIKE 'user_pass'");
-            $column = $check instanceof mysqli_result ? $check->fetch_assoc() : null;
-            if (!is_array($column)) {
-                $rung_ok = false;
-                error_log('Prosper202 upgrade: could not read 202_users.user_pass');
-            } elseif (strtolower((string) $column['Type']) !== 'varchar(255)'
-                && _upgrade_query("ALTER TABLE `202_users` MODIFY `user_pass` varchar(255) NOT NULL") === false) {
-                $rung_ok = false;
-                error_log('Prosper202 upgrade: failed to widen 202_users.user_pass');
-            }
+            // line and no rung ever created it. 1.9.55 stored a 32-character
+            // salted MD5 in char(32); hash_user_pass() writes 60 or more, and
+            // only the login path widened the column, so until an account
+            // logged in, a password set any other way (a reset, the API, the
+            // CLI) did not fit. Widening is not lossy.
+            $rung_ok = _upgrade_1956_baseline();
 
             if ($rung_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.56'") !== false) {
@@ -3681,7 +3709,10 @@ class UPGRADE
             // repaired; the 1.9.57 and 1.9.58 rungs keep only their version
             // advance. The version moves only when every step succeeded, so a
             // partial failure re-enters this block on the next run.
-            $mta_ok = true;
+            //
+            // A paid install also stores 1.9.56 but never ran the free
+            // 1.9.55 -> 1.9.56 step, so its schema comes first (a no-op after it).
+            $mta_ok = _upgrade_1956_baseline();
             foreach (\Prosper202\Database\Tables\AttributionTables::getDefinitions() as $mta_definition) {
                 if (_upgrade_query($mta_definition->createStatement) === false) {
                     $mta_ok = false;
@@ -4665,7 +4696,17 @@ class UPGRADE
 
             // A schema change for 1.9.80 belongs in this block, reconciled
             // before the version is written.
+            //
+            // A paid 1.9.56 install that already reached 1.9.79 passed the
+            // 1.9.56 step before it carried the paid baseline, so the baseline
+            // runs here too (a no-op on a free install or one already fixed).
+            // Both run, so one failure does not skip the other, and the
+            // version moves only when both succeeded.
+            $baseline_ok = _upgrade_1956_baseline();
             $step_ok = _upgrade_measurement_tables([
+                // 202_users_pref gains shopify_webhook_secret, which Shopify's
+                // order webhooks are verified with (ShopifyWebhookSecret).
+                \Prosper202\Database\Tables\UserTables::usersPref(),
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
@@ -4673,7 +4714,14 @@ class UPGRADE
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),
                 \Prosper202\Database\Tables\ClickTables::purLinkPixelFires(),
                 \Prosper202\Database\Tables\GoalTables::purLinkGoalSubjects(),
-            ]);
+                // The Bot202 Facebook Pixel Assistant's lookup rows, as a fresh
+                // install seeds them (DataSeeder); a paid install's are kept.
+                \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelContentType(),
+                \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelClickEvents(),
+            ]) && $baseline_ok;
+            if ($step_ok) {
+                _upgrade_seed_bot202_facebook_pixel_lookups();
+            }
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
                     $prosper202_version = '1.9.80';
@@ -4681,7 +4729,7 @@ class UPGRADE
                     error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: a table of the 1.9.80 step could not be reconciled (the list above);'
+                error_log('Prosper202 upgrade: a table of the 1.9.80 step or the paid 1.9.56 baseline could not be reconciled (the list above);'
                     . ' leaving version at 1.9.79 so the next run retries.');
             }
         }

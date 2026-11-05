@@ -286,7 +286,7 @@ final class JVZooAdapterTest extends TestCase
         $affiliate = JVZooRole::AFFILIATE;
 
         return [
-            'a URL with no role' => [[], null, 'This URL names no role.'],
+            'a URL whose role is another' => [[], null, 'role is neither affiliate nor vendor'],
             'a field JVZIPN does not post' => [['ctid' => '9'], $affiliate, 'a field JVZIPN v1 does not post (ctid)'],
             'no ctransaction' => [['ctransaction' => ''], $affiliate, 'The notification carries no ctransaction.'],
             'an unknown type' => [['ctransaction' => 'sale'], $affiliate, 'ctransaction is "sale", which JVZIPN'],
@@ -421,6 +421,30 @@ final class JVZooAdapterTest extends TestCase
             $refusal = self::refusal(static fn () => $adapter->parse(self::request($fields)));
             self::assertSame($kind, $refusal->outcome->kind, $name);
         }
+    }
+
+    /**
+     * The URL 1.9.56 showed names no role. Its sale could be the affiliate's
+     * or the vendor's, so it is refused, recording nothing, and the answer
+     * names the two URLs to set instead.
+     */
+    public function testAUrlWithNoRoleIsRefusedNamingTheUrlsToSet(): void
+    {
+        foreach ([null, ''] as $none) {
+            $refusal = self::refusal(static fn () => JVZooAdapter::forQuery($none)->parse(self::request(self::sale())));
+            self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
+            self::assertSame(JVZooAdapter::ROLELESS_REFUSAL, $refusal->outcome->message);
+        }
+        self::assertStringContainsString('1.9.56', JVZooAdapter::ROLELESS_REFUSAL);
+        self::assertStringContainsString('?role=affiliate', JVZooAdapter::ROLELESS_REFUSAL);
+        self::assertStringContainsString('?role=vendor', JVZooAdapter::ROLELESS_REFUSAL);
+        // A role that is neither is refused as one.
+        foreach (['seller', 'Vendor', ['vendor']] as $other) {
+            $refusal = self::refusal(static fn () => JVZooAdapter::forQuery($other)->parse(self::request(self::sale())));
+            self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
+            self::assertStringContainsString('role is neither affiliate nor vendor', $refusal->outcome->message);
+        }
+        self::assertSame(42, JVZooAdapter::forQuery('affiliate')->parse(self::request(self::sale()))->clickId);
     }
 
     public function testTheRoleIsReadFromTheQueryExactly(): void

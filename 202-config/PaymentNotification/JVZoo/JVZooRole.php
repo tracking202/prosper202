@@ -15,6 +15,7 @@ use Prosper202\PaymentNotification\ClickField;
  * knowing which party this is. JVZoo itself asks the two in two places, the
  * affiliate's Affiliate IPN and the product's JVZIPN URL, so each gets its
  * own URL: tracking202/static/jvzoo.php?role=affiliate and ?role=vendor.
+ * The URL with no role is 1.9.56's, refused (JVZooAdapter::ROLELESS_REFUSAL).
  */
 enum JVZooRole: string
 {
