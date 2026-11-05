@@ -363,6 +363,15 @@ if ($queue !== null && (int) $queue['merges_failing'] > 0) {
         . ' conversions again; each is tried again, less often the longer it fails'
         . ' (p202 attribution queue shows why).';
 }
+// The models whose recompute the worker could not queue: each is tried again.
+$modelNote = null;
+if ($queue !== null && (int) $queue['models_failing'] > 0) {
+    $failingModels = (int) $queue['models_failing'];
+    $modelNote = $failingModels
+        . ($failingModels === 1 ? ' model failed to queue its' : ' models failed to queue their')
+        . ' conversions for a recompute; each is tried again, less often the longer it fails,'
+        . ' while the rest of attribution carries on (p202 attribution queue shows why).';
+}
 $activeModels = array_values(array_filter($models, static fn (array $m): bool => $m['status'] === 'active'));
 $defaultModel = null;
 foreach ($models as $m) {
@@ -606,6 +615,16 @@ $modelSettings = static function (array $m): string {
             <span class="p202-pill p202-pill--bad">Failing</span>
             <span class="p202-strip__label">Visitors merged into one person</span>
             <span class="p202-strip__value"><?php echo $h($mergeNote); ?></span>
+        </div>
+    </div>
+    <?php } ?>
+
+    <?php if ($modelNote !== null) { ?>
+    <div class="p202-strip mb-3" id="attribution-model-recomputes">
+        <div class="p202-strip__row">
+            <span class="p202-pill p202-pill--bad">Failing</span>
+            <span class="p202-strip__label">Model changes being applied</span>
+            <span class="p202-strip__value"><?php echo $h($modelNote); ?></span>
         </div>
     </div>
     <?php } ?>
