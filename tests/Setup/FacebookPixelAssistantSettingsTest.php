@@ -67,6 +67,10 @@ final class FacebookPixelAssistantSettingsTest extends TestCase
         $errors = [];
         FacebookPixelAssistantSettings::fromForm(['fbpa_content_name' => ['x']], $errors);
         self::assertSame(['fbpa_content_name'], array_keys($errors), 'a list is no name');
+
+        $errors = [];
+        FacebookPixelAssistantSettings::fromForm(['fbpa_status' => 'yes', 'fbpa_dynamic_epv' => ['1']], $errors);
+        self::assertSame(['fbpa_status', 'fbpa_dynamic_epv'], array_keys($errors), 'a switch is on or off, nothing else');
     }
 
     /** The row is written only for a page of the user's: selected from 202_landing_pages under the user's id. */

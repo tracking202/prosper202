@@ -92,7 +92,18 @@ final class FacebookPixelAssistantSettings
      */
     public static function fromForm(array $post, array &$errors): array
     {
-        $flag = static fn (string $name): int => in_array($post[$name] ?? null, ['1', 'on'], true) ? 1 : 0;
+        // Absent or 0 is off, 1 or on is on; anything else is refused like a bad choice.
+        $flag = static function (string $field) use ($post, &$errors): int {
+            $value = $post[$field] ?? '0';
+            if (in_array($value, ['1', 'on'], true)) {
+                return 1;
+            }
+            if ($value !== '0' && $value !== '') {
+                $errors[$field] = 'Turn the Facebook Pixel switch on or off.';
+            }
+
+            return 0;
+        };
         $name = $post['fbpa_content_name'] ?? '';
         $name = is_string($name) ? trim($name) : null;
         if ($name === null || mb_strlen($name, 'UTF-8') > self::CONTENT_NAME_MAX) {
