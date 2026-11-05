@@ -625,8 +625,10 @@ final class ClickExitIntegrationTest extends TestCase
      * A Meta Purchase (type 6) on the deferred pixel passes the gate a
      * conversion request's does: the privacy setting for the poll's visitor,
      * a consent refusal sent with the poll, and the click's campaign's
-     * identity capture. A refusal is final (the conversion is marked fired);
-     * a setting that cannot be read leaves it unmarked, for the next poll.
+     * identity capture. The owner's refusal is final (the conversion is
+     * marked fired); a visitor's consent refusal fires and marks nothing, so
+     * a later consenting poll fires it; a setting that cannot be read leaves
+     * it unmarked, for the next poll.
      */
     public function testDeferredMetaPurchaseFiresOnlyForATrackedConsentingVisitor(): void
     {
@@ -659,7 +661,6 @@ final class ClickExitIntegrationTest extends TestCase
         try {
             $cases = [
                 'tracked and consenting' => ['disabled', $outsideEu, [], 1, true],
-                'consent refused with the poll' => ['disabled', $outsideEu, ['p202_consent' => '0'], 1, false],
                 'privacy holds every visitor back' => ['all', $outsideEu, [], 1, false],
                 'privacy eu, visitor may be in the EU' => ['eu', static fn (): bool => true, [], 1, false],
                 'privacy eu, visitor outside the EU' => ['eu', $outsideEu, [], 1, true],
@@ -675,6 +676,20 @@ final class ClickExitIntegrationTest extends TestCase
                 self::assertSame($fires, str_contains($polled['markup'], $purchase . $tx), $why);
                 self::assertSame(['n' => '1'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"), $why);
             }
+
+            // The visitor refuses consent with the poll: nothing renders or is
+            // marked, and the conversion fires in full once they consent.
+            self::q('UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = ' . self::$campaign);
+            $conv = $sale('meta-consent-later');
+            foreach ([['p202_consent' => '0'], ['p202_consent' => 'no'], ['p202_consent' => ['1']]] as $refusal) {
+                $refused = (new PurLinkPixels($conn, $setting('disabled')))->poll($proof, $now, $key, $outsideEu, $refusal);
+                self::assertSame(['waiting', '', 0], [$refused['status'], $refused['markup'], $refused['conversions']]);
+            }
+            self::assertSame(['n' => '0'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"));
+            $consented = (new PurLinkPixels($conn, $setting('disabled')))->poll($proof, $now, $key, $outsideEu, ['p202_consent' => '1']);
+            self::assertSame(['fired', 1], [$consented['status'], $consented['conversions']]);
+            self::assertStringContainsString('t=meta-consent-later', $consented['markup']);
+            self::assertStringContainsString($purchase . 'meta-consent-later', $consented['markup']);
 
             // A setting that cannot be read rolls the poll back: nothing is
             // marked, and the next poll fires the Purchase.
@@ -756,6 +771,13 @@ final class ClickExitIntegrationTest extends TestCase
         self::assertSame('converted', $exit->recordOrdered($proof, '129979', '4', $now, $key));
         self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
         self::assertSame('4', self::one("SELECT sequence FROM 202_purlink_exit_order WHERE click_id=$clickId")['sequence']);
+
+        // An earlier-expiring proof of the click never shortens the fence.
+        $longer = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 3600, $key);
+        self::assertSame('converted', $exit->recordOrdered($longer, '11101', '5', $now, $key));
+        self::assertSame('converted', $exit->recordOrdered($proof, '11101', '6', $now, $key));
+        self::assertSame(['sequence' => '6', 'expires_at' => (string) ($now + 3600)],
+            self::one("SELECT sequence, expires_at FROM 202_purlink_exit_order WHERE click_id=$clickId"));
     }
 
     public function testPurLinkConversionClickUpdateRollsBackWithItsRouteAndLedger(): void

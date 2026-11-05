@@ -78,10 +78,11 @@ final class PurLinkExit
                 if (!$accepted) {
                     return 'refused';
                 }
+                // The fence lives as long as the longest-lived proof it saw.
                 $stmt = $this->conn->prepareWrite(
                     'INSERT INTO 202_purlink_exit_order (click_id,user_id,landing_page_id,sequence,campaign_id,expires_at)'
                     . ' VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE sequence=VALUES(sequence),'
-                    . ' campaign_id=VALUES(campaign_id), expires_at=VALUES(expires_at)'
+                    . ' campaign_id=VALUES(campaign_id), expires_at=GREATEST(expires_at, VALUES(expires_at))'
                 );
                 $this->conn->bind($stmt, 'iiiiii', [
                     $claims['click_id'], $claims['user_id'], $claims['landing_page_id'], $order,

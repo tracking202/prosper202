@@ -63,4 +63,61 @@ final class PurLinkPageviewTest extends TestCase
         self::assertSame('', PurLinkPageview::script(['p202_purlink' => '1'], true, 22, 4, 8, 1_700_000_000, fn () => null));
         self::assertSame('', PurLinkPageview::script(['p202_purlink' => '1'], true, 22, 4, 8, 1_700_000_000, static function (): ?string { throw new \RuntimeException('unavailable'); }));
     }
+
+    /** @dataProvider optOutSpellings */
+    public function testASnippetTurnsPurLinksOffWithAnyValueButOne(string $query, bool $on): void
+    {
+        parse_str($query, $get);
+        self::assertSame($on, PurLinkPageview::requestedBy($get), $query);
+    }
+
+    public static function optOutSpellings(): iterable
+    {
+        foreach (['', 'lpip=4', 'p202_purlink=1', 'p202_purlink=%201%20', 'p202.purlink=1'] as $on) {
+            yield $on => [$on, true];
+        }
+        foreach ([
+            'p202_purlink=0', 'p202_purlink=off', 'p202_purlink=false', 'p202_purlink=no', 'p202_purlink=00',
+            'p202_purlink=', 'p202_purlink[]=1', 'p202_purlink[]=', 'p202.purlink=0', 'p202_purlink=1&p202_purlink=0',
+        ] as $off) {
+            yield $off => [$off, false];
+        }
+    }
+
+    /**
+     * The exit-order fence and the deferred pixel's fire-once rows are keyed
+     * by click and outlive one proof: that holds because a click's proofs
+     * come only from the pageview request that allocated it, once.
+     */
+    public function testOnlyTheAllocatingPageviewIssuesAClicksProofs(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $callers = [];
+        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS)) as $file) {
+            $path = substr((string) $file, strlen($root) + 1);
+            if (!str_ends_with($path, '.php') || preg_match('#^(vendor|tests|node_modules)/#', $path) === 1) {
+                continue;
+            }
+            $source = (string) file_get_contents((string) $file);
+            foreach (['PurLinkProof::issue(', 'PurLinkPageview::forDatabase(', 'PurLinkPageview::script('] as $call) {
+                if (str_contains($source, $call)) {
+                    $callers[$call][] = $path;
+                }
+            }
+        }
+        foreach ($callers as &$paths) {
+            sort($paths);
+        }
+        ksort($callers);
+        self::assertSame([
+            'PurLinkPageview::forDatabase(' => ['tracking202/static/record_adv.php', 'tracking202/static/record_simple.php'],
+            'PurLinkProof::issue(' => ['202-config/Click/PurLinkPageview.php'],
+        ], $callers);
+        foreach ($callers['PurLinkPageview::forDatabase('] as $path) {
+            $source = (string) file_get_contents($root . '/' . $path);
+            self::assertSame(1, substr_count($source, '->allocateClickId()'), "$path allocates one click");
+            self::assertSame(1, substr_count($source, 'PurLinkPageview::forDatabase('), "$path issues once");
+            self::assertLessThan(strpos($source, 'PurLinkPageview::forDatabase('), strpos($source, '->allocateClickId()'), $path);
+        }
+    }
 }

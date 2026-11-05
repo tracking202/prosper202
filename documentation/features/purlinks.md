@@ -118,7 +118,8 @@ again. The landing page can ask for a day after the visit.
 PurLinks follow the landing page's consent: a visitor who refused tracking, or
 withdraws it with `p202.consent(false)`, gets no SubID, sends no click-out and
 fires no deferred pixel. The links fall back to the tracker's redirect, which
-applies its own rules.
+applies its own rules. A deferred-pixel request that refuses consent fires
+nothing and leaves the conversion for a later request that consents.
 
 The account's privacy setting (Settings › Privacy) does not stop PurLinks: a
 PurLink stores nothing in the visitor's browser and records what the tracker's
@@ -136,8 +137,9 @@ URL, a cookie or a referrer, and the requests send no cookies.
 - Browser conversion pixels on the offer's thank-you page (`gpx.php`,
   `px.php`, `upx.php`) rely on the tracker's cookie, which a PurLink visit
   does not set as a first party. Use the network's server postback.
-- A snippet can opt out with `p202_purlink=0` in the `landing.php` URL; its
-  PurLinks then go through the tracker's redirect.
+- A snippet can opt out with `p202_purlink=0` in the `landing.php` URL, or
+  in a 1.9.56 `landing.js` URL; its PurLinks then go through the tracker's
+  redirect. Any value other than `1` (`off`, `false`, `no`) also opts out.
 
 ## Upgrading from 1.9.56
 

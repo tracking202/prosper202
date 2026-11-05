@@ -9,6 +9,7 @@ use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
 use Prosper202\Http\PrivacyMode;
 use Prosper202\Http\PrivacySetting;
+use Prosper202\Identity\RequestSignals;
 
 /**
  * The deferred pixel: a landing page that sent its visitor straight to an
@@ -20,7 +21,8 @@ use Prosper202\Http\PrivacySetting;
  *
  * A Meta Purchase (type 6) passes the gate a conversion request's does
  * (TrafficSourcePixels::visitorMayBeTracked()), read under the lock so a
- * failed read rolls the poll back and the next poll retries it.
+ * failed read rolls the poll back and the next poll retries it. A poll that
+ * refuses consent fires and marks nothing: the visitor may consent later.
  */
 final class PurLinkPixels
 {
@@ -41,7 +43,7 @@ final class PurLinkPixels
 
     /**
      * @param \Closure(): bool $visitorMayBeInEu the polling visitor's (p202VisitorMayBeInEu())
-     * @param array<string, mixed> $signals the poll's fields: p202_consent=0 refuses the Meta Purchase
+     * @param array<string, mixed> $signals the poll's fields: p202_consent=0 defers every pixel
      * @return array{status: 'refused'|'waiting'|'fired', markup: string, conversions: int}
      */
     public function poll(string $proof, int $now, string $key, \Closure $visitorMayBeInEu, array $signals = []): array
@@ -104,7 +106,9 @@ final class PurLinkPixels
         );
         $this->conn->bind($stmt, 'ii', [$claims['click_id'], $claims['user_id']]);
         $due = $this->conn->fetchAll($stmt);
-        if ($due === []) {
+        // Consent is the visitor's to give later; account privacy and campaign
+        // capture are the owner's, so their refusal below consumes the conversion.
+        if ($due === [] || !RequestSignals::consentGiven($signals)) {
             return ['status' => 'waiting', 'markup' => '', 'conversions' => 0];
         }
 
