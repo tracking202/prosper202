@@ -4712,6 +4712,10 @@ class UPGRADE
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
+                // PurLinks: click-out ordering, deferred pixels fired, per-offer goal subjects.
+                \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),
+                \Prosper202\Database\Tables\ClickTables::purLinkPixelFires(),
+                \Prosper202\Database\Tables\GoalTables::purLinkGoalSubjects(),
                 // The Bot202 Facebook Pixel Assistant's lookup rows, as a fresh
                 // install seeds them (DataSeeder); a paid install's are kept.
                 \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelContentType(),

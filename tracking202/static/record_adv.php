@@ -322,8 +322,30 @@ if ($clickIsBot) {
 // Pre-allocate click_id so we can compute click_id_public and site URLs
 $conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
 $clickRepo = new \Prosper202\Click\MysqlClickRepository($conn);
-$click_id = $clickRepo->allocateClickId();
-$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
+// One gclid's template hit and page view record one at a time (released below).
+$raParallelLock = \Prosper202\Click\ParallelTrackingClick::hold(
+    $conn,
+    (int) $mysql['user_id'],
+    (int) $mysql['landing_page_id'],
+    (string) ($mysql['gclid'] ?? '')
+);
+// A Google Ads click the tracking template (pt.php) recorded for this page is this visit's click.
+$raParallelClick = \Prosper202\Click\ParallelTrackingClick::find(
+    $conn,
+    (int) $mysql['user_id'],
+    (int) $mysql['landing_page_id'],
+    (string) ($mysql['gclid'] ?? ''),
+    (int) $ip_id,
+    time()
+);
+if ($raParallelClick !== null) {
+    $click_id = $raParallelClick->clickId;
+    $click_id_public = $raParallelClick->clickIdPublic;
+    $mysql['aff_campaign_id'] = $raParallelClick->affCampaignId;
+} else {
+    $click_id = $clickRepo->allocateClickId();
+    $click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
+}
 $mysql['click_id'] = (string) $click_id;
 $mysql['click_id_public'] = (string) $click_id_public;
 
@@ -372,12 +394,30 @@ $clickIdentity = p202ClickIdentity(
 // until it commits; a failure is the error page, as rtr.php's is.
 // Built outside the try: a record the builder refuses is a bug, not a
 // database failure, and the uncaught handler logs it as one.
-$raClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
-try {
-    p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($raClick));
-} catch (\Throwable $raWriteError) {
-    record_mysql_error($db, 'recording click ' . $click_id, $raWriteError->getMessage());
+if ($raParallelClick !== null) {
+    // The page's identity signals go to the click it took.
+    $clickIdentity->attach($conn, (int) $mysql['user_id'], $click_id, $raParallelClick->clickTime);
+    // The template's hit (pt.php) that finds the page's click brings the
+    // tracker's cost, keyword and c1-c4 the page's URL did not carry.
+    if (($ptTemplateHit ?? false) === true) {
+        try {
+            $clickRepo->fillFromTemplate(
+                \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity)
+            );
+        } catch (\Throwable $raFillError) {
+            error_log('Prosper202 parallel tracking: the template\'s values for click ' . $click_id
+                . ' could not be written: ' . $raFillError->getMessage());
+        }
+    }
+} else {
+    $raClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
+    try {
+        p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($raClick));
+    } catch (\Throwable $raWriteError) {
+        record_mysql_error($db, 'recording click ' . $click_id, $raWriteError->getMessage());
+    }
 }
+\Prosper202\Click\ParallelTrackingClick::release($conn, $raParallelLock);
 
 
 //set the cookie
@@ -407,6 +447,8 @@ var pci = <?php echo json_encode((string) $click_id_public); ?>;
 echo p202ClickCookieJs(['tracking202subid' => (string) $click_id, 'tracking202pci' => (string) $click_id_public]);
 $p13nOwner = (int) ($tracker_row['user_id'] ?? 0);
 echo p202MintPersonalizationCookieJs($db, $p13nOwner, $_GET, (int) $click_id, trackingEnabled());
+echo p202DcsClickJs($_GET, (int) $click_id);
+echo \Prosper202\Click\PurLinkPageview::forDatabase($_GET, trackingEnabled(), (int) $click_id, (int) $mysql['landing_page_id'], (int) $mysql['user_id'], $db);
 ?>
 
 }

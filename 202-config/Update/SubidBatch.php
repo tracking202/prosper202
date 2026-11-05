@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace Prosper202\Update;
 
-use Prosper202\Click\ClickId;
+use Prosper202\Click\ClickRef;
 use Prosper202\Click\FirstVisit;
 use Prosper202\Click\LatestVisit;
+use Prosper202\Click\PurLinkExit;
 use Prosper202\Conversion\BatchInterrupted;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
@@ -66,6 +67,9 @@ final class SubidBatch
     private const PREVIEW_CHUNK = 500;
 
     private readonly MysqlConversionRepository $conversions;
+
+    /** The installation key that verified this batch's signed PurLink SubIDs. */
+    private ?string $purLinkKey = null;
 
     public function __construct(private readonly Connection $conn, ?MysqlConversionRepository $conversions = null)
     {
@@ -140,7 +144,7 @@ final class SubidBatch
             }
             $fields = $text === null ? [] : ($withFields ? array_map('trim', explode(',', $text)) : [$text]);
             $subid = $text === null ? '' : $fields[0];
-            $entry = ['line' => $index + 1, 'subid' => $subid, 'click_id' => $text === null ? null : ClickId::parse($subid), 'status' => null];
+            $entry = ['line' => $index + 1, 'subid' => $subid, 'click_id' => $text === null ? null : ClickRef::parse($subid)?->clickId, 'status' => null];
             if ($entry['click_id'] === null) {
                 $entry['status'] = self::NOT_A_SUBID;
                 $entries[] = $entry;
@@ -190,7 +194,8 @@ final class SubidBatch
                 continue;
             }
 
-            $key = $entry['click_id'] . "\0" . ($entry['transaction_id'] ?? '');
+            // A signed SubID is its own key: a forged copy naming the same click is no repeat of it.
+            $key = (ClickRef::parse($subid)?->purLinkSubid ?? $entry['click_id']) . "\0" . ($entry['transaction_id'] ?? '');
             if (isset($firstLine[$key])) {
                 $first = $entries[$firstLine[$key]];
                 // A repeat stating another payout or time is not that line again (CLAUDE.md #15).
@@ -390,22 +395,25 @@ final class SubidBatch
             if (isset($entry['conv_time'])) {
                 $data['conv_time'] = $entry['conv_time'];
             }
+            $unfilter = function (int $lockedClickId) use ($userId): void {
+                // A converting click is never left filtered.
+                foreach (['UPDATE 202_clicks SET click_filtered = 0 WHERE click_id = ? AND user_id = ?',
+                    'UPDATE 202_clicks_spy SET click_filtered = 0 WHERE click_id = ? AND user_id = ?'] as $sql) {
+                    $stmt = $this->conn->prepareWrite($sql);
+                    $this->conn->bind($stmt, 'ii', [$lockedClickId, $userId]);
+                    $this->conn->executeUpdate($stmt);
+                }
+            };
+            $purLink = ClickRef::parse($entry['subid'])?->purLinkSubid;
+            if ($purLink !== null && $this->purLinkKey === null) {
+                throw new \LogicException('a signed SubID reached mark() unverified');
+            }
             try {
-                $result = $this->conversions->record(
-                    $userId,
-                    $data,
-                    // The list named the click.
-                    MatchMethod::CLICK_ID,
-                    function (int $lockedClickId) use ($userId): void {
-                        // A converting click is never left filtered.
-                        foreach (['UPDATE 202_clicks SET click_filtered = 0 WHERE click_id = ? AND user_id = ?',
-                            'UPDATE 202_clicks_spy SET click_filtered = 0 WHERE click_id = ? AND user_id = ?'] as $sql) {
-                            $stmt = $this->conn->prepareWrite($sql);
-                            $this->conn->bind($stmt, 'ii', [$lockedClickId, $userId]);
-                            $this->conn->executeUpdate($stmt);
-                        }
-                    }
-                );
+                // The list named the click; a signed PurLink SubID records on its offer.
+                $result = $purLink === null
+                    ? $this->conversions->record($userId, $data, MatchMethod::CLICK_ID, $unfilter)
+                    : (new PurLinkExit($this->conn))->recordConversion($purLink, $this->purLinkKey, $data, MatchMethod::CLICK_ID, $unfilter)
+                        ?? ['clickFound' => false, 'duplicate' => false];
             } catch (\Throwable $e) {
                 throw new BatchInterrupted('line ' . $entry['line'] . ' (subid ' . $entry['subid'] . ')', $marked, null, $e);
             }
@@ -487,7 +495,7 @@ final class SubidBatch
      */
     public function clear(int $userId, array $items): array
     {
-        $entries = self::read($items);
+        $entries = $this->verifyPurLinks($userId, self::read($items));
         $cleared = 0;
         foreach ($entries as $i => $entry) {
             if ($entry['status'] !== null) {
@@ -542,7 +550,7 @@ final class SubidBatch
      */
     public function clearPreview(int $userId, array $items): array
     {
-        $entries = self::read($items);
+        $entries = $this->verifyPurLinks($userId, self::read($items));
         $clicks = $this->ownedClicks($userId, $entries);
         $count = 0;
         $conversions = 0;
@@ -739,7 +747,7 @@ final class SubidBatch
         if ($defaultPayout !== null && ($problem = self::payoutError($defaultPayout)) !== null) {
             throw new \InvalidArgumentException('default ' . $problem);
         }
-        $entries = $this->refuseChangedSales($userId, $this->refuseTimesBeforeTheirClick($userId, self::readLines($items, $zone)), $zone);
+        $entries = $this->refuseChangedSales($userId, $this->refuseTimesBeforeTheirClick($userId, $this->verifyPurLinks($userId, self::readLines($items, $zone))), $zone);
         $invalid = self::invalidLines($entries);
         if ($invalid !== []) {
             throw new SubidLinesRefused($invalid);
@@ -850,6 +858,31 @@ final class SubidBatch
         $row = $this->conn->fetchOne($stmt);
 
         return $row === null ? null : ((int) $row['deleted'] === 1 ? 'deleted' : 'live');
+    }
+
+    /**
+     * A signed PurLink SubID names its click only when its MAC verifies and
+     * the click is the account's; otherwise its line is not_found.
+     *
+     * @param list<array<string, mixed>> $entries
+     * @return list<array<string, mixed>>
+     */
+    private function verifyPurLinks(int $userId, array $entries): array
+    {
+        foreach ($entries as $i => $entry) {
+            $purLink = $entry['status'] === null ? ClickRef::parse($entry['subid'])?->purLinkSubid : null;
+            if ($purLink === null) {
+                continue;
+            }
+            $verified = ClickRef::verify($this->conn, $purLink);
+            if ($verified === null || $verified['claims']['user_id'] !== $userId) {
+                $entries[$i]['status'] = self::NOT_FOUND;
+                continue;
+            }
+            $this->purLinkKey = $verified['key'];
+        }
+
+        return $entries;
     }
 
     /**

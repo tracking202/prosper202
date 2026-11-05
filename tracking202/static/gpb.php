@@ -29,8 +29,43 @@ $request = p202PostbackRequest($_GET, $_POST);
 // subid of 0 fell back to "the last click from this IP" — for a
 // server-to-server postback, the network's own server.
 $parsedClickId = p202ParseClickId($request['subid'] ?? null) ?? p202ParseClickId($request['sid'] ?? null);
+$legacyPurLink = null;
+$signedPurLink = null;
+$signedPurLinkValue = null;
+$purLinkKey = null;
+// As for a plain id, sid is read when subid names no click in any form.
+$rawSubid = $request['subid'] ?? $request['sid'] ?? null;
+foreach (['subid', 'sid'] as $subidName) {
+    $subidValue = $request[$subidName] ?? null;
+    if (\Prosper202\Click\ClickRef::parse($subidValue) !== null
+        || (is_string($subidValue) && \Prosper202\Click\PurLinkSubid::legacy($subidValue) !== null)) {
+        $rawSubid = $subidValue;
+        break;
+    }
+}
+$signedPurLinkRead = $parsedClickId === null ? p202VerifyPurLinkSubid($db, $rawSubid, 'gpb') : null;
+if ($signedPurLinkRead !== null) {
+    $signedPurLink = $signedPurLinkRead['claims'];
+    $purLinkKey = $signedPurLinkRead['key'];
+    $parsedClickId = $signedPurLink['click_id'];
+    $signedPurLinkValue = $rawSubid;
+}
 if ($parsedClickId === null) {
-	p202RespondJsonError(404, 'SubID not found');
+    $legacyValue = $rawSubid;
+    if (is_string($legacyValue)) {
+        try {
+            $legacyPurLink = (new \Prosper202\Click\PurLinkLegacySubid(
+                \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+            ))->resolve($legacyValue);
+        } catch (\Throwable $legacyError) {
+            error_log('gpb: legacy PurLink lookup failed: ' . $legacyError->getMessage());
+            p202RespondJsonError(500, 'Failed to read SubID');
+        }
+    }
+    if ($legacyPurLink === null) {
+        p202RespondJsonError(404, 'SubID not found');
+    }
+    $parsedClickId = $legacyPurLink['click_id'];
 }
 $mysql['click_id'] = (string) $parsedClickId;
 
@@ -41,7 +76,7 @@ if ($cvar_sql_result === false) {
     record_mysql_error($db, $cvar_sql);
 }
 $cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
-if (!$cvar_sql_row) {
+if (!$cvar_sql_row || ($signedPurLink !== null && (int) $cvar_sql_row['user_id'] !== $signedPurLink['user_id'])) {
 	p202RespondJsonError(404, 'Click data not found');
 }
 // The traffic source and cost, whose pixels announce it: the first visit's,
@@ -133,7 +168,12 @@ $mysql['conv_time'] = $conv_time;
 // campaign without goals records its plain conversion below, as it always
 // has, with the event's name kept on the row.
 try {
-	$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $request, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['browser' => false]);
+    $webEvent = $signedPurLinkValue !== null
+        ? p202RecordPurLinkWebEvent($db, $signedPurLinkValue, $purLinkKey, $request)
+        : p202RecordWebEvent($db, (int) $mysql['click_id'], $request, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, [
+            'browser' => false,
+            'expected_campaign_id' => $legacyPurLink['campaign_id'] ?? null,
+        ]);
 } catch (\Throwable $webEventError) {
 	error_log('gpb: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
 	p202RespondJsonError(500, 'Failed to record event');
@@ -150,6 +190,7 @@ try {
 		$db,
 		[
 			'click_id'        => (int) $mysql['click_id'],
+            'expected_campaign_id' => $legacyPurLink['campaign_id'] ?? null,
 			'user_id'         => (string) ($cvar_sql_row['user_id'] ?? '0'),
 			'conv_time'       => $conv_time,
 			'ip'              => p202StoredVisitorIp(),
@@ -176,8 +217,12 @@ try {
 		($mysql['use_pixel_payout'] == 1) ? (string) ($request['amount'] ?? '') : '',
 		p202ExtractTransactionId($request),
 		p202ExtractCustomer($request),
-		p202ExtractItems($request)
+		p202ExtractItems($request),
+        $signedPurLinkValue,
+        $purLinkKey,
 	);
+} catch (\Prosper202\Conversion\PurLinkCampaignChanged $campaignError) {
+    p202RespondJsonError(404, 'SubID no longer matches the campaign');
 } catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
 	p202RespondJsonError(
 		$reversalError->kind === \Prosper202\Conversion\Ledger\ReversalException::CONFLICT ? 422 : 404,
@@ -220,7 +265,7 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
         $tokens,
         null,
         false,
-        static fn (): bool => p202ConversionMayTrack($db, (int) $mysql['click_id'], $_GET)
+        static fn (): bool => p202ConversionMayTrack($db, (int) $mysql['click_id'], $request)
     );
 	if (array_intersect($fired['types'], [1, 2, 3, 4]) !== []) {
 		header('HTTP/1.1 202 Accepted', true, 202);
