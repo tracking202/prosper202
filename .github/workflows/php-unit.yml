@@ -2,6 +2,11 @@ name: Run PHPUnit Tests
 
 on:
   push:
+    # Feature branches are covered by pull_request; a push run there repeats
+    # the same jobs and competes with it for runners.
+    branches:
+      - master
+      - '[0-9]+.[0-9]+.[0-9]+'
     paths:
       - '**.php'
       - '202-js/consent-prompt.js'
@@ -11,6 +16,13 @@ on:
       - '**.php'
       - '202-js/consent-prompt.js'
       - 'tests/Messaging/consent-prompt.test.mjs'
+
+# A new push to a pull request cancels that PR's older run, which no longer
+# describes its head and would hold runners the newer run is queued for.
+# Other events get a unique group, so no push run is ever dropped.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
