@@ -7,6 +7,7 @@ namespace Tests\PaymentNotification;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickRecord;
 use Prosper202\Click\MysqlClickRepository;
+use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\InboundRequest;
@@ -51,6 +52,9 @@ final class PayKickstartIpnIntegrationTest extends TestCase
     private const KEY_1 = 'campaign-one-KEY-0001';
     private const KEY_2 = 'campaign-two-KEY-0002';
     private const OTHER_KEY = 'other-account-KEY-77';
+
+    /** When this test's notifications happened, unless one says otherwise: one value, so a retry repeats it. */
+    private static int $now = 0;
 
     private const CLICK_TABLES = [
         '202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_rotator',
@@ -97,6 +101,7 @@ final class PayKickstartIpnIntegrationTest extends TestCase
 
     protected function setUp(): void
     {
+        self::$now = time();
         $db = self::requireScratch();
         foreach (self::CLICK_TABLES as $table) {
             self::q("DELETE FROM $table WHERE click_id BETWEEN " . self::CLICK . ' AND ' . (self::CLICK + 99));
@@ -164,7 +169,7 @@ final class PayKickstartIpnIntegrationTest extends TestCase
             'event' => 'sales', 'mode' => 'live', 'payment_processor' => 'stripe', 'is_rebill' => '0',
             'amount' => '47.00',
             'quantity' => '1', 'buyer_first_name' => 'Ruggero', 'buyer_email' => 'buyer@example.com',
-            'transaction_id' => 'PK-TX-0001', 'invoice_id' => 'PK-INV-0001', 'transaction_time' => (string) time(),
+            'transaction_id' => 'PK-TX-0001', 'invoice_id' => 'PK-INV-0001', 'transaction_time' => (string) self::$now,
             'product_id' => '2354', 'campaign_id' => '215', 'custom_subid' => (string) self::CLICK,
             'affiliate_commission_amount' => '0', 'licenses' => ['LIC-1', 'LIC-2'],
         ];
@@ -742,6 +747,71 @@ final class PayKickstartIpnIntegrationTest extends TestCase
 
     /** No adapter sends a currency yet; the processor refuses one it would have to convert. */
     /** A refund with an id of its own (no PayKickstart refund has one) is told from another by that id. */
+    /**
+     * A refund carries no id of its own, so a second refund of a sale already
+     * reversed, at another transaction_time, is another refund: refused
+     * naming the reversal on file, never a 200 duplicate that loses it. The
+     * first one sent again is that refund however it is rendered: another
+     * spelling of its amount, other buyer details, signed with another key.
+     */
+    public function testASecondRefundOfTheSameAmountAtAnotherTimeIsRefusedNotADuplicate(): void
+    {
+        $this->post(self::fields(), self::KEY_1);
+        $first = self::fields(
+            ['event' => 'refund', 'amount' => '-10.00', 'transaction_time' => (string) (self::$now + 60)]
+        );
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($first, self::KEY_1));
+
+        $second = self::fields(
+            ['event' => 'refund', 'amount' => '-10.00', 'transaction_time' => (string) (self::$now + 120)]
+        );
+        $outcome = $this->post($second, self::KEY_1);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $outcome);
+        $reversal = (int) self::conversionIds()[1];
+        self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is already reversed by 10 in conversion '
+            . $reversal . ', and 37 of its 47 is still credited; this refund is another notification than that'
+            . ' reversal\'s and states 10.00, and a sale is reversed once. Nothing was changed.', $outcome->message);
+        self::assertSame(['47.00000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
+
+        $rendered = ['amount' => '10', 'buyer_email' => 'changed@example.com', 'licenses' => 'LIC-1'] + $first;
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($rendered, self::KEY_2));
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($first, self::KEY_1));
+        self::assertCount(2, self::conversions());
+    }
+
+    /**
+     * 1.9.79 keyed a refund by its whole body. One recorded then and sent
+     * again after the upgrade is still that refund, while its reversal stands
+     * and after it was deleted; another refund still meets the one on file.
+     */
+    public function testARefundKeyedByItsBodyBeforeTheUpgradeIsStillThatRefund(): void
+    {
+        $this->post(self::fields(), self::KEY_1);
+        $sale = (int) self::conversionIds()[0];
+        $first = PayKickstartAdapterTest::signed(
+            self::fields(['event' => 'refund', 'amount' => '', 'transaction_time' => (string) (self::$now + 60)]),
+            self::KEY_1
+        );
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->deliver($first));
+        $reversal = (int) self::conversionIds()[1];
+        // As 1.9.79 wrote it.
+        $legacy = DedupeKey::reversal($sale, 'body:' . Processor::bodyFingerprint($first));
+        self::q("UPDATE 202_conversion_logs SET dedupe_key = '" . $legacy . "' WHERE conv_id = " . $reversal);
+
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->deliver($first));
+        $another = self::fields(
+            ['event' => 'refund', 'amount' => '', 'transaction_time' => (string) (self::$now + 120)]
+        );
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $this->post($another, self::KEY_1));
+
+        self::conversionRepository()->softDelete($reversal, self::ACCOUNT);
+        $again = $this->deliver($first);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $again);
+        self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' was reversed by conversion ' . $reversal
+            . ', since deleted; this refund is that refund sent again, so nothing was changed.', $again->message);
+        self::assertCount(2, self::conversions(), 'the deleted reversal\'s refund sent again reverses nothing');
+    }
+
     public function testARefundWithAnIdOfItsOwnIsToldApartByIt(): void
     {
         $processor = new Processor(self::requireScratch());
