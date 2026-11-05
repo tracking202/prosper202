@@ -1087,7 +1087,7 @@ p202 destination delete 1 --dry-run
 |------|-------------|
 | `--event-name` | GA4 event name, `purchase` by default |
 | `--client-id-source` | `click` (sends `p202.<click id>`) or `c1`–`c4`, the click variable your landing page puts the `_ga` client id in |
-| `--user-id-source` | `customer` sends the LTV customer's reference as `user_id` |
+| `--user-id-source` | `customer` sends `p202c.<customer id>` as `user_id`, never the customer's reference |
 | `--param name=field` | An extra event parameter from a click field (repeatable) |
 | `--campaign-id N` | Only this campaign's conversions (repeatable); none for every campaign |
 | `--send-user-data` | Send SHA-256 hashes of the customer's normalised email and E.164 phone, never the raw values |

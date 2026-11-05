@@ -57,7 +57,7 @@ final class Ga4DestinationTest extends TestCase
             'USD',
             'ORD-1001',
             $click + ['c1' => '', 'utm_campaign' => 'spring-sale', 't202kw' => 'trail shoes'],
-            'cust-88',
+            88,
             [hash('sha256', 'a@example.com')]
         );
     }
@@ -91,7 +91,7 @@ final class Ga4DestinationTest extends TestCase
     {
         $body = Ga4Destination::body($this->settings(['user_id_source' => 'customer']), self::facts());
         self::assertSame('p202.4242', $body['client_id']);
-        self::assertSame('cust-88', $body['user_id']);
+        self::assertSame('p202c.88', $body['user_id'], 'a pseudonymous id, never the customer\'s ref');
         self::assertSame((self::NOW - 60) * 1_000_000, $body['timestamp_micros']);
         self::assertSame(['ad_user_data' => 'GRANTED'], $body['consent']);
         self::assertSame(['sha256_email_address' => [hash('sha256', 'a@example.com')]], $body['user_data']);
@@ -100,6 +100,15 @@ final class Ga4DestinationTest extends TestCase
         $summary = Ga4Destination::summary($body);
         self::assertSame(['sha256_email_address'], $summary['user_data'], 'the log names which identifiers went');
         self::assertStringNotContainsString(hash('sha256', 'a@example.com'), (string) json_encode($summary), 'and never their values');
+        self::assertSame([true, true], [$summary['client_id'], $summary['user_id']], 'nor the client and user ids\' values');
+        self::assertStringNotContainsString('p202.4242', (string) json_encode($summary));
+    }
+
+    public function testAUserIdIsSentOnlyForACustomerAndOnlyWhenAsked(): void
+    {
+        self::assertArrayNotHasKey('user_id', Ga4Destination::body($this->settings(), self::facts()), 'user_id_source none');
+        $noCustomer = new ConversionFacts(7, 4242, 30, self::NOW - 60, '19.90000', 'USD', 'ORD-1001', ['c1' => ''], null);
+        self::assertArrayNotHasKey('user_id', Ga4Destination::body($this->settings(['user_id_source' => 'customer']), $noCustomer));
     }
 
     public function testAClientIdFromAClickVariable(): void
@@ -151,6 +160,45 @@ final class Ga4DestinationTest extends TestCase
         })))->send($this->settings(), ['api_secret' => self::SECRET], self::facts(), false, self::NOW);
         self::assertSame([false, false], [$private->delivered, $private->retry]);
         self::assertSame([], $this->sent, 'nothing is sent to a private address');
+    }
+
+    public function testAHostThatDoesNotResolveIsRetriedNotFailed(): void
+    {
+        $transport = function (array $o): array {
+            $this->sent[] = $o;
+
+            return ['status' => 204, 'error' => null, 'primary_ip' => '203.0.113.10', 'location' => null, 'body' => ''];
+        };
+        $unresolved = (new Ga4Destination(new WebhookSender(new WebhookGuard(static fn (): array => [], ''), $transport)))
+            ->send($this->settings(), ['api_secret' => self::SECRET], self::facts(), false, self::NOW);
+        self::assertSame([false, true], [$unresolved->delivered, $unresolved->retry], $unresolved->reason);
+        self::assertTrue($unresolved->unanswered(), 'the host is skipped for the rest of the run');
+        self::assertStringContainsString('does not resolve', $unresolved->reason);
+        self::assertStringNotContainsString(self::SECRET, $unresolved->reason);
+
+        self::assertSame([], $this->sent, 'nothing was sent');
+    }
+
+    /**
+     * The operator's allowlist is read when the guard is built at send
+     * time; a constant, so its own process.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testAnAllowlistThatDoesNotParseIsRetriedNotFailed(): void
+    {
+        define('P202_WEBHOOK_ALLOW_NETWORKS', 'not-a-network');
+        $transport = function (array $o): array {
+            $this->sent[] = $o;
+
+            return ['status' => 204, 'error' => null, 'primary_ip' => '203.0.113.10', 'location' => null, 'body' => ''];
+        };
+        $result = (new Ga4Destination(new WebhookSender(null, $transport)))
+            ->send($this->settings(), ['api_secret' => self::SECRET], self::facts(), false, self::NOW);
+        self::assertSame([false, true], [$result->delivered, $result->retry], $result->reason);
+        self::assertStringContainsString('P202_WEBHOOK_ALLOW_NETWORKS', $result->reason);
+        self::assertSame([], $this->sent, 'nothing was sent');
     }
 
     public function testATestFireGoesToTheDebugEndpointAndReportsItsMessages(): void

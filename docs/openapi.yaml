@@ -17038,7 +17038,13 @@ components:
             Where the GA client id is. click sends p202.<click id>, which
             records the conversion but does not join the browser session; a
             c variable carries the _ga client id your landing page passed.
-        user_id_source: {type: string, enum: [none, customer], default: none}
+        user_id_source:
+          type: string
+          enum: [none, customer]
+          default: none
+          description: |
+            customer sends p202c.<customer id> as user_id (with send_user_data
+            on and ad_user_data not denied), never the customer's reference.
         params:
           type: object
           additionalProperties:
@@ -17063,7 +17069,10 @@ components:
         next_attempt_at: {type: integer}
         last_status_code: {type: integer, nullable: true}
         last_error: {type: string, nullable: true}
-        summary: {type: object, nullable: true}
+        summary:
+          type: object
+          nullable: true
+          description: What was sent - event, params, consent, and which identifiers went (client_id and user_id true or false, user_data the hashed fields' names), never their values.
         created_at: {type: integer}
         sent_at: {type: integer, nullable: true}
     AppNotification:

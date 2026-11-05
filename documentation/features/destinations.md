@@ -25,10 +25,13 @@ Set them up on **Setup › Destinations**, with `p202 destination`, or through
    deployment runs) sends what is due. A send that fails is tried again 1
    minute later, then 2, 4, … up to 6 hours apart, 8 tries in all. A
    platform that refuses the conversion outright, or an address the server
-   never calls (private, loopback, metadata), fails it at once.
+   never calls (private, loopback, metadata), fails it at once. A host name
+   that does not resolve, or a `P202_WEBHOOK_ALLOW_NETWORKS` that does not
+   parse, is tried again like a timeout.
 3. Every row is in the destination's delivery log with its status, the
    number of tries, the platform's last answer and a summary of what was
-   sent.
+   sent: the event, its parameters and consent, and which identifiers went
+   (client id, user id, hashed email or phone), never their values.
 
 | Status | Meaning |
 | --- | --- |
@@ -84,12 +87,16 @@ Measurement Protocol API secrets › Create.
 Each conversion is sent as one event, `purchase` unless you name another,
 with `value`, `currency` (the account's) and `transaction_id` (the network's
 transaction id, else `P202-<conversion id>`, so GA4 counts a purchase it
-receives twice once), at the conversion's own time.
+receives twice once), at the conversion's own time. A conversion that
+replaces an earlier one on the same click (a campaign that pays the latest
+conversion, or a newer revenue upload) is sent with the transaction id of
+the first one it replaced, so GA4 counts the sale once and keeps the value
+it received first.
 
 | Setting | |
 | --- | --- |
 | `client_id_source` | GA4 joins an event to a browser session only through the `_ga` client id. Prosper202 does not see that cookie, so either your landing page passes the id on a click variable (`c1`–`c4`) or Prosper202 sends `p202.<click id>` (`click`, the default), which records the conversion and its value but not the session's source. |
-| `user_id_source` | `customer` sends the LTV customer's reference as `user_id`, only with hashed user data on and `ad_user_data` not denied: a reference can be an email address. |
+| `user_id_source` | `customer` sends `p202c.<customer id>`, the LTV customer's Prosper202 id, as `user_id`, only with hashed user data on and `ad_user_data` not denied. Never the customer's own reference, which can be an email address. |
 | `params` | Extra event parameters, each from a click field: `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `keyword`, `c1`–`c4`, `campaign_id`, `click_id`. They carry whatever your links put in those fields, as is, whatever the hashed-data and consent settings: do not map one that holds an email address or other personal data. |
 | `campaign_ids` | Only these campaigns' conversions; empty for every campaign. |
 
