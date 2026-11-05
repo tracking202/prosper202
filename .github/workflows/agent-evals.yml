@@ -56,6 +56,13 @@ on:
         required: false
         default: ''
 
+# A new push to a pull request cancels that PR's older run, which no longer
+# describes its head and would hold runners the newer run is queued for.
+# Other events get a unique group, so no push run is ever dropped.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   agent-evals:
     runs-on: ubuntu-latest
