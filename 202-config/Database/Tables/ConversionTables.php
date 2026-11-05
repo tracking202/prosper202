@@ -61,6 +61,8 @@ final class ConversionTables
             self::offlineConversionFeeds(),
             self::offlineConversionNames(),
             self::postbackAuth(),
+            self::destinations(),
+            self::destinationDeliveries(),
             self::inboundLog(),
         ];
     }
@@ -409,6 +411,63 @@ final class ConversionTables
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The ad platforms an account sends its conversions to (Prosper202\Destinations):
+     * type, mapping settings (JSON) and credentials sealed by DestinationStore, never served.
+     */
+    public static function destinations(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::DESTINATIONS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::DESTINATIONS . "` (
+                `destination_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `type` varchar(32) COLLATE utf8mb4_bin NOT NULL,
+                `name` varchar(100) NOT NULL,
+                `enabled` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                `settings` text NOT NULL,
+                `credentials` text NOT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                `deleted_at` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`destination_id`),
+                KEY `user_enabled` (`user_id`,`enabled`,`deleted_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Ad platforms conversions are sent to'"
+        );
+    }
+
+    /**
+     * The destinations' queue and delivery log, written with the conversion
+     * (DestinationQueue) and sent by the worker under the outbox's rules. A
+     * test fire has no conversion: conv_id NULL, which the unique key never
+     * compares equal. summary says what was sent, never an identifier's value.
+     */
+    public static function destinationDeliveries(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::DESTINATION_DELIVERIES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::DESTINATION_DELIVERIES . "` (
+                `delivery_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `destination_id` int(10) unsigned NOT NULL,
+                `conv_id` int(11) unsigned DEFAULT NULL,
+                `kind` varchar(16) COLLATE utf8mb4_bin NOT NULL,
+                `status` varchar(16) COLLATE utf8mb4_bin NOT NULL,
+                `attempts` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `next_attempt_at` int(10) unsigned NOT NULL,
+                `last_status_code` smallint(5) unsigned DEFAULT NULL,
+                `last_error` varchar(255) DEFAULT NULL,
+                `summary` varchar(1000) DEFAULT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `sent_at` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`delivery_id`),
+                UNIQUE KEY `destination_conv_kind` (`destination_id`,`conv_id`,`kind`),
+                KEY `status_next` (`status`,`next_attempt_at`),
+                KEY `user_destination` (`user_id`,`destination_id`,`delivery_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Conversions queued for and sent to destinations'"
         );
     }
 

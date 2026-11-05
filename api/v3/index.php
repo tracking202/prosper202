@@ -751,6 +751,28 @@ try {
             },
         ]);
 
+        // ── Destinations: the ad platforms conversions are sent to ───────
+        // Setup's, like the traffic sources; the delivery log carries
+        // conversion values, so it asks for campaign data too.
+        $router->group('/destinations', function (Router $r) use ($crud) {
+            $cls = \Api\V3\Controllers\DestinationsController::class;
+            $r->get('',      fn() => $crud($cls)->list());
+            $r->get('/{id}', fn($ctx) => $crud($cls)->get(PathId::of($ctx)));
+        }, [$setupSection]);
+        $router->group('/destinations', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\DestinationsController::class;
+            $r->get('/{id}/deliveries', fn($ctx) => $crud($cls)->deliveries(PathId::of($ctx), $queryParams));
+        }, [$setupSection, static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_campaign_data');
+        }]);
+        $router->group('/destinations', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\DestinationsController::class;
+            $r->post('',            fn() => ['_status' => 201] + $crud($cls)->create($payload));
+            $r->patch('/{id}',      fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
+            $r->delete('/{id}',     fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
+            $r->post('/{id}/test',  fn($ctx) => $crud($cls)->test(PathId::of($ctx)));
+        }, [$setupSection]);
+
         // ── API capabilities ────────────────────────────────────────────
         // The principal is who the key acts as and what it may do: the probe
         // an agent makes first, and the only way a key holder learns its own
@@ -1357,6 +1379,7 @@ try {
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
+                'destinations'  => '/destinations[/{id}][/test|/deliveries]',
                 'events'        => '/events',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
@@ -1381,6 +1404,7 @@ try {
         foreach ($crudMap as $resource => $class) {
             $previewRouter->delete("/$resource/{id}", fn($ctx) => $crud($class)->deletePreview(PathId::of($ctx)));
         }
+        $previewRouter->delete('/destinations/{id}', fn($ctx) => $crud(\Api\V3\Controllers\DestinationsController::class)->deletePreview(PathId::of($ctx)));
         $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview(PathId::of($ctx)));
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview(PathId::of($ctx)));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview(PathId::of($ctx), PathId::of($ctx, 'ruleId')));

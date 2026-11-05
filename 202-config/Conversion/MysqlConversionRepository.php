@@ -18,6 +18,7 @@ use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\Ltv\MysqlCustomerRepository;
+use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Notifications\NotificationOutbox;
 use RuntimeException;
 use Throwable;
@@ -666,6 +667,19 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 $dedupeKey,
                 $transactionId
             );
+        }
+
+        // The account's destinations (ad platforms), queued in this transaction; only a
+        // paid sale. A failure to queue is logged and loses the send, never the conversion.
+        if ($reverses === null && $amountUnits >= 0 && $payable) {
+            try {
+                $this->conn->withSavepoint(fn (): int => (new DestinationQueue($this->conn))->queueConversion($userId, $convId, $campaignId, time()));
+            } catch (Throwable $e) {
+                if (Connection::isRetryableLockError($e) || $this->conn->isRollbackOnly()) {
+                    throw $e;
+                }
+                error_log('Conversion ' . $convId . ' of user ' . $userId . ' was recorded but not queued for its destinations: ' . $e->getMessage());
+            }
         }
 
         if ($clickSideUpdate !== null) {
