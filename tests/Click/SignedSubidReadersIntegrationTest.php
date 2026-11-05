@@ -53,6 +53,8 @@ final class SignedSubidReadersIntegrationTest extends TestCase
         self::cleanUp();
         self::user(self::OWNER);
         self::user(self::OTHER);
+        self::postbackAuthOff(self::OWNER);
+        self::postbackAuthOff(self::OTHER);
         InstallTokenKey::ensure(self::$db);
         self::$key = (string) InstallTokenKey::load(self::$db);
         self::$offer = self::insert('INSERT INTO 202_aff_campaigns SET user_id = ' . self::OWNER . ', aff_network_id = 1,'
@@ -87,7 +89,7 @@ final class SignedSubidReadersIntegrationTest extends TestCase
         }
         $users = self::OWNER . ', ' . self::OTHER;
         foreach (['202_landing_pages', '202_aff_campaigns', '202_conversion_uploads', '202_revenue_events',
-            '202_dirty_hours', '202_users'] as $table) {
+            '202_dirty_hours', '202_postback_auth', '202_users'] as $table) {
             self::q("DELETE FROM $table WHERE user_id IN ($users)");
         }
     }

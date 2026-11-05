@@ -121,9 +121,7 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
         self::cleanUp();
         self::user(self::USER);
         self::q('INSERT INTO 202_users_pref SET user_id = ' . self::USER . ", user_pref_privacy = 'disabled'");
-        // When the postback is sent, not whether it may be: the account leaves
-        // postback authentication off (one made on 1.9.80 or later requires a token).
-        self::row('202_postback_auth', ['user_id' => self::USER, 'auth_mode' => 'off', 'updated_at' => time()]);
+        self::postbackAuthOff(self::USER);
         self::row('202_aff_campaigns', [
             'aff_campaign_id' => self::CAMPAIGN, 'aff_campaign_id_public' => self::CAMPAIGN + 100000,
             'user_id' => self::USER, 'aff_network_id' => 0, 'aff_campaign_name' => 'store',
