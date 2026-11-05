@@ -44,10 +44,12 @@ template_top('Product Analytics Disclosure');
 			<li><strong>Your campaign setup:</strong> affiliate network names, traffic source names, campaign
 				names, and the shape of the campaign destination (template) URLs you entered at setup: the address,
 				path words and query names, with only tracking macros (such as {clickid}) and short numeric ids kept
-				as values. A path part or query name is kept only when it reads as short words or a number of up to
-				six digits; tokens, hashes, dotted names (such as first.last) and longer numbers are taken out. Every
-				other value, sign-in details and anything after # are taken out, and a URL that is not a plain
-				http(s) address is not sent at all.</li>
+				as values. A path part, query name or macro is kept only when it reads as short words holding at
+				most six digits in all; tokens, hashes, dotted names (such as first.last, but not tracker macros
+				such as {campaign.id}) and longer numbers, even when split up by dashes, dots, spaces or neighbouring
+				path parts, are taken out. Every other value, sign-in details and anything after # are taken out, a
+				URL longer than 512 characters is cut short, and a URL that is not a plain http(s) address is not
+				sent at all.</li>
 			<li><strong>Offer performance:</strong> per-campaign payout, currency, EPC, conversion rate, and
 				clicks.</li>
 			<li><strong>Account-level revenue aggregates:</strong> if you use Customer LTV, only account totals

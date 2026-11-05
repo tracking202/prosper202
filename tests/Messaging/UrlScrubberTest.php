@@ -14,6 +14,25 @@ final class UrlScrubberTest extends TestCase
         $this->assertSame($expected, UrlScrubber::scrub($url));
     }
 
+    public function test_a_long_url_is_cut_at_a_part_boundary(): void
+    {
+        $url = 'https://store.example/' . implode('/', array_fill(0, 200, 'keto')) . '?s1={clickid}';
+
+        $scrubbed = UrlScrubber::scrub($url);
+
+        $this->assertLessThanOrEqual(512, strlen($scrubbed));
+        $this->assertStringStartsWith('https://store.example/keto/keto/', $scrubbed);
+        $this->assertStringEndsWith('/redacted', $scrubbed);
+        $this->assertStringNotContainsString('{clickid}', $scrubbed);
+    }
+
+    public function test_a_url_within_the_cap_is_not_cut(): void
+    {
+        $url = 'https://store.example/' . implode('/', array_fill(0, 90, 'keto'));
+
+        $this->assertSame($url, UrlScrubber::scrub($url));
+    }
+
     /** @return array<string, array{string, string}> */
     public static function urls(): array
     {
@@ -56,6 +75,30 @@ final class UrlScrubberTest extends TestCase
             ],
             'a token as a query key' => ['https://lp.example/o?Zx9Kq2Lm8Np4=1', 'https://lp.example/o?redacted=1'],
             'a very long word' => ['https://lp.example/abcdefghijklmnopqrstuvwxyz', 'https://lp.example/redacted'],
+            'a phone number split by dashes' => ['https://store.example/call/415-555-1234', 'https://store.example/call/redacted'],
+            'a card number split by dashes' => ['https://store.example/c/4111-1111-1111-1111', 'https://store.example/c/redacted'],
+            'a number split by an underscore' => ['https://store.example/a/123456_789012', 'https://store.example/a/redacted'],
+            'a phone number split by dots' => ['https://store.example/call/415.555.1234', 'https://store.example/call/redacted'],
+            'a phone number split by encoded spaces' => ['https://store.example/call/415%20555%201234', 'https://store.example/call/redacted'],
+            'a phone number split by spaces' => ['https://store.example/call/415 555 1234', 'https://store.example/call/redacted'],
+            'a phone number behind a word' => ['https://store.example/o/ord-415-555-1234', 'https://store.example/o/redacted'],
+            'a phone number with a page extension' => ['https://store.example/o/415-555-1234.html', 'https://store.example/o/redacted'],
+            'a phone number split by underscores in a key' => ['https://store.example/o?415_555_1234=1', 'https://store.example/o?redacted=1'],
+            'a phone number split by dashes in a value' => ['https://store.example/o?p=415-555-1234', 'https://store.example/o?p=redacted'],
+            'a phone number split across path segments' => [
+                'https://store.example/call/415/555/1234/lp',
+                'https://store.example/call/redacted/redacted/redacted/lp',
+            ],
+            'short ids in neighbouring segments' => ['https://lp.example/offer/42/7/keto', 'https://lp.example/offer/42/7/keto'],
+            'a long number as a macro' => ['https://store.example/o?s1={1234567890123}', 'https://store.example/o?s1=redacted'],
+            'a dotted name as a macro' => ['https://store.example/o?s1={alice.smith}', 'https://store.example/o?s1=redacted'],
+            'a split number as a macro' => ['https://store.example/o?s1=[[415-555-1234]]', 'https://store.example/o?s1=redacted'],
+            'a token as a macro' => ['https://store.example/o?s1=#a1b2c3d4e5#', 'https://store.example/o?s1=redacted'],
+            'a macro as a path segment' => ['https://store.example/{alice.smith}/{clickid}', 'https://store.example/redacted/{clickid}'],
+            'tracker macros with a namespace' => [
+                'https://store.example/o?c={campaign.id}&t={trafficsource.name}&p={p202:subid}',
+                'https://store.example/o?c={campaign.id}&t={trafficsource.name}&p={p202:subid}',
+            ],
             'a tel: link' => ['tel:+14155551234', ''],
             'a mailto: link' => ['mailto:alice@example.com', ''],
             'another scheme' => ['javascript://store.example/%0Aalert(1)', ''],
