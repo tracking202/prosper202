@@ -15555,7 +15555,7 @@ components:
           type: integer
           description: >-
             Identity merges whose conversions the worker has not re-queued yet, including the failing
-            ones; a retired merge is not counted.
+            ones and any merge 1.9.79 retired.
         merges_failing:
           type: integer
           description: >-
@@ -15564,14 +15564,14 @@ components:
         merges_retired:
           type: integer
           description: >-
-            Merges whose own data refuses the re-queue (the merged person has more visitor keys than
-            one statement can name). They are not tried again until
-            202-cronjobs/attribution-worker.php --retry-now.
+            Merges 1.9.79 retired (the merged person had more visitor keys than one statement can
+            name). From 1.9.80 such a person is read in groups and the worker takes these merges again
+            on its next run, so this is 0 once it has run; kept for clients that read it.
         models_awaiting_recompute:
           type: integer
         merge_rows:
           type: array
-          description: The failing and retired merges, retired first, up to limit.
+          description: The failing merges, and any 1.9.79 retired, retired first, up to limit.
           items:
             type: object
             properties:
