@@ -1542,6 +1542,7 @@ function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
     return $result;
 }
 
+// $payout in $currency, converted INTO $payout_currency (ExchangeRates::foreignPayout()).
 function getForeignPayout($currency, $payout_currency, $payout)
 {
     $fields = [

@@ -508,7 +508,7 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 				(int) $_SESSION['user_id'],
 				$postedCurrency,
 				(string) ($user_row['user_account_currency'] ?? ''),
-				static fn (string $campaignCurrency, string $payout): mixed => getForeignPayout($postedCurrency, $campaignCurrency, $payout)
+				static fn (string $campaignCurrency, string $payout): mixed => getForeignPayout($campaignCurrency, $postedCurrency, $payout)
 			);
 			$currencySaved = true;
 		} catch (Throwable $failed) {
