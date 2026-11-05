@@ -668,7 +668,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 if (Connection::isRetryableLockError($e) || $this->conn->isRollbackOnly()) {
                     throw $e;
                 }
-                error_log('Conversion ' . $convId . ' was recorded but not queued for its destinations: ' . $e->getMessage());
+                error_log('Conversion ' . $convId . ' of user ' . $userId . ' was recorded but not queued for its destinations: ' . $e->getMessage());
             }
         }
 

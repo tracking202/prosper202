@@ -358,6 +358,23 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertSame([], $this->bodies);
     }
 
+    public function testACampaignFilterThatIsNotAListFailsRatherThanSendingEveryCampaign(): void
+    {
+        $id = $this->destination(['campaign_ids' => [30]]);
+        $this->click(100);
+        $this->record(100, 'ORD-25');
+        self::fixture("UPDATE 202_destinations SET settings = JSON_SET(settings, '$.campaign_ids', '30') WHERE destination_id = $id");
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['failed']);
+        self::assertSame([], $this->bodies);
+        self::assertStringContainsString('campaign filter cannot be read', (string) self::deliveries($id)[0]['last_error']);
+
+        // Positive control: the same filter as a list sends.
+        self::fixture("UPDATE 202_destinations SET settings = JSON_SET(settings, '$.campaign_ids', JSON_ARRAY(30)) WHERE destination_id = $id");
+        $this->click(101);
+        $this->record(101, 'ORD-26');
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['sent']);
+    }
+
     public function testASwitchedOffAccountsConversionsWait(): void
     {
         $id = $this->destination();

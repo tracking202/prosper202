@@ -240,7 +240,11 @@ final class DestinationQueue
             return ['cancelled', new SendResult(false, false, null, 'the conversion was replaced by conversion ' . (int) $conv['superseded_by'] . ' before this was sent')];
         }
         $campaigns = $destination['settings']['campaign_ids'] ?? [];
-        if (is_array($campaigns) && $campaigns !== [] && !in_array((int) $conv['campaign_id'], $campaigns, true)) {
+        if (!is_array($campaigns)) {
+            // A filter that is not a list is not read as "every campaign".
+            return ['failed', new SendResult(false, false, null, 'not sent: destination ' . (int) $destination['destination_id'] . '\'s campaign filter cannot be read; save its campaigns again')];
+        }
+        if ($campaigns !== [] && !in_array((int) $conv['campaign_id'], $campaigns, true)) {
             return ['cancelled', new SendResult(false, false, null, 'the conversion\'s campaign is not one this destination sends')];
         }
         $ip = (string) ($conv['ip_address'] ?? '');
