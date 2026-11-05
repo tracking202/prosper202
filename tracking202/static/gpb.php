@@ -1,6 +1,12 @@
 <?php
 declare(strict_types=1);
 
+// A Shopify order webhook, which paid 1.9.56 took at this URL, is verified and recorded by shopify.php.
+if (isset($_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256']) || isset($_SERVER['HTTP_X_SHOPIFY_TOPIC'])) {
+	require __DIR__ . '/shopify.php';
+	exit;
+}
+
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
@@ -206,7 +212,14 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
 	// accumulating campaign is the sum of every conversion so far.
 	$tokens['payout'] = $conversionResult['payout'];
     // Markup only: the type-4 postbacks went out through the outbox above.
-    $fired = p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens, null, false);
+    $fired = p202FireTrafficSourcePixels(
+        $db,
+        (int) $mysql['ppc_account_id'],
+        $tokens,
+        null,
+        false,
+        static fn (): bool => p202ConversionMayTrack($db, (int) $mysql['click_id'], $_GET)
+    );
 	if (array_intersect($fired['types'], [1, 2, 3, 4]) !== []) {
 		header('HTTP/1.1 202 Accepted', true, 202);
 	}

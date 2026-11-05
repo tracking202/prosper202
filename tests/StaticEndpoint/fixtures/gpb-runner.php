@@ -3,7 +3,8 @@
 declare(strict_types=1);
 
 /**
- * Runs tracking202/static/gpb.php once against the scratch database, in a
+ * Runs tracking202/static/gpb.php (or P202_TEST_SCRIPT, another script in
+ * that folder) once against the scratch database, in a
  * process of its own, as the web server runs it, and prints its response:
  * the status code on the first line, then the body.
  *
@@ -33,7 +34,12 @@ $port = (string) (getenv('P202_TEST_DB_PORT') ?: '');
 $get = json_decode((string) (getenv('P202_TEST_GET') ?: '{}'), true, 8, JSON_THROW_ON_ERROR);
 $post = json_decode((string) (getenv('P202_TEST_POST') ?: '{}'), true, 8, JSON_THROW_ON_ERROR);
 
-$path = '/tracking202/static/gpb.php';
+$script = (string) (getenv('P202_TEST_SCRIPT') ?: 'gpb.php');
+if (preg_match('/^[a-z0-9_-]+\.php$/D', $script) !== 1) {
+    fwrite(STDERR, "P202_TEST_SCRIPT names a script in tracking202/static\n");
+    exit(2);
+}
+$path = '/tracking202/static/' . $script;
 $_SERVER = array_merge($_SERVER, [
     'SERVER_NAME' => 'localhost', 'HTTP_HOST' => 'localhost', 'SERVER_PORT' => '80', 'SERVER_PROTOCOL' => 'HTTP/1.1',
     'REQUEST_URI' => $path . ($get === [] ? '' : '?' . http_build_query($get)),
@@ -41,6 +47,9 @@ $_SERVER = array_merge($_SERVER, [
     'REMOTE_ADDR' => '203.0.113.7', 'HTTP_USER_AGENT' => 'p202-gpb-runner',
     'REQUEST_METHOD' => $post === [] ? 'GET' : 'POST',
 ]);
+if ($post !== []) {
+    $_SERVER['CONTENT_TYPE'] = 'application/x-www-form-urlencoded';
+}
 $_GET = $get;
 $_POST = $post;
 $_REQUEST = $get + $post;

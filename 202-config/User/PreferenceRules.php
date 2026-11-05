@@ -10,6 +10,7 @@ use Prosper202\Ltv\MysqlPersonalizationRepository;
 use Prosper202\Notifications\SlackWebhook;
 use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
+use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 
 /**
  * Every preference `PUT /users/{id}/preferences` writes, and the rule the
@@ -89,7 +90,7 @@ final class PreferenceRules
     private const SPECIAL = [
         'user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email',
         'user_ltv_personalization_fields', 'user_ltv_score_weights', 'user_ltv_rec_fatigue',
-        'paykickstart_ipn_secret_keys', 'jvzoo_ipn_secret_key',
+        'paykickstart_ipn_secret_keys', 'jvzoo_ipn_secret_key', 'shopify_webhook_secret',
     ];
 
     private function __construct()
@@ -201,6 +202,9 @@ final class PreferenceRules
                 // The endpoint reads the key through JVZooKey too, so a key
                 // stored here is one it can sign with.
                 return JVZooKey::parse($value);
+            case 'shopify_webhook_secret':
+                // The endpoint verifies with what ShopifyWebhookSecret::stored() reads.
+                return ShopifyWebhookSecret::parse($value);
             case 'paykickstart_ipn_secret_keys':
                 // The whole list: the keys cannot be read back, so a caller
                 // adding one sends every key it keeps (PayKickstartKeys).

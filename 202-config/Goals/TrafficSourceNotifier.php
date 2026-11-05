@@ -41,9 +41,14 @@ final class TrafficSourceNotifier implements OutcomeNotifier
 {
     private string $markup = '';
 
+    /**
+     * @param (\Closure(int): bool)|null $visitorMayBeTracked whether the
+     *        click's visitor may be sent a Meta Purchase (type 6); held back without it
+     */
     public function __construct(
         private Connection $conn,
         private bool $browser = false,
+        private ?\Closure $visitorMayBeTracked = null,
     ) {
     }
 
@@ -94,7 +99,17 @@ final class TrafficSourceNotifier implements OutcomeNotifier
                 'p202_goal_value' => $amount,
             ];
             // Browser pixels only: the server postbacks are the outbox's.
-            $fired = TrafficSourcePixels::fire($this->conn, $click['ppc_account_id'], $tokens, null, $this->browser, false);
+            $clickId = $subject->clickId;
+            $mayTrack = $this->visitorMayBeTracked;
+            $fired = TrafficSourcePixels::fire(
+                $this->conn,
+                $click['ppc_account_id'],
+                $tokens,
+                null,
+                $this->browser,
+                false,
+                $mayTrack === null ? null : static fn (): bool => $mayTrack($clickId),
+            );
             $this->markup .= $fired['markup'];
             $queued = (int) ($notice['queued'] ?? 0);
             $status = match (true) {

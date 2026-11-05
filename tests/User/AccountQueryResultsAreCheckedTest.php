@@ -113,8 +113,8 @@ final class AccountQueryResultsAreCheckedTest extends TestCase
         self::assertFalse($db->rollbackCalled);
         $updates = $db->statementsContaining('UPDATE `202_aff_campaigns`');
         self::assertCount(3, $updates);
-        self::assertSame(['10.00', '11', 1, 7], $updates[0]->boundValues);
-        self::assertSame(['0.00', '0', 2, 7], $updates[1]->boundValues);
+        self::assertSame(['EUR', '10.00', '11', 1, 7], $updates[0]->boundValues, 'in the old account currency, which becomes the campaign\'s');
+        self::assertSame(['EUR', '0.00', '0', 2, 7], $updates[1]->boundValues);
         self::assertSame(['4.4', 3, 7], $updates[2]->boundValues);
         self::assertSame(['USD', 7], $db->statementsContaining('UPDATE `202_users_pref`')[0]->boundValues);
     }
