@@ -408,6 +408,67 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     }
 
     /**
+     * The tracking template's hit (pt.php) found a click the page's script
+     * recorded first (ParallelTrackingClick): the template brings what the
+     * page's URL does not (its tracker's cost and traffic source, keyword,
+     * text ad, c1-c4 and publisher), and a value it does not bring (0) keeps the
+     * click's. Under the click's lock, as every ledger writer takes it, and
+     * only on the account's own click; marked for the rollup.
+     */
+    public function fillFromTemplate(ClickRecord $template): void
+    {
+        $clickId = $template->clickId;
+        $userId = $template->userId;
+        $ledger = new MysqlConversionLedger($this->conn);
+        $ledger->clickTransaction($clickId, $userId, function (?array $locked) use ($template, $clickId, $userId): void {
+            if ($locked === null || $this->accountsClickFirstTime($userId, $clickId) === null) {
+                return;
+            }
+            $cost = [
+                $template->ppcAccountId, $template->ppcAccountId,
+                $template->clickCpc, $template->clickCpc, $clickId, $userId,
+            ];
+            $this->write(
+                'UPDATE 202_clicks SET ppc_account_id = IF(? = 0, ppc_account_id, ?),'
+                    . ' click_cpc = IF(? = 0, click_cpc, ?) WHERE click_id = ? AND user_id = ?',
+                'iissii',
+                $cost
+            );
+            $this->write(
+                'UPDATE 202_clicks_spy SET ppc_account_id = IF(? = 0, ppc_account_id, ?),'
+                    . ' click_cpc = IF(? = 0, click_cpc, ?) WHERE click_id = ? AND user_id = ?',
+                'iissii',
+                $cost
+            );
+            $this->write(
+                'UPDATE 202_clicks_advance SET keyword_id = IF(? = 0, keyword_id, ?),'
+                    . ' text_ad_id = IF(? = 0, text_ad_id, ?) WHERE click_id = ?',
+                'iiiii',
+                [$template->keywordId, $template->keywordId, $template->textAdId, $template->textAdId, $clickId]
+            );
+            $this->write(
+                'INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES (?, ?, ?, ?, ?)'
+                    . ' ON DUPLICATE KEY UPDATE c1_id = IF(VALUES(c1_id) = 0, c1_id, VALUES(c1_id)),'
+                    . ' c2_id = IF(VALUES(c2_id) = 0, c2_id, VALUES(c2_id)),'
+                    . ' c3_id = IF(VALUES(c3_id) = 0, c3_id, VALUES(c3_id)),'
+                    . ' c4_id = IF(VALUES(c4_id) = 0, c4_id, VALUES(c4_id))',
+                'iiiii',
+                [$clickId, $template->c1Id, $template->c2Id, $template->c3Id, $template->c4Id]
+            );
+            // A granted publisher (PublisherCredit) is credited once; an earlier credit stands.
+            if ($template->publisherUserId !== 0) {
+                $this->write(
+                    'INSERT INTO 202_clicks_publisher (click_id, publisher_user_id) VALUES (?, ?)'
+                        . ' ON DUPLICATE KEY UPDATE publisher_user_id = publisher_user_id',
+                    'ii',
+                    [$clickId, $template->publisherUserId]
+                );
+            }
+            RollupDirty::click($this->conn, $userId, $clickId);
+        });
+    }
+
+    /**
      * The time of the click's first row when every row is the account's;
      * null when it has none or one is another's. Not locked: a click's
      * account never changes, and FOR UPDATE on the non-unique click_id key

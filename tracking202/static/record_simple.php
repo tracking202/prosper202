@@ -313,8 +313,30 @@ if ($clickIsBot) {
 // Pre-allocate click_id so we can compute click_id_public and site URLs
 $conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
 $clickRepo = new \Prosper202\Click\MysqlClickRepository($conn);
-$click_id = $clickRepo->allocateClickId();
-$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
+// One gclid's template hit and page view record one at a time (released below).
+$rsParallelLock = \Prosper202\Click\ParallelTrackingClick::hold(
+    $conn,
+    (int) $mysql['user_id'],
+    (int) $mysql['landing_page_id'],
+    $adClickIds['gclid'] ?? ''
+);
+// A Google Ads click the tracking template (pt.php) recorded for this page is this visit's click.
+$rsParallelClick = \Prosper202\Click\ParallelTrackingClick::find(
+    $conn,
+    (int) $mysql['user_id'],
+    (int) $mysql['landing_page_id'],
+    $adClickIds['gclid'] ?? '',
+    (int) $ip_id,
+    time()
+);
+if ($rsParallelClick !== null) {
+    $click_id = $rsParallelClick->clickId;
+    $click_id_public = $rsParallelClick->clickIdPublic;
+    $mysql['aff_campaign_id'] = $rsParallelClick->affCampaignId;
+} else {
+    $click_id = $clickRepo->allocateClickId();
+    $click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
+}
 $mysql['click_id'] = (string) $click_id;
 $mysql['click_id_public'] = (string) $click_id_public;
 
@@ -357,7 +379,8 @@ if ($cloaking_on === true) {
 	$mysql['click_cloaking_site_url_id'] = (string) $click_cloaking_site_url_id;
 }
 
-$redirect_site_url = rotateTrackerUrl($db, $tracker_row);
+// A taken click has its offer URL already; rotating again would skip an offer.
+$redirect_site_url = $rsParallelClick === null ? rotateTrackerUrl($db, $tracker_row) : '';
 // The click's rows are written below, so its URL's tokens come from the values
 // in hand: read back, they are not there yet.
 $redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $click_id, [
@@ -401,12 +424,30 @@ $clickIdentity = p202ClickIdentity(
 // until it commits; a failure is the error page, as rtr.php's is.
 // Built outside the try: a record the builder refuses is a bug, not a
 // database failure, and the uncaught handler logs it as one.
-$rsClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
-try {
-    p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($rsClick));
-} catch (\Throwable $rsWriteError) {
-    record_mysql_error($db, 'recording click ' . $click_id, $rsWriteError->getMessage());
+if ($rsParallelClick !== null) {
+    // The page's identity signals go to the click it took.
+    $clickIdentity->attach($conn, (int) $mysql['user_id'], $click_id, $rsParallelClick->clickTime);
+    // The template's hit (pt.php) that finds the page's click brings the
+    // tracker's cost, keyword and c1-c4 the page's URL did not carry.
+    if (($ptTemplateHit ?? false) === true) {
+        try {
+            $clickRepo->fillFromTemplate(
+                \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity)
+            );
+        } catch (\Throwable $rsFillError) {
+            error_log('Prosper202 parallel tracking: the template\'s values for click ' . $click_id
+                . ' could not be written: ' . $rsFillError->getMessage());
+        }
+    }
+} else {
+    $rsClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
+    try {
+        p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($rsClick));
+    } catch (\Throwable $rsWriteError) {
+        record_mysql_error($db, 'recording click ' . $click_id, $rsWriteError->getMessage());
+    }
 }
+\Prosper202\Click\ParallelTrackingClick::release($conn, $rsParallelLock);
 
 //update the click summary table if this is a 'real click'
 #if ($click_filtered == 0) {
