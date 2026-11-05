@@ -254,7 +254,7 @@ p202 destination update 1 --disable
 p202 destination create --type google_ads --name "Search campaigns" --customer-id 123-456-7890 \
     --conversion-action 987654 --credentials-file google-ads.json
 p202 destination connect 2          # open the authorisation_url it prints
-p202 destination update 2 --campaign-conversion-action 12=987655
+p202 destination update 2 --campaign-conversion-action 12=987655   # sets campaign 12's, keeps the others; 12= removes it
 p202 destination test 2
 ```
 

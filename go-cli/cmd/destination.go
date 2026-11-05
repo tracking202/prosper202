@@ -119,6 +119,41 @@ func readGoogleAdsCredentials(file string) (map[string]interface{}, error) {
 	return creds, nil
 }
 
+// destinationTypeFlags are the flags only one destination type reads (its
+// settingKeys and its credentials). A flag of the other type is refused,
+// never dropped: an agent would read a dropped flag as applied.
+var destinationTypeFlags = map[string][]string{
+	"ga4":        {"measurement-id", "api-secret-file", "event-name", "client-id-source", "user-id-source", "param"},
+	"google_ads": {"credentials-file", "customer-id", "login-customer-id", "conversion-action", "campaign-conversion-action"},
+}
+
+// destinationFlagsFor refuses a flag the destination's type does not read.
+func destinationFlagsFor(cmd *cobra.Command, typ, hint string) error {
+	for _, other := range destinationTypes.values {
+		if other == typ {
+			continue
+		}
+		for _, f := range destinationTypeFlags[other] {
+			if cmd.Flags().Changed(f) {
+				return validationError("--%s is for %s destinations; this one is %s", f, other, typ).WithHint(hint, f)
+			}
+		}
+	}
+	return nil
+}
+
+// destinationTypeFlagChanged reports whether any type-specific flag was given.
+func destinationTypeFlagChanged(cmd *cobra.Command) bool {
+	for _, flags := range destinationTypeFlags {
+		for _, f := range flags {
+			if cmd.Flags().Changed(f) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // destinationSettings applies the flags the caller set over $base (the
 // stored settings on an update, empty on a create).
 func destinationSettings(cmd *cobra.Command, base map[string]interface{}) (map[string]interface{}, error) {
@@ -152,13 +187,23 @@ func destinationSettings(cmd *cobra.Command, base map[string]interface{}) (map[s
 		s["params"] = params
 	}
 	if cmd.Flags().Changed("campaign-conversion-action") {
+		// Merged into the stored map: each flag sets one campaign's action, and N= (on an update) removes it.
 		actions := map[string]interface{}{}
+		if stored, ok := s["campaign_conversion_actions"].(map[string]interface{}); ok {
+			for k, v := range stored {
+				actions[k] = v
+			}
+		}
 		values, _ := cmd.Flags().GetStringArray("campaign-conversion-action")
 		for _, p := range values {
 			id, action, ok := strings.Cut(p, "=")
-			if n, err := strconv.Atoi(id); !ok || err != nil || n <= 0 || action == "" {
+			if n, err := strconv.Atoi(id); !ok || err != nil || n <= 0 || (action == "" && base == nil) {
 				return nil, validationError("--campaign-conversion-action %q must be campaign_id=conversion_action", p).
-					WithHint("For example --campaign-conversion-action 12=987654; `p202 campaign list` shows the campaign ids.")
+					WithHint("For example --campaign-conversion-action 12=987654; on an update, 12= removes campaign 12's. `p202 campaign list` shows the campaign ids.")
+			}
+			if action == "" {
+				delete(actions, id)
+				continue
 			}
 			actions[id] = action
 		}
@@ -263,6 +308,9 @@ var destinationCreateCmd = &cobra.Command{
 		if enumValue(cmd, "type") == "google_ads" {
 			return createGoogleAdsDestination(cmd)
 		}
+		if err := destinationFlagsFor(cmd, "ga4", "Add --type google_ads to make a Google Ads destination, or leave --%s out."); err != nil {
+			return err
+		}
 		name, _ := cmd.Flags().GetString("name")
 		file, _ := cmd.Flags().GetString("api-secret-file")
 		if name == "" || file == "" || !cmd.Flags().Changed("measurement-id") {
@@ -293,6 +341,9 @@ var destinationCreateCmd = &cobra.Command{
 }
 
 func createGoogleAdsDestination(cmd *cobra.Command) error {
+	if err := destinationFlagsFor(cmd, "google_ads", "Leave --%s out: it is a GA4 setting."); err != nil {
+		return err
+	}
 	name, _ := cmd.Flags().GetString("name")
 	file, _ := cmd.Flags().GetString("credentials-file")
 	if name == "" || file == "" || !cmd.Flags().Changed("customer-id") || !cmd.Flags().Changed("conversion-action") {
@@ -350,7 +401,8 @@ var destinationUpdateCmd = &cobra.Command{
 	Short: "Update a destination: name, on/off, settings, or its API secret",
 	Long: "Only the flags you give are applied; the rest of the settings stay as they are.\n\n" +
 		"  p202 destination update 1 --disable\n" +
-		"  p202 destination update 1 --campaign-id 12 --campaign-id 14 --send-user-data",
+		"  p202 destination update 1 --campaign-id 12 --campaign-id 14 --send-user-data\n" +
+		"  p202 destination update 2 --campaign-conversion-action 12=987655   (sets campaign 12's; 12= removes it)",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := destinationArg(args[0]); err != nil {
@@ -360,6 +412,10 @@ var destinationUpdateCmd = &cobra.Command{
 		disable, _ := cmd.Flags().GetBool("disable")
 		if enable && disable {
 			return validationError("--enable and --disable are exclusive").WithHint("Give one of them.")
+		}
+		if cmd.Flags().Changed("api-secret-file") && cmd.Flags().Changed("credentials-file") {
+			return validationError("--api-secret-file and --credentials-file are exclusive: a destination has one kind of credentials").
+				WithHint("--api-secret-file is a GA4 destination's, --credentials-file a Google Ads one's; `p202 destination get %s` shows its type.", args[0])
 		}
 		c, err := destinationClient("update")
 		if err != nil {
@@ -379,21 +435,27 @@ var destinationUpdateCmd = &cobra.Command{
 		for _, f := range settingsFlags {
 			changed = changed || cmd.Flags().Changed(f)
 		}
-		if changed {
+		if changed || destinationTypeFlagChanged(cmd) {
 			raw, err := c.Get("destinations/"+args[0], nil)
 			if err != nil {
 				return withHint(err, "%s", destinationListHint)
 			}
 			var current struct {
 				Data struct {
+					Type     string                 `json:"type"`
 					Settings map[string]interface{} `json:"settings"`
 				} `json:"data"`
 			}
 			if err := json.Unmarshal(raw, &current); err != nil {
 				return fmt.Errorf("reading destination %s: %w", args[0], err)
 			}
-			if body["settings"], err = destinationSettings(cmd, current.Data.Settings); err != nil {
+			if err := destinationFlagsFor(cmd, current.Data.Type, "Leave --%s out; `p202 destination get "+args[0]+"` shows the destination's type and settings."); err != nil {
 				return err
+			}
+			if changed {
+				if body["settings"], err = destinationSettings(cmd, current.Data.Settings); err != nil {
+					return err
+				}
 			}
 		}
 		if file, _ := cmd.Flags().GetString("api-secret-file"); file != "" {
@@ -510,7 +572,7 @@ func destinationSettingFlags(cmd *cobra.Command) {
 	cmd.Flags().String("customer-id", "", "For google_ads: the customer ID conversions go to (123-456-7890)")
 	cmd.Flags().String("login-customer-id", "", "For google_ads: the manager account your access goes through, if any")
 	cmd.Flags().String("conversion-action", "", "For google_ads: conversion action ID (ctId in its address), or customers/<id>/conversionActions/<id>")
-	cmd.Flags().StringArray("campaign-conversion-action", nil, "For google_ads: campaign_id=conversion_action for one campaign (repeatable)")
+	cmd.Flags().StringArray("campaign-conversion-action", nil, "For google_ads: campaign_id=conversion_action for one campaign (repeatable); on update it is merged with the stored ones, and campaign_id= removes one")
 	enumFlag(cmd, "client-id-source", newEnum([]string{"click", "c1", "c2", "c3", "c4"}))
 	enumFlag(cmd, "user-id-source", newEnum([]string{"none", "customer"}))
 	enumFlag(cmd, "ad-user-data", destinationConsent)

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -69,5 +70,88 @@ func TestReadAPISecretTrimsAndRefusesAnEmptyFile(t *testing.T) {
 	}
 	if _, err := readAPISecret(empty); err == nil || hintFor(err) == "" {
 		t.Errorf("an empty secret file: err %v, hint %q", err, hintFor(err))
+	}
+}
+
+// The real create command, its flags reset after the test.
+func destinationCreateFlagsCmd(t *testing.T, args ...string) *cobra.Command {
+	t.Helper()
+	c := destinationCreateCmd
+	resetAllFlags(c)
+	t.Cleanup(func() { resetAllFlags(c) })
+	if err := c.ParseFlags(args); err != nil {
+		t.Fatalf("parse %v: %v", args, err)
+	}
+	return c
+}
+
+// A flag of the other destination type is refused before anything is read or
+// sent, with a hint, never dropped in silence.
+func TestDestinationCreateRefusesTheOtherTypesFlags(t *testing.T) {
+	cases := map[string][]string{
+		"google_ads credentials on ga4":    {"--name", "S", "--measurement-id", "G-ABC123", "--api-secret-file", "x", "--credentials-file", "g.json"},
+		"google_ads customer on ga4":       {"--name", "S", "--measurement-id", "G-ABC123", "--api-secret-file", "x", "--customer-id", "123-456-7890"},
+		"ga4 measurement id on google_ads": {"--type", "google_ads", "--name", "S", "--customer-id", "1234567890", "--conversion-action", "987654", "--credentials-file", "g.json", "--measurement-id", "G-ABC123"},
+		"ga4 secret on google_ads":         {"--type", "google_ads", "--name", "S", "--customer-id", "1234567890", "--conversion-action", "987654", "--credentials-file", "g.json", "--api-secret-file", "x"},
+	}
+	for name, args := range cases {
+		c := destinationCreateFlagsCmd(t, args...)
+		err := c.RunE(c, nil)
+		if err == nil {
+			t.Fatalf("%s: accepted", name)
+		}
+		if exitCodeForError(err) != 1 || hintFor(err) == "" {
+			t.Errorf("%s: exit %d, hint %q", name, exitCodeForError(err), hintFor(err))
+		}
+		if !strings.Contains(err.Error(), "destinations; this one is") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	err := destinationCreateFlagsCmd(t, "--name", "S", "--measurement-id", "G-ABC123", "--api-secret-file", "x", "--credentials-file", "g.json").RunE(destinationCreateCmd, nil)
+	if !strings.Contains(hintFor(err), "--type google_ads") {
+		t.Errorf("the hint should name --type google_ads, got %q", hintFor(err))
+	}
+}
+
+func TestDestinationUpdateRefusesBothCredentialFiles(t *testing.T) {
+	c := destinationFlagsCmd(t, "--api-secret-file", "s.txt", "--credentials-file", "g.json")
+	err := c.RunE(c, []string{"3"})
+	if err == nil || !strings.Contains(err.Error(), "exclusive") {
+		t.Fatalf("both credential files were accepted: %v", err)
+	}
+	if exitCodeForError(err) != 1 || !strings.Contains(hintFor(err), "p202 destination get 3") {
+		t.Errorf("exit %d, hint %q", exitCodeForError(err), hintFor(err))
+	}
+}
+
+// update checks the flags against the stored type it reads.
+func TestDestinationFlagsForTheStoredType(t *testing.T) {
+	if err := destinationFlagsFor(destinationFlagsCmd(t, "--customer-id", "1234567890"), "ga4", "Leave --%s out."); err == nil ||
+		exitCodeForError(err) != 1 || hintFor(err) != "Leave --customer-id out." {
+		t.Errorf("a Google Ads flag on a GA4 destination: %v (hint %q)", err, hintFor(err))
+	}
+	if err := destinationFlagsFor(destinationFlagsCmd(t, "--param", "campaign=utm_campaign"), "google_ads", "Leave --%s out."); err == nil {
+		t.Error("a GA4 flag on a Google Ads destination was accepted")
+	}
+	if err := destinationFlagsFor(destinationFlagsCmd(t, "--customer-id", "1234567890", "--send-user-data"), "google_ads", "x"); err != nil {
+		t.Errorf("its own and common flags: %v", err)
+	}
+}
+
+func TestCampaignConversionActionsMergeIntoTheStoredOnes(t *testing.T) {
+	stored := map[string]interface{}{"campaign_conversion_actions": map[string]interface{}{"14": "111", "20": "222"}}
+	s, err := destinationSettings(destinationFlagsCmd(t, "--campaign-conversion-action", "12=987655", "--campaign-conversion-action", "14="), stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]interface{}{"12": "987655", "20": "222"}
+	if !reflect.DeepEqual(s["campaign_conversion_actions"], want) {
+		t.Errorf("got %v, want %v (12 added, 14 removed, 20 kept)", s["campaign_conversion_actions"], want)
+	}
+	if !reflect.DeepEqual(stored["campaign_conversion_actions"], map[string]interface{}{"14": "111", "20": "222"}) {
+		t.Error("the stored map was changed in place")
+	}
+	if _, err := destinationSettings(destinationFlagsCmd(t, "--campaign-conversion-action", "12="), nil); err == nil || exitCodeForError(err) != 1 || hintFor(err) == "" {
+		t.Errorf("12= on a create should be refused with a hint: %v", err)
 	}
 }
