@@ -25,6 +25,10 @@ final class ClickExitTest extends TestCase
             static fn () => new ClickExit(1, 5, outboundSiteUrlId: -1),
             'outbound URL is an id or 0, not -1',
         ];
+        yield 'a zero landing page' => [
+            static fn () => new ClickExit(1, 5, landingPageId: 0),
+            'landing page must be a positive id',
+        ];
         yield 'no campaign' => [static fn () => new OfferRoute(0, '1.00'), "campaign is a positive id, not 0"];
         yield 'an empty payout' => [static fn () => new OfferRoute(3, ''), "payout is a decimal number, not ''"];
         yield 'a payout with words' => [
@@ -53,6 +57,7 @@ final class ClickExitTest extends TestCase
         self::assertNull($exit->cloaking);
         self::assertNull($exit->offer);
         self::assertNull($exit->rotator);
+        self::assertNull($exit->landingPageId);
         self::assertSame(0, $exit->outboundSiteUrlId);
         self::assertSame('-0.50', (new OfferRoute(3, '-0.50'))->payout);
     }

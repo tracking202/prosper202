@@ -27,7 +27,7 @@ final class ConversionFacts
         public readonly string $currency,
         public readonly string $transactionId,
         public readonly array $click,
-        public readonly ?string $customerRef = null,
+        public readonly ?int $customerId = null,
         public readonly array $emailHashes = [],
         public readonly array $phoneHashes = [],
         public readonly string $zone = 'UTC',

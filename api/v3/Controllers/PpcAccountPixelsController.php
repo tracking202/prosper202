@@ -9,6 +9,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\StatementHelpers;
+use Prosper202\Conversion\FacebookPixelId;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\CorrectionUrls;
 use Prosper202\Notifications\NotificationOutbox;
@@ -222,6 +223,16 @@ final class PpcAccountPixelsController
             $refused = isset($errors['pixel_code']) ? null : PostbackSender::refusalAtSave($code, $held['code']);
             if ($refused !== null) {
                 $errors['pixel_code'] = $refused;
+            }
+        }
+
+        // A Bot202 Facebook Pixel Assistant pixel is stored as its Meta Pixel ID, as the form stores it.
+        if ($typeId === FacebookPixelId::PIXEL_TYPE && is_string($code) && $code !== '' && !isset($errors['pixel_code'])) {
+            $pixelId = FacebookPixelId::fromCode($code);
+            if ($pixelId === null) {
+                $errors['pixel_code'] = 'A Bot202 Facebook Pixel Assistant pixel holds your Meta Pixel ID: its digits, or Meta\'s Pixel code pasted whole';
+            } else {
+                $code = $pixelId;
             }
         }
 

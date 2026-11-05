@@ -7,6 +7,7 @@
 
 - [Introduction](00-introduction.md)
 - [Deploying Prosper202 on Coolify](deploying-on-coolify.md)
+- [Upgrading from paid Prosper202 1.9.56](upgrading/from-paid-1.9.56.md)
 
 ### Setting Up Prosper202 Pro
 
@@ -95,6 +96,8 @@ A legacy PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 lis
 - [Multi-touch Attribution Engine](features/advanced-attribution-engine.md)
 - [The Prosper202 UI Standard](features/ui-standard.md)
 - [Visitor identity](features/visitor-identity.md) — how clicks are linked to one person, with first-party signals only
+- [PurLinks](features/purlinks.md) — landing page links straight to the offer with no tracker redirect, the click-out still recorded, and the deferred pixel
+- [Dynamic content](features/dynamic-content.md) — the visit's country, keyword, `c1` and other values in your page's text and form fields, and 1.9.56's `dcs` API
 - [Offline conversions for Google Ads and Microsoft Advertising](features/offline-conversions.md) — the import files, which conversions they send, and fetch URLs the platforms read on a schedule
 - [Destinations: conversions to your ad platforms, from your server](features/destinations.md) — GA4 Measurement Protocol and Google Ads click conversions (developer token and OAuth client setup), the delivery log, privacy and hashed data, test fires
 - [Measurement rewrite plan](features/measurement-rewrite-plan.md) — app measurement (iOS and Android), goals, the conversion ledger and multi-touch attribution: the design, what was built, and the release gate

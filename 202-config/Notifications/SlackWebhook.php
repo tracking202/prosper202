@@ -6,6 +6,7 @@ namespace Prosper202\Notifications;
 
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
+use Prosper202\Database\Connection;
 
 /**
  * The Slack incoming webhook (user_slack_incoming_webhook): the one rule for
@@ -41,6 +42,23 @@ final class SlackWebhook
 
     public function __construct(private ?WebhookSender $sender = null)
     {
+    }
+
+    /**
+     * The account's own saved webhook, trimmed, or null when it has none (974K).
+     *
+     * @throws \Prosper202\Database\Exceptions\QueryException when it cannot be read
+     */
+    public static function ofAccount(Connection $conn, int $accountId): ?string
+    {
+        if ($accountId <= 0) {
+            return null;
+        }
+        $stmt = $conn->prepareRead('SELECT user_slack_incoming_webhook FROM 202_users_pref WHERE user_id = ? LIMIT 1');
+        $conn->bind($stmt, 'i', [$accountId]);
+        $url = $conn->fetchOne($stmt)[self::COLUMN] ?? null;
+
+        return is_string($url) && trim($url) !== '' ? trim($url) : null;
     }
 
     /**

@@ -98,6 +98,8 @@ final class ClickRetention
         '202_identity_observations',
         '202_clicks_visitor',
         '202_clicks_filter_reason',
+        '202_purlink_exit_order',
+        '202_purlink_pixel_fires',
         '202_clicks_publisher',
         '202_click_latest_visits',
         '202_clicks',
@@ -112,6 +114,7 @@ final class ClickRetention
     public const KEPT = [
         '202_clicks_counter' => 'the click id allocator: an emptied AUTO_INCREMENT table restarts at 1 on MySQL 5.7 and MariaDB before 10.2.4 after a restart, and new clicks would reuse the ids conversions still name',
         '202_conversion_logs' => 'conversions: the money, and the ledger that counts it, outlive the click they came through',
+        '202_purlink_goal_subjects' => 'the per-offer goal subjects stay with their outcomes when the click is deleted',
         '202_attribution_journeys' => 'a conversion\'s journey, kept with the conversion; the rollup and the reports join the click and drop a touch whose click is gone',
         '202_attribution_credits' => 'a conversion\'s credits, kept with the conversion: its totals stay whole; breakdowns join the click',
         '202_attribution_rollup_dirty_clicks' => 'rollup marks: resolving a click that is gone marks the hours of the journeys that still hold it',

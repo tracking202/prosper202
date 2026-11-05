@@ -85,7 +85,7 @@ final class GoogleAdsDestinationTest extends TestCase
             'USD',
             'ORD-1001',
             $click + ['gclid' => '', 'gbraid' => '', 'wbraid' => '', 'c1' => ''],
-            'cust-88',
+            88,
             $emails,
             [],
             $zone,

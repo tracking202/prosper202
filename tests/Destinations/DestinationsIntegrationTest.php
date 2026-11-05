@@ -55,9 +55,10 @@ final class DestinationsIntegrationTest extends TestCase
         $this->answers = [];
     }
 
-    private function store(): DestinationStore
+    /** @param (callable(string): list<string>)|null $resolver */
+    private function store(?callable $resolver = null): DestinationStore
     {
-        $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.10'], '203.0.113.0/24');
+        $guard = new WebhookGuard($resolver ?? static fn (string $host): array => ['203.0.113.10'], '203.0.113.0/24');
         $transport = function (array $options): array {
             $this->bodies[] = json_decode((string) $options[CURLOPT_POSTFIELDS], true);
 
@@ -70,9 +71,10 @@ final class DestinationsIntegrationTest extends TestCase
     /** @var list<string> addresses the privacy check was asked about */
     private array $asked = [];
 
-    private function worker(bool $mayBeEuropean = false): DestinationQueue
+    /** @param (callable(string): list<string>)|null $resolver */
+    private function worker(bool $mayBeEuropean = false, ?callable $resolver = null): DestinationQueue
     {
-        return new DestinationQueue(new Connection(self::$db), $this->store(), function (string $ip) use ($mayBeEuropean): bool {
+        return new DestinationQueue(new Connection(self::$db), $this->store($resolver), function (string $ip) use ($mayBeEuropean): bool {
             $this->asked[] = $ip;
 
             return $mayBeEuropean;
@@ -200,7 +202,7 @@ final class DestinationsIntegrationTest extends TestCase
 
     public function testHashedUserDataGoesOnlyWhenTurnedOnAndConsentIsNotDenied(): void
     {
-        self::fixture("INSERT INTO 202_customers SET customer_id=9, user_id=1, primary_ref='cust-9', email='Jane.Doe@Example.com', phone='+1 555 123 4567',
+        self::fixture("INSERT INTO 202_customers SET customer_id=9, user_id=1, primary_ref='jane.doe@example.com', email='Jane.Doe@Example.com', phone='+1 555 123 4567',
             first_seen_time=1, last_activity_time=1, created_at=1, updated_at=1");
         $on = $this->destination(['send_user_data' => true, 'user_id_source' => 'customer']);
         $this->click(100);
@@ -209,8 +211,8 @@ final class DestinationsIntegrationTest extends TestCase
         $this->worker()->sendDue(10, 5, time() + 1);
         self::assertSame([hash('sha256', 'jane.doe@example.com')], $this->bodies[0]['user_data']['sha256_email_address']);
         self::assertSame([hash('sha256', '+15551234567')], $this->bodies[0]['user_data']['sha256_phone_number']);
-        self::assertSame('cust-9', $this->bodies[0]['user_id']);
-        self::assertStringNotContainsString('Example.com', (string) json_encode($this->bodies[0]));
+        self::assertSame('p202c.9', $this->bodies[0]['user_id'], 'a pseudonymous id, never the customer\'s ref');
+        self::assertStringNotContainsString('example.com', strtolower((string) json_encode($this->bodies[0])), 'no email, from the ref or the customer');
         $summary = (string) self::$db->query("SELECT summary FROM 202_destination_deliveries WHERE destination_id = $on")->fetch_row()[0];
         self::assertStringContainsString('sha256_email_address', $summary, 'the log names the identifiers sent');
         self::assertStringNotContainsString(hash('sha256', 'jane.doe@example.com'), $summary, 'and never their values');
@@ -221,7 +223,7 @@ final class DestinationsIntegrationTest extends TestCase
         self::fixture("UPDATE 202_conversion_logs SET customer_id=9 WHERE conv_id=$second");
         $this->worker()->sendDue(10, 5, time() + 1);
         self::assertArrayNotHasKey('user_data', $this->bodies[1], 'ad_user_data denied sends no hashed data');
-        self::assertArrayNotHasKey('user_id', $this->bodies[1], 'nor the customer\'s ref, which can be an email address');
+        self::assertArrayNotHasKey('user_id', $this->bodies[1], 'nor the customer\'s id');
     }
 
     public function testDeletesCancelWhatWasNotSent(): void
@@ -310,6 +312,42 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertSame([], $this->bodies);
     }
 
+    public function testAReplacingConversionReusesTheTransactionIdOfTheOneItReplaced(): void
+    {
+        $this->destination();
+        $this->campaign(32, null, 'replace');
+        $this->click(103, 32);
+        $this->record(103, 'ORD-40');
+        $this->worker()->sendDue(10, 5, time() + 1);
+        $this->record(103, 'ORD-41');
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 2)['sent']);
+        self::assertSame(['ORD-40', 'ORD-40'], array_map(static fn (array $b): string => $b['events'][0]['params']['transaction_id'], $this->bodies), 'GA4 counts the sale once');
+
+        // Positive control: a campaign that adds every conversion sends each under its own id.
+        $this->click(104);
+        $this->record(104, 'ORD-42');
+        $this->record(104, 'ORD-43');
+        $this->worker()->sendDue(10, 5, time() + 3);
+        self::assertSame(['ORD-42', 'ORD-43'], array_map(static fn (array $b): string => $b['events'][0]['params']['transaction_id'], array_slice($this->bodies, 2)));
+    }
+
+    public function testAHostThatDoesNotResolveIsRetriedNotFailed(): void
+    {
+        $id = $this->destination();
+        $this->click(100);
+        $this->record(100, 'ORD-50');
+        $out = $this->worker(resolver: static fn (string $host): array => [])->sendDue(10, 5, time() + 1);
+        self::assertSame([1, 0], [$out['retrying'], $out['failed']]);
+        $row = self::deliveries($id)[0];
+        self::assertSame(['pending', '1'], [$row['status'], $row['attempts']]);
+        self::assertStringContainsString('does not resolve', (string) $row['last_error']);
+        self::assertSame([], $this->bodies);
+
+        // Positive control: once the name resolves, the same row is sent.
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 3600)['sent']);
+        self::assertCount(1, $this->bodies);
+    }
+
     public function testACampaignFilterChangedAfterQueueingIsHonouredAtSend(): void
     {
         $id = $this->destination();
@@ -318,6 +356,23 @@ final class DestinationsIntegrationTest extends TestCase
         $this->store()->update(1, $id, ['settings' => ['measurement_id' => 'G-ABC123', 'campaign_ids' => [31]]], time());
         self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['cancelled']);
         self::assertSame([], $this->bodies);
+    }
+
+    public function testACampaignFilterThatIsNotAListFailsRatherThanSendingEveryCampaign(): void
+    {
+        $id = $this->destination(['campaign_ids' => [30]]);
+        $this->click(100);
+        $this->record(100, 'ORD-25');
+        self::fixture("UPDATE 202_destinations SET settings = JSON_SET(settings, '$.campaign_ids', '30') WHERE destination_id = $id");
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['failed']);
+        self::assertSame([], $this->bodies);
+        self::assertStringContainsString('campaign filter cannot be read', (string) self::deliveries($id)[0]['last_error']);
+
+        // Positive control: the same filter as a list sends.
+        self::fixture("UPDATE 202_destinations SET settings = JSON_SET(settings, '$.campaign_ids', JSON_ARRAY(30)) WHERE destination_id = $id");
+        $this->click(101);
+        $this->record(101, 'ORD-26');
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['sent']);
     }
 
     public function testASwitchedOffAccountsConversionsWait(): void

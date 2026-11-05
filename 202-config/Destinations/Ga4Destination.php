@@ -116,7 +116,8 @@ final class Ga4Destination implements DestinationType
         $redact = static fn (string $text): string => $secret === '' ? $text : str_replace([$secret, rawurlencode($secret)], '…', $text);
 
         if ($sent['refused'] !== null) {
-            return new SendResult(false, false, null, $redact('not sent: ' . $sent['refused']), $summary);
+            // A name that does not resolve now, or an allowlist the operator will fix, is tried again.
+            return new SendResult(false, $sent['retryable'], null, $redact('not sent: ' . $sent['refused']), $summary);
         }
         if ($sent['strayed'] !== null) {
             return new SendResult(false, false, null, 'not sent: the connection went to ' . $sent['strayed'] . ' instead of the checked address ' . $sent['pinned'], $summary);
@@ -178,8 +179,9 @@ final class Ga4Destination implements DestinationType
             }
         }
         $body = ['client_id' => $clientId];
-        if (($settings['user_id_source'] ?? 'none') === 'customer' && $facts->customerRef !== null && $facts->customerRef !== '') {
-            $body['user_id'] = mb_substr($facts->customerRef, 0, 256);
+        // A pseudonymous id, stable per customer: the customer's own ref can be an email address.
+        if (($settings['user_id_source'] ?? 'none') === 'customer' && $facts->customerId !== null && $facts->customerId > 0) {
+            $body['user_id'] = 'p202c.' . $facts->customerId;
         }
         $body['timestamp_micros'] = ($testTime ?? $facts->convTime) * 1_000_000;
         $consent = [];
@@ -210,11 +212,16 @@ final class Ga4Destination implements DestinationType
     public static function summary(array $body): array
     {
         $event = $body['events'][0] ?? [];
+        // A mapped parameter carries whatever the link put in the field: its name is kept, not its value.
+        $params = [];
+        foreach ((array) ($event['params'] ?? []) as $name => $value) {
+            $params[$name] = in_array($name, ['value', 'currency', 'transaction_id'], true) ? $value : true;
+        }
 
         return [
             'event' => $event['name'] ?? null,
-            'params' => $event['params'] ?? [],
-            'client_id' => $body['client_id'] ?? null,
+            'params' => $params,
+            'client_id' => isset($body['client_id']),
             'user_id' => isset($body['user_id']),
             'user_data' => array_keys($body['user_data'] ?? []),
             'consent' => $body['consent'] ?? null,

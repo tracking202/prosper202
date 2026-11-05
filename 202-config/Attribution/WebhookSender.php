@@ -29,7 +29,7 @@ namespace Prosper202\Attribution;
  * old, which stops a captured request being replayed.
  *
  * @phpstan-type Posted array{
- *     refused: string|null, strayed: string|null, pinned: string, status: int,
+ *     refused: string|null, retryable: bool, strayed: string|null, pinned: string, status: int,
  *     error: string|null, location: string|null, body: string
  * }
  */
@@ -151,7 +151,7 @@ final class WebhookSender
         int $timeout = self::TIMEOUT
     ): array {
         $none = [
-            'refused' => null, 'strayed' => null, 'pinned' => '', 'status' => 0,
+            'refused' => null, 'retryable' => false, 'strayed' => null, 'pinned' => '', 'status' => 0,
             'error' => null, 'location' => null, 'body' => '',
         ];
         if (strlen($body) > self::MAX_BODY_BYTES) {
@@ -162,7 +162,10 @@ final class WebhookSender
             $this->guard ??= new WebhookGuard();
             $target = $this->guard->check($url, $ports);
         } catch (WebhookRefused | \UnexpectedValueException $e) {
-            return ['refused' => $e->getMessage()] + $none;
+            // A host that does not resolve now, or the operator's unparseable allowlist, may be fine on a later try.
+            $retryable = $e instanceof WebhookUnresolved || $e instanceof \UnexpectedValueException;
+
+            return ['refused' => $e->getMessage(), 'retryable' => $retryable] + $none;
         }
 
         $answer = ($this->transport)(self::curlOptions($target, $body, $headers, $timeout));
@@ -170,6 +173,7 @@ final class WebhookSender
 
         return [
             'refused' => null,
+            'retryable' => false,
             'strayed' => $connected !== null && $connected !== '' && !self::sameAddress($connected, $target->pinned())
                 ? $connected
                 : null,

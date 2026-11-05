@@ -90,6 +90,8 @@ final class UserDataPurge
     private const IDENTITY_STATEMENTS = [
         'DELETE o FROM 202_identity_observations o JOIN 202_clicks c ON c.click_id = o.click_id WHERE c.user_id = ?',
         'DELETE FROM 202_clicks_visitor WHERE user_id = ?',
+        'DELETE FROM 202_purlink_exit_order WHERE user_id = ?',
+        'DELETE FROM 202_purlink_pixel_fires WHERE user_id = ?',
         'DELETE FROM 202_identity_merges WHERE user_id = ?',
         'DELETE FROM 202_identity_signals WHERE user_id = ?',
         'DELETE FROM 202_identity_visitors WHERE user_id = ?',
@@ -106,6 +108,7 @@ final class UserDataPurge
         'DELETE FROM 202_goal_progress WHERE user_id = ?',
         'DELETE FROM 202_goal_events WHERE user_id = ?',
         'DELETE FROM 202_goal_subjects WHERE user_id = ?',
+        'DELETE FROM 202_purlink_goal_subjects WHERE user_id = ?',
         'DELETE FROM 202_campaign_goals WHERE user_id = ?',
         'DELETE v FROM 202_goal_versions v JOIN 202_goals g ON g.goal_id = v.goal_id WHERE g.user_id = ?',
         'DELETE FROM 202_goals WHERE user_id = ?',

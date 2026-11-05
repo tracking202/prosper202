@@ -79,4 +79,26 @@ final class AccountPixelsTest extends TestCase
         self::assertCount(1, $rows);
         self::assertSame(1, $rows[0]['pixel_type_id']);
     }
+
+    /**
+     * A Bot202 Facebook Pixel Assistant pixel (type 6) is stored as its
+     * Meta Pixel ID, as paid 1.9.56's form stored it (its page script pulled
+     * the ID out of a pasted Pixel code); a code that holds none is refused.
+     */
+    public function testAFacebookPixelAssistantPixelIsStoredAsItsPixelId(): void
+    {
+        $errors = [];
+        $rows = AccountPixels::fromForm([
+            'pixel_type_id' => ['6', '6'],
+            'pixel_code' => ["<script>fbq('init', '123456789012345');</script>", ' 555555555555555 '],
+            'pixel_id' => ['', ''],
+        ], $errors);
+
+        self::assertSame([], $errors);
+        self::assertSame(['123456789012345', '555555555555555'], array_column($rows, 'pixel_code'));
+
+        $rows = AccountPixels::fromForm(['pixel_type_id' => ['6'], 'pixel_code' => ['https://example.com/pixel'], 'pixel_id' => ['']], $errors);
+        self::assertSame(['pixel_code'], array_keys($errors));
+        self::assertSame([], $rows);
+    }
 }

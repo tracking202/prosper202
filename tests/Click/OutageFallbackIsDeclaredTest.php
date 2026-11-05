@@ -29,6 +29,7 @@ final class OutageFallbackIsDeclaredTest extends TestCase
         'tracking202/redirect/cl2.php' => 'never reads the database',
         'tracking202/redirect/go.php' => 'sets no click cookie; lp.php and off.php fall back, offrtr.php asks',
         'api/v1/reports/index.php' => 'the API\'s JSON error, under a 503',
+        'api/v1/setup-endpoint.php' => 'the API\'s JSON error, under a 503 (LegacySetup::answer)',
         'api/v2/reports/index.php' => 'the API\'s JSON error, under a 503',
         'api/v2/categories/index.php' => 'the API\'s JSON error, under a 503',
     ];

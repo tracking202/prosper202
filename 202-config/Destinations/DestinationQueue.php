@@ -62,7 +62,9 @@ final class DestinationQueue
      * Queue a new conversion for each of the account's enabled destinations
      * that takes its campaign, in the caller's transaction. Before the
      * upgrade has made the table (code first, upgrade after) nothing is
-     * queued; any other failure fails the transaction, as the outbox's does.
+     * queued; any other failure throws. record() runs this in a savepoint and
+     * rethrows only a lock error or a rollback-only transaction: anything else
+     * is logged and the conversion commits unqueued.
      */
     public function queueConversion(int $userId, int $convId, int $campaignId, int $now): int
     {
@@ -256,7 +258,11 @@ final class DestinationQueue
             return ['cancelled', new SendResult(false, false, null, 'the conversion was replaced by conversion ' . (int) $conv['superseded_by'] . ' before this was sent')];
         }
         $campaigns = $destination['settings']['campaign_ids'] ?? [];
-        if (is_array($campaigns) && $campaigns !== [] && !in_array((int) $conv['campaign_id'], $campaigns, true)) {
+        if (!is_array($campaigns)) {
+            // A filter that is not a list is not read as "every campaign".
+            return ['failed', new SendResult(false, false, null, 'not sent: destination ' . (int) $destination['destination_id'] . '\'s campaign filter cannot be read; save its campaigns again')];
+        }
+        if ($campaigns !== [] && !in_array((int) $conv['campaign_id'], $campaigns, true)) {
             return ['cancelled', new SendResult(false, false, null, 'the conversion\'s campaign is not one this destination sends')];
         }
         $ip = (string) ($conv['ip_address'] ?? '');
@@ -287,8 +293,8 @@ final class DestinationQueue
         $visit = $this->conn->prepareWrite('SELECT c.click_time FROM ' . FirstVisit::of('?') . ' AS c WHERE c.user_id = ?');
         $this->conn->bind($visit, 'ii', [$clickId, $userId]);
         $clickTime = $this->conn->fetchOne($visit)['click_time'] ?? null;
-        [$customerRef, $emails, $phones] = $this->customer($destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
-        $transactionId = trim((string) ($conv['transaction_id'] ?? ''));
+        [$customerId, $emails, $phones] = $this->customer($destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
+        $transactionId = $this->replacedTransactionId($clickId, $convId, $userId) ?? trim((string) ($conv['transaction_id'] ?? ''));
         $facts = new ConversionFacts(
             $convId,
             $clickId,
@@ -298,7 +304,7 @@ final class DestinationQueue
             $this->currency($userId),
             $transactionId !== '' ? $transactionId : 'P202-' . $convId,
             $tokens,
-            $customerRef,
+            $customerId,
             $emails,
             $phones,
             $this->zone($userId),
@@ -315,25 +321,45 @@ final class DestinationQueue
     }
 
     /**
-     * The customer's ref and, when the destination sends user data and the
+     * The transaction id of the first conversion this one replaced (the
+     * campaign pays the latest conversion, or a newer revenue upload), so
+     * the platform counts the sale once. Null when it replaced none.
+     */
+    private function replacedTransactionId(int $clickId, int $convId, int $userId): ?string
+    {
+        // A recompute points every replaced row at the current winner, so the earliest is the sale's first send.
+        $stmt = $this->conn->prepareWrite("SELECT conv_id, transaction_id FROM 202_conversion_logs
+            WHERE click_id = ? AND user_id = ? AND superseded_by = ? AND superseded_reason IN ('replace', 'batch')
+            ORDER BY conv_id LIMIT 1");
+        $this->conn->bind($stmt, 'iii', [$clickId, $userId, $convId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            return null;
+        }
+        $first = trim((string) ($row['transaction_id'] ?? ''));
+
+        return $first !== '' ? $first : 'P202-' . (int) $row['conv_id'];
+    }
+
+    /**
+     * The customer's id and, when the destination sends user data and the
      * account has not stated ad_user_data denied, their hashed email and phone.
      *
      * @param array<string, mixed> $settings
-     * @return array{0: string|null, 1: list<string>, 2: list<string>}
+     * @return array{0: int|null, 1: list<string>, 2: list<string>}
      */
     private function customer(array $settings, int $customerId, int $userId): array
     {
         if ($customerId <= 0) {
             return [null, [], []];
         }
-        $stmt = $this->conn->prepareWrite('SELECT primary_ref, email, phone FROM `' . TableRegistry::CUSTOMERS . '` WHERE customer_id = ? AND user_id = ? LIMIT 1');
+        $stmt = $this->conn->prepareWrite('SELECT email, phone FROM `' . TableRegistry::CUSTOMERS . '` WHERE customer_id = ? AND user_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
         $row = $this->conn->fetchOne($stmt);
         if ($row === null) {
             return [null, [], []];
         }
-        // The customer's ref can be an email address: it goes only where the hashes may.
-        // An allowlist: unstated or granted sends, anything else (denied, a corrupt value) does not.
+        // The id goes only where the hashes may. An allowlist: unstated or granted sends, anything else (denied, a corrupt value) does not.
         $send = ($settings['send_user_data'] ?? false) === true && in_array($settings['consent']['ad_user_data'] ?? null, [null, 'granted'], true);
         if (!$send) {
             return [null, [], []];
@@ -341,7 +367,7 @@ final class DestinationQueue
         $email = PiiHash::email($row['email'] ?? null);
         $phone = PiiHash::phone($row['phone'] ?? null);
 
-        return [(string) $row['primary_ref'], $email === null ? [] : [$email], $phone === null ? [] : [$phone]];
+        return [$customerId, $email === null ? [] : [$email], $phone === null ? [] : [$phone]];
     }
 
     /** @param array<string, mixed> $settings */

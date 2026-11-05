@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification\PayKickstart;
 
-use Prosper202\Click\ClickId;
+use Prosper202\Click\ClickRef;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
@@ -100,6 +100,19 @@ final class PayKickstartAdapter implements ProviderAdapter
             );
         }
         $hash = $request->fields['hash'] ?? null;
+        $affiliateIpn = array_key_exists('tracking_id', $request->fields)
+            || array_key_exists('affiliate_commission_amount', $request->fields);
+        if ((!is_string($hash) || $hash === '') && $affiliateIpn) {
+            // The form 1.9.56's handler took: refused by name, never dropped in silence.
+            throw Refusal::of(
+                OutcomeKind::UNVERIFIED,
+                'This is PayKickstart\'s Affiliate IPN (tracking_id, affiliate_commission_amount), which Prosper202'
+                . ' 1.9.56 recorded. It carries no signature, so anyone who knows this URL could send one, and'
+                . ' Prosper202 no longer records it; nothing was recorded. A vendor sets this URL as the product\'s'
+                . ' IPN, which is signed, with subid=[[subid]] on the checkout link and the IPN secret key stored in'
+                . ' Account > API integrations > PayKickstart.'
+            );
+        }
         if (!is_string($hash) || $hash === '') {
             throw Refusal::of(
                 OutcomeKind::UNVERIFIED,
@@ -228,13 +241,13 @@ final class PayKickstartAdapter implements ProviderAdapter
     }
 
     /** @param array<array-key, mixed> $fields */
-    private static function clickId(array $fields): ?int
+    private static function clickId(array $fields): ?ClickRef
     {
         $raw = self::text($fields, 'custom_subid');
         if ($raw === null) {
             return null;
         }
-        $clickId = ClickId::parse($raw);
+        $clickId = ClickRef::parse($raw);
         if ($clickId === null) {
             throw self::malformed(
                 'custom_subid is "' . self::shown($raw) . '", which is not a click id. The checkout link carries'

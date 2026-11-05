@@ -499,7 +499,7 @@ func destinationSettingFlags(cmd *cobra.Command) {
 	cmd.Flags().String("api-secret-file", "", "File holding the GA4 Measurement Protocol API secret; - reads piped stdin")
 	cmd.Flags().String("event-name", "", "GA4 event name (default purchase)")
 	cmd.Flags().String("client-id-source", "", "Where the GA client id is, one of {values}: click (p202.<click id>) or the c variable your landing page puts the _ga id in")
-	cmd.Flags().String("user-id-source", "", "Send a user_id, one of {values}: customer sends the LTV customer's ref")
+	cmd.Flags().String("user-id-source", "", "Send a user_id, one of {values}: customer sends p202c.<customer id>")
 	cmd.Flags().StringArray("param", nil, "An event parameter as name=field (repeatable), field one of: "+strings.Join(destinationParamFields, ", "))
 	cmd.Flags().StringArray("campaign-id", nil, "Only this campaign's conversions (repeatable); none for every campaign")
 	cmd.Flags().Bool("all-campaigns", false, "Every campaign's conversions (clears --campaign-id)")

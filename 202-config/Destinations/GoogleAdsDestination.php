@@ -447,7 +447,7 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
             $facts->currency,
             $facts->transactionId,
             ['gclid' => self::TEST_GCLID] + $facts->click,
-            $facts->customerRef,
+            $facts->customerId,
             $facts->emailHashes,
             $facts->phoneHashes,
             $facts->zone,
