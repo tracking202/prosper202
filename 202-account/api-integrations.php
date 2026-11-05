@@ -186,7 +186,7 @@ if (!$user_results) {
 $user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'] ?? '';
 $editing_dni_network = false;
-$dniNetworks = getAllDniNetworks($user_row['install_hash']);
+$dniNetworks = dniNetworkList(getAllDniNetworks($user_row['install_hash']));
 // The network list comes from the DNI service; when it cannot be reached the
 // page says so instead of offering an empty select.
 $dniNetworksAvailable = is_array($dniNetworks);
