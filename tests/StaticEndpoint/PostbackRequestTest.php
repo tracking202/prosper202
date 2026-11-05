@@ -150,7 +150,7 @@ final class PostbackRequestTest extends TestCase
         }
         self::assertCount(2, $reads, 'only the merge reads the superglobals: ' . implode(', ', $reads));
         $merge = explode("\n", $source)[$line - 1];
-        self::assertStringContainsString('$request = p202PostbackRequest($_GET, $_POST);', $merge);
+        self::assertStringContainsString('$request = p202PostbackRequest($_GET, $signedQuery ? [] : $_POST);', $merge);
         foreach (['p202RecordWebEvent($db, (int) $mysql[\'click_id\'], $request', 'p202ExtractReversal($request)',
             'p202ExtractTransactionId($request)', 'p202ExtractCustomer($request)', 'p202ExtractItems($request)',
             "p202LinkConversionIdentity(\$db, (int) \$mysql['click_id'], \$request)"] as $call) {

@@ -84,6 +84,10 @@ $cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
 if (!$cvar_sql_row) {
     p202RespondJsonError(404, 'Click data not found');
 }
+
+// Postback authentication: the click's account's token or signature, before anything is written.
+p202RequirePostbackAuth($db, $cvar_sql_row['user_id'] ?? null, 'upx');
+
 // The traffic source and cost, whose pixels announce it: the first visit's,
 // when it is the same account's (p202ClickSourceSql()).
 $source_sql = p202ClickSourceSql($clickId, (int) $cvar_sql_row['user_id']);

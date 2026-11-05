@@ -229,7 +229,10 @@ final class SetupEndpointsInstanceTest extends TestCase
         [$status, $body] = self::call(self::$key, 'GET', '/conversions/postback-code?amount=4.25&subid=' . $click);
         $this->assertSame(200, $status, json_encode($body));
         $url = $body['data']['simple']['postback_url'];
-        $this->assertStringEndsWith('/tracking202/static/gpb.php?amount=4.25&subid=' . $click, $url);
+        // It carries the account's postback token, given to a key that may write conversions.
+        $token = (string) $body['data']['postback_token'];
+        $this->assertMatchesRegularExpression('/\A[0-9a-f]{32}\z/', $token, json_encode($body));
+        $this->assertStringEndsWith('/tracking202/static/gpb.php?amount=4.25&subid=' . $click . '&p202_token=' . $token, $url);
         [$status, , , $answer] = self::fetch($url);
         $this->assertContains($status, [200, 202], $answer);
         $this->assertStringContainsString("<img src='https://ads.example/" . self::$run . ".gif?c=$click'", $answer, 'the account\'s API-made pixel fired');
@@ -337,6 +340,15 @@ final class SetupEndpointsInstanceTest extends TestCase
         try {
             [$status, $answer] = self::call($readKey, 'GET', '/landing-pages/' . self::$ids['simple'] . '/code');
             $this->assertSame(200, $status, json_encode($answer));
+            // The postback code without the token, which records and reverses conversions; nor the token's own route.
+            [$status, $answer] = self::call($readKey, 'GET', '/conversions/postback-code?subid=1');
+            $this->assertSame(200, $status, json_encode($answer));
+            $this->assertNull($answer['data']['postback_token']);
+            $this->assertIsString($answer['data']['postback_token_withheld']);
+            $this->assertStringNotContainsString('p202_token=', (string) json_encode($answer['data']['simple']));
+            [$status, $answer] = self::call($readKey, 'GET', '/conversions/postback-auth');
+            $this->assertSame(403, $status, json_encode($answer));
+            $this->assertStringContainsString("requires 'conversions:write'", (string) $answer['message']);
             [$status, $answer] = self::call($readKey, 'POST', '/ppc-networks/' . self::$ids['source'] . '/variables', ['name' => 'x', 'parameter' => 'x', 'placeholder' => 'x']);
             $this->assertSame(403, $status, json_encode($answer));
             $this->assertStringContainsString("requires 'ppc-networks:write'", (string) $answer['message']);

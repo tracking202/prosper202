@@ -44,6 +44,7 @@ final class GlobalPostbackFormPostIntegrationTest extends TestCase
         }
         self::cleanUp();
         self::user(self::USER);
+        self::postbackAuthOff(self::USER);
         self::$campaign = self::insert('INSERT INTO 202_aff_campaigns SET user_id = ' . self::USER
             . ", aff_network_id = 0, aff_campaign_name = 'Form post', aff_campaign_url = 'https://shop.example',"
             . ' aff_campaign_payout = 3.00, aff_campaign_foreign_payout = 3.00, aff_campaign_time = 0,'
@@ -85,7 +86,8 @@ final class GlobalPostbackFormPostIntegrationTest extends TestCase
                 self::q("DELETE FROM $table WHERE click_id = $click");
             }
         }
-        foreach (['202_aff_campaigns', '202_revenue_events', '202_dirty_hours', '202_users'] as $table) {
+        $tables = ['202_aff_campaigns', '202_revenue_events', '202_dirty_hours', '202_postback_auth', '202_users'];
+        foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE user_id = " . self::USER);
         }
     }

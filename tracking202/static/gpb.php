@@ -22,7 +22,9 @@ $mysql['cid'] = 0;
 $mysql['click_id'] = 0;
 
 // Query string, then a form-encoded POST body (as paid 1.9.56 read): the query wins a name both send.
-$request = p202PostbackRequest($_GET, $_POST);
+// A signed request reads its query alone: p202_sig signs nothing else.
+$signedQuery = \Prosper202\Conversion\PostbackAuth\PresentedCredentials::fromQueryString((string) ($_SERVER['QUERY_STRING'] ?? ''))->signature !== null;
+$request = p202PostbackRequest($_GET, $signedQuery ? [] : $_POST);
 
 // The click: an exact positive integer from subid (or sid), or a 404.
 // is_numeric() plus a cast used to turn "123.9" into click 123, and a
@@ -79,6 +81,10 @@ $cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
 if (!$cvar_sql_row || ($signedPurLink !== null && (int) $cvar_sql_row['user_id'] !== $signedPurLink['user_id'])) {
 	p202RespondJsonError(404, 'Click data not found');
 }
+
+// Postback authentication: the click's account's token or signature, before anything is written.
+p202RequirePostbackAuth($db, $cvar_sql_row['user_id'] ?? null, 'gpb');
+
 // The traffic source and cost, whose pixels announce it: the first visit's,
 // when it is the same account's (p202ClickSourceSql()).
 $source_sql = p202ClickSourceSql($parsedClickId, (int) $cvar_sql_row['user_id']);

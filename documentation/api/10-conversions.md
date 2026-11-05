@@ -16,6 +16,9 @@ List, inspect, manually create, and delete conversions.
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
 | `GET` | `/conversions/postback-code` | The conversion pixels and postback URLs Setup › Postback / Pixel shows ([Setup API](27-setup.md)) |
+| `GET` | `/conversions/postback-auth` | The mode, the postback token those URLs carry, the signing secret, and how to sign ([Setup API](27-setup.md#postback-authentication)) |
+| `PUT` | `/conversions/postback-auth` | Choose what postbacks and pixels must carry: `off`, `token` (token or signature) or `signed` (signatures only; pixels refused) |
+| `POST` | `/conversions/postback-auth/rotate` | Replace the token or the signing secret, the old one working for a grace period |
 
 Marking or deleting subids in bulk, resetting a campaign's subids and
 uploading a revenue report — the UI's Update section — are in the
@@ -302,10 +305,11 @@ The same holds for the pixels and postbacks, Update Subids, revenue uploads,
 goals and app installs, and `GET /clicks/{id}/conversions` shows the latest
 visit's value.
 
-The per-campaign postback (`pb.php?acip=…&subid=…`, with or without `event=`)
-accepts a click any of whose visits was on the campaign it names, when that
-campaign is the click's account's, and credits the latest visit: the network
-posts back for the offer it sold, which may be on any visit of the click.
+The per-campaign postback (`pb.php?acip=…&subid=…`, with or without `event=`;
+also `p202_token`, or a signature, when the account requires one) accepts a
+click any of whose visits was on the campaign it names, when that campaign
+is the click's account's, and credits the latest visit: the network posts
+back for the offer it sold, which may be on any visit of the click.
 Before 1.9.79 only the campaign of the visit the database read first was
 accepted. Any other click is answered `404` "Unknown subid for this
 campaign", as before.

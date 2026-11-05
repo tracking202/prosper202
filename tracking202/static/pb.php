@@ -34,6 +34,9 @@ if ($aff_campaign_row === null) {
 p202ApplyOwnerPrivacy($aff_campaign_row['user_id'] ?? null);
 \Prosper202\InboundLog\RequestLog::current()?->account($aff_campaign_row['user_id'] ?? null);
 
+// Postback authentication: the campaign's account's token or signature, before anything is written.
+p202RequirePostbackAuth($db, $aff_campaign_row['user_id'] ?? null, 'pb');
+
 // An exact positive integer, or nothing: "123.9" must not become click 123.
 $click_id = p202ParseClickId($_GET['subid'] ?? null);
 // A PurLink SubID must name this postback's campaign. The signed

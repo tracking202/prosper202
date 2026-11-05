@@ -257,6 +257,57 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		p202_account_redirect('202-account/api-integrations.php');
 	}
 
+	// Postback authentication (Prosper202\Conversion\PostbackAuth): the mode,
+	// and rotating the token or the signing secret.
+	$pbAction = $_POST['postback_auth_action'] ?? null;
+	if (in_array($pbAction, ['mode', 'rotate'], true)) {
+		$pbStore = new \Prosper202\Conversion\PostbackAuth\PostbackAuthStore(new \Prosper202\Database\Connection($db));
+		$pbUser = (int) $_SESSION['user_id'];
+		$pbHours = ['0' => 0, '24' => 24, '168' => 168, '720' => 720];
+		$pbGrace = $_POST['grace_hours'] ?? null;
+		$pbMode = is_string($_POST['mode'] ?? null) ? \Prosper202\Conversion\PostbackAuth\PostbackAuthMode::tryFrom($_POST['mode']) : null;
+		$pbCredential = is_string($_POST['credential'] ?? null)
+			? \Prosper202\Conversion\PostbackAuth\PostbackCredential::tryFrom($_POST['credential']) : null;
+		if ($pbAction === 'mode' && $pbMode === null) {
+			p202_account_flash('bad', 'Choose what your postbacks and pixels must carry.');
+			p202_account_redirect('202-account/api-integrations.php#postback-auth');
+		}
+		if ($pbAction === 'rotate' && ($pbCredential === null || !(is_string($pbGrace) && isset($pbHours[$pbGrace])))) {
+			p202_account_flash('bad', 'Choose how long the old one keeps working: not at all, a day, a week or 30 days.');
+			p202_account_redirect('202-account/api-integrations.php#postback-auth');
+		}
+		try {
+			$pbSaved = null;
+			if ($pbAction === 'rotate' && $pbCredential !== null && is_string($pbGrace)) {
+				$pbSaved = $pbStore->rotate($pbUser, $pbCredential, $pbHours[$pbGrace] * 3600, time());
+				$pbWhat = $pbCredential === \Prosper202\Conversion\PostbackAuth\PostbackCredential::TOKEN ? 'postback token' : 'signing secret';
+				// An old one that could not be read was not kept, whatever the grace.
+				$pbKept = $pbCredential === \Prosper202\Conversion\PostbackAuth\PostbackCredential::TOKEN
+					? $pbSaved->previousTokenValidUntil(time()) : $pbSaved->previousSecretValidUntil(time());
+				p202_account_flash('ok', $pbKept === null
+					? 'Your ' . $pbWhat . ' was replaced; the old one stopped working.'
+						. ($pbWhat === 'postback token' ? ' Copy your postback URLs and pixels again from Setup › Postback / Pixel.' : ' Give the new one to everything that signs.')
+					: 'Your ' . $pbWhat . ' was replaced; the old one keeps working for ' . ($pbHours[$pbGrace] / 24)
+						. ' day(s) while you move to the new one.');
+			} elseif ($pbMode !== null) {
+				// The mode and its credentials are saved together or not at all.
+				$pbSaved = $pbStore->setMode($pbUser, $pbMode, time());
+				p202_account_flash('ok', match ($pbMode) {
+					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Every postback and pixel is accepted again, with or without credentials.',
+					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN => 'Postbacks and pixels without your token or a signature are now refused.',
+					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED => 'Only signed postbacks are accepted now: the token alone is refused, and so is every pixel.',
+				});
+			}
+			if ($pbSaved?->recoveryNotice() !== null) {
+				p202_account_flash('bad', (string) $pbSaved->recoveryNotice());
+			}
+		} catch (Throwable $pbError) {
+			error_log('api-integrations.php: postback authentication: ' . $pbError->getMessage());
+			p202_account_flash('bad', 'This could not be saved just now; nothing changed. Try again.');
+		}
+		p202_account_redirect('202-account/api-integrations.php#postback-auth');
+	}
+
 	// The four key cards: one secret each; a field left empty keeps the saved one.
 	$keyCards = [
 		'change_cb_key' => ['cb_key', 'cb_key',
@@ -790,6 +841,15 @@ $keyIntegrations = [
 ];
 $cb_crypto_ok = function_exists('openssl_decrypt');
 
+// The account's postback token, minted on first view as every place that
+// hands out a postback URL mints it.
+$pbAuth = null;
+try {
+	$pbAuth = (new \Prosper202\Conversion\PostbackAuth\PostbackAuthStore(new \Prosper202\Database\Connection($db)))
+		->ensureCredentials((int) $_SESSION['user_id'], time());
+} catch (Throwable $pbReadError) {
+	error_log('api-integrations.php: the postback token could not be read: ' . $pbReadError->getMessage());
+}
 $ipqsSaved = SavedSecret::isSaved($user_row['ipqs_api_key'] ?? null);
 $ipqsNote = p202_ipqs_card_note($db, (int) $_SESSION['user_id'], $ipqsSaved);
 
@@ -807,6 +867,92 @@ template_top('API Integrations');
 <?php echo p202_account_render_flashes($flashExtra); ?>
 
 <div class="row g-4">
+	<div class="col-12">
+		<section class="p202-panel" id="postback-auth">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Postback authentication</h2>
+				<?php if ($pbAuth === null) { ?>
+					<span class="p202-pill p202-pill--warn">Unreadable</span>
+				<?php } elseif ($pbAuth->mode === \Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF) { ?>
+					<span class="p202-pill p202-pill--warn">Not required</span>
+				<?php } elseif ($pbAuth->mode === \Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN) { ?>
+					<span class="p202-pill p202-pill--good">Token or signature</span>
+				<?php } else { ?>
+					<span class="p202-pill p202-pill--good">Signed only</span>
+				<?php } ?>
+			</div>
+			<div class="p202-panel__body">
+				<?php if ($pbAuth === null) { ?>
+					<p class="text-danger">Your postback settings could not be read just now. Reload the page; if it persists, see the server's error log.</p>
+				<?php } else {
+					if ($pbAuth->recoveryNotice() !== null) { ?>
+					<div class="alert alert-warning" role="alert"><?php echo $e((string) $pbAuth->recoveryNotice()); ?></div>
+					<?php }
+					$pbNow = time();
+					$pbModes = [
+						'off' => ['Not required', 'Every postback and pixel is accepted, as before 1.9.80, with or without the token.'],
+						'token' => ['Token or signature', 'A postback or pixel must carry the token (as the URLs in Setup › Postback / Pixel do) or a signature.'],
+						'signed' => ['Signed postbacks only', 'Only a request signed with the signing secret is accepted; the token alone is refused. Pixels cannot sign, so every pixel is refused.'],
+					];
+					$pbGraceSelect = static function (string $id): string {
+						return '<select class="form-select" id="' . $id . '" name="grace_hours">'
+							. '<option value="168" selected>for 7 days</option><option value="24">for 1 day</option>'
+							. '<option value="720">for 30 days</option><option value="0">not at all (it leaked)</option></select>';
+					}; ?>
+					<p class="text-secondary">Click ids count up, so anyone who can guess one could record or reverse a
+						conversion with a bare postback URL. Your postback URLs and pixels carry this account's token as
+						<code>p202_token</code>. A sender that can compute an HMAC can instead sign each request with
+						<code>p202_ts</code> and <code>p202_sig</code>, keyed with the signing secret below, which no URL ever
+						carries. Unless authentication is off, a wrong token or signature is refused.</p>
+					<p class="text-secondary">A pixel runs in the visitor's browser, so its token can be read on the
+						advertiser's page: it stops guessing, not someone who saw the page. A pixel cannot sign, so
+						<strong>Signed postbacks only</strong> refuses every pixel.</p>
+					<form method="post" action="<?php echo $e($self . '#postback-auth'); ?>" class="mb-4"
+						data-p202-confirm="<?php echo $e('Change what your postbacks and pixels must carry? Anything your networks call that does not carry it will be refused from now on, and nothing recorded.'); ?>">
+						<?php echo p202_account_token_field(); ?>
+						<input type="hidden" name="postback_auth_action" value="mode">
+						<fieldset>
+							<legend class="form-label">Postbacks and pixels must carry</legend>
+							<?php foreach ($pbModes as $pbValue => [$pbLabel, $pbHelp]) { ?>
+								<div class="form-check">
+									<input class="form-check-input" type="radio" name="mode" id="pb_mode_<?php echo $e($pbValue); ?>"
+										value="<?php echo $e($pbValue); ?>"<?php echo $pbAuth->mode->value === $pbValue ? ' checked' : ''; ?>>
+									<label class="form-check-label" for="pb_mode_<?php echo $e($pbValue); ?>"><?php echo $e($pbLabel); ?>
+										<span class="form-text d-block"><?php echo $e($pbHelp); ?></span></label>
+								</div>
+							<?php } ?>
+						</fieldset>
+						<button class="btn btn-secondary mt-2" type="submit">Save</button>
+					</form>
+					<?php foreach ([
+						'token' => ['Token', 'p202_token, in every postback URL and pixel', (string) $pbAuth->token, $pbAuth->tokenCreatedAt, $pbAuth->previousTokenValidUntil($pbNow), 'Copy the URLs that carry it from <a href="' . $e($base . 'tracking202/setup/get_postback.php') . '">Setup › Postback / Pixel</a>.'],
+						'signing_secret' => ['Signing secret', 'the key of p202_sig; never put it in a URL', (string) $pbAuth->secret, $pbAuth->secretCreatedAt, $pbAuth->previousSecretValidUntil($pbNow), 'Give it only to a server that signs its postbacks.'],
+					] as $pbCred => [$pbTitle, $pbWhat, $pbValue, $pbMade, $pbPrevious, $pbWhere]) { ?>
+						<div class="mb-4">
+							<p class="mb-1"><strong><?php echo $e($pbTitle); ?></strong> <span class="text-secondary">(<?php echo $e($pbWhat); ?>)</span></p>
+							<p class="mb-1"><code data-postback-<?php echo $e(str_replace('_', '-', $pbCred)); ?>><?php echo $e($pbValue); ?></code>
+								<?php if ($pbMade !== null) { ?><span class="text-secondary">made <?php echo $e(date('M j, Y g:i a', $pbMade)); ?></span><?php } ?></p>
+							<?php if ($pbPrevious !== null) { ?>
+								<p class="mb-1"><span class="text-secondary">The one it replaced keeps working until</span> <?php echo $e(date('M j, Y g:i a', $pbPrevious)); ?>.</p>
+							<?php } ?>
+							<p class="mb-2"><?php echo $pbWhere; ?></p>
+							<form method="post" action="<?php echo $e($self . '#postback-auth'); ?>"
+								data-p202-confirm="<?php echo $e('Replace your ' . strtolower($pbTitle) . '? Everything that uses the old one must move to the new one before it stops working.'); ?>">
+								<?php echo p202_account_token_field(); ?>
+								<input type="hidden" name="postback_auth_action" value="rotate">
+								<input type="hidden" name="credential" value="<?php echo $e($pbCred); ?>">
+								<label class="form-label" for="grace_<?php echo $e($pbCred); ?>">The old one keeps working</label>
+								<div class="input-group" style="max-width: 28rem">
+									<?php echo $pbGraceSelect('grace_' . $pbCred); ?>
+									<button class="btn btn-secondary" type="submit">Rotate</button>
+								</div>
+							</form>
+						</div>
+					<?php } ?>
+				<?php } ?>
+			</div>
+		</section>
+	</div>
 	<div class="col-12">
 		<section class="p202-panel" id="dni">
 			<div class="p202-panel__head">

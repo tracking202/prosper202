@@ -144,6 +144,8 @@ if [ -z "$FCA" ] || [ -z "$FRT" ] || [ -z "$FTA" ] || [ -z "$FPA" ] || [ -z "$PX
     exit 2
 fi
 # Both accounts' links are clicked (off.php names the other's campaign).
+# shellcheck source=tests/live/guard.sh
+. "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
 # shellcheck source=tests/live/privacy.sh
 . "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
 p202_track_in_full "$BASE" "$P202_API_KEY" "$ME" "$OTHER" || exit 2
@@ -251,6 +253,8 @@ get "/tracking202/static/record_simple.php?lpip=$LPS&t202kw=cpr" >/dev/null
 eq "$(since)" "$((before + 1))" "while lpip=$LPS records its click"
 id=$(grep -oE 'var subid =[^;]*' "$OUT/page" | grep -oE '[0-9]+' | head -1)
 ACIP=$(public 202_aff_campaigns aff_campaign_id_public "aff_campaign_id=$CA")
+# The postbacks and pixels below carry no token: their accounts accept that (guard.sh).
+Q "$(p202_postback_auth_off_sql)"
 curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=${ACIP}abc&subid=${id:-0}"
 eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '${id:-0}'")" "0" "pb.php?acip=${ACIP}abc names no campaign"
 curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=${id:-0}"

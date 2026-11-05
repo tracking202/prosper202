@@ -34,3 +34,15 @@ if you really mean it:
 MSG
     return 1
 }
+
+# Postback authentication (1.9.80): an account made on 1.9.80 or later refuses
+# a postback or pixel that carries neither its token nor a signature (403;
+# gpx.php sends its image anyway and records nothing). A pass that sends bare
+# ones to test something else says so first: this prints the statement that
+# puts every account in the scratch database in mode off, for the pass's own
+# mysql. Run it after the pass seeds its accounts.
+p202_postback_auth_off_sql() {
+    printf '%s\n' "INSERT INTO 202_postback_auth (user_id, auth_mode, updated_at)" \
+        "SELECT user_id, 'off', UNIX_TIMESTAMP() FROM 202_users" \
+        "ON DUPLICATE KEY UPDATE auth_mode = 'off', updated_at = UNIX_TIMESTAMP();"
+}

@@ -491,11 +491,25 @@ try {
         // /conversions routes, whose GET /conversions/{id} would otherwise
         // answer GET /conversions/postback-code. SetupRoutesPermissionTest
         // holds all of this.
-        $router->group('', function (Router $r) use ($crud, $queryParams) {
+        $router->group('', function (Router $r) use ($crud, $queryParams, $auth) {
             $code = \Api\V3\Controllers\SetupCodeController::class;
             $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode(PathId::of($ctx), $queryParams));
-            $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams));
+            // The postback token rides in the URLs only for a key that may write conversions.
+            $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams, null, $auth->hasScope('conversions:write')));
         }, [$setupSection]);
+        // Postback authentication: what Account › API Integrations asks for,
+        // as the page does. The read too needs conversions:write: it hands out
+        // the token and the signing secret, which record and reverse conversions.
+        $router->group('/conversions/postback-auth', function (Router $r) use ($crud, $idempotent, $payload) {
+            $cls = \Api\V3\Controllers\PostbackAuthController::class;
+            $r->get('', fn() => $crud($cls)->show());
+            $r->put('', fn() => $crud($cls)->update($payload));
+            $r->post('/rotate', fn() => $crud($cls)->withCredentials($idempotent('conversions/postback-auth/rotate', $payload,
+                fn() => $cls::withoutCredentials($crud($cls)->rotate($payload)))));
+        }, [static function () use ($auth, $db): void {
+            $auth->requireScope('conversions:write');
+            $auth->requirePermission($db, 'access_to_api_integrations');
+        }]);
         $router->group('/ppc-networks/{id}/variables', function (Router $r) use ($crud, $idempotent, $payload) {
             $vars = \Api\V3\Controllers\PpcNetworkVariablesController::class;
             $r->get('', fn($ctx) => $crud($vars)->list(PathId::of($ctx)));

@@ -304,7 +304,12 @@ say "5. compare the rows both installs seed"
 #   202_licence_answers      the licence service's answer for the key the
 #                            installer confirmed (checked below); the
 #                            $ORIGIN_VERSION installer kept none
-ROW_EXEMPT=' 202_users 202_api_keys 202_deployment_secrets 202_users_pref 202_attribution_models 202_attribution_backfill 202_reclick_backfill 202_licence_answers '
+#   202_postback_auth        an account from before 1.9.80 starts with its
+#                            postback token not required (a row of `off`, so
+#                            its networks' URLs keep converting); a new
+#                            account has no row and reads as `token` (checked
+#                            below)
+ROW_EXEMPT=' 202_users 202_api_keys 202_deployment_secrets 202_users_pref 202_attribution_models 202_attribution_backfill 202_reclick_backfill 202_licence_answers 202_postback_auth '
 ROWS_COMPARED=0
 ROW_DIFFS=()
 while IFS= read -r table; do
@@ -347,5 +352,10 @@ eq "$(mysql_q -N "$DB_UP" -e "$MODELS")" "$(mysql_q -N "$DB_FRESH" -e "$MODELS")
 PRIVACY="SELECT GROUP_CONCAT(user_pref_privacy ORDER BY user_id) FROM 202_users_pref"
 eq "$(mysql_q -N "$DB_UP" -e "$PRIVACY")" "disabled" "the $ORIGIN_VERSION account keeps its privacy setting through the upgrade"
 eq "$(mysql_q -N "$DB_FRESH" -e "$PRIVACY")" "eu" "a fresh install's account starts at privacy eu"
+POSTBACK_AUTH="SELECT CONCAT_WS('/', COUNT(*), COALESCE(SUM(auth_mode = 'off' AND token_sealed IS NULL AND secret_sealed IS NULL), 0)) FROM 202_postback_auth"
+eq "$(mysql_q -N "$DB_UP" -e "$POSTBACK_AUTH")" "1/1" \
+    "the $ORIGIN_VERSION account starts with its postback token not required, and no token or secret minted yet"
+eq "$(mysql_q -N "$DB_FRESH" -e "$POSTBACK_AUTH")" "0/0" \
+    "a fresh install's account has no postback auth row, so it requires its token"
 
 finish

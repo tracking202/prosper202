@@ -306,7 +306,9 @@ type postbackCode struct {
 	Data struct {
 		Scheme     string `json:"scheme"`
 		CampaignID *int   `json:"campaign_id"`
-		Simple     struct {
+		// Why the URLs leave out p202_token: a key without conversions:write.
+		TokenWithheld string `json:"postback_token_withheld"`
+		Simple        struct {
 			Pixel       string `json:"pixel"`
 			PostbackURL string `json:"postback_url"`
 		} `json:"simple"`
@@ -427,6 +429,7 @@ var conversionPostbackURLCmd = &cobra.Command{
 			fmt.Fprintln(os.Stderr, "  cid= is empty: rerun with --campaign <id> for the campaign this postback reports under.")
 		}
 		fmt.Fprintln(os.Stderr, "  If the network only supports sid, change ?subid= to ?sid=.")
+		noteWithheldToken(code)
 		fmt.Println(url)
 		return nil
 	},
@@ -469,6 +472,7 @@ var conversionPixelCmd = &cobra.Command{
 			render(data)
 			return nil
 		}
+		noteWithheldToken(code)
 		switch {
 		case kind == "simple":
 			fmt.Fprintln(os.Stderr, "Global tracking pixel (put it on the conversion or thank-you page):")
@@ -485,6 +489,14 @@ var conversionPixelCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// noteWithheldToken says on stderr when the server left the postback token
+// out of the URLs because this key may not write conversions.
+func noteWithheldToken(code *postbackCode) {
+	if code.Data.TokenWithheld != "" {
+		fmt.Fprintln(os.Stderr, "  "+code.Data.TokenWithheld)
+	}
 }
 
 func init() {

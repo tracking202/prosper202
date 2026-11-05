@@ -693,6 +693,60 @@ if (!function_exists('_upgrade_reclick_backfill_mark')) {
     }
 }
 
+if (!function_exists('_upgrade_postback_auth_table')) {
+    /**
+     * 202_postback_auth (Prosper202\Conversion\PostbackAuth), made with a
+     * row for every account already here, mode `off`: no row reads as
+     * `token` (an account made from 1.9.80 on), and an account whose
+     * networks call its postbacks without a token must not lose them at the
+     * upgrade. Built under another name and renamed into place, so the table
+     * exists only with its rows: a run that stopped half way left no table,
+     * and the next run starts again. A table already there is left to the
+     * reconciler, with every row and choice in it; this runs on whichever
+     * step first meets the table (the 1.9.75 step reconciles every
+     * conversion table, on an install older than 1.9.76). A database with
+     * no 202_users has no account to keep converting, and gets the table
+     * without rows.
+     */
+    function _upgrade_postback_auth_table(\Prosper202\Database\Schema\SchemaDefinition $definition): bool
+    {
+        $table = _upgrade_query("SHOW TABLES LIKE '202\\_postback\\_auth'");
+        if (!$table instanceof \mysqli_result) {
+            error_log('Prosper202 upgrade: could not read whether 202_postback_auth exists; it will be made on the next run.');
+            return false;
+        }
+        $exists = $table->num_rows > 0;
+        $table->free();
+        if ($exists) {
+            return true;
+        }
+        $users = _upgrade_query("SHOW TABLES LIKE '202\\_users'");
+        if (!$users instanceof \mysqli_result) {
+            error_log('Prosper202 upgrade: could not read whether 202_users exists; 202_postback_auth will be made on the next run.');
+            return false;
+        }
+        $hasAccounts = $users->num_rows > 0;
+        $users->free();
+        $steps = [
+            'DROP TABLE IF EXISTS `202_postback_auth_building`',
+            str_replace('`202_postback_auth`', '`202_postback_auth_building`', $definition->createStatement),
+        ];
+        if ($hasAccounts) {
+            $steps[] = 'INSERT INTO `202_postback_auth_building` (user_id, auth_mode, updated_at)'
+                . " SELECT u.user_id, 'off', UNIX_TIMESTAMP() FROM `202_users` AS u";
+        }
+        $steps[] = 'RENAME TABLE `202_postback_auth_building` TO `202_postback_auth`';
+        foreach ($steps as $sql) {
+            if (_upgrade_query($sql) === false) {
+                error_log('Prosper202 upgrade: failed to make 202_postback_auth with a row for each account; the next run retries.');
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_same_ip_fallback')) {
     /**
      * 202_users_pref.user_pref_same_ip_fallback (Prosper202\Conversion\
@@ -853,6 +907,18 @@ if (!function_exists('_upgrade_measurement_tables')) {
         foreach ($definitions as $definition) {
             if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::USERS_PREF) {
                 if (!_upgrade_same_ip_fallback()) {
+                    return false;
+                }
+                break;
+            }
+        }
+
+        // Postback authentication's table arrives with a row for each account
+        // already there, before the reconciler would make it empty
+        // (_upgrade_postback_auth_table()).
+        foreach ($definitions as $definition) {
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::POSTBACK_AUTH) {
+                if (!_upgrade_postback_auth_table($definition)) {
                     return false;
                 }
                 break;
@@ -4863,6 +4929,12 @@ class UPGRADE
             // What was queued before consent existed is kept and never goes out
             // (_upgrade_withhold_unconsented_analytics(), run by the reconcile).
             //
+            // Postback authentication (Prosper202\Conversion\PostbackAuth):
+            // 202_postback_auth, made with a row for every account already
+            // here that leaves the requirement off, so the postbacks and
+            // pixels its networks call now keep converting
+            // (_upgrade_postback_auth_table()).
+            //
             // A paid 1.9.56 install that already reached 1.9.79 passed the
             // 1.9.56 step before it carried the paid baseline, so the baseline
             // runs here too (a no-op on a free install or one already fixed).
@@ -4885,6 +4957,7 @@ class UPGRADE
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
+                \Prosper202\Database\Tables\ConversionTables::postbackAuth(),
                 // The ad platforms conversions are sent to, and their delivery
                 // log (Prosper202\Destinations).
                 \Prosper202\Database\Tables\ConversionTables::destinations(),

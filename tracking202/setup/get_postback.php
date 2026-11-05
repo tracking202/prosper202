@@ -31,11 +31,22 @@ $linkBase = p202TrackingBaseForResponse($storedDomain);
 $secure = str_starts_with($linkBase, 'https://');
 $campaignOptions = p202_setup_campaign_options($db, (int) $_SESSION['user_id']);
 
+// The account's postback token, minted the first time a URL is handed out:
+// every URL carries it (Prosper202\Conversion\PostbackAuth).
+$postbackAuth = null;
+try {
+	$postbackAuth = (new \Prosper202\Conversion\PostbackAuth\PostbackAuthStore(new \Prosper202\Database\Connection($db)))
+		->ensureCredentials((int) $_SESSION['user_id'], time());
+} catch (\Throwable $postbackAuthError) {
+	error_log('get_postback.php: the postback token could not be read: ' . $postbackAuthError->getMessage());
+}
+$postbackToken = (string) ($postbackAuth->token ?? '');
+
 /** The snippets for the defaults: no amount, no campaign, no sub id. */
 $root = $linkBase . 'tracking202/static/';
 // Prosper202\Setup\PostbackCode builds them, as it does for the REST API
 // (GET /conversions/postback-code); the script rebuilds the same strings.
-$built = \Prosper202\Setup\PostbackCode::snippets($root, '', '', '');
+$built = \Prosper202\Setup\PostbackCode::snippets($root, '', '', '', $postbackToken);
 $snippets = [
 	'simple_pixel' => $built['simple']['pixel'],
 	'simple_postback' => $built['simple']['postback_url'],
@@ -56,7 +67,21 @@ template_top('Pixel And Postback URLs');
 	</div>
 </div>
 
-<div class="row g-4" data-postback-builder data-root-path="<?php echo p202_setup_e(substr($root, (int) strpos($root, '://') + 3)); ?>">
+<?php if ($postbackAuth === null) { ?>
+<div class="alert alert-danger" role="alert">Your postback token could not be read just now, so these URLs carry none, and an account that requires one refuses them. Reload the page; if it persists, see the server's error log.</div>
+<?php } else { ?>
+<?php if ($postbackAuth->recoveryNotice() !== null) { ?>
+<div class="alert alert-warning" role="alert"><?php echo p202_setup_e((string) $postbackAuth->recoveryNotice()); ?></div>
+<?php } ?>
+<p class="p202-decided mb-3"><i class="bi bi-shield-lock"></i> <?php echo match ($postbackAuth->mode) {
+	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN => 'Your account accepts only postbacks and pixels that carry its token (<code>p202_token</code>), as these URLs do, or a signature.',
+	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Your account also accepts postbacks and pixels without a token. These URLs carry it; once your networks use them, require it.',
+	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED => '<strong>Your account accepts only signed postbacks</strong>, so these URLs are refused as they are: the token alone is not enough, and the pixels below cannot sign, so every pixel is refused. Sign each postback with your signing secret, or accept the token again.',
+}; ?>
+	<a href="<?php echo p202_setup_e($base . '202-account/api-integrations.php#postback-auth'); ?>">Postback authentication settings</a></p>
+<?php } ?>
+
+<div class="row g-4" data-postback-builder data-postback-token="<?php echo p202_setup_e($postbackToken); ?>" data-root-path="<?php echo p202_setup_e(substr($root, (int) strpos($root, '://') + 3)); ?>">
 	<div class="col-12 col-lg-5">
 		<section class="p202-panel">
 			<div class="p202-panel__head">

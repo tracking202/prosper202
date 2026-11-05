@@ -124,6 +124,8 @@ seed_click $RT "$CAMP_R" 7.50 "$PPC"
 value()  { Q "SELECT CONCAT(click_lead, '/', click_payout) FROM 202_clicks WHERE click_id=$1"; }
 rows()   { Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$1 AND deleted=0"; }
 col()    { Q "SELECT GROUP_CONCAT(COALESCE($2,'-') ORDER BY conv_id SEPARATOR ',') FROM 202_conversion_logs WHERE click_id=$1"; }
+# The postbacks and pixels below carry no token: their accounts accept that (guard.sh).
+Q "$(p202_postback_auth_off_sql)"
 gpb()    { curl -sS -o "$OUT/gpb.out" -w '%{http_code}' "$BASE/tracking202/static/gpb.php?$1"; }
 # The postbacks are queued; the notification worker sends them (66H8).
 worker() { "${P202_PHP:-php}" 202-cronjobs/app-installs.php > "$OUT/worker.out" 2>&1; }

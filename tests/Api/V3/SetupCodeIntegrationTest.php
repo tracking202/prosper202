@@ -54,7 +54,7 @@ final class SetupCodeIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         foreach ([self::USER, self::OTHER] as $u) {
-            foreach (['202_landing_pages', '202_aff_campaigns', '202_aff_networks', '202_rotators'] as $table) {
+            foreach (['202_landing_pages', '202_aff_campaigns', '202_aff_networks', '202_rotators', '202_postback_auth'] as $table) {
                 self::$db->query("DELETE FROM $table WHERE user_id = $u");
             }
         }
@@ -262,23 +262,44 @@ final class SetupCodeIntegrationTest extends TestCase
 
     public function testThePostbackCodeIsThePagesForTheValuesGiven(): void
     {
-        $data = $this->controller()->postbackCode([], self::server())['data'];
+        $data = $this->controller()->postbackCode([], self::server(), true)['data'];
         $root = 'https://track.example.com/tracking202/static/';
         self::assertSame(['https', $root, '', '', null], [$data['scheme'], $data['base_url'], $data['amount'], $data['subid'], $data['campaign_id']]);
-        $defaults = PostbackCode::snippets($root, '', '', '');
+        $token = $data['postback_token'];
+        self::assertMatchesRegularExpression('/\A[0-9a-f]{32}\z/', $token, 'the account\'s token, minted for the URLs');
+        self::assertSame($token, $this->controller()->postbackCode([], self::server(), true)['data']['postback_token'], 'and kept');
+        self::assertNull($data['postback_token_withheld']);
+        self::assertSame('token', $data['postback_auth_mode'], 'an account made from 1.9.80 on needs the token or a signature');
+        $defaults = PostbackCode::snippets($root, '', '', '', $token);
         foreach (['simple', 'advanced', 'universal'] as $type) {
             self::assertSame($defaults[$type], $data[$type]);
         }
 
         $campaign = $this->ids['campaign_mine'];
-        $data = $this->controller()->postbackCode(['amount' => '{payout}', 'subid' => '#s2#', 'campaign_id' => (string) $campaign, 'scheme' => 'http'], self::server())['data'];
+        $data = $this->controller()->postbackCode(['amount' => '{payout}', 'subid' => '#s2#', 'campaign_id' => (string) $campaign, 'scheme' => 'http'], self::server(), true)['data'];
         $root = 'http://track.example.com/tracking202/static/';
-        self::assertSame($root . "gpb.php?amount={payout}&cid=$campaign&subid=#s2#", $data['advanced']['postback_url']);
-        self::assertSame($root . 'gpb.php?amount={payout}&subid=#s2#', $data['simple']['postback_url']);
+        self::assertSame($root . "gpb.php?amount={payout}&cid=$campaign&subid=#s2#&p202_token=$token", $data['advanced']['postback_url']);
+        self::assertSame($root . "gpb.php?amount={payout}&subid=#s2#&p202_token=$token", $data['simple']['postback_url']);
         self::assertSame($campaign, $data['campaign_id']);
 
         self::setTrackingDomain('https://secure.example.com/');
         self::assertSame('https://secure.example.com/tracking202/static/', $this->controller()->postbackCode([], self::server(false))['data']['base_url'], 'a domain stored with its scheme keeps it');
+    }
+
+    public function testACallerThatMayNotWriteConversionsGetsTheUrlsWithoutTheToken(): void
+    {
+        $data = $this->controller()->postbackCode(['subid' => '{aff_sub}'], self::server())['data'];
+        self::assertNull($data['postback_token']);
+        self::assertSame(SetupCodeController::TOKEN_WITHHELD, $data['postback_token_withheld']);
+        self::assertSame('token', $data['postback_auth_mode']);
+        self::assertSame('https://track.example.com/tracking202/static/gpb.php?amount=&subid={aff_sub}', $data['simple']['postback_url']);
+        self::assertStringNotContainsString('p202_token=', (string) json_encode($data));
+        self::assertNull(self::row('SELECT user_id FROM 202_postback_auth WHERE user_id = ' . self::USER), 'nothing was minted');
+
+        $token = $this->controller()->postbackCode([], self::server(), true)['data']['postback_token'];
+        $again = $this->controller()->postbackCode([], self::server())['data'];
+        self::assertNull($again['postback_token'], 'a token that exists is withheld too');
+        self::assertStringNotContainsString((string) $token, (string) json_encode($again));
     }
 
     public function testThePostbackCodeRefusesWhatItCannotWrite(): void

@@ -558,8 +558,8 @@ $sections = [
 		<div class="col-lg-6">
 			<label class="form-label">Simple global postback URL</label>
 			<div class="p202-code mb-3">
-				<pre class="p202-code__value"><?php echo htmlspecialchars($base, ENT_QUOTES, 'UTF-8'); ?>tracking202/static/gpb.php?amount=&amp;subid=</pre>
-				<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php echo htmlspecialchars($base . 'tracking202/static/gpb.php?amount=&subid=', ENT_QUOTES, 'UTF-8'); ?>"><i class="bi bi-clipboard"></i> Copy</button>
+				<pre class="p202-code__value"><?php echo htmlspecialchars($base, ENT_QUOTES, 'UTF-8'); ?>tracking202/static/gpb.php?amount=&amp;subid=&amp;p202_token=</pre>
+				<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php echo htmlspecialchars($base . 'tracking202/static/gpb.php?amount=&subid=&p202_token=', ENT_QUOTES, 'UTF-8'); ?>"><i class="bi bi-clipboard"></i> Copy</button>
 			</div>
 			<label class="form-label">Schema token</label>
 			<div class="p202-code">

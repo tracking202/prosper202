@@ -893,6 +893,9 @@ p202 conversion list   [--limit 50] [--offset 0] [--campaign-id N] [--all]
                        [--goal N] [--json]
 p202 conversion match-methods [--aff-campaign-id N] [--period P] [--time-from T] [--time-to T] [--json]
                        # each campaign's conversions, counted ones and income by how their click was found
+p202 conversion postback-auth get [--json]   # mode, the URL token (p202_token), the signing secret, how to sign
+p202 conversion postback-auth set --mode off|token|signed  # token: token or signature; signed: signatures only, pixels refused
+p202 conversion postback-auth rotate [--credential token|signing_secret] [--grace-hours 0-720]  # the old one works this long (168)
 p202 conversion offline-export --format google|google_uploads|microsoft [--days 1-90] [--aff-campaign-id N]
                        [--conversion-name S] [--ad-user-data granted|denied] [--ad-personalization granted|denied]
                        [--output FILE] [--summary] [--json]

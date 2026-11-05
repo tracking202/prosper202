@@ -68,6 +68,20 @@ class App {
     }
   }
 
+  /**
+   * The signed-in account's postback token, as Setup › Postback / Pixel hands
+   * it out (minted on first view). An account made on 1.9.80 or later refuses
+   * a postback or pixel without it.
+   */
+  async postbackToken() {
+    const response = await this.page.request.get(this.url('/tracking202/setup/get_postback.php'));
+    const found = /data-postback-token="([0-9a-f]{32})"/.exec(await response.text());
+    if (!found) {
+      throw new Error('Setup › Postback / Pixel handed out no postback token (HTTP ' + response.status() + ')');
+    }
+    return found[1];
+  }
+
   // ── Moving around ─────────────────────────────────────────────────
 
   async goto(pathname) {

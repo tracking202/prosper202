@@ -4,7 +4,8 @@
 > give it a goal per step — an opt-in, a sale, an upsell — on
 > Setup › Campaigns (the campaign's **Goals** panel), set its **When a click
 > converts more than once** to **Add them up**, and have each step's
-> postback or pixel carry its event: `gpb.php?subid=[[subid]]&event=sale&amount=[[payout]]&txid=[[transaction_id]]`.
+> postback or pixel carry its event: `gpb.php?subid=[[subid]]&event=sale&amount=[[payout]]&txid=[[transaction_id]]&p202_token=<your token>`
+> (your postback token, from Setup › Postback / Pixel, when your account requires it).
 > Each step is its own conversion on the click, with its own payout, shown
 > in the click's breakdown, and the traffic source can be told about each
 > one. No campaign copies are needed. See [web events](../api/23-events.md).

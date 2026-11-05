@@ -220,6 +220,8 @@ SIG=$(sign "email_sha256:$ANA")
 CP=$(click "$OUT/b5" "t202id=$T_ON" "$OUT/h10")   # the phone: a new visitor
 KP=$(vkey "$CP")
 ne "$KP" "$KM" "the phone starts as its own visitor"
+# The postbacks and pixels below carry no token: their accounts accept that (guard.sh).
+Q "$(p202_postback_auth_off_sql)"
 code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/tracking202/static/pb.php?acip=$ACIP_ON&subid=$C2&txid=L1&cust=$ANA&cust_type=email_sha256&cust_sig=$SIG")
 eq "$code" 200 "laptop conversion with the signed customer accepted"
 code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/tracking202/static/pb.php?acip=$ACIP_ON&subid=$CP&txid=P1&cust=$ANA&cust_type=email_sha256&cust_sig=$(sign "custom:$ANA")")

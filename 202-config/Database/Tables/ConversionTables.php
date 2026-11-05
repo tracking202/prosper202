@@ -60,6 +60,7 @@ final class ConversionTables
             self::attributionRollupDirtyClicks(),
             self::offlineConversionFeeds(),
             self::offlineConversionNames(),
+            self::postbackAuth(),
             self::destinations(),
             self::destinationDeliveries(),
             self::inboundLog(),
@@ -378,6 +379,37 @@ final class ConversionTables
                 `conversion_name` varchar(100) NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`user_id`,`platform`,`aff_campaign_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Each account's postback authentication (Prosper202\Conversion\
+     * PostbackAuth): what its postbacks and pixels must present (auth_mode:
+     * off, token, signed), its URL token and its signing secret, each sealed
+     * (AES-256-GCM under the `postback_token` key in 202_deployment_secrets),
+     * and for each the one a rotation replaced, valid until its expiry.
+     * No row is an account made from 1.9.80 on that never had a token: it
+     * reads as `token`, the DEFAULT; the 1.9.80 rung makes the table with a
+     * row of `off` for every account already there.
+     */
+    public static function postbackAuth(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::POSTBACK_AUTH,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::POSTBACK_AUTH . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `auth_mode` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'token',
+                `token_sealed` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `token_created_at` int(10) unsigned DEFAULT NULL,
+                `previous_token_sealed` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `previous_token_expires_at` int(10) unsigned DEFAULT NULL,
+                `secret_sealed` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `secret_created_at` int(10) unsigned DEFAULT NULL,
+                `previous_secret_sealed` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `previous_secret_expires_at` int(10) unsigned DEFAULT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

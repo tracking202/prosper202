@@ -105,10 +105,143 @@ page's own script writes the same strings; a test runs it and compares):
 HTML attribute or a JavaScript string is refused: whitespace, quotes, `<`, `>`,
 `\`, `&` and control characters.
 
+For a key with `conversions:write`, every URL ends with the account's postback
+token, `&p202_token=…`, minted the first time a URL is handed out; the answer
+also carries it as `postback_token`, with the account's mode as
+`postback_auth_mode` ([below](#postback-authentication)). The token records
+and reverses conversions, so a key without `conversions:write` gets the URLs
+without it: `postback_token` is `null` and `postback_token_withheld` says why. In `signed` mode these URLs are refused
+as they are: sign them, and pixels cannot be used.
+
 ```bash
 curl -H "Authorization: Bearer $KEY" \
   "https://your-domain.com/api/v3/conversions/postback-code?subid=%7Baff_sub%7D&amount=%7Bpayout%7D"
 ```
+
+## Postback authentication
+
+Click ids count up. Without authentication, anyone who can guess one can send
+`gpb.php?subid=<id>` and record a sale, or `&status=reversed` and take one
+back. So each account has two credentials:
+
+- a **postback token**, 32 hex characters, which every pixel and postback URL
+  Setup hands out carries as `p202_token`;
+- a **signing secret**, 64 hex characters, which no URL ever carries: a
+  sender that can compute an HMAC keys `p202_sig` with it
+  ([below](#signed-postbacks)).
+
+The account's **mode** says what `pb.php`, `gpb.php`, `px.php`, `gpx.php` and
+`upx.php` require of a request for its campaign or click:
+
+| `mode` | What happens |
+| ------ | ------------ |
+| `off` | Every request is accepted, as before 1.9.80, whatever credentials it carries: refusing a stale or wrong token would stop no one (leaving it out passes) and would lose the conversions of URLs that still carry a replaced token. |
+| `token` | The token or a valid signature is needed. |
+| `signed` | Only a valid signature is accepted. The token alone is refused, with a message naming the signing secret. **A pixel cannot sign** (the visitor's browser loads it), so `px.php`, `gpx.php` and `upx.php` are refused too unless the request is signed. |
+| `token`, `signed` | A wrong token or signature is refused. One account's token or secret opens nothing of another account's. |
+
+A refusal is `403` with a JSON message, and nothing is recorded. `gpx.php` has
+sent its image already, so it only logs the refusal.
+
+Accounts that existed when the install upgraded to 1.9.80 start at `off`, so
+the postbacks their networks already call keep converting: copy the URLs
+again from Setup (they now carry the token), give them to your networks,
+then choose `token`. An account made after 1.9.80 starts at `token`. Choose
+`signed` only once every sender signs and no pixel is in use.
+
+Both credentials are stored encrypted (AES-256-GCM, under a key kept in the
+database's deployment secrets). The token is shown on Setup › Postback /
+Pixel; both are shown on Account › API Integrations › Postback
+authentication. The token is a URL parameter, so it lands in the logs of
+whoever relays the request; rotate it if it leaks. **A pixel runs in the
+visitor's browser, so its token can be read on the advertiser's page.** That
+still stops anyone forging conversions blind by counting click ids, which is
+the attack it is for; it does not stop someone who has seen the page. A
+sender that can sign should sign, and `signed` mode keeps a token read off a
+page from opening anything.
+
+| Method | Path | Body | Permission and key scope |
+| ------ | ---- | ---- | ---------- |
+| `GET` | `/conversions/postback-auth` | — | `access_to_api_integrations`, `conversions:write` |
+| `PUT` | `/conversions/postback-auth` | `{"mode": "token"}` (`off`, `token` or `signed`) | `access_to_api_integrations`, `conversions:write` |
+| `POST` | `/conversions/postback-auth/rotate` | `{"credential": "token", "grace_hours": 168}` (`token` or `signing_secret`; 0–720 hours, default 168) | `access_to_api_integrations`, `conversions:write` |
+
+The read hands out the token and the signing secret, which record and
+reverse conversions, so it asks what the page asks and a key that may write
+conversions. `GET /conversions/postback-code` answers the token
+(`postback_token`) and the mode (`postback_auth_mode`) with the snippets,
+under Setup's permission, to a key with `conversions:write` only. The mode
+and the credentials it needs are saved together or not at all. The rotation
+honors `Idempotency-Key`: a retry answers the first rotation instead of
+rotating again (a replay shows the credentials as they are now, since the
+recorded answer keeps none).
+
+If a stored token or secret cannot be read (the key that encrypts them was
+lost from the database, or a value was altered), a postback that presents it
+is answered `500`, never let through, while one that presents nothing is
+still decided by the mode, and `off` accepts both. Opening Account › API
+Integrations, Setup › Postback / Pixel, any of the three routes above, or a
+rotation replaces it with a new one, and the answer says so (`recovered`):
+the old ones stopped working, so copy your URLs again.
+
+A rotation makes a new token or signing secret; the old one keeps working
+for `grace_hours` (`previous_token_valid_until`,
+`previous_signing_secret_valid_until`) while your networks or signing
+servers move to the new one. `0` stops it at once. Two of each work at most:
+one an earlier rotation kept working is dropped.
+
+### Signed postbacks
+
+A sender that can compute an HMAC (your own server, a CRM webhook you
+script) sends `p202_ts` and `p202_sig` instead of the token, keyed with the
+signing secret, so no credential travels:
+
+- `p202_ts`: Unix seconds; it must be within 300 seconds of the server's
+  clock.
+- `p202_sig`: lower-case hex HMAC-SHA256, keyed with the signing secret (its
+  64 characters as text; not the URL token, which is refused as a key), of
+
+  ```
+  P202-POSTBACK-V1\n<endpoint>\n<canonical query>
+  ```
+
+  `<endpoint>` is `pb`, `gpb`, `px`, `gpx` or `upx`. `<canonical query>` is
+  every parameter of the URL except `p202_sig` (`p202_ts` included): each
+  name and value decoded, then percent-encoded as RFC 3986 says (PHP's
+  `rawurlencode()`: letters, digits and `-._~` as they are, a space as
+  `%20`), written `name=value`, sorted by name and then by value as bytes,
+  and joined with `&`. A parameter sent twice is in it twice.
+
+Inside the window the same signed request can be sent again; the conversion
+is deduplicated as a network's retry is, by its transaction id (or once per
+click without one). Send a transaction id.
+
+```php
+$secret = '…';                                   // signing_secret, from GET /conversions/postback-auth
+$params = ['subid' => '123', 'amount' => '9.99', 'txid' => 'A-1', 'p202_ts' => (string) time()];
+$pairs = [];
+foreach ($params as $name => $value) {
+    $pairs[] = [rawurlencode($name), rawurlencode($value)];
+}
+usort($pairs, fn ($a, $b) => strcmp($a[0], $b[0]) ?: strcmp($a[1], $b[1]));
+$canonical = implode('&', array_map(fn ($p) => $p[0] . '=' . $p[1], $pairs));
+$params['p202_sig'] = hash_hmac('sha256', "P202-POSTBACK-V1\ngpb\n" . $canonical, $secret);
+$url = 'https://track.example.com/tracking202/static/gpb.php?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+```
+
+For `subid=123&amount=9.99&txid=A-1&p202_ts=1800000000` to `gpb`, the string
+signed is:
+
+```
+P202-POSTBACK-V1
+gpb
+amount=9.99&p202_ts=1800000000&subid=123&txid=A-1
+```
+
+A PurLink SubID's signature says which click and offer the SubID names; it
+does not authenticate the postback, and the mode applies all the same.
+Payment notifications (ClickBank, JVZoo, PayKickstart, Zaxaa) verify their
+own signatures and are not affected.
 
 ## A traffic source's custom variables — `/ppc-networks/{id}/variables`
 
@@ -211,6 +344,9 @@ p202 landing-page code 12                                    # simple page
 p202 landing-page code 14 --offer campaign:3 --offer rotator:2
 p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}'
 p202 conversion pixel --type universal
+p202 conversion postback-auth get                            # mode, token, signing secret, how to sign
+p202 conversion postback-auth set --mode token               # off | token | signed
+p202 conversion postback-auth rotate --credential signing_secret --grace-hours 168
 p202 ppc-network variable create 3 --name 'Ad id' --parameter adid --placeholder '{ad_id}'
 p202 ppc-account pixel create 4 --type-id 4 --code 'https://network.example/pb?click=[[subid]]'
 ```

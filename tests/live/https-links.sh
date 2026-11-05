@@ -156,7 +156,10 @@ scenario() { # name saved-domain expected-base why [curl header args...]
 
     page "$BASE/tracking202/setup/get_postback.php" "$OUT/pb.html" "$@"
     api GET "/conversions/postback-code" "$OUT/pb.json" "$@"
-    local postback="${expect}tracking202/static/gpb.php?amount=&subid="
+    # The URLs end with the account's postback token, which a key with conversions:write is given.
+    local token
+    token=$(json "$OUT/pb.json" data.postback_token)
+    local postback="${expect}tracking202/static/gpb.php?amount=&subid=&p202_token=$token"
     eq "$(grab "$OUT/pb.html" 'id="unsecure_postback">([^<]*)</pre>')" "$postback" "Postback / Pixel shows $postback"
     eq "$(json "$OUT/pb.json" data.simple.postback_url)" "$postback" "as GET /conversions/postback-code does"
 

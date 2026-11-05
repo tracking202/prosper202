@@ -30,6 +30,71 @@ if (!function_exists('p202InboundLogWatch')) {
 
 const P202_POSTBACK_USER_AGENT = \Prosper202\Conversion\TrafficSourcePixels::POSTBACK_USER_AGENT;
 
+// ── Postback authentication (9FZ0): one block, called once per endpoint ──
+if (!function_exists('p202PostbackAuthRefusal')) {
+    /**
+     * Why this postback or pixel request may not change the conversions of
+     * $userId's account, the account whose campaign or click it names
+     * (Prosper202\Conversion\PostbackAuth\PostbackAuthGate), or null when
+     * it may. Asked before anything is written. A refusal is logged, and
+     * noted in the inbound log when there is one. A failed read refuses
+     * (500), never passes, except while the 1.9.80 upgrade has not run:
+     * the table is not there yet, and the install works as 1.9.79 did, as
+     * the upgrade leaves every account it finds.
+     *
+     * @return array{0: int, 1: string}|null the status and the sentence to answer
+     */
+    function p202PostbackAuthRefusal(mysqli $db, mixed $userId, string $endpoint): ?array
+    {
+        $account = is_int($userId) ? $userId
+            : (is_string($userId) && preg_match('/\A[1-9][0-9]{0,9}\z/D', $userId) === 1 ? (int) $userId : 0);
+        try {
+            $refusal = \Prosper202\Conversion\PostbackAuth\PostbackAuthGate::forConnection(new \Prosper202\Database\Connection($db))
+                ->check($account, $endpoint, (string) ($_SERVER['QUERY_STRING'] ?? ''), time());
+        } catch (\Throwable $authError) {
+            if (\Prosper202\Database\SchemaVersion::pendingUpgrade($db, \Prosper202\Conversion\PostbackAuth\PostbackAuthGate::SINCE) !== null) {
+                error_log($endpoint . ': postback authentication is not in force until the 1.9.80 upgrade runs ('
+                    . $authError->getMessage() . ')');
+                return null;
+            }
+            error_log($endpoint . ': postback authentication could not be checked for account ' . $account . ': ' . $authError->getMessage());
+            $answer = [500, 'Failed to check postback authentication'];
+            p202PostbackAuthNoteRefusal($account, 'failed', $answer[1], $answer[0]);
+            return $answer;
+        }
+        if ($refusal === null) {
+            return null;
+        }
+        error_log($endpoint . ': refused unauthenticated request for account ' . $account . ' (' . $refusal->reason . ')');
+        p202PostbackAuthNoteRefusal($account, 'unauthenticated', $refusal->message, $refusal::STATUS);
+        return [$refusal::STATUS, $refusal->message];
+    }
+
+    /** p202PostbackAuthRefusal() for an endpoint that answers in JSON: a refusal ends the request with it. */
+    function p202RequirePostbackAuth(mysqli $db, mixed $userId, string $endpoint): void
+    {
+        $refusal = p202PostbackAuthRefusal($db, $userId, $endpoint);
+        if ($refusal !== null) {
+            p202RespondJsonError($refusal[0], $refusal[1]);
+        }
+    }
+
+    /**
+     * The refusal in the inbound log (Prosper202\InboundLog\RequestLog, PR
+     * #379), when this install has it: looked up by name, so this file works
+     * with and without it.
+     */
+    function p202PostbackAuthNoteRefusal(int $account, string $outcome, string $message, int $status): void
+    {
+        $logClass = 'Prosper202\\InboundLog\\RequestLog';
+        $log = class_exists($logClass) && is_callable([$logClass, 'current']) ? call_user_func([$logClass, 'current']) : null;
+        if (is_object($log) && method_exists($log, 'account') && method_exists($log, 'refuse')) {
+            $log->account($account);
+            $log->refuse($outcome, $message, $status);
+        }
+    }
+}
+
 // Request names read as one value, first non-blank wins; p202PostbackRequest() merges each as a unit.
 const P202_ORDER_NUMBER_NAMES = ['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'];
 const P202_CUSTOMER_NAMES = ['cust', 'customer_ref'];

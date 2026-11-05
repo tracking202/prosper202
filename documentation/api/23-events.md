@@ -26,9 +26,13 @@ the global pixel (`gpx.php`), the universal pixel (`upx.php`), and the
 per-campaign postback and pixel (`pb.php`, `px.php`).
 
 ```
-https://track.example.com/tracking202/static/gpb.php?subid=[[subid]]&event=sale&amount=49.00&txid=ORD-1001
-https://track.example.com/tracking202/static/gpb.php?subid=[[subid]]&event=upsell&event_props={"sku":"B-2"}
+https://track.example.com/tracking202/static/gpb.php?subid=[[subid]]&event=sale&amount=49.00&txid=ORD-1001&p202_token=<your token>
+https://track.example.com/tracking202/static/gpb.php?subid=[[subid]]&event=upsell&event_props={"sku":"B-2"}&p202_token=<your token>
 ```
+
+When your account requires it, every postback and pixel carries your postback
+token: copy it from Setup › Postback / Pixel, or read it with
+`GET /conversions/postback-auth`.
 
 | Parameter | |
 |---|---|

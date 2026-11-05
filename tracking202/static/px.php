@@ -40,6 +40,9 @@ $mysql['user_id'] = $db->real_escape_string((string)$aff_campaign_row['user_id']
 p202ApplyOwnerPrivacy($aff_campaign_row['user_id'] ?? null);
 \Prosper202\InboundLog\RequestLog::current()?->account($aff_campaign_row['user_id'] ?? null);
 
+// Postback authentication: the campaign's account's token or signature, before anything is written.
+p202RequirePostbackAuth($db, $aff_campaign_row['user_id'] ?? null, 'px');
+
 //see if it has the cookie, do whatever we can to grab to grab SOMETHING to tie this lead to
 // A cookie is untrusted input: only an exact positive integer names a click
 // ("123.9" or "1e3" must not become click 123 or 1000). A cookie that is

@@ -82,6 +82,8 @@ ingest() { # click events-json
     printf '{"user_id": %s, "click_id": %s, "events": %s}' "$OWNER" "$1" "$2" \
       | (cd "$ROOT" && "$PHP" tests/live/goals-ingest.php) > "$OUT/ingest" 2> "$OUT/ingest.err"
 }
+# The postbacks and pixels below carry no token: their accounts accept that (guard.sh).
+Q "$(p202_postback_auth_off_sql)"
 gpb() { curl -sS -o "$OUT/gpb.out" -w '%{http_code}' "$BASE/tracking202/static/gpb.php?$1"; }
 get() { curl -sS -c "$JAR" -b "$JAR" -o "$2" -w '%{http_code}' "$BASE/$1"; }
 value() { Q "SELECT CONCAT(click_lead, '/', click_payout) FROM 202_clicks WHERE click_id=$1"; }

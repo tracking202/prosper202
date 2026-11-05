@@ -89,6 +89,8 @@ api() {
     [ -n "${5:-}" ] && args+=(-H "$5")
     curl "${args[@]}" "$BASE/api/v3$2"
 }
+# The postbacks and pixels below carry no token: their accounts accept that (guard.sh).
+Q "$(p202_postback_auth_off_sql)"
 # hit PATH-AND-QUERY — a public endpoint; body in $OUT/body; prints the status.
 hit() { curl -s -o "$OUT/body" -w '%{http_code}' "$BASE$1"; }
 field() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); v=$1; print('' if v is None else (json.dumps(v) if isinstance(v,(dict,list,bool)) else v))" "$OUT/body" 2>/dev/null; }

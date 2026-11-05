@@ -103,4 +103,17 @@ trait ScratchReportDatabase
             . " user_email = 'rp$userId@example.com', user_dash_email = '', user_pass = 'x',"
             . ' user_timezone = ' . self::str($timezone) . ", user_time_register = 0, install_hash = '', user_hash = ''");
     }
+
+    /**
+     * $userId's postbacks and pixels need no token or signature (mode `off`,
+     * as the 1.9.80 upgrade leaves every account it finds), for a suite about
+     * what one records rather than whether it may: an account with no row,
+     * as one a fixture makes is, requires its token (PostbackAuthGate). The
+     * suite's cleanup deletes the row from 202_postback_auth with the account.
+     */
+    private static function postbackAuthOff(int $userId): void
+    {
+        self::q("INSERT INTO 202_postback_auth SET user_id = $userId, auth_mode = 'off', updated_at = " . time()
+            . " ON DUPLICATE KEY UPDATE auth_mode = 'off'");
+    }
 }

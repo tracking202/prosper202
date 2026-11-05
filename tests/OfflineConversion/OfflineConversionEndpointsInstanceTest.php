@@ -111,10 +111,12 @@ final class OfflineConversionEndpointsInstanceTest extends TestCase
                     'click_id' => self::click($ids), 'payout' => 2, 'transaction_id' => "$run-$i",
                 ]);
             }
-            // Nothing names this one: gpx.php converts the latest click from the address.
+            // Nothing names this one: gpx.php converts the latest click from the
+            // address, with the account's postback token, as Setup hands it out.
+            $token = (string) (self::get('conversions/postback-auth')['data']['token'] ?? '');
             self::click("gclid=$run-E");
             [$status, $headers, $body] = self::request(
-                self::$base . '/tracking202/static/gpx.php?amount=1',
+                self::$base . '/tracking202/static/gpx.php?amount=1&p202_token=' . $token,
                 [CURLOPT_USERAGENT => self::UA]
             );
             self::assertSame(200, $status, $headers . $body);

@@ -71,14 +71,15 @@ const CONVERSIONS = 3;
  * run is a duplicate the ledger answers without recording again.
  */
 async function recordConversions(ctx) {
-  const { db, ui, config } = ctx;
+  const { db, ui, config, app } = ctx;
   const clicks = db.rows('SELECT click_id FROM 202_clicks WHERE user_id=1 AND click_time >= UNIX_TIMESTAMP(CURDATE())'
     + ' ORDER BY click_id LIMIT ' + CONVERSIONS).map((r) => String(r[0]));
   if (clicks.length < CONVERSIONS) {
     throw new Error('the fixture has ' + clicks.length + ' clicks today; seed it (tests/fixtures/agent-eval/seed.sh) before this spec');
   }
+  const token = await app.postbackToken();
   for (const click of clicks) {
-    const response = await ui.page.request.get(config.base + '/tracking202/static/gpb.php?subid=' + click + '&amount=5&txid=overview-spec-' + click);
+    const response = await ui.page.request.get(config.base + '/tracking202/static/gpb.php?subid=' + click + '&amount=5&txid=overview-spec-' + click + '&p202_token=' + token);
     if (response.status() >= 400) {
       throw new Error('the postback for click ' + click + ' answered ' + response.status() + ': ' + (await response.text()).slice(0, 200));
     }

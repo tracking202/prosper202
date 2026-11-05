@@ -23,6 +23,10 @@ namespace Prosper202\Setup;
  * given. The strings are the script's, byte for byte, including that the
  * JavaScript pixel's `cid` stays empty whatever campaign was chosen.
  *
+ * Every URL ends with the account's postback token, `&p202_token=…`
+ * (Prosper202\Conversion\PostbackAuth), which an account that requires it
+ * refuses a postback or pixel without; '' leaves it out.
+ *
  * $root is `scheme://host[:port]/<install path>/tracking202/static/`. The
  * values are written in as given: a network's macro such as {aff_sub} or
  * #s2# must reach it unencoded. A caller that takes them from outside says
@@ -42,20 +46,21 @@ final class PostbackCode
      *
      * @return array{simple: array{pixel: string, postback_url: string}, advanced: array{pixel: string, postback_url: string}, universal: array{javascript: string, iframe: string}}
      */
-    public static function snippets(string $root, string $amount, string $campaignId, string $subid): array
+    public static function snippets(string $root, string $amount, string $campaignId, string $subid, string $token): array
     {
+        $t = \Prosper202\Conversion\PostbackAuth\PostbackToken::queryPart($token);
         return [
             'simple' => [
-                'pixel' => '<img height="1" width="1" border="0" style="display: none;" src="' . $root . 'gpx.php?amount=' . $amount . '&subid=' . $subid . '" />',
-                'postback_url' => $root . 'gpb.php?amount=' . $amount . '&subid=' . $subid,
+                'pixel' => '<img height="1" width="1" border="0" style="display: none;" src="' . $root . 'gpx.php?amount=' . $amount . '&subid=' . $subid . $t . '" />',
+                'postback_url' => $root . 'gpb.php?amount=' . $amount . '&subid=' . $subid . $t,
             ],
             'advanced' => [
-                'pixel' => '<img height="1" width="1" border="0" style="display: none;" src="' . $root . 'gpx.php?amount=' . $amount . '&cid=' . $campaignId . '&subid=' . $subid . '" />',
-                'postback_url' => $root . 'gpb.php?amount=' . $amount . '&cid=' . $campaignId . '&subid=' . $subid,
+                'pixel' => '<img height="1" width="1" border="0" style="display: none;" src="' . $root . 'gpx.php?amount=' . $amount . '&cid=' . $campaignId . '&subid=' . $subid . $t . '" />',
+                'postback_url' => $root . 'gpb.php?amount=' . $amount . '&cid=' . $campaignId . '&subid=' . $subid . $t,
             ],
             'universal' => [
-                'javascript' => "<script>\n var vars202={amount:\"" . $amount . "\",cid:\"\",subid:\"" . $subid . "\"};(function(d, s) {\n \tvar js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {\n \t\tif (d.getElementById(id)) {return;}\n \t\tif202 = d.createElement(\"iframe\");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = \"no\";if202.noResize = true;\n \t\tupxf.parentNode.insertBefore(if202, upxf);\n \t};\n \tload(\"" . $root . "upx.php?amount=\"+vars202['amount']+\"&cid=\"+vars202['cid']+\"&subid=\"+vars202['subid'], \"upxif\");\n }(document, \"script\"));</script>\n<noscript>\n \t<iframe height=\"1\" width=\"1\" border=\"0\" style=\"display: none;\" frameborder=\"0\" scrolling=\"no\" src=\"" . $root . 'upx.php?amount=' . $amount . '&cid=&subid=' . $subid . "\" seamless></iframe>\n</noscript>",
-                'iframe' => '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="' . $root . 'upx.php?amount=' . $amount . '&subid=' . $subid . '" seamless></iframe>',
+                'javascript' => "<script>\n var vars202={amount:\"" . $amount . "\",cid:\"\",subid:\"" . $subid . "\"};(function(d, s) {\n \tvar js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {\n \t\tif (d.getElementById(id)) {return;}\n \t\tif202 = d.createElement(\"iframe\");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = \"no\";if202.noResize = true;\n \t\tupxf.parentNode.insertBefore(if202, upxf);\n \t};\n \tload(\"" . $root . "upx.php?amount=\"+vars202['amount']+\"&cid=\"+vars202['cid']+\"&subid=\"+vars202['subid']+\"" . $t . "\", \"upxif\");\n }(document, \"script\"));</script>\n<noscript>\n \t<iframe height=\"1\" width=\"1\" border=\"0\" style=\"display: none;\" frameborder=\"0\" scrolling=\"no\" src=\"" . $root . 'upx.php?amount=' . $amount . '&cid=&subid=' . $subid . $t . "\" seamless></iframe>\n</noscript>",
+                'iframe' => '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="' . $root . 'upx.php?amount=' . $amount . '&subid=' . $subid . $t . '" seamless></iframe>',
             ],
         ];
     }

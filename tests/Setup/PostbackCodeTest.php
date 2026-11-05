@@ -34,7 +34,7 @@ final class PostbackCodeTest extends TestCase
     public function testTheDefaultsAreThePagesFirstRender(): void
     {
         $root = 'https://' . self::ROOT_PATH;
-        $snippets = PostbackCode::snippets($root, '', '', '');
+        $snippets = PostbackCode::snippets($root, '', '', '', '');
         self::assertSame('<img height="1" width="1" border="0" style="display: none;" src="' . $root . 'gpx.php?amount=&subid=" />', $snippets['simple']['pixel']);
         self::assertSame($root . 'gpb.php?amount=&subid=', $snippets['simple']['postback_url']);
         self::assertSame($root . 'gpb.php?amount=&cid=&subid=', $snippets['advanced']['postback_url']);
@@ -42,26 +42,40 @@ final class PostbackCodeTest extends TestCase
         self::assertStringContainsString('var vars202={amount:"",cid:"",subid:""}', $snippets['universal']['javascript']);
     }
 
+    /** The account's postback token ends every URL (Prosper202\Conversion\PostbackAuth). */
+    public function testEveryUrlCarriesTheAccountsToken(): void
+    {
+        $root = 'https://' . self::ROOT_PATH;
+        $token = '0123456789abcdef0123456789abcdef';
+        $snippets = PostbackCode::snippets($root, '', '', '{aff_sub}', $token);
+        self::assertSame($root . 'gpb.php?amount=&subid={aff_sub}&p202_token=' . $token, $snippets['simple']['postback_url']);
+        self::assertSame($root . 'gpb.php?amount=&cid=&subid={aff_sub}&p202_token=' . $token, $snippets['advanced']['postback_url']);
+        foreach (['simple' => 'pixel', 'advanced' => 'pixel', 'universal' => 'iframe'] as $type => $snippet) {
+            self::assertStringContainsString('subid={aff_sub}&p202_token=' . $token . '"', $snippets[$type][$snippet], "$type $snippet");
+        }
+        self::assertSame(2, substr_count($snippets['universal']['javascript'], '&p202_token=' . $token), 'the script and its fallback');
+    }
+
     /**
-     * @return array<string, array{bool, string, string, string}>
+     * @return array<string, array{bool, string, string, string, string}>
      */
     public static function choices(): array
     {
         return [
-            'the defaults, over http' => [false, '', '', ''],
-            'a network macro and a campaign, over https' => [true, '{payout}', '42', '{aff_sub}'],
-            'Cake and LinkTrust shapes' => [true, '12.50', '7', '#s2#'],
-            'a LinkTrust token' => [false, '', '', '[=SID=]'],
+            'the defaults, over http' => [false, '', '', '', ''],
+            'a network macro and a campaign, over https' => [true, '{payout}', '42', '{aff_sub}', '0123456789abcdef0123456789abcdef'],
+            'Cake and LinkTrust shapes' => [true, '12.50', '7', '#s2#', 'fedcba9876543210fedcba9876543210'],
+            'a LinkTrust token' => [false, '', '', '[=SID=]', '0123456789abcdef0123456789abcdef'],
         ];
     }
 
     /**
      * @dataProvider choices
      */
-    public function testTheClassWritesWhatThePagesScriptWrites(bool $secure, string $amount, string $cid, string $subid): void
+    public function testTheClassWritesWhatThePagesScriptWrites(bool $secure, string $amount, string $cid, string $subid, string $token): void
     {
         $node = self::node();
-        $args = json_encode(['root_path' => self::ROOT_PATH, 'secure' => $secure, 'amount' => $amount, 'cid' => $cid, 'subid' => $subid], JSON_THROW_ON_ERROR);
+        $args = json_encode(['root_path' => self::ROOT_PATH, 'secure' => $secure, 'amount' => $amount, 'cid' => $cid, 'subid' => $subid, 'token' => $token], JSON_THROW_ON_ERROR);
         $command = escapeshellarg($node) . ' ' . escapeshellarg(__DIR__ . '/postback-builder-harness.js') . ' '
             . escapeshellarg(dirname(__DIR__, 2) . '/202-js/p202-setup.js') . ' ' . escapeshellarg($args) . ' 2>&1';
         exec($command, $lines, $status);
@@ -70,7 +84,7 @@ final class PostbackCodeTest extends TestCase
         $written = json_decode($out, true, 512, JSON_THROW_ON_ERROR);
         self::assertIsArray($written);
 
-        $snippets = PostbackCode::snippets(($secure ? 'https' : 'http') . '://' . self::ROOT_PATH, $amount, $cid, $subid);
+        $snippets = PostbackCode::snippets(($secure ? 'https' : 'http') . '://' . self::ROOT_PATH, $amount, $cid, $subid, $token);
         foreach (self::BOXES as $box => [$type, $snippet]) {
             self::assertArrayHasKey($box, $written, "the script wrote $box");
             self::assertSame($written[$box], $snippets[$type][$snippet], "$type $snippet is what the script writes into #$box");
