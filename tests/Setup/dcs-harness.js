@@ -36,6 +36,8 @@ function page(serverData, query, elements, options = {}) {
     const listeners = {};
     const warnings = [];
     const network = [];
+    const posts = [];
+    const queue = [];
     const document = {
         readyState: options.readyState || 'complete',
         referrer: options.referrer === undefined ? 'https://search.example/?q=shoes' : options.referrer,
@@ -50,12 +52,23 @@ function page(serverData, query, elements, options = {}) {
     let consent = options.consent !== false;
     const window = {
         p202: {consent(given) { if (given === false) { consent = false; } else if (given === true) { consent = true; } return consent; }},
-        fetch() { network.push('fetch'); },
     };
+    if (options.fetch !== false) {
+        window.fetch = (url, init) => {
+            network.push('fetch');
+            let resolve;
+            const answered = new Promise((r) => { resolve = r; });
+            posts.push({url, init, resolve: () => resolve({status: 204})});
+            return answered;
+        };
+    }
     const context = {
         window, document, URLSearchParams,
         console: {warn(m) { warnings.push(m); }},
-        navigator: {sendBeacon() { network.push('beacon'); return true; }},
+        navigator: {sendBeacon(url, blob) { network.push('beacon'); posts.push({url, blob}); return true; }},
+        Blob,
+        p202BeaconFinished: !!options.beaconFinished,
+        p202EventQueue: queue,
         Image: function () { network.push('image'); },
         t202GetVar: get,
         p202ConsentGiven: () => consent,
@@ -70,11 +83,15 @@ function page(serverData, query, elements, options = {}) {
         utm_content: 't202utm_content', utm_campaign: 't202utm_campaign'};
     const code = block
         .replace('<?php echo $p202ServerDataJs; ?>', JSON.stringify(serverData))
-        .replace('<?php echo $p202ClientParamMapJs; ?>', JSON.stringify(map));
+        .replace('<?php echo $p202ClientParamMapJs; ?>', JSON.stringify(map))
+        .replace('<?php echo $p202DcsUpdateUrlJs; ?>', JSON.stringify(UPDATE_URL));
     assert.ok(!code.includes('<?php'), 'every PHP value is substituted');
     vm.runInNewContext(code, context);
-    return {window, listeners, warnings, network};
+    return {window, listeners, warnings, network, posts, queue, context};
 }
+const UPDATE_URL = 'https://track.example/tracking202/static/dcs-update.php';
+const PROOF = 'update.41.12.3.1700086400.' + 'A'.repeat(43);
+const settle = () => new Promise((r) => setImmediate(r));
 
 const server = {
     t202Country: 'Example', t202CountryCode: 'EX', t202Region: '', t202City: 'Sample City', t202Postal: '',
@@ -173,9 +190,8 @@ const query = 'c1=<b>one</b>&c2=two&t202kw=blue+shoes&utm_source=news&pci=88&t20
     dcs.updateDataObj({t202C1: 'changed'});
     dcs.updateDataObj({t202C2: 'again'});
     assert.strictEqual(c1.value, 'changed');
-    assert.strictEqual(warnings.length, 1, 'one warning that the recorded click is not rewritten');
-    assert.match(warnings[0], /recorded click is not updated/);
-    assert.deepStrictEqual(network, [], 'updateDataObj sends nothing (1.9.56 called redirect/u.php)');
+    assert.deepStrictEqual(warnings, [], 'c1-c4 wait for the click');
+    assert.deepStrictEqual(network, [], 'nothing is sent before record.php hands over the proof');
 }
 
 // 3. The click's subid arrives with record.php's answer; consent governs IP and subid.
@@ -212,4 +228,104 @@ for (const options of [{consent: false}, {revoked: true}]) {
     assert.strictEqual(late.textContent, 'Sample City');
 }
 
-console.log('Dynamic content harness passed');
+// 5. updateDataObj() changes the click this pageview recorded: c1-c4 and the
+// keyword, with record.php's update proof, one request at a time.
+(async () => {
+    {
+        const {window, warnings, network, posts} = page(server, query, []);
+        const dcs = window.dcs;
+        dcs.updateDataObj({t202C1: 'changed', t202Country: 'page only'});
+        dcs.updateDataObj({t202C2: 'again', t202Kw: 'red shoes & socks'});
+        dcs.updateDataObj({t202c2: 'lower case wins last'});
+        assert.deepStrictEqual(network, [], 'held until the proof arrives');
+        window.p202DcsClick({t202Subid: '41', updateProof: PROOF});
+        assert.strictEqual(dcs.t202DataObj.t202Subid, '41');
+        assert.strictEqual(posts.length, 1, 'one request for every change so far');
+        assert.strictEqual(posts[0].url, UPDATE_URL);
+        assert.deepStrictEqual(
+            {method: posts[0].init.method, keepalive: posts[0].init.keepalive, credentials: posts[0].init.credentials,
+                type: posts[0].init.headers['Content-Type']},
+            {method: 'POST', keepalive: true, credentials: 'omit', type: 'application/x-www-form-urlencoded'});
+        assert.deepStrictEqual(Object.fromEntries(new URLSearchParams(posts[0].init.body)),
+            {proof: PROOF, t202c1: 'changed', t202c2: 'lower case wins last', t202kw: 'red shoes & socks'});
+        assert.ok(!posts[0].init.body.includes('t202subid') && !posts[0].init.body.includes('t202country'),
+            'the click is the proof\'s, never a subid the page names');
+
+        dcs.updateDataObj({t202C3: 'first'});
+        dcs.updateDataObj({t202C3: 'second', t202C4: 'z'});
+        assert.strictEqual(posts.length, 1, 'a request in flight holds the next');
+        posts[0].resolve();
+        await settle();
+        assert.strictEqual(posts.length, 2);
+        assert.deepStrictEqual(Object.fromEntries(new URLSearchParams(posts[1].init.body)),
+            {proof: PROOF, t202c3: 'second', t202c4: 'z'}, 'the latest values, after the earlier ones landed');
+        posts[1].resolve();
+        await settle();
+
+        dcs.updateDataObj({t202C1: '', t202C2: null, t202C3: {toString() { return 'x'; }}});
+        assert.strictEqual(posts.length, 2, 'an empty value leaves the click\'s, as 1.9.56 did');
+        dcs.updateDataObj({t202C1: 'a'.repeat(400), t202Kw: 'k'.repeat(149) + '\u{1F600}x', t202C2: 7});
+        const cut = Object.fromEntries(new URLSearchParams(posts[2].init.body));
+        assert.deepStrictEqual([cut.t202c1.length, cut.t202kw, cut.t202c2],
+            [350, 'k'.repeat(149) + '\u{1F600}', '7'], 'cut to what the click stores, never half a character');
+        posts[2].resolve();
+        await settle();
+
+        dcs.updateDataObj({t202Id: '9', t202Utm_source: 'mail', t202Referrer: 'https://ref.example/'});
+        dcs.updateDataObj({t202Id: '10'});
+        assert.strictEqual(posts.length, 3, 'the traffic source, UTMs and referrer are page only');
+        assert.strictEqual(warnings.length, 3, 'each said once');
+        assert.ok(warnings.every((w) => /on the page only; the recorded click keeps its value/.test(w)), warnings.join('\n'));
+        assert.ok(/t202Id/.test(warnings[0]) && /t202Utm_source/.test(warnings[1]) && /t202Referrer/.test(warnings[2]));
+
+        window.p202.consent(false);
+        dcs.updateDataObj({t202C1: 'after withdrawal'});
+        window.p202.consent(true);
+        dcs.updateDataObj({t202C1: 'consent again'});
+        assert.strictEqual(posts.length, 3, 'a withdrawal ends the proof');
+        assert.strictEqual(warnings.length, 4);
+        assert.match(warnings[3], /no recorded click to update/);
+    }
+    {
+        // record.php answered with a subid and no proof (no key): said once it has answered.
+        const {window, warnings, posts, queue} = page(server, query, []);
+        window.dcs.updateDataObj({t202C1: 'v'});
+        window.p202DcsClick({t202Subid: '41'});
+        assert.deepStrictEqual([posts.length, warnings.length, queue.length], [0, 0, 1]);
+        window.dcs.updateDataObj({t202C2: 'w'});
+        assert.strictEqual(queue.length, 1, 'one wait');
+        queue.forEach((fn) => fn());
+        assert.strictEqual(posts.length, 0);
+        assert.strictEqual(warnings.length, 1);
+        assert.match(warnings[0], /no recorded click to update/);
+    }
+    for (const [why, options] of [['p202_beacon=0', {beaconFinished: true}], ['refused', {consent: false}], ['revoked', {revoked: true}]]) {
+        const {window, warnings, posts} = page(server, query, [], options);
+        // An events-only page records no click; a refusal ignores record.php's answer.
+        if (!options.beaconFinished) { window.p202DcsClick({t202Subid: '41', updateProof: PROOF}); }
+        window.dcs.updateDataObj({t202C1: 'v'});
+        assert.strictEqual(posts.length, 0, why);
+        assert.strictEqual(warnings.length, 1, why);
+        assert.match(warnings[0], /no recorded click to update/, why);
+    }
+    {
+        // Without fetch, a beacon.
+        const {window, posts, network} = page(server, query, [], {fetch: false});
+        window.p202DcsClick({t202Subid: '41', updateProof: PROOF});
+        window.dcs.updateDataObj({t202C4: 'beacon'});
+        assert.deepStrictEqual(network, ['beacon']);
+        assert.strictEqual(posts[0].url, UPDATE_URL);
+        assert.strictEqual(posts[0].blob.type, 'application/x-www-form-urlencoded');
+        assert.strictEqual(await posts[0].blob.text(), 'proof=' + encodeURIComponent(PROOF) + '&t202c4=beacon');
+    }
+    {
+        // A replaced dcs sends nothing.
+        const {window, posts} = page(server, query, []);
+        const old = window.dcs;
+        window.p202DcsClick({t202Subid: '41', updateProof: PROOF});
+        window.dcs = {};
+        old.updateDataObj({t202C1: 'stale'});
+        assert.strictEqual(posts.length, 0);
+    }
+    console.log('Dynamic content harness passed');
+})().catch((e) => { console.error(e); process.exitCode = 1; });

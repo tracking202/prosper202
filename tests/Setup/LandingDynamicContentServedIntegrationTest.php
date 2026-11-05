@@ -11,7 +11,9 @@ use PHPUnit\Framework\TestCase;
  * database (served by `php -S`, as ClickDefaultsServedIntegrationTest is):
  * the visitor's IP only under the page's account's privacy setting, dates in
  * that account's zone, and the click's subid from record_simple.php only
- * when its cookies may be set and the visitor consents.
+ * when its cookies may be set and the visitor consents, with the proof
+ * dcs.updateDataObj() changes that click's c1-c4 and keyword with
+ * (static/dcs-update.php, and 1.9.56's redirect/u.php routed to it).
  *
  * @group integration
  */
@@ -93,6 +95,7 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
     private static function seed(): void
     {
         self::cleanUp();
+        \Api\V3\Apps\Android\InstallTokenKey::ensure(self::requireScratch());
         // 127.0.0.1 is a visitor GeoIP cannot place: 'all' and 'eu' hold it back.
         foreach ([self::TRACKED => ['disabled', 'Asia/Tokyo'], self::HELD_BACK => ['all', 'America/New_York'],
             self::EU => ['eu', 'Europe/Paris']]
@@ -131,6 +134,42 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
 
         return [$status, $body];
+    }
+
+    /** @return array{int, string, string} status, body, content type */
+    private static function post(string $path, string|array $body): array
+    {
+        $ch = curl_init(self::$base . $path);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $body]);
+        $answer = (string) curl_exec($ch);
+
+        return [(int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE), $answer, (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE)];
+    }
+
+    /** @return array<string, string> record.php's answer to dcs */
+    private function dcsAnswer(string $query): array
+    {
+        [$status, $body] = self::get('/tracking202/static/record_simple.php?' . $query);
+        self::assertSame(200, $status, $body . $this->serverLog());
+        self::assertSame(1, preg_match('/window\.p202DcsClick\((\{.*?\})\); \} catch/', $body, $m), $body);
+
+        return json_decode($m[1], true, 4, JSON_THROW_ON_ERROR);
+    }
+
+    /** @return array<string, string|null> the click's values as the reports read them */
+    private static function values(int $clickId): array
+    {
+        $result = self::requireScratch()->query('SELECT t1.c1, t2.c2, k.keyword, c.click_cpc, de.c1_id = ct.c1_id AS report_c1'
+            . ' FROM 202_clicks c JOIN 202_clicks_tracking ct USING (click_id) JOIN 202_clicks_advance ca USING (click_id)'
+            . ' LEFT JOIN 202_tracking_c1 t1 ON t1.c1_id = ct.c1_id LEFT JOIN 202_tracking_c2 t2 ON t2.c2_id = ct.c2_id'
+            . ' LEFT JOIN 202_keywords k ON k.keyword_id = ca.keyword_id LEFT JOIN 202_dataengine de ON de.click_id = c.click_id'
+            . " WHERE c.click_id = $clickId");
+        self::assertInstanceOf(\mysqli_result::class, $result);
+        $row = $result->fetch_assoc();
+        self::assertIsArray($row, "click $clickId");
+
+        return $row;
     }
 
     /** @return array<string, string> the script's server-side segments */
@@ -177,7 +216,7 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
         $click = self::requireScratch()->query('SELECT MAX(click_id) FROM 202_clicks WHERE user_id = ' . self::TRACKED)
             ->fetch_row()[0];
         self::assertNotNull($click, 'the click is recorded');
-        self::assertStringContainsString('window.p202DcsClick({"t202Subid":"' . $click . '"})', $body);
+        self::assertStringContainsString('window.p202DcsClick({"t202Subid":"' . $click . '","updateProof":"update.' . $click . '.', $body);
 
         foreach (['refused' => self::TRACKED_PAGE . '&p202_consent=0', 'held back' => (string) self::HELD_BACK_PAGE,
             "'eu'" => (string) self::EU_PAGE] as $why => $query) {
@@ -185,6 +224,60 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
             self::assertSame(200, $status, $why);
             self::assertStringContainsString('var subid =', $body, "$why: the click is answered");
             self::assertStringNotContainsString('p202DcsClick(', $body, $why);
+        }
+    }
+
+    public function testThePagesUpdateChangesTheClickItRecordedAndNoOther(): void
+    {
+        $answer = $this->dcsAnswer('lpip=' . self::TRACKED_PAGE . '&c1=from+the+url&t202kw=url+keyword');
+        $click = (int) $answer['t202Subid'];
+        $proof = $answer['updateProof'];
+        $other = (int) $this->dcsAnswer('lpip=' . self::TRACKED_PAGE . '&c1=another+visitor')['t202Subid'];
+        self::assertSame(['from the url', 'url keyword'], [self::values($click)['c1'], self::values($click)['keyword']]);
+
+        // What landing.php's dcs.updateDataObj() sends.
+        $sent = self::post('/tracking202/static/dcs-update.php', http_build_query([
+            'proof' => $proof, 't202c1' => 'Spring sale', 't202kw' => 'blue shoes',
+            't202Subid' => (string) $other, 't202Id' => '1', 't202Utm_source' => 'news',
+        ]));
+        self::assertSame([204, ''], [$sent[0], $sent[1]], $this->serverLog());
+        $values = self::values($click);
+        self::assertSame(['Spring sale', 'blue shoes', '1'], [$values['c1'], $values['keyword'], $values['report_c1']]);
+        self::assertSame('another visitor', self::values($other)['c1'], 'a subid in the request names no click');
+
+        // 1.9.56's beacon: FormData to redirect/u.php, with the proof the new script adds.
+        $sent = self::post('/tracking202/redirect/u.php', ['proof' => $proof, 't202C2' => 'from u.php', 't202Subid' => (string) $other]);
+        self::assertSame([204, ''], [$sent[0], $sent[1]], $this->serverLog());
+        self::assertSame('from u.php', self::values($click)['c2']);
+        self::assertNotSame('from u.php', self::values($other)['c2']);
+
+        // Nothing without a valid proof, answered without an error.
+        $before = [self::values($click), self::values($other)];
+        [$status, $gif] = self::get('/tracking202/redirect/u.php?t202Subid=' . $other . '&t202C1=hijack');
+        self::assertSame(200, $status);
+        self::assertSame('GIF89a', substr($gif, 0, 6), '1.9.56\'s image fallback still gets an image');
+        foreach ([
+            'u.php without a proof' => ['/tracking202/redirect/u.php', ['t202Subid' => (string) $other, 't202C1' => 'hijack']],
+            'no proof' => ['/tracking202/static/dcs-update.php', 't202Subid=' . $other . '&t202c1=hijack'],
+            'tampered' => ['/tracking202/static/dcs-update.php', 'proof=' . rawurlencode($proof . 'x') . '&t202c1=hijack'],
+            'refused' => ['/tracking202/static/dcs-update.php', 'proof=' . rawurlencode($proof) . '&t202c1=hijack&p202_consent=0'],
+            'too long' => ['/tracking202/static/dcs-update.php', 'proof=' . rawurlencode($proof) . '&t202c1=' . str_repeat('h', 30000)],
+        ] as $why => [$path, $body]) {
+            $sent = self::post($path, $body);
+            self::assertSame([204, ''], [$sent[0], $sent[1]], $why);
+        }
+        self::assertSame($before, [self::values($click), self::values($other)]);
+
+        $log = (string) file_get_contents(self::$log);
+        foreach ([
+            'dcs update refused (redirect/u.php): a GET carries no update proof',
+            'dcs update refused (redirect/u.php): no update proof',
+            'dcs update refused (dcs-update.php): the proof is invalid',
+            'dcs update refused (dcs-update.php): the visitor refused tracking',
+            'dcs update refused (dcs-update.php): body over',
+            'dcs update (dcs-update.php): ignored fields a page may not change: t202id, t202utm_source',
+        ] as $line) {
+            self::assertStringContainsString($line, $log);
         }
     }
 }

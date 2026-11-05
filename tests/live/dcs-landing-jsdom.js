@@ -3,6 +3,8 @@
 // Dynamic content (dcs.t202DataObj) on a page carrying the real snippet,
 // served by a live instance, in jsdom (installed separately). Both the
 // current landing.php snippet and 1.9.56's landing.js snippet are loaded.
+// dcs.updateDataObj() posts the click's new c1 through Node's fetch (jsdom
+// has none); each updated click id is printed for the caller to check.
 // PAGE: a simple landing page with a campaign whose account tracks this
 // visitor in full (privacy 'disabled'). Records clicks: disposable instances only.
 const {JSDOM, ResourceLoader, VirtualConsole} = require('jsdom');
@@ -22,6 +24,7 @@ async function run(snippet, refused) {
     const urls = [];
     const errors = [];
     const warnings = [];
+    const updates = [];
     class Recorder extends ResourceLoader {
         fetch(url, options) { urls.push(url); return super.fetch(url, options); }
     }
@@ -46,6 +49,14 @@ async function run(snippet, refused) {
     const dom = new JSDOM('<!doctype html><html><head></head><body>' + body + '</body></html>', {
         url: base + '/test-page' + query, runScripts: 'dangerously', resources: new Recorder(),
         pretendToBeVisual: true, virtualConsole: vc,
+        beforeParse(window) {
+            window.fetch = (url, init) => {
+                const sent = {url: String(url), init, status: null};
+                updates.push(sent);
+                return fetch(url, {method: init.method, body: init.body, headers: init.headers})
+                    .then((r) => { sent.status = r.status; return r; });
+            };
+        },
     });
     const w = dom.window;
     const d = w.document;
@@ -75,13 +86,26 @@ async function run(snippet, refused) {
             assert.ok(/^[1-9][0-9]*$/.test(field('lead_t202Subid').value), 'the click\'s subid');
         }
 
-        const before = urls.length;
         w.dcs.addDataObj({offerName: 'Pro plan'});
-        w.dcs.updateDataObj({t202C1: 'Summer sale'});
+        w.dcs.updateDataObj({t202C1: 'Summer sale', t202Utm_source: 'mail'});
         assert.strictEqual(field('t202C1').value, 'Summer sale');
-        await sleep(300);
-        assert.ok(!urls.slice(before).some((u) => u.includes('/u.php')), 'nothing is sent to redirect/u.php');
-        assert.ok(warnings.some((m) => /recorded click is not updated/.test(m)), 'the page is told');
+        assert.ok(warnings.some((m) => /t202Utm_source on the page only/.test(m)), 'a UTM is the page\'s only');
+        if (refused) {
+            await sleep(300);
+            assert.deepStrictEqual(updates, [], 'no consent, no update');
+            assert.ok(warnings.some((m) => /no recorded click to update/.test(m)), 'the page is told');
+        } else {
+            await waitFor(() => updates.length === 1 && updates[0].status !== null, 'the update');
+            const sent = updates[0];
+            assert.strictEqual(sent.url, base + '/tracking202/static/dcs-update.php');
+            const body = Object.fromEntries(new URLSearchParams(sent.init.body));
+            assert.ok(body.proof.startsWith('update.' + w.dcs.t202DataObj.t202Subid + '.'), body.proof);
+            assert.deepStrictEqual(Object.keys(body), ['proof', 't202c1']);
+            assert.strictEqual(body.t202c1, 'Summer sale');
+            assert.strictEqual(sent.status, 204);
+            assert.ok(!warnings.some((m) => /no recorded click to update|is not updated/.test(m)), warnings.join('\n'));
+            console.log('updated click ' + w.dcs.t202DataObj.t202Subid);
+        }
         assert.deepStrictEqual(errors, []);
     } finally { w.close(); }
 }

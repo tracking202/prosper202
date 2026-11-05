@@ -336,6 +336,70 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         return true;
     }
 
+    /**
+     * A landing page's dcs.updateDataObj() (PageUpdate): the click's c1-c4
+     * and keyword, under its lock, only while every row of it is the
+     * account's and its latest visit is on $landingPageId, so a re-click to
+     * another page ends that page's proof. False when refused.
+     *
+     * @param array<string, int> $ids 'c1'..'c4' and 'keyword' => their lookup ids
+     */
+    public function recordPageValues(int $userId, int $clickId, int $landingPageId, array $ids): bool
+    {
+        $columns = ['c1' => 'c1_id', 'c2' => 'c2_id', 'c3' => 'c3_id', 'c4' => 'c4_id'];
+        if (array_diff_key($ids, $columns + ['keyword' => true]) !== []) {
+            throw new LogicException('A page changes only a click\'s c1-c4 and keyword');
+        }
+
+        return (new MysqlConversionLedger($this->conn))->clickTransaction(
+            $clickId,
+            $userId,
+            function (?array $locked) use ($userId, $clickId, $landingPageId, $ids, $columns): bool {
+                if ($locked === null) {
+                    return false;
+                }
+                $firstClickTime = $this->accountsClickFirstTime($userId, $clickId);
+                if ($firstClickTime === null) {
+                    return false;
+                }
+                $stmt = $this->conn->prepareWrite('SELECT c.landing_page_id FROM ' . LatestVisit::of('?') . ' AS c');
+                $this->conn->bind($stmt, 'i', [$clickId]);
+                $latest = $this->conn->fetchOne($stmt);
+                if ($latest === null || self::intColumn($latest, 'landing_page_id') !== $landingPageId) {
+                    return false;
+                }
+                if (RollupDirty::hotPathRewriteNeedsMark($firstClickTime)) {
+                    RollupDirty::click($this->conn, $userId, $clickId);
+                }
+                $set = [];
+                $values = [];
+                foreach ($columns as $field => $column) {
+                    if (isset($ids[$field])) {
+                        $set[] = $column . ' = ?';
+                        $values[] = $ids[$field];
+                    }
+                }
+                if ($set !== []) {
+                    $values[] = $clickId;
+                    $this->write(
+                        'UPDATE 202_clicks_tracking SET ' . implode(', ', $set) . ' WHERE click_id = ?',
+                        str_repeat('i', count($values)),
+                        $values
+                    );
+                }
+                if (isset($ids['keyword'])) {
+                    $this->write(
+                        'UPDATE 202_clicks_advance SET keyword_id = ? WHERE click_id = ?',
+                        'ii',
+                        [$ids['keyword'], $clickId]
+                    );
+                }
+
+                return true;
+            }
+        );
+    }
+
     #[\Override]
     public function isAccountsClick(int $userId, int $clickId): bool
     {

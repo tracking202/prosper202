@@ -178,6 +178,7 @@ $p202PurLinkAdvancedJs = $p202Js(isset($identityRow) && (int) $identityRow['land
 $p202PurLinkDeferredJs = $p202Js(($_GET['p202_defpixel'] ?? $_GET['defpixel'] ?? null) === '1');
 $p202ServerDataJs = $p202Js($t202ServerData, true);
 $p202ClientParamMapJs = $p202Js($t202ClientParamMap);
+$p202DcsUpdateUrlJs = $p202Js($baseUrl . 'tracking202/static/dcs-update.php');
 ?>
 
 (function() {
@@ -654,12 +655,20 @@ if (document.readyState === 'loading') {
 	var serverData = <?php echo $p202ServerDataJs; ?>;
 	var clientParamMap = <?php echo $p202ClientParamMapJs; ?>;
 	var clientValues = {t202kw: t202kw, c1: c1, c2: c2, c3: c3, c4: c4, utm_source: utm_source, utm_medium: utm_medium, utm_term: utm_term, utm_content: utm_content, utm_campaign: utm_campaign};
-	// The keys 1.9.56's server-side redirect/u.php stored from updateDataObj().
-	var clickKeys = /^t202(kw|c[1-4]|referrer|id|utm_(source|medium|term|content|campaign))$/i;
+	// updateDataObj() changes these on the recorded click too, as 1.9.56's
+	// redirect/u.php did (PageUpdate::FIELDS), with record.php's proof.
+	var updateUrl = <?php echo $p202DcsUpdateUrlJs; ?>;
+	var sentKeys = /^t202(c[1-4]|kw)$/i;
+	// u.php also changed these; the click keeps them now.
+	var pageOnlyKeys = /^t202(referrer|id|utm_(source|medium|term|content|campaign))$/i;
+	var updateProof = '';
+	var pendingUpdate = null;
+	var updating = false;
+	var waitingForClick = false;
 	var notText = {FORM: 1, SCRIPT: 1, STYLE: 1, META: 1, LINK: 1, IFRAME: 1, OBJECT: 1, HTML: 1, HEAD: 1, BODY: 1};
 	// Inputs whose value is what they post or their label, not a field's text.
 	var notValue = {radio: 1, checkbox: 1, submit: 1, button: 1, reset: 1, image: 1, file: 1};
-	var warned = false;
+	var warned = {};
 	function own(obj, key) { return Object.prototype.hasOwnProperty.call(obj, key); }
 	function consented() { return !p202PurLinkRevoked && p202ConsentGiven(); }
 
@@ -749,8 +758,68 @@ if (document.readyState === 'loading') {
 		for (key in mergeDataObj) { if (own(mergeDataObj, key) && key !== '__proto__') { next[key] = mergeDataObj[key]; } }
 		this.t202DataObj = next;
 	};
-	// Changes keys the object already has and renders them. The page only:
-	// the recorded click keeps the values it was recorded with.
+	function warnOnce(why, message) {
+		if (!warned[why] && window.console && console.warn) {
+			warned[why] = true;
+			console.warn('Prosper202: ' + message);
+		}
+	}
+	// The click's value as stored (MysqlTrackingRepository): c1-c4 350
+	// characters, the keyword 150, never half of a surrogate pair.
+	function cut(value, max) {
+		var i = 0;
+		for (var n = 0; i < value.length && n < max; n++) {
+			var c = value.charCodeAt(i);
+			i += (c >= 0xD800 && c <= 0xDBFF && i + 1 < value.length) ? 2 : 1;
+		}
+		return value.slice(0, i);
+	}
+	function postUpdate(body) {
+		try {
+			if (window.fetch) {
+				return window.fetch(updateUrl, {
+					method: 'POST', body: body, keepalive: true, mode: 'cors', credentials: 'omit',
+					headers: {'Content-Type': 'application/x-www-form-urlencoded'}
+				}).then(function() {}, function() {});
+			}
+			if (navigator.sendBeacon) {
+				navigator.sendBeacon(updateUrl, new Blob([body], {type: 'application/x-www-form-urlencoded'}));
+			}
+		} catch (e) { /* the page goes on */ }
+		return null;
+	}
+	// One request at a time, so a later value is never overtaken by an earlier one.
+	function sendUpdate() {
+		if (updating || !pendingUpdate || !updateProof || !consented() || window.dcs !== dcs) { return; }
+		var body = 'proof=' + encodeURIComponent(updateProof);
+		for (var field in pendingUpdate) {
+			if (own(pendingUpdate, field)) {
+				try { body += '&' + field + '=' + encodeURIComponent(pendingUpdate[field]); } catch (e) { /* a lone surrogate */ }
+			}
+		}
+		pendingUpdate = null;
+		var sent = postUpdate(body);
+		if (sent) {
+			updating = true;
+			sent.then(function() { updating = false; sendUpdate(); });
+		}
+	}
+	function noClick() {
+		pendingUpdate = null;
+		warnOnce('click', 'dcs.updateDataObj() changed the page only: this pageview has no recorded click to update (no consent, or the privacy setting holds this visitor back).');
+	}
+	function queueUpdate(key, value) {
+		if (value === null || value === undefined || typeof value === 'object' || typeof value === 'function') { return; }
+		value = String(value);
+		// As 1.9.56: an empty value leaves the click's.
+		if (value === '') { return; }
+		pendingUpdate = pendingUpdate || {};
+		var field = key.toLowerCase();
+		pendingUpdate[field] = cut(value, field === 't202kw' ? 150 : 350);
+	}
+
+	// Changes keys the object already has and renders them; c1-c4 and the
+	// keyword also on the click this pageview recorded.
 	T202Data.prototype.updateDataObj = function(changes) {
 		var changed = [];
 		changes = changes || {};
@@ -761,11 +830,28 @@ if (document.readyState === 'loading') {
 			}
 		}
 		this.renderChanges(changed);
-		for (var i = 0; i < changed.length && !warned; i++) {
-			if (clickKeys.test(changed[i]) && window.console && console.warn) {
-				warned = true;
-				console.warn('Prosper202: dcs.updateDataObj() changes the page only; the recorded click is not updated.');
+		if (this !== window.dcs) { return; }
+		var queued = false;
+		for (var i = 0; i < changed.length; i++) {
+			if (sentKeys.test(changed[i])) {
+				queueUpdate(changed[i], changes[changed[i]]);
+				queued = true;
+			} else if (pageOnlyKeys.test(changed[i])) {
+				warnOnce(changed[i].toLowerCase(), 'dcs.updateDataObj() changes ' + changed[i] + ' on the page only; the recorded click keeps its value.');
 			}
+		}
+		if (!queued) { return; }
+		if (!consented()) {
+			noClick();
+		} else if (!pendingUpdate) {
+			return;
+		} else if (updateProof) {
+			sendUpdate();
+		} else if (p202BeaconFinished) {
+			noClick();
+		} else if (!waitingForClick) {
+			waitingForClick = true;
+			p202EventQueue.push(function() { if (!updateProof && pendingUpdate) { noClick(); } });
 		}
 	};
 
@@ -779,6 +865,10 @@ if (document.readyState === 'loading') {
 		if (!click || typeof click.t202Subid !== 'string' || !consented() || window.dcs !== dcs) { return; }
 		dcs.t202DataObj.t202Subid = click.t202Subid;
 		render(dcs, ['t202Subid']);
+		if (typeof click.updateProof === 'string' && click.updateProof !== '') {
+			updateProof = click.updateProof;
+			sendUpdate();
+		}
 	};
 	// A withdrawal clears what came from the visitor's request.
 	var consent = window.p202.consent;
@@ -787,6 +877,8 @@ if (document.readyState === 'loading') {
 		if (given === false && window.dcs === dcs) {
 			dcs.t202DataObj.t202IP = '';
 			dcs.t202DataObj.t202Subid = '';
+			updateProof = '';
+			pendingUpdate = null;
 			render(dcs, ['t202IP', 't202Subid']);
 		} else if (given === true && window.dcs === dcs && consented()) {
 			dcs.t202DataObj.t202IP = serverData.t202IP;
