@@ -53,6 +53,8 @@ $endpointLabels = [
     'clickbank' => 'ClickBank INS',
     'jvzoo' => 'JVZoo IPN',
     'paykickstart' => 'PayKickstart IPN',
+    'shopify' => 'Shopify webhook',
+    'zaxaa' => 'Zaxaa IPN',
 ];
 $outcomeChoices = ['' => 'Everything', 'refused' => 'Refused or nothing recorded', 'accepted' => 'Accepted'];
 $endpointChoices = ['' => 'Every endpoint'] + $endpointLabels;

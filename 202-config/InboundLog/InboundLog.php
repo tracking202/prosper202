@@ -48,7 +48,7 @@ final class InboundLog
      */
     public const BACKED_OUTCOMES = ['recorded', 'reversed', 'event_recorded'];
 
-    public const ENDPOINTS = ['pb', 'gpb', 'px', 'gpx', 'upx', 'clickbank', 'jvzoo', 'paykickstart'];
+    public const ENDPOINTS = ['pb', 'gpb', 'px', 'gpx', 'upx', 'clickbank', 'jvzoo', 'paykickstart', 'shopify', 'zaxaa'];
 
     public function __construct(private readonly \mysqli $db)
     {

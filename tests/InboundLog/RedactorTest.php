@@ -90,9 +90,26 @@ final class RedactorTest extends TestCase
             'ctransreceipt' => 'ORD%2D20391',
         ], 'jvzoo');
 
-        self::assertSame(Redactor::REDACTED, $kept['cvendthru']);
+        self::assertSame('subid=9001&email=[redacted]', $kept['cvendthru']);
         self::assertSame(Redactor::REDACTED, $kept['caffitid'], 'encoded twice');
         self::assertSame('ORD%2D20391', $kept['ctransreceipt'], 'kept as sent');
+    }
+
+    public function testAVendorPassThroughKeepsOnlyItsSubid(): void
+    {
+        $cases = [
+            'subid=123&token=example-secret&phone=5551234567' => 'subid=123&token=[redacted]&phone=[redacted]',
+            '?subid=1&name=Jamie+Rivera&addr=1+Main+St' => 'subid=1&name=[redacted]&addr=[redacted]',
+            'subid=1%26phone%3D5551234567' => 'subid=[redacted]',
+            'note%3Dx=Jamie' => '_redacted_name_0=[redacted]',
+            'sub%69d=7&x[y]=secret' => 'subid=7&_redacted_name_1=[redacted]',
+            'subid=jane%40northwind.example' => 'subid=[redacted]',
+            'free text Jamie Rivera 5551234567' => '_redacted_name_0=[redacted]',
+        ];
+        foreach ($cases as $sent => $expected) {
+            self::assertSame($expected, Redactor::fields(['cvendthru' => $sent], 'jvzoo')['cvendthru'], $sent);
+        }
+        self::assertSame(Redactor::REDACTED, Redactor::fields(['cvendthru' => ['subid' => '1', 'phone' => '555']], 'jvzoo')['cvendthru']);
     }
 
     public function testAValueThatCannotBeScannedIsRedacted(): void

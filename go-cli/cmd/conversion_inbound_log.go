@@ -12,7 +12,7 @@ import (
 
 // inboundLogEndpoints are the endpoints GET /conversions/inbound-log
 // records (Prosper202\InboundLog\InboundLog::ENDPOINTS), in the server's order.
-var inboundLogEndpoints = []string{"pb", "gpb", "px", "gpx", "upx", "clickbank", "jvzoo", "paykickstart"}
+var inboundLogEndpoints = []string{"pb", "gpb", "px", "gpx", "upx", "clickbank", "jvzoo", "paykickstart", "shopify", "zaxaa"}
 
 var conversionInboundLogCmd = &cobra.Command{
 	Use:   "inbound-log",

@@ -55,6 +55,17 @@ final class Redactor
     /** A trailing full stop ends a sentence, not the address: "from 203.0.113.9." is one. */
     private const IPV4_VALUE = '/(^|[^0-9.])(\d{1,3}\.){3}\d{1,3}($|[^0-9.]|\.(?![0-9]))/';
 
+    /**
+     * Per endpoint, the free-form query-string fields (a vendor's buy-link
+     * pass-through) and the pairs inside them whose values are kept. Every
+     * other pair keeps its name, and its value is redacted.
+     */
+    private const PASS_THROUGH = [
+        'jvzoo' => ['cvendthru' => ['subid']],
+    ];
+
+    private const PLAIN_TOKEN = '/^[A-Za-z0-9_.:-]{1,64}$/';
+
     private function __construct()
     {
     }
@@ -76,7 +87,12 @@ final class Redactor
             }
             $name = (string) $name;
             $shown = self::namesAPerson($name) ? '_redacted_name_' . $kept : self::text($name, 64);
-            $out[$shown] = in_array($name, $keep, true) ? self::value($value, 0) : self::REDACTED;
+            $pairs = self::PASS_THROUGH[$endpoint][$name] ?? null;
+            $out[$shown] = match (true) {
+                $pairs !== null => self::passThrough($value, $pairs),
+                in_array($name, $keep, true) => self::value($value, 0),
+                default => self::REDACTED,
+            };
             $kept++;
         }
 
@@ -111,6 +127,34 @@ final class Redactor
     public static function scalar(string $value): string
     {
         return self::namesAPerson($value) ? self::REDACTED : $value;
+    }
+
+    /**
+     * A query string with only the listed pairs' values kept: "subid=12&phone=[redacted]".
+     *
+     * @param list<string> $pairs
+     */
+    private static function passThrough(mixed $value, array $pairs): string
+    {
+        if (!is_string($value) || strlen($value) > self::MAX_SCANNED) {
+            return self::REDACTED;
+        }
+        $out = [];
+        foreach (explode('&', ltrim($value, '?')) as $i => $pair) {
+            if ($pair === '') {
+                continue;
+            }
+            $parts = explode('=', $pair, 2);
+            $name = urldecode($parts[0]);
+            // Only a plain token is shown, as a name or a kept value: free text could name the buyer.
+            $shown = preg_match(self::PLAIN_TOKEN, $name) === 1 ? $name : '_redacted_name_' . $i;
+            $decoded = count($parts) === 2 ? urldecode($parts[1]) : '';
+            $kept = $shown === $name && count($parts) === 2 && in_array($name, $pairs, true)
+                && preg_match(self::PLAIN_TOKEN, $decoded) === 1 && !self::namesAPerson($decoded);
+            $out[] = $shown . '=' . ($kept ? $decoded : self::REDACTED);
+        }
+
+        return self::text(implode('&', $out), self::MAX_VALUE * 2);
     }
 
     private static function value(mixed $value, int $depth): mixed

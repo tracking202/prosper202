@@ -156,6 +156,24 @@ final class InboundLogIntegrationTest extends TestCase
         }
     }
 
+    public function testAVendorPassThroughKeepsOnlyTheSubidInTheStoredRow(): void
+    {
+        $this->jvzoo(JVZooAdapterTest::signed(JVZooAdapterTest::sale([
+            'caffitid' => (string) self::CLICK, 'ctransreceipt' => self::RECEIPT, 'ctranstime' => (string) time(),
+            'cvendthru' => 'subid=1&name=Jamie+Rivera&phone=5551234567&token=example-secret',
+        ]), self::KEY));
+
+        $rows = self::rows(self::ACCOUNT, false);
+        self::assertCount(1, $rows);
+        self::assertSame('subid=1&name=[redacted]&phone=[redacted]&token=[redacted]', $rows[0]['fields']['cvendthru']);
+        $stored = self::$db->query('SELECT fields FROM 202_inbound_log');
+        self::assertInstanceOf(\mysqli_result::class, $stored);
+        $raw = (string) $stored->fetch_row()[0];
+        foreach (['Jamie', 'Rivera', '5551234567', 'example-secret'] as $private) {
+            self::assertStringNotContainsString($private, $raw);
+        }
+    }
+
     public function testAnUnverifiedNotificationIsSeenOnlyByAnAdminWithItsReason(): void
     {
         $this->jvzoo(JVZooAdapterTest::signed(JVZooAdapterTest::sale(['caffitid' => (string) self::CLICK]), 'not-the-key'));
