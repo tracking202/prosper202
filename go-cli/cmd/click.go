@@ -119,7 +119,8 @@ var clickGetCmd = &cobra.Command{
 		"ttclid (TikTok), msclkid (Microsoft Advertising) and fbclid (Meta), each null for\n" +
 		"none; --json gives them whole. A filtered click (click_filtered 1) says why in\n" +
 		"filter_reason: sign_in_address, crawler_range, repeat_visit, filter_list (with the\n" +
-		"list's filter_entry_id) or bot; null for a click filtered before 1.9.79, which\n" +
+		"list's filter_entry_id), fraud_score (IPQualityScore, after the click) or bot; null\n" +
+		"for a click filtered before 1.9.79, which\n" +
 		"recorded no reason. `p202 click-filter` shows and changes the rules.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {

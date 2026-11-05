@@ -154,7 +154,6 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
 
 include_once(CONFIG_PATH . '/functions-auth.php');
 include_once(CONFIG_PATH . '/DeviceDetect.php');
-include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
 
 // Initialize $tid and $db variables to prevent undefined variable errors
@@ -630,9 +629,13 @@ function p202RotatorVisitor(
         (string) ($ua->device->family ?? ''),
         (string) ($ua->ua->family ?? ''),
         $filtered,
-        static function () use ($db, $userId, $ip): ?bool {
+        static function () use ($db, $userId, $ip, $geo): ?bool {
             try {
-                $key = \Prosper202\Rotator\FraudScore::accountKey(\Prosper202\Repository\LookupRepositoryFactory::connection($db), $userId);
+                $conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
+                if (\Prosper202\Http\PrivacySetting::forAccount($conn, $userId) === 'all') {
+                    return null; // the account holds every visitor back: nothing is sent
+                }
+                $key = \Prosper202\Rotator\FraudScore::accountKey($conn, $userId);
             } catch (\Throwable $keyError) {
                 error_log("Redirector fraud rule: reading account $userId's IPQualityScore key failed ("
                     . $keyError->getMessage() . '); the rule is skipped');
@@ -640,7 +643,12 @@ function p202RotatorVisitor(
                 return null;
             }
 
-            return \Prosper202\Rotator\FraudScore::isHigh($key, $ip, $_SERVER);
+            return \Prosper202\Rotator\FraudScore::isHigh(
+                $key,
+                $ip,
+                is_string($geo['country_code'] ?? null) ? $geo['country_code'] : null,
+                $_SERVER
+            );
         }
     );
 }
