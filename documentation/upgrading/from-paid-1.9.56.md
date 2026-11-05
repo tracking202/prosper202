@@ -34,6 +34,11 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   webhook that does not verify against it is refused.
 - **The Bot202 Facebook Pixel Assistant.** The settings your landing pages
   kept fire the traffic source's Meta Pixel again.
+- **JVZoo's JVZIPN URL.** The URL 1.9.56 showed
+  (`tracking202/static/jvzoo.php`, no `?role=`) still records an affiliate's
+  sales on the click in `caffitid`, verified with the stored JVZIPN secret
+  key. A vendor's product JVZIPN URL needs the URL ending `?role=vendor` from
+  Account › API integrations › JVZoo.
 - **Passwords.** Stored 1.9.56 passwords still sign in.
 - **Privacy.** Accounts that existed before the upgrade keep tracking as they
   did. Only accounts created on 1.9.79 or later start with privacy set to
@@ -76,11 +81,6 @@ These differ from 1.9.56 on purpose and stay that way.
 - **The daily email report is retired.** Its cron address,
   `202-cronjobs/daily-email.php`, now answers `410 Gone`.
 - **The `landing.js` loader ignores `defpixel` and `rsid`** in old snippets.
-- **The JVZIPN URL 1.9.56 showed is refused.** It names no role, so a sale
-  there could be credited as the affiliate's or the vendor's. It answers
-  `400` and records nothing. Paste the URL from Account › API integrations ›
-  JVZoo: the one ending `?role=affiliate` into your Affiliate IPN, the one
-  ending `?role=vendor` into your product's JVZIPN URL.
 - **Update › CPC previews before it applies.** It shows how many clicks will
   change and refuses a confirmation that no longer matches that preview.
 

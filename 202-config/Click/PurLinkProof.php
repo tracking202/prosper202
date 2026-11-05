@@ -11,10 +11,13 @@ final class PurLinkProof
 {
     public const EXIT = 'exit';
     public const PIXELS = 'pixels';
+    /** A landing page's dcs.updateDataObj() changing the click's c1-c4 and keyword (PageUpdate). */
+    public const UPDATE = 'update';
+    private const PURPOSES = [self::EXIT, self::PIXELS, self::UPDATE];
     public const MAX_LIFETIME = 30 * 24 * 60 * 60;
 
     private const DOMAIN = "prosper202-purlink-proof-v1\0";
-    private const SHAPE = '/\A(exit|pixels)\.([1-9][0-9]{0,18})\.([1-9][0-9]{0,18})\.'
+    private const SHAPE = '/\A(exit|pixels|update)\.([1-9][0-9]{0,18})\.([1-9][0-9]{0,18})\.'
         . '([1-9][0-9]{0,18})\.([1-9][0-9]{0,18})\.([A-Za-z0-9_-]{43})\z/D';
 
     private function __construct()
@@ -36,7 +39,7 @@ final class PurLinkProof
     ): string {
         self::checkKey($key);
         if (
-            !in_array($purpose, [self::EXIT, self::PIXELS], true)
+            !in_array($purpose, self::PURPOSES, true)
             || $clickId < 1 || $landingPageId < 1 || $userId < 1 || $now < 1
             || $lifetime < 1 || $lifetime > self::MAX_LIFETIME || $now > PHP_INT_MAX - $lifetime
         ) {
@@ -56,7 +59,7 @@ final class PurLinkProof
     {
         self::checkKey($key);
         if (
-            $now < 1 || !in_array($purpose, [self::EXIT, self::PIXELS], true)
+            $now < 1 || !in_array($purpose, self::PURPOSES, true)
             || preg_match(self::SHAPE, $proof, $parts) !== 1 || $parts[1] !== $purpose
         ) {
             return null;

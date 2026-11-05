@@ -141,8 +141,8 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
         ?\Closure $visitorMayBeTracked = null
     ): array {
         // $server false: the type-4 postbacks were queued with the
-        // conversion (notify_traffic_source) and go out through the outbox
-        // (p202SendQueuedPostbacks()); only the markup types render here.
+        // conversion (notify_traffic_source) and go out after the answer
+        // (p202SendQueuedPostbacksAfterAnswer()) or from the worker.
         $conn = new \Prosper202\Database\Connection($db);
 
         return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server, $visitorMayBeTracked);
@@ -170,35 +170,34 @@ if (!function_exists('p202ConversionMayTrack')) {
     }
 }
 
-if (!function_exists('p202SendQueuedPostbacks')) {
+if (!function_exists('p202SendQueuedPostbacksAfterAnswer')) {
     /**
-     * Send, now, the traffic-source postbacks queued for one conversion
-     * (p202RecordConversion() with notify_traffic_source) — after the commit
-     * that queued them. Best effort by design: the rows are already durable,
-     * so a send that fails, throws or never happens is retried by the
-     * notification worker (202-cronjobs/index.php every minute) instead of
-     * being lost. A retried request for the same conversion calls this
-     * again, which sends whatever is still due. Never throws.
-     *
-     * @return array{sent: int, failed: int, retrying: int, queued: int}
+     * Send a conversion's queued postbacks once the answer has gone to the
+     * network (PHP-FPM, LiteSpeed). Where the client cannot be released first
+     * the worker sends them, so the network never waits on a traffic source.
      */
-    function p202SendQueuedPostbacks(mysqli $db, int $convId): array
+    function p202SendQueuedPostbacksAfterAnswer(mysqli $db, int $convId): void
     {
-        $out = ['sent' => 0, 'failed' => 0, 'retrying' => 0, 'queued' => 0];
         if ($convId <= 0) {
-            return $out;
+            return;
         }
+        if (function_exists('fastcgi_finish_request')) {
+            $released = fastcgi_finish_request();
+        } elseif (function_exists('litespeed_finish_request')) {
+            $released = litespeed_finish_request();
+        } else {
+            return;
+        }
+        if ($released !== true) {
+            return;
+        }
+        ignore_user_abort(true);
         try {
-            $conn = new \Prosper202\Database\Connection($db);
-            $outbox = new \Prosper202\Notifications\NotificationOutbox($conn);
-            $out = $outbox->sendDue(20, [$convId]) + $out;
-            $out['queued'] = $outbox->reachedState($convId)['total'];
+            (new \Prosper202\Notifications\NotificationOutbox(new \Prosper202\Database\Connection($db)))
+                ->sendDue(20, [$convId], 20);
         } catch (\Throwable $e) {
-            error_log('conversion ' . $convId . ': its queued postbacks were not sent now; the worker retries them: '
-                . $e->getMessage());
+            error_log('conversion ' . $convId . ': its queued postbacks were left to the worker: ' . $e->getMessage());
         }
-
-        return $out;
     }
 }
 
@@ -559,8 +558,8 @@ if (!function_exists('p202RecordConversion')) {
         }
         if (!empty($log['notify_traffic_source'])) {
             // Queue the click's traffic-source server postbacks with the row
-            // (NotificationOutbox), in its transaction; the caller sends
-            // them with p202SendQueuedPostbacks() and the worker retries.
+            // (NotificationOutbox), in its transaction; they are sent after
+            // the answer or by the worker.
             $data['notify_traffic_source'] = true;
         }
         if (isset($log['event_name']) && (string) $log['event_name'] !== '') {

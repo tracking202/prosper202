@@ -99,7 +99,9 @@ final class PurLinkPageviewTest extends TestCase
                 continue;
             }
             $source = (string) file_get_contents((string) $file);
-            foreach (['PurLinkProof::issue(', 'PurLinkPageview::forDatabase(', 'PurLinkPageview::script('] as $call) {
+            $calls = ['PurLinkProof::issue(', 'PurLinkPageview::forDatabase(', 'PurLinkPageview::script(',
+                'PageUpdate::clickScript(', 'echo p202DcsClickJs('];
+            foreach ($calls as $call) {
                 if (str_contains($source, $call)) {
                     $callers[$call][] = $path;
                 }
@@ -109,15 +111,20 @@ final class PurLinkPageviewTest extends TestCase
             sort($paths);
         }
         ksort($callers);
+        // PageUpdate's update proof goes out from the same pageview, through p202DcsClickJs().
         self::assertSame([
+            'PageUpdate::clickScript(' => ['202-config/connect2.php'],
             'PurLinkPageview::forDatabase(' => ['tracking202/static/record_adv.php', 'tracking202/static/record_simple.php'],
-            'PurLinkProof::issue(' => ['202-config/Click/PurLinkPageview.php'],
+            'PurLinkProof::issue(' => ['202-config/Click/PageUpdate.php', '202-config/Click/PurLinkPageview.php'],
+            'echo p202DcsClickJs(' => ['tracking202/static/record_adv.php', 'tracking202/static/record_simple.php'],
         ], $callers);
         foreach ($callers['PurLinkPageview::forDatabase('] as $path) {
             $source = (string) file_get_contents($root . '/' . $path);
             self::assertSame(1, substr_count($source, '->allocateClickId()'), "$path allocates one click");
-            self::assertSame(1, substr_count($source, 'PurLinkPageview::forDatabase('), "$path issues once");
-            self::assertLessThan(strpos($source, 'PurLinkPageview::forDatabase('), strpos($source, '->allocateClickId()'), $path);
+            foreach (['PurLinkPageview::forDatabase(', 'p202DcsClickJs('] as $issuer) {
+                self::assertSame(1, substr_count($source, $issuer), "$path calls $issuer once");
+                self::assertLessThan(strpos($source, $issuer), strpos($source, '->allocateClickId()'), $path);
+            }
         }
     }
 }
