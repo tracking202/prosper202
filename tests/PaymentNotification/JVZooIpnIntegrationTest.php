@@ -107,6 +107,8 @@ final class JVZooIpnIntegrationTest extends TestCase
         self::key(self::OTHER, self::OTHER_KEY);
         self::key(self::SHARING, null);
         self::key(self::DELETED, null);
+        self::q('UPDATE 202_users_pref SET ' . JVZooRole::ROLELESS_COLUMN . " = 'affiliate' WHERE user_id IN ("
+            . self::ACCOUNT . ', ' . self::OTHER . ', ' . self::SHARING . ', ' . self::DELETED . ')');
         $repo = new MysqlClickRepository(new Connection($db));
         $clicks = [
             self::CLICK => [self::ACCOUNT, self::CAMPAIGN],
@@ -294,6 +296,48 @@ final class JVZooIpnIntegrationTest extends TestCase
         [$status, $body] = explode("\n", $out, 2) + [1 => ''];
 
         return [(int) $status, $body, $err];
+    }
+
+    /**
+     * A vendor still on the 1.9.56 URL who chose "vendor" for it on Account >
+     * API integrations: a signed vendor-shaped SALE there records on the buy
+     * link's subid. With the choice left at affiliate it is refused (400).
+     */
+    public function testAVendorWhoChoseVendorForTheUrlWithNoRoleHasTheSaleRecordedOnTheSubidsClick(): void
+    {
+        $sale = JVZooAdapterTest::signed(self::fields(['caffitid' => '', 'cvendthru' => 'subid=' . self::CLICK]), self::KEY);
+
+        [$status, $body] = self::jvzoo([], $sale);
+        self::assertSame(400, $status, $body);
+        self::assertStringContainsString('for the 1.9.56 URL on Account > API integrations > JVZoo', $body);
+        self::assertSame([], self::conversions());
+
+        self::q('UPDATE 202_users_pref SET ' . JVZooRole::ROLELESS_COLUMN . " = 'vendor' WHERE user_id = " . self::ACCOUNT);
+        [$status, $body] = self::jvzoo([], $sale);
+        self::assertSame(200, $status, $body);
+        self::assertStringContainsString('Recorded transaction ' . self::RECEIPT . ' on click ' . self::CLICK, $body);
+        self::assertSame([(string) self::CLICK], array_column(self::conversions(), 'click_id'));
+        self::assertSame((string) self::ACCOUNT, self::conversions()[0]['user_id']);
+
+        // ?role=affiliate ignores the setting: no caffitid there is no click, as before.
+        $again = JVZooAdapterTest::signed(self::fields(['caffitid' => '', 'cvendthru' => 'subid=' . self::SECOND_CLICK,
+            'ctransreceipt' => 'R-AFF-1']), self::KEY);
+        [$status, $body] = self::jvzoo(['role' => 'affiliate'], $again);
+        self::assertSame(200, $status, $body);
+        self::assertStringContainsString('carries no caffitid', $body);
+        self::assertCount(1, self::conversions());
+    }
+
+    /** Two accounts holding one key that read the 1.9.56 URL differently: refused, nothing recorded. */
+    public function testAccountsSharingAKeyThatReadTheUrlWithNoRoleDifferentlyAreRefused(): void
+    {
+        self::key(self::SHARING, self::KEY);
+        self::q('UPDATE 202_users_pref SET ' . JVZooRole::ROLELESS_COLUMN . " = 'vendor' WHERE user_id = " . self::SHARING);
+        $sale = JVZooAdapterTest::signed(self::fields(['caffitid' => '', 'cvendthru' => 'subid=' . self::SHARING_CLICK]), self::KEY);
+        [$status, $body] = self::jvzoo([], $sale);
+        self::assertSame(400, $status, $body);
+        self::assertStringContainsString('more than one account', $body);
+        self::assertSame([], self::conversions());
     }
 
     public function testAVendorsSaleIsRecordedOnTheBuyLinksSubidNeverOnTheAffiliatesTid(): void

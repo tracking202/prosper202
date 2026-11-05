@@ -22,8 +22,9 @@ use Prosper202\PaymentNotification\Verification;
  * with the receiving JVZoo account's JVZIPN secret key (JVZooSignature),
  * sent to an affiliate's Affiliate IPN or a product's JVZIPN URL. The URL
  * says which (JVZooRole), and that decides the field naming the click. The
- * URL 1.9.56 showed names none and is read as the affiliate's, as 1.9.56
- * read it (`caffitid`).
+ * URL 1.9.56 showed names none: it is read as the role the verifying
+ * account chose for it (JVZooRole::ROLELESS_COLUMN), the affiliate's unless
+ * it chose the vendor's.
  *
  * `ctransaction` decides what is done: SALE and BILL (a rebill, under its
  * own receipt) are recorded at `ctransamount`, the amount paid to the party
@@ -66,14 +67,39 @@ final class JVZooAdapter implements ProviderAdapter
     /** The vendor's pass-through variable on the buy link. */
     public const VENDOR_VARIABLE = 'subid';
 
-    public function __construct(private readonly ?JVZooRole $role)
-    {
+    /** At 1.9.56's URL read as the affiliate's, a notification with no caffitid: refused so JVZoo retries and says why. */
+    public const ROLELESS_NO_AFFILIATE = 'This notification has no caffitid, so it is not an affiliate\'s, and this URL'
+        . ' (the one Prosper202 1.9.56 showed, with no ?role=) reads your notifications as an affiliate\'s.'
+        . ' Nothing was recorded. If you sell your own product on JVZoo, choose "vendor" for the 1.9.56 URL on'
+        . ' Account > API integrations > JVZoo, or paste the URL ending ?role=vendor from there into your'
+        . ' product\'s JVZIPN URL.';
+
+    /** Accounts sharing the key that verified a notification at 1.9.56's URL read it as different roles. */
+    public const ROLELESS_CONFLICT = 'This notification verifies with the JVZIPN secret key of more than one account,'
+        . ' and they read the 1.9.56 URL (no ?role=) differently, one as an affiliate\'s and one as a vendor\'s.'
+        . ' Nothing was recorded. Choose the same for the 1.9.56 URL on Account > API integrations > JVZoo in each'
+        . ' account, or paste the URL ending ?role=affiliate or ?role=vendor into JVZoo instead.';
+
+    /** Set by verify() at 1.9.56's URL when the verifying accounts' choices differ; parse() refuses. */
+    private bool $rolelessConflict = false;
+
+    /**
+     * @param array<int, JVZooRole> $rolelessRoles account id => how it reads 1.9.56's URL; storedSecrets() fills
+     *     it from JVZooRole::ROLELESS_COLUMN, and an account not in it reads it as the affiliate's
+     */
+    public function __construct(
+        private ?JVZooRole $role,
+        private readonly bool $roleless = false,
+        private array $rolelessRoles = [],
+    ) {
     }
 
-    /** The adapter for a request's ?role: none (absent or empty) is 1.9.56's URL, the affiliate's. */
+    /** The adapter for a request's ?role: none (absent or empty) is 1.9.56's URL, read as each account chose. */
     public static function forQuery(mixed $role): self
     {
-        return new self($role === null || $role === '' ? JVZooRole::AFFILIATE : JVZooRole::fromQuery($role));
+        return $role === null || $role === ''
+            ? new self(JVZooRole::AFFILIATE, true)
+            : new self(JVZooRole::fromQuery($role));
     }
 
     public function name(): string
@@ -112,6 +138,11 @@ final class JVZooAdapter implements ProviderAdapter
                     'JVZoo notification: account %d\'s stored JVZIPN secret key is not a key; it verifies nothing',
                     $accountId
                 ));
+            }
+        }
+        if ($this->roleless) {
+            foreach (AccountSecrets::stored($conn, JVZooRole::ROLELESS_COLUMN) as $accountId => $value) {
+                $this->rolelessRoles[$accountId] = JVZooRole::fromQuery($value) ?? JVZooRole::AFFILIATE;
             }
         }
 
@@ -165,7 +196,20 @@ final class JVZooAdapter implements ProviderAdapter
             }
         }
 
-        return $verified === [] ? null : new Verification($verified);
+        if ($verified === []) {
+            return null;
+        }
+        if ($this->roleless) {
+            // At 1.9.56's URL the verifying accounts' setting picks the role.
+            $roles = array_unique(array_map(
+                fn (int $id): string => ($this->rolelessRoles[$id] ?? JVZooRole::AFFILIATE)->value,
+                array_keys($verified)
+            ));
+            $this->rolelessConflict = count($roles) > 1;
+            $this->role = $this->rolelessConflict ? JVZooRole::AFFILIATE : JVZooRole::from($roles[array_key_first($roles)]);
+        }
+
+        return new Verification($verified);
     }
 
     public function parse(InboundRequest $request): Notification
@@ -210,6 +254,12 @@ final class JVZooAdapter implements ProviderAdapter
         }
         if ($kind === NotificationKind::TEST || $kind === NotificationKind::IGNORED) {
             return new Notification($kind, $type);
+        }
+        if ($this->rolelessConflict) {
+            throw self::malformed(self::ROLELESS_CONFLICT);
+        }
+        if ($this->roleless && $this->role === JVZooRole::AFFILIATE && self::text($fields, 'caffitid') === null) {
+            throw self::malformed(self::ROLELESS_NO_AFFILIATE);
         }
 
         $receipt = self::text($fields, 'ctransreceipt');
