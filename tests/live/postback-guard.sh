@@ -7,8 +7,8 @@
 #     with nothing written;
 #   - one already stored (as an older version stored it) is not called when a
 #     conversion fires it, through gpb.php and through upx.php, which answer
-#     as they always have; its outbox row is `failed` at once with the reason
-#     and is never tried again, by the request or by the worker, and the log
+#     as they always have; its outbox row is `failed` on the worker's first try, with the reason,
+#     and is never tried again, and the log
 #     line names the pixel and the host, never the query;
 #   - an allowed postback is called, and a redirect from it to the loopback
 #     listener is not followed.
@@ -225,6 +225,8 @@ Q "$(p202_postback_auth_off_sql)"
 STATUS=$(curl -sS -o "$OUT/gpb.out" -w '%{http_code}' "$BASE/tracking202/static/gpb.php?subid=$CLICK&amount=3&txid=PB-1")
 eq "$STATUS" 202 "gpb.php answers 202, as it does for a click whose source has a postback pixel"
 has "$OUT/gpb.out" '"msg":"Postback successful"' "with the answer it always gave"
+# Queued by the request; the worker sends (66H8).
+"$PHP" 202-cronjobs/app-installs.php > "$OUT/worker.out" 2>&1
 CONV=$(Q "SELECT conv_id FROM 202_conversion_logs WHERE click_id=$CLICK AND deleted=0")
 [ -n "$CONV" ] && ok "the conversion was recorded" || bad "no conversion for click $CLICK"
 row() { Q "SELECT CONCAT(status, '|', attempts, '|', COALESCE(last_error, '')) FROM 202_notification_pending WHERE conv_id=$CONV AND pixel_id=$1 AND kind='reached'"; }
@@ -267,6 +269,7 @@ eq "$(wc -l < "$OUT/inside.log" | tr -d ' ')" 0 "the internal listener was still
 say "upx.php: the universal pixel answers as before"
 STATUS=$(curl -sS -o "$OUT/upx.out" -w '%{http_code}' "$BASE/tracking202/static/upx.php?subid=$CLICK_UPX&amount=3&txid=UPX-1")
 eq "$STATUS" 200 "upx.php answers 200"
+"$PHP" 202-cronjobs/app-installs.php > "$OUT/worker.out" 2>&1
 CONV_UPX=$(Q "SELECT conv_id FROM 202_conversion_logs WHERE click_id=$CLICK_UPX AND deleted=0")
 [ -n "$CONV_UPX" ] && ok "its conversion was recorded" || bad "no conversion for click $CLICK_UPX"
 eq "$(Q "SELECT status FROM 202_notification_pending WHERE conv_id=$CONV_UPX AND pixel_id=$PIX_A")" failed "its loopback postback was refused"

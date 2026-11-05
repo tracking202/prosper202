@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification\JVZoo;
 
-use Prosper202\Click\ClickId;
+use Prosper202\Click\ClickRef;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
@@ -21,7 +21,9 @@ use Prosper202\PaymentNotification\Verification;
  * JVZoo's JVZIPN (v1), as support.jvzoo.com documents it: a form post signed
  * with the receiving JVZoo account's JVZIPN secret key (JVZooSignature),
  * sent to an affiliate's Affiliate IPN or a product's JVZIPN URL. The URL
- * says which (JVZooRole), and that decides the field naming the click.
+ * says which (JVZooRole), and that decides the field naming the click. The
+ * URL 1.9.56 showed names none and is read as the affiliate's, as 1.9.56
+ * read it (`caffitid`).
  *
  * `ctransaction` decides what is done: SALE and BILL (a rebill, under its
  * own receipt) are recorded at `ctransamount`, the amount paid to the party
@@ -68,6 +70,12 @@ final class JVZooAdapter implements ProviderAdapter
     {
     }
 
+    /** The adapter for a request's ?role: none (absent or empty) is 1.9.56's URL, the affiliate's. */
+    public static function forQuery(mixed $role): self
+    {
+        return new self($role === null || $role === '' ? JVZooRole::AFFILIATE : JVZooRole::fromQuery($role));
+    }
+
     public function name(): string
     {
         return 'JVZoo';
@@ -86,7 +94,7 @@ final class JVZooAdapter implements ProviderAdapter
     public function clickField(): ClickField
     {
         if ($this->role === null) {
-            throw new \LogicException('a JVZoo URL with no role has no click field; parse() refuses its notifications');
+            throw new \LogicException('a JVZoo URL with an unknown role has no click field; parse() refuses it');
         }
 
         return $this->role->clickField();
@@ -165,7 +173,8 @@ final class JVZooAdapter implements ProviderAdapter
         $fields = $request->fields;
         if ($this->role === null) {
             throw self::malformed(
-                'This URL names no role. Paste the URL Account > API integrations > JVZoo gives: the one ending'
+                'This URL\'s role is neither affiliate nor vendor. Paste the URL Account > API integrations > JVZoo'
+                . ' gives: the one ending'
                 . ' ?role=affiliate into your Affiliate IPN, the one ending ?role=vendor into your product\'s JVZIPN'
                 . ' URL.'
             );
@@ -258,14 +267,14 @@ final class JVZooAdapter implements ProviderAdapter
      *
      * @param array<array-key, mixed> $fields
      */
-    private function clickId(array $fields, string $type, string $receipt): ?int
+    private function clickId(array $fields, string $type, string $receipt): ?ClickRef
     {
         if ($this->role === JVZooRole::AFFILIATE) {
             $tid = self::text($fields, 'caffitid');
             if ($tid === null) {
                 return null;
             }
-            $clickId = ClickId::parse($tid);
+            $clickId = ClickRef::parse($tid);
             if ($clickId !== null) {
                 return $clickId;
             }
@@ -286,7 +295,7 @@ final class JVZooAdapter implements ProviderAdapter
         if (count($subids) > 1) {
             throw self::malformed('cvendthru carries subid more than once, with different values.');
         }
-        $clickId = ClickId::parse($subids[0]);
+        $clickId = ClickRef::parse($subids[0]);
         if ($clickId === null) {
             throw self::malformed(
                 'cvendthru carries subid "' . self::shown($subids[0]) . '", which is not a click id. The buy link'

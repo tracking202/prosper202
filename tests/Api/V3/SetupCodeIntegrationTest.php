@@ -125,6 +125,10 @@ final class SetupCodeIntegrationTest extends TestCase
         self::assertSame('simple', $data['landing_page_type']);
         self::assertSame($base, $data['base_url'], 'the caller\'s domain (user 1\'s is owner.example), scheme-relative as the page writes it');
         self::assertSame(LandingPageCode::loader($base, $public), $data['loader']);
+        self::assertStringContainsString('landing.php?lpip=' . $public . '&p202_defpixel=1&t202id=', $data['loader_deferred_pixel']);
+        self::assertStringNotContainsString('p202_defpixel', $data['loader']);
+        // The PurLink is the campaign URL itself: the link straight to the offer.
+        self::assertSame('https://offer.example/', $data['purlink']);
         self::assertSame($base . 'tracking202/redirect/go.php?lpip=' . $public, $data['outbound_link']);
         self::assertSame(LandingPageCode::simpleOutboundPhp($base, $public, 'https://lp.example/mine', self::NOW), $data['outbound_php']);
         self::assertSame(LandingPageCode::simpleOutboundJavascript($base, $public), $data['outbound_javascript']);
@@ -173,9 +177,11 @@ final class SetupCodeIntegrationTest extends TestCase
         [$first, $second] = $data['offers'];
         self::assertSame([1, 'rotator', $rotator, 'Split mine'], [$first['position'], $first['type'], $first['id'], $first['name']]);
         self::assertSame($base . 'tracking202/redirect/go.php?rpi=' . $rotatorPublic, $first['outbound_link']);
+        self::assertArrayNotHasKey('purlink', $first, 'a redirector has no PurLink, as in 1.9.56');
         self::assertSame(LandingPageCode::rotatorOutboundPhp($base, $rotatorPublic, 'Split mine', 'https://lp.example/adv-mine', self::NOW), $first['outbound_php']);
         self::assertSame([2, 'campaign', $campaign, 'Offer mine'], [$second['position'], $second['type'], $second['id'], $second['name']]);
         self::assertSame($base . 'tracking202/redirect/go.php?acip=' . $campaignPublic, $second['outbound_link']);
+        self::assertSame('https://offer.example/?acip=' . $campaignPublic, $second['purlink']);
         self::assertSame(LandingPageCode::campaignOutboundPhp($base, $campaignPublic, 'Offer mine', 'https://lp.example/adv-mine', self::NOW), $second['outbound_php']);
     }
 

@@ -52,7 +52,8 @@ const setupFeatures = `"setup_section":true,"delete_dry_run":true,"staged_writes
 const simpleCodeAnswer = `{"data":{"landing_page_id":12,"landing_page_id_public":6122,"landing_page_type":"simple",
 "landing_page_nickname":"Spring","landing_page_url":"https://lp.example/spring","base_url":"//t.example/",
 "loader":"<script>load(\"//t.example/tracking202/static/landing.php?lpip=6122\")</script>",
-"aff_campaign_id":3,"outbound_link":"//t.example/tracking202/redirect/go.php?lpip=6122",
+"loader_deferred_pixel":"<script>load(\"//t.example/tracking202/static/landing.php?lpip=6122&p202_defpixel=1\")</script>",
+"aff_campaign_id":3,"purlink":"https://offer.example/?s=[[subid]]","outbound_link":"//t.example/tracking202/redirect/go.php?lpip=6122",
 "outbound_php":"<?php header('location: //t.example/tracking202/redirect/lp.php?lpip=6122'); ?>",
 "outbound_javascript":"<html>window.location='//t.example/tracking202/redirect/lp.php?lpip=6122'</html>",
 "segments":{"t202Country":"Visitor's Country","t202City":"Visitor's City","t202kw":"Value passed in t202kw"}}}`
@@ -70,6 +71,10 @@ func TestLandingPageCodePrintsThePagesSnippets(t *testing.T) {
 	for _, want := range []string{
 		`Landing page 12 "Spring" (simple): https://lp.example/spring`,
 		`landing.php?lpip=6122`,
+		"With the deferred pixel",
+		"landing.php?lpip=6122&p202_defpixel=1",
+		"PurLink: link straight to the offer",
+		"https://offer.example/?s=[[subid]]",
 		"Option 1: outbound redirect link",
 		"//t.example/tracking202/redirect/go.php?lpip=6122",
 		"Option 2: outbound PHP redirect",
@@ -78,6 +83,9 @@ func TestLandingPageCodePrintsThePagesSnippets(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("output lacks %q:\n%s", want, stdout)
 		}
+	}
+	if strings.Contains(stdout, "Add [[subid]]") {
+		t.Errorf("a PurLink with [[subid]] needs no warning:\n%s", stdout)
 	}
 	// The page's order, not the alphabet's: the visitor's country comes first.
 	if c, k := strings.Index(stdout, "t202Country"), strings.Index(stdout, "t202kw"); c < 0 || k < 0 || strings.Index(stdout[c+1:], "t202City")+c+1 > k {

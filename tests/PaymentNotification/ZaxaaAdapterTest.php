@@ -164,6 +164,13 @@ final class ZaxaaAdapterTest extends TestCase
         self::assertStringContainsString('"PAYOUT"', $unknown->outcome->message);
     }
 
+    public function testASignedPurLinkSubidNamesItsClickForTheProcessorToVerify(): void
+    {
+        $product = self::sale()['products'][0];
+        $n = self::parsed(['products' => [['custom' => '41-987-0123456789ab'] + $product]]);
+        self::assertSame([41, '41-987-0123456789ab'], [$n->clickId, $n->purLinkSubid]);
+    }
+
     public function testTheClickIsTheOneEveryProductsCustomNames(): void
     {
         $product = self::sale()['products'][0];

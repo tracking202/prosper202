@@ -88,6 +88,6 @@ final class LandingPageCodeTest extends TestCase
         self::assertStringContainsString('return \Prosper202\Setup\LandingPageCode::SEGMENTS;', $source, 'getDynamicContentSegments() is the class\'s list');
         self::assertStringContainsString("return \\Prosper202\\Setup\\LandingPageCode::loader('//' . getTrackingDomain() . get_absolute_url(), \$landing_page_id_public);", $source, 'generateTrackingLoaderSnippet() is the class\'s loader');
         self::assertArrayHasKey('t202Country', LandingPageCode::SEGMENTS);
-        self::assertCount(19, LandingPageCode::SEGMENTS);
+        self::assertCount(20, LandingPageCode::SEGMENTS);
     }
 }

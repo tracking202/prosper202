@@ -71,6 +71,7 @@ final class GoalTables
             self::goalVersions(),
             self::campaignGoals(),
             self::goalSubjects(),
+            self::purLinkGoalSubjects(),
             self::goalEvents(),
             self::goalProgress(),
             self::goalOutcomes(),
@@ -153,6 +154,24 @@ final class GoalTables
                 PRIMARY KEY (`subject_type`,`subject_id`),
                 KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='One lock row per goal subject (a click or an install)'"
+        );
+    }
+
+    /** Stable per-click, per-page, per-offer identity for PurLink goal events. */
+    public static function purLinkGoalSubjects(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::PURLINK_GOAL_SUBJECTS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::PURLINK_GOAL_SUBJECTS . "` (
+                `subject_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `click_id` bigint(20) unsigned NOT NULL,
+                `landing_page_id` mediumint(8) unsigned NOT NULL,
+                `campaign_id` mediumint(8) unsigned NOT NULL,
+                PRIMARY KEY (`subject_id`),
+                UNIQUE KEY `click_page_campaign` (`click_id`,`landing_page_id`,`campaign_id`),
+                KEY `user_campaign` (`user_id`,`campaign_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Separate goal event streams per PurLink offer'"
         );
     }
 

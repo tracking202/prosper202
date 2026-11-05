@@ -48,6 +48,8 @@ works on an http or an https landing page.
 | Field | What it is |
 | ----- | ---------- |
 | `loader` | The script to put right above `</body>` of **only** the page visitors first arrive on |
+| `loader_deferred_pixel` | The same script with the deferred pixel on (`p202_defpixel=1`); see [PurLinks](../features/purlinks.md) |
+| `purlink` | The [PurLink](../features/purlinks.md): the campaign URL, a link straight to the offer. `null` when the campaign URL is not an absolute http(s) URL |
 | `outbound_link` | Option 1: the link to the offer (`go.php?lpip=`) |
 | `outbound_php` | Option 2: a PHP redirect page to save on your site and link to (cloaks the affiliate link) |
 | `outbound_javascript` | Option 3: a JavaScript redirect page (lets other tags fire first) |
@@ -59,7 +61,10 @@ Its campaign must be live, as the page only lists those (`422` on
 `offers`, in order: `campaign:<aff_campaign_id>` (via `go.php?acip=` and
 `off.php`) or `rotator:<rotator id>` (via `go.php?rpi=` and `offrtr.php`),
 comma separated, at most 100. Each comes back in `offers[]` with `position`,
-`type`, `id`, `public_id`, `name`, `outbound_link` and `outbound_php`.
+`type`, `id`, `public_id`, `name`, `outbound_link` and `outbound_php`; a
+campaign offer also has `purlink`, its campaign URL with `acip=` naming the
+offer (`null` when that cannot be written). Both page types have
+`loader_deferred_pixel`.
 
 ```bash
 curl -H "Authorization: Bearer $KEY" \

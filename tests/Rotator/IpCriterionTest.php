@@ -98,33 +98,31 @@ final class IpCriterionTest extends TestCase
     }
 
     /**
-     * The Redirectors page's save (a script, so pinned by its source; the
-     * live pass posts to it): a posted criterion value is read in two
-     * statements, the check that refuses what Criterion::refusal() names
-     * (refusal() here, for an IP list without ALL) and the write that stores
-     * Criterion::stored() (the canonical list), and nowhere else; and the
-     * page's refusal answers "ERROR: <reason>", which p202-setup.js shows.
+     * The Redirectors page's save (a script, so pinned by its source;
+     * RedirectorRulesSaveIntegrationTest and the live pass post to it) reads
+     * a posted criterion value once, into the body it hands
+     * RotatorsController::setDefaultAndRules(), whose criterion() refuses
+     * what IpCriterion::refusal() names and stores the canonical list; the
+     * page writes no criterion itself, and its refusal answers
+     * "ERROR: <reason>", which p202-setup.js shows.
      */
-    public function testThePageSaveChecksAndStoresAnIpCriterionThroughCriterion(): void
+    public function testThePageSaveChecksAndStoresAnIpCriterionThroughTheController(): void
     {
-        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/tracking202/ajax/rotator.php');
-        self::assertSame(2, substr_count($source, "\$criteria['value']"), 'a new read of the posted value');
-        $check = "\t\t\tif ((\$reason = \\Prosper202\\Rotator\\Criterion::refusal("
-            . "(string) (\$criteria['type'] ?? ''), (string) (\$criteria['value'] ?? ''))) !== null) {\n"
-            . "\t\t\t\t\$refuse(\$reason);\n"
-            . "\t\t\t}\n";
-        self::assertSame(1, substr_count($source, $check), 'the check');
+        $root = dirname(__DIR__, 2);
+        $source = (string) file_get_contents($root . '/tracking202/ajax/rotator.php');
+        self::assertSame(1, substr_count($source, "\$criteria['value']"), 'a new read of the posted value');
+        self::assertSame(1, substr_count($source, "'value' => \$text(\$criteria['value'] ?? ''),"), 'the value, as posted, in the body');
+        self::assertSame(1, substr_count($source, '->setDefaultAndRules('), 'the body, to the controller');
+        self::assertStringNotContainsString('202_rotator_rules_criteria', $source, 'no criterion written by the page');
         $refuse = "\t\$refuse = static function (?string \$reason = null): never {\n"
             . "\t\theader('Content-Type: text/plain; charset=utf-8'); // a reason repeats what was typed\n"
             . "\t\tdie(\$reason === null ? \"ERROR\" : 'ERROR: ' . \$reason);\n"
             . "\t};\n";
         self::assertSame(1, substr_count($source, $refuse), 'the refusal answers ERROR: <reason>');
-        $write = "\$value = \$db->real_escape_string(\n"
-            . "                \\Prosper202\\Rotator\\Criterion::stored("
-            . "(string) \$criteria['type'], (string) \$criteria['value'])\n"
-            . "            );\n";
-        self::assertSame(1, substr_count($source, $write), 'the write');
-        $script = (string) file_get_contents(dirname(__DIR__, 2) . '/202-js/p202-setup.js');
+        $controller = (string) file_get_contents($root . '/api/v3/Controllers/RotatorsController.php');
+        self::assertStringContainsString('$refused = IpCriterion::refusal($value);', $controller, 'the check');
+        self::assertStringContainsString("\$value = IpCriterion::normalize(\$value)['value'];", $controller, 'the write');
+        $script = (string) file_get_contents($root . '/202-js/p202-setup.js');
         self::assertStringContainsString("result.indexOf('ERROR: ') === 0 ? result.slice(7) : ''", $script);
     }
 }

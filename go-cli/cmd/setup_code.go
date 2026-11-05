@@ -196,17 +196,20 @@ type landingPageCode struct {
 		Nickname           string          `json:"landing_page_nickname"`
 		URL                string          `json:"landing_page_url"`
 		Loader             string          `json:"loader"`
+		LoaderDeferred     string          `json:"loader_deferred_pixel"`
+		PurLink            *string         `json:"purlink"`
 		OutboundLink       string          `json:"outbound_link"`
 		OutboundPHP        string          `json:"outbound_php"`
 		OutboundJavascript string          `json:"outbound_javascript"`
 		Segments           json.RawMessage `json:"segments"`
 		Offers             []struct {
-			Position     int    `json:"position"`
-			Type         string `json:"type"`
-			ID           int    `json:"id"`
-			Name         string `json:"name"`
-			OutboundLink string `json:"outbound_link"`
-			OutboundPHP  string `json:"outbound_php"`
+			Position     int     `json:"position"`
+			Type         string  `json:"type"`
+			ID           int     `json:"id"`
+			Name         string  `json:"name"`
+			PurLink      *string `json:"purlink"`
+			OutboundLink string  `json:"outbound_link"`
+			OutboundPHP  string  `json:"outbound_php"`
 		} `json:"offers"`
 	} `json:"data"`
 }
@@ -226,8 +229,16 @@ func printLandingPageCode(data []byte) error {
 	b.WriteString("1. Landing page code\n")
 	b.WriteString("Put this right above the </body> tag of ONLY the page your visitors first arrive on, not in a template every page of the site includes.\n\n")
 	b.WriteString(strings.TrimSpace(d.Loader) + "\n\n")
+	if d.LoaderDeferred != "" {
+		b.WriteString("With the deferred pixel (instead of the code above): after a PurLink click the offer opens in a new tab, and this page fires your traffic source's pixels when the network's postback reports the conversion.\n\n")
+		b.WriteString(strings.TrimSpace(d.LoaderDeferred) + "\n\n")
+	}
 	if d.LandingPageType == "simple" {
-		b.WriteString("2. Link out to the offer: choose one of the three.\n\n")
+		b.WriteString("2. Link out to the offer: choose one.\n\n")
+		if d.PurLink != nil && *d.PurLink != "" {
+			b.WriteString("PurLink: link straight to the offer, no tracker redirect (the landing page code fills in [[subid]] and other tokens)\n")
+			b.WriteString(*d.PurLink + "\n" + purLinkSubidWarning(*d.PurLink) + "\n")
+		}
 		b.WriteString("Option 1: outbound redirect link (use it as the link to the offer on your page)\n")
 		b.WriteString(d.OutboundLink + "\n\n")
 		b.WriteString("Option 2: outbound PHP redirect (save it as a page on your site, e.g. redirect.php, and link to that page; cloaks your affiliate link)\n")
@@ -238,6 +249,9 @@ func printLandingPageCode(data []byte) error {
 		b.WriteString("2. Link out to each offer: use its outbound link as that offer's link on your page, or save its PHP redirect as a page on your site and link to that.\n\n")
 		for _, o := range d.Offers {
 			fmt.Fprintf(&b, "Offer %d: %s %d %q\n", o.Position, o.Type, o.ID, o.Name)
+			if o.PurLink != nil && *o.PurLink != "" {
+				b.WriteString("PurLink (straight to the offer):\n" + *o.PurLink + "\n" + purLinkSubidWarning(*o.PurLink))
+			}
 			b.WriteString("Outbound link:\n" + o.OutboundLink + "\n")
 			b.WriteString("PHP redirect:\n" + strings.TrimSpace(o.OutboundPHP) + "\n\n")
 		}
@@ -251,6 +265,16 @@ func printLandingPageCode(data []byte) error {
 	}
 	fmt.Print(b.String())
 	return nil
+}
+
+var purLinkSubid = regexp.MustCompile(`(?i)(\[\[|%5b%5b)subid(\]\]|%5d%5d)`)
+
+// purLinkSubidWarning says so when a PurLink cannot carry the click back.
+func purLinkSubidWarning(link string) string {
+	if purLinkSubid.MatchString(link) {
+		return ""
+	}
+	return "Add [[subid]] to the campaign URL where your network takes its SubID, or its conversions cannot be matched to the click.\n"
 }
 
 // orderedStrings reads a JSON object of strings in the order it was sent (a

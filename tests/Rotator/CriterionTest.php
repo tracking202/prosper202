@@ -35,7 +35,6 @@ final class CriterionTest extends TestCase
         'tracking202/redirect/offrtr.php' => 'reads',
         'tracking202/ajax/sort_rotator.php' => 'reads',
         'tracking202/setup/rotator.php' => 'reads',
-        'tracking202/ajax/rotator.php' => 'reads',
         'api/v3/Controllers/RotatorsController.php' => 'reads',
         '202-config/Database/Schema/TableRegistry.php' => 'names the table; reads no value',
         '202-config/functions-upgrade.php' => 'creates the table; reads no value',

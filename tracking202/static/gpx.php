@@ -32,6 +32,20 @@ if ($requestedClick['malformed'] !== null) {
     error_log('gpx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
     exit;
 }
+// A signed PurLink SubID names its click once its MAC verifies, and records
+// on its offer (as on gpb.php); one that does not verify records nothing.
+try {
+    $purLink = p202PurLinkFromRequest($db, $requestedClick, 'gpx');
+} catch (\RuntimeException $purLinkError) {
+    // The image is already sent; the log is the only place to say so.
+    error_log($purLinkError->getMessage());
+    exit;
+}
+if ($purLink === false) {
+    exit;
+}
+$purLinkSubid = $purLink === null ? null : $requestedClick['purlink'];
+$purLinkKey = $purLink['key'] ?? null;
 // How the click was found, kept on the conversion (MatchMethod): the
 // parameter or the cookie that named it, or the address it was guessed from.
 $matchedBy = $requestedClick['method'] ?? \Prosper202\Conversion\Ledger\MatchMethod::SAME_IP;
@@ -88,7 +102,9 @@ if (is_numeric($mysql['click_id'])) {
 	// as it always has, with the event's name kept on the row.
 	$eventName = null;
 	try {
-		$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, $matchedBy, ['browser' => false]);
+		$webEvent = $purLinkSubid !== null
+			? p202RecordPurLinkWebEvent($db, $purLinkSubid, (string) $purLinkKey, $_GET)
+			: p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, $matchedBy, ['browser' => false]);
 	} catch (\Throwable $webEventError) {
 		error_log('gpx: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
 		return;
@@ -156,7 +172,9 @@ if (is_numeric($mysql['click_id'])) {
 			($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
 			p202ExtractTransactionId($_GET),
 			p202ExtractCustomer($_GET),
-			p202ExtractItems($_GET)
+			p202ExtractItems($_GET),
+			$purLinkSubid,
+			$purLinkKey,
 		);
 		} catch (\Throwable $conversionError) {
 			error_log('gpx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());

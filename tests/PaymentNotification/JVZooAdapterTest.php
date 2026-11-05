@@ -195,6 +195,14 @@ final class JVZooAdapterTest extends TestCase
         self::assertNull(self::parsed(['ctranstime' => ''])->occurredAt, 'none stated: dated when it arrives');
     }
 
+    public function testASignedPurLinkSubidNamesItsClickForTheProcessorToVerify(): void
+    {
+        $affiliate = self::parsed(['caffitid' => '41-987-0123456789ab']);
+        self::assertSame([41, '41-987-0123456789ab'], [$affiliate->clickId, $affiliate->purLinkSubid]);
+        $vendor = self::parsed(['cvendthru' => 'subid=' . '41-987-0123456789ab'], JVZooRole::VENDOR);
+        self::assertSame([41, '41-987-0123456789ab'], [$vendor->clickId, $vendor->purLinkSubid]);
+    }
+
     public function testTheVendorsClickIsTheBuyLinksSubidAndTheTidIsNotRead(): void
     {
         $vendor = static fn (array $overrides): Notification => self::parsed($overrides, JVZooRole::VENDOR);
@@ -286,7 +294,7 @@ final class JVZooAdapterTest extends TestCase
         $affiliate = JVZooRole::AFFILIATE;
 
         return [
-            'a URL with no role' => [[], null, 'This URL names no role.'],
+            'a URL whose role is another' => [[], null, 'role is neither affiliate nor vendor'],
             'a field JVZIPN does not post' => [['ctid' => '9'], $affiliate, 'a field JVZIPN v1 does not post (ctid)'],
             'no ctransaction' => [['ctransaction' => ''], $affiliate, 'The notification carries no ctransaction.'],
             'an unknown type' => [['ctransaction' => 'sale'], $affiliate, 'ctransaction is "sale", which JVZIPN'],
@@ -421,6 +429,34 @@ final class JVZooAdapterTest extends TestCase
             $refusal = self::refusal(static fn () => $adapter->parse(self::request($fields)));
             self::assertSame($kind, $refusal->outcome->kind, $name);
         }
+    }
+
+    /**
+     * The URL 1.9.56 showed names no role. 1.9.56 always read it as the
+     * affiliate's (caffitid), so it is the affiliate's URL: the click is
+     * caffitid, never the vendor's subid, and cverify is still checked.
+     */
+    public function testAUrlWithNoRoleIsTheAffiliatesAs1956ReadIt(): void
+    {
+        $sale = self::sale(['cvendthru' => 'subid=77']);
+        $secrets = [3 => [self::KEY_A]];
+        foreach ([null, ''] as $none) {
+            $adapter = JVZooAdapter::forQuery($none);
+            self::assertSame('caffitid', $adapter->clickField()->field);
+            self::assertSame(42, $adapter->parse(self::request($sale))->clickId);
+            self::assertSame(
+                [3 => 0],
+                $adapter->verify(self::request(self::signed($sale, self::KEY_A)), $secrets)?->secretByAccount
+            );
+            self::assertNull($adapter->verify(self::request(self::signed($sale, self::KEY_OTHER)), $secrets));
+        }
+        // A role that is neither is refused as one.
+        foreach (['seller', 'Vendor', ['vendor']] as $other) {
+            $refusal = self::refusal(static fn () => JVZooAdapter::forQuery($other)->parse(self::request(self::sale())));
+            self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
+            self::assertStringContainsString('role is neither affiliate nor vendor', $refusal->outcome->message);
+        }
+        self::assertSame(77, JVZooAdapter::forQuery('vendor')->parse(self::request($sale))->clickId);
     }
 
     public function testTheRoleIsReadFromTheQueryExactly(): void

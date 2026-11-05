@@ -237,22 +237,9 @@ class RotatorsController
             $binds[] = self::ruleOrRotatorName($payload, 'name', true);
             $types .= 's';
         }
-        // The default is one destination, as Setup > Redirectors sets it:
-        // naming any part of it replaces the whole default and clears the
-        // rest, the auto-monetizer included. Setting only default_url left a
-        // default campaign in place, and rtr.php, which prefers the campaign,
-        // went on sending clicks there.
-        //
-        // A body that restates the default the rotator holds -- a GET body
-        // sent back with a new name -- changes nothing. It rewrote the
-        // default, so a rotator whose default is the auto-monetizer (which
-        // GET shows as auto_monetizer, every default_* null) lost it on a
-        // rename, answered 200 (measured), and one whose default campaign was
-        // deleted since could not be renamed at all.
         $namesDefault = array_intersect_key($payload, array_flip(self::DEFAULT_KEYS)) !== [];
-        $heldDefault = ['url' => $current['default_url'] ?? null, 'campaign' => $current['default_campaign'] ?? null, 'lp' => $current['default_lp'] ?? null];
-        if ($namesDefault && !self::restates($payload, self::DEFAULT_KEYS, $heldDefault)) {
-            $default = $this->destination($payload, self::DEFAULT_KEYS, false, '', $heldDefault);
+        $default = $this->plannedDefault($payload, $current);
+        if ($default !== null) {
             $sets[] = 'default_url = ?, default_campaign = ?, default_lp = ?, auto_monetizer = NULL';
             array_push($binds, $default['url'], $default['campaign'], $default['lp']);
             $types .= 'sii';
@@ -276,6 +263,38 @@ class RotatorsController
         $stmt->close();
 
         return $this->get($id);
+    }
+
+    /**
+     * The default a payload names, checked, or null when it names none or
+     * restates the one $current (the rotator as get() answers it) holds.
+     *
+     * The default is one destination, as Setup > Redirectors sets it:
+     * naming any part of it replaces the whole default and clears the
+     * rest, the auto-monetizer included. Setting only default_url left a
+     * default campaign in place, and rtr.php, which prefers the campaign,
+     * went on sending clicks there.
+     *
+     * A body that restates the default the rotator holds -- a GET body
+     * sent back with a new name -- changes nothing. It rewrote the
+     * default, so a rotator whose default is the auto-monetizer (which
+     * GET shows as auto_monetizer, every default_* null) lost it on a
+     * rename, answered 200 (measured), and one whose default campaign was
+     * deleted since could not be renamed at all.
+     *
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $current
+     * @return array{url: ?string, campaign: ?int, lp: ?int}|null
+     */
+    private function plannedDefault(array $payload, array $current): ?array
+    {
+        $namesDefault = array_intersect_key($payload, array_flip(self::DEFAULT_KEYS)) !== [];
+        $heldDefault = ['url' => $current['default_url'] ?? null, 'campaign' => $current['default_campaign'] ?? null, 'lp' => $current['default_lp'] ?? null];
+        if (!$namesDefault || self::restates($payload, self::DEFAULT_KEYS, $heldDefault)) {
+            return null;
+        }
+
+        return $this->destination($payload, self::DEFAULT_KEYS, false, '', $heldDefault);
     }
 
     /**
@@ -919,18 +938,7 @@ class RotatorsController
     public function setRules(int $rotatorId, array $payload, bool $dryRun, callable $mayRemoveRules): array
     {
         PayloadKeys::refuseUnknown($payload, ['rules'], 'a redirector rule set');
-        PayloadKeys::refuse(PayloadKeys::listErrors($payload, 'rules', [...self::RULE_FIELDS, ...self::RULE_READ_ONLY], 'a redirector rule'));
-        $sent = $payload['rules'] ?? null;
-        if (!is_array($sent) || $sent === []) {
-            throw new ValidationException('A rule set needs its rules', [
-                'rules' => 'Send every rule the redirector is to have, in the order they are tried (GET /rotators/'
-                    . $rotatorId . '/rules answers the set as stored). A set has at least one rule, as on '
-                    . 'Setup › Redirectors: to send every visitor to the default, set each rule\'s status to 0',
-            ]);
-        }
-        if (count($sent) > self::MAX_RULES) {
-            throw new ValidationException('Too many rules', ['rules' => 'At most ' . self::MAX_RULES . ' rules']);
-        }
+        $sent = $this->sentRules($rotatorId, $payload);
 
         if ($dryRun) {
             $plan = $this->planRuleSet($rotatorId, $sent, $mayRemoveRules);
@@ -959,9 +967,69 @@ class RotatorsController
     }
 
     /**
-     * Hold the redirector's row until the transaction ends, so the API's
-     * writes of its rules (a set, one rule, the redirector's removal) run
-     * one after another. Setup › Redirectors' save takes no lock.
+     * The rules a set's body sends, its shape checked before anything is read.
+     *
+     * @param array<string, mixed> $payload
+     * @return list<array<string, mixed>>
+     */
+    private function sentRules(int $rotatorId, array $payload): array
+    {
+        PayloadKeys::refuse(PayloadKeys::listErrors($payload, 'rules', [...self::RULE_FIELDS, ...self::RULE_READ_ONLY], 'a redirector rule'));
+        $sent = $payload['rules'] ?? null;
+        if (!is_array($sent) || $sent === []) {
+            throw new ValidationException('A rule set needs its rules', [
+                'rules' => 'Send every rule the redirector is to have, in the order they are tried (GET /rotators/'
+                    . $rotatorId . '/rules answers the set as stored). A set has at least one rule, as on '
+                    . 'Setup › Redirectors: to send every visitor to the default, set each rule\'s status to 0',
+            ]);
+        }
+        if (count($sent) > self::MAX_RULES) {
+            throw new ValidationException('Too many rules', ['rules' => 'At most ' . self::MAX_RULES . ' rules']);
+        }
+
+        return array_values($sent);
+    }
+
+    /**
+     * Setup › Redirectors' save: setRules()'s body plus update()'s default_*, written in one transaction under the lock.
+     * Answers the redirector as the lock found it (`before`) and as written (`rotator`).
+     *
+     * @param array<string, mixed> $payload
+     * @param callable(): void $mayRemoveRules refuses a caller who may not remove a rule
+     * @return array{data: array{rotator_id: int, before: array<string, mixed>, rotator: array<string, mixed>, changes: array<string, mixed>}}
+     */
+    public function setDefaultAndRules(int $rotatorId, array $payload, callable $mayRemoveRules): array
+    {
+        PayloadKeys::refuseUnknown($payload, [...array_values(self::DEFAULT_KEYS), 'rules'], "a redirector's default and rule set");
+        $sent = $this->sentRules($rotatorId, $payload);
+
+        return $this->transaction(function () use ($mayRemoveRules, $payload, $rotatorId, $sent): array {
+            $this->lockRotator($rotatorId);
+            $before = (array) $this->get($rotatorId)['data'];
+            $default = $this->plannedDefault($payload, $before);
+            $plan = $this->planRuleSet($rotatorId, $sent, $mayRemoveRules);
+            if ($default !== null) {
+                $stmt = $this->prepare('UPDATE 202_rotators SET default_url = ?, default_campaign = ?, default_lp = ?,'
+                    . ' auto_monetizer = NULL WHERE id = ? AND user_id = ?');
+                $this->bind($stmt, 'siiii', $default['url'], $default['campaign'], $default['lp'], $rotatorId, $this->userId);
+                $this->execute($stmt, 'Failed to update the default');
+                $stmt->close();
+            }
+            $this->writeRuleSet($rotatorId, $plan);
+
+            return ['data' => [
+                'rotator_id' => $rotatorId,
+                'before' => $before,
+                'rotator' => (array) $this->get($rotatorId)['data'],
+                'changes' => $plan['changes'],
+            ]];
+        });
+    }
+
+    /**
+     * Hold the redirector's row until the transaction ends, so the writes of
+     * its rules (a set, Setup › Redirectors' save, one rule, the
+     * redirector's removal) run one after another.
      */
     private function lockRotator(int $rotatorId): void
     {
@@ -1623,8 +1691,7 @@ class RotatorsController
     /**
      * Hold one of the redirector's rules until the transaction ends, once
      * lockRotator() holds the redirector. A rule removed while the write
-     * waited, by a set or by Setup › Redirectors' save (which takes neither
-     * lock), is not found.
+     * waited, by a set or by Setup › Redirectors' save, is not found.
      */
     private function lockRule(int $rotatorId, int $ruleId): void
     {

@@ -585,6 +585,7 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 	function getAdsFromS3($user, $key)
 	{
 		$ch = curl_init();
+		\Prosper202\Http\OutboundTimeouts::apply($ch);
 		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/get-ads/' . $user . '/' . $key);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 		$results = curl_exec($ch);
@@ -602,6 +603,7 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 		$fields = http_build_query($fields);
 
 		$ch = curl_init();
+		\Prosper202\Http\OutboundTimeouts::apply($ch);
 		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/delete-ad/' . $user . '/' . $key);
 		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
 		curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);

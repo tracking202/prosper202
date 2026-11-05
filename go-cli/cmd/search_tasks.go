@@ -150,7 +150,7 @@ var searchTasks = []searchTask{
 	{Run: "p202 system info", Pages: []string{"Settings"},
 		Phrases: []string{"install settings", "versions", "database size", "geoip database age", "geolite build date"}},
 	{Run: "p202 system integrations", Pages: []string{"3rd Party API Integrations"},
-		Phrases: []string{"clickbank url", "jvzoo url", "instant notification url"}},
+		Phrases: []string{"clickbank url", "jvzoo url", "instant notification url", "shopify webhook url"}},
 	// The CLI's own setting: the docs call it the install's base URL.
 	{Run: "p202 config set-url", Phrases: []string{"base url", "instance url"}},
 	{Run: "p202 user list", Pages: []string{"User Management"},

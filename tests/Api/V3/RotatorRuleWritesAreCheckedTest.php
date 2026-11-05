@@ -39,8 +39,8 @@ use Tests\Support\SourceScan;
  * What this does not see: a table name assembled at runtime (none of the
  * tree's writes with an unread table reaches these tables:
  * RollupWritersAreMarkedTest lists them), a write in another class that the
- * controller calls, and whether the listed files' own checks are right
- * (the page's are held by tests/live/setup-pages.sh).
+ * controller calls, and whether the listed files' own checks are right.
+ * Setup › Redirectors' save writes through setDefaultAndRules().
  */
 final class RotatorRuleWritesAreCheckedTest extends TestCase
 {
@@ -53,8 +53,6 @@ final class RotatorRuleWritesAreCheckedTest extends TestCase
     /** @var array<string, string> file => why its writes of a rule's rows are safe */
     private const WRITERS = [
         self::CONTROLLER => 'the API: each public method that reaches a write is held to ENTRY_POINTS',
-        'tracking202/ajax/rotator.php' => 'Setup › Redirectors\' save, which refuses a rule with no name, criterion '
-            . 'or destination with checks of its own (tests/live/setup-pages.sh)',
         'tracking202/setup/rotator.php' => 'removes a redirector with every rule, criterion and destination it has',
         '202-config/functions-upgrade.php' => 'the upgrade ladder, moving stored destinations into their own table',
     ];
@@ -67,6 +65,7 @@ final class RotatorRuleWritesAreCheckedTest extends TestCase
         'createRule' => 'checked',
         'updateRule' => 'checked',
         'setRules' => 'checked',
+        'setDefaultAndRules' => 'checked',
         'delete' => 'removes the redirector with its rules, criteria and destinations',
         'deleteRule' => 'removes one rule with its criteria and destinations',
     ];
@@ -116,6 +115,13 @@ final class RotatorRuleWritesAreCheckedTest extends TestCase
                 });
             }
             public function setRules(): void
+            {
+                $this->transaction(function (): void {
+                    $this->plan();
+                    $this->insert();
+                });
+            }
+            public function setDefaultAndRules(): void
             {
                 $this->transaction(function (): void {
                     $this->plan();

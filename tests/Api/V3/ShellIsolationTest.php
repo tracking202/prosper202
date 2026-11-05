@@ -71,6 +71,7 @@ final class ShellIsolationTest extends TestCase
     private const EXTERNAL_SERVICE_LOADERS = [
         'https://dna8twue3dlxq.cloudfront.net/js/profitwell.js' => 'ProfitWell, loaded by template_bottom()',
         '//www.googletagservices.com/tag/js/gpt.js' => 'Google Publisher Tag on the sign-in page (info_top([\'ads\' => true]))',
+        'https://connect.facebook.net/en_US/fbevents.js' => 'Meta Pixel base code, loaded on an advertiser\'s landing page by the Bot202 Facebook Pixel Assistant (202-js/p202-fb-pixel-assistant.js), never by the app shell',
     ];
 
     private const SKIP_DIRS = ['vendor', 'node_modules', 'tests', '.git', 'go-cli', 'docs', 'documentation', '202-js/vendor', '202-css/vendor', '202-config/temp', '202-config/data', '202-config/geo'];

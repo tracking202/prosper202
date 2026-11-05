@@ -1,0 +1,5 @@
+-- Fixed: A ClickBank refund or chargeback of a sale recorded before upgrading from 1.9.56 found nothing to reverse, because 1.9.56 credited the click without a conversion row under the receipt. It now takes its amount back from the value the click carried over, once per receipt and never below 0 (a click 1.9.56 left below 0 has nothing to take back), and says so in its answer.
+app: Fixed: ClickBank refunds of sales recorded before the upgrade are taken back again.
+-- Fixed: Every ClickBank sale was refused on an account whose currency is not USD. ClickBank states amounts in USD; they are recorded as stated, as 1.9.56 did, and the answer says the amount is not converted.
+app: Fixed: ClickBank sales record again on accounts that count in a currency other than USD.
+-- Changed: PayKickstart's Affiliate IPN, which paid 1.9.56 recorded, carries no signature, so Prosper202 does not record it. Its answer and the log now name it and say what to set instead (the product's signed IPN with subid=[[subid]] on the checkout link).
