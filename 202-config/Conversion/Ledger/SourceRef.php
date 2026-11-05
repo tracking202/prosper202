@@ -69,7 +69,13 @@ final class SourceRef
     /** The digest an API key reference carries, for matching a stored key against one. */
     public static function keyDigest(string $apiKey): string
     {
-        return substr(hash('sha256', $apiKey), 0, self::KEY_DIGEST_LENGTH);
+        return self::hashDigest(hash('sha256', $apiKey));
+    }
+
+    /** The digest of a key stored as its SHA-256 (ApiKeyStore's key_hash). */
+    public static function hashDigest(string $sha256Hex): string
+    {
+        return substr($sha256Hex, 0, self::KEY_DIGEST_LENGTH);
     }
 
     /**

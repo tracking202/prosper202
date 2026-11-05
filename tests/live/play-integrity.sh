@@ -173,7 +173,7 @@ cron() {
 row() { Q "SELECT CONCAT_WS('/', match_state, COALESCE(trusted, 'null'), integrity_state) FROM 202_app_installs WHERE install_uuid='$1'"; }
 paid() { Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$1 AND dedupe_key='install'"; }
 
-OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
+OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE (key_hash = SHA2('$P202_API_KEY', 256) OR (key_hash IS NULL AND api_key COLLATE utf8mb4_bin = '$P202_API_KEY'))")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
 
 FAKE_PID=

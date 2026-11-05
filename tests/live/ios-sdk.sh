@@ -85,7 +85,7 @@ header() { grep -i "^$1:" "$OUT/head" | head -1 | cut -d' ' -f2- | tr -d '\r'; }
 
 mysql_q "$DB" -e "TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_app_skan_encoding_history;
   TRUNCATE 202_app_postbacks; TRUNCATE 202_goals; TRUNCATE 202_goal_versions;"
-OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key = '$P202_API_KEY' LIMIT 1")
+OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE (key_hash = SHA2('$P202_API_KEY', 256) OR (key_hash IS NULL AND api_key COLLATE utf8mb4_bin = '$P202_API_KEY')) LIMIT 1")
 [ -n "$OWNER" ] || OWNER=1
 
 say "the SDK contract fixtures, answered by the running server"
