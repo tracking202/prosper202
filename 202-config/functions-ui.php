@@ -80,11 +80,15 @@ function p202_asset_tag(string $id, string $base, bool $defer = false): string
     $location = $asset['url'] ?? $asset['path'];
     $extension = strtolower(pathinfo(parse_url($location, PHP_URL_PATH) ?: $location, PATHINFO_EXTENSION));
     $url = htmlspecialchars(p202_asset_url($id, $base), ENT_QUOTES, 'UTF-8');
+    // An external file's own referrer policy (202-config/assets.php), whatever the page's is.
+    $referrer = isset($asset['referrerpolicy'])
+        ? ' referrerpolicy="' . htmlspecialchars($asset['referrerpolicy'], ENT_QUOTES, 'UTF-8') . '"'
+        : '';
     return match ($extension) {
         'css' => $defer
             ? throw new InvalidArgumentException("Asset '$id' is a stylesheet; only a script can be deferred")
-            : '<link rel="stylesheet" href="' . $url . '">',
-        'js' => '<script src="' . $url . '"' . ($defer ? ' defer' : '') . '></script>',
+            : '<link rel="stylesheet" href="' . $url . '"' . $referrer . '>',
+        'js' => '<script src="' . $url . '"' . $referrer . ($defer ? ' defer' : '') . '></script>',
         default => throw new InvalidArgumentException("Asset '$id' is not a stylesheet or script"),
     };
 }
