@@ -102,7 +102,7 @@ final class DestinationsController
 
     public function test(int $id): array
     {
-        return ['data' => (new DestinationQueue($this->conn, $this->store))->testFire($this->userId, $id, time()) ?? throw self::notFound($id)];
+        return ['data' => $this->refusing(fn (): ?array => (new DestinationQueue($this->conn, $this->store))->testFire($this->userId, $id, time())) ?? throw self::notFound($id)];
     }
 
     /** @param array<string, mixed> $params */

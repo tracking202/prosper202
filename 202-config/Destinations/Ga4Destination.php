@@ -54,11 +54,11 @@ final class Ga4Destination implements DestinationType
 
     public function validate(array $settings, ?array $credentials): array
     {
-        $id = strtoupper(trim((string) ($settings['measurement_id'] ?? '')));
+        $id = strtoupper(trim(self::text($settings, 'measurement_id', '', 'settings.')));
         if (preg_match('/\AG-[A-Z0-9]{4,20}\z/D', $id) !== 1) {
             throw new DestinationInputException('settings.measurement_id', 'measurement_id must be the stream\'s Measurement ID, G- followed by letters and digits (Admin › Data streams).');
         }
-        $event = trim((string) ($settings['event_name'] ?? 'purchase'));
+        $event = trim(self::text($settings, 'event_name', 'purchase', 'settings.'));
         if (
             preg_match(self::NAME, $event) !== 1 || in_array(strtolower($event), self::RESERVED_EVENTS, true)
             || preg_match('/\A(firebase_|ga_|google_|gtag)/i', $event) === 1
@@ -88,7 +88,7 @@ final class Ga4Destination implements DestinationType
         if ($credentials === null) {
             return [$out, null];
         }
-        $secret = trim((string) ($credentials['api_secret'] ?? ''));
+        $secret = trim(self::text($credentials, 'api_secret', '', 'credentials.'));
         if (preg_match('/\A[A-Za-z0-9_\-]{8,100}\z/D', $secret) !== 1) {
             throw new DestinationInputException('credentials.api_secret', 'credentials.api_secret must be the stream\'s Measurement Protocol API secret (Admin › Data streams › Measurement Protocol API secrets).');
         }
@@ -238,6 +238,17 @@ final class Ga4Destination implements DestinationType
         }
 
         return $out;
+    }
+
+    /** A text field, refused when it is not text: a cast would make ["x"] read "Array". */
+    private static function text(array $from, string $key, string $default, string $prefix): string
+    {
+        $value = $from[$key] ?? $default;
+        if (!is_string($value)) {
+            throw new DestinationInputException($prefix . $key, $key . ' must be text.');
+        }
+
+        return $value;
     }
 
     /** @param list<string> $allowed the first is the default */

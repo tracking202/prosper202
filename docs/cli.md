@@ -1095,8 +1095,10 @@ p202 destination delete 1 --dry-run
 | `--ad-user-data`, `--ad-personalization` | Google's consent signals as you state them: `granted`, `denied`, or `unset` to stop sending one |
 
 A conversion goes out with the minutely cron job and is retried with backoff,
-8 tries in all. A visitor your privacy setting holds back is `withheld`, never
-sent.
+8 tries in all. A conversion whose click was guessed (same IP, visitor id), a
+visitor your privacy setting holds back, and a visitor who may be in the EEA
+or UK when the destination does not state both consent signals `granted` are
+`withheld`, never sent.
 
 ## Reports
 

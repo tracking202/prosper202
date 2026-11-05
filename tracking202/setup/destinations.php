@@ -202,7 +202,7 @@ echo p202_setup_error_flashes($errors, $formFields);
                     <?php } ?>
                 </div>
                 <?php } ?>
-                <div class="form-text">Conversions go out within a minute or two, sent by the minutely cron job and retried with backoff (8 tries over about a day). A visitor your privacy setting holds back (Personal settings) is never sent: their row says withheld. Field mapping, campaigns and the full log: <code>p202 destination</code> or <code>/api/v3/destinations</code>.</div>
+                <div class="form-text">Conversions go out within a minute or two, sent by the minutely cron job and retried with backoff (8 tries over about a day). A guessed click, a visitor your privacy setting holds back, and a visitor who may be in the EEA or UK are never sent (withheld) unless, for the last, both consent signals below are Granted. Field mapping, campaigns and the full log: <code>p202 destination</code> or <code>/api/v3/destinations</code>.</div>
             </div>
         </section>
     </div>

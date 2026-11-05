@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace Prosper202\Destinations;
 
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\DataEngine\IpAddressSql;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Schema\TableRegistry;
 use Prosper202\Http\EuropeanVisitor;
-use Prosper202\Http\PrivacyMode;
 use Prosper202\Http\PrivacySetting;
 use Prosper202\Notifications\NotificationOutbox;
 
@@ -25,9 +25,11 @@ use Prosper202\Notifications\NotificationOutbox;
  * skipped for the rest of the run. The body is built at send time from the
  * ledger, so no secret and no identifier is ever stored in a row.
  *
- * Before a send, the visitor's privacy (PrivacySetting, PrivacyMode,
- * EuropeanVisitor for 'eu'): a visitor the account does not track in full
- * is withheld, and never retried.
+ * Before a send (owner, 2026-11-04): a conversion whose click was guessed
+ * (not named by click id or cookie) is withheld; so is every visitor under
+ * privacy 'all', and a visitor who may be in the EEA or UK (EuropeanVisitor)
+ * unless the setting is 'disabled' and the destination states both consent
+ * signals granted. Withheld rows are never retried.
  */
 final class DestinationQueue
 {
@@ -126,8 +128,8 @@ final class DestinationQueue
                     $out['cancelled']++;
                     continue;
                 }
-                if (is_string($destination) || !$destination['enabled'] || isset($unanswered[$destination['host']])) {
-                    // Unreadable credentials, switched off, or a host that did not answer: left for a later run.
+                if (is_array($destination) && (!$destination['enabled'] || isset($unanswered[$destination['host']]))) {
+                    // Switched off, or a host that did not answer: left for a later run.
                     continue;
                 }
                 $attempts = (int) $row['attempts'] + 1;
@@ -138,9 +140,12 @@ final class DestinationQueue
                     continue;
                 }
                 $tried++;
-                $threw = false;
+                $threw = is_string($destination);
                 try {
-                    [$status, $result] = $this->deliver($destination, (int) $row['conv_id'], $now);
+                    // A destination that cannot be read says why on each of its rows, which end failed after their tries.
+                    [$status, $result] = is_string($destination)
+                        ? ['pending', new SendResult(false, true, null, 'not sent: ' . $destination)]
+                        : $this->deliver($destination, (int) $row['conv_id'], $now);
                 } catch (\JsonException | DestinationInputException $e) {
                     // This row's data, not the run's: it fails alone (CLAUDE.md #24).
                     [$status, $result] = ['failed', new SendResult(false, false, null, 'not sent: ' . $e->getMessage())];
@@ -183,15 +188,19 @@ final class DestinationQueue
             return null;
         }
         if (is_string($destination)) {
-            throw new \RuntimeException($destination);
+            throw new DestinationInputException('credentials', $destination . '; set the credentials again');
         }
-        $result = $destination['adapter']->send(
-            $destination['settings'],
-            $destination['credentials'],
-            ConversionFacts::sample($now, $this->currency($userId)),
-            true,
-            $now
-        );
+        try {
+            $result = $destination['adapter']->send(
+                $destination['settings'],
+                $destination['credentials'],
+                ConversionFacts::sample($now, $this->currency($userId)),
+                true,
+                $now
+            );
+        } catch (\JsonException $e) {
+            $result = new SendResult(false, false, null, 'not sent: ' . $e->getMessage());
+        }
         $id = $this->insertTest($userId, $destinationId, $result, $now);
 
         return [
@@ -215,7 +224,7 @@ final class DestinationQueue
     {
         $userId = $destination['user_id'];
         // The primary, not a replica: a row a lagging replica lacks is not a deleted one.
-        $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, '
+        $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, '
             . IpAddressSql::address('ip', 'ip6') . ' AS ip_address
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
             . IpAddressSql::join('ip', 'ip6') . '
@@ -233,11 +242,22 @@ final class DestinationQueue
             return ['cancelled', new SendResult(false, false, null, 'the conversion\'s campaign is not one this destination sends')];
         }
         $ip = (string) ($conv['ip_address'] ?? '');
+        // Only a click the conversion named: a guess would teach the platform the wrong clicks.
+        $method = MatchMethod::tryFrom((string) ($conv['match_method'] ?? '')) ?? MatchMethod::UNKNOWN;
+        if ($method !== MatchMethod::CLICK_ID && $method !== MatchMethod::COOKIE) {
+            return ['withheld', new SendResult(false, false, null, 'withheld: the click was found by ' . $method->label() . ', not named by the conversion')];
+        }
         $setting = PrivacySetting::forAccount($this->conn, $userId);
-        if (!PrivacyMode::tracksInFull($setting, fn (): bool => ($this->mayBeEuropean)($ip))) {
-            return ['withheld', new SendResult(false, false, null, $setting === 'all'
-                ? 'withheld: your privacy setting holds back every visitor'
-                : 'withheld: your privacy setting holds back visitors who may be in Europe, and this click\'s address is not placed outside it')];
+        if ($setting === 'all') {
+            return ['withheld', new SendResult(false, false, null, 'withheld: your privacy setting holds back every visitor')];
+        }
+        if (($this->mayBeEuropean)($ip)) {
+            if ($setting !== 'disabled') {
+                return ['withheld', new SendResult(false, false, null, 'withheld: your privacy setting holds back visitors who may be in Europe, and this click\'s address is not placed outside it')];
+            }
+            if (!self::consentGranted($destination['settings'])) {
+                return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination does not state consent granted (ad_user_data and ad_personalization)')];
+            }
         }
         $clickId = (int) $conv['click_id'];
         $click = TrafficSourcePixels::clickTokens($this->conn, $userId, $clickId, true);
@@ -284,7 +304,8 @@ final class DestinationQueue
             return [null, [], []];
         }
         // The customer's ref can be an email address: it goes only where the hashes may.
-        $send = ($settings['send_user_data'] ?? false) === true && ($settings['consent']['ad_user_data'] ?? null) !== 'denied';
+        // An allowlist: unstated or granted sends, anything else (denied, a corrupt value) does not.
+        $send = ($settings['send_user_data'] ?? false) === true && in_array($settings['consent']['ad_user_data'] ?? null, [null, 'granted'], true);
         if (!$send) {
             return [null, [], []];
         }
@@ -292,6 +313,12 @@ final class DestinationQueue
         $phone = PiiHash::phone($row['phone'] ?? null);
 
         return [(string) $row['primary_ref'], $email === null ? [] : [$email], $phone === null ? [] : [$phone]];
+    }
+
+    /** @param array<string, mixed> $settings */
+    private static function consentGranted(array $settings): bool
+    {
+        return ($settings['consent']['ad_user_data'] ?? null) === 'granted' && ($settings['consent']['ad_personalization'] ?? null) === 'granted';
     }
 
     /**

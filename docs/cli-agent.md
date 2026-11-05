@@ -935,7 +935,8 @@ p202 destination delete <id> [--force] [--dry-run] [--json]                # uns
 ```
 
 The API secret is read from a file or piped stdin (`-`), never a flag value. `--staged` is refused: the
-routes are not stageable. A `withheld` delivery was held back by the privacy setting and is never retried;
+routes are not stageable. A `withheld` delivery is never retried: a guessed click, the privacy setting, or an
+EEA/UK visitor without both consent signals stated `granted` (`last_error` says which);
 `failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called).
 
 ### Reports

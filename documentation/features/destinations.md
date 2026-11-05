@@ -35,7 +35,7 @@ Set them up on **Setup › Destinations**, with `p202 destination`, or through
 | `pending` | Waiting, or backing off after a failed try. |
 | `sent` | The platform accepted it. |
 | `failed` | Tries ran out, or the platform refused it, or it was not sent (a GA4 event more than 72 hours old, a private address). `last_error` says which. |
-| `withheld` | Your privacy setting holds this visitor back, so nothing was sent. Never retried. |
+| `withheld` | Nothing was sent: the click was guessed, or the visitor is held back (below). `last_error` says which. Never retried. |
 | `cancelled` | The conversion or the destination was deleted before it went out. |
 
 A destination you turn off queues nothing; what it had queued waits and goes
@@ -45,13 +45,23 @@ cancelled, and its credentials erased.
 
 ## Privacy and personal data
 
-- **Your privacy setting decides who is sent** (Personal settings, the
-  same setting that masks addresses and drops cookies). `all`: no
-  visitor's conversion is sent. `eu` (the default for new accounts): a
-  conversion is sent only when GeoIP places its click's address outside
-  Europe and the EU; an address it cannot place is held back. `disabled`:
-  every conversion is sent. The strictest of the install's and the
-  account's setting applies.
+- **Only clicks the conversion named are sent.** A conversion whose click
+  was found by its postback's or pixel's subid, an API call, an upload or a
+  tracking cookie is sent; one whose click was guessed (the visitor id, or the
+  latest click from the same IP address) is withheld, as the offline
+  conversion files leave it out: a guess would teach the platform's bidding
+  the wrong clicks.
+- **A visitor who may be in the EEA or UK is withheld unless consent is
+  granted**, whatever your privacy setting. GeoIP decides from the click's
+  address; an address it cannot place counts as possibly European. Such a
+  visitor is sent only when your privacy setting is `disabled` and the
+  destination states both consent signals (`ad_user_data` and
+  `ad_personalization`) as `granted`.
+- **Your privacy setting** (Personal settings, the same setting that masks
+  addresses and drops cookies) applies on top: `all` sends no visitor; `eu`
+  (the default for new accounts) sends only visitors placed outside Europe
+  and the EU. The strictest of the install's and the account's setting
+  applies.
 - **Hashed email and phone are off by default.** With *send hashed email
   and phone* on, the conversion's LTV customer email is trimmed and
   lower-cased (for gmail.com, dots and a `+tag` are dropped, as Google
@@ -60,8 +70,8 @@ cancelled, and its credentials erased.
   written to the queue, the log or an error.
 - **Consent signals** (`ad_user_data`, `ad_personalization`) are what you
   state, per destination, from your consent banner: Prosper202 does not
-  record a visitor's consent. With `ad_user_data` denied, no hashed data is
-  sent even when the setting is on.
+  record a visitor's consent. Hashed data (and `user_id`) go only when
+  `ad_user_data` is unstated or `granted`.
 - Credentials (the GA4 API secret) are stored encrypted (AES-256-GCM,
   bound to the destination) and are never shown again.
 

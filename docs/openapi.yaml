@@ -4426,8 +4426,10 @@ paths:
         Newest first. `status` is `pending` (waiting, or backing off after
         a failed attempt; 8 attempts in all, 1 minute doubling to 6 hours
         apart), `sent`, `failed` (attempts ran out, the platform refused it,
-        or the request was refused before it was sent), `withheld` (your
-        privacy setting holds this visitor back, so nothing was sent) or
+        or the request was refused before it was sent), `withheld` (nothing
+        was sent - the click was guessed rather than named, the privacy
+        setting holds the visitor back, or the visitor may be in the EEA or
+        UK and the destination does not state both consent signals granted) or
         `cancelled` (the conversion or the destination was deleted first).
         `summary` is what was sent, without identifiers' values.
         `meta.summary` counts every status under the same filters except

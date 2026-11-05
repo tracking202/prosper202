@@ -70,7 +70,7 @@ final class DestinationsIntegrationTest extends TestCase
     /** @var list<string> addresses the privacy check was asked about */
     private array $asked = [];
 
-    private function worker(bool $mayBeEuropean = true): DestinationQueue
+    private function worker(bool $mayBeEuropean = false): DestinationQueue
     {
         return new DestinationQueue(new Connection(self::$db), $this->store(), function (string $ip) use ($mayBeEuropean): bool {
             $this->asked[] = $ip;
@@ -330,5 +330,64 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertSame('pending', self::deliveries($id)[0]['status']);
         self::fixture('UPDATE 202_users SET user_active=1 WHERE user_id=1');
         self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['sent'], 'the positive control: active again, it is sent');
+    }
+
+    public function testAVisitorWhoMayBeInTheEeaOrUkIsWithheldUnlessConsentIsGranted(): void
+    {
+        // Privacy 'disabled' (the setUp default): the account tracks everyone in full.
+        $id = $this->destination();
+        $this->click(100);
+        $this->record(100, 'ORD-30');
+        self::assertSame(1, $this->worker(mayBeEuropean: true)->sendDue(10, 5, time() + 1)['withheld']);
+        self::assertStringContainsString('EEA or UK', (string) self::deliveries($id)[0]['last_error']);
+
+        // One signal granted is not enough.
+        $this->store()->update(1, $id, ['settings' => ['measurement_id' => 'G-ABC123', 'consent' => ['ad_user_data' => 'granted']]], time());
+        $this->click(101);
+        $this->record(101, 'ORD-31');
+        self::assertSame(1, $this->worker(mayBeEuropean: true)->sendDue(10, 5, time() + 1)['withheld']);
+
+        // Positive control: both stated granted, and the visitor is sent.
+        $this->store()->update(1, $id, ['settings' => ['measurement_id' => 'G-ABC123', 'consent' => ['ad_user_data' => 'granted', 'ad_personalization' => 'granted']]], time());
+        $this->click(102);
+        $this->record(102, 'ORD-32');
+        self::assertSame(1, $this->worker(mayBeEuropean: true)->sendDue(10, 5, time() + 1)['sent']);
+        self::assertSame(['ad_user_data' => 'GRANTED', 'ad_personalization' => 'GRANTED'], $this->bodies[0]['consent']);
+
+        // The account's 'eu' setting still holds them back, consent or not.
+        self::fixture("UPDATE 202_users_pref SET user_pref_privacy='eu' WHERE user_id=1");
+        $this->click(103);
+        $this->record(103, 'ORD-33');
+        self::assertSame(1, $this->worker(mayBeEuropean: true)->sendDue(10, 5, time() + 1)['withheld']);
+        self::assertCount(1, $this->bodies);
+    }
+
+    public function testAGuessedClickIsWithheld(): void
+    {
+        $id = $this->destination();
+        $this->click(100);
+        (new MysqlConversionRepository(new Connection(self::$db)))->record(1, [
+            'click_id' => 100, 'payout' => '19.90', 'transaction_id' => 'ORD-40', 'source' => 'pixel',
+        ], MatchMethod::SAME_IP);
+        $this->click(101);
+        (new MysqlConversionRepository(new Connection(self::$db)))->record(1, [
+            'click_id' => 101, 'payout' => '19.90', 'transaction_id' => 'ORD-41', 'source' => 'pixel',
+        ], MatchMethod::COOKIE);
+        $out = $this->worker()->sendDue(10, 5, time() + 1);
+        self::assertSame([1, 1], [$out['withheld'], $out['sent']], 'the same-IP guess is withheld; the cookie match, the positive control, is sent');
+        self::assertStringContainsString('not named by the conversion', (string) self::deliveries($id)[0]['last_error']);
+    }
+
+    public function testADestinationThatCannotBeReadSaysSoOnItsRows(): void
+    {
+        $id = $this->destination();
+        $this->click(100);
+        $this->record(100, 'ORD-42');
+        self::fixture("UPDATE 202_destinations SET credentials='v1.bm90LWEtcmVhbC1jaXBoZXJ0ZXh0LWF0LWFsbC0xMjM0NTY=' WHERE destination_id = $id");
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['retrying']);
+        $row = self::deliveries($id)[0];
+        self::assertSame(['pending', '1'], [$row['status'], $row['attempts']]);
+        self::assertStringContainsString('cannot be read', (string) $row['last_error']);
+        self::assertSame([], $this->bodies);
     }
 }

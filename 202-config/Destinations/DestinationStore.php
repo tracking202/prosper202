@@ -97,36 +97,39 @@ final class DestinationStore
      */
     public function update(int $userId, int $destinationId, array $patch, int $now): ?array
     {
-        $row = $this->row($userId, $destinationId);
-        if ($row === null) {
-            return null;
-        }
-        $name = (string) $row['name'];
-        if (array_key_exists('name', $patch)) {
-            $name = self::name(is_string($patch['name']) ? $patch['name'] : '');
-        }
-        $enabled = (int) $row['enabled'] === 1;
-        if (array_key_exists('enabled', $patch)) {
-            if (!is_bool($patch['enabled'])) {
-                throw new DestinationInputException('enabled', 'enabled must be true or false.');
+        // Read and written under one row lock, so two concurrent changes cannot lose one (CLAUDE.md #36).
+        $updated = $this->conn->transaction(function () use ($userId, $destinationId, $patch, $now): bool {
+            $lock = $this->conn->prepareWrite('SELECT ' . self::COLUMNS . ' FROM `' . TableRegistry::DESTINATIONS . '` WHERE destination_id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE');
+            $this->conn->bind($lock, 'ii', [$destinationId, $userId]);
+            $row = $this->conn->fetchOne($lock);
+            if ($row === null) {
+                return false;
             }
-            $enabled = $patch['enabled'];
-        }
-        $settings = self::decode((string) $row['settings']);
-        $credentials = null;
-        if (array_key_exists('settings', $patch) || array_key_exists('credentials', $patch)) {
-            // A null is refused below, never read as "keep" (CLAUDE.md #4).
-            $settings = array_key_exists('settings', $patch) ? $patch['settings'] : $settings;
-            if (array_key_exists('credentials', $patch) && !is_array($patch['credentials'])) {
-                throw new DestinationInputException('credentials', 'credentials must be an object; leave it out to keep the stored ones.');
+            $name = (string) $row['name'];
+            if (array_key_exists('name', $patch)) {
+                $name = self::name(is_string($patch['name']) ? $patch['name'] : '');
             }
-            $given = $patch['credentials'] ?? null;
-            if (!is_array($settings) || ($given !== null && !is_array($given))) {
-                throw new DestinationInputException(is_array($settings) ? 'credentials' : 'settings', 'settings and credentials must be objects.');
+            $enabled = (int) $row['enabled'] === 1;
+            if (array_key_exists('enabled', $patch)) {
+                if (!is_bool($patch['enabled'])) {
+                    throw new DestinationInputException('enabled', 'enabled must be true or false.');
+                }
+                $enabled = $patch['enabled'];
             }
-            [$settings, $credentials] = $this->settings($userId, $this->type((string) $row['type']), $settings, $given);
-        }
-        $this->conn->transaction(function () use ($name, $enabled, $settings, $now, $userId, $destinationId, $credentials): void {
+            $settings = self::decode((string) $row['settings']);
+            $credentials = null;
+            if (array_key_exists('settings', $patch) || array_key_exists('credentials', $patch)) {
+                // A null is refused below, never read as "keep" (CLAUDE.md #4).
+                $settings = array_key_exists('settings', $patch) ? $patch['settings'] : $settings;
+                if (array_key_exists('credentials', $patch) && !is_array($patch['credentials'])) {
+                    throw new DestinationInputException('credentials', 'credentials must be an object; leave it out to keep the stored ones.');
+                }
+                $given = $patch['credentials'] ?? null;
+                if (!is_array($settings) || ($given !== null && !is_array($given))) {
+                    throw new DestinationInputException(is_array($settings) ? 'credentials' : 'settings', 'settings and credentials must be objects.');
+                }
+                [$settings, $credentials] = $this->settings($userId, $this->type((string) $row['type']), $settings, $given);
+            }
             $update = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATIONS . '` SET name = ?, enabled = ?, settings = ?, updated_at = ?
                  WHERE destination_id = ? AND user_id = ? AND deleted_at IS NULL');
             $this->conn->bind($update, 'sisiii', [$name, $enabled ? 1 : 0, self::json($settings), $now, $destinationId, $userId]);
@@ -134,9 +137,11 @@ final class DestinationStore
             if ($credentials !== null) {
                 $this->writeCredentials($userId, $destinationId, $credentials);
             }
+
+            return true;
         });
 
-        return $this->get($userId, $destinationId);
+        return $updated ? $this->get($userId, $destinationId) : null;
     }
 
     /** Soft delete; what it had queued and not sent is cancelled. Whether there was one. */

@@ -69,15 +69,16 @@ final class Ga4DestinationTest extends TestCase
             $this->ga4()->validate(['measurement_id' => ' g-abc123 '], null)[0]
         );
         $refused = [
-            'settings.measurement_id' => ['measurement_id' => 'UA-1234-1'],
-            'settings.event_name' => ['measurement_id' => 'G-ABC123', 'event_name' => 'session_start'],
-            'settings.client_id_source' => ['measurement_id' => 'G-ABC123', 'client_id_source' => 'cookie'],
-            'settings.params' => ['measurement_id' => 'G-ABC123', 'params' => ['email' => 'customer_email']],
+            ['settings.measurement_id', ['measurement_id' => 'UA-1234-1']],
+            ['settings.event_name', ['measurement_id' => 'G-ABC123', 'event_name' => 'session_start']],
+            ['settings.event_name', ['measurement_id' => 'G-ABC123', 'event_name' => ['purchase']]],
+            ['settings.client_id_source', ['measurement_id' => 'G-ABC123', 'client_id_source' => 'cookie']],
+            ['settings.params', ['measurement_id' => 'G-ABC123', 'params' => ['email' => 'customer_email']]],
         ];
-        foreach ($refused as $field => $settings) {
+        foreach ($refused as [$field, $settings]) {
             try {
                 $this->ga4()->validate($settings, null);
-                self::fail($field . ' was accepted');
+                self::fail($field . ' was accepted: ' . json_encode($settings));
             } catch (DestinationInputException $e) {
                 self::assertSame($field, $e->field);
             }
