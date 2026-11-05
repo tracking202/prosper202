@@ -11,9 +11,12 @@ use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationInputException;
+use Prosper202\Destinations\DestinationKeyMissing;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\GoogleAdsDestination;
+use Prosper202\Destinations\GoogleAdsOAuth;
+use Prosper202\Destinations\GoogleAdsOAuthCallback;
 use Tests\Apps\Android\AndroidDatabase;
 
 /**
@@ -294,7 +297,7 @@ final class GoogleAdsIntegrationTest extends TestCase
         $refused = null;
         try {
             $key->invoke($store, false);
-        } catch (\RuntimeException $e) {
+        } catch (DestinationKeyMissing $e) {
             $refused = $e->getMessage();
         }
         self::assertNotNull($refused, 'the minted key was rolled back, so there is none');
@@ -304,5 +307,182 @@ final class GoogleAdsIntegrationTest extends TestCase
         self::assertSame($minted, $key->invoke($store, false));
         self::$db->query("DELETE FROM 202_deployment_secrets WHERE secret_name = '" . DestinationStore::SECRET_NAME . "'");
         self::assertSame($minted, $key->invoke($store, false));
+    }
+
+    public function testASecondMintInTheSameRolledBackTransactionIsNotKeptEither(): void
+    {
+        // update() mints once to read the stored credentials, then writeCredentials() asks again: the second
+        // call's INSERT changes no row and reads the first call's uncommitted key back.
+        self::$db->query("DELETE FROM 202_deployment_secrets WHERE secret_name = '" . DestinationStore::SECRET_NAME . "'");
+        $store = $this->store();
+        $key = new \ReflectionMethod($store, 'key');
+        self::$db->begin_transaction();
+        $first = $key->invoke($store, true);
+        self::assertSame($first, $key->invoke($store, true), 'the same transaction reads its own key back');
+        self::$db->rollback();
+        $this->expectException(DestinationKeyMissing::class);
+        $key->invoke($store, false);
+    }
+
+    public function testAMissingKeyReadsAsUnreadableButADatabaseErrorIsNot(): void
+    {
+        $id = $this->destination();
+        $this->store()->authorise(1, $id, self::REFRESH, time());
+        self::assertSame('ready', $this->store()->get(1, $id)['status']);
+        $this->adsClick(130, time() - 7 * 3600);
+        $this->record(130, 'ORD-130');
+        $pending = self::deliveries($id);
+        self::assertSame(['pending', '0'], [$pending[0]['status'], $pending[0]['attempts']]);
+
+        self::$db->query('RENAME TABLE 202_deployment_secrets TO 202_deployment_secrets_away');
+        try {
+            $listed = null;
+            try {
+                $listed = $this->store()->get(1, $id)['status'];
+            } catch (\Throwable $e) {
+                self::assertNotInstanceOf(DestinationKeyMissing::class, $e);
+            }
+            self::assertNull($listed, 'a failed read of the key is an error, not credentials_unreadable (got ' . var_export($listed, true) . ')');
+            $sent = null;
+            try {
+                $sent = $this->worker()->sendDue(10, 15, time());
+            } catch (\Throwable $e) {
+                self::assertNotInstanceOf(DestinationKeyMissing::class, $e);
+            }
+            self::assertNull($sent, 'the run stops on a database error');
+            self::assertSame(['pending', '0'], [self::deliveries($id)[0]['status'], self::deliveries($id)[0]['attempts']], 'and the row keeps its tries');
+        } finally {
+            self::$db->query('RENAME TABLE 202_deployment_secrets_away TO 202_deployment_secrets');
+        }
+
+        // The positive control: a key that is really not there reads as unreadable credentials.
+        self::$db->query("DELETE FROM 202_deployment_secrets WHERE secret_name = '" . DestinationStore::SECRET_NAME . "'");
+        self::assertSame('credentials_unreadable', $this->store()->get(1, $id)['status']);
+    }
+
+    public function testAConversionGoogleAlreadyHeldIsFlaggedInTheLog(): void
+    {
+        $id = $this->destination();
+        $this->store()->authorise(1, $id, self::REFRESH, time());
+        $this->adsClick(140, time() - 7 * 3600);
+        $this->record(140, 'ORD-140');
+        $this->answers = [['status' => 200, 'body' => '{"partialFailureError":{"code":3,"message":"m","details":[{"errors":[{"errorCode":{"conversionUploadError":"ORDER_ID_ALREADY_IN_USE"},"message":"The order id is already in use."}]}]},"results":[{}]}']];
+        $this->worker()->sendDue(10, 15, time());
+        $row = self::$db->query("SELECT status, last_error, summary FROM 202_destination_deliveries WHERE destination_id = $id AND kind = 'conversion'")->fetch_assoc();
+        self::assertSame('sent', $row['status']);
+        self::assertStringStartsWith(GoogleAdsDestination::ALREADY_IN_GOOGLE_ADS, (string) $row['last_error']);
+        self::assertTrue(json_decode((string) $row['summary'], true)['already_in_google_ads'] ?? false);
+    }
+
+    private const SERVER = ['HTTP_HOST' => 'track.example', 'HTTPS' => 'on', 'SERVER_PORT' => '443', 'REQUEST_URI' => '/tracking202/setup/destination-oauth.php'];
+
+    /** @var list<array{url: string, body: string}> the token endpoint's requests */
+    private array $tokenRequests = [];
+
+    /** The callback, with Google's token endpoint answering $answer. */
+    private function connectCallback(array $answer = ['status' => 200, 'body' => '{"access_token":"ya29.x","refresh_token":"1//0newGrant-abc","expires_in":3599}']): GoogleAdsOAuthCallback
+    {
+        $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.10'], '203.0.113.0/24');
+        $transport = function (array $options) use ($answer): array {
+            $this->tokenRequests[] = ['url' => (string) $options[CURLOPT_URL], 'body' => (string) $options[CURLOPT_POSTFIELDS]];
+
+            return $answer + ['error' => null, 'primary_ip' => '203.0.113.10', 'location' => null];
+        };
+
+        return new GoogleAdsOAuthCallback($this->store(), new GoogleAdsOAuth(new WebhookSender($guard, $transport)));
+    }
+
+    public function testTheCallbackStoresTheGrantForTheDestinationItsStateNames(): void
+    {
+        $id = $this->destination();
+        $now = time();
+        $this->adsClick(150, $now - 7 * 3600);
+        $this->record(150, 'ORD-150');
+        $this->worker()->sendDue(10, 15, $now);
+        self::assertSame('pending', self::deliveries($id)[0]['status'], 'not connected: the conversion waits');
+        self::assertGreaterThan($now, (int) self::deliveries($id)[0]['next_attempt_at']);
+
+        $state = GoogleAdsOAuth::state(1, $id, $now, $this->store()->stateKey());
+        $outcome = $this->connectCallback()->handle(1, ['state' => $state, 'code' => '4/0consentCode'], self::SERVER, $now);
+
+        self::assertSame(['ok' => true, 'text' => 'Google Ads is connected.', 'destination_id' => $id], $outcome);
+        self::assertSame('ready', $this->store()->get(1, $id)['status']);
+        self::assertSame('1//0newGrant-abc', $this->store()->forSending(1, $id)['credentials']['refresh_token']);
+        self::assertSame((string) $now, self::deliveries($id)[0]['next_attempt_at'], 'connecting makes the waiting conversion due now');
+        self::assertCount(1, $this->tokenRequests);
+        self::assertSame(GoogleAdsOAuth::TOKEN_URL, $this->tokenRequests[0]['url']);
+        parse_str($this->tokenRequests[0]['body'], $form);
+        self::assertSame([
+            'grant_type' => 'authorization_code', 'code' => '4/0consentCode', 'client_id' => self::CREDENTIALS['oauth_client_id'],
+            'client_secret' => self::CREDENTIALS['oauth_client_secret'], 'redirect_uri' => GoogleAdsOAuth::redirectUri(self::SERVER),
+        ], $form, 'the code is traded with the destination\'s own client, for the redirect URI Google was given');
+    }
+
+    public function testTheCallbackRefusesAStateItDidNotSignForThisUserInTime(): void
+    {
+        $id = $this->destination();
+        $theirs = $this->destination(user: 2);
+        $now = time();
+        $key = $this->store()->stateKey();
+        $signed = GoogleAdsOAuth::state(1, $id, $now, $key);
+        $cases = [
+            // [user, query, now, the sentence's words, the destination it names]
+            'forged' => [1, ['state' => substr($signed, 0, -4) . 'abcd', 'code' => 'c'], $now, 'did not sign', 0],
+            'not ours' => [1, ['state' => 'v1.1.' . $id . '.' . ($now + 600) . '.00.x', 'code' => 'c'], $now, 'did not sign', 0],
+            'garbage' => [1, ['state' => 'nonsense', 'code' => 'c'], $now, 'did not make', 0],
+            'another user' => [2, ['state' => $signed, 'code' => 'c'], $now, 'another user', 0],
+            'expired' => [1, ['state' => $signed, 'code' => 'c'], $now + GoogleAdsOAuth::STATE_SECONDS + 1, 'expired', 0],
+            'consent refused' => [1, ['state' => $signed, 'error' => 'access_denied'], $now, 'not allowed', $id],
+            'no code' => [1, ['state' => $signed], $now, 'without a code', $id],
+            'another user\'s destination' => [1, ['state' => GoogleAdsOAuth::state(1, $theirs, $now, $key), 'code' => 'c'], $now, 'not one of yours', 0],
+        ];
+        foreach ($cases as $name => [$user, $query, $at, $words, $named]) {
+            $outcome = $this->connectCallback()->handle($user, $query, self::SERVER, $at);
+            self::assertFalse($outcome['ok'], $name);
+            self::assertStringContainsString($words, $outcome['text'], $name);
+            self::assertSame($named, $outcome['destination_id'], $name);
+        }
+        self::assertSame([], $this->tokenRequests, 'no code is traded for a refused state');
+        self::assertSame('needs_authorisation', $this->store()->get(1, $id)['status']);
+        self::assertSame('needs_authorisation', $this->store()->get(2, $theirs)['status']);
+    }
+
+    public function testTheCallbackSaysWhyGoogleGaveNoGrant(): void
+    {
+        $id = $this->destination();
+        $state = GoogleAdsOAuth::state(1, $id, time(), $this->store()->stateKey());
+        $none = $this->connectCallback(['status' => 200, 'body' => '{"access_token":"ya29.x","expires_in":3599}'])->handle(1, ['state' => $state, 'code' => 'c'], self::SERVER, time());
+        self::assertSame([false, $id], [$none['ok'], $none['destination_id']]);
+        self::assertStringContainsString('no refresh token', $none['text']);
+
+        $bad = $this->connectCallback(['status' => 400, 'body' => '{"error":"invalid_grant","error_description":"Bad Request ' . self::CREDENTIALS['oauth_client_secret'] . '"}'])
+            ->handle(1, ['state' => $state, 'code' => 'c'], self::SERVER, time());
+        self::assertFalse($bad['ok']);
+        self::assertStringContainsString('invalid_grant', $bad['text']);
+        self::assertStringNotContainsString(self::CREDENTIALS['oauth_client_secret'], $bad['text'], 'the client secret is never shown back');
+        self::assertSame('needs_authorisation', $this->store()->get(1, $id)['status']);
+    }
+
+    public function testOauthStartGivesAConsentLinkWhoseStateTheCallbackAccepts(): void
+    {
+        $id = $this->destination();
+        $theirs = $this->destination(user: 2);
+        $controller = new \Api\V3\Controllers\DestinationsController(self::$db, 1);
+        $started = $controller->oauthStart($id, self::SERVER)['data'];
+
+        self::assertStringStartsWith(GoogleAdsOAuth::AUTH_URL . '?', $started['authorisation_url']);
+        parse_str((string) parse_url($started['authorisation_url'], PHP_URL_QUERY), $query);
+        self::assertSame(self::CREDENTIALS['oauth_client_id'], $query['client_id']);
+        self::assertSame(GoogleAdsOAuth::redirectUri(self::SERVER), $query['redirect_uri']);
+        self::assertSame($query['redirect_uri'], $started['redirect_uri']);
+        self::assertSame(['offline', 'consent', GoogleAdsOAuth::SCOPE], [$query['access_type'], $query['prompt'], $query['scope']]);
+        self::assertSame($id, GoogleAdsOAuth::verifyState((string) $query['state'], 1, time(), $this->store()->stateKey()), 'the state names this user and destination');
+        self::assertTrue($this->connectCallback()->handle(1, ['state' => $query['state'], 'code' => 'c'], self::SERVER, time())['ok']);
+
+        try {
+            $controller->oauthStart($theirs, self::SERVER);
+            self::fail('another account\'s destination was started');
+        } catch (\Api\V3\Exception\NotFoundException) {
+        }
     }
 }

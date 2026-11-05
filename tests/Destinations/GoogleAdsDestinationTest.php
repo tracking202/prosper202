@@ -74,13 +74,13 @@ final class GoogleAdsDestinationTest extends TestCase
      * @param array<string, string> $click
      * @param list<string> $emails
      */
-    private static function facts(array $click = ['gclid' => 'Cj0KCQ-gclid'], array $emails = [], ?int $clickTime = self::NOW - 7 * 3600, string $zone = 'America/New_York', int $campaign = 30): ConversionFacts
+    private static function facts(array $click = ['gclid' => 'Cj0KCQ-gclid'], array $emails = [], ?int $clickTime = self::NOW - 7 * 3600, string $zone = 'America/New_York', int $campaign = 30, int $convTime = self::NOW - 600): ConversionFacts
     {
         return new ConversionFacts(
             7,
             4242,
             $campaign,
-            self::NOW - 600,
+            $convTime,
             '19.90000',
             'USD',
             'ORD-1001',
@@ -266,6 +266,43 @@ final class GoogleAdsDestinationTest extends TestCase
         self::assertSame([false, false, null], [$old->delivered, $old->retry, $old->waitUntil]);
         self::assertStringContainsString('90 days', $old->reason);
         self::assertSame([], $this->sent);
+    }
+
+    public function testEveryWaitEndsWhenTheClickTimeIsUnknown(): void
+    {
+        // No first-visit row: the click's time is unknown, and its conversion's is a floor on its age.
+        $this->uploads = [self::partialFailure('TOO_RECENT_EVENT')];
+        $fresh = $this->ads()->send($this->settings(), self::credentials(), self::facts(clickTime: null), false, self::NOW);
+        self::assertSame([true, self::NOW - 600 + 6 * 3600], [$fresh->retry, $fresh->waitUntil], 'a fresh conversion still waits for Google, uncounted');
+
+        $this->uploads = [self::partialFailure('TOO_RECENT_EVENT')];
+        $day = $this->ads()->send($this->settings(), self::credentials(), self::facts(clickTime: null, convTime: self::NOW - 30 * 3600), false, self::NOW);
+        self::assertSame([true, null], [$day->retry, $day->waitUntil], 'still "too recent" a day after the conversion is a counted retry, not a wait');
+
+        $this->sent = [];
+        foreach (['TOO_RECENT_EVENT', 'TOO_RECENT_CONVERSION_ACTION'] as $code) {
+            $this->uploads = [self::partialFailure($code)];
+            $old = $this->ads()->send($this->settings(), self::credentials(), self::facts(clickTime: null, convTime: self::NOW - 91 * 86400), false, self::NOW);
+            self::assertSame([false, false, null], [$old->delivered, $old->retry, $old->waitUntil], $code);
+            self::assertStringContainsString('90 days', $old->reason, $code);
+        }
+        self::assertSame([], $this->sent, 'past 90 days nothing is sent, so no wait outlives Google\'s window');
+    }
+
+    public function testAConversionGoogleAlreadyHoldsIsSentAndSaysItWasNotCompared(): void
+    {
+        foreach (['ORDER_ID_ALREADY_IN_USE', 'CLICK_CONVERSION_ALREADY_EXISTS'] as $code) {
+            $this->uploads = [self::partialFailure($code)];
+            $result = $this->ads()->send($this->settings(), self::credentials(), self::facts(), false, self::NOW);
+            self::assertTrue($result->delivered, $code);
+            self::assertStringStartsWith(GoogleAdsDestination::ALREADY_IN_GOOGLE_ADS, $result->reason, $code);
+            self::assertStringContainsString($code, $result->reason);
+            self::assertTrue($result->summary['already_in_google_ads'] ?? false, $code . ': the log row can be found');
+            self::assertSame('19.9', (string) $result->summary['value'], 'the value this send carried is kept beside it');
+        }
+        $this->uploads = [];
+        $plain = $this->ads()->send($this->settings(), self::credentials(), self::facts(), false, self::NOW);
+        self::assertSame(['', false], [$plain->reason, array_key_exists('already_in_google_ads', $plain->summary)], 'an upload Google took is not flagged');
     }
 
     public function testADestinationNotYetConnectedWaitsWithoutARequest(): void

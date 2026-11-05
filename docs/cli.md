@@ -1142,7 +1142,9 @@ p202 destination connect 2
 | `--ad-user-data`, `--ad-personalization` | Google's consent signals as you state them: `granted`, `denied`, or `unset` to stop sending one |
 | `--customer-id`, `--login-customer-id` | Google Ads: the account the conversions go to, and the manager account your access goes through |
 | `--conversion-action` | Google Ads: the conversion action ID (`ctId`), or `customers/<id>/conversionActions/<id>` |
-| `--campaign-conversion-action N=ACTION` | Google Ads: the conversion action for one campaign (repeatable) |
+| `--campaign-conversion-action N=ACTION` | Google Ads: the conversion action for one campaign (repeatable). On `update` it is merged with the stored ones; `N=` removes campaign N's |
+
+A flag of the other type is refused, not ignored: `--credentials-file`, `--customer-id`, `--login-customer-id`, `--conversion-action` and `--campaign-conversion-action` are Google Ads' (`create` needs `--type google_ads`); `--measurement-id`, `--api-secret-file`, `--event-name`, `--client-id-source`, `--user-id-source` and `--param` are GA4's. `update` checks them against the destination's stored type, and refuses `--api-secret-file` with `--credentials-file`.
 
 A conversion goes out with the minutely cron job and is retried with backoff,
 8 tries in all. A conversion whose click was guessed (same IP, visitor id), a
