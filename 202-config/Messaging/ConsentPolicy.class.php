@@ -176,9 +176,12 @@ final class ConsentPolicy
                 );
                 $conn->bind($stmt, 'ssi', [$state, date('Y-m-d H:i:s'), $userId]);
             }
-            // The row exists (above), so a write that changed nothing is still
-            // a success; a failed write throws.
-            $conn->executeUpdate($stmt);
+            // The row exists (above) and the version always moves, so a write
+            // that changed no row means the choice was not stored.
+            if ($conn->executeUpdate($stmt) !== 1) {
+                error_log('[ConsentPolicy] record changed no row for user ' . $userId);
+                return false;
+            }
         } catch (\Throwable $e) {
             error_log('[ConsentPolicy] record failed: ' . $e->getMessage());
             return false;

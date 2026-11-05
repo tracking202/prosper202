@@ -135,7 +135,6 @@ final class ConsentSyncBlockTest extends TestCase
         $service = new MessagingService($db, 7, ['install_hash' => 'h', 'api_key' => 'k', 'user_id' => 7]);
         $fake = new ConsentBlockFakeClient();
         $prop = new ReflectionProperty(MessagingService::class, 'client');
-        $prop->setAccessible(true);
         $prop->setValue($service, $fake);
 
         $this->assertSame(MessagingService::SYNC_FAILED, $service->sync(true));
@@ -148,7 +147,6 @@ final class ConsentSyncBlockTest extends TestCase
             'install_hash' => 'h', 'api_key' => 'k', 'user_id' => 7, 'attributes' => ['clicks_30d' => 9],
         ]);
         $method = new ReflectionMethod(MessagingService::class, 'outboundIdentity');
-        $method->setAccessible(true);
         $denied = ['analytics' => 'denied'] + self::ALL_UNSET;
 
         $identity = $method->invoke($service, false, ['clicks_30d' => 9], $denied);
