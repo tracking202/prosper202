@@ -411,7 +411,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
      * The tracking template's hit (pt.php) found a click the page's script
      * recorded first (ParallelTrackingClick): the template brings what the
      * page's URL does not (its tracker's cost and traffic source, keyword,
-     * text ad and c1-c4), and a value it does not bring (0) keeps the
+     * text ad, c1-c4 and publisher), and a value it does not bring (0) keeps the
      * click's. Under the click's lock, as every ledger writer takes it, and
      * only on the account's own click; marked for the rollup.
      */
@@ -455,6 +455,15 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                 'iiiii',
                 [$clickId, $template->c1Id, $template->c2Id, $template->c3Id, $template->c4Id]
             );
+            // A granted publisher (PublisherCredit) is credited once; an earlier credit stands.
+            if ($template->publisherUserId !== 0) {
+                $this->write(
+                    'INSERT INTO 202_clicks_publisher (click_id, publisher_user_id) VALUES (?, ?)'
+                        . ' ON DUPLICATE KEY UPDATE publisher_user_id = publisher_user_id',
+                    'ii',
+                    [$clickId, $template->publisherUserId]
+                );
+            }
             RollupDirty::click($this->conn, $userId, $clickId);
         });
     }

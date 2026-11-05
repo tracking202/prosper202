@@ -118,7 +118,7 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
             self::q("DELETE FROM $table WHERE $id BETWEEN 4100 AND 4199");
         }
         $users = self::OWNER . ', ' . self::OTHER . ', ' . self::PUBLISHER;
-        self::q('DELETE FROM 202_clicks_publisher WHERE publisher_user_id = ' . self::PUBLISHER);
+        self::q("DELETE FROM 202_clicks_publisher WHERE publisher_user_id IN ($users)");
         self::q("DELETE FROM 202_user_role WHERE user_id IN ($users)");
         self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::GRANT_ROLE);
         self::q('DELETE FROM 202_roles WHERE role_id = ' . self::GRANT_ROLE);
@@ -300,6 +300,85 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
             'SELECT publisher_user_id FROM 202_clicks_publisher WHERE click_id = ' . (int) $click['click_id']
         )->fetch_row();
         self::assertSame((string) self::PUBLISHER, (string) ($credit[0] ?? ''), 'the click is credited to the publisher');
+
+        // The page's view then takes the click and keeps the credit.
+        self::get(
+            '/tracking202/static/record_simple.php?lpip=' . (self::SIMPLE_LP + self::PUBLIC) . '&gclid=G-pub-1',
+            'https://shop.example/landing?x=1&gclid=G-pub-1'
+        );
+        self::assertSame((string) self::PUBLISHER, self::publisherOf((int) $click['click_id']));
+    }
+
+    private static function publisherOf(int $clickId): ?string
+    {
+        $row = self::requireScratch()
+            ->query("SELECT publisher_user_id FROM 202_clicks_publisher WHERE click_id = $clickId")
+            ->fetch_row();
+
+        return $row === null ? null : (string) $row[0];
+    }
+
+    /**
+     * @return iterable<string, array{int, int, string}> tracker, page, page script
+     */
+    public static function pages(): iterable
+    {
+        yield 'simple' => [self::SIMPLE_TRACKER, self::SIMPLE_LP, 'record_simple.php'];
+        yield 'advanced' => [self::ADVANCED_TRACKER, self::ADVANCED_LP, 'record_adv.php'];
+    }
+
+    /**
+     * The page's script records first and the publisher's template takes its
+     * click: the publisher is credited once. A retry naming a publisher the
+     * account has not granted changes nothing.
+     *
+     * @dataProvider pages
+     */
+    public function testAPublishersTemplateAfterThePagesScriptCreditsThePublisher(
+        int $tracker,
+        int $page,
+        string $script
+    ): void {
+        $gclid = 'G-pubpf-' . $page;
+        $before = self::clicks();
+        [$status, $headers] = self::get(
+            "/tracking202/static/$script?lpip=" . ($page + self::PUBLIC) . "&gclid=$gclid",
+            "https://shop.example/landing?gclid=$gclid"
+        );
+        self::assertSame(200, $status, $headers . $this->serverLog());
+        $clickId = (int) self::clickWithGclid($gclid)['click_id'];
+        self::assertNull(self::publisherOf($clickId), 'the page names no publisher');
+
+        [$status, $headers] = self::get(
+            self::pt($tracker, '&t202pubid=' . self::PUBLISHER_PUBLIC_ID . "&t202kw=&gclid=$gclid"),
+            'https://www.google.com/'
+        );
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertSame($before + 1, self::clicks(), 'the template takes the page\'s click');
+        self::assertSame((string) self::PUBLISHER, self::publisherOf($clickId), 'the template\'s publisher is credited');
+
+        [$status, $headers] = self::get(self::pt($tracker, "&t202pubid=nogrant99&t202kw=&gclid=$gclid"));
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertSame($before + 1, self::clicks());
+        self::assertSame((string) self::PUBLISHER, self::publisherOf($clickId), 'an ungranted id credits nobody');
+    }
+
+    /** A click already credited keeps its publisher when a template's hit fills it. */
+    public function testATemplatesPublisherDoesNotReplaceAnEarlierCredit(): void
+    {
+        self::get(
+            '/tracking202/static/record_simple.php?lpip=' . (self::SIMPLE_LP + self::PUBLIC) . '&gclid=G-pubkeep-1',
+            'https://shop.example/landing?x=1&gclid=G-pubkeep-1'
+        );
+        $clickId = (int) self::clickWithGclid('G-pubkeep-1')['click_id'];
+        self::q('INSERT INTO 202_clicks_publisher (click_id, publisher_user_id) VALUES (' . $clickId . ', ' . self::OTHER . ')');
+
+        [$status, $headers] = self::get(
+            self::pt(self::SIMPLE_TRACKER, '&t202pubid=' . self::PUBLISHER_PUBLIC_ID . '&t202kw=&gclid=G-pubkeep-1')
+        );
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertSame((string) self::OTHER, self::publisherOf($clickId), 'the first credit stands');
+        self::assertSame('0.25000', (string) self::clickWithGclid('G-pubkeep-1')['click_cpc'], 'the rest is filled');
     }
 
     /**
