@@ -8,6 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\NotificationOutbox;
+use Prosper202\Notifications\PostbackResult;
 use Prosper202\Notifications\PostbackSender;
 
 /**
@@ -100,6 +101,39 @@ final class NotificationOutboxIntegrationTest extends TestCase
         self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0], $outbox->sendDue(10));
         self::assertSame(['https://a.example/pb?s=100', 'https://b.example/pb?s=100&v=4.00', 'https://b.example/pb?s=100&v=4.00'], $calls,
             'A accepted the conversion once and is never sent it again');
+    }
+
+    /**
+     * A host that answers, even with a rejection, is not slow: its other rows
+     * are still sent in the same run. Only a host that gave no answer (a
+     * timeout, no connection) waits for the next run.
+     */
+    public function testAHostThatAnswersWithAnErrorStillGetsItsOtherRowsInTheSameRun(): void
+    {
+        $this->click(100);
+        self::pixels([90 => 'https://a.example/1 https://a.example/2 https://b.example/3']);
+        $this->queue(self::OLD);
+
+        $calls = [];
+        $outbox = $this->outboxWith(function (string $url) use (&$calls): bool|PostbackResult {
+            $calls[] = $url;
+
+            return $url === 'https://a.example/1' ? PostbackResult::failed('https://a.example answered 400', 400) : true;
+        });
+        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 1], $outbox->sendDue(10));
+        self::assertSame(['https://a.example/1', 'https://a.example/2', 'https://b.example/3'], $calls);
+
+        // The same host giving no answer at all: its next row waits.
+        $this->clock += NotificationOutbox::backoff(1);
+        self::fixture("UPDATE 202_notification_pending SET status = 'pending', attempts = 0, next_attempt_at = 0 WHERE conv_id = " . self::OLD);
+        $calls = [];
+        $outbox = $this->outboxWith(function (string $url) use (&$calls): bool|PostbackResult {
+            $calls[] = $url;
+
+            return $url === 'https://a.example/1' ? PostbackResult::failed('not delivered to https://a.example: timed out') : true;
+        });
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 1], $outbox->sendDue(10));
+        self::assertSame(['https://a.example/1', 'https://b.example/3'], $calls);
     }
 
     public function testAnEndpointThatNeverRecoversFailsAloneAfterItsAttempts(): void
