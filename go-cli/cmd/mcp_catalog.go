@@ -328,11 +328,14 @@ func rotatorRulesSchema() mcpProperty {
 	criterion := mcpProperty{
 		Type: "object",
 		Properties: map[string]mcpProperty{
-			"id":        {Description: "Keeps this criterion."},
-			"type":      {Type: "string", Enum: []string{"country", "region", "city", "isp", "ip", "platform", "device", "browser"}},
+			"id": {Description: "Keeps this criterion."},
+			"type": {Type: "string", Enum: []string{"country", "region", "eu", "city", "isp", "fraud", "ip", "iprange", "browser",
+				"platform", "device", "visitor", "c1", "c2", "c3", "c4", "t202kw", "referer",
+				"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"}},
 			"statement": {Type: "string", Enum: []string{"is", "is_not"}},
 			"value": {Type: "string", Description: "Comma-separated, or ALL. Countries as Name(CC), e.g. United States(US); " +
-				"devices lower case (desktop, mobile, tablet, bot); ip single addresses."},
+				"devices lower case (desktop, mobile, tablet, bot); ip single addresses; iprange CIDR, a.b.c.* or a-b; " +
+				"eu/fraud true or false; visitor filtered or unique."},
 		},
 		Required: []string{"type", "value"},
 	}

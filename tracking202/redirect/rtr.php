@@ -124,151 +124,44 @@ if ($bid !== null) {
 // decides (a non-matching rule sets $default = true).
 $default = empty($rule_row);
 
-foreach ($rule_row as $rule) {
-	
-	$rotate = [];
-	$count = 0;
+// The click's filter verdict and device, decided once: a visitor rule asks
+// for it before the click is written, and its repeat-visit check records the address.
+$rtrClickClass = null;
+$rtrClassify = static function () use ($db, $user_id, &$rtrClickClass): array {
+	return $rtrClickClass ??= rtr_classify_click($db, $user_id);
+};
+$rtrVisitor = p202RotatorVisitor(
+	$db,
+	(int) $rotator_row['user_id'],
+	$ip_address,
+	$GeoData,
+	$IspData,
+	$result,
+	$rotator_row['user_keyword_searched_or_bidded'] ?? null,
+	$rotator_row['user_pref_referer_data'] ?? null,
+	// A failed classification skips the rule (redirect_process() asks again, and fails as it did).
+	static function () use ($rtrClassify): ?bool {
+		try {
+			$filtered = $rtrClassify()['mysql']['click_filtered'] ?? null;
+		} catch (\Throwable $rtrClassifyError) {
+			error_log('rtr.php: deciding whether the click is filtered failed (' . $rtrClassifyError->getMessage()
+				. '); its visitor rules are skipped');
 
+			return null;
+		}
+
+		return $filtered === null ? null : $filtered === '1';
+	}
+);
+
+foreach ($rule_row as $rule) {
 	$mysql['rule_id'] = $db->real_escape_string((string)$rule['rule_id']);
 	$criteria_sql = "SELECT type, statement, value
 				 FROM 202_rotator_rules_criteria
 				 WHERE rule_id='".$mysql['rule_id']."'"; 
 	$criteria_row = foreach_memcache_mysql_fetch_assoc($db, $criteria_sql);
 
-	foreach ($criteria_row as $criteria) {
-		switch ($criteria['statement']) {
-			case 'is':
-				$statement = true;		
-			break;
-					
-			case 'is_not':
-				$statement = false;	
-			break;
-		}
-
-		$values = \Prosper202\Rotator\Criterion::values($criteria['value']);
-
-		if (\Prosper202\Rotator\Criterion::matchesEveryone($values)) {
-			
-			$rotate[] = true;
-
-		} else {
-
-			switch ($criteria['type']) {
-				case 'country':
-					$country = $GeoData['country']."(".$GeoData['country_code'].")";
-
-					if ($statement) {
-						if (in_array($country, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($country, $values)) {
-							$rotate[] = true;
-						}
-					}
-						
-				break;
-				
-				case 'region':
-					$region = $GeoData['region']."(".$GeoData['country_code'].")";
-					
-					if ($statement) {
-						if (in_array($region, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($region, $values)) {
-							$rotate[] = true;
-						}
-					}
-
-				break;
-
-				case 'city':
-					$city = $GeoData['city']."(".$GeoData['country_code'].")";
-					
-					if ($statement) {
-						if (in_array($city, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($city, $values)) {
-							$rotate[] = true;
-						}
-					}
-				break;
-
-				case 'isp':
-					
-					if ($statement) {
-						if (in_array($IspData, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($IspData, $values)) {
-							$rotate[] = true;
-						}
-					}
-				break;
-
-				case 'ip':
-					if ($statement) {
-						if (\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
-							$rotate[] = true;
-						}
-					}
-
-				break;
-
-				case 'platform':
-					if ($statement) {
-						if (in_array($result->os->family, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($result->os->family, $values)) {
-							$rotate[] = true;
-						}
-					}
-				break;
-
-				case 'device':
-					if ($statement) {
-						if (in_array(strtolower($result->device->family), $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array(strtolower($result->device->family), $values)) {
-							$rotate[] = true;
-						}
-					}
-				break;
-
-				case 'browser':
-					if ($statement) {
-						if (in_array($result->ua->family, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($result->ua->family, $values)) {
-							$rotate[] = true;
-						}
-					}
-				break;
-			}
-		}
-
-		$count++;
-
-	}
-	
-	//If any of the rules maches, redirect to the redirect type.
-	if ($count == count($rotate)) {
+	if (\Prosper202\Rotator\CriterionMatcher::rule($criteria_row, $rtrVisitor)) {
 		$rule_redirects_sql = "SELECT rur.id,
 					   rur.redirect_url,
 					   rur.redirect_campaign,
@@ -324,7 +217,7 @@ foreach ($rule_row as $rule) {
         // not match does: to a later rule, or to the rotator's default.
         $default = $redirect_array === null;
 		if ($redirect_array !== null) {
-			$redirect = redirect_process($db, $redirect_array, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
+			$redirect = redirect_process($db, $redirect_array, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded, $rtrClassify());
 			p202NoStore();
 			header('location: '.$redirect);
 			die();
@@ -364,7 +257,7 @@ if ($default == true) {
 			die();
 		}
 	}
-	$default = redirect_process($db, $rotator_row, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
+	$default = redirect_process($db, $rotator_row, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded, $rtrClassify());
 	p202NoStore();
 	header('location: '.$default);
 	die();
@@ -372,8 +265,47 @@ if ($default == true) {
 
 
 
+/**
+ * The click's device, bot and filter verdict, decided once per visit
+ * (redirect_process() records them; a visitor rule asks before it does).
+ *
+ * @return array{device_id: array<string, mixed>, ip_id: int, mysql: array<string, string>}
+ */
+function rtr_classify_click($db, $user_id): array
+{
+$uaParam = ClickRequest::text($_GET, 'ua');
+$detectInstance = new DeviceDetect();
+if ($uaParam !== '') {
+	$detectInstance->setUserAgent($uaParam);
+}
+$device_id = PLATFORMS::get_device_info($db, $detectInstance, $uaParam);
+if (!is_array($device_id)) {
+	$device_id = ['platform' => '', 'browser' => '', 'device' => '', 'type' => '1'];
+}
+
+$mysql = [];
+// Bots are redirected like anyone else; only the recorded flags differ.
+$clickIsBot = \Prosper202\Click\ClickBotDetector::isBot($detectInstance->getUserAgent(), $device_id);
+$mysql['click_bot'] = $clickIsBot ? '1' : '0';
+
+// Stored masked under the owner's privacy setting (p202StoredVisitorIp).
+$ip_id = \Prosper202\Repository\LookupRepositoryFactory::location($db)->findOrCreateIp(p202StoredVisitorIp());
+
+if ($clickIsBot) {
+	$mysql['click_filtered'] = '1';
+} else {
+	// Why it is filtered goes with the click (202_clicks_filter_reason).
+	$clickFilter = FILTER::verdict($db, $ip_id, $user_id);
+	$mysql['click_filtered'] = (string) $clickFilter->flag();
+	$mysql['click_filter_reason'] = (string) $clickFilter->reason;
+	$mysql['click_filter_entry_id'] = $clickFilter->filtered ? (string) ($clickFilter->entryId ?? 0) : '0';
+}
+
+return ['device_id' => $device_id, 'ip_id' => (int) $ip_id, 'mysql' => $mysql];
+}
+
 //Redirect process function
-function redirect_process($db, $rule, $ppc_account, $cpc, $rotator_id, $GeoData, $ip_address, $user_id, $IspData, $keyword_type){
+function redirect_process($db, $rule, $ppc_account, $cpc, $rotator_id, $GeoData, $ip_address, $user_id, $IspData, $keyword_type, array $clickClass){
 $ruleDefaults = [
 	'aff_campaign_id' => 0,
 	'aff_campaign_url' => '',
@@ -402,15 +334,8 @@ $rule = array_merge($ruleDefaults, is_array($rule) ? $rule : []);
 
 $escape = static fn($value) => $db->real_escape_string((string)($value ?? ''));
 
-$uaParam = ClickRequest::text($_GET, 'ua');
-$detectInstance = new DeviceDetect();
-if ($uaParam !== '') {
-	$detectInstance->setUserAgent($uaParam);
-}
-$device_id = PLATFORMS::get_device_info($db, $detectInstance, $uaParam);
-if (!is_array($device_id)) {
-	$device_id = ['platform' => '', 'browser' => '', 'device' => '', 'type' => '1'];
-}
+$device_id = $clickClass['device_id'];
+$mysql = $clickClass['mysql'];
 
 $mysql['click_time'] = time();
 $mysql['aff_campaign_id'] = $escape($rule['aff_campaign_id']);
@@ -465,15 +390,10 @@ $mysql['device_id'] = $db->real_escape_string((string)($device_id['device'] ?? '
 $mysql['text_ad_id'] = $db->real_escape_string((string)($rule['text_ad_id'] ?? 0));
 $mysql['isp_id'] = $db->real_escape_string('0');
 
-// Bots are redirected like anyone else; only the recorded flags differ.
-$clickIsBot = \Prosper202\Click\ClickBotDetector::isBot($detectInstance->getUserAgent(), $device_id);
-$mysql['click_bot'] = $clickIsBot ? '1' : '0';
-
 $mysql['click_in'] = 1;
 $mysql['click_out'] = 1; 
 
-// Stored masked under the owner's privacy setting (p202StoredVisitorIp).
-$ip_id = $locationRepo->findOrCreateIp(p202StoredVisitorIp());
+$ip_id = $clickClass['ip_id'];
 $mysql['ip_id'] = (string) $ip_id;
 
 $countryName = (string) ($GeoData['country'] ?? '');
@@ -494,15 +414,6 @@ if ($IspData != null) {
 	$mysql['isp_id'] = (string) $isp_id;
 }
 
-if ($clickIsBot) {
-	$mysql['click_filtered'] = '1';
-} else {
-	// Why it is filtered goes with the click (202_clicks_filter_reason).
-	$clickFilter = FILTER::verdict($db, $ip_id, $user_id);
-	$mysql['click_filtered'] = (string) $clickFilter->flag();
-	$mysql['click_filter_reason'] = (string) $clickFilter->reason;
-	$mysql['click_filter_entry_id'] = $clickFilter->filtered ? (string) ($clickFilter->entryId ?? 0) : '0';
-}
 
 $clickRepo = new \Prosper202\Click\MysqlClickRepository(\Prosper202\Repository\LookupRepositoryFactory::connection($db));
 
