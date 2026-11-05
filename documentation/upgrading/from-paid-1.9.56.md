@@ -27,6 +27,13 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   the upgrade.
 - **Redirector rules.** Rules on c1–c4, UTM values, keyword, referer and the
   other 1.9.56 types still match.
+- **Update Subids.** Lines of `SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP` are
+  read again, each field after the subid optional.
+- **Shopify order webhooks** sent to `gpb.php` are recorded again, once you
+  store the webhook secret under Account › API integrations › Shopify. A
+  webhook that does not verify against it is refused.
+- **The Bot202 Facebook Pixel Assistant.** The settings your landing pages
+  kept fire the traffic source's Meta Pixel again.
 - **Passwords.** Stored 1.9.56 passwords still sign in.
 - **Privacy.** Accounts that existed before the upgrade keep tracking as they
   did. Only accounts created on 1.9.79 or later start with privacy set to
@@ -69,6 +76,11 @@ These differ from 1.9.56 on purpose and stay that way.
 - **The daily email report is retired.** Its cron address,
   `202-cronjobs/daily-email.php`, now answers `410 Gone`.
 - **The `landing.js` loader ignores `defpixel` and `rsid`** in old snippets.
+- **The JVZIPN URL 1.9.56 showed is refused.** It names no role, so a sale
+  there could be credited as the affiliate's or the vendor's. It answers
+  `400` and records nothing. Paste the URL from Account › API integrations ›
+  JVZoo: the one ending `?role=affiliate` into your Affiliate IPN, the one
+  ending `?role=vendor` into your product's JVZIPN URL.
 - **Update › CPC previews before it applies.** It shows how many clicks will
   change and refuses a confirmation that no longer matches that preview.
 
@@ -90,9 +102,4 @@ and its line comes off this list when the fix ships.
   format (`<click>-<campaign>`) on postbacks, and the deferred pixel
   (`defpixel=1`).
 - Dynamic landing-page content, such as the visit's SubID.
-- JVZoo IPN URLs without `?role=`, which is the URL 1.9.56 showed. Add
-  `?role=affiliate` or `?role=vendor`.
 - Google Ads parallel tracking templates (`tracking202/redirect/pt.php`).
-- Update Subids lines with payout, order number and time.
-- Shopify order webhooks.
-- The Bot202 Facebook Pixel Assistant. Its settings are kept.
