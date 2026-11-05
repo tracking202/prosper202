@@ -137,13 +137,38 @@ Confirm the new numbers to go ahead. A write without `expect_clicks` and
 
 ## Update Subids — `POST /conversions/subids`
 
-Records each subid's click as converted at its campaign's payout, through the
-conversion ledger (`source: "subid_upload"`), once per click. A converting
-click is no longer filtered.
+Records each subid's click as converted through the conversion ledger
+(`source: "subid_upload"`). A converting click is no longer filtered.
+
+Each item is a line `SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP`, as the page
+and paid 1.9.56 take it. Every field after the subid is optional; leave one
+empty to skip it (`"940003,,order-10"`).
+
+- **Payout**: the line's, else the body's `payout`, else the campaign's.
+- **Transaction id**: a line without one marks its click once (a click that
+  is already a lead is `already_converted`). A line with one records that
+  sale once: the same id on the same click again is `already_converted`,
+  another id is another sale on the click. The same id sent with another
+  payout or time than the sale recorded (or than an earlier line with that
+  click and id) is refused like an unreadable line, naming both: a recorded
+  sale is not changed here. Only what the line states is compared.
+- **Time**: read in the body's `timezone` (a zone name such as
+  `America/New_York`), else the account's zone; a line without one is
+  recorded now. `11/03/2026 2:30:00 PM` (month first, two- or four-digit
+  year, 12- or 24-hour), `2026-11-03 14:30:00` and a Unix timestamp are read.
+
+A line whose payout, transaction id or time cannot be read is a `422` naming
+it, and nothing in the request is written (a dry run refuses it the same
+way): a currency sign, thousands separator or decimal comma in the payout
+(`1,250` and `12,50` split into two fields; write `1250` or `12.50`; a
+whole-number payout followed by a transaction id of up to three digits is
+refused for the same reason, so write that payout as `12.00`), a payout
+above 999999.99 (the most a click's report row holds), a negative amount, a date that does not exist, is in the future or is before
+its click, more than four fields.
 
 ```bash
 curl -X POST "$P202/api/v3/conversions/subids" -H "Authorization: Bearer $KEY" \
-  -d '{"subids": ["940001", "940002", "abc", "940001"]}'
+  -d '{"subids": ["940001", "940002, 12.50, order-9, 11/03/2026 2:30:00 PM", "abc", "940001"], "payout": "4.25"}'
 ```
 
 ```json
@@ -153,7 +178,7 @@ curl -X POST "$P202/api/v3/conversions/subids" -H "Authorization: Bearer $KEY" \
     "marked": 2, "already_converted": 0, "not_found": 0, "not_a_subid": 1, "duplicate_in_list": 1,
     "lines": [
       {"line": 1, "subid": "940001", "click_id": 940001, "status": "marked"},
-      {"line": 2, "subid": "940002", "click_id": 940002, "status": "marked"},
+      {"line": 2, "subid": "940002", "click_id": 940002, "status": "marked", "payout": "12.50", "transaction_id": "order-9", "conv_time": 1793734200},
       {"line": 3, "subid": "abc", "click_id": null, "status": "not_a_subid"},
       {"line": 4, "subid": "940001", "click_id": 940001, "status": "duplicate_in_list", "first_line": 1}
     ]
@@ -161,13 +186,18 @@ curl -X POST "$P202/api/v3/conversions/subids" -H "Authorization: Bearer $KEY" \
 }
 ```
 
+```json
+{"error": true, "status": 422, "message": "Invalid subid lines: nothing was recorded",
+ "field_errors": {"subids.1": "payout \"$12.50\" is not a number: write it as digits with a decimal point, such as 12.50, with no currency sign or thousands separator"}}
+```
+
 `subids` is a list of strings or integers, at most 5,000; items are trimmed
 and blank ones skipped (but `line` counts them, so sending a file's lines
 gives back the file's line numbers). Statuses: `marked` (`would_mark` in a dry
-run), `already_converted` (the click is already a lead: nothing is added),
-`not_found` (no click of this account), `not_a_subid` (a subid is a click id:
-digits, no leading zero), `duplicate_in_list`. Every status is counted, 0
-included.
+run), `already_converted` (nothing is added), `not_found` (no click of this
+account), `not_a_subid` (a subid is a click id: digits, no leading zero),
+`duplicate_in_list` (the same click and transaction id as an earlier line).
+Every status is counted, 0 included.
 
 A click a redirector link re-clicked is marked on its latest visit's campaign,
 at that visit's payout, and its lead flag is that visit's, as for every

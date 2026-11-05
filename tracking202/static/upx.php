@@ -226,7 +226,14 @@ if (is_numeric($mysql['click_id'])) {
 			: $conversionResult['dedupe_key'];
 		$tokens['payout'] = $conversionResult['payout'];
         // Markup only: the type-4 postbacks go out through the outbox above.
-        echo p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens, null, false)['markup'];
+        echo p202FireTrafficSourcePixels(
+            $db,
+            (int) $mysql['ppc_account_id'],
+            $tokens,
+            null,
+            false,
+            static fn (): bool => p202ConversionMayTrack($db, $clickId, $_GET)
+        )['markup'];
 	}
 
 }

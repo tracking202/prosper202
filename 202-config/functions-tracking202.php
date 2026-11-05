@@ -1329,6 +1329,24 @@ function getAllDniNetworks($install_hash)
     return json_decode($result, true);
 }
 
+/**
+ * The DNI service's answer as a list of networks, or null when it is not one
+ * (unreachable, not JSON, or an error such as {"code":400,"msg":...}).
+ */
+function dniNetworkList($answer): ?array
+{
+    if (!is_array($answer) || !array_is_list($answer)) {
+        return null;
+    }
+    foreach ($answer as $network) {
+        if (!is_array($network) || !isset($network['networkId'], $network['networkType'], $network['name'])) {
+            return null;
+        }
+    }
+
+    return $answer;
+}
+
 function authDniNetworks($hash, $network, $key, $affId)
 {
     $fields = [
@@ -1524,6 +1542,7 @@ function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
     return $result;
 }
 
+// $payout in $currency, converted INTO $payout_currency (ExchangeRates::foreignPayout()).
 function getForeignPayout($currency, $payout_currency, $payout)
 {
     $fields = [

@@ -443,6 +443,7 @@ final class LinkAssistantTest extends TestCase
             'aff_campaign_name' => '',
             'aff_campaign_url' => '',
             'aff_campaign_payout' => '',
+            'aff_campaign_currency' => 'USD',
             'aff_campaign_rotate' => '1',
             'aff_campaign_cloaking' => '0',
             'payout_mode' => 'replace',
@@ -456,6 +457,7 @@ final class LinkAssistantTest extends TestCase
             'errors' => [],
             'categories' => ['1' => 'Shop'],
             'rotation_offered' => true,
+            'account_currency' => 'USD',
         ];
         $render = static function (string $file) use ($campaignForm): string {
             ob_start();

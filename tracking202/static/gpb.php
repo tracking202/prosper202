@@ -214,7 +214,14 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
 	// accumulating campaign is the sum of every conversion so far.
 	$tokens['payout'] = $conversionResult['payout'];
     // Markup only: the type-4 postbacks went out through the outbox above.
-    $fired = p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens, null, false);
+    $fired = p202FireTrafficSourcePixels(
+        $db,
+        (int) $mysql['ppc_account_id'],
+        $tokens,
+        null,
+        false,
+        static fn (): bool => p202ConversionMayTrack($db, (int) $mysql['click_id'], $_GET)
+    );
 	if (array_intersect($fired['types'], [1, 2, 3, 4]) !== []) {
 		header('HTTP/1.1 202 Accepted', true, 202);
 	}
