@@ -226,8 +226,29 @@ final class SignedSubidReadersIntegrationTest extends TestCase
         self::assertSame([[(string) self::$offer, '3.00000']], self::conversions($clickId));
     }
 
-    /** @param array<string, string> $get */
-    private static function pixel(string $script, array $get): void
+    public function testUpxAnswersUnavailableNotForgedWhenTheKeyCannotBeRead(): void
+    {
+        if (!is_file(dirname(__DIR__, 2) . '/202-config.php')) {
+            self::markTestSkipped('No 202-config.php: tests/run-integration-suites.sh writes one.');
+        }
+        [$clickId, $subid] = self::signedClick();
+        // The key is unreadable for this request: it is set aside, then put back.
+        self::q("UPDATE 202_deployment_secrets SET secret_name = 'android_install_token_aside' WHERE secret_name = 'android_install_token'");
+        try {
+            [$status] = self::pixel('upx.php', ['subid' => $subid, 'amount' => '3.00']);
+        } finally {
+            self::q("UPDATE 202_deployment_secrets SET secret_name = 'android_install_token' WHERE secret_name = 'android_install_token_aside'");
+        }
+        self::assertSame(503, $status, 'a sender retrying 5xx tries again');
+        self::assertSame([], self::conversions($clickId));
+        self::assertSame(404, self::pixel('upx.php', ['subid' => self::forged($subid)])[0], 'a forged SubID is not found');
+    }
+
+    /**
+     * @param array<string, string> $get
+     * @return array{int, string} status and body
+     */
+    private static function pixel(string $script, array $get): array
     {
         $env = getenv();
         $env['P202_TEST_SCRIPT'] = $script;
@@ -245,5 +266,8 @@ final class SignedSubidReadersIntegrationTest extends TestCase
         fclose($pipes[1]);
         fclose($pipes[2]);
         self::assertSame(0, proc_close($proc), "$script exited non-zero: $err\n$out");
+        [$status, $body] = explode("\n", $out, 2) + [1 => ''];
+
+        return [(int) $status, $body];
     }
 }

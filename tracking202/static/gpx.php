@@ -34,7 +34,13 @@ if ($requestedClick['malformed'] !== null) {
 }
 // A signed PurLink SubID names its click once its MAC verifies, and records
 // on its offer (as on gpb.php); one that does not verify records nothing.
-$purLink = p202PurLinkFromRequest($db, $requestedClick, 'gpx');
+try {
+    $purLink = p202PurLinkFromRequest($db, $requestedClick, 'gpx');
+} catch (\RuntimeException $purLinkError) {
+    // The image is already sent; the log is the only place to say so.
+    error_log($purLinkError->getMessage());
+    exit;
+}
 if ($purLink === false) {
     exit;
 }

@@ -405,9 +405,12 @@ final class SubidBatch
                 }
             };
             $purLink = ClickRef::parse($entry['subid'])?->purLinkSubid;
+            if ($purLink !== null && $this->purLinkKey === null) {
+                throw new \LogicException('a signed SubID reached mark() unverified');
+            }
             try {
                 // The list named the click; a signed PurLink SubID records on its offer.
-                $result = $purLink === null || $this->purLinkKey === null
+                $result = $purLink === null
                     ? $this->conversions->record($userId, $data, MatchMethod::CLICK_ID, $unfilter)
                     : (new PurLinkExit($this->conn))->recordConversion($purLink, $this->purLinkKey, $data, MatchMethod::CLICK_ID, $unfilter)
                         ?? ['clickFound' => false, 'duplicate' => false];

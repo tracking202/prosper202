@@ -792,7 +792,10 @@ if (!function_exists('p202PurLinkFromRequest')) {
     /**
      * The verified claims and key of the signed PurLink SubID a pixel request
      * named (p202ClickIdFromRequest()'s purlink); null when it named none,
-     * false (logged) when it does not verify or cannot be checked now.
+     * false (logged) when it does not verify.
+     *
+     * @throws \RuntimeException when it cannot be checked now (the key or the
+     *         click could not be read): the caller answers 5xx, not "forged".
      *
      * @param array{purlink?: string|null} $requested
      * @return array{claims: array{click_id: int, landing_page_id: int, user_id: int, campaign_public_id: int}, key: string}|false|null
@@ -806,8 +809,7 @@ if (!function_exists('p202PurLinkFromRequest')) {
         try {
             $verified = \Prosper202\Click\ClickRef::verify(new \Prosper202\Database\Connection($db), $subid);
         } catch (\Throwable $error) {
-            error_log($endpoint . ': signed PurLink verification unavailable: ' . $error->getMessage());
-            return false;
+            throw new \RuntimeException($endpoint . ': signed PurLink verification unavailable: ' . $error->getMessage(), 0, $error);
         }
         if ($verified === null) {
             error_log($endpoint . ': refusing a signed PurLink SubID that does not match its click');

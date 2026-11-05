@@ -27,7 +27,13 @@ if ($requestedClick['malformed'] !== null) {
 }
 // A signed PurLink SubID names its click once its MAC verifies, and records
 // on its offer (as on gpb.php); one that does not verify records nothing.
-$purLink = p202PurLinkFromRequest($db, $requestedClick, 'upx');
+try {
+    $purLink = p202PurLinkFromRequest($db, $requestedClick, 'upx');
+} catch (\RuntimeException $purLinkError) {
+    // Unavailable, not forged: a 5xx so the sender retries.
+    error_log($purLinkError->getMessage());
+    p202RespondJsonError(503, 'Service unavailable');
+}
 if ($purLink === false) {
     p202RespondJsonError(404, 'SubID not found');
 }
