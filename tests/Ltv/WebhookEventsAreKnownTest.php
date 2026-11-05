@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Ltv;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Alerts\AlertKind;
 use Prosper202\Ltv\MysqlWebhookRepository;
 use Tests\Support\SourceScan;
 
@@ -19,7 +20,9 @@ use Tests\Support\SourceScan;
  * Each must name its event with a string literal on the list; an event
  * named any other way cannot be read, and is refused. A direct
  * MysqlWebhookRepository::enqueue() call is not seen (its receiver has no
- * name a token scan can trust); the two that exist forward the names above.
+ * name a token scan can trust); LtvMaintenance's forwards a name above, and
+ * the money-loss alerts' (Alerts\AlertNotifier) queues each AlertKind's
+ * value, which this test reads from the enum.
  *
  * The Go CLI checks `--events` against its own copy of the list before it
  * sends anything; the copy is held to this one, '*' included.
@@ -111,6 +114,13 @@ final class WebhookEventsAreKnownTest extends TestCase
                 } else {
                     $sent[$name] = true;
                 }
+            }
+        }
+        foreach (AlertKind::cases() as $kind) {
+            if (!in_array($kind->value, MysqlWebhookRepository::KNOWN_EVENTS, true)) {
+                $unknown[] = "AlertKind::{$kind->name} sends \"{$kind->value}\", which KNOWN_EVENTS does not list";
+            } else {
+                $sent[$kind->value] = true;
             }
         }
         self::assertSame([], $unknown, 'add the event to MysqlWebhookRepository::KNOWN_EVENTS (and the Go CLI\'s'
