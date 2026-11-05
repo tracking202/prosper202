@@ -427,6 +427,26 @@ function p202ClickCookieJs(array $cookies): string
 }
 
 /**
+ * The statement that gives the landing page's dcs.t202DataObj its t202Subid
+ * (1.9.56's segment) and the proof dcs.updateDataObj() changes the click
+ * with (PageUpdate): under the click cookies' rule and with consent.
+ *
+ * @param array<string, mixed> $get
+ */
+function p202DcsClickJs(array $get, int $clickId, int $landingPageId, int $userId, \mysqli $db): string
+{
+    return \Prosper202\Click\PageUpdate::clickScript(
+        $get,
+        trackingEnabled(),
+        $clickId,
+        $landingPageId,
+        $userId,
+        time(),
+        static fn (): ?string => \Api\V3\Apps\Android\InstallTokenKey::load($db)
+    );
+}
+
+/**
  * Whether privacy 'eu' applies to this visitor: unless the GeoIP lookup of
  * their address places them outside Europe and outside the European Union,
  * it does (EuropeanVisitor, which the app intakes ask too).
@@ -609,7 +629,7 @@ function p202RotatorVisitor(
         (string) ($ua->device->family ?? ''),
         (string) ($ua->ua->family ?? ''),
         $filtered,
-        static function () use ($db, $userId, $ip): ?bool {
+        static function () use ($db, $userId, $ip, $geo): ?bool {
             try {
                 $key = \Prosper202\Rotator\FraudScore::accountKey(\Prosper202\Repository\LookupRepositoryFactory::connection($db), $userId);
             } catch (\Throwable $keyError) {
@@ -619,7 +639,12 @@ function p202RotatorVisitor(
                 return null;
             }
 
-            return \Prosper202\Rotator\FraudScore::isHigh($key, $ip, $_SERVER);
+            return \Prosper202\Rotator\FraudScore::isHigh(
+                $key,
+                $ip,
+                is_string($geo['country_code'] ?? null) ? $geo['country_code'] : null,
+                $_SERVER
+            );
         }
     );
 }

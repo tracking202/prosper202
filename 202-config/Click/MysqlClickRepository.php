@@ -230,6 +230,35 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     #[\Override]
     public function recordExit(ClickExit $exit, ?\Closure $redirectSiteUrlId = null): bool
     {
+        $ledger = new MysqlConversionLedger($this->conn);
+
+        return $ledger->clickTransaction(
+            $exit->clickId,
+            $exit->userId,
+            fn (?array $locked): bool => $this->recordExitLocked($exit, $redirectSiteUrlId, $locked)
+        );
+    }
+
+    /**
+     * Record an exit as part of the caller's transaction, under the click lock.
+     *
+     * @param (\Closure(): int)|null $redirectSiteUrlId as for recordExit()
+     */
+    public function recordExitInTransaction(ClickExit $exit, ?\Closure $redirectSiteUrlId = null): bool
+    {
+        return $this->conn->joinTransaction(function () use ($exit, $redirectSiteUrlId): bool {
+            $locked = (new MysqlConversionLedger($this->conn))->lockClick($exit->clickId, $exit->userId);
+
+            return $this->recordExitLocked($exit, $redirectSiteUrlId, $locked);
+        });
+    }
+
+    /**
+     * @param (\Closure(): int)|null $redirectSiteUrlId
+     * @param array<string, mixed>|null $locked
+     */
+    private function recordExitLocked(ClickExit $exit, ?\Closure $redirectSiteUrlId, ?array $locked): bool
+    {
         if (($redirectSiteUrlId === null) !== ($exit->outboundSiteUrlId === 0)) {
             throw new LogicException('A click exit records its outbound and redirect URLs together, or neither');
         }
@@ -237,81 +266,138 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             throw new LogicException('A click exit that writes nothing');
         }
 
-        $ledger = new MysqlConversionLedger($this->conn);
+        // The click's lock first, as recordReClick() and the ledger take
+        // it: a re-click holds it while it upserts the route, so an exit
+        // that took the route first and the click's rows after could
+        // deadlock with it.
+        if ($locked === null) {
+            return false;
+        }
+        $firstClickTime = $this->accountsClickFirstTime($exit->userId, $exit->clickId);
+        if ($firstClickTime === null || !$this->namesTheAccountsRecords($exit)) {
+            return false;
+        }
+        $route = $exit->rotator;
+        if ($route !== null) {
+            $this->write(
+                'INSERT INTO 202_clicks_rotator (click_id, rotator_id, rule_id, rule_redirect_id)'
+                    . ' VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE rotator_id = VALUES(rotator_id),'
+                    . ' rule_id = VALUES(rule_id), rule_redirect_id = VALUES(rule_redirect_id)',
+                'iiii',
+                [$exit->clickId, $route->rotatorId, $route->ruleId, $route->ruleRedirectId]
+            );
+            // rule_id holds the rule's redirect, as rtr.php writes it. No sum reads either column.
+            $this->write(
+                'UPDATE 202_clicks SET rotator_id = ?, rule_id = ? WHERE click_id = ?',
+                'iii',
+                [$route->rotatorId, $route->ruleRedirectId, $exit->clickId]
+            );
+        }
+        $offer = $exit->offer;
+        if ($offer !== null) {
+            // A click old enough to be summed is marked in the rewrite's
+            // transaction (AttributionRollup rule 2).
+            if (RollupDirty::hotPathRewriteNeedsMark($firstClickTime)) {
+                RollupDirty::click($this->conn, $exit->userId, $exit->clickId);
+            }
+            $this->write(
+                'UPDATE 202_clicks AS c'
+                    . ' LEFT JOIN 202_clicks_spy AS s ON (s.click_id = c.click_id AND s.user_id = c.user_id)'
+                    . ' SET c.aff_campaign_id = ?, s.aff_campaign_id = ?, c.click_payout = ?, s.click_payout = ?'
+                    . ' WHERE c.click_id = ? AND c.click_lead = 0',
+                'iissi',
+                [$offer->campaignId, $offer->campaignId, $offer->payout, $offer->payout, $exit->clickId]
+            );
+        }
+        if ($exit->clickedOut) {
+            if ($exit->cloaking === null) {
+                $this->write(
+                    'UPDATE 202_clicks_record SET click_out = 1 WHERE click_id = ?',
+                    'i',
+                    [$exit->clickId]
+                );
+            } else {
+                $this->write(
+                    'UPDATE 202_clicks_record SET click_out = 1, click_cloaking = ? WHERE click_id = ?',
+                    'ii',
+                    [$exit->cloaking, $exit->clickId]
+                );
+            }
+        }
+        if ($redirectSiteUrlId !== null) {
+            $this->write(
+                'UPDATE 202_clicks_site SET click_outbound_site_url_id = ?, click_redirect_site_url_id = ?'
+                    . ' WHERE click_id = ?',
+                'iii',
+                [$exit->outboundSiteUrlId, $redirectSiteUrlId(), $exit->clickId]
+            );
+        }
 
-        return $ledger->clickTransaction($exit->clickId, $exit->userId, function (?array $locked) use (
-            $exit,
-            $redirectSiteUrlId
-        ): bool {
-            // The click's lock first, as recordReClick() and the ledger take
-            // it: a re-click holds it while it upserts the route, so an exit
-            // that took the route first and the click's rows after could
-            // deadlock with it.
-            if ($locked === null) {
-                return false;
-            }
-            $firstClickTime = $this->accountsClickFirstTime($exit->userId, $exit->clickId);
-            if ($firstClickTime === null || !$this->namesTheAccountsRecords($exit)) {
-                return false;
-            }
-            $route = $exit->rotator;
-            if ($route !== null) {
-                $this->write(
-                    'INSERT INTO 202_clicks_rotator (click_id, rotator_id, rule_id, rule_redirect_id)'
-                        . ' VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE rotator_id = VALUES(rotator_id),'
-                        . ' rule_id = VALUES(rule_id), rule_redirect_id = VALUES(rule_redirect_id)',
-                    'iiii',
-                    [$exit->clickId, $route->rotatorId, $route->ruleId, $route->ruleRedirectId]
-                );
-                // rule_id holds the rule's redirect, as rtr.php writes it. No sum reads either column.
-                $this->write(
-                    'UPDATE 202_clicks SET rotator_id = ?, rule_id = ? WHERE click_id = ?',
-                    'iii',
-                    [$route->rotatorId, $route->ruleRedirectId, $exit->clickId]
-                );
-            }
-            $offer = $exit->offer;
-            if ($offer !== null) {
-                // A click old enough to be summed is marked in the rewrite's
-                // transaction (AttributionRollup rule 2).
+        return true;
+    }
+
+    /**
+     * A landing page's dcs.updateDataObj() (PageUpdate): the click's c1-c4
+     * and keyword, under its lock, only while every row of it is the
+     * account's and its latest visit is on $landingPageId, so a re-click to
+     * another page ends that page's proof. False when refused.
+     *
+     * @param array<string, int> $ids 'c1'..'c4' and 'keyword' => their lookup ids
+     */
+    public function recordPageValues(int $userId, int $clickId, int $landingPageId, array $ids): bool
+    {
+        $columns = ['c1' => 'c1_id', 'c2' => 'c2_id', 'c3' => 'c3_id', 'c4' => 'c4_id'];
+        if (array_diff_key($ids, $columns + ['keyword' => true]) !== []) {
+            throw new LogicException('A page changes only a click\'s c1-c4 and keyword');
+        }
+
+        return (new MysqlConversionLedger($this->conn))->clickTransaction(
+            $clickId,
+            $userId,
+            function (?array $locked) use ($userId, $clickId, $landingPageId, $ids, $columns): bool {
+                if ($locked === null) {
+                    return false;
+                }
+                $firstClickTime = $this->accountsClickFirstTime($userId, $clickId);
+                if ($firstClickTime === null) {
+                    return false;
+                }
+                $stmt = $this->conn->prepareWrite('SELECT c.landing_page_id FROM ' . LatestVisit::of('?') . ' AS c');
+                $this->conn->bind($stmt, 'i', [$clickId]);
+                $latest = $this->conn->fetchOne($stmt);
+                if ($latest === null || self::intColumn($latest, 'landing_page_id') !== $landingPageId) {
+                    return false;
+                }
                 if (RollupDirty::hotPathRewriteNeedsMark($firstClickTime)) {
-                    RollupDirty::click($this->conn, $exit->userId, $exit->clickId);
+                    RollupDirty::click($this->conn, $userId, $clickId);
                 }
-                $this->write(
-                    'UPDATE 202_clicks AS c'
-                        . ' LEFT JOIN 202_clicks_spy AS s ON (s.click_id = c.click_id AND s.user_id = c.user_id)'
-                        . ' SET c.aff_campaign_id = ?, s.aff_campaign_id = ?, c.click_payout = ?, s.click_payout = ?'
-                        . ' WHERE c.click_id = ? AND c.click_lead = 0',
-                    'iissi',
-                    [$offer->campaignId, $offer->campaignId, $offer->payout, $offer->payout, $exit->clickId]
-                );
-            }
-            if ($exit->clickedOut) {
-                if ($exit->cloaking === null) {
+                $set = [];
+                $values = [];
+                foreach ($columns as $field => $column) {
+                    if (isset($ids[$field])) {
+                        $set[] = $column . ' = ?';
+                        $values[] = $ids[$field];
+                    }
+                }
+                if ($set !== []) {
+                    $values[] = $clickId;
                     $this->write(
-                        'UPDATE 202_clicks_record SET click_out = 1 WHERE click_id = ?',
-                        'i',
-                        [$exit->clickId]
+                        'UPDATE 202_clicks_tracking SET ' . implode(', ', $set) . ' WHERE click_id = ?',
+                        str_repeat('i', count($values)),
+                        $values
                     );
-                } else {
+                }
+                if (isset($ids['keyword'])) {
                     $this->write(
-                        'UPDATE 202_clicks_record SET click_out = 1, click_cloaking = ? WHERE click_id = ?',
+                        'UPDATE 202_clicks_advance SET keyword_id = ? WHERE click_id = ?',
                         'ii',
-                        [$exit->cloaking, $exit->clickId]
+                        [$ids['keyword'], $clickId]
                     );
                 }
-            }
-            if ($redirectSiteUrlId !== null) {
-                $this->write(
-                    'UPDATE 202_clicks_site SET click_outbound_site_url_id = ?, click_redirect_site_url_id = ?'
-                        . ' WHERE click_id = ?',
-                    'iii',
-                    [$exit->outboundSiteUrlId, $redirectSiteUrlId(), $exit->clickId]
-                );
-            }
 
-            return true;
-        });
+                return true;
+            }
+        );
     }
 
     #[\Override]
@@ -464,6 +550,67 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     }
 
     /**
+     * The tracking template's hit (pt.php) found a click the page's script
+     * recorded first (ParallelTrackingClick): the template brings what the
+     * page's URL does not (its tracker's cost and traffic source, keyword,
+     * text ad, c1-c4 and publisher), and a value it does not bring (0) keeps the
+     * click's. Under the click's lock, as every ledger writer takes it, and
+     * only on the account's own click; marked for the rollup.
+     */
+    public function fillFromTemplate(ClickRecord $template): void
+    {
+        $clickId = $template->clickId;
+        $userId = $template->userId;
+        $ledger = new MysqlConversionLedger($this->conn);
+        $ledger->clickTransaction($clickId, $userId, function (?array $locked) use ($template, $clickId, $userId): void {
+            if ($locked === null || $this->accountsClickFirstTime($userId, $clickId) === null) {
+                return;
+            }
+            $cost = [
+                $template->ppcAccountId, $template->ppcAccountId,
+                $template->clickCpc, $template->clickCpc, $clickId, $userId,
+            ];
+            $this->write(
+                'UPDATE 202_clicks SET ppc_account_id = IF(? = 0, ppc_account_id, ?),'
+                    . ' click_cpc = IF(? = 0, click_cpc, ?) WHERE click_id = ? AND user_id = ?',
+                'iissii',
+                $cost
+            );
+            $this->write(
+                'UPDATE 202_clicks_spy SET ppc_account_id = IF(? = 0, ppc_account_id, ?),'
+                    . ' click_cpc = IF(? = 0, click_cpc, ?) WHERE click_id = ? AND user_id = ?',
+                'iissii',
+                $cost
+            );
+            $this->write(
+                'UPDATE 202_clicks_advance SET keyword_id = IF(? = 0, keyword_id, ?),'
+                    . ' text_ad_id = IF(? = 0, text_ad_id, ?) WHERE click_id = ?',
+                'iiiii',
+                [$template->keywordId, $template->keywordId, $template->textAdId, $template->textAdId, $clickId]
+            );
+            $this->write(
+                'INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES (?, ?, ?, ?, ?)'
+                    . ' ON DUPLICATE KEY UPDATE c1_id = IF(VALUES(c1_id) = 0, c1_id, VALUES(c1_id)),'
+                    . ' c2_id = IF(VALUES(c2_id) = 0, c2_id, VALUES(c2_id)),'
+                    . ' c3_id = IF(VALUES(c3_id) = 0, c3_id, VALUES(c3_id)),'
+                    . ' c4_id = IF(VALUES(c4_id) = 0, c4_id, VALUES(c4_id))',
+                'iiiii',
+                [$clickId, $template->c1Id, $template->c2Id, $template->c3Id, $template->c4Id]
+            );
+            // A granted publisher (PublisherCredit) is credited once; an earlier credit stands.
+            if ($template->publisherUserId !== 0) {
+                $this->write(
+                    'INSERT INTO 202_clicks_publisher (click_id, publisher_user_id) VALUES (?, ?)'
+                        . ' ON DUPLICATE KEY UPDATE publisher_user_id = publisher_user_id',
+                    'ii',
+                    [$clickId, $template->publisherUserId]
+                );
+            }
+            RollupDirty::click($this->conn, $userId, $clickId);
+        });
+    }
+
+    /**
      * The time of the click's first row when every row is the account's;
      * null when it has none or one is another's. Not locked: a click's
      * account never changes, and FOR UPDATE on the non-unique click_id key
@@ -577,11 +724,38 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     /** Whether the offer's campaign and the rotator, its rule and redirect, are the exit's account's. */
     private function namesTheAccountsRecords(ClickExit $exit): bool
     {
-        if ($exit->offer !== null) {
+        if ($exit->landingPageId !== null) {
+            // A proof for an earlier landing page must not authorize an exit
+            // after a re-click has moved this click to another page. This is
+            // read under the click lock held by recordExit().
+            $sql =
+                'SELECT c.landing_page_id FROM ' . LatestVisit::of('?') . ' AS c'
+                    . ' JOIN 202_landing_pages AS lp ON lp.landing_page_id = c.landing_page_id'
+                    . ' AND lp.user_id = c.user_id AND (? = 1 OR lp.landing_page_deleted = 0)'
+                    . ' WHERE c.user_id = ? AND lp.landing_page_id = ?';
+            $types = 'iiii';
+            $values = [$exit->clickId, $exit->deletedRecordsCount ? 1 : 0, $exit->userId, $exit->landingPageId];
+            $offer = $exit->offer;
+            if ($offer !== null) {
+                // A simple page can only send its own campaign; an advanced
+                // page may send any campaign of its account.
+                $sql .= ' AND (lp.landing_page_type = 1 OR lp.aff_campaign_id = ?)';
+                $types .= 'i';
+                $values[] = $offer->campaignId;
+            }
+            $stmt = $this->conn->prepareWrite($sql);
+            $this->conn->bind($stmt, $types, $values);
+            if ($this->conn->fetchOne($stmt) === null) {
+                return false;
+            }
+        }
+        $offer = $exit->offer;
+        if ($offer !== null) {
             $stmt = $this->conn->prepareWrite(
                 'SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ?'
+                    . ($exit->landingPageId !== null && !$exit->deletedRecordsCount ? ' AND aff_campaign_deleted = 0' : '')
             );
-            $this->conn->bind($stmt, 'ii', [$exit->offer->campaignId, $exit->userId]);
+            $this->conn->bind($stmt, 'ii', [$offer->campaignId, $exit->userId]);
             if ($this->conn->fetchOne($stmt) === null) {
                 return false;
             }

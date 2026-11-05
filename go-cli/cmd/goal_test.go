@@ -263,3 +263,25 @@ func TestAppEncodingNamesTheGoalCommandsForARefusedGoal(t *testing.T) {
 		t.Errorf("exit code = %d, want %d", code, ExitValidation)
 	}
 }
+
+func TestGoalPurLinkSubjectCanBeListedAndReevaluated(t *testing.T) {
+	_, seen := goalServer(t, 200, `{"data":[],"pagination":{}}`)
+	if _, _, err := executeCommand("goal", "outcomes", "5", "--subject-type", "purlink", "--subject-id", "19"); err != nil {
+		t.Fatalf("list PurLink outcomes: %v", err)
+	}
+	if _, _, err := executeCommand("goal", "reevaluate", "5", "--subject-type", "purlink", "--after", "19"); err != nil {
+		t.Fatalf("preview PurLink re-evaluation: %v", err)
+	}
+	if _, _, err := executeCommand("goal", "reevaluate", "5", "--apply", "--subject-type", "purlink", "--after", "19"); err != nil {
+		t.Fatalf("apply PurLink re-evaluation: %v", err)
+	}
+	if got := (*seen)[0]; got.Method != "GET" || !strings.Contains(got.Query, "subject_type=purlink") || !strings.Contains(got.Query, "subject_id=19") {
+		t.Errorf("outcomes request = %+v", got)
+	}
+	if got := (*seen)[1]; got.Method != "GET" || !strings.Contains(got.Query, "subject_type=purlink") || !strings.Contains(got.Query, "after=19") {
+		t.Errorf("preview request = %+v", got)
+	}
+	if got := (*seen)[2]; got.Method != "POST" || got.Body["subject_type"] != "purlink" || got.Body["after"] != float64(19) {
+		t.Errorf("apply request = %+v", got)
+	}
+}

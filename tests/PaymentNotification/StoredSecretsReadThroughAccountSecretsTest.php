@@ -35,12 +35,10 @@ final class StoredSecretsReadThroughAccountSecretsTest extends TestCase
         '202-config/PaymentNotification/ClickBank/ClickBankAdapter.php' => [
             'UPDATE 202_users_pref SET cb_verified = 1 WHERE user_id = ?' => 'marks the key of the one account a'
                 . ' TEST decrypted for verified (confirmTest(); a key two accounts store is refused before it)',
-            'SELECT user_slack_incoming_webhook FROM 202_users_pref WHERE user_id = ? LIMIT 1' => 'the Slack'
-                . ' webhook of the account a verified TEST was for (slackWebhook(), cb202.php)',
         ],
         '202-config/PaymentNotification/Processor.php' => [
             'SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1' => 'the currency of the'
-                . ' account the click and the verified secret already decided (Processor::currencyRefusal())',
+                . ' account the click and the verified secret already decided (Processor::otherCurrency())',
         ],
     ];
 

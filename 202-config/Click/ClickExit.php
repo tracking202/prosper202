@@ -30,6 +30,10 @@ final readonly class ClickExit
         public bool $clickedOut = true,
         public ?int $cloaking = null,
         public int $outboundSiteUrlId = 0,
+        public ?int $landingPageId = null,
+        // A conversion for a route a signed SubID proves: the page or campaign
+        // may have been deleted since, and the conversion still counts.
+        public bool $deletedRecordsCount = false,
     ) {
         if ($userId < 1 || $clickId < 1) {
             throw new InvalidArgumentException("A click exit names an account and a click, not $userId and $clickId");
@@ -42,6 +46,9 @@ final readonly class ClickExit
         }
         if ($outboundSiteUrlId < 0) {
             throw new InvalidArgumentException("A click exit's outbound URL is an id or 0, not $outboundSiteUrlId");
+        }
+        if ($landingPageId !== null && $landingPageId < 1) {
+            throw new InvalidArgumentException('A click exit landing page must be a positive id');
         }
     }
 }

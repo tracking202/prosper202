@@ -14,9 +14,23 @@ use Prosper202\Rotator\FraudScore;
  */
 final class FraudScoreTest extends TestCase
 {
-    protected function setUp(): void
+    public function testTheClientLoadsWithTheRule(): void
     {
-        require_once dirname(__DIR__, 2) . '/202-config/FraudDetectionIPQS.class.php';
+        self::assertTrue(class_exists(FraudScore::class));
+        self::assertTrue(class_exists(\FraudDetectionIPQS::class, false));
+    }
+
+    public function testEuropeanAndUnplacedVisitorsAreNeverSent(): void
+    {
+        $asked = false;
+        $detector = static function () use (&$asked): \FraudDetectionInterface {
+            $asked = true;
+            throw new \LogicException('not to be asked');
+        };
+        foreach (['FR', 'DE', 'GB', 'CH', 'NO', 'RE', 'AX', '', null] as $country) {
+            self::assertNull(FraudScore::isHigh('k', '203.0.113.9', $country, [], $detector), var_export($country, true));
+        }
+        self::assertFalse($asked);
     }
 
     public function testNoKeyIsUnknownAndAsksNobody(): void
@@ -26,8 +40,8 @@ final class FraudScoreTest extends TestCase
             $asked = true;
             throw new \LogicException('not to be asked');
         };
-        self::assertNull(FraudScore::isHigh('', '203.0.113.9', [], $detector));
-        self::assertNull(FraudScore::isHigh('  ', '203.0.113.9', [], $detector));
+        self::assertNull(FraudScore::isHigh('', '203.0.113.9', 'US', [], $detector));
+        self::assertNull(FraudScore::isHigh('  ', '203.0.113.9', 'US', [], $detector));
         self::assertFalse($asked);
     }
 
@@ -45,7 +59,7 @@ final class FraudScoreTest extends TestCase
                     return json_encode(['fraud_score' => $this->score]);
                 }
             };
-            self::assertSame($fraud, FraudScore::isHigh('k', '203.0.113.9', [], $detector), "score $score");
+            self::assertSame($fraud, FraudScore::isHigh('k', '203.0.113.9', 'US', [], $detector), "score $score");
         }
     }
 
@@ -59,7 +73,7 @@ final class FraudScoreTest extends TestCase
         };
         $log = ini_set('error_log', '/dev/null');
         try {
-            self::assertNull(FraudScore::isHigh('k', '203.0.113.9', [], $detector));
+            self::assertNull(FraudScore::isHigh('k', '203.0.113.9', 'US', [], $detector));
         } finally {
             ini_set('error_log', (string) $log);
         }
@@ -83,7 +97,7 @@ final class FraudScoreTest extends TestCase
                 }
             };
         };
-        FraudScore::isHigh('key/with space', '2001:db8::5', [
+        FraudScore::isHigh('key/with space', '2001:db8::5', 'US', [
             'HTTP_USER_AGENT' => 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0',
             'HTTP_ACCEPT_LANGUAGE' => 'de-DE,de;q=0.9',
         ], $detector);
