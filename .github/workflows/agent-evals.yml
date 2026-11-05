@@ -9,24 +9,24 @@ name: Agent Evals
 # to evaluate a real agent. Rubric lines are graded only when a judge_cmd
 # is dispatched; otherwise they report needs_judge, which does not fail the
 # job — the deterministic graders gate fully on their own.
+#
+# It runs when a change lands on master or a version branch, nightly, and on
+# demand, not on every pull request push (owner, 2026-11-05): its paths put
+# it on nearly every PR, while the Go CLI's own tests and the API integration
+# suites already run there. A CLI-to-API break shows up at landing. A pull
+# request that edits this file runs it; any other can run it on its branch
+# with workflow_dispatch.
 
 on:
   pull_request:
     paths:
-      - 'go-cli/**'
-      - 'api/**'
-      - '202-config/**'
-      - 'tracking202/**'
-      - '202-account/**'
-      - 'tests/fixtures/agent-eval/**'
-      - 'tests/live/**'
-      # The instance suites it runs (tests/integration-suites.php --instance)
-      - 'tests/**/*InstanceTest.php'
-      - 'tests/Redirect/DlIntegrationTest.php'
-      - 'tests/integration-suites.php'
       - '.github/workflows/agent-evals.yml'
+  schedule:
+    - cron: '47 6 * * *'
   push:
-    branches: [master]
+    branches:
+      - master
+      - '[0-9]+.[0-9]+.[0-9]+'
     paths:
       - 'go-cli/**'
       - 'api/**'
@@ -55,6 +55,13 @@ on:
           stdout). Without it, rubric cases report needs_judge.
         required: false
         default: ''
+
+# A new push to a pull request cancels that PR's older run, which no longer
+# describes its head and would hold runners the newer run is queued for.
+# Other events get a unique group, so no push run is ever dropped.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   agent-evals:
