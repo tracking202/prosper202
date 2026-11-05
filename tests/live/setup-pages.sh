@@ -468,7 +468,7 @@ has "$P" 'data-rule-id="none"' "choosing it opens the rules editor with a first,
 RULE_ARGS=(--data-urlencode "post_rules=1" --data-urlencode "rotator_id=$ROT" --data-urlencode "default_type=campaign" --data-urlencode "defaults=$CAMP"
   --data-urlencode "data[0][rule_id]=none" --data-urlencode "data[0][rule_name]=US mobile" --data-urlencode "data[0][status]=active" --data-urlencode "data[0][split]=false"
   --data-urlencode "data[0][redirects][0][id]=none" --data-urlencode "data[0][redirects][0][type]=url" --data-urlencode "data[0][redirects][0][value]=https://mobile.example/"
-  --data-urlencode "data[0][criteria][0][criteria_id]=none" --data-urlencode "data[0][criteria][0][type]=country" --data-urlencode "data[0][criteria][0][statement]=is" --data-urlencode "data[0][criteria][0][value]=US,GB")
+  --data-urlencode "data[0][criteria][0][criteria_id]=none" --data-urlencode "data[0][criteria][0][type]=country" --data-urlencode "data[0][criteria][0][statement]=is" --data-urlencode "data[0][criteria][0][value]=United States(US),United Kingdom(GB)")
 ajax "$AJAX/rotator.php" "$OUT/r-csrf.txt" --data-urlencode "token=wrong" "${RULE_ARGS[@]}"
 has "$OUT/r-csrf.txt" "ERROR" "saving rules with a bad token is refused"
 eq "$(Q "SELECT COUNT(*) FROM 202_rotator_rules WHERE rotator_id=$ROT")" "0" "and writes no rule"
@@ -487,12 +487,12 @@ ajax "$AJAX/rotator.php" "$OUT/r-rules.txt" --data-urlencode "token=$T" "${RULE_
 has "$OUT/r-rules.txt" "DONE" "saving rules with the token is accepted"
 eq "$(Q "SELECT default_campaign FROM 202_rotators WHERE id=$ROT")" "$CAMP" "the default campaign was stored"
 eq "$(Q "SELECT CONCAT(rule_name,'|',status,'|',splittest) FROM 202_rotator_rules WHERE rotator_id=$ROT")" "US mobile|1|0" "the rule was stored"
-eq "$(Q "SELECT CONCAT(type,'|',statement,'|',value) FROM 202_rotator_rules_criteria WHERE rotator_id=$ROT")" "country|is|US,GB" "its criterion was stored"
+eq "$(Q "SELECT CONCAT(type,'|',statement,'|',value) FROM 202_rotator_rules_criteria WHERE rotator_id=$ROT")" "country|is|United States(US),United Kingdom(GB)" "its criterion was stored"
 RULE=$(Q "SELECT id FROM 202_rotator_rules WHERE rotator_id=$ROT")
 eq "$(Q "SELECT redirect_url FROM 202_rotator_rules_redirects WHERE rule_id=$RULE")" "https://mobile.example/" "its redirect was stored"
 get "$SETUP/rotator.php?rotator_id=$ROT" "$P"
 has "$P" "data-rule-id=\"$RULE\"" "the editor reloads the saved rule"
-has "$P" 'value="US,GB"' "with its criterion's values"
+has "$P" 'value="United States(US),United Kingdom(GB)"' "with its criterion's values"
 has "$P" 'value="https://mobile.example/"' "and its redirect"
 
 # An advanced landing page belongs to no campaign (aff_campaign_id 0). The
@@ -503,7 +503,7 @@ say "rotators: a rule and a default on an advanced landing page"
 ADV_ARGS=(--data-urlencode "post_rules=1" --data-urlencode "rotator_id=$ROT" --data-urlencode "default_type=lp" --data-urlencode "defaults=$ALP"
   --data-urlencode "data[0][rule_id]=$RULE" --data-urlencode "data[0][rule_name]=US mobile" --data-urlencode "data[0][status]=active" --data-urlencode "data[0][split]=false"
   --data-urlencode "data[0][redirects][0][id]=none" --data-urlencode "data[0][redirects][0][type]=lp" --data-urlencode "data[0][redirects][0][value]=$ALP"
-  --data-urlencode "data[0][criteria][0][criteria_id]=$(Q "SELECT id FROM 202_rotator_rules_criteria WHERE rotator_id=$ROT")" --data-urlencode "data[0][criteria][0][type]=country" --data-urlencode "data[0][criteria][0][statement]=is" --data-urlencode "data[0][criteria][0][value]=US,GB")
+  --data-urlencode "data[0][criteria][0][criteria_id]=$(Q "SELECT id FROM 202_rotator_rules_criteria WHERE rotator_id=$ROT")" --data-urlencode "data[0][criteria][0][type]=country" --data-urlencode "data[0][criteria][0][statement]=is" --data-urlencode "data[0][criteria][0][value]=United States(US),United Kingdom(GB)")
 get "$SETUP/rotator.php?rotator_id=$ROT" "$P"; T=$(token_of "$P")
 ajax "$AJAX/rotator.php" "$OUT/r-adv.txt" --data-urlencode "token=$T" "${ADV_ARGS[@]}"
 has "$OUT/r-adv.txt" "DONE" "a rule and a default on the advanced landing page are accepted"
@@ -544,7 +544,7 @@ mysql_q "$DB" -e "DELETE FROM 202_rotator_rules WHERE rotator_id=$LEGACY_ROT; DE
 # shares (Prosper202\Rotator\Criterion): offrtr.php read only ALL as every
 # visitor, so a rule saved as "all" sent offer-link clicks to the default.
 say "rotators: a criterion typed as all is stored as ALL and listed as any visitor"
-ALL_ARGS=("${ADV_ARGS[@]/%value]=US,GB/value]=all}")
+ALL_ARGS=("${ADV_ARGS[@]/%value]=United States(US),United Kingdom(GB)/value]=all}")
 get "$SETUP/rotator.php?rotator_id=$ROT" "$P"; T=$(token_of "$P")
 ajax "$AJAX/rotator.php" "$OUT/r-all.txt" --data-urlencode "token=$T" "${ALL_ARGS[@]}"
 has "$OUT/r-all.txt" "DONE" "a rule whose criterion is all is accepted"
@@ -726,7 +726,7 @@ foreign_rules() { # label args...
   has "$OUT/r-foreign.txt" "ERROR" "saving rules that name another account's $label is refused"
 }
 RULE_OK=(--data-urlencode "data[0][rule_name]=US mobile" --data-urlencode "data[0][status]=active" --data-urlencode "data[0][split]=false"
-  --data-urlencode "data[0][criteria][0][type]=country" --data-urlencode "data[0][criteria][0][statement]=is" --data-urlencode "data[0][criteria][0][value]=US,GB")
+  --data-urlencode "data[0][criteria][0][type]=country" --data-urlencode "data[0][criteria][0][statement]=is" --data-urlencode "data[0][criteria][0][value]=United States(US),United Kingdom(GB)")
 foreign_rules "campaign as the default" --data-urlencode "default_type=campaign" --data-urlencode "defaults=$FCAMP" --data-urlencode "data[0][rule_id]=none" "${RULE_OK[@]}" \
   --data-urlencode "data[0][criteria][0][criteria_id]=none" --data-urlencode "data[0][redirects][0][id]=none" --data-urlencode "data[0][redirects][0][type]=url" --data-urlencode "data[0][redirects][0][value]=https://x.example/"
 foreign_rules "landing page as a redirect" --data-urlencode "default_type=lp" --data-urlencode "defaults=$ALP" --data-urlencode "data[0][rule_id]=none" "${RULE_OK[@]}" \

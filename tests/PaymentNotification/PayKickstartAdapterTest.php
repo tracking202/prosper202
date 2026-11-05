@@ -131,6 +131,23 @@ final class PayKickstartAdapterTest extends TestCase
         self::assertSame(OutcomeKind::UNVERIFIED, $kind(['hash' => ['x']] + self::sale()));
     }
 
+    /** The unsigned Affiliate IPN form 1.9.56 took is refused by name, saying why and what to set instead. */
+    public function testThe1956AffiliateIpnFormIsRefusedByName(): void
+    {
+        $adapter = new PayKickstartAdapter();
+        $form = ['tracking_id' => '42', 'affiliate_commission_amount' => '23.50', 'transaction_time' => '1700000000'];
+        foreach ([$form, ['tracking_id' => '42'], ['affiliate_commission_amount' => '1.00', 'hash' => '']] as $fields) {
+            $refusal = self::refusal(static fn () => $adapter->verify(self::request($fields), [3 => [self::KEY_A]]));
+            self::assertSame(OutcomeKind::UNVERIFIED, $refusal->outcome->kind);
+            self::assertStringStartsWith('This is PayKickstart\'s Affiliate IPN (tracking_id,', $refusal->outcome->message);
+            self::assertStringContainsString('carries no signature', $refusal->outcome->message);
+            self::assertStringContainsString('subid=[[subid]]', $refusal->outcome->message);
+        }
+        // A signed product IPN that names an affiliate is verified as before.
+        $signed = self::signed(['affiliate_commission_amount' => '5.00'] + self::sale(), self::KEY_A);
+        self::assertNotNull($adapter->verify(self::request($signed), [3 => [self::KEY_A]]));
+    }
+
     public function testASaleARebillAndARefund(): void
     {
         self::assertEquals(

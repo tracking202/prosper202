@@ -967,8 +967,9 @@ class UsersController
      * reads the privacy setting from its row, which this writes).
      *
      * @param (callable(string, string, string): mixed)|null $rate
-     *   (account currency, campaign currency, payout) => the exchange
-     *   service's answer; null asks the live service
+     *   (from currency, to currency, amount) => the exchange service's
+     *   answer, the amount in the new account currency; null asks the live
+     *   service
      */
     public function updatePreferences(int $userId, array $payload, ?callable $rate = null): array
     {
@@ -1007,7 +1008,7 @@ class UsersController
                     $userId,
                     $currency,
                     (string) ($current['user_account_currency'] ?? ''),
-                    static fn (string $campaignCurrency, string $payout): mixed => $rate($currency, $campaignCurrency, $payout)
+                    static fn (string $campaignCurrency, string $payout): mixed => $rate($campaignCurrency, $currency, $payout)
                 );
             } catch (\RuntimeException $e) {
                 throw new HttpException(

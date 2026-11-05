@@ -48,7 +48,7 @@ $canManageAdmins = $userObj->hasPermission("add_edit_delete_admin");
 
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username FROM 202_users AS 2u WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = _mysqli_query($db, $user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
@@ -56,8 +56,7 @@ if ($user_results === false) {
 $user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'];
 
-if (!empty($user_row['url']))
-	$slack = new Slack($user_row['url']);
+$slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 
 //set the timezone for the user, for entering their dates.
 AUTH::set_timezone($_SESSION['user_timezone']);
