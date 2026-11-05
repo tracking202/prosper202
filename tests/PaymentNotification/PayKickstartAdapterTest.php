@@ -131,6 +131,23 @@ final class PayKickstartAdapterTest extends TestCase
         self::assertSame(OutcomeKind::UNVERIFIED, $kind(['hash' => ['x']] + self::sale()));
     }
 
+    /** The unsigned Affiliate IPN form 1.9.56 took is refused by name, saying why and what to set instead. */
+    public function testThe1956AffiliateIpnFormIsRefusedByName(): void
+    {
+        $adapter = new PayKickstartAdapter();
+        $form = ['tracking_id' => '42', 'affiliate_commission_amount' => '23.50', 'transaction_time' => '1700000000'];
+        foreach ([$form, ['tracking_id' => '42'], ['affiliate_commission_amount' => '1.00', 'hash' => '']] as $fields) {
+            $refusal = self::refusal(static fn () => $adapter->verify(self::request($fields), [3 => [self::KEY_A]]));
+            self::assertSame(OutcomeKind::UNVERIFIED, $refusal->outcome->kind);
+            self::assertStringStartsWith('This is PayKickstart\'s Affiliate IPN (tracking_id,', $refusal->outcome->message);
+            self::assertStringContainsString('carries no signature', $refusal->outcome->message);
+            self::assertStringContainsString('subid=[[subid]]', $refusal->outcome->message);
+        }
+        // A signed product IPN that names an affiliate is verified as before.
+        $signed = self::signed(['affiliate_commission_amount' => '5.00'] + self::sale(), self::KEY_A);
+        self::assertNotNull($adapter->verify(self::request($signed), [3 => [self::KEY_A]]));
+    }
+
     public function testASaleARebillAndARefund(): void
     {
         self::assertEquals(
@@ -187,6 +204,13 @@ final class PayKickstartAdapterTest extends TestCase
         self::assertNull((new PayKickstartAdapter())->parse(self::request($noSubid))->clickId);
         self::assertNull(self::parsed(['custom_subid' => ''])->clickId);
         self::assertSame(9, self::parsed(['custom_subid' => ' 9 '])->clickId, 'trimmed, as signed');
+    }
+
+    public function testASignedPurLinkSubidNamesItsClickForTheProcessorToVerify(): void
+    {
+        $n = self::parsed(['custom_subid' => '41-987-0123456789ab']);
+        self::assertSame([41, '41-987-0123456789ab'], [$n->clickId, $n->purLinkSubid]);
+        self::assertNull(self::parsed(['custom_subid' => '41'])->purLinkSubid);
     }
 
     /** @return array<string, array{array<string, mixed>, string}> */

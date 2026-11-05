@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification;
 
+use Prosper202\Click\ClickRef;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\ReversalException;
+use Prosper202\Conversion\PurLinkCampaignChanged;
 use Prosper202\Database\Connection;
 
 /**
@@ -26,6 +29,9 @@ use Prosper202\Database\Connection;
  * (FingerprintsNotifications), a refund is a duplicate only when it is that
  * notification. A refund takes back at most what its sale recorded: one
  * stating more is capped at the sale and its answer names both amounts.
+ * From a provider whose 1.9.56 handler wrote no rows (ReversesPreUpgradeSales),
+ * a refund naming no sale on file takes its stated amount back from the value
+ * the click carried from before the upgrade, at most what is left of it.
  */
 final class Processor
 {
@@ -121,17 +127,37 @@ final class Processor
         if ($n->clickId === null) {
             return self::noClick($n, $transactionId, $provider->clickField(), 'nothing was recorded');
         }
+        $purLink = $this->purLink($n);
+        if ($purLink === false) {
+            return self::unknownClick($n->clickId, $provider->clickField());
+        }
         $owner = $this->owner($n->clickId, $verification);
         if ($owner === null) {
             return self::unknownClick($n->clickId, $provider->clickField());
         }
-        $currency = $this->currencyRefusal($n, $owner);
-        if ($currency !== null) {
+        $currency = $this->currency($n, $owner, $provider);
+        if ($currency instanceof Outcome) {
             return $currency;
         }
 
+        return self::noted(
+            $this->recordSale($n, $n->clickId, $owner, $provider, $request, $transactionId, $amount, $purLink),
+            $currency
+        );
+    }
+
+    private function recordSale(
+        Notification $n,
+        int $clickId,
+        int $owner,
+        ProviderAdapter $provider,
+        InboundRequest $request,
+        string $transactionId,
+        string $amount,
+        ?string $purLinkKey = null
+    ): Outcome {
         if ($provider instanceof SignsThePaymentNotTheClick
-            && $this->resignedSale($provider, $n->clickId, $transactionId, $amount, $owner)
+            && $this->resignedSale($provider, $clickId, $transactionId, $amount, $owner)
         ) {
             return new Outcome(
                 OutcomeKind::CONFLICT,
@@ -142,18 +168,27 @@ final class Processor
             );
         }
 
-        [$time, $dated] = self::dated($n->occurredAt, $this->latestVisitTime($n->clickId), 'the click');
-        $result = $this->record($n->clickId, $owner, $provider, $request, [
+        [$time, $dated] = self::dated($n->occurredAt, $this->latestVisitTime($clickId), 'the click');
+        $what = [
             'transaction_id' => $transactionId,
             'use_pixel_payout' => true,
             'payout' => $amount,
             'conv_time' => $time,
-        ]);
-        $on = 'Transaction ' . $transactionId . ' on click ' . $n->clickId;
+        ];
+        if ($purLinkKey !== null) {
+            // A signed PurLink SubID records on its offer, as on pb.php and gpb.php.
+            $what += ['purlink_subid' => $n->purLinkSubid, 'purlink_key' => $purLinkKey];
+        }
+        try {
+            $result = $this->record($clickId, $owner, $provider, $request, $what);
+        } catch (PurLinkCampaignChanged) {
+            return self::unknownClick($clickId, $provider->clickField());
+        }
+        $on = 'Transaction ' . $transactionId . ' on click ' . $clickId;
         if ($result['recorded']) {
             return new Outcome(
                 OutcomeKind::RECORDED,
-                'Recorded transaction ' . $transactionId . ' on click ' . $n->clickId . ' at ' . $amount . '.' . $dated,
+                'Recorded transaction ' . $transactionId . ' on click ' . $clickId . ' at ' . $amount . '.' . $dated,
                 $result['conv_id'],
                 $owner
             );
@@ -163,7 +198,7 @@ final class Processor
             if (Amount::toUnits($stored) !== Amount::toUnits($amount)) {
                 return new Outcome(
                     OutcomeKind::CONFLICT,
-                    'Transaction ' . $transactionId . ' is already recorded on click ' . $n->clickId . ' at '
+                    'Transaction ' . $transactionId . ' is already recorded on click ' . $clickId . ' at '
                     . self::plain($stored) . '; this notification states ' . $amount . '. Nothing was changed.',
                     $result['conv_id'],
                     $owner
@@ -175,7 +210,7 @@ final class Processor
             if ($reversal !== null) {
                 return new Outcome(
                     OutcomeKind::CONFLICT,
-                    'Transaction ' . $transactionId . ' on click ' . $n->clickId . ' is recorded and reversed by'
+                    'Transaction ' . $transactionId . ' on click ' . $clickId . ' is recorded and reversed by'
                     . ' conversion ' . $reversal . '; this ' . $n->event . ' states the sale again. Nothing was'
                     . ' changed: if the refund was undone, delete conversion ' . $reversal . ' to count the sale.',
                     $result['conv_id'],
@@ -185,14 +220,14 @@ final class Processor
 
             return new Outcome(
                 OutcomeKind::DUPLICATE,
-                'Transaction ' . $transactionId . ' is already recorded on click ' . $n->clickId
+                'Transaction ' . $transactionId . ' is already recorded on click ' . $clickId
                 . '; nothing was changed.',
                 $result['conv_id'],
                 $owner
             );
         }
         if ($result['reason'] === 'unknown_click' || $result['reason'] === 'foreign_click') {
-            return self::unknownClick($n->clickId, $provider->clickField());
+            return self::unknownClick($clickId, $provider->clickField());
         }
 
         throw new \RuntimeException($on . ': the conversion writer answered "' . $result['reason'] . '"');
@@ -214,15 +249,32 @@ final class Processor
         if ($n->clickId === null) {
             return self::noClick($n, $original, $provider->clickField(), 'there is no sale to reverse');
         }
+        if ($this->purLink($n) === false) {
+            return self::unknownClick($n->clickId, $provider->clickField());
+        }
         $owner = $this->owner($n->clickId, $verification);
         if ($owner === null) {
             return self::unknownClick($n->clickId, $provider->clickField());
         }
-        $currency = $this->currencyRefusal($n, $owner);
-        if ($currency !== null) {
+        $currency = $this->currency($n, $owner, $provider);
+        if ($currency instanceof Outcome) {
             return $currency;
         }
 
+        return self::noted(
+            $this->recordReversal($n, $n->clickId, $owner, $provider, $request, $original),
+            $currency
+        );
+    }
+
+    private function recordReversal(
+        Notification $n,
+        int $clickId,
+        int $owner,
+        ProviderAdapter $provider,
+        InboundRequest $request,
+        string $original
+    ): Outcome {
         // A refund with an id of its own is told apart from another refund
         // of the same sale by that id. One without is keyed by its body: a
         // retry sent again unchanged is that refund, whether or not its
@@ -236,10 +288,10 @@ final class Processor
         $exact = $provider instanceof FingerprintsNotifications;
         $body = $exact ? $provider->fingerprint($request) : self::fingerprint($request->fields);
         $reference = $ownId ? (string) $n->transactionId : 'body:' . $body;
-        $on = 'Transaction ' . $original . ' on click ' . $n->clickId;
+        $on = 'Transaction ' . $original . ' on click ' . $clickId;
         // A refund is dated when it happened, the sale keeping its own day;
         // never before the sale it takes back.
-        $sale = $this->saleOnFile($n->clickId, $original, $owner);
+        $sale = $this->saleOnFile($clickId, $original, $owner);
         [$time, $dated] = self::dated($n->occurredAt, $sale['time'] ?? 0, 'the sale');
         // A refund takes back at most what its sale recorded (a sale is
         // reversed once): one stating more (a fee, a mismatched payment) is
@@ -252,18 +304,23 @@ final class Processor
                 . ', more than the sale recorded';
             $amount = Amount::fromUnits($sale['units']);
         }
+        // A sale credited before the upgrade left no row to name: the writer
+        // takes its refund back from the value the click carried over, capped
+        // under the click lock at what is left of it.
+        $carriedPath = $sale === null && $amount !== null && $provider instanceof ReversesPreUpgradeSales;
         try {
-            $result = $this->record($n->clickId, $owner, $provider, $request, [
+            $result = $this->record($clickId, $owner, $provider, $request, [
                 'transaction_id' => $original,
                 'reversal' => true,
                 'reversal_ref' => $reference,
+                'reverses_carried_value' => $carriedPath,
                 'use_pixel_payout' => $amount !== null,
                 'payout' => $amount ?? '',
                 'conv_time' => $time,
             ]);
         } catch (ReversalException $e) {
             $standing = !$ownId && $e->kind === ReversalException::CONFLICT
-                ? $this->liveReversalOfTransaction($n->clickId, $original, $owner)
+                ? $this->liveReversalOfTransaction($clickId, $original, $owner)
                 : null;
             if ($standing !== null) {
                 return $this->repeatedReversal($n, $on, $standing, $owner, $exact);
@@ -276,20 +333,40 @@ final class Processor
                 $owner
             );
         }
+        $taken = $carriedPath && $result['conv_id'] > 0 ? $this->carriedTaken($result['conv_id'], $owner) : null;
         if ($result['recorded']) {
+            if ($taken !== null) {
+                if ($taken !== abs(Amount::toUnits((string) $amount))) {
+                    $by = self::units($taken) . ', all that was left of it: this ' . $n->event . ' states ' . $amount;
+                }
+                $by .= ', from the value the click carried from before the upgrade (no sale under ' . $original
+                    . ' was recorded since)';
+            }
+
             return new Outcome(
                 OutcomeKind::REVERSED,
-                'Reversed transaction ' . $original . ' on click ' . $n->clickId . ' by '
+                'Reversed transaction ' . $original . ' on click ' . $clickId . ' by '
                 . $by . '.' . $dated,
                 $result['conv_id'],
                 $owner
             );
         }
         if ($result['reason'] === 'duplicate') {
+            if ($taken !== null) {
+                // Keyed by this notification, so a hit is this refund sent again.
+                return new Outcome(
+                    OutcomeKind::DUPLICATE,
+                    $on . ' is already taken back from the value the click carried from before the upgrade;'
+                    . ' nothing was changed.',
+                    $result['conv_id'],
+                    $owner
+                );
+            }
+
             return $this->repeatedReversal($n, $on, $result['conv_id'], $owner);
         }
         if ($result['reason'] === 'unknown_click' || $result['reason'] === 'foreign_click') {
-            return self::unknownClick($n->clickId, $provider->clickField());
+            return self::unknownClick($clickId, $provider->clickField());
         }
 
         throw new \RuntimeException($on . ': the conversion writer answered "' . $result['reason'] . '"');
@@ -319,6 +396,21 @@ final class Processor
             'user_agent' => $request->userAgent,
             'source' => $provider->source()->value,
         ] + $what);
+    }
+
+    /**
+     * The installation key that verified the notification's signed PurLink
+     * SubID; null for a plain click id, false when the SubID is forged or its
+     * click is gone. A key that cannot be read throws: the provider retries.
+     */
+    private function purLink(Notification $n): string|false|null
+    {
+        if ($n->purLinkSubid === null) {
+            return null;
+        }
+        $verified = ClickRef::verify(new Connection($this->db), $n->purLinkSubid);
+
+        return $verified === null || $verified['claims']['click_id'] !== $n->clickId ? false : $verified['key'];
     }
 
     /**
@@ -459,8 +551,61 @@ final class Processor
         return false;
     }
 
-    /** An amount in another currency is refused: nothing here converts it. */
-    private function currencyRefusal(Notification $n, int $owner): ?Outcome
+    /**
+     * What a reversal row took back, in positive units, when the row it nets
+     * against is a legacy baseline (the value a click carried from before
+     * the ledger), or null when it reverses a sale of its own.
+     */
+    private function carriedTaken(int $conversionId, int $owner): ?int
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead(
+            'SELECT r.click_payout FROM 202_conversion_logs r'
+            . ' JOIN 202_conversion_logs s ON s.conv_id = r.reverses_conv_id AND s.user_id = r.user_id'
+            . ' WHERE r.conv_id = ? AND r.user_id = ? AND s.dedupe_key = ? LIMIT 1'
+        );
+        $conn->bind($stmt, 'iis', [$conversionId, $owner, DedupeKey::legacy()]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? null : abs(Amount::toUnits((string) $row['click_payout']));
+    }
+
+    /** The outcome with a sentence added to its answer. */
+    private static function noted(Outcome $outcome, string $note): Outcome
+    {
+        return $note === ''
+            ? $outcome
+            : new Outcome($outcome->kind, $outcome->message . $note, $outcome->conversionId, $outcome->accountId);
+    }
+
+    /**
+     * An amount in another currency than the account's: refused, since
+     * nothing here converts it, or, from a provider that states every
+     * account's amounts in one currency, kept as stated with the answer
+     * saying so ('' when the currencies agree or none is stated).
+     */
+    private function currency(Notification $n, int $owner, ProviderAdapter $provider): Outcome|string
+    {
+        $accountCurrency = $this->otherCurrency($n, $owner);
+        if ($accountCurrency === null) {
+            return '';
+        }
+        if ($provider instanceof RecordsAmountsAsStated) {
+            return ' The amount is in ' . strtoupper((string) $n->currency) . ' and this account counts in '
+                . $accountCurrency . '; Prosper202 does not convert it, so it stands as stated.';
+        }
+
+        return new Outcome(
+            OutcomeKind::CURRENCY_MISMATCH,
+            'The amount is in ' . strtoupper((string) $n->currency) . ' and this account counts in ' . $accountCurrency
+            . '; Prosper202 does not convert it, so nothing was recorded.',
+            null,
+            $owner
+        );
+    }
+
+    /** The account's currency when the notification states another, or null. */
+    private function otherCurrency(Notification $n, int $owner): ?string
     {
         if ($n->currency === null) {
             return null;
@@ -473,17 +618,7 @@ final class Processor
             throw new \RuntimeException('account ' . $owner . ' has no preferences row to read its currency from');
         }
         $accountCurrency = strtoupper(trim((string) $row['user_account_currency']));
-        if (strtoupper($n->currency) === $accountCurrency) {
-            return null;
-        }
-
-        return new Outcome(
-            OutcomeKind::CURRENCY_MISMATCH,
-            'The amount is in ' . strtoupper($n->currency) . ' and this account counts in ' . $accountCurrency
-            . '; Prosper202 does not convert it, so nothing was recorded.',
-            null,
-            $owner
-        );
+        return strtoupper($n->currency) === $accountCurrency ? null : $accountCurrency;
     }
 
     private function storedAmount(int $conversionId, int $owner): string

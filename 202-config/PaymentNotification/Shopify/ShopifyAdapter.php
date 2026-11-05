@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification\Shopify;
 
-use Prosper202\Click\ClickId;
+use Prosper202\Click\ClickRef;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
@@ -300,7 +300,7 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
      *
      * @param array<array-key, mixed> $lineItems
      */
-    private static function clickOf(array $lineItems): ?int
+    private static function clickOf(array $lineItems): ?ClickRef
     {
         foreach ($lineItems as $item) {
             $properties = is_array($item) ? ($item['properties'] ?? []) : [];
@@ -317,7 +317,7 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
                 if ($value === null || $value === '') {
                     continue;
                 }
-                $clickId = ClickId::parse($value);
+                $clickId = ClickRef::parse($value);
                 if ($clickId === null) {
                     throw self::malformed(
                         'The ' . self::shown($name) . ' line item property is "'
@@ -342,7 +342,7 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
      * is on none. On more than one click and not on the item's, the refund
      * cannot say which it takes back, and is refused.
      */
-    private function clickOfOrder(string $orderId, ?int $named): ?int
+    private function clickOfOrder(string $orderId, ?ClickRef $named): ?ClickRef
     {
         if ($this->db === null || $this->accounts === []) {
             return $named;
@@ -358,9 +358,9 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
         ]);
         $clicks = array_map(static fn (array $row): int => (int) $row['click_id'], $conn->fetchAll($stmt));
         if (count($clicks) === 1) {
-            return $clicks[0];
+            return ClickRef::click($clicks[0]);
         }
-        if ($clicks === [] || in_array($named, $clicks, true)) {
+        if ($clicks === [] || in_array($named?->clickId, $clicks, true)) {
             return $named;
         }
 

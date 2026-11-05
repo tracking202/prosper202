@@ -28,7 +28,7 @@ final class CurrencyChange
      * The campaign updates a change from $storedCurrency to $currency needs;
      * none when the currency is not changing.
      *
-     * @param callable(string, string): mixed $rate (campaign currency, payout)
+     * @param callable(string, string): mixed $rate (the currency the payout is in, payout)
      *   => the service's answer, ['exchange_payout' => number]
      * @return list<array{0: string, 1: string, 2: list<int|string>}> [sql, types, values]
      * @throws \RuntimeException when the service gives no usable rate: then
@@ -61,8 +61,12 @@ final class CurrencyChange
             $foreign = (string) $row['aff_campaign_foreign_payout'];
             $campaignCurrency = (string) $row['aff_campaign_currency'];
             if ((float) $foreign == 0.0) {
-                // Still in its own currency: keep the original, show the converted.
-                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_foreign_payout` = ?, `aff_campaign_payout` = ? WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'ssii', [$payout, $converted($campaignCurrency, $payout), $id, $userId]];
+                // In the account currency (CampaignCurrency::store() keeps no
+                // foreign payout for it; a row saved before carries the column
+                // default, not its currency): keep the original in the old
+                // account currency, which becomes the campaign's, and show
+                // the converted.
+                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_currency` = ?, `aff_campaign_foreign_payout` = ?, `aff_campaign_payout` = ? WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sssii', [$storedCurrency, $payout, $converted($storedCurrency, $payout), $id, $userId]];
             } elseif ($currency === $campaignCurrency) {
                 // Back to its own currency: the original returns.
                 $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ?, `aff_campaign_foreign_payout` = \'0.00\' WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [$foreign, $id, $userId]];

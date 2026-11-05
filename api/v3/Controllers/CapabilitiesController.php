@@ -213,7 +213,7 @@ class CapabilitiesController
                     // without writing anything.
                     'goals' => [
                         'scopes' => array_map(static fn (\Prosper202\Goals\GoalScope $s): string => $s->value, \Prosper202\Goals\GoalScope::cases()),
-                        'subjects' => [\Prosper202\Goals\GoalSubject::CLICK, \Prosper202\Goals\GoalSubject::INSTALL],
+                        'subjects' => [\Prosper202\Goals\GoalSubject::CLICK, \Prosper202\Goals\GoalSubject::INSTALL, \Prosper202\Goals\GoalSubject::PURLINK],
                         'evaluator_format' => 1,
                     ],
                     // Web events (plan §2.2): POST /events keyed by

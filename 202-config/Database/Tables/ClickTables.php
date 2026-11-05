@@ -24,6 +24,8 @@ final class ClickTables
             self::clicksAdvance(),
             self::clicksCounter(),
             self::clicksRecord(),
+            self::purLinkExitOrder(),
+            self::purLinkPixelFires(),
             self::clicksSite(),
             self::clicksSpy(),
             self::clicksTracking(),
@@ -125,6 +127,43 @@ final class ClickTables
                 KEY `click_cloak` (`click_cloaking`),
                 KEY `click_reviewed` (`click_reviewed`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /** Last accepted PurLink click-out per click, serialized by the click lock. */
+    public static function purLinkExitOrder(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::PURLINK_EXIT_ORDER,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::PURLINK_EXIT_ORDER . "` (
+                `click_id` bigint(20) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `landing_page_id` mediumint(8) unsigned NOT NULL,
+                `sequence` int(10) unsigned NOT NULL,
+                `campaign_id` mediumint(8) unsigned NOT NULL,
+                `expires_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`click_id`),
+                KEY `user_id` (`user_id`),
+                KEY `expires_at` (`expires_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Ordering for PurLink exits while their proof is valid'"
+        );
+    }
+
+    /** Conversions a landing page's deferred pixel has already been given. */
+    public static function purLinkPixelFires(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::PURLINK_PIXEL_FIRES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::PURLINK_PIXEL_FIRES . "` (
+                `conv_id` int(11) unsigned NOT NULL,
+                `click_id` bigint(20) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `expires_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`conv_id`),
+                KEY `click_id` (`click_id`),
+                KEY `user_id` (`user_id`),
+                KEY `expires_at` (`expires_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Deferred PurLink pixels already fired, while their proof is valid'"
         );
     }
 

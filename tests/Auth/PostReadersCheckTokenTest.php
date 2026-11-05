@@ -72,6 +72,7 @@ final class PostReadersCheckTokenTest extends TestCase
         'tracking202/static/zpn.php' => 'Zaxaa\'s ZPN, posted by its server and authenticated by its hash_key'
             . ' with a stored Zaxaa API signature (no session to forge a request from)',
         'tracking202/static/p13n.php' => 'a public endpoint authenticated by a personalization bearer token, cross-origin by design (no session to forge a request from)',
+        'tracking202/static/dcs-update.php' => 'a public beacon authenticated by record.php\'s signed update proof for one click, cross-origin by design (no session to forge a request from); it reads $_POST only for 1.9.56\'s FormData',
         'tracking202/static/p13n_event.php' => 'a public beacon authenticated by a personalization bearer token, cross-origin by design (no session to forge a request from)',
     ];
 
