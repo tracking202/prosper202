@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Destinations;
 
+use Prosper202\Click\FirstVisit;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\DataEngine\IpAddressSql;
@@ -12,6 +13,7 @@ use Prosper202\Database\Schema\TableRegistry;
 use Prosper202\Http\EuropeanVisitor;
 use Prosper202\Http\PrivacySetting;
 use Prosper202\Notifications\NotificationOutbox;
+use Prosper202\Report\AccountZone;
 
 /**
  * The destinations' queue and delivery log (202_destination_deliveries).
@@ -30,6 +32,10 @@ use Prosper202\Notifications\NotificationOutbox;
  * privacy 'all', and a visitor who may be in the EEA or UK (EuropeanVisitor)
  * unless the setting is 'disabled' and the destination states both consent
  * signals granted. Withheld rows are never retried.
+ *
+ * A send that says to wait (SendResult::$waitUntil: a click too recent for
+ * the platform, a destination not yet authorised) is not a try: the row
+ * stays pending with its attempts unchanged until then.
  */
 final class DestinationQueue
 {
@@ -42,6 +48,8 @@ final class DestinationQueue
     private readonly DestinationStore $store;
     /** @var \Closure(string): bool */
     private \Closure $mayBeEuropean;
+    /** @var array<int, string> */
+    private array $zones = [];
 
     /** @param (callable(string): bool)|null $mayBeEuropean EuropeanVisitor::mayBe() by default */
     public function __construct(private readonly Connection $conn, ?DestinationStore $store = null, ?callable $mayBeEuropean = null)
@@ -93,6 +101,7 @@ final class DestinationQueue
         $now ??= time();
         $out = ['sent' => 0, 'retrying' => 0, 'failed' => 0, 'withheld' => 0, 'cancelled' => 0];
         $unanswered = [];
+        $waiting = [];
         $destinations = [];
         $after = 0;
         $tried = 0;
@@ -130,8 +139,8 @@ final class DestinationQueue
                     $out['cancelled']++;
                     continue;
                 }
-                if (is_array($destination) && (!$destination['enabled'] || isset($unanswered[$destination['host']]))) {
-                    // Switched off, or a host that did not answer: left for a later run.
+                if (is_array($destination) && (!$destination['enabled'] || isset($unanswered[$destination['host']]) || isset($waiting[$key]))) {
+                    // Switched off, a host that did not answer, or a destination that waits for its operator: left for a later run.
                     continue;
                 }
                 $attempts = (int) $row['attempts'] + 1;
@@ -162,6 +171,15 @@ final class DestinationQueue
                 }
                 if (!$threw && $result->unanswered()) {
                     $unanswered[$destination['host']] = true;
+                }
+                if (!$threw && $status === 'pending' && $result->waitUntil !== null) {
+                    $this->wait($after, $attempts - 1, $result, $result->waitUntil);
+                    if ($result->destinationWaits) {
+                        $waiting[$key] = true;
+                        $this->waitDestination((int) $row['user_id'], (int) $row['destination_id'], $result->waitUntil);
+                    }
+                    $out['retrying']++;
+                    continue;
                 }
                 if ($status === 'pending' && $attempts >= NotificationOutbox::MAX_ATTEMPTS) {
                     $status = 'failed';
@@ -196,7 +214,7 @@ final class DestinationQueue
             $result = $destination['adapter']->send(
                 $destination['settings'],
                 $destination['credentials'],
-                ConversionFacts::sample($now, $this->currency($userId)),
+                ConversionFacts::sample($now, $this->currency($userId), $this->zone($userId)),
                 true,
                 $now
             );
@@ -271,6 +289,10 @@ final class DestinationQueue
             return ['failed', new SendResult(false, false, null, 'not sent: the conversion\'s click ' . $clickId . ' is not found')];
         }
         $tokens = $click['tokens'];
+        // The first visit's, as the click's ids are: when the platform saw the click.
+        $visit = $this->conn->prepareWrite('SELECT c.click_time FROM ' . FirstVisit::of('?') . ' AS c WHERE c.user_id = ?');
+        $this->conn->bind($visit, 'ii', [$clickId, $userId]);
+        $clickTime = $this->conn->fetchOne($visit)['click_time'] ?? null;
         [$customerId, $emails, $phones] = $this->customer($destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
         $transactionId = $this->replacedTransactionId($clickId, $convId, $userId) ?? trim((string) ($conv['transaction_id'] ?? ''));
         $facts = new ConversionFacts(
@@ -284,11 +306,18 @@ final class DestinationQueue
             $tokens,
             $customerId,
             $emails,
-            $phones
+            $phones,
+            $this->zone($userId),
+            $clickTime === null ? null : (int) $clickTime
         );
         $result = $destination['adapter']->send($destination['settings'], $destination['credentials'], $facts, false, $now);
 
-        return [$result->delivered ? 'sent' : ($result->retry ? 'pending' : 'failed'), $result];
+        return [match (true) {
+            $result->delivered => 'sent',
+            $result->withheld => 'withheld',
+            $result->retry || $result->waitUntil !== null => 'pending',
+            default => 'failed',
+        }, $result];
     }
 
     /**
@@ -369,6 +398,30 @@ final class DestinationQueue
         } catch (\RuntimeException | \JsonException $e) {
             return 'destination ' . $destinationId . ' cannot be read: ' . $e->getMessage();
         }
+    }
+
+    private function zone(int $userId): string
+    {
+        return $this->zones[$userId] ??= AccountZone::read($this->conn, $userId);
+    }
+
+    /** A row that waits: pending, its claim undone, due again at $until. */
+    private function wait(int $deliveryId, int $attempts, SendResult $result, int $until): void
+    {
+        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
+            . "` SET attempts = ?, next_attempt_at = ?, last_status_code = ?, last_error = ?, summary = COALESCE(?, summary) WHERE delivery_id = ? AND status = 'pending'");
+        $this->conn->bind($stmt, 'iiissi', [$attempts, $until, $result->status, $result->reason === '' ? null : self::clip($result->reason, 255),
+            $result->summary === [] ? null : self::summaryJson($result->summary), $deliveryId]);
+        $this->conn->executeUpdate($stmt);
+    }
+
+    /** Every pending conversion of a destination that needs its operator waits until $until, so no run reads them before. */
+    private function waitDestination(int $userId, int $destinationId, int $until): void
+    {
+        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
+            . "` SET next_attempt_at = GREATEST(next_attempt_at, ?) WHERE destination_id = ? AND user_id = ? AND status = 'pending' AND kind = 'conversion'");
+        $this->conn->bind($stmt, 'iii', [$until, $destinationId, $userId]);
+        $this->conn->executeUpdate($stmt);
     }
 
     private function currency(int $userId): string

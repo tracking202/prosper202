@@ -935,6 +935,11 @@ p202 destination create --name S --measurement-id G-XXXX --api-secret-file FILE|
                        [--event-name purchase] [--client-id-source click|c1|c2|c3|c4] [--user-id-source none|customer]
                        [--param name=field]... [--campaign-id N]... | [--all-campaigns] [--send-user-data]
                        [--ad-user-data granted|denied|unset] [--ad-personalization granted|denied|unset] [--json]
+p202 destination create --type google_ads --name S --customer-id 123-456-7890 --conversion-action ID
+                       --credentials-file FILE|- [--login-customer-id N] [--campaign-conversion-action N=ID]...
+                       [--send-user-data] [--ad-user-data ...] [--ad-personalization ...] [--json]
+                       # credentials JSON: developer_token, oauth_client_id, oauth_client_secret; status needs_authorisation
+p202 destination connect <id> [--json]                  # Google Ads: authorisation_url for a human's browser (same user, 10 min)
 p202 destination update <id> [--enable|--disable] [--name S] [any create flag]   # only the flags given change
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
 p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]
@@ -946,6 +951,12 @@ The API secret is read from a file or piped stdin (`-`), never a flag value. `--
 routes are not stageable. A `withheld` delivery is never retried: a guessed click, the privacy setting, or an
 EEA/UK visitor without both consent signals stated `granted` (`last_error` says which);
 `failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called).
+A Google Ads destination with `status` `needs_authorisation` holds its conversions `pending` (no tries used)
+until a person opens `connect`'s `authorisation_url`; an agent cannot complete that step. A click under 6 hours
+old also waits; one with no gclid/wbraid/gbraid and no hashed data is `withheld`. While conversions wait on
+something only a person can fix (a developer token Google has not approved, lost access, a wrong customer ID or
+conversion action), `destination get` shows `waiting` (`reason`, `status_code`, `until`); report the `reason`,
+and after the fix `destination update` (same settings or credentials) makes them due at once.
 
 ### Reports
 

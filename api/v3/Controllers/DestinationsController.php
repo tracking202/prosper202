@@ -11,6 +11,7 @@ use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
+use Prosper202\Destinations\GoogleAdsOAuth;
 
 /**
  * /destinations: the ad platforms the account sends conversions to
@@ -103,6 +104,18 @@ final class DestinationsController
     public function test(int $id): array
     {
         return ['data' => $this->refusing(fn (): ?array => (new DestinationQueue($this->conn, $this->store))->testFire($this->userId, $id, time())) ?? throw self::notFound($id)];
+    }
+
+    /**
+     * Where to send a browser to connect a Google Ads destination to the
+     * operator's Google account. The callback is the Setup page on this
+     * install, signed in as the same user.
+     *
+     * @param array<string, mixed> $server normally $_SERVER
+     */
+    public function oauthStart(int $id, array $server): array
+    {
+        return ['data' => $this->refusing(fn (): ?array => GoogleAdsOAuth::start($this->store, $this->userId, $id, GoogleAdsOAuth::redirectUri($server), time())) ?? throw self::notFound($id)];
     }
 
     /** @param array<string, mixed> $params */

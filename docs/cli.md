@@ -1101,7 +1101,8 @@ safe to run again.
 ## Destinations
 
 Send each new conversion to your ad platforms from your own server as it is
-recorded, starting with Google Analytics 4 (Measurement Protocol). The same
+recorded: Google Analytics 4 (Measurement Protocol) and Google Ads (click
+conversions, with your own developer token and OAuth client). The same
 as Setup › Destinations and `/api/v3/destinations`; the full guide is
 `documentation/features/destinations.md`.
 
@@ -1113,6 +1114,9 @@ p202 destination deliveries 1 --status failed
 p202 destination update 1 --campaign-id 12 --send-user-data
 p202 destination update 1 --disable
 p202 destination delete 1 --dry-run
+p202 destination create --type google_ads --name "Search campaigns" --customer-id 123-456-7890 \
+    --conversion-action 987654 --credentials-file google-ads.json
+p202 destination connect 2
 ```
 
 | Command | Description |
@@ -1120,7 +1124,9 @@ p202 destination delete 1 --dry-run
 | `destination list` / `get <id>` | Destinations and their settings; credentials are never shown, only `credentials_set` |
 | `destination create` | Add a GA4 destination: `--name`, `--measurement-id`, `--api-secret-file` (a file, or `-` for piped stdin; never a flag value) |
 | `destination update <id>` | `--enable` / `--disable`, `--name`, any setting flag, or a new `--api-secret-file`; only the flags given change |
-| `destination test <id>` | Send a made-up conversion to GA4's validation endpoint, which records nothing; prints `valid` and GA4's `messages` |
+| `destination create --type google_ads` | Add a Google Ads destination: `--name`, `--customer-id`, `--conversion-action`, `--credentials-file` (JSON with `developer_token`, `oauth_client_id`, `oauth_client_secret`; a file or `-`) |
+| `destination connect <id>` | Google Ads: prints `authorisation_url` (open it signed in as the same user, within 10 minutes) and the `redirect_uri` to register on the OAuth client |
+| `destination test <id>` | Send a made-up conversion to the platform's validation endpoint (GA4's `/debug/mp/collect`, Google Ads `validateOnly`), which records nothing; prints `valid` and the `messages` |
 | `destination deliveries <id>` | The delivery log: `--status pending\|sent\|failed\|withheld\|cancelled`, `--kind conversion\|test`, `--conv-id`, `--limit`, `--offset` |
 | `destination delete <id>` | Delete it (`--dry-run` previews, `--force` skips the prompt); what it has not sent is cancelled |
 
@@ -1134,6 +1140,9 @@ p202 destination delete 1 --dry-run
 | `--send-user-data` | Send SHA-256 hashes of the customer's normalised email and E.164 phone, never the raw values |
 | `--all-campaigns` | Every campaign again (clears `--campaign-id`) |
 | `--ad-user-data`, `--ad-personalization` | Google's consent signals as you state them: `granted`, `denied`, or `unset` to stop sending one |
+| `--customer-id`, `--login-customer-id` | Google Ads: the account the conversions go to, and the manager account your access goes through |
+| `--conversion-action` | Google Ads: the conversion action ID (`ctId`), or `customers/<id>/conversionActions/<id>` |
+| `--campaign-conversion-action N=ACTION` | Google Ads: the conversion action for one campaign (repeatable) |
 
 A conversion goes out with the minutely cron job and is retried with backoff,
 8 tries in all. A conversion whose click was guessed (same IP, visitor id), a
