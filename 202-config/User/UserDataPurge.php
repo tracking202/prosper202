@@ -177,6 +177,9 @@ final class UserDataPurge
         // IPQualityScore scoring: the visitors' cached address scores, and how far it walked.
         'DELETE FROM 202_ipqs_scores WHERE user_id = ?',
         'DELETE FROM 202_ipqs_progress WHERE user_id = ?',
+        // The money-loss alerts' settings and the incidents they were sent for.
+        'DELETE FROM 202_alert_settings WHERE user_id = ?',
+        'DELETE FROM 202_alert_state WHERE user_id = ?',
     ];
 
     /**

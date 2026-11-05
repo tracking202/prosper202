@@ -44,6 +44,8 @@ final class TableRegistry
     public const string CLICK_FILTER_ENTRIES = '202_click_filter_entries';
     public const string IPQS_SCORES = '202_ipqs_scores';
     public const string IPQS_PROGRESS = '202_ipqs_progress';
+    public const string ALERT_SETTINGS = '202_alert_settings';
+    public const string ALERT_STATE = '202_alert_state';
     public const string USER_DATA_FEEDBACK = 'user_data_feedback';
 
     // Click tables
