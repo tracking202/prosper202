@@ -146,6 +146,7 @@ class Slack {
 	  'jvzoo_secret_key_updated' => '#[user] entered a new JVZoo Secret Key',
 	  'ipqs_api_key_updated' => '#[user] entered a new IPQualityScore API Key',
 	  'paykickstart_ipn_keys_updated' => '#[user] changed the PayKickstart IPN secret keys',
+	  'shopify_webhook_secret_updated' => '#[user] entered a new Shopify webhook secret',
 
       //User Management
       'user_management_user' => '#[user] [type] a Prosper202 ClickServer User: #[username] ([role])',

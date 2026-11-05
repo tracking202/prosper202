@@ -1,6 +1,12 @@
 <?php
 declare(strict_types=1);
 
+// A Shopify order webhook, which paid 1.9.56 took at this URL, is verified and recorded by shopify.php.
+if (isset($_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256']) || isset($_SERVER['HTTP_X_SHOPIFY_TOPIC'])) {
+	require __DIR__ . '/shopify.php';
+	exit;
+}
+
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
