@@ -111,6 +111,7 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
         self::q("DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id IN ($accounts)");
         self::q("DELETE FROM 202_ppc_accounts WHERE ppc_account_id IN ($accounts)");
         self::q('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = ' . self::CAMPAIGN);
+        self::q('DELETE FROM 202_postback_auth WHERE user_id = ' . self::USER);
         self::q('DELETE FROM 202_users_pref WHERE user_id = ' . self::USER);
         self::q('DELETE FROM 202_users WHERE user_id = ' . self::USER);
     }
@@ -120,6 +121,9 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
         self::cleanUp();
         self::user(self::USER);
         self::q('INSERT INTO 202_users_pref SET user_id = ' . self::USER . ", user_pref_privacy = 'disabled'");
+        // When the postback is sent, not whether it may be: the account leaves
+        // postback authentication off (one made on 1.9.80 or later requires a token).
+        self::row('202_postback_auth', ['user_id' => self::USER, 'auth_mode' => 'off', 'updated_at' => time()]);
         self::row('202_aff_campaigns', [
             'aff_campaign_id' => self::CAMPAIGN, 'aff_campaign_id_public' => self::CAMPAIGN + 100000,
             'user_id' => self::USER, 'aff_network_id' => 0, 'aff_campaign_name' => 'store',

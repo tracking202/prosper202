@@ -50,6 +50,7 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
     private const ROTATOR = 995651;
     private const ROTATOR_TRACKER = 995652;
     private const RULE = 995653;
+    private const POSTBACK_AUTH_KEPT = '202_postback_auth_p1956_kept';
 
     /** @var list<string>|null 202_version as this class found it, put back after */
     private static ?array $versions = null;
@@ -165,16 +166,27 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         self::q('DROP TABLE IF EXISTS 202_clicks_purlink');
         self::q('ALTER TABLE 202_users MODIFY user_pass varchar(255) NOT NULL');
         self::q(\Prosper202\Database\Tables\CoreTables::userDataFeedback()->createStatement);
+        // The installed 202_postback_auth paidShape() set aside, with its rows,
+        // in place of the one the upgrade made.
+        $kept = self::$db->query("SHOW TABLES LIKE '" . self::POSTBACK_AUTH_KEPT . "'");
+        if ($kept instanceof \mysqli_result && $kept->num_rows > 0) {
+            self::q('DROP TABLE IF EXISTS 202_postback_auth');
+            self::q('RENAME TABLE ' . self::POSTBACK_AUTH_KEPT . ' TO 202_postback_auth');
+        }
     }
 
     /**
      * What a paid 1.9.56 database has that a free one lacks, and the reverse:
      * the paid line stores the same "1.9.56", added 202_clicks_purlink, and
-     * never created user_data_feedback or widened 202_users.user_pass.
+     * never created user_data_feedback or widened 202_users.user_pass. Nor
+     * did it have 202_postback_auth (1.9.80), which the upgrade makes with a
+     * row of mode `off` for each account it finds; the installed one is set
+     * aside until cleanUp().
      */
     private static function paidShape(): void
     {
         self::q('DROP TABLE user_data_feedback');
+        self::q('RENAME TABLE 202_postback_auth TO ' . self::POSTBACK_AUTH_KEPT);
         self::q('ALTER TABLE 202_users MODIFY user_pass char(32) NOT NULL');
         self::q('CREATE TABLE 202_clicks_purlink (
             `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -451,6 +463,10 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         self::assertSame('disabled', self::scalar(
             'SELECT user_pref_privacy FROM 202_users_pref WHERE user_id = ' . self::OWNER
         ), 'an upgraded account keeps tracking as it did');
+        self::assertSame('off', self::scalar(
+            'SELECT GROUP_CONCAT(DISTINCT auth_mode) FROM 202_postback_auth WHERE user_id IN ('
+            . implode(', ', [self::OWNER, self::PUBLISHER, self::MANAGER]) . ') HAVING COUNT(*) = 3'
+        ), 'each account the upgrade found keeps its postbacks and pixels without a token');
     }
 
     /**
