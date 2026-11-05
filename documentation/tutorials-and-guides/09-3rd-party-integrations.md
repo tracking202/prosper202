@@ -26,9 +26,14 @@ filtered for another reason keeps that reason.
 
 What is sent, and what is not:
 
-- **Only the visitor's IP address**, as Prosper202 stored it (masked when your
-  privacy setting masks it), with IPQualityScore's fixed lookup options. No
-  user agent, referer, click id, keyword or anything else about the click.
+- **Only the visitor's IP address**, as Prosper202 stored it, with
+  IPQualityScore's fixed lookup options. No user agent, referer, click id,
+  keyword or anything else about the click.
+- **Nothing while your privacy setting is "all"** (or the install's is): no
+  click is sent or scored, and the redirector's "High fraud score" rule is
+  skipped. A click whose address was stored masked (under "eu") is never
+  sent or scored either: a masked address is no visitor's, and one score for
+  it would filter a whole network's clicks.
 - **Never a visitor from the EU, the EEA, the UK or Switzerland, nor one whose
   country is unknown.** The country is the one GeoIP recorded for the click;
   those clicks are not sent, not scored and stay as they were. There is no

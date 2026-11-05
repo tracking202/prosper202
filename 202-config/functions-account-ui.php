@@ -478,7 +478,9 @@ function p202_ipqs_card_note(\mysqli $db, int $userId, bool $keySaved): string
         . ' whose country is unknown, are never sent and are not scored. That includes the EU\'s outermost regions'
         . ' and Åland, Gibraltar, the Isle of Man, Jersey, Guernsey, and Svalbard and Jan Mayen. A redirector'
         . ' "High fraud score" rule also sends the visitor\'s user agent and language with the address, at'
-        . ' redirect time, under the same regional limits.</p>';
+        . ' redirect time, under the same regional limits. While your privacy setting holds back every visitor'
+        . ' (\'all\'), nothing is sent and no click is scored, and a click whose address was stored masked is'
+        . ' never scored.</p>';
     if (!$keySaved) {
         return $note;
     }

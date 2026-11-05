@@ -631,7 +631,11 @@ function p202RotatorVisitor(
         $filtered,
         static function () use ($db, $userId, $ip, $geo): ?bool {
             try {
-                $key = \Prosper202\Rotator\FraudScore::accountKey(\Prosper202\Repository\LookupRepositoryFactory::connection($db), $userId);
+                $conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
+                if (\Prosper202\Http\PrivacySetting::forAccount($conn, $userId) === 'all') {
+                    return null; // the account holds every visitor back: nothing is sent
+                }
+                $key = \Prosper202\Rotator\FraudScore::accountKey($conn, $userId);
             } catch (\Throwable $keyError) {
                 error_log("Redirector fraud rule: reading account $userId's IPQualityScore key failed ("
                     . $keyError->getMessage() . '); the rule is skipped');

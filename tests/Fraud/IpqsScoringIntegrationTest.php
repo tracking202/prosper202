@@ -52,6 +52,7 @@ final class IpqsScoringIntegrationTest extends TestCase
             self::$countries[$code] = self::insert('INSERT INTO 202_locations_country SET country_code = '
                 . self::str($code) . ', country_name = ' . self::str('ipqs ' . $code));
         }
+        self::$ips['198.51.100.0'] = self::insert("INSERT INTO 202_ips SET ip_address = '198.51.100.0'");
         for ($i = 50; $i < 70; $i++) {
             self::$ips['203.0.113.' . $i] = self::insert("INSERT INTO 202_ips SET ip_address = '203.0.113.$i'");
         }
@@ -217,6 +218,87 @@ final class IpqsScoringIntegrationTest extends TestCase
         self::assertSame(self::COUNTED, self::filtered($reunion));
         self::assertSame(1, $report['held']);
         self::assertSame([], self::cached(self::OWNER));
+    }
+
+    public function testAnAccountHoldingEveryVisitorBackIsNotScored(): void
+    {
+        self::$stub->scores(['203.0.113.55' => 99]);
+        self::q("UPDATE 202_users_pref SET user_pref_privacy = 'all' WHERE user_id = " . self::OWNER);
+        $held = $this->click(self::OWNER, '203.0.113.55', 'US');
+
+        $report = $this->score();
+
+        self::assertSame([], self::$stub->addresses(), "privacy 'all': nothing is sent");
+        self::assertSame(self::COUNTED, self::filtered($held));
+        self::assertSame(0, $report['lookups']);
+
+        self::q("UPDATE 202_users_pref SET user_pref_privacy = 'disabled' WHERE user_id = " . self::OWNER);
+        $this->score();
+
+        self::assertSame(['203.0.113.55'], self::$stub->addresses(), "the same click is scored under 'disabled'");
+        self::assertSame(self::FRAUD, self::filtered($held));
+    }
+
+    public function testAMaskedAddressIsNeverSent(): void
+    {
+        self::$stub->scores(['198.51.100.0' => 99, '203.0.113.56' => 99]);
+        $masked = $this->click(self::OWNER, '198.51.100.0', 'US', 400);
+        $whole = $this->click(self::OWNER, '203.0.113.56', 'US', 300);
+
+        $report = $this->score();
+
+        self::assertSame(['203.0.113.56'], self::$stub->addresses(), 'a /24 stands for no one visitor');
+        self::assertSame(self::COUNTED, self::filtered($masked));
+        self::assertSame(self::FRAUD, self::filtered($whole));
+        self::assertSame(1, $report['held']);
+    }
+
+    public function testASwitchedOffAccountIsNotScored(): void
+    {
+        self::$stub->scores(['203.0.113.57' => 99]);
+        self::q('UPDATE 202_users SET user_active = 0 WHERE user_id = ' . self::OWNER);
+        $click = $this->click(self::OWNER, '203.0.113.57', 'US');
+
+        $this->score();
+
+        self::assertSame([], self::$stub->addresses());
+        self::assertSame(self::COUNTED, self::filtered($click));
+    }
+
+    public function testAnErrorOnAClickIsRecordedAndScoringGoesOnAfterIt(): void
+    {
+        self::$stub->scores(['203.0.113.58' => 99, '203.0.113.59' => 99]);
+        $broken = $this->click(self::OWNER, '203.0.113.58', 'US', 400);
+        $next = $this->click(self::OWNER, '203.0.113.59', 'US', 300);
+        self::q('RENAME TABLE 202_clicks_filter_reason TO 202_clicks_filter_reason_away');
+        try {
+            $report = $this->score();
+        } finally {
+            self::q('RENAME TABLE 202_clicks_filter_reason_away TO 202_clicks_filter_reason');
+        }
+
+        self::assertSame(1, $report['failed']);
+        self::assertSame(['203.0.113.58'], self::$stub->addresses(), 'filtering it failed, after the lookup');
+        self::assertSame(self::COUNTED, self::filtered($broken), 'the failed filter wrote nothing');
+        self::assertSame('1', self::one('SELECT failures FROM 202_ipqs_progress WHERE user_id = ' . self::OWNER));
+        self::assertSame(
+            (string) (self::NOW + IpqsScoring::RETRY_FIRST),
+            self::one('SELECT retry_at FROM 202_ipqs_progress WHERE user_id = ' . self::OWNER),
+            'waited out like a failed lookup'
+        );
+        self::assertNotNull(IpqsScoring::status(new Connection(self::$db), self::OWNER)['last_error'] ?? null);
+
+        $this->now += IpqsScoring::RETRY_FIRST;
+        $this->score();
+
+        self::assertSame(
+            ['203.0.113.58', '203.0.113.59'],
+            self::$stub->addresses(),
+            'the next click, not the one that failed again'
+        );
+        self::assertSame(self::COUNTED, self::filtered($broken));
+        self::assertSame(self::FRAUD, self::filtered($next));
+        self::assertSame('0', self::one('SELECT failures FROM 202_ipqs_progress WHERE user_id = ' . self::OWNER));
     }
 
     public function testEachAccountUsesItsOwnKeyAndCache(): void

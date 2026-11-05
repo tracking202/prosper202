@@ -9,6 +9,8 @@ use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\DataEngine\IpAddressSql;
 use Prosper202\Http\EuropeanCountries;
+use Prosper202\Http\PrivacySetting;
+use Prosper202\Http\StoredVisitorIp;
 
 /**
  * IPQualityScore fraud scoring, for each account that saved an IPQS key
@@ -25,12 +27,16 @@ use Prosper202\Http\EuropeanCountries;
  * score of FRAUD_THRESHOLD or more filters the click
  * (MysqlClickRepository::filterAsFraud(), reason fraud_score) and rolls its
  * report row up again. Every other click is passed over, and no held click
- * is sent or recorded anywhere.
+ * is sent or recorded anywhere. An account whose privacy setting
+ * (PrivacySetting) is 'all' is not scored at all, and a click stored masked
+ * (StoredVisitorIp::mask()) is held: that address is no visitor's.
  *
  * A failed lookup ends the account's run at that click, recorded with the
  * reason (never the key), and the account waits RETRY_FIRST seconds,
  * doubling to RETRY_MAX, before its next try, starting with that click. A
- * click still unscored when it leaves the window is not scored.
+ * click still unscored when it leaves the window is not scored. Any other
+ * error on a click is recorded and waited out the same way, and that click
+ * is passed over.
  */
 final class IpqsScoring
 {
@@ -145,7 +151,7 @@ final class IpqsScoring
             'SELECT p.user_id, p.ipqs_api_key FROM 202_users_pref AS p'
             . ' JOIN 202_users AS u ON u.user_id = p.user_id'
             . ' LEFT JOIN 202_ipqs_progress AS g ON g.user_id = p.user_id'
-            . " WHERE p.ipqs_api_key IS NOT NULL AND p.ipqs_api_key <> '' AND u.user_deleted = 0"
+            . " WHERE p.ipqs_api_key IS NOT NULL AND p.ipqs_api_key <> '' AND u.user_deleted = 0 AND u.user_active = 1"
             . ' AND (g.user_id IS NULL OR g.retry_at <= ?)'
             . ' ORDER BY COALESCE(g.last_run_at, 0), p.user_id'
         );
@@ -163,6 +169,9 @@ final class IpqsScoring
     {
         $now = ($this->clock)();
         $counts = ['clicks' => 0, 'filtered' => 0, 'held' => 0, 'failed' => 0];
+        if (PrivacySetting::forAccount($this->conn, $userId) === 'all') {
+            return $counts;
+        }
         [$cursorTime, $cursorId, $failures] = $this->progress($userId);
         $floor = $now - self::WINDOW_SECONDS;
         if ($cursorTime < $floor) {
@@ -183,7 +192,15 @@ final class IpqsScoring
                 $counted = (int) $click['click_filtered'] === 0 && (int) $click['click_lead'] === 0;
                 if (!isset($seen[$clickId]) && $counted) {
                     $seen[$clickId] = true;
-                    $verdict = $this->scoreClick($userId, $key, $click, $repository, $failure, $looked);
+                    try {
+                        $verdict = $this->scoreClick($userId, $key, $click, $repository, $failure, $looked);
+                    } catch (\Throwable $e) {
+                        error_log('IPQualityScore scoring: account ' . $userId . ', click ' . $clickId
+                            . ': ' . $e->getMessage());
+                        $failure = 'A click could not be scored; scoring went on from the next one.';
+                        [$cursorTime, $cursorId] = [(int) $click['click_time'], $clickId];
+                        break 2;
+                    }
                     if ($verdict === null) {
                         break 2; // the lookup budget is spent, or the lookup failed: this click is next
                     }
@@ -224,6 +241,9 @@ final class IpqsScoring
         }
         $ipId = (int) $click['ip_id'];
         $address = is_string($click['ip_address'] ?? null) ? $click['ip_address'] : '';
+        if ($address !== '' && StoredVisitorIp::mask($address) === $address) {
+            return 'held';
+        }
         $public = filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
         if ($ipId <= 0 || $public === false) {
             return 'skipped';
