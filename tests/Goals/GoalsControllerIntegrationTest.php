@@ -47,6 +47,47 @@ final class GoalsControllerIntegrationTest extends TestCase
         self::fail('expected a 422');
     }
 
+    public function testPurLinkOutcomesAndReevaluationAreAvailableThroughTheApi(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $goal = $this->goal(7, ['name' => 'Signup', 'trigger' => ['event' => 'signup'], 'value' => ['type' => 'fixed', 'amount' => 3]]);
+        $page = 777004;
+        self::fixture("DELETE FROM 202_landing_pages WHERE landing_page_id=$page");
+        self::fixture("INSERT INTO 202_landing_pages SET landing_page_id=$page,user_id=1,aff_campaign_id=0,landing_page_type=1,landing_page_nickname='api goal',landing_page_url='https://example.test/',landing_page_time=1");
+        self::fixture("UPDATE 202_clicks SET landing_page_id=$page WHERE click_id=100");
+        $done = $this->conn->transaction(function () use ($page): array {
+            $subject = (new \Prosper202\Goals\PurLinkGoalSubjects($this->conn))->forRouteInTransaction(1, 100, $page, 7);
+            self::assertNotNull($subject);
+            return $this->engine->ingestPurLinkInTransaction(1, $subject,
+                [$this->event('api-event', 'signup', 1_650_000_000)], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+        });
+        $this->engine->finishPurLinkIngest(1, $done);
+        $subjectId = $done['subject']->id;
+        $listed = $this->api()->outcomes($goal, ['subject_type' => 'purlink', 'subject_id' => (string) $subjectId]);
+        self::assertSame(1, $listed['pagination']['total']);
+        self::assertSame('purlink', $listed['data'][0]['subject_type']);
+        self::assertSame(7, $listed['data'][0]['campaign_id']);
+        self::assertSame(['click_id' => 100, 'landing_page_id' => $page], $listed['data'][0]['purlink']);
+        self::assertSame([], $this->api()->outcomes($goal, ['subject_type' => 'click'])['data']);
+        $this->clock += 100;
+        $this->goals->addVersion(1, $goal, \Prosper202\Goals\GoalDefinition::parse(
+            ['name' => 'Signup', 'trigger' => ['event' => 'signup'], 'value' => ['type' => 'fixed', 'amount' => 5]], $goal
+        ), $this->clock);
+        $preview = $this->api()->reevaluationPreview($goal, ['subject_type' => 'purlink'])['data'];
+        self::assertFalse($preview['applied']);
+        self::assertSame(1, $preview['totals']['write']);
+        $applied = $this->api()->reevaluate($goal, ['subject_type' => 'purlink'])['data'];
+        self::assertTrue($applied['applied']);
+        self::assertSame('5.00000', $this->clickState(100)['payout']);
+        $simulated = $this->api()->evaluate([
+            'goals' => [['goal_id' => 1, 'definition' => ['name' => 'Signup', 'trigger' => ['event' => 'signup']]]],
+            'subject' => ['type' => 'purlink', 'click_at' => 1],
+            'events' => [['event_id' => 'e', 'name' => 'signup', 'occurred_at' => 2, 'received_at' => 2]],
+        ])['data'];
+        self::assertCount(1, $simulated['outcomes']);
+    }
+
     public function testACampaignGoalIsCreatedPayableAndEveryBadIdIsRefusedByName(): void
     {
         $this->campaign(7);

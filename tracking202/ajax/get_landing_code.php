@@ -83,10 +83,24 @@ $error = [];
 	echo '<h3 class="p202-section__title">1. Landing page code</h3>'
 		. '<p>Put this right above the <code>&lt;/body&gt;</code> tag of <strong>only</strong> the page your visitors first arrive on, not in a template every page of the site includes.</p>';
 	echo p202_setup_code_box($javascript_code, ['long' => true]);
+	echo '<details class="p202-disclosure mb-3" data-p202-remember="setup-lp-code-defpixel">'
+		. '<summary>With the deferred pixel <span class="p202-disclosure__hint">fires your traffic source\'s pixels on this page when a PurLink click converts</span></summary>'
+		. '<div class="p202-disclosure__body">'
+		. '<p>Use this version of the code instead when your traffic source\'s pixel must fire on your own page, for example a pixel that reads a cookie of this site. After a visitor follows a PurLink, the offer opens in a new tab and this page fires the pixels once the network\'s postback reports the conversion.</p>'
+		. p202_setup_code_box(\Prosper202\Setup\LandingPageCode::loader($codeBase, $publicId, true), ['long' => true])
+		. '</div></details>';
 	echo p202_setup_lp_check(get_absolute_url(), (string) ($_SESSION['token'] ?? ''), (int) $landing_page_row['landing_page_id']);
 
 	echo '<h3 class="p202-section__title">2. Link out to the offer</h3>'
-		. '<p>Choose one of the three. The simplest is the outbound link: use it as the link to the offer on your page.</p>';
+		. '<p>Choose one. A PurLink is the fastest for your visitor; the outbound redirect link is the simplest. Use either as the link to the offer on your page.</p>';
+	$purLink = \Prosper202\Setup\LandingPageCode::simplePurLink((string) ($landing_page_row['aff_campaign_url'] ?? ''));
+	if ($purLink !== null) {
+		echo p202_setup_code_box($purLink, ['label' => 'PurLink: link straight to the offer']);
+		echo '<p>A PurLink sends the visitor straight to the offer, with no redirect through your tracker; the landing page code records the click-out in the background. Tokens such as <code>[[subid]]</code> and <code>[[c1]]</code> in the link are filled in on the page. Until the visitor\'s SubID is ready the link goes through the tracker\'s redirect instead.</p>';
+		if (!\Prosper202\Setup\LandingPageCode::purLinkHasSubid($purLink)) {
+			echo p202_flash('warn', 'Add [[subid]] to the campaign URL where your network takes its SubID, or its conversions cannot be matched to the click.');
+		}
+	}
 	echo p202_setup_code_box($affiliate_link, ['label' => 'Option 1: outbound redirect link']);
 
 	$outbound_php = \Prosper202\Setup\LandingPageCode::simpleOutboundPhp($codeBase, $publicId, (string) $landing_page_row['landing_page_url'], time());

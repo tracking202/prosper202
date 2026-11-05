@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification;
 
+use Prosper202\Click\ClickRef;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\ReversalException;
+use Prosper202\Conversion\PurLinkCampaignChanged;
 use Prosper202\Database\Connection;
 
 /**
@@ -125,6 +127,10 @@ final class Processor
         if ($n->clickId === null) {
             return self::noClick($n, $transactionId, $provider->clickField(), 'nothing was recorded');
         }
+        $purLink = $this->purLink($n);
+        if ($purLink === false) {
+            return self::unknownClick($n->clickId, $provider->clickField());
+        }
         $owner = $this->owner($n->clickId, $verification);
         if ($owner === null) {
             return self::unknownClick($n->clickId, $provider->clickField());
@@ -135,7 +141,7 @@ final class Processor
         }
 
         return self::noted(
-            $this->recordSale($n, $n->clickId, $owner, $provider, $request, $transactionId, $amount),
+            $this->recordSale($n, $n->clickId, $owner, $provider, $request, $transactionId, $amount, $purLink),
             $currency
         );
     }
@@ -147,7 +153,8 @@ final class Processor
         ProviderAdapter $provider,
         InboundRequest $request,
         string $transactionId,
-        string $amount
+        string $amount,
+        ?string $purLinkKey = null
     ): Outcome {
         if ($provider instanceof SignsThePaymentNotTheClick
             && $this->resignedSale($provider, $clickId, $transactionId, $amount, $owner)
@@ -162,12 +169,21 @@ final class Processor
         }
 
         [$time, $dated] = self::dated($n->occurredAt, $this->latestVisitTime($clickId), 'the click');
-        $result = $this->record($clickId, $owner, $provider, $request, [
+        $what = [
             'transaction_id' => $transactionId,
             'use_pixel_payout' => true,
             'payout' => $amount,
             'conv_time' => $time,
-        ]);
+        ];
+        if ($purLinkKey !== null) {
+            // A signed PurLink SubID records on its offer, as on pb.php and gpb.php.
+            $what += ['purlink_subid' => $n->purLinkSubid, 'purlink_key' => $purLinkKey];
+        }
+        try {
+            $result = $this->record($clickId, $owner, $provider, $request, $what);
+        } catch (PurLinkCampaignChanged) {
+            return self::unknownClick($clickId, $provider->clickField());
+        }
         $on = 'Transaction ' . $transactionId . ' on click ' . $clickId;
         if ($result['recorded']) {
             return new Outcome(
@@ -232,6 +248,9 @@ final class Processor
         }
         if ($n->clickId === null) {
             return self::noClick($n, $original, $provider->clickField(), 'there is no sale to reverse');
+        }
+        if ($this->purLink($n) === false) {
+            return self::unknownClick($n->clickId, $provider->clickField());
         }
         $owner = $this->owner($n->clickId, $verification);
         if ($owner === null) {
@@ -377,6 +396,21 @@ final class Processor
             'user_agent' => $request->userAgent,
             'source' => $provider->source()->value,
         ] + $what);
+    }
+
+    /**
+     * The installation key that verified the notification's signed PurLink
+     * SubID; null for a plain click id, false when the SubID is forged or its
+     * click is gone. A key that cannot be read throws: the provider retries.
+     */
+    private function purLink(Notification $n): string|false|null
+    {
+        if ($n->purLinkSubid === null) {
+            return null;
+        }
+        $verified = ClickRef::verify(new Connection($this->db), $n->purLinkSubid);
+
+        return $verified === null || $verified['claims']['click_id'] !== $n->clickId ? false : $verified['key'];
     }
 
     /**

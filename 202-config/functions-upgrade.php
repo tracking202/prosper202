@@ -101,10 +101,11 @@ if (!function_exists('_upgrade_query')) {
      * instead of silently skipping a migration step; every other outcome preserves
      * _mysqli_query()'s contract exactly (the mysqli_result, or false).
      *
-     * Only autocommit statements flow through here: no upgrade step calls
-     * Connection::transaction(), the one place a transaction begins
-     * (TransactionsBeginOnlyInConnectionTest), so a per-statement retry never
-     * runs inside one.
+     * Only autocommit statements flow through here: the one upgrade step
+     * that calls Connection::transaction(), the one place a transaction
+     * begins (TransactionsBeginOnlyInConnectionTest), is the PurLink
+     * carry-over, which runs no _upgrade_query() inside one, so a
+     * per-statement retry never runs inside one.
      *
      * @param  string|mixed $sql
      * @return \mysqli_result|bool
@@ -168,6 +169,64 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
         } catch (\Throwable $e) {
             error_log('Prosper202 upgrade: the cached licence answers could not be copied: ' . $e->getMessage());
         }
+    }
+}
+
+if (!function_exists('_upgrade_purlink_carryover')) {
+    /**
+     * Paid 1.9.56's pending PurLink click-outs, carried into the PurLink
+     * tables (Prosper202\Click\PurLinkPaidCarryOver) so the postbacks of
+     * clicks still in flight convert. It makes 202_purlink_exit_order itself,
+     * as it runs before the step's reconcile. 202_clicks_purlink is left in place.
+     * No such table (a free install, or a paid one whose CREATE the server
+     * refused for its charset clause) is nothing to do. What was skipped is
+     * counted on a line of its own, which is not a failure.
+     */
+    function _upgrade_purlink_carryover(): bool
+    {
+        global $db;
+
+        $table = _upgrade_query("SHOW TABLES LIKE '202\\_clicks\\_purlink'");
+        if (!$table instanceof \mysqli_result) {
+            error_log('Prosper202 upgrade: could not read whether 202_clicks_purlink exists; its pending PurLink'
+                . ' clicks will be carried over on the next run.');
+            return false;
+        }
+        $exists = $table->num_rows > 0;
+        $table->free();
+        if (!$exists) {
+            return true;
+        }
+        // CREATE TABLE IF NOT EXISTS; the step's reconcile converges it after.
+        if (_upgrade_query(\Prosper202\Database\Tables\ClickTables::purLinkExitOrder()->createStatement) === false) {
+            error_log('Prosper202 upgrade: could not create 202_purlink_exit_order for the paid PurLink clicks;'
+                . ' they will be carried over on the next run.');
+            return false;
+        }
+        try {
+            $conn = new \Prosper202\Database\Connection(($db instanceof \mysqli) ? $db : $db->getConnection());
+            $counts = (new \Prosper202\Click\PurLinkPaidCarryOver($conn))->carry(time());
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade: the pending PurLink clicks of paid 1.9.56 (202_clicks_purlink) could not'
+                . ' all be carried over: ' . $e->getMessage());
+            return false;
+        }
+        if (isset($counts['unknown_shape'])) {
+            error_log('Prosper202 PurLink carry-over: 202_clicks_purlink does not have paid 1.9.56\'s columns;'
+                . ' nothing carried. The table is left in place.');
+        } elseif ($counts !== []) {
+            $carried = $counts['carried'] ?? 0;
+            unset($counts['carried']);
+            $skipped = [];
+            foreach ($counts as $why => $rows) {
+                $skipped[] = "$why $rows";
+            }
+            error_log('Prosper202 PurLink carry-over: ' . $carried . ' pending click(s) of 202_clicks_purlink carried'
+                . ($skipped === [] ? '' : '; skipped ' . array_sum($counts) . ' row(s): ' . implode(', ', $skipped))
+                . '. The table is left in place.');
+        }
+
+        return true;
     }
 }
 
@@ -4703,6 +4762,9 @@ class UPGRADE
             // Both run, so one failure does not skip the other, and the
             // version moves only when both succeeded.
             $baseline_ok = _upgrade_1956_baseline();
+            // Paid 1.9.56's pending PurLink clicks, carried into 202_purlink_exit_order (which it makes first).
+            $carried_ok = _upgrade_purlink_carryover();
+            $paid_ok = $baseline_ok && $carried_ok;
             $step_ok = _upgrade_measurement_tables([
                 // 202_users_pref gains shopify_webhook_secret, which Shopify's
                 // order webhooks are verified with (ShopifyWebhookSecret).
@@ -4714,11 +4776,15 @@ class UPGRADE
                 // log (Prosper202\Destinations).
                 \Prosper202\Database\Tables\ConversionTables::destinations(),
                 \Prosper202\Database\Tables\ConversionTables::destinationDeliveries(),
+                // PurLinks: click-out ordering, deferred pixels fired, per-offer goal subjects.
+                \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),
+                \Prosper202\Database\Tables\ClickTables::purLinkPixelFires(),
+                \Prosper202\Database\Tables\GoalTables::purLinkGoalSubjects(),
                 // The Bot202 Facebook Pixel Assistant's lookup rows, as a fresh
                 // install seeds them (DataSeeder); a paid install's are kept.
                 \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelContentType(),
                 \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelClickEvents(),
-            ]) && $baseline_ok;
+            ]) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();
             }
@@ -4729,8 +4795,8 @@ class UPGRADE
                     error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: a table of the 1.9.80 step or the paid 1.9.56 baseline could not be reconciled (the list above);'
-                    . ' leaving version at 1.9.79 so the next run retries.');
+                error_log('Prosper202 upgrade: a table of the 1.9.80 step or the paid 1.9.56 baseline could not be reconciled (the list above),'
+                    . ' or the paid PurLink clicks carried over; leaving version at 1.9.79 so the next run retries.');
             }
         }
 

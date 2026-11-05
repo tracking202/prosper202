@@ -243,12 +243,16 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * @return array<string, mixed> as record(), plus '_prepared' for afterRecordCommit()
      * @throws ReversalException
      */
-    public function recordInTransaction(int $userId, array $data, MatchMethod $matchedBy): array
-    {
-        return $this->conn->joinTransaction(function () use ($userId, $data, $matchedBy): array {
+    public function recordInTransaction(
+        int $userId,
+        array $data,
+        MatchMethod $matchedBy,
+        ?callable $clickSideUpdate = null,
+    ): array {
+        return $this->conn->joinTransaction(function () use ($userId, $data, $matchedBy, $clickSideUpdate): array {
             $prepared = $this->prepareRecord($data, $matchedBy);
             $click = (new MysqlConversionLedger($this->conn))->lockClick((int) $prepared['clickId'], $userId);
-            $result = $this->recordLocked($userId, $prepared, null, $click);
+            $result = $this->recordLocked($userId, $prepared, $clickSideUpdate, $click);
             $result['_prepared'] = $prepared;
 
             return $result;
@@ -360,6 +364,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         $clickCampaignId = (int) $click['aff_campaign_id'];
+        // An unsigned legacy PurLink names an offer but cannot authorize a
+        // route change. Check again under this lock: a re-click could have
+        // moved the click since the endpoint resolved its SubID.
+        if (isset($data['expected_campaign_id']) && (int) $data['expected_campaign_id'] !== $clickCampaignId) {
+            throw new PurLinkCampaignChanged('The click no longer belongs to the PurLink campaign');
+        }
         $terms = $ledger->campaignTerms($clickCampaignId, $userId);
 
         // A reversal names the row it reverses by that row's transaction
