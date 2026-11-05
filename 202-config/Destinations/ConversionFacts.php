@@ -15,6 +15,8 @@ final class ConversionFacts
      * @param array<string, scalar|null> $click TrafficSourcePixels::clickTokens() tokens
      * @param list<string> $emailHashes
      * @param list<string> $phoneHashes
+     * @param string $zone the account's time zone (AccountZone)
+     * @param int|null $clickTime when the click was made, null when unknown
      */
     public function __construct(
         public readonly ?int $convId,
@@ -28,16 +30,18 @@ final class ConversionFacts
         public readonly ?string $customerRef = null,
         public readonly array $emailHashes = [],
         public readonly array $phoneHashes = [],
+        public readonly string $zone = 'UTC',
+        public readonly ?int $clickTime = null,
     ) {
     }
 
     /** A made-up conversion for a test fire: no visitor's data. */
-    public static function sample(int $now, string $currency): self
+    public static function sample(int $now, string $currency, string $zone = 'UTC'): self
     {
         return new self(null, 0, 0, $now, '49.00', $currency, 'p202-test-' . $now, [
             'subid' => '0', 'c1' => '', 'c2' => '', 'c3' => '', 'c4' => '', 't202kw' => 'running shoes',
             'utm_source' => 'google', 'utm_medium' => 'cpc', 'utm_campaign' => 'spring-sale', 'utm_term' => '', 'utm_content' => '',
             'gclid' => '', 'gbraid' => '', 'wbraid' => '', 'ttclid' => '', 'msclkid' => '', 'fbclid' => '',
-        ]);
+        ], null, [], [], $zone, null);
     }
 }

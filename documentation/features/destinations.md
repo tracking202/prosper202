@@ -6,9 +6,10 @@ gateway that keeps the raw data where it is: the platform receives the
 conversion, its value and its ids, and at most a SHA-256 hash of the
 customer's email or phone, never the address or number itself.
 
-The first destination is **Google Analytics 4**, through its Measurement
-Protocol. Google Ads (API upload with gclid, gbraid and wbraid, and enhanced
-conversions) is next.
+Two destinations exist: **Google Analytics 4**, through its Measurement
+Protocol, and **Google Ads**, as click conversions uploaded through the
+Google Ads API with your own developer token and OAuth client (gclid, wbraid
+or gbraid, and optionally enhanced conversions for leads).
 
 Set them up on **Setup › Destinations**, with `p202 destination`, or through
 `/api/v3/destinations`.
@@ -32,7 +33,7 @@ Set them up on **Setup › Destinations**, with `p202 destination`, or through
 
 | Status | Meaning |
 | --- | --- |
-| `pending` | Waiting, or backing off after a failed try. |
+| `pending` | Waiting, or backing off after a failed try. A Google Ads row also waits, without using a try, for its click to be 6 hours old and for the destination to be connected to Google. |
 | `sent` | The platform accepted it. |
 | `failed` | Tries ran out, or the platform refused it, or it was not sent (a GA4 event more than 72 hours old, a private address). `last_error` says which. |
 | `withheld` | Nothing was sent: the click was guessed, or the visitor is held back (below). `last_error` says which. Never retried. |
@@ -72,8 +73,10 @@ cancelled, and its credentials erased.
   state, per destination, from your consent banner: Prosper202 does not
   record a visitor's consent. Hashed data (and `user_id`) go only when
   `ad_user_data` is unstated or `granted`.
-- Credentials (the GA4 API secret) are stored encrypted (AES-256-GCM,
-  bound to the destination) and are never shown again.
+- Credentials (the GA4 API secret; the Google Ads developer token, OAuth
+  client secret and refresh token) are stored encrypted (AES-256-GCM, bound
+  to the destination) and are never shown again. Every error stored or shown
+  has them replaced by `…`.
 
 ## Google Analytics 4
 
@@ -103,6 +106,113 @@ the event, not the API secret, and the regular endpoint answers "accepted"
 even for an event it drops: after a test, confirm the first real conversions
 in GA4's Realtime report.
 
+## Google Ads
+
+Each conversion is uploaded to one Google Ads account as a click conversion
+(`customers/{id}:uploadClickConversions`, Google Ads API v26), straight from
+your server to Google with your own developer token and your own OAuth
+client: nothing passes through Tracking202.
+
+### What you need
+
+1. **A developer token.** It belongs to a Google Ads *manager* account (MCC):
+   in the manager account, **Admin › API Center** shows it and its access
+   level. A new token starts at *Test* access, which reaches test accounts
+   only; apply there for *Basic* access, which is enough for a single
+   business's conversions. Google's policy is at
+   https://developers.google.com/google-ads/api/docs/api-policy/developer-token.
+
+   **Google's changes in 2026, as its documentation reads on 2026-11-04:**
+   developer tokens were sunset on 9 September 2026 in favour of access
+   granted to the Google Cloud project that owns your OAuth client (applied
+   for on that project's *Google Ads API* page in Cloud Console, not the API
+   Center; Test access there still reaches test accounts only), and since
+   15 June 2026 `UploadClickConversions` answers
+   `CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE` to developer tokens that made
+   no offline conversion upload between 17 December 2025 and 15 June 2026.
+   Google recommends its Data Manager API for new integrations. A token that
+   was uploading conversions in that window keeps working; a delivery that
+   gets that answer fails and its log says so. See
+   https://developers.google.com/google-ads/api/docs/conversions/upload-clicks.
+2. **An OAuth client** in Google Cloud Console, in the same project as the
+   API access:
+   - *APIs & Services › Library*: enable the **Google Ads API**.
+   - *OAuth consent screen*: set it up (Internal for a Workspace
+     organisation, otherwise External) and **publish it to production**: a
+     client left in *Testing* gets refresh tokens that Google expires after
+     7 days, and the destination then waits for you to connect it again.
+   - *Credentials › Create credentials › OAuth client ID*, type **Web
+     application**. Under *Authorised redirect URIs* add this install's
+     callback exactly as Setup › Destinations shows it, for example
+     `https://track.example.com/tracking202/setup/destination-oauth.php`
+     (it is also in the answer of `p202 destination connect`). Copy the
+     client ID and secret.
+3. **A conversion action** for uploads: *Goals › Conversions › New
+   conversion action › Import › other data sources or CRMs › Track
+   conversions from clicks*. Its ID is the number after `ctId=` in its
+   address. For hashed email and phone, turn on *enhanced conversions for
+   leads* and accept the customer data terms in *Goals › Settings*.
+4. **The customer ID** of the account the conversions go to (`123-456-7890`,
+   top of Google Ads) and, when you reach it through a manager account, that
+   manager's ID as the login customer ID.
+
+### Connect it
+
+Add the destination on Setup › Destinations (*Add Google Ads*) or with
+`p202 destination create --type google_ads`, then press **Connect Google
+Ads** (or run `p202 destination connect <id>` and open the address it
+prints, in a browser signed in to Prosper202 as the same user, within 10
+minutes). Google asks you to allow access to your Google Ads account and
+sends you back to the callback, which stores the refresh token. Until then
+the destination's status is `needs_authorisation` and its conversions wait
+as `pending`, using none of their tries; connecting makes them due at once.
+Access tokens are minted from the refresh token for each run and never
+stored. If Google later refuses the refresh token (revoked, expired, or the
+client changed), the destination's conversions wait again and the log says
+to connect it again. New credentials with the same OAuth client ID keep the
+connection; another client ID needs connecting again.
+
+The callback checks a signed state that names you and the destination and
+expires after 10 minutes, so a Google answer meant for another user, another
+install or an old attempt is refused.
+
+### What is sent
+
+| Field | |
+| --- | --- |
+| `gclid`, `wbraid` or `gbraid` | One of them, from the click, in that order (gbraid and wbraid together are refused by Google). |
+| `userIdentifiers` | With *send hashed email and phone* on and `ad_user_data` not denied: the SHA-256 hashes of the customer's email and E.164 phone (enhanced conversions for leads). Not sent beside a wbraid or gbraid alone, which Google ignores them with. |
+| `conversionAction` | The destination's `conversion_action`, or the one `campaign_conversion_actions` names for the conversion's campaign. An ID, or `customers/<id>/conversionActions/<id>` for an action a manager account owns. |
+| `conversionDateTime` | The conversion's time in your account's time zone, with that day's offset (`2026-06-01 14:30:00-04:00`). |
+| `conversionValue`, `currencyCode` | The payout and the account's currency. |
+| `orderId` | The network's transaction id, else `P202-<conversion id>`: Google counts one conversion per order id, so a retry or an overlap with another uploader is not counted twice. |
+| `consent` | `adUserData` and `adPersonalization` as the destination states them. |
+
+A conversion whose click has no gclid, wbraid or gbraid and that carries no
+hashed email or phone is `withheld`: there is nothing Google can match.
+Google takes a click's conversion only 6 hours after the click, so a newer
+one waits until then, using none of its tries. A click more than 90 days old
+fails: no conversion window is longer.
+
+Google's answers: a conversion Google already holds (`ORDER_ID_ALREADY_IN_USE`,
+`CLICK_CONVERSION_ALREADY_EXISTS`) counts as sent; `TOO_RECENT_EVENT` and
+`TOO_RECENT_CONVERSION_ACTION` wait 6 hours; a quota error, a timeout and a
+5xx are retried with backoff; anything else Google refuses (an expired
+click, a missing conversion action, a permission error) fails at once, with
+Google's error code and message in `last_error`.
+
+**Test it**: *send test* uploads a made-up conversion with `validateOnly`,
+which records nothing in Google Ads. It mints an access token and has Google
+check the developer token, the account, the conversion action and the
+consent; its made-up gclid is expected to be refused, so the test passes
+when nothing else is. It cannot prove a real click will match: check the
+action's *Uploads* in Google Ads after the first real conversions (a
+conversion appears there a few hours after its upload).
+
+Not yet: conversion adjustments and retractions (a refund does not reach
+Google Ads), batching, and backfilling conversions recorded before the
+destination existed.
+
 ## CLI
 
 ```bash
@@ -112,6 +222,13 @@ p202 destination test 1
 p202 destination update 1 --campaign-id 12 --send-user-data
 p202 destination deliveries 1 --status failed
 p202 destination update 1 --disable
+
+# Google Ads: google-ads.json holds developer_token, oauth_client_id, oauth_client_secret
+p202 destination create --type google_ads --name "Search campaigns" --customer-id 123-456-7890 \
+    --conversion-action 987654 --credentials-file google-ads.json
+p202 destination connect 2          # open the authorisation_url it prints
+p202 destination update 2 --campaign-conversion-action 12=987655
+p202 destination test 2
 ```
 
 ## API
@@ -124,6 +241,7 @@ p202 destination update 1 --disable
 | `PATCH` | `/destinations/{id}` | `name`, `enabled`, `settings` (replaced whole), `credentials` (replaced whole) |
 | `DELETE` | `/destinations/{id}` | Delete (`?dry_run=1` previews) |
 | `POST` | `/destinations/{id}/test` | Test fire |
+| `POST` | `/destinations/{id}/oauth/start` | Google Ads: the consent screen's `authorisation_url` and the `redirect_uri` to register |
 | `GET` | `/destinations/{id}/deliveries` | The delivery log (`status`, `kind`, `conv_id`, `time_from`, `time_to`, `limit`, `offset`) |
 
 Scopes `destinations:read` and `destinations:write`. Every route needs the
@@ -140,3 +258,16 @@ POST /api/v3/destinations
   "credentials": {"api_secret": "…"}
 }
 ```
+
+```json
+POST /api/v3/destinations
+{
+  "type": "google_ads",
+  "name": "Search campaigns",
+  "settings": {"customer_id": "123-456-7890", "conversion_action": "987654", "campaign_conversion_actions": {"12": "987655"}},
+  "credentials": {"developer_token": "…", "oauth_client_id": "….apps.googleusercontent.com", "oauth_client_secret": "…"}
+}
+```
+
+A read shows `status`: `ready`, `needs_authorisation` (a Google Ads
+destination not connected yet) or `credentials_unreadable`.
