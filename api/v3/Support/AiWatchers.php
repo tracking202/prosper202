@@ -6,6 +6,7 @@ namespace Api\V3\Support;
 
 use Api\V3\Auth;
 use Prosper202\Database\Connection;
+use Prosper202\User\ApiKeyStore;
 
 /**
  * The campaign watchers Tracking202's MCP server runs with an AI connection's
@@ -112,12 +113,12 @@ final class AiWatchers
 
     /**
      * The watcher tokens of the user's AI-connection keys
-     * (AiConnect::isConnectionLabel()), all of them or those $apiKey names:
-     * as the account page and the API delete it (the column's collation, case
-     * folded) or, with $exact, byte for byte as POST /connect/revoke does. An
-     * install without the label column has no key it can tell is a
-     * connection's. Computed from the stored key for now; an install that
-     * stores keys hashed reads a token stored at the key's creation instead.
+     * (AiConnect::isConnectionLabel()): all of them, the one $apiKey is, or
+     * the one $keyRef names (ApiKeyStore::ref()), each found byte for byte.
+     * A hashed key's token is the one stored at its creation or by the
+     * upgrade that hashed it; a key still stored whole has its token
+     * computed. An install without the label column has no key it can tell
+     * is a connection's.
      *
      * @return list<string>
      * @throws \Throwable when the keys could not be read
@@ -126,39 +127,47 @@ final class AiWatchers
         \mysqli $db,
         int $userId,
         ?string $apiKey = null,
-        bool $exact = false
+        ?string $keyRef = null
     ): array {
         if (!Auth::apiKeyLabelColumnExists($db)) {
             return [];
         }
         $conn = new Connection($db);
-        $sql = 'SELECT api_key, label FROM 202_api_keys WHERE user_id = ?';
-        if ($apiKey === null) {
-            $stmt = $conn->prepareRead($sql);
-            $conn->bind($stmt, 'i', [$userId]);
-        } else {
-            $stmt = $conn->prepareRead($sql . ($exact ? ' AND api_key COLLATE utf8mb4_bin = ?' : ' AND api_key = ?'));
-            $conn->bind($stmt, 'is', [$userId, $apiKey]);
+        $sql = 'SELECT ' . ApiKeyStore::columns($db) . ', label FROM 202_api_keys WHERE user_id = ?';
+        $types = 'i';
+        $values = [$userId];
+        if ($apiKey !== null || $keyRef !== null) {
+            [$match, $matchTypes, $matchValues] = $apiKey !== null
+                ? ApiKeyStore::matchKey($db, $apiKey)
+                : ApiKeyStore::matchRef($db, (string) $keyRef);
+            $sql .= ' AND ' . $match;
+            $types .= $matchTypes;
+            $values = [...$values, ...$matchValues];
         }
+        $stmt = $conn->prepareRead($sql);
+        $conn->bind($stmt, $types, $values);
         $tokens = [];
         foreach ($conn->fetchAll($stmt) as $row) {
             if (AiConnect::isConnectionLabel(isset($row['label']) ? (string) $row['label'] : null)) {
-                $tokens[] = AiConnect::watcherToken((string) $row['api_key']);
+                $token = ApiKeyStore::watcherTokenOf($row);
+                if ($token !== null) {
+                    $tokens[] = $token;
+                }
             }
         }
         return $tokens;
     }
 
     /**
-     * Before a delete of the user's keys ($apiKey, or all of them): stops the
+     * Before a delete of the user's keys ($apiKey, the one $keyRef names, or all of them): stops the
      * watchers of each AI-connection key among them. Best effort; the delete
      * goes ahead whatever this answers, since a deleted key reads nothing.
      * True when there was nothing to stop or the server confirmed it.
      */
-    public function stopBeforeDelete(\mysqli $db, int $userId, ?string $apiKey = null, bool $exact = false): bool
+    public function stopBeforeDelete(\mysqli $db, int $userId, ?string $apiKey = null, ?string $keyRef = null): bool
     {
         try {
-            $tokens = self::connectionTokens($db, $userId, $apiKey, $exact);
+            $tokens = self::connectionTokens($db, $userId, $apiKey, $keyRef);
         } catch (\Throwable $e) {
             error_log('p202: AI watchers: the keys to be deleted could not be read: ' . $e->getMessage());
             return false;

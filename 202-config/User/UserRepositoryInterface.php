@@ -38,15 +38,6 @@ interface UserRepositoryInterface
     public function removeRole(int $userId, int $roleId): void;
 
     /**
-     * @return list<array<string, mixed>>
-     */
-    public function listApiKeys(int $userId): array;
-
-    public function createApiKey(int $userId, string $name): string;
-
-    public function deleteApiKey(string $apiKey, int $userId): void;
-
-    /**
      * @return array<string, mixed>|null
      */
     public function getPreferences(int $userId): ?array;

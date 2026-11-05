@@ -160,7 +160,7 @@ print(urllib.parse.parse_qs(q).get('referrer', [''])[0])" "$1"
 uuid() { python3 -c 'import uuid; print(uuid.uuid4())'; }
 ctime() { Q "SELECT click_time FROM 202_clicks WHERE click_id = $1"; }
 
-OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
+OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE (key_hash = SHA2('$P202_API_KEY', 256) OR (key_hash IS NULL AND api_key COLLATE utf8mb4_bin = '$P202_API_KEY'))")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
 
 cleanup() {

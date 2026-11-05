@@ -435,6 +435,9 @@ final class AiConnect
         // files can land before its upgrade runs.
         try {
             $withLabel = Auth::apiKeyLabelColumnExists($db);
+            // Probed now too, so the key's insert (ApiKeyStore) asks nothing new.
+            Auth::apiKeyHashColumnExists($db);
+            Auth::apiKeyScopeColumnExists($db);
         } catch (AuthException $e) {
             return $refuse(500, 'server_error', 'The install could not read its API key table.' . $again);
         }
@@ -486,18 +489,8 @@ final class AiConnect
         $label = self::label((string) $grant['client_name']);
         $apiKey = bin2hex(random_bytes(32));
         try {
-            if ($withLabel) {
-                $stmt = $conn->prepareWrite(
-                    'INSERT INTO 202_api_keys (user_id, api_key, scope, label, created_at) VALUES (?, ?, ?, ?, ?)'
-                );
-                $conn->bind($stmt, 'isssi', [$userId, $apiKey, $scope, $label, time()]);
-            } else {
-                $stmt = $conn->prepareWrite(
-                    'INSERT INTO 202_api_keys (user_id, api_key, scope, created_at) VALUES (?, ?, ?, ?)'
-                );
-                $conn->bind($stmt, 'issi', [$userId, $apiKey, $scope, time()]);
-            }
-            $conn->executeInsert($stmt);
+            // Stored hashed, with the watcher token its label calls for.
+            \Prosper202\User\ApiKeyStore::insert($db, $userId, $apiKey, $scope, $withLabel ? $label : null, time());
         } catch (QueryException $e) {
             error_log('p202: AI connect: ' . $e->getMessage());
             return $refuse(500, 'server_error', 'The key could not be created; nothing was connected.' . $again);
@@ -531,12 +524,12 @@ final class AiConnect
     {
         $conn = new Connection($db);
         try {
-            // Compared byte for byte: the sign-in lookup folds case, and a key
-            // must not remove another key that differs only in case.
-            $stmt = $conn->prepareWrite('DELETE FROM 202_api_keys WHERE api_key COLLATE utf8mb4_bin = ?');
-            $conn->bind($stmt, 's', [$apiKey]);
+            // Compared byte for byte, as every key lookup is (ApiKeyStore).
+            [$keyMatch, $keyTypes, $keyValues] = \Prosper202\User\ApiKeyStore::matchKey($db, $apiKey);
+            $stmt = $conn->prepareWrite('DELETE FROM 202_api_keys WHERE ' . $keyMatch);
+            $conn->bind($stmt, $keyTypes, $keyValues);
             $removed = $conn->executeUpdate($stmt);
-        } catch (QueryException $e) {
+        } catch (QueryException | AuthException $e) {
             error_log('p202: AI connect: revoke: ' . $e->getMessage());
             $message = 'The key could not be removed; remove it in My Account › Personal Settings › API keys.';
             return [500, ['error' => true, 'message' => $message]];
