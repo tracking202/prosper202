@@ -70,6 +70,11 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         ],
         'cli/ApiClient.php' => [1, "the PHP CLI's own configured server, on the operator's machine"],
         '202-config/FraudDetectionIPQS.class.php' => [1, 'a fixed host, www.ipqualityscore.com'],
+        '202-config/Fraud/IpqsClient.php' => [
+            1,
+            'a fixed host, www.ipqualityscore.com (IpqsClient::ORIGIN), https only, no redirects; the override is'
+            . ' loopback only',
+        ],
         '202-config/User/ExchangeRates.php' => [1, 'a fixed host, ExchangeRates::ENDPOINT'],
         '202-config/License/ClickServerKeyValidator.php' => [1, self::FIXED . ', each redirect held to that host'],
         '202-config/functions-tracking202.php' => [

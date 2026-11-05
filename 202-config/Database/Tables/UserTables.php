@@ -31,6 +31,8 @@ final class UserTables
             self::authKeys(),
             self::clickFilterSettings(),
             self::clickFilterEntries(),
+            self::ipqsScores(),
+            self::ipqsProgress(),
             self::alertSettings(),
             self::alertState(),
         ];
@@ -341,6 +343,52 @@ final class UserTables
                 PRIMARY KEY (`entry_id`),
                 UNIQUE KEY `user_range` (`user_id`, `family`, `range_start`, `prefix`),
                 KEY `user_match` (`user_id`, `family`, `range_start`, `range_end`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * IPQualityScore's fraud score of an address, per account
+     * (Prosper202\Fraud\IpqsScoring): reused for a day, so a repeat visitor
+     * costs one lookup, then deleted; why a click was filtered stays in
+     * 202_clicks_filter_reason. ip_id is the click's 202_ips row. From
+     * 1.9.80, added by its rung.
+     */
+    public static function ipqsScores(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::IPQS_SCORES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::IPQS_SCORES . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `ip_id` bigint(20) unsigned NOT NULL,
+                `fraud_score` tinyint(3) unsigned NOT NULL,
+                `scored_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`, `ip_id`),
+                KEY `scored_at` (`scored_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * How far IPQualityScore scoring has walked an account's clicks (the
+     * last click scored, by time and id), and its last failed lookup, which
+     * holds the account back until retry_at. From 1.9.80, added by its rung.
+     */
+    public static function ipqsProgress(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::IPQS_PROGRESS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::IPQS_PROGRESS . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `cursor_time` int(10) unsigned NOT NULL DEFAULT '0',
+                `cursor_click_id` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `last_run_at` int(10) unsigned NOT NULL DEFAULT '0',
+                `last_lookup_at` int(10) unsigned DEFAULT NULL,
+                `failures` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `retry_at` int(10) unsigned NOT NULL DEFAULT '0',
+                `last_error` varchar(255) DEFAULT NULL,
+                `last_error_at` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

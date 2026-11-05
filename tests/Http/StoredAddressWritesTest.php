@@ -99,6 +99,12 @@ final class StoredAddressWritesTest extends TestCase
                 ],
             ],
         ],
+        '202-config/Fraud/IpqsScoring.php' => [
+            '202_ipqs_scores.ip_id' => [
+                self::DERIVED,
+                'cacheScore(): the scored click\'s stored ip_id (202_clicks_advance), masked under privacy',
+            ],
+        ],
         '202-config/connect2.php' => [
             '202_last_ips.ip_id' => [
                 self::DERIVED,

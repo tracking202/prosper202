@@ -4885,6 +4885,10 @@ class UPGRADE
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
+                // IPQualityScore scoring (Prosper202\Fraud\IpqsScoring): each
+                // account's cached address scores and how far it has walked.
+                \Prosper202\Database\Tables\UserTables::ipqsScores(),
+                \Prosper202\Database\Tables\UserTables::ipqsProgress(),
                 // Each API key as its SHA-256 and prefix, and an AI connection's
                 // key with its watcher token (Prosper202\User\ApiKeyStore); the
                 // reconcile hashes the keys already there.

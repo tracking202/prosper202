@@ -715,6 +715,26 @@ function RunSecondsCronjob()
             error_log('Notification outbox failed: ' . $e->getMessage());
         }
 
+        // IPQualityScore fraud scoring for the accounts that saved a key
+        // (Prosper202\Fraud\IpqsScoring): the minute's new clicks, under its
+        // own budget and lookup cap. A failed lookup is recorded on the
+        // account's row and retried with backoff; only a database error
+        // lands here, and the next run starts where this one saved.
+        try {
+            $ipqsScoring = new \Prosper202\Fraud\IpqsScoring(
+                new \Prosper202\Database\Connection($db),
+                new \Prosper202\Fraud\IpqsClient()
+            );
+            $ipqs = $ipqsScoring->run(time() + \Prosper202\Fraud\IpqsScoring::RUN_SECONDS);
+            if ($ipqs['lookups'] + $ipqs['filtered'] + $ipqs['failed'] > 0) {
+                echo 'IPQualityScore: ' . (int) $ipqs['clicks'] . ' click(s) scored, ' . (int) $ipqs['lookups']
+                    . ' lookup(s), ' . (int) $ipqs['filtered'] . ' filtered, ' . (int) $ipqs['failed']
+                    . ' account(s) failed<br>';
+            }
+        } catch (\Throwable $e) {
+            error_log('IPQualityScore scoring failed: ' . $e->getMessage());
+        }
+
         // LTV webhooks, the Landing Page Optimizer's pairing among them:
         // the deliveries the /ltv writes queued (202-cronjobs/ltv_webhooks.php
         // is the same run on its own; the dispatcher's named lock keeps the
