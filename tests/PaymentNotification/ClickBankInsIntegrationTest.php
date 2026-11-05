@@ -151,12 +151,16 @@ final class ClickBankInsIntegrationTest extends TestCase
         self::q("UPDATE 202_users_pref SET cb_key = $value WHERE user_id = $user");
     }
 
+    /** One default sale time per test, so a retry posted a second later is the same order. */
+    private ?int $soldAt = null;
+
     /** @param array<string, mixed> $overrides */
     private function post(array $overrides, string $key): Outcome
     {
+        $this->soldAt ??= time() - 60;
         $order = ClickBankAdapterTest::sale($overrides + [
             'trackingCodes' => [(string) self::CLICK],
-            'transactionTime' => self::stated(time() - 60),
+            'transactionTime' => self::stated($this->soldAt),
         ]);
 
         return $this->deliver(ClickBankAdapterTest::body($order, $key));
