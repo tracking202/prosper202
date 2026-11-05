@@ -46,6 +46,10 @@ final class ServedPreferences
         'user_ltv_score_weights', 'user_ltv_rec_fatigue', 'lpo_status',
         'lpo_ctx_kw', 'user_delete_data_before', 'user_pref_same_ip_fallback',
         'jvzoo_roleless_role',
+        // Product-analytics consent: shown, never written here (ConsentPolicy writes it).
+        'analytics_consent', 'analytics_consent_at', 'analytics_consent_source',
+        'email_marketing_consent', 'email_marketing_consent_at', 'eu_consent_prompt_seen',
+        'analytics_geo_is_eu', 'consent_version', 'consent_acked_version', 'analytics_revoked_version',
     ];
 
     /**

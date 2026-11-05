@@ -436,6 +436,32 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 		<?php if (!empty($_SESSION['user_id'])) {
 			$p202ChatJson = JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE;
 			?>
+			<?php
+			// Server-side page-view (analytics tier, consent-gated) and the
+			// one-time EU/UK consent prompt; neither may break the page.
+			$p202_needs_prompt = false;
+			try {
+				$p202_analytics = (defined('CONFIG_PATH') ? CONFIG_PATH : __DIR__) . '/Messaging/Analytics.class.php';
+				if (!is_file($p202_analytics)) {
+					throw new \RuntimeException('product analytics is not installed beside this template');
+				}
+				require_once $p202_analytics;
+				$p202_route = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: 'unknown';
+				Analytics::event('page_viewed', ['path' => $p202_route], 'analytics');
+				$p202_consent_db = $GLOBALS['db'] ?? null;
+				$p202_needs_prompt = ($p202_consent_db instanceof mysqli)
+					&& ConsentPolicy::needsEuPrompt($p202_consent_db, (int) $_SESSION['user_id']);
+			} catch (\Throwable $p202_consent_e) {
+				$p202_needs_prompt = false;
+				error_log('[Consent] ' . $p202_consent_e->getMessage());
+			}
+			?>
+			<?php if ($p202_needs_prompt) { ?>
+				<div id="p202-consent-banner"
+					data-base="<?php echo htmlspecialchars(get_absolute_url(), ENT_QUOTES); ?>"
+					data-token="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>"></div>
+				<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/consent-prompt.js"></script>
+			<?php } ?>
 			<!-- The chat box: 202-js/p202-chat.js, which the shell loads deferred, reads
 			     this, and replaces the command queue below with the real
 			     Prosper202Messenger, replaying what was queued. -->

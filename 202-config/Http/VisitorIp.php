@@ -79,6 +79,49 @@ final class VisitorIp
     }
 
     /**
+     * The connecting peer's address for a decision a client must not be able
+     * to steer: REMOTE_ADDR, or '' when the request carries any forwarding
+     * header (there is no trusted-proxy setting to say which to believe).
+     *
+     * @param array<string, mixed> $server normally $_SERVER
+     */
+    public static function unforwardedPeer(array $server): string
+    {
+        foreach ([...self::FORWARDING_HEADERS, 'HTTP_FORWARDED', 'HTTP_X_FORWARDED', 'HTTP_FORWARDED_FOR'] as $key) {
+            if (isset($server[$key]) && self::scalar($server[$key]) !== '') {
+                return '';
+            }
+        }
+
+        return self::address(self::scalar($server['REMOTE_ADDR'] ?? null));
+    }
+
+    /**
+     * unforwardedPeer(), except that a request from one of Cloudflare's edge
+     * servers is the visitor its CF-Connecting-IP names (every other
+     * forwarding header ignored), and only when that is one public address;
+     * anything else answers ''.
+     *
+     * @param array<string, mixed> $server normally $_SERVER
+     */
+    public static function cloudflareOrUnforwardedPeer(array $server): string
+    {
+        $peer = self::address(self::scalar($server['REMOTE_ADDR'] ?? null));
+        if ($peer === '' || !CloudflareRanges::contains($peer)) {
+            return self::unforwardedPeer($server);
+        }
+        $claimed = trim(self::scalar($server['HTTP_CF_CONNECTING_IP'] ?? null));
+        $public = filter_var($claimed, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+        if ($public === false) {
+            return '';
+        }
+        $packed = inet_pton($public);
+        $canonical = $packed === false ? false : inet_ntop($packed);
+
+        return $canonical === false ? '' : $canonical;
+    }
+
+    /**
      * The X-Forwarded-For header exactly as the client sent it, for a
      * diagnostic log line that wants to show what arrived. Never a stored
      * value or a decision: that is fromServer().

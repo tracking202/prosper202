@@ -4,6 +4,7 @@ declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 require_once __DIR__ . '/../202-config/functions-account-ui.php';
 require_once __DIR__ . '/../202-config/functions-click-filter-ui.php';
+require_once dirname(__DIR__) . '/202-config/Messaging/ConsentPolicy.class.php';
 require_once __DIR__ . '/../202-config/functions-alerts-ui.php';
 
 AUTH::require_user();
@@ -260,6 +261,28 @@ $sameIpHelp = 'When a pixel names no click, credit your latest click from the vi
 $cloakChoices = ['origin' => 'Show Prosper202 Domain', 'never' => 'Show Blank Referer'];
 $adChoices = ['show_all' => 'Show All Ads', 'hide_login' => 'Hide Ads On Login Screen', 'hide_all' => 'Hide All Ads'];
 
+// The Data & communication boxes, for every user whatever their permissions:
+// analytics is recorded under the signed-in user, who may always revoke it.
+// A box left as the page showed it records nothing. False when one failed.
+$p202RecordConsentChoices = static function () use ($db): bool {
+	if (empty($_POST['consent_form'])) {
+		return true;
+	}
+	$saved = true;
+	$consentUserId = (int) $_SESSION['user_id'];
+	foreach (['analytics' => 'analytics_consent', 'email_marketing' => 'email_marketing_consent'] as $consentFlag => $consentField) {
+		$consentNow = !empty($_POST[$consentField]);
+		if ($consentNow === (($_POST[$consentField . '_shown'] ?? '') === '1')) {
+			continue;
+		}
+		if (!ConsentPolicy::record($db, $consentUserId, $consentFlag, $consentNow ? 'granted' : 'denied', 'settings')) {
+			error_log('[Consent] failed to record ' . $consentFlag . ' consent for user ' . $consentUserId);
+			$saved = false;
+		}
+	}
+	return $saved;
+};
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	$submittedEmail = isset($_POST['user_email']) ? trim((string)$_POST['user_email']) : $currentUserEmail;
@@ -272,6 +295,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
 			p202_account_redirect('202-account/account.php');
 		}
+		// The consent choices stand on their own: recorded whether or not the
+		// rest of the form is valid or saves, so a revocation is never dropped.
+		$consentSaved = $p202RecordConsentChoices();
+		$consentRefused = 'Your Data & communication choice could not be saved. Try again.';
 		if (check_email_address($submittedEmail) == false) {
 			$error['user_email'] = 'Please enter a valid email address.';
 		}
@@ -366,7 +393,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$profileSaved = false;
 				}
 				if (!$profileSaved) {
-					$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your settings could not be saved. Nothing you see below has changed; try again.'];
+					$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your settings could not be saved. Nothing you see below has changed'
+						. ($consentSaved && !empty($_POST['consent_form']) ? ' apart from your Data & communication choice' : '') . '; try again.'];
 				} else {
 					$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 					//set the  session's user_timezone
@@ -446,7 +474,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						}
 					}
 
-					p202_account_flash('ok', 'Your settings are saved.');
+					if ($consentSaved) {
+						p202_account_flash('ok', 'Your settings are saved.');
+					} else {
+						p202_account_flash('bad', 'Your other settings are saved, but your Data & communication choice could not be. Try again.');
+					}
 					p202_account_redirect('202-account/account.php');
 				}
 			}
@@ -475,14 +507,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						if ($slack && $submittedEmail !== $currentUserEmail) {
 							$slack->push('user_email_changed', ['user' => $username, 'old_email' => $currentUserEmail, 'new_email' => $submittedEmail]);
 						}
-						p202_account_flash('ok', 'Your settings are saved.');
+						if ($consentSaved) {
+							p202_account_flash('ok', 'Your settings are saved.');
+						} else {
+							p202_account_flash('bad', 'Your email is saved, but your Data & communication choice could not be. Try again.');
+						}
 						p202_account_redirect('202-account/account.php');
 					}
 				}
 			}
 		}
 
-		// Refused: say it under the field, and keep what was typed.
+		// Refused: say it under the field, and keep what was typed. The consent
+		// choice was recorded (or not) above, and the page says which.
+		if (!$consentSaved) {
+			$pageFlashes[] = ['kind' => 'bad', 'text' => $consentRefused];
+		}
 		$profileErrors = $error;
 		foreach (['user_email', 'user_timezone', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
 			if (isset($_POST[$profileField])) {
@@ -1029,6 +1069,32 @@ echo p202_account_render_flashes($extraFlashes);
 							</div>
 						</details>
 					<?php } ?>
+
+						<?php
+						// Every user may change these, whatever their permissions.
+						// State comes from ConsentPolicy (the only consent reader), so
+						// 'unset' shows the effective default rather than the raw column.
+						$analyticsChecked = ConsentPolicy::analyticsAllowed($db, (int) $_SESSION['user_id']) ? ' checked' : '';
+						$emailChecked = ConsentPolicy::emailMarketingAllowed($db, (int) $_SESSION['user_id']) ? ' checked' : '';
+						?>
+						<fieldset class="mb-3" id="data-consent">
+							<legend class="form-label">Data &amp; communication</legend>
+							<input type="hidden" name="consent_form" value="1">
+							<input type="hidden" name="analytics_consent_shown" value="<?php echo $analyticsChecked !== '' ? '1' : '0'; ?>">
+							<input type="hidden" name="email_marketing_consent_shown" value="<?php echo $emailChecked !== '' ? '1' : '0'; ?>">
+							<div class="form-check">
+								<input class="form-check-input" type="checkbox" name="analytics_consent" id="analytics_consent" value="1"<?php echo $analyticsChecked; ?>>
+								<label class="form-check-label" for="analytics_consent"><strong>Product analytics &amp; personalized help</strong>: lets us surface workflow tips and match
+									you with specially-sourced, higher-paying offers relevant to what you promote. Your usage data,
+									including traffic stats, revenue numbers, and campaign names and destination links, is sent to
+									Prosper202. We never share it with third parties. <a href="<?php echo get_absolute_url(); ?>202-account/disclosure.php" target="_blank" rel="noopener">Learn more</a>.</label>
+							</div>
+							<div class="form-check">
+								<input class="form-check-input" type="checkbox" name="email_marketing_consent" id="email_marketing_consent" value="1"<?php echo $emailChecked; ?>>
+								<label class="form-check-label" for="email_marketing_consent"><strong>Money-making offers &amp; tips by email</strong>: occasional emails about higher-paying
+									offers and workflow improvements. You can unsubscribe anytime.</label>
+							</div>
+						</fieldset>
 
 					<div class="p202-form-actions">
 						<button class="btn btn-primary" type="submit">Save settings</button>

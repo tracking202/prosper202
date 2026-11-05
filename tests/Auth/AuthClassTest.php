@@ -296,6 +296,153 @@ final class AuthClassTest extends TestCase
         $this->assertSame('UTC', $_SESSION['user_timezone']);
     }
 
+    /**
+     * A sign-in placed in the EU/UK whose location cannot be stored still
+     * signs in, and its session holds analytics; an unknown location writes
+     * nothing; a non-EU result that cannot be stored holds nothing.
+     *
+     * @dataProvider signInLocations
+     */
+    public function testTheSignInLocationIsStoredOrHeldNeverFatal(?bool $isEu, bool $held): void
+    {
+        $hadDb = array_key_exists('db', $GLOBALS);
+        $oldDb = $GLOBALS['db'] ?? null;
+        $prepared = [];
+        $db = $this->createMock(\mysqli::class);
+        $db->method('prepare')->willReturnCallback(static function (string $sql) use (&$prepared) {
+            $prepared[] = $sql;
+            return false;
+        });
+        $GLOBALS['db'] = $db;
+        $_SESSION = [];
+        try {
+            AUTH::begin_user_session(['user_id' => 42, 'user_name' => 'testuser'], static fn (): ?bool => $isEu);
+
+            self::assertSame(42, $_SESSION['user_id']);
+            self::assertSame($held, $_SESSION[\ConsentPolicy::SESSION_GEO_HELD]);
+            if ($held) {
+                self::assertFalse(\ConsentPolicy::captureFence($db, 42)['allowed'] ?? true, 'the session holds analytics');
+            }
+            $writes = preg_grep('/^\s*(UPDATE|INSERT IGNORE INTO) `202_users_pref`/', $prepared);
+            if ($isEu === null) {
+                self::assertSame([], $writes, 'an unknown location writes nothing');
+            } else {
+                self::assertNotSame([], $writes, 'a definitive location is written');
+            }
+        } finally {
+            if ($hadDb) { $GLOBALS['db'] = $oldDb; } else { unset($GLOBALS['db']); }
+        }
+    }
+
+    /** @return array<string, array{?bool, bool}> */
+    public static function signInLocations(): array
+    {
+        return [
+            'EU/UK, not stored' => [true, true],
+            'elsewhere, not stored' => [false, false],
+            'unknown' => [null, false],
+        ];
+    }
+
+    /**
+     * The sign-in location comes from REMOTE_ADDR alone: a request carrying
+     * any forwarding header is unknown, which holds analytics.
+     *
+     * @dataProvider signInRequests
+     * @param array<string, string> $server
+     */
+    public function testTheSignInLocationIsTheConnectingPeersNeverAForwardedOne(array $server, ?bool $expected): void
+    {
+        $countries = [
+            '192.0.2.10' => ['DE', true],
+            '198.51.100.7' => ['US', false],
+            '203.0.113.5' => ['GB', false],
+            '2001:db8::10' => ['FR', true],
+            '2001:db8::20' => ['US', false],
+        ];
+        $country = static fn (string $ip): ?array => $countries[$ip] ?? null;
+
+        self::assertSame($expected, AUTH::sign_in_is_eu($server, $country));
+    }
+
+    /** @return array<string, array{array<string, string>, ?bool}> */
+    public static function signInRequests(): array
+    {
+        return [
+            'an EU address' => [['REMOTE_ADDR' => '192.0.2.10'], true],
+            'a UK address' => [['REMOTE_ADDR' => '203.0.113.5'], true],
+            'an address elsewhere' => [['REMOTE_ADDR' => '198.51.100.7'], false],
+            'an address the database cannot place' => [['REMOTE_ADDR' => '192.0.2.99'], null],
+            'a forged X-Forwarded-For from the EU' => [
+                ['REMOTE_ADDR' => '192.0.2.10', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], null,
+            ],
+            'a forged X-Real-IP' => [['REMOTE_ADDR' => '192.0.2.10', 'HTTP_X_REAL_IP' => '198.51.100.7'], null],
+            'a forged CF-Connecting-IP' => [['REMOTE_ADDR' => '192.0.2.10', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null],
+            'a forged Forwarded' => [['REMOTE_ADDR' => '192.0.2.10', 'HTTP_FORWARDED' => 'for=198.51.100.7'], null],
+            'no address' => [[], null],
+            // Behind Cloudflare: an edge server's CF-Connecting-IP is the visitor.
+            'Cloudflare, a visitor elsewhere' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], false],
+            'Cloudflare, a visitor in the EU' => [['REMOTE_ADDR' => '104.16.0.9', 'HTTP_CF_CONNECTING_IP' => '192.0.2.10'], true],
+            'Cloudflare: X-Forwarded-For ignored' => [
+                ['REMOTE_ADDR' => '162.158.1.1', 'HTTP_X_FORWARDED_FOR' => '192.0.2.10', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], false,
+            ],
+            'Cloudflare, no CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], null],
+            'Cloudflare, a malformed CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7, 192.0.2.10'], null],
+            'Cloudflare, a private CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '10.0.0.5'], null],
+            'Cloudflare, a loopback CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '127.0.0.1'], null],
+            'the last address of a Cloudflare range' => [['REMOTE_ADDR' => '172.71.255.255', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], false],
+            'the first address past a Cloudflare range' => [['REMOTE_ADDR' => '172.72.0.0', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null],
+            'Cloudflare over IPv6, a visitor in the EU over IPv6' => [
+                ['REMOTE_ADDR' => '2606:4700::6810:84e5', 'HTTP_CF_CONNECTING_IP' => '2001:DB8:0::10'], true,
+            ],
+            'Cloudflare over IPv6, the end of a /29' => [['REMOTE_ADDR' => '2a06:98c7:ffff::1', 'HTTP_CF_CONNECTING_IP' => '2001:db8::20'], false],
+            'past a Cloudflare /29' => [['REMOTE_ADDR' => '2a06:98c8::1', 'HTTP_CF_CONNECTING_IP' => '2001:db8::20'], null],
+            'Cloudflare, a unique-local IPv6 CF-Connecting-IP' => [['REMOTE_ADDR' => '2400:cb00::1', 'HTTP_CF_CONNECTING_IP' => 'fd00::1'], null],
+            'Cloudflare, a link-local IPv6 CF-Connecting-IP' => [['REMOTE_ADDR' => '2400:cb00::1', 'HTTP_CF_CONNECTING_IP' => 'fe80::1'], null],
+            'a Cloudflare address written IPv4-mapped is not Cloudflare' => [
+                ['REMOTE_ADDR' => '::ffff:172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null,
+            ],
+        ];
+    }
+
+    /** Every published range holds its own first and last address and not the ones beside it. */
+    public function testCloudflareRangesMatchByPrefixLengthNotByText(): void
+    {
+        foreach (\Prosper202\Http\CloudflareRanges::CIDRS as $cidr) {
+            [$network, $bits] = explode('/', $cidr);
+            $base = inet_pton($network);
+            self::assertNotFalse($base, $cidr);
+            $hostBits = strlen($base) * 8 - (int) $bits;
+            $first = self::addToPacked($base, 0);
+            $last = self::addToPacked($base, 1, $hostBits);
+            self::assertTrue(\Prosper202\Http\CloudflareRanges::inCidr(inet_ntop($first), $cidr), "first of $cidr");
+            self::assertTrue(\Prosper202\Http\CloudflareRanges::inCidr(inet_ntop($last), $cidr), "last of $cidr");
+            // Some ranges adjoin another (104.16.0.0/13, 104.24.0.0/14), so each is checked on its own.
+            self::assertFalse(\Prosper202\Http\CloudflareRanges::inCidr(inet_ntop(self::addToPacked($last, 1)), $cidr), "after $cidr");
+            self::assertFalse(\Prosper202\Http\CloudflareRanges::inCidr(inet_ntop(self::addToPacked($first, -1)), $cidr), "before $cidr");
+        }
+        self::assertFalse(\Prosper202\Http\CloudflareRanges::inCidr('2606:4700::1', '173.245.48.0/20'), 'families never match');
+        self::assertFalse(\Prosper202\Http\CloudflareRanges::contains('104.16.0'), 'not an address');
+    }
+
+    /** $packed plus $delta (or, with $hostBits, with its low $hostBits set). */
+    private static function addToPacked(string $packed, int $delta, ?int $hostBits = null): string
+    {
+        $bytes = array_values(unpack('C*', $packed));
+        if ($hostBits !== null) {
+            for ($i = count($bytes) - 1; $hostBits > 0; $i--, $hostBits -= 8) {
+                $bytes[$i] |= $hostBits >= 8 ? 0xFF : (1 << $hostBits) - 1;
+            }
+            return pack('C*', ...$bytes);
+        }
+        for ($i = count($bytes) - 1; $i >= 0 && $delta !== 0; $i--) {
+            $sum = $bytes[$i] + $delta;
+            $bytes[$i] = ($sum % 256 + 256) % 256;
+            $delta = intdiv($sum - $bytes[$i], 256);
+        }
+        return pack('C*', ...$bytes);
+    }
+
     public function testSetTimezoneWithValidTimezone(): void
     {
         AUTH::set_timezone('America/Los_Angeles');

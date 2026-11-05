@@ -126,6 +126,8 @@ final class CoreTables
         );
     }
 
+    // 202_messaging_events: queued behavioural events; `tier` marks
+    // essential (always sent) vs analytics (consent-gated) events.
     public static function messagingEvents(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -137,10 +139,13 @@ final class CoreTables
                 `metadata` json DEFAULT NULL,
                 `occurred_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 `client_token` varchar(64) NOT NULL,
-                `delivery_status` enum('pending','sent','failed') NOT NULL DEFAULT 'pending',
+                `tier` enum('essential','analytics') NOT NULL DEFAULT 'analytics',
+                `delivery_status` enum('pending','sent','failed','withheld') NOT NULL DEFAULT 'pending',
                 `sync_attempts` int(11) NOT NULL DEFAULT '0',
+                `consent_version` bigint unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`id`),
-                KEY `user_pending` (`user_id`,`delivery_status`)
+                KEY `user_pending` (`user_id`,`delivery_status`),
+                KEY `user_event_time` (`user_id`,`event_name`,`occurred_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
@@ -154,6 +159,8 @@ final class CoreTables
                 `data` json DEFAULT NULL,
                 `dirty` tinyint(1) NOT NULL DEFAULT '0',
                 `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `withheld` tinyint(1) NOT NULL DEFAULT '0',
+                `consent_version` bigint unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

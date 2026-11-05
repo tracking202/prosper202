@@ -530,12 +530,17 @@ class AUTH
         return trim((string) ($user_row['p202_customer_api_key'] ?? ''));
     }
 
-    public static function begin_user_session(array $user_row): void
+    /**
+     * @param (callable(): ?bool)|null $resolveGeo whether the client signs in
+     *   from the EU/UK (null: unknown); detect_client_is_eu() when not given
+     */
+    public static function begin_user_session(array $user_row, ?callable $resolveGeo = null): void
     {
         // Read before the session is written: a lookup that throws leaves
         // the request signed out, rather than signed in without an owner.
         $accountOwnerId = self::determineAccountOwnerId($user_row);
-        $writer = static function () use ($user_row, $accountOwnerId): void {
+        $geoHeld = self::rememberSignInGeo((int) ($user_row['user_id'] ?? 0), $resolveGeo);
+        $writer = static function () use ($user_row, $accountOwnerId, $geoHeld): void {
             if (session_status() === PHP_SESSION_ACTIVE) {
                 session_regenerate_id(true);
             }
@@ -553,6 +558,7 @@ class AUTH
             // The generation the user is at; a later change counts it up, and
             // connect.php ends a session still holding this one.
             $_SESSION['user_session_generation'] = (int) ($user_row['user_session_generation'] ?? 0);
+            $_SESSION[\ConsentPolicy::SESSION_GEO_HELD] = $geoHeld;
         };
 
         if (function_exists('withWritableSession')) {
@@ -562,6 +568,110 @@ class AUTH
         }
 
         self::$sessionHeartbeatRefreshed = true;
+
+        // Essential-tier lifecycle event (spec §7.3): login always flows, no
+        // consent gate. Analytics resolves $db/$_SESSION (established above),
+        // never throws, and logs + swallows its own failures — a tracking
+        // problem must never break login.
+        try {
+            require_once __DIR__ . '/Messaging/Analytics.class.php';
+            \Analytics::event('login', [], 'essential');
+        } catch (\Throwable $e) {
+            error_log('[Analytics] login event failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Store whether the account holder signs in from the EU/UK, looked up from
+     * the client IP. Only a definitive lookup is stored, so an unknown result
+     * never flattens a known value. Never breaks sign-in: true when an EU/UK
+     * result could not be stored, and the session then holds analytics.
+     */
+    private static function rememberSignInGeo(int $userId, ?callable $resolveGeo): bool
+    {
+        require_once __DIR__ . '/Messaging/ConsentPolicy.class.php';
+        $isEu = null;
+        try {
+            $isEu = $resolveGeo === null ? self::detect_client_is_eu() : $resolveGeo();
+            if ($isEu === null) {
+                return false;
+            }
+            $db = $GLOBALS['db'] ?? null;
+            if ($db instanceof \mysqli && ConsentPolicy::rememberGeo($db, $userId, $isEu)) {
+                return false;
+            }
+            error_log('[ConsentPolicy] the sign-in location of user ' . $userId . ' could not be stored');
+        } catch (\Throwable $e) {
+            error_log('[ConsentPolicy] the sign-in location of user ' . $userId . ' could not be stored: ' . $e->getMessage());
+        }
+
+        return $isEu === true;
+    }
+
+    /**
+     * Whether the current request signs in from the EU/UK, per the bundled
+     * GeoLite2 database (getGeoData() lives in connect2.php, which the login
+     * bootstrap never includes). Null when it cannot be told, so the caller
+     * stores nothing and analytics stays held.
+     */
+    private static function detect_client_is_eu(): ?bool
+    {
+        return self::sign_in_is_eu($_SERVER);
+    }
+
+    /**
+     * The EU/UK answer for the connecting peer, or for the visitor Cloudflare
+     * names when the peer is a Cloudflare edge server. Any other forwarding
+     * header is the client's own claim and could turn an EU account's held
+     * analytics on, so a request carrying one is unknown.
+     *
+     * @param array<string, mixed> $server normally $_SERVER
+     * @param (callable(string): ?array{0: string, 1: bool})|null $country
+     *   the address's ISO country and EU flag, null when unresolved; GeoLite2
+     *   when not given
+     */
+    public static function sign_in_is_eu(array $server, ?callable $country = null): ?bool
+    {
+        $ip = \Prosper202\Http\VisitorIp::cloudflareOrUnforwardedPeer($server);
+        if ($ip === '') {
+            return null;
+        }
+        $found = ($country ?? self::geoLiteCountry(...))($ip);
+        if ($found === null) {
+            return null;
+        }
+        [$iso, $inEu] = $found;
+        // The disclosure promises EU/UK: the UK and the EEA outside the EU too.
+        return $inEu || in_array($iso, ['GB', 'NO', 'IS', 'LI'], true);
+    }
+
+    /** @return array{0: string, 1: bool}|null */
+    private static function geoLiteCountry(string $ip): ?array
+    {
+        if (!class_exists(\GeoIp2\Database\Reader::class)) {
+            return null;
+        }
+
+        $mmdb = \Prosper202\GeoIp\CityDatabase::PATH;
+        if (!is_readable($mmdb)) {
+            return null;
+        }
+
+        $reader = null;
+        try {
+            $reader = new \GeoIp2\Database\Reader($mmdb);
+            $record = $reader->city($ip);
+            // Only trust the EU flag when the country actually resolved;
+            // isInEuropeanUnion defaults to false on absent data.
+            $iso = $record->country->isoCode ?? null;
+            return $iso === null ? null : [(string) $iso, (bool) $record->country->isInEuropeanUnion];
+        } catch (\Throwable) {
+            return null; // Private/unroutable IP, bad DB, etc. → inconclusive.
+        } finally {
+            if ($reader !== null) {
+                $reader->close();
+            }
+        }
     }
 
     /**

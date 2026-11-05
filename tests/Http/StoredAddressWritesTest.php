@@ -285,6 +285,10 @@ final class StoredAddressWritesTest extends TestCase
     /** @return array<string, array<string, list<int>>> file => table.column => lines */
     private static function found(): array
     {
+        // ConsentPolicy is not autoloaded; its SQL is built from a class
+        // constant the scan resolves only once the class is loaded, so load
+        // it here rather than depend on which tests ran first.
+        require_once SourceScan::repoRoot() . '/202-config/Messaging/ConsentPolicy.class.php';
         $found = [];
         foreach (SourceScan::phpFiles() as $path => $source) {
             $writes = AddressWriteScan::writes($source);
