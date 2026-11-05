@@ -55,7 +55,7 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
     ];
 
     /** Class constants that name a secret column. */
-    private const COLUMN_CLASSES = ['JVZooKey', 'PayKickstartKeys'];
+    private const COLUMN_CLASSES = ['JVZooKey', 'PayKickstartKeys', 'ShopifyWebhookSecret'];
 
     /** @var array<string, string> callee => what it answers instead of the secret */
     private const SANITIZERS = [
@@ -66,6 +66,7 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
         'PayKickstartKeys::hint' => 'the last four characters of a key of 12 or more, else ""',
         'PayKickstartKeys::removalToken' => 'an HMAC of the key under a secret that never leaves the server',
         'JVZooKey::unreadable' => 'whether the stored key cannot be one',
+        'ShopifyWebhookSecret::unreadable' => 'whether the stored secret cannot be one',
         'PairingWebhook::state' => 'the optimizer webhook\'s state and id, read from the bridge config',
         'DimensionSync::pushForUser' => 'how many dimensions it sent the optimizer',
         'getAllDniNetworks' => 'the hosted service\'s list of networks, asked with the install hash',
@@ -212,7 +213,7 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
     private static function filesThatNameASecret(): array
     {
         $names = implode('|', array_map('preg_quote', self::secretNames(false)));
-        $pattern = '/\b(?:' . $names . ')\b|\b(?:JVZooKey|PayKickstartKeys)::COLUMN\b/';
+        $pattern = '/\b(?:' . $names . ')\b|\b(?:JVZooKey|PayKickstartKeys|ShopifyWebhookSecret)::COLUMN\b/';
 
         return array_filter(
             SourceScan::phpFiles(),

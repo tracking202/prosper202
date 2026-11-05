@@ -73,7 +73,7 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         '202-config/User/ExchangeRates.php' => [1, 'a fixed host, ExchangeRates::ENDPOINT'],
         '202-config/License/ClickServerKeyValidator.php' => [1, self::FIXED . ', each redirect held to that host'],
         '202-config/functions-tracking202.php' => [
-            24,
+            23,
             self::FIXED . ', except getData($url): redirects followed, no address check; called with fixed'
             . " URLs and with the update feed's own link (functions.php's auto-upgrade)",
         ],

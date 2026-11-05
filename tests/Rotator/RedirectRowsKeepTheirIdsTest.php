@@ -69,15 +69,6 @@ final class RedirectRowsKeepTheirIdsTest extends TestCase
                 'DELETE FROM 202_rotator_rules WHERE id = ? AND rotator_id = ?' => 'as above',
             ],
         ],
-        'tracking202/ajax/rotator.php' => [
-            '{main}' => [
-                "DELETE FROM 202_rotator_rules_redirects WHERE id NOT IN (…) AND rule_id = '…'" => "Setup ›"
-                    . " Redirectors' save: the rule's redirects the page did not post; one posted with its id is"
-                    . ' updated in place',
-                "DELETE FROM `202_rotator_rules` WHERE `id` NOT IN (…) AND rotator_id='…'" => 'the same save: the'
-                    . ' rules the page did not post; one posted with its id is updated in place',
-            ],
-        ],
         'tracking202/setup/rotator.php' => [
             '{main}' => [
                 'DELETE FROM 202_rotator_rules_redirects WHERE rule_id IN (SELECT id FROM 202_rotator_rules WHERE'
