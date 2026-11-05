@@ -598,7 +598,7 @@ p202 rotator rule-create "$ROTATOR_ID" \
 ```
 
 JSON fields (`--criteria-json`, `--redirects-json`, `--weighting-config`) are validated locally before the API call. Malformed JSON produces an immediate error (exit 1).
-A rotator's default is one destination (`--default-url`, `--default-campaign` or `--default-lp`); setting one on `update` replaces the default whatever its kind. Each redirect names exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`; criteria types are country, region, city, isp, ip, platform, device, browser, and countries are written `United States(US)` (`p202 rotator criteria-values`) — a bare `US` is refused, because it never matches. An `ip` criterion lists single IPv4 or IPv6 addresses (stored canonical, so `2001:DB8::1` is `2001:db8::1`); a range or a typo is refused by name for the same reason.
+A rotator's default is one destination (`--default-url`, `--default-campaign` or `--default-lp`); setting one on `update` replaces the default whatever its kind. Each redirect names exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`; criteria types are country, region, eu, city, isp, fraud, ip, iprange, browser, platform, device, visitor, c1-c4, t202kw, referer and utm_source/medium/campaign/term/content, and countries are written `United States(US)` (`p202 rotator criteria-values`) — a bare `US` is refused, because it never matches. An `ip` criterion lists single IPv4 or IPv6 addresses (stored canonical, so `2001:DB8::1` is `2001:db8::1`); a range or a typo is refused by name for the same reason.
 A rule needs at least one criterion and one redirect: the redirects read a rule with no criterion as every visitor, so `rule-create` refuses one without `--criteria-json` or `--country`, and an empty list, before any request. To match every visitor, say so with the value `ALL`.
 
 ### Forecast next week and flag today as normal or anomalous
@@ -886,7 +886,7 @@ starts names the one it meant, the same block twice is a 409 naming the entry.
 ```
 p202 conversion list   [--limit 50] [--offset 0] [--campaign-id N] [--all]
                        [--time-from T] [--time-to T] [--click-id N]
-                       [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|paykickstart|jvzoo|app_install|goal|legacy_baseline]
+                       [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|paykickstart|jvzoo|zaxaa|app_install|goal|legacy_baseline]
                        [--match-method click_id|cookie|visitor_id|same_ip|unknown]   # how the click was found; same_ip = a guess
                        [--goal N] [--json]
 p202 conversion match-methods [--aff-campaign-id N] [--period P] [--time-from T] [--time-to T] [--json]
