@@ -58,8 +58,9 @@ final class ApiKeyAuthPathScopeTest extends TestCase
 
     /**
      * True when the source contains a SELECT from 202_api_keys filtered by
-     * api_key — the shape that resolves a user from a credential the caller
-     * supplied. Looking up keys by user_id (listing them) and deleting one by
+     * the key — api_key, or the condition ApiKeyStore::matchKey() builds,
+     * held in $keyMatch — the shape that resolves a user from a credential
+     * the caller supplied. Looking up keys by user_id (listing them) and deleting one by
      * value are key *management*, not authentication, and do not count.
      */
     private function hasAuthenticatingSelect(string $source): bool
@@ -89,7 +90,7 @@ final class ApiKeyAuthPathScopeTest extends TestCase
                 continue;
             }
             $clause = $where[1];
-            if (preg_match('/`?api_key`?\s*=/i', $clause) !== 1) {
+            if (preg_match('/`?api_key`?\s*=|\$keyMatch\b/i', $clause) !== 1) {
                 continue;
             }
             if (preg_match('/`?user_id`?\s*=/i', $clause) === 1) {

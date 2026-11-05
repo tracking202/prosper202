@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Connect;
 
+use Prosper202\User\ApiKeyStore;
 use Api\V3\Controllers\UsersController;
 use Api\V3\Support\AiConnect;
 use Api\V3\Support\AiWatchers;
@@ -86,10 +87,9 @@ final class AiWatchersIntegrationTest extends TestCase
 
     private function key(int $user, ?string $label): string
     {
+        // Stored as 1.9.80 stores it: hashed, with the watcher token for an AI key.
         $key = bin2hex(random_bytes(32));
-        self::q('INSERT INTO 202_api_keys (user_id, api_key, scope, label, created_at) VALUES (' . $user . ', '
-            . self::str($key) . ', ' . self::str((string) AiConnect::scopeFor('read')) . ', '
-            . ($label === null ? 'NULL' : self::str($label)) . ', ' . time() . ')');
+        ApiKeyStore::insert(self::requireScratch(), $user, $key, (string) AiConnect::scopeFor('read'), $label, time());
 
         return $key;
     }
@@ -104,7 +104,7 @@ final class AiWatchersIntegrationTest extends TestCase
     private function keyExists(string $key): bool
     {
         $result = self::requireScratch()
-            ->query('SELECT COUNT(*) AS n FROM 202_api_keys WHERE api_key = ' . self::str($key));
+            ->query('SELECT COUNT(*) AS n FROM 202_api_keys WHERE key_hash = ' . self::str(ApiKeyStore::hash($key)));
         self::assertInstanceOf(\mysqli_result::class, $result);
 
         return (int) ($result->fetch_assoc()['n'] ?? 0) === 1;
@@ -154,8 +154,9 @@ final class AiWatchersIntegrationTest extends TestCase
         $watchers = p202_account_ai_watchers($keys, new AiWatchers($this->relay()->origin()));
 
         $listed = array_map('strval', array_keys($watchers));
-        self::assertSame([$this->keys['ai']], $listed, 'only the AI key has watchers');
-        self::assertCount(3, $watchers[$this->keys['ai']] ?? []);
+        $aiRef = ApiKeyStore::hash($this->keys['ai']);
+        self::assertSame([$aiRef], $listed, 'only the AI key has watchers, named by its ref');
+        self::assertCount(3, $watchers[$aiRef] ?? []);
         self::assertSame(
             ['Bearer ' . AiConnect::watcherToken($this->keys['ai'])],
             array_column($this->relay()->requests(), 'authorization'),
@@ -167,7 +168,7 @@ final class AiWatchersIntegrationTest extends TestCase
         self::assertSame([self::CAMPAIGN => 'Spring sale', self::CAMPAIGN + 10 => 'Old launch (deleted)'], $names);
 
         $this->relay()->forget();
-        $plainOnly = array_values(array_filter($keys, fn (array $k): bool => $k['api_key'] !== $this->keys['ai']));
+        $plainOnly = array_values(array_filter($keys, fn (array $k): bool => $k['ref'] !== $aiRef));
         self::assertSame([], p202_account_ai_watchers($plainOnly, new AiWatchers($this->relay()->origin())));
         self::assertSame([], $this->relay()->requests(), 'an account with no AI key makes no call');
     }
@@ -181,9 +182,10 @@ final class AiWatchersIntegrationTest extends TestCase
 
         foreach (
             [
-                'another user\'s AI key' => $this->keys['othersAi'],
-                'a key of no AI connection' => $this->keys['plain'],
-                'the key in another case' => strtoupper($this->keys['ai']),
+                'another user\'s AI key' => ApiKeyStore::hash($this->keys['othersAi']),
+                'a key of no AI connection' => ApiKeyStore::hash($this->keys['plain']),
+                'the key in another case' => ApiKeyStore::hash(strtoupper($this->keys['ai'])),
+                'the key itself, not its ref' => $this->keys['ai'],
                 'no key' => '',
             ] as $case => $posted
         ) {
@@ -193,7 +195,7 @@ final class AiWatchersIntegrationTest extends TestCase
         }
         self::assertSame([], $this->relay()->requests(), 'nothing was asked of the server');
 
-        $answer = p202_account_stop_ai_watcher($db, self::OWNER, $this->keys['ai'], self::W1, $relay);
+        $answer = p202_account_stop_ai_watcher($db, self::OWNER, ApiKeyStore::hash($this->keys['ai']), self::W1, $relay);
         self::assertSame('ok', $answer['kind'], $answer['text']);
         $requests = $this->relay()->requests();
         self::assertCount(1, $requests);
@@ -202,7 +204,7 @@ final class AiWatchersIntegrationTest extends TestCase
 
         $this->relay()->answer('POST /api/watchers/stop', 404, ['error' => 'there is no such watcher for this key']);
         foreach ([self::W1, 'wch_x'] as $id) {
-            $answer = p202_account_stop_ai_watcher($db, self::OWNER, $this->keys['ai'], $id, $relay);
+            $answer = p202_account_stop_ai_watcher($db, self::OWNER, ApiKeyStore::hash($this->keys['ai']), $id, $relay);
             self::assertSame('warn', $answer['kind'], $id);
         }
     }
@@ -218,12 +220,13 @@ final class AiWatchersIntegrationTest extends TestCase
         $others = $this->keys['othersAi'];
         self::assertTrue($relay->stopBeforeDelete($db, self::OWNER, $others), 'another user\'s key is not theirs');
         $upper = strtoupper($this->keys['ai']);
-        self::assertTrue($relay->stopBeforeDelete($db, self::OWNER, $upper, true), 'revoke matches byte for byte');
+        self::assertTrue($relay->stopBeforeDelete($db, self::OWNER, $upper), 'a key is matched byte for byte');
+        self::assertTrue($relay->stopBeforeDelete($db, self::OWNER, null, ApiKeyStore::hash($upper)), 'and by its own ref');
         self::assertSame([], $this->relay()->requests());
 
-        // The page and the API fold case, as their DELETE does.
-        self::assertTrue($relay->stopBeforeDelete($db, self::OWNER, $upper));
-        self::assertTrue($relay->stopBeforeDelete($db, self::OWNER, $this->keys['ai'], true));
+        // The API and revoke name the key; the page names its ref.
+        self::assertTrue($relay->stopBeforeDelete($db, self::OWNER, $this->keys['ai']));
+        self::assertTrue($relay->stopBeforeDelete($db, self::OWNER, null, ApiKeyStore::hash($this->keys['ai'])));
         $requests = $this->relay()->requests();
         self::assertCount(2, $requests);
         foreach ($requests as $request) {

@@ -49,15 +49,18 @@ final readonly class Auth
         // too, as the sign-in and the remember-me cookie refuse them
         // (functions-auth.php): this read user_deleted alone, so turning a
         // user off left every key they held working with their role.
+        // The key is found by its hash, byte for byte (ApiKeyStore); the
+        // lookup by api_key under utf8mb4_general_ci folded case.
         $scopeColumnExists = self::apiKeyScopeColumnExists($db);
-        $sql = $scopeColumnExists
-            ? 'SELECT k.user_id, k.scope, u.user_active FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1'
-            : 'SELECT k.user_id, u.user_active FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1';
+        [$keyMatch, $keyTypes, $keyValues] = \Prosper202\User\ApiKeyStore::matchKey($db, $apiKey, 'k');
+        $sql = 'SELECT k.user_id, ' . ($scopeColumnExists ? 'k.scope, ' : '') . 'u.user_active'
+            . ' FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id'
+            . ' WHERE ' . $keyMatch . ' AND u.user_deleted = 0 LIMIT 1';
         $stmt = $db->prepare($sql);
         if (!$stmt) {
             throw new AuthException('Authentication unavailable', 500);
         }
-        self::bind($stmt, 's', $apiKey);
+        self::bind($stmt, $keyTypes, ...$keyValues);
         if (!self::execute($stmt)) {
             $stmt->close();
             throw new AuthException('Authentication unavailable', 500);
@@ -635,6 +638,21 @@ final readonly class Auth
         $cache ??= new \WeakMap();
         if (!isset($cache[$db])) {
             $cache[$db] = self::probeApiKeyColumn($db, "SHOW COLUMNS FROM 202_api_keys LIKE 'label'");
+        }
+        return $cache[$db];
+    }
+
+    /**
+     * Whether 202_api_keys stores keys hashed (key_hash, 1.9.80). Cached and
+     * failing as apiKeyLabelColumnExists() does. Prosper202\User\ApiKeyStore
+     * reads and writes keys by it.
+     */
+    public static function apiKeyHashColumnExists(\mysqli $db): bool
+    {
+        static $cache = null;
+        $cache ??= new \WeakMap();
+        if (!isset($cache[$db])) {
+            $cache[$db] = self::probeApiKeyColumn($db, "SHOW COLUMNS FROM 202_api_keys LIKE 'key_hash'");
         }
         return $cache[$db];
     }

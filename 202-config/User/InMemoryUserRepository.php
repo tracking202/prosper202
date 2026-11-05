@@ -19,8 +19,6 @@ final class InMemoryUserRepository implements UserRepositoryInterface
     public array $userRoles = [];
 
     /** @var array<int, array<string, mixed>> */
-    public array $apiKeys = [];
-    private int $nextApiKeyId = 1;
 
     /** @var array<int, array<string, mixed>> */
     public array $preferences = [];
@@ -117,38 +115,6 @@ final class InMemoryUserRepository implements UserRepositoryInterface
             $this->userRoles,
             fn(array $ur) => !($ur['user_id'] === $userId && $ur['role_id'] === $roleId),
         ));
-    }
-
-    public function listApiKeys(int $userId): array
-    {
-        return array_values(array_filter(
-            $this->apiKeys,
-            fn(array $k) => $k['user_id'] === $userId,
-        ));
-    }
-
-    public function createApiKey(int $userId, string $name): string
-    {
-        $id = $this->nextApiKeyId++;
-        $key = bin2hex(random_bytes(32));
-        $this->apiKeys[$id] = [
-            'user_id' => $userId,
-            'api_key' => $key,
-            'created_at' => time(),
-            'scope' => null,
-        ];
-
-        return $key;
-    }
-
-    public function deleteApiKey(string $apiKey, int $userId): void
-    {
-        foreach ($this->apiKeys as $id => $k) {
-            if ($k['api_key'] === $apiKey && $k['user_id'] === $userId) {
-                unset($this->apiKeys[$id]);
-                return;
-            }
-        }
     }
 
     public function getPreferences(int $userId): ?array

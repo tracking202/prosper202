@@ -262,7 +262,11 @@ final class UserTables
                 `api_key` varchar(250) NOT NULL DEFAULT '',
                 `scope` text DEFAULT NULL,
                 `label` varchar(100) DEFAULT NULL,
-                `created_at` int(10) NOT NULL
+                `created_at` int(10) NOT NULL,
+                `key_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `key_prefix` varchar(16) DEFAULT NULL,
+                `watcher_token` char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                KEY `202_api_keys_key_hash` (`key_hash`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
