@@ -357,4 +357,18 @@ final class GoogleAdsIntegrationTest extends TestCase
         self::$db->query("DELETE FROM 202_deployment_secrets WHERE secret_name = '" . DestinationStore::SECRET_NAME . "'");
         self::assertSame('credentials_unreadable', $this->store()->get(1, $id)['status']);
     }
+
+    public function testAConversionGoogleAlreadyHeldIsFlaggedInTheLog(): void
+    {
+        $id = $this->destination();
+        $this->store()->authorise(1, $id, self::REFRESH, time());
+        $this->adsClick(140, time() - 7 * 3600);
+        $this->record(140, 'ORD-140');
+        $this->answers = [['status' => 200, 'body' => '{"partialFailureError":{"code":3,"message":"m","details":[{"errors":[{"errorCode":{"conversionUploadError":"ORDER_ID_ALREADY_IN_USE"},"message":"The order id is already in use."}]}]},"results":[{}]}']];
+        $this->worker()->sendDue(10, 15, time());
+        $row = self::$db->query("SELECT status, last_error, summary FROM 202_destination_deliveries WHERE destination_id = $id AND kind = 'conversion'")->fetch_assoc();
+        self::assertSame('sent', $row['status']);
+        self::assertStringStartsWith(GoogleAdsDestination::ALREADY_IN_GOOGLE_ADS, (string) $row['last_error']);
+        self::assertTrue(json_decode((string) $row['summary'], true)['already_in_google_ads'] ?? false);
+    }
 }

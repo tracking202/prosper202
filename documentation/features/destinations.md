@@ -208,7 +208,11 @@ the conversion's time stands in for it (a click is never later than its
 conversion), so every wait ends by 90 days at the latest.
 
 Google's answers: a conversion Google already holds (`ORDER_ID_ALREADY_IN_USE`,
-`CLICK_CONVERSION_ALREADY_EXISTS`) counts as sent; `TOO_RECENT_EVENT` and
+`CLICK_CONVERSION_ALREADY_EXISTS`) counts as sent. Google keeps the one it
+holds, and its API reads no click conversion back, so the value and time of
+this one are not compared with it: the row says so in `last_error`, and its
+summary carries `already_in_google_ads: true` (a corrected value sent under the
+same order id does not change Google's; adjusting it is a later feature). `TOO_RECENT_EVENT` and
 `TOO_RECENT_CONVERSION_ACTION` wait 6 hours, uncounted (`TOO_RECENT_EVENT`
 more than a day after the click is an ordinary, counted retry); a quota error, a timeout and a
 5xx are retried with backoff. What only you can mend waits instead of

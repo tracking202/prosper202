@@ -36,6 +36,11 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
     /** A test's made-up click id: Google checks everything else, then refuses the click, which is expected. */
     public const TEST_GCLID = 'Prosper202-test-click-id';
     private const TEST_CLICK_ERRORS = ['UNPARSEABLE_GCLID', 'EVENT_NOT_FOUND', 'CLICK_NOT_FOUND', 'TOO_RECENT_EVENT', 'EXPIRED_EVENT'];
+    /**
+     * How a row Google already held is logged. Google keeps the conversion it holds, and the API reads no click
+     * conversion back, so this one's value and time are not compared with it.
+     */
+    public const ALREADY_IN_GOOGLE_ADS = 'already in Google Ads (Google keeps the conversion it holds; this one\'s value and time were not compared with it): ';
     /** Google already holds this conversion (the same order id, or the same click and time). */
     private const ALREADY_THERE = ['ORDER_ID_ALREADY_IN_USE', 'CLICK_CONVERSION_ALREADY_EXISTS'];
     private const RETRY_FAMILIES = ['quotaError', 'internalError'];
@@ -185,7 +190,13 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
             unset($this->tokens[self::tokenKey($credentials)]);
         }
 
-        return self::redacted(self::answer($sent['status'], $sent['body'], $test, $facts, $now), $secrets, $summary);
+        $result = self::answer($sent['status'], $sent['body'], $test, $facts, $now);
+        if ($result->delivered && str_starts_with($result->reason, self::ALREADY_IN_GOOGLE_ADS)) {
+            // Findable in the log: a corrected value or time sent under the same order id did not reach Google.
+            $summary['already_in_google_ads'] = true;
+        }
+
+        return self::redacted($result, $secrets, $summary);
     }
 
     /**
@@ -233,7 +244,7 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
             return new SendResult(true, false, $status, '');
         }
         if (array_intersect($codes, self::ALREADY_THERE) !== []) {
-            return new SendResult(true, false, $status, 'already in Google Ads: ' . self::describe($errors));
+            return new SendResult(true, false, $status, self::ALREADY_IN_GOOGLE_ADS . self::describe($errors));
         }
         // Still "too recent" a day after the click is not the click's age: an ordinary retry, counted.
         if (in_array('TOO_RECENT_EVENT', $codes, true) && $now - self::clickAgeFrom($facts) > 4 * self::CLICK_HOLD) {

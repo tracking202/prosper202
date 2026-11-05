@@ -289,6 +289,22 @@ final class GoogleAdsDestinationTest extends TestCase
         self::assertSame([], $this->sent, 'past 90 days nothing is sent, so no wait outlives Google\'s window');
     }
 
+    public function testAConversionGoogleAlreadyHoldsIsSentAndSaysItWasNotCompared(): void
+    {
+        foreach (['ORDER_ID_ALREADY_IN_USE', 'CLICK_CONVERSION_ALREADY_EXISTS'] as $code) {
+            $this->uploads = [self::partialFailure($code)];
+            $result = $this->ads()->send($this->settings(), self::credentials(), self::facts(), false, self::NOW);
+            self::assertTrue($result->delivered, $code);
+            self::assertStringStartsWith(GoogleAdsDestination::ALREADY_IN_GOOGLE_ADS, $result->reason, $code);
+            self::assertStringContainsString($code, $result->reason);
+            self::assertTrue($result->summary['already_in_google_ads'] ?? false, $code . ': the log row can be found');
+            self::assertSame('19.9', (string) $result->summary['value'], 'the value this send carried is kept beside it');
+        }
+        $this->uploads = [];
+        $plain = $this->ads()->send($this->settings(), self::credentials(), self::facts(), false, self::NOW);
+        self::assertSame(['', false], [$plain->reason, array_key_exists('already_in_google_ads', $plain->summary)], 'an upload Google took is not flagged');
+    }
+
     public function testADestinationNotYetConnectedWaitsWithoutARequest(): void
     {
         $result = $this->ads()->send($this->settings(), self::credentials(false), self::facts(), false, self::NOW);
