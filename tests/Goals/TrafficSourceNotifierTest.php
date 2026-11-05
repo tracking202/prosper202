@@ -45,10 +45,10 @@ final class TrafficSourceNotifierTest extends TestCase
     public function testTheBrowserPathsPassTheVisitorCheck(): void
     {
         $root = dirname(__DIR__, 2);
-        // gpb hands down its merged query-and-form request (p202PostbackRequest()).
-        foreach (['tracking202/static/upx.php' => '\$_GET', 'tracking202/static/gpb.php' => '\$request'] as $file => $request) {
+        // gpb.php reads the merged query and form body ($request); upx.php the query.
+        foreach (['tracking202/static/upx.php' => '\$_GET', 'tracking202/static/gpb.php' => '\$request'] as $file => $source) {
             self::assertMatchesRegularExpression(
-                '/p202FireTrafficSourcePixels\([^;]*?static fn \(\): bool => p202ConversionMayTrack\(\$db, [^;]*?' . $request . '\)\s*\)/s',
+                '/p202FireTrafficSourcePixels\([^;]*?static fn \(\): bool => p202ConversionMayTrack\(\$db, [^;]*?' . $source . '\)\s*\)/s',
                 (string) file_get_contents("$root/$file"),
                 $file
             );

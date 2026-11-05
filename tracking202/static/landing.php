@@ -171,7 +171,7 @@ $p202CampaignCaptureJs = $p202Js($p202CampaignCapture);
 $p202CustomVarsJs = $p202Js($t202CustomVars);
 $p202BeaconFinishedJs = $p202Js(!$p202SendsBeacon);
 // PurLinks are on for every landing page, as in 1.9.56; p202_purlink=0 opts a snippet out.
-$p202PurLinkRequestedJs = $p202Js($p202SendsBeacon && isset($identityRow) && ($_GET['p202_purlink'] ?? null) !== '0');
+$p202PurLinkRequestedJs = $p202Js($p202SendsBeacon && isset($identityRow) && \Prosper202\Click\PurLinkPageview::requestedBy($_GET));
 $p202PurLinkBaseJs = $p202Js($baseUrl);
 $p202PurLinkAdvancedJs = $p202Js(isset($identityRow) && (int) $identityRow['landing_page_type'] === 1);
 // The deferred pixel: p202_defpixel=1, or defpixel=1 from a 1.9.56 snippet.

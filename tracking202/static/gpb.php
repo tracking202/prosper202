@@ -32,7 +32,16 @@ $legacyPurLink = null;
 $signedPurLink = null;
 $signedPurLinkValue = null;
 $purLinkKey = null;
+// As for a plain id, sid is read when subid names no click in any form.
 $rawSubid = $request['subid'] ?? $request['sid'] ?? null;
+foreach (['subid', 'sid'] as $subidName) {
+    $subidValue = $request[$subidName] ?? null;
+    if (\Prosper202\Click\ClickRef::parse($subidValue) !== null
+        || (is_string($subidValue) && \Prosper202\Click\PurLinkSubid::legacy($subidValue) !== null)) {
+        $rawSubid = $subidValue;
+        break;
+    }
+}
 $signedPurLinkRead = $parsedClickId === null ? p202VerifyPurLinkSubid($db, $rawSubid, 'gpb') : null;
 if ($signedPurLinkRead !== null) {
     $signedPurLink = $signedPurLinkRead['claims'];
@@ -41,7 +50,7 @@ if ($signedPurLinkRead !== null) {
     $signedPurLinkValue = $rawSubid;
 }
 if ($parsedClickId === null) {
-    $legacyValue = $request['subid'] ?? $request['sid'] ?? null;
+    $legacyValue = $rawSubid;
     if (is_string($legacyValue)) {
         try {
             $legacyPurLink = (new \Prosper202\Click\PurLinkLegacySubid(
