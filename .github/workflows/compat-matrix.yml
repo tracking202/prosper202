@@ -3,6 +3,12 @@ name: Compatibility Matrix
 # The versions README "Supported versions" promises, beyond the baseline
 # (PHP 8.3 + MySQL 8.0) that php-unit.yml and php-integration.yml run.
 # Separate jobs, so the baseline's required check names stay as they are.
+#
+# It runs when a change lands on master or a version branch, nightly, and on
+# demand, not on every pull request push: its 19 jobs were about half of each
+# PR push's runner demand and queued every PR's checks behind them. Pull
+# requests still run the baseline; one that edits this file runs the matrix,
+# and any other can run it with workflow_dispatch on its branch.
 
 on:
   push:
@@ -16,10 +22,16 @@ on:
       - '.github/workflows/compat-matrix.yml'
   pull_request:
     paths:
-      - '**.php'
-      - 'composer.lock'
-      - 'tests/run-integration-suites.sh'
       - '.github/workflows/compat-matrix.yml'
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+# One run per branch at a time: a newer landing replaces a run still queued
+# (it tests a superset), and a newer PR push cancels the PR's older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   unit:
@@ -149,9 +161,10 @@ jobs:
           path: ${{ runner.temp }}/integration-logs/
           if-no-files-found: ignore
 
-  # One stable check name for the whole matrix.
+  # One stable check name for the whole matrix. Skipped after a cancel, as
+  # php-integration.yml's gate is, so the cancelled run releases its group.
   compat:
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [unit, integration-shard]
     runs-on: ubuntu-latest
     steps:
