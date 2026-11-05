@@ -9,21 +9,35 @@ name: Upgrade Equals Install
 # 1.9.55 predates PHP 8 (a parse error on 8.x), so the origin installer runs
 # on PHP 7.4 and everything else on 8.3; the second setup-php makes 8.3 the
 # default `php` and leaves `php7.4` on PATH.
+#
+# What it proves depends on the schema, the installer, the upgrade and the
+# bootstrap they load (all under 202-config/), the config template, the two
+# pages the fresh install calls, the lock file and the test itself. It ran on
+# every `**.php` change, which put it on nearly every pull request; a change
+# elsewhere cannot alter the schema either side produces.
 
 on:
   pull_request:
     paths:
-      - '**.php'
-      - 'tests/live/upgrade-equals-install.sh'
-      - 'tests/live/schema-diff.php'
+      - '202-config/**'
+      - '202-config-sample.php'
+      - '202-account/ajax/validate-apikey.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'tests/live/**'
       - 'tests/fixtures/agent-eval/ci/**'
       - '.github/workflows/upgrade-equals-install.yml'
   push:
-    branches: [master]
+    branches:
+      - master
+      - '[0-9]+.[0-9]+.[0-9]+'
     paths:
-      - '**.php'
-      - 'tests/live/upgrade-equals-install.sh'
-      - 'tests/live/schema-diff.php'
+      - '202-config/**'
+      - '202-config-sample.php'
+      - '202-account/ajax/validate-apikey.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'tests/live/**'
       - 'tests/fixtures/agent-eval/ci/**'
       - '.github/workflows/upgrade-equals-install.yml'
   workflow_dispatch:
