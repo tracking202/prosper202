@@ -70,7 +70,7 @@ final class StoredAddressWritesTest extends TestCase
      * How many listed writes do not go through the storage helper. Lower it
      * when one goes; raising it is a decision a reviewer has to see.
      */
-    private const CEILING = 20;
+    private const CEILING = 19;
 
     private const HELPER_CALL = '/\bp202StoredVisitorIp\(\)|\bStoredVisitorIp::forAccount\(/';
 
@@ -184,14 +184,6 @@ final class StoredAddressWritesTest extends TestCase
                     . ' the operator types',
             ],
         ],
-        '202-config/Messaging/ConsentPolicy.class.php' => [
-            '202_users_pref.*' => [
-                self::NONE,
-                'the consent columns and analytics_geo_is_eu, a 0/1 the sign-in location is reduced to;'
-                    . ' no address is written',
-                ['202-config/Messaging/ConsentPolicy.class.php'],
-            ],
-        ],
         '202-account/api-integrations.php' => [
             '202_users_pref.*' => [
                 self::NONE,
@@ -287,6 +279,10 @@ final class StoredAddressWritesTest extends TestCase
     /** @return array<string, array<string, list<int>>> file => table.column => lines */
     private static function found(): array
     {
+        // ConsentPolicy is not autoloaded; its SQL is built from a class
+        // constant the scan resolves only once the class is loaded, so load
+        // it here rather than depend on which tests ran first.
+        require_once SourceScan::repoRoot() . '/202-config/Messaging/ConsentPolicy.class.php';
         $found = [];
         foreach (SourceScan::phpFiles() as $path => $source) {
             $writes = AddressWriteScan::writes($source);
