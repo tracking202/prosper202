@@ -28,7 +28,7 @@ if (!isset($aff_network_row)) $aff_network_row = null;
 $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2u.install_hash FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username, 2u.install_hash FROM 202_users AS 2u WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
@@ -41,8 +41,7 @@ if ($rotateUrlCampaignsResults === false) {
     record_mysql_error($rotateUrlCampaignsSql);
 }
 
-if (!empty($user_row['url']))
-	$slack = new Slack($user_row['url']);
+$slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 
 if (!empty($_GET['edit_aff_campaign_id'])) {
 	$editing = true;

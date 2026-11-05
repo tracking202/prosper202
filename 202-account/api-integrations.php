@@ -176,7 +176,7 @@ function lpo_ctx_pref_cache_bust($userId)
 $mysql['add_dni'] = $db->real_escape_string((string)($_GET['add_dni_network'] ?? ''));
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2u.install_hash, 2u.p202_customer_api_key FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username, 2u.install_hash, 2u.p202_customer_api_key FROM 202_users AS 2u WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = _mysqli_query($db, $user_sql);
 // A failed query must stop here, not read as an account with no settings:
 // this row supplies the install hash the DNI network lookup below sends
@@ -187,7 +187,7 @@ if (!$user_results) {
 $user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'] ?? '';
 $editing_dni_network = false;
-$dniNetworks = getAllDniNetworks($user_row['install_hash']);
+$dniNetworks = dniNetworkList(getAllDniNetworks($user_row['install_hash']));
 // The network list comes from the DNI service; when it cannot be reached the
 // page says so instead of offering an empty select.
 $dniNetworksAvailable = is_array($dniNetworks);
@@ -195,8 +195,7 @@ if (!$dniNetworksAvailable) {
 	$dniNetworks = [];
 }
 
-if (!empty($user_row['url']))
-	$slack = new Slack($user_row['url']);
+$slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 
 if (isset($_GET['cb_status']) && $_GET['cb_status'] == 1) {
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);

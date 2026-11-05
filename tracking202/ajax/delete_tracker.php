@@ -8,15 +8,14 @@ AUTH::require_permissions('access_to_setup_section');
 $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
+$user_sql = "SELECT 2u.user_name as username FROM 202_users AS 2u WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
 }
 $user_row = p202FetchRow($user_results, $user_sql);
 
-if (!empty($user_row['url'])) 
-	$slack = new Slack($user_row['url']);
+$slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_tracker")) {
 
