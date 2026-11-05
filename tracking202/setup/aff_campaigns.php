@@ -698,4 +698,5 @@ if ($error) {
 </div>
 
 <?php echo p202_setup_script_tag($base); ?>
+<?php echo p202_setup_link_assistant_script($base); ?>
 <?php template_bottom(); ?>

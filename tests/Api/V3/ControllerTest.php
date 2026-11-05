@@ -58,6 +58,7 @@ class StubController extends Controller
             'ratio'       => ['type' => 'd', 'range' => [-99.99, 99.99]],
             'day'         => ['type' => 's', 'format' => 'date'],
             'until'       => ['type' => 's', 'format' => 'date', 'nullable' => true],
+            'site'        => ['type' => 's', 'format' => 'http_url', 'max_length' => 255],
             'created_at'  => ['type' => 's', 'readonly' => true],
         ];
     }
@@ -439,6 +440,51 @@ final class ControllerTest extends TestCase
         }
         $this->assertTrue($ctrl->beforeCreateCalled);
         $this->assertSame('42', $ctrl->beforeCreatePayload['name']);
+    }
+
+    /**
+     * 'http_url' is Setup › Landing Pages' rule for its URL (HttpUrlPrefix):
+     * a value the page refuses is refused here too, naming the field (WT1M).
+     *
+     * @return iterable<string, array{string}>
+     */
+    public static function urlsThePageRefuses(): iterable
+    {
+        yield 'no scheme' => ['lp.example.com/x'];
+        yield 'protocol-relative' => ['//lp.example.com/x'];
+        yield 'another scheme' => ['ftp://lp.example.com/x'];
+        yield 'a leading space' => [' https://lp.example.com/x'];
+        yield 'empty' => [''];
+    }
+
+    /** @dataProvider urlsThePageRefuses */
+    public function testAnHttpUrlFieldRefusesWhatThePageRefuses(string $url): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        try {
+            $ctrl->testValidatePayload(['site' => $url]);
+            self::fail('accepted ' . var_export($url, true));
+        } catch (ValidationException $e) {
+            self::assertSame(["Field 'site' must start with http:// or https://"], array_values($e->getFieldErrors()));
+            self::assertArrayHasKey('site', $e->getFieldErrors());
+        }
+    }
+
+    public function testAnHttpUrlFieldTakesWhatThePageTakes(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        foreach (['http://lp.example.com/x', 'https://lp.example.com/x?a=1'] as $url) {
+            self::assertSame(['site' => $url], $ctrl->testValidatePayload(['site' => $url]));
+        }
+    }
+
+    public function testLandingPagesHoldTheirUrlToThePagesRule(): void
+    {
+        $fields = (new \ReflectionMethod(\Api\V3\Controllers\LandingPagesController::class, 'fields'))
+            ->invoke((new \ReflectionClass(\Api\V3\Controllers\LandingPagesController::class))->newInstanceWithoutConstructor());
+        self::assertSame('http_url', $fields['landing_page_url']['format'] ?? null);
+        $page = (string) file_get_contents(dirname(__DIR__, 3) . '/tracking202/setup/landing_pages.php');
+        self::assertStringContainsString('\\Prosper202\\Http\\HttpUrlPrefix::accepts(', $page, 'the page reads the same rule');
     }
 
     public function testCreateMaxLengthValidation(): void

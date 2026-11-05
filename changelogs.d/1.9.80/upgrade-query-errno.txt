@@ -1,0 +1,1 @@
+-- Fixed: An upgrade statement that fails for good is logged with its MySQL error number, the server's message and the statement, with quoted values taken out. The log only said, for example, "failed to create 202_customers", so nobody could tell why. Re-runs of an applied step (a table, column or key already there, or one already dropped) stay quiet as before.

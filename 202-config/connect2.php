@@ -576,6 +576,54 @@ function p202RuleRedirectIsUsable(array $redirect): bool
     return !empty($redirect['redirect_url'])
         || ($redirect['auto_monetizer'] ?? null) != null;
 }
+
+/**
+ * What a redirector's rules can ask about this visitor, in rtr.php and
+ * offrtr.php alike (CriterionMatcher). The account's IPQualityScore key is
+ * read only when a fraud rule is tried; a failed read skips the rule and the
+ * visitor goes on.
+ *
+ * @param array<string, mixed> $geo getGeoData()'s answer
+ * @param object $ua the user-agent parser's result, device family as the scripts set it
+ * @param \Closure(): ?bool $filtered whether the click is, or is to be, recorded as filtered; null when unknown
+ */
+function p202RotatorVisitor(
+    \mysqli $db,
+    int $userId,
+    string $ip,
+    array $geo,
+    ?string $isp,
+    object $ua,
+    ?string $keywordPreference,
+    ?string $refererPreference,
+    \Closure $filtered
+): \Prosper202\Rotator\VisitorFacts {
+    return \Prosper202\Rotator\VisitorFacts::fromRequest(
+        $_GET,
+        $_SERVER,
+        $keywordPreference,
+        $refererPreference,
+        $ip,
+        $geo,
+        $isp,
+        (string) ($ua->os->family ?? ''),
+        (string) ($ua->device->family ?? ''),
+        (string) ($ua->ua->family ?? ''),
+        $filtered,
+        static function () use ($db, $userId, $ip): ?bool {
+            try {
+                $key = \Prosper202\Rotator\FraudScore::accountKey(\Prosper202\Repository\LookupRepositoryFactory::connection($db), $userId);
+            } catch (\Throwable $keyError) {
+                error_log("Redirector fraud rule: reading account $userId's IPQualityScore key failed ("
+                    . $keyError->getMessage() . '); the rule is skipped');
+
+                return null;
+            }
+
+            return \Prosper202\Rotator\FraudScore::isHigh($key, $ip, $_SERVER);
+        }
+    );
+}
 function rotateTrackerUrl($db, $tracker_row)
 {
 

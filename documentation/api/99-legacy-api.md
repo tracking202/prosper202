@@ -20,7 +20,7 @@ Pass the API key as a query parameter:
 
 ## Methods
 
-The v1 API supports a single `reports` method.
+The v1 API's method is `reports`; the setup reads below are kept for clients of paid 1.9.56.
 
 ### Reports
 
@@ -47,6 +47,32 @@ The v1 API supports a single `reports` method.
 A click a redirector link re-clicked counts once, at its latest visit, as in
 every report ([Reports](11-reports.md#a-click-a-redirector-link-re-clicked));
 it counted at each visit before 1.9.79.
+
+### Setup reads (from paid 1.9.56)
+
+Paid 1.9.56 also served read-only setup lists. They answer again for the
+clients written against them, read through API v3:
+
+| Endpoint | Answers under | v3 equivalent |
+| -------- | ------------- | ------------- |
+| `/api/v1/ads/` | `ads` | `GET /text-ads` |
+| `/api/v1/landingPages/` | `landing_pages` (each with `bot202_fb_pixel_assistant`, always empty) | `GET /landing-pages` |
+| `/api/v1/trafficSources/` | `traffic_sources`, each with `ppc_accounts`, each with `traffic_source_account_pixels` | `GET /ppc-networks`, `/ppc-accounts`, `/ppc-accounts/{id}/pixels` |
+| `/api/v1/redirectors/` | `smart_redirectors`, each with `redirector_rules`, each with `redirector_criteria` and `redirector_redirects` | `GET /rotators/{id}` |
+| `/api/v1/trackers/` | `trackers` | `GET /trackers` |
+| `/api/v1/campaigns/` | `campaigns` | `GET /campaigns` |
+| `/api/v1/categories/` | `categories` | `GET /aff-networks` |
+| `/api/v1/version/` | `version`: the installed version | — |
+
+Each takes `?apikey=` and `GET` only. The key is checked as v3 checks it: the
+user must be active, a scoped key needs the area's read scope (`read`, or
+for example `campaigns:read`; traffic sources need `ppc-networks:read` and
+`ppc-accounts:read`), and the role needs Setup access. `version/` takes any
+live key. Only the key's own account's records are listed, every value is a
+string as before (an empty value is `""`), and an account with none is
+answered `null`. Records do not carry their `*_time` column. A refusal is
+the old error object under the same key, `{"campaigns": {"msg": …,
+"error": true, "status": 401}}`, with that HTTP status.
 
 ### Example
 

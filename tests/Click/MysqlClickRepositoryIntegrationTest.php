@@ -288,6 +288,9 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
                 throw new \RuntimeException('the redirect could not be resolved');
             });
             self::fail('the failure reaches the caller');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\RuntimeException $e) {
             self::assertSame('the redirect could not be resolved', $e->getMessage());
         }
