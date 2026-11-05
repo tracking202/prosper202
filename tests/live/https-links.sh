@@ -141,8 +141,8 @@ scenario() { # name saved-domain expected-base why [curl header args...]
         --data-urlencode "edit_tracker=1" --data-urlencode "tracker_id=$DL_PUB"
     eq "$(grab "$OUT/g.html" '<pre class="p202-code__value">([^<]*)</pre>')" "$dl" "Get tracking link answers $dl"
     has "$OUT/g.html" "This link uses ${expect%%://*}://, $why" "and says why"
-    # An edit stores the link again under a new tracker_id, its public id kept.
-    DL=$(Q "SELECT tracker_id FROM 202_trackers WHERE tracker_id_public = $DL_PUB")
+    # An edit updates the link in place: the tracker_id the API takes survives.
+    eq "$(Q "SELECT tracker_id FROM 202_trackers WHERE tracker_id_public = $DL_PUB")" "$DL" "the edit kept tracker $DL"
 
     page "$BASE/tracking202/setup/get_trackers.php" "$OUT/gl.html" "$@"
     eq "$(listed "$OUT/gl.html" "$DL")" "$dl" "Get Links lists the direct link on it"
