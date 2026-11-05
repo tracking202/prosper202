@@ -70,7 +70,7 @@ final class StoredAddressWritesTest extends TestCase
      * How many listed writes do not go through the storage helper. Lower it
      * when one goes; raising it is a decision a reviewer has to see.
      */
-    private const CEILING = 19;
+    private const CEILING = 20;
 
     private const HELPER_CALL = '/\bp202StoredVisitorIp\(\)|\bStoredVisitorIp::forAccount\(/';
 
@@ -182,6 +182,14 @@ final class StoredAddressWritesTest extends TestCase
                 self::NONE,
                 'report preferences from functions-report-prefs.php\'s list; user_pref_ip is the Visitor IP filter'
                     . ' the operator types',
+            ],
+        ],
+        '202-config/Messaging/ConsentPolicy.class.php' => [
+            '202_users_pref.*' => [
+                self::NONE,
+                'the consent columns and analytics_geo_is_eu, a 0/1 the sign-in location is reduced to;'
+                    . ' no address is written',
+                ['202-config/Messaging/ConsentPolicy.class.php'],
             ],
         ],
         '202-account/api-integrations.php' => [
