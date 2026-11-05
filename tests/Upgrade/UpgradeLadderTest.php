@@ -1207,6 +1207,38 @@ final class UpgradeLadderTest extends TestCase
     }
 
     /**
+     * Only the 1.9.80 rung hashes the stored API keys. The released 1.9.78
+     * rung reconciles 202_api_keys through the same
+     * _upgrade_measurement_tables(), so the helper hashes only when a step
+     * passes $hashApiKeys; otherwise that rung would start hashing keys (and
+     * hold a 1.9.77 install back when that fails).
+     */
+    public function testOnlyThe1980RungHashesApiKeys(): void
+    {
+        $code = $this->upgradeCode();
+        $this->assertSame(1, preg_match_all('/(?<!function )_upgrade_hash_api_keys\(\)/', $code, $m), 'one call');
+        $this->assertMatchesRegularExpression(
+            '/if\s*\(\s*\$hashApiKeys\s*&&[^{]*_upgrade_hash_api_keys\(\)/',
+            $code,
+            'the helper hashes only when the step asks it to'
+        );
+
+        $hashing = [];
+        $apiKeys = [];
+        foreach ($this->ladderSteps() as $step) {
+            if (!str_contains($step['block'], 'UserTables::apiKeys()')) {
+                continue;
+            }
+            $apiKeys[] = $step['gates'];
+            if (preg_match('/\],\s*\[\],\s*\[\],\s*true\s*\)/', $step['block'])) {
+                $hashing[] = $step['gates'];
+            }
+        }
+        $this->assertGreaterThan(1, count($apiKeys), 'the 1.9.78 and 1.9.80 rungs both reconcile 202_api_keys');
+        $this->assertSame([[self::PRIOR_VERSION]], $hashing, 'only the rung gated on ' . self::PRIOR_VERSION . ' hashes');
+    }
+
+    /**
      * Every write to 202_version is in a spelling PERSIST_PATTERN can read.
      *
      * The other half of the persist scans: they answer "the top is 1.9.76"
