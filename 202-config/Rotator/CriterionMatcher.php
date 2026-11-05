@@ -127,16 +127,16 @@ final class CriterionMatcher
             case 'c3':
             case 'c4':
                 $param = $visitor->param($type);
-                return $param !== null && $param !== '' && self::listed($param, $values) === $is;
+                return $param !== null && $param !== '' && self::listed($param, $values, $visitor->recorded) === $is;
             case 'utm_source':
             case 'utm_medium':
             case 'utm_campaign':
             case 'utm_term':
             case 'utm_content':
                 $param = $visitor->param($type);
-                return $param !== null && self::listed($param, $values) === $is;
+                return $param !== null && self::listed($param, $values, $visitor->recorded) === $is;
             case 't202kw':
-                return $visitor->keyword !== null && self::listed($visitor->keyword, $values) === $is;
+                return $visitor->keyword !== null && self::listed($visitor->keyword, $values, $visitor->recorded) === $is;
         }
 
         $actual = self::visitorValue($type, $visitor);
