@@ -11,6 +11,8 @@ parameters:
     # The constants version.php and the config define at run time.
     bootstrapFiles:
         - phpstan-legacy-stubs.php
+        # PageUpdate::failureText() redacts with p202FailedQueryMessage().
+        - 202-config/mysql-error-args.php
     paths:
         - 202-config/Repository
         - 202-config/Click/ClickExit.php

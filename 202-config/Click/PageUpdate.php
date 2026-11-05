@@ -70,7 +70,7 @@ final class PageUpdate
                 $secret
             );
         } catch (\Throwable $error) {
-            error_log('dcs update proof unavailable for click ' . $clickId . ': ' . $error->getMessage());
+            error_log('dcs update proof unavailable for click ' . $clickId . ': ' . self::failureText($error));
         }
 
         return 'try { if (typeof window.p202DcsClick === "function") window.p202DcsClick('
@@ -155,11 +155,25 @@ final class PageUpdate
                 ClickRollupSql::rollUpClick($this->conn, $claims['click_id']);
             } catch (\Throwable $error) {
                 error_log('dcs update: click ' . $claims['click_id'] . ' changed but its report row was not refreshed: '
-                    . $error->getMessage() . '; ' . ClickRollupSql::queueRetry($this->conn, $claims['click_id']));
+                    . self::failureText($error) . '; ' . ClickRollupSql::queueRetry($this->conn, $claims['click_id']));
             }
         }
 
         return $result;
+    }
+
+    /**
+     * A failure for the log without the values the server's words quote: the
+     * page chose them (CLAUDE.md #1, as p202LogFailedQuery() redacts).
+     */
+    public static function failureText(\Throwable $error): string
+    {
+        require_once dirname(__DIR__) . '/mysql-error-args.php';
+        $message = $error->getMessage();
+        $errno = preg_match('/ \[errno (\d+)\]\z/', $message, $m) === 1 ? (int) $m[1]
+            : ($error instanceof \mysqli_sql_exception ? (int) $error->getCode() : 0);
+
+        return $error::class . ': ' . p202FailedQueryMessage($errno, $message);
     }
 
     /**

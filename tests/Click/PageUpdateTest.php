@@ -153,4 +153,23 @@ final class PageUpdateTest extends TestCase
         self::assertTrue(PageUpdate::fields(['P202_CONSENT' => '1'])['consent'] ?? null);
         self::assertTrue(PageUpdate::fields(['t202c1' => 'a'])['consent'] ?? null, 'absent gives consent');
     }
+
+    /** A page's c1-c4 or keyword quoted back in a server error never reaches the log. */
+    public function testAFailureIsLoggedWithoutTheValuesItQuotes(): void
+    {
+        $failure = new \Prosper202\Database\Exceptions\QueryException(
+            "MySQL execute failed: Duplicate entry 'mine\nFORGED log line' for key 'c1' [errno 1062]"
+        );
+        $text = PageUpdate::failureText($failure);
+        self::assertStringNotContainsString('FORGED', $text);
+        self::assertStringNotContainsString("\n", $text);
+        self::assertStringContainsString("Duplicate entry ? for key 'c1'", $text);
+        self::assertStringNotContainsString('mine', PageUpdate::failureText(new \RuntimeException("bad value 'mine'")));
+
+        $root = dirname(__DIR__, 2);
+        foreach (['202-config/Click/PageUpdate.php', 'tracking202/static/dcs-update.php'] as $path) {
+            $source = (string) file_get_contents($root . '/' . $path);
+            self::assertDoesNotMatchRegularExpression('/error_log\([^;]*getMessage\(\)/s', $source, $path);
+        }
+    }
 }

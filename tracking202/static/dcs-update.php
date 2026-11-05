@@ -91,7 +91,7 @@ try {
     }
     $result = (new PageUpdate(new Connection($db)))->apply($proof, $parsed['values'], time(), $key);
 } catch (Throwable $error) {
-    error_log('dcs update failed (' . $p202UpdateEndpoint . '): ' . $error->getMessage());
+    error_log('dcs update failed (' . $p202UpdateEndpoint . '): ' . PageUpdate::failureText($error));
     http_response_code(503);
     exit;
 }
