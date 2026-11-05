@@ -9,7 +9,9 @@ use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
 use Prosper202\PaymentNotification\ClickField;
+use Prosper202\PaymentNotification\FingerprintsNotifications;
 use Prosper202\PaymentNotification\InboundRequest;
+use Prosper202\PaymentNotification\KeyedRefundsByBodyBefore1980;
 use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
 use Prosper202\PaymentNotification\OutcomeKind;
@@ -33,8 +35,15 @@ use Prosper202\PaymentNotification\Verification;
  * PayKickstart's Affiliate IPN is another notification: JSON, unsigned, with
  * PayKickstart's own tracking-link id and no custom variables, so nothing in
  * it names a click. It is answered 415, saying so.
+ *
+ * A refund carries no id of its own: its transaction_id names the sale. One
+ * refund is told from another by its transaction_time (fingerprint()), which
+ * PayKickstart documents as when the transaction was generated, so its retry
+ * carries the same one whatever else it renders again. A second refund of a
+ * sale already reversed at another time is refused naming the reversal on
+ * file, never answered as the first (CLAUDE.md #15).
  */
-final class PayKickstartAdapter implements ProviderAdapter
+final class PayKickstartAdapter implements ProviderAdapter, FingerprintsNotifications, KeyedRefundsByBodyBefore1980
 {
     /** decimal(11,5): at most six whole digits and five decimals, read exactly. */
     private const AMOUNT = '/^(-?)(\d{1,6}(?:\.\d{1,5})?)$/D';
@@ -218,6 +227,24 @@ final class PayKickstartAdapter implements ProviderAdapter
             $clickId,
             $occurredAt
         );
+    }
+
+    /**
+     * What one refund is: the sale it names and when it happened. The IPN
+     * documents no field that changes from one delivery to the next (no
+     * attempt count, no delivery time; the hash covers the values), but
+     * nothing says a retry is not rendered again from the order, so a field
+     * that could be (the buyer's details, licenses, a hash under a rotated
+     * key) is not part of it. transaction_time is the transaction's own time,
+     * which a retry repeats. The amount is compared, not keyed: only the sale
+     * says that 47 and none both take back the whole of a 47 sale. Two
+     * refunds of one sale with the same transaction_time, or none, and the
+     * same amount cannot be told apart and read as one.
+     */
+    public function fingerprint(InboundRequest $request): string
+    {
+        return hash('sha256', 'paykickstart-refund|' . (self::text($request->fields, 'transaction_id') ?? '') . '|'
+            . (self::text($request->fields, 'transaction_time') ?? ''));
     }
 
     /**
