@@ -4767,8 +4767,11 @@ class UPGRADE
             $paid_ok = $baseline_ok && $carried_ok;
             $step_ok = _upgrade_measurement_tables([
                 // 202_users_pref gains shopify_webhook_secret, which Shopify's
-                // order webhooks are verified with (ShopifyWebhookSecret).
+                // order webhooks are verified with (ShopifyWebhookSecret), and
+                // jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole).
                 \Prosper202\Database\Tables\UserTables::usersPref(),
+                // The inbound postback and notification log (Prosper202\InboundLog).
+                \Prosper202\Database\Tables\ConversionTables::inboundLog(),
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
@@ -4776,6 +4779,14 @@ class UPGRADE
                 // log (Prosper202\Destinations).
                 \Prosper202\Database\Tables\ConversionTables::destinations(),
                 \Prosper202\Database\Tables\ConversionTables::destinationDeliveries(),
+                // The money-loss alerts' settings per account (no row is on;
+                // a row with enabled 0 is off), and the incident each was last
+                // sent for (Prosper202\Alerts).
+                \Prosper202\Database\Tables\UserTables::alertSettings(),
+                \Prosper202\Database\Tables\UserTables::alertState(),
+                // 202_conversion_logs gains user_conv_time, the alerts' read of
+                // an account's last week of conversions.
+                \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
                 // PurLinks: click-out ordering, deferred pixels fired, per-offer goal subjects.
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),
                 \Prosper202\Database\Tables\ClickTables::purLinkPixelFires(),

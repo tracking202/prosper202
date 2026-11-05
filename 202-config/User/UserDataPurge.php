@@ -150,6 +150,8 @@ final class UserDataPurge
     public const CONVERSION_STATEMENTS = [
         'DELETE FROM 202_conversion_uploads WHERE user_id = ?',
         'DELETE FROM 202_offline_conversion_names WHERE user_id = ?',
+        // The requests the inbound log kept for the account.
+        'DELETE FROM 202_inbound_log WHERE user_id = ?',
     ];
 
     /** Queued traffic-source postbacks, where corrections to them would go, and the destinations and their deliveries: a deleted account's never go out. */
@@ -176,6 +178,9 @@ final class UserDataPurge
         // The click filter's settings and address list (the clicks' reasons stay with the clicks).
         'DELETE FROM 202_click_filter_entries WHERE user_id = ?',
         'DELETE FROM 202_click_filter_settings WHERE user_id = ?',
+        // The money-loss alerts' settings and the incidents they were sent for.
+        'DELETE FROM 202_alert_settings WHERE user_id = ?',
+        'DELETE FROM 202_alert_state WHERE user_id = ?',
     ];
 
     /**

@@ -38,6 +38,7 @@ if ($p202Nav2 === 'setup') {
         ['Postback/Pixel', 'tracking202/setup/get_postback.php', ['get_postback.php']],
         ['Offline Conversions', 'tracking202/setup/offline_conversions.php', ['offline_conversions.php']],
         ['Destinations', 'tracking202/setup/destinations.php', ['destinations.php']],
+        ['Inbound Log', 'tracking202/setup/inbound_log.php', ['inbound_log.php']],
     ];
 } elseif (($p202Nav1 === 'account' && $p202Nav2 === '') || $p202Nav2 === 'overview') {
     $p202StripLabel = 'Overview reports';

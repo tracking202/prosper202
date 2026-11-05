@@ -137,9 +137,9 @@ if( !$detect->isMobile() && !$detect->isTablet() ){
 
 $default = true;
 
-// A visitor rule reads the click as the landing page recorded it. The
-// request is the landing page's offer link, not the visitor's own, so a
-// c1-c4, utm, keyword or referer rule cannot be decided here and is skipped.
+// The request is the landing page's offer link, not the visitor's own: visitor,
+// c1-c4, utm, keyword and referer rules read the click as the landing page
+// recorded it (RecordedLink). If that read fails, those rules are skipped.
 $offrtrVisitor = p202RotatorVisitor(
 	$db,
 	(int) $rotator_row['user_id'],
@@ -165,7 +165,21 @@ $offrtrVisitor = p202RotatorVisitor(
 
 		return $row === null ? null : (string) ($row['click_filtered'] ?? '0') === '1';
 	}
-)->withoutLinkFacts();
+);
+try {
+	$offrtrLink = \Prosper202\Rotator\RecordedLink::read(
+		\Prosper202\Repository\LookupRepositoryFactory::connection($db),
+		(int) $offrtrClickId,
+		(int) $rotator_row['user_id']
+	);
+} catch (\Throwable $offrtrLinkError) {
+	error_log('offrtr.php: reading click ' . $mysql['click_id'] . "'s link values failed ("
+		. $offrtrLinkError->getMessage() . '); its c1-c4, utm, keyword and referer rules are skipped');
+	$offrtrLink = null;
+}
+$offrtrVisitor = $offrtrLink === null
+	? $offrtrVisitor->withoutLinkFacts()
+	: $offrtrVisitor->withLink($offrtrLink['query'], $offrtrLink['keyword'], $offrtrLink['referer']);
 
 foreach ($rule_row as $rule) {
 	$mysql['rule_id'] = $db->real_escape_string((string)$rule['rule_id']);

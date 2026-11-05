@@ -459,6 +459,103 @@ final class JVZooAdapterTest extends TestCase
         self::assertSame(77, JVZooAdapter::forQuery('vendor')->parse(self::request($sale))->clickId);
     }
 
+    /**
+     * A vendor's notification at the role-less URL carries no caffitid: read
+     * as the affiliate's (no setting, or affiliate), it is refused (JVZoo
+     * retries and shows why), not answered as "no click".
+     */
+    public function testAVendorsNotificationAtTheUrlWithNoRoleIsRefusedNamingTheVendorSetting(): void
+    {
+        foreach (['SALE', 'BILL', 'RFND', 'CGBK', 'INSF'] as $type) {
+            $vendors = self::sale(['caffitid' => '', 'cvendthru' => 'subid=77', 'ctransaction' => $type]);
+            foreach ([[], [3 => JVZooRole::AFFILIATE]] as $choices) {
+                $adapter = new JVZooAdapter(JVZooRole::AFFILIATE, true, $choices);
+                self::assertNotNull($adapter->verify(self::request(self::signed($vendors, self::KEY_A)), [3 => [self::KEY_A]]));
+                $refusal = self::refusal(static fn () => $adapter->parse(self::request($vendors)));
+                self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind, $type);
+                self::assertSame(JVZooAdapter::ROLELESS_NO_AFFILIATE, $refusal->outcome->message);
+            }
+            foreach ([null, ''] as $none) {
+                $refusal = self::refusal(static fn () => JVZooAdapter::forQuery($none)->parse(self::request($vendors)));
+                self::assertSame(JVZooAdapter::ROLELESS_NO_AFFILIATE, $refusal->outcome->message, $type);
+            }
+            // The vendor URL reads it; the affiliate URL answers it as no click, as before.
+            self::assertSame(77, JVZooAdapter::forQuery('vendor')->parse(self::request($vendors))->clickId, $type);
+            self::assertNull(JVZooAdapter::forQuery('affiliate')->parse(self::request($vendors))->clickId, $type);
+        }
+        self::assertStringContainsString('choose "vendor" for the 1.9.56 URL on Account > API integrations > JVZoo',
+            JVZooAdapter::ROLELESS_NO_AFFILIATE);
+        self::assertStringContainsString('?role=vendor', JVZooAdapter::ROLELESS_NO_AFFILIATE);
+        // A test notification at that URL is still answered.
+        self::assertSame('TEST', JVZooAdapter::forQuery(null)->parse(self::request(self::sale(['caffitid' => '', 'ctransaction' => 'TEST'])))->kind->name);
+    }
+
+    /** At the role-less URL, the verifying account's setting picks the role. */
+    public function testTheUrlWithNoRoleReadsTheVerifyingAccountsSetting(): void
+    {
+        $sale = self::sale(['caffitid' => '42', 'cvendthru' => 'subid=77']);
+        $signed = self::request(self::signed($sale, self::KEY_A));
+        $secrets = [3 => [self::KEY_A], 7 => [self::KEY_OTHER]];
+
+        $vendor = new JVZooAdapter(JVZooRole::AFFILIATE, true, [3 => JVZooRole::VENDOR, 7 => JVZooRole::AFFILIATE]);
+        self::assertSame([3 => 0], $vendor->verify($signed, $secrets)?->secretByAccount);
+        self::assertSame(77, $vendor->parse(self::request($sale))->clickId, 'subid in cvendthru');
+        self::assertSame('subid in cvendthru', $vendor->clickField()->field);
+
+        foreach ([[], [3 => JVZooRole::AFFILIATE, 7 => JVZooRole::VENDOR]] as $choices) {
+            $affiliate = new JVZooAdapter(JVZooRole::AFFILIATE, true, $choices);
+            self::assertNotNull($affiliate->verify($signed, $secrets));
+            self::assertSame(42, $affiliate->parse(self::request($sale))->clickId, 'caffitid');
+            self::assertSame('caffitid', $affiliate->clickField()->field);
+        }
+
+        // A vendor with no subid on the buy link: no click, in the vendor's names, never refused as not an affiliate's.
+        $bare = self::sale(['caffitid' => '', 'cvendthru' => '']);
+        $vendor = new JVZooAdapter(JVZooRole::AFFILIATE, true, [3 => JVZooRole::VENDOR]);
+        $vendor->verify(self::request(self::signed($bare, self::KEY_A)), $secrets);
+        self::assertNull($vendor->parse(self::request($bare))->clickId);
+    }
+
+    /** The explicit ?role= URLs ignore the setting. */
+    public function testTheExplicitRoleUrlsIgnoreTheSetting(): void
+    {
+        $sale = self::sale(['caffitid' => '42', 'cvendthru' => 'subid=77']);
+        $signed = self::request(self::signed($sale, self::KEY_A));
+        $secrets = [3 => [self::KEY_A]];
+        $cases = [
+            [JVZooRole::AFFILIATE, JVZooRole::VENDOR, 42],
+            [JVZooRole::VENDOR, JVZooRole::AFFILIATE, 77],
+        ];
+        foreach ($cases as [$role, $setting, $click]) {
+            $adapter = new JVZooAdapter($role, false, [3 => $setting]);
+            self::assertNotNull($adapter->verify($signed, $secrets));
+            self::assertSame($click, $adapter->parse(self::request($sale))->clickId, $role->value);
+        }
+        $affiliate = new JVZooAdapter(JVZooRole::AFFILIATE, false, [3 => JVZooRole::VENDOR]);
+        $noTid = self::sale(['caffitid' => '', 'cvendthru' => 'subid=77']);
+        $affiliate->verify(self::request(self::signed($noTid, self::KEY_A)), $secrets);
+        self::assertNull($affiliate->parse(self::request($noTid))->clickId, 'no click, not refused');
+    }
+
+    /** Accounts sharing the key whose settings differ: refused, not guessed. */
+    public function testConflictingSettingsAcrossVerifyingAccountsAreRefused(): void
+    {
+        $sale = self::sale(['caffitid' => '42', 'cvendthru' => 'subid=77']);
+        $signed = self::request(self::signed($sale, self::KEY_A));
+        $shared = [3 => [self::KEY_A], 7 => [self::KEY_A]];
+
+        $adapter = new JVZooAdapter(JVZooRole::AFFILIATE, true, [3 => JVZooRole::VENDOR]);
+        self::assertSame([3 => 0, 7 => 0], $adapter->verify($signed, $shared)?->secretByAccount);
+        $refusal = self::refusal(static fn () => $adapter->parse(self::request($sale)));
+        self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
+        self::assertSame(JVZooAdapter::ROLELESS_CONFLICT, $refusal->outcome->message);
+
+        // The same setting in both reads it.
+        $agreed = new JVZooAdapter(JVZooRole::AFFILIATE, true, [3 => JVZooRole::VENDOR, 7 => JVZooRole::VENDOR]);
+        $agreed->verify($signed, $shared);
+        self::assertSame(77, $agreed->parse(self::request($sale))->clickId);
+    }
+
     public function testTheRoleIsReadFromTheQueryExactly(): void
     {
         self::assertSame(JVZooRole::AFFILIATE, JVZooRole::fromQuery('affiliate'));

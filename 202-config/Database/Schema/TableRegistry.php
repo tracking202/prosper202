@@ -42,6 +42,8 @@ final class TableRegistry
     public const string AUTH_KEYS = '202_auth_keys';
     public const string CLICK_FILTER_SETTINGS = '202_click_filter_settings';
     public const string CLICK_FILTER_ENTRIES = '202_click_filter_entries';
+    public const string ALERT_SETTINGS = '202_alert_settings';
+    public const string ALERT_STATE = '202_alert_state';
     public const string USER_DATA_FEEDBACK = 'user_data_feedback';
 
     // Click tables
@@ -116,6 +118,7 @@ final class TableRegistry
     public const string OFFLINE_CONVERSION_NAMES = '202_offline_conversion_names';
     public const string DESTINATIONS = '202_destinations';
     public const string DESTINATION_DELIVERIES = '202_destination_deliveries';
+    public const string INBOUND_LOG = '202_inbound_log';
 
     // Deployment-wide secrets (SecretTables): owned by the installation, not
     // by any user

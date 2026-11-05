@@ -254,7 +254,11 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
 
         $reconciler = new SchemaReconciler(static fn (string $sql) => _upgrade_query($sql));
         $this->assertTrue($reconciler->reconcile(ConversionTables::conversionLogs()));
-        $this->assertSame([], $reconciler->getApplied(), 'the upgraded table already has every column and key the installer declares');
+        // Every column and key the installer declares but user_conv_time, which the 1.9.80 step adds.
+        $this->assertSame(
+            ['ALTER TABLE `202_conversion_logs` ADD KEY `user_conv_time` (`user_id`,`conv_time`)'],
+            $reconciler->getApplied()
+        );
         $this->assertSame([], $reconciler->getUnreconciled());
 
         // The reconciler compares names and nullability, not types or

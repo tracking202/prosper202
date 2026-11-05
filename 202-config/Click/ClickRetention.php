@@ -128,6 +128,7 @@ final class ClickRetention
         '202_personalization_tokens' => 'personalization tokens, purged on their own replay window',
         '202_customers' => 'first_click_id: the customer\'s first click, kept as the customer\'s acquisition record',
         '202_users_pref' => 'user_delete_data_clickid is the scheduled deletion\'s marker (an earlier version\'s form)',
+        '202_inbound_log' => 'the inbound log names the click a request asked for, which may never have existed; it is pruned to its own bound',
     ];
 
     /** @var callable(): int */

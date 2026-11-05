@@ -253,11 +253,18 @@ function RunHourlyCronJob()
         PruneAppRetention();
         PrunePurLinkExitOrder();
 
+        // The inbound log keeps each account's newest requests (InboundLog::KEEP_PER_ACCOUNT).
+        PruneInboundLog();
+
         // Product analytics a page recorded and could not deliver (held
         // back by the throttle, then the tab closed, or a backlog left by
         // a portal outage). Hourly, not every minute: each failed try
         // spends one of an event's five attempts.
         DeliverPendingAnalytics();
+
+        // Money-loss alerts: a steady campaign that stopped converting while
+        // it buys clicks, or one past its daily cost cap with no conversion.
+        RunMoneyLossAlerts();
 
         // LTV subscriptions that stopped renewing: past_due once their period
         // and grace are over, canceled 30 days later, which MRR, churn and
@@ -278,6 +285,24 @@ function RunHourlyCronJob()
         return true;
     } else {
         return false;
+    }
+}
+
+/**
+ * The money-loss alerts (Prosper202\Alerts\AlertRun) for every account that
+ * has not turned them off, for up to 60 seconds; accounts the time did not
+ * reach are checked next hour. A failure is logged and the tier goes on.
+ */
+function RunMoneyLossAlerts(): void
+{
+    try {
+        $line = \Prosper202\Alerts\AlertRun::hourly(getDatabaseConnection(), $_SERVER, dirname(__DIR__));
+        if ($line !== null) {
+            echo 'Money-loss alerts: ' . htmlspecialchars($line, ENT_QUOTES) . '<br>';
+            flushOutput();
+        }
+    } catch (\Throwable $e) {
+        error_log('Money-loss alerts failed: ' . $e->getMessage());
     }
 }
 
@@ -390,6 +415,18 @@ function PruneAppRetention(): void
         }
     } catch (\Throwable $e) {
         error_log('App retention failed: ' . $e->getMessage());
+    }
+}
+
+function PruneInboundLog(): void
+{
+    try {
+        $deleted = (new \Prosper202\InboundLog\InboundLog(getDatabaseConnection()))->prune();
+        if ($deleted > 0) {
+            echo 'Inbound log: ' . $deleted . ' old request(s) pruned<br>';
+        }
+    } catch (\Throwable $e) {
+        error_log('Inbound log prune failed: ' . $e->getMessage());
     }
 }
 
