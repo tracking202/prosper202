@@ -80,9 +80,12 @@ The SubID a PurLink carries looks like `1234567-3121-a1b2c3d4e5f6`: the
 click, the offer, and a signature, about 25 characters of digits, letters
 and hyphens, so networks that limit SubID length or characters accept it. The
 signature means nobody can write a SubID that moves a click's conversion to
-another offer. It does not expire while the click exists. `gpb.php` and
-`pb.php` accept it; `pb.php` also checks that it names the postback's own
-campaign.
+another offer. It does not expire while the click exists. Everything that
+takes a SubID back accepts it and credits its offer: `gpb.php`, `pb.php`,
+`gpx.php`, `upx.php`, the ClickBank, JVZoo, PayKickstart, Zaxaa and Shopify
+notifications, revenue uploads and Update Subids. `pb.php` also checks that it
+names the postback's own campaign. A SubID whose signature does not match
+records nothing.
 
 ## The deferred pixel
 
@@ -115,7 +118,8 @@ again. The landing page can ask for a day after the visit.
 PurLinks follow the landing page's consent: a visitor who refused tracking, or
 withdraws it with `p202.consent(false)`, gets no SubID, sends no click-out and
 fires no deferred pixel. The links fall back to the tracker's redirect, which
-applies its own rules.
+applies its own rules. A deferred-pixel request that refuses consent fires
+nothing and leaves the conversion for a later request that consents.
 
 The account's privacy setting (Settings › Privacy) does not stop PurLinks: a
 PurLink stores nothing in the visitor's browser and records what the tracker's
@@ -128,13 +132,18 @@ URL, a cookie or a referrer, and the requests send no cookies.
 
 - A copied PurLink carries the visitor's SubID: anyone who opens it is
   credited to that click, as with a copied redirect link.
+- On an advanced page the visitor's choice is the route: the signature says
+  the SubID was issued by this install for this click and one of the
+  account's offers, not which offer the network's sale was for. `pb.php`
+  checks the offer against its `acip`; `gpb.php` has no offer to check.
 - A browser or extension that blocks the background request loses the
   click-out record; the conversion is still credited through the SubID.
 - Browser conversion pixels on the offer's thank-you page (`gpx.php`,
   `px.php`, `upx.php`) rely on the tracker's cookie, which a PurLink visit
   does not set as a first party. Use the network's server postback.
-- A snippet can opt out with `p202_purlink=0` in the `landing.php` URL; its
-  PurLinks then go through the tracker's redirect.
+- A snippet can opt out with `p202_purlink=0` in the `landing.php` URL, or
+  in a 1.9.56 `landing.js` URL; its PurLinks then go through the tracker's
+  redirect. Any value other than `1` (`off`, `false`, `no`) also opts out.
 
 ## Upgrading from 1.9.56
 

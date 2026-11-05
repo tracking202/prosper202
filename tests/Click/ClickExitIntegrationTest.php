@@ -223,15 +223,15 @@ final class ClickExitIntegrationTest extends TestCase
         $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
         $exit = new PurLinkExit(new Connection(self::requireScratch()));
 
-        self::assertFalse($exit->record($proof . 'x', null, $now, $key));
-        self::assertFalse($exit->record($proof, null, $now + 60, $key));
-        self::assertFalse($exit->record($proof, '11102', $now, $key));
-        self::assertFalse($exit->record($proof, '11103', $now, $key));
-        self::assertFalse($exit->record($proof, '11101e0', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof . 'x', null, '11', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, null, '12', $now + 60, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11102', '13', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11103', '14', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11101e0', '15', $now, $key));
         self::assertNull($exit->subid($proof, '11102', $now, $key));
         self::assertNull($exit->subid($proof, '11103', $now, $key));
         self::assertSame('0', self::state($clickId)['click_out']);
-        self::assertTrue($exit->record($proof, '11101', $now, $key));
+        self::assertSame('recorded', $exit->recordOrdered($proof, '11101', '16', $now, $key));
         self::assertSame('1', self::state($clickId)['click_out']);
         self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
     }
@@ -252,11 +252,11 @@ final class ClickExitIntegrationTest extends TestCase
         $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
         $exit = new PurLinkExit(new Connection(self::requireScratch()));
 
-        self::assertFalse($exit->record($proof, null, $now, $key));
-        self::assertFalse($exit->record($proof, '11102', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, null, '17', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11102', '18', $now, $key));
         self::assertNull($exit->subid($proof, '11102', $now, $key));
         self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = ' . self::$campaign);
-        self::assertFalse($exit->record($proof, '11101', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11101', '19', $now, $key));
         self::assertNull($exit->subid($proof, '11101', $now, $key));
         self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 0 WHERE aff_campaign_id = ' . self::$campaign);
         $subid = $exit->subid($proof, '11101', $now, $key);
@@ -272,7 +272,7 @@ final class ClickExitIntegrationTest extends TestCase
         self::assertNull($exit->claims(str_replace('-11101-', '-11102-', $subid), $key));
         self::assertNull($exit->claims($clickId . '-11101', $key));
         self::assertSame('0', self::state($clickId)['click_out']);
-        self::assertTrue($exit->record($proof, '11101', $now, $key));
+        self::assertSame('recorded', $exit->recordOrdered($proof, '11101', '20', $now, $key));
         self::assertSame('1', self::state($clickId)['click_out']);
         self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
     }
@@ -300,7 +300,8 @@ final class ClickExitIntegrationTest extends TestCase
             static fn (int $user, int $click, int $campaign, string $payout): array => [$user, $click, $campaign, $payout]
         );
         self::assertSame([self::OWNER, $clickId, self::$campaign, '7.25'], $seen);
-        self::assertTrue($exit->record($proof, '11101', $now, $key));
+        // The click had converted: its click-out is recorded, its offer is not, and the answer says so.
+        self::assertSame('converted', $exit->recordOrdered($proof, '11101', '21', $now, $key));
         self::assertSame('1', self::state($clickId)['click_out']);
         self::assertSame('4', self::state($clickId)['aff_campaign_id']);
         self::assertSame('2.50000', self::state($clickId)['click_payout']);
@@ -492,8 +493,8 @@ final class ClickExitIntegrationTest extends TestCase
         self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = ' . self::$campaign);
         try {
             self::assertNull($exit->subid($proof, '11101', $now, $key), 'a deleted page prepares no new SubID');
-            self::assertFalse($exit->record($proof, '11101', $now, $key), 'nor records a new click-out');
-            self::assertTrue($exit->route($subid, $key), 'pb.php routes the late postback');
+            self::assertSame('refused', $exit->recordOrdered($proof, '11101', '22', $now, $key), 'nor records a new click-out');
+            self::assertTrue($exit->convert($subid, $key, static fn (): bool => true), 'pb.php routes the late postback');
             $late = $exit->recordConversion($subid, $key, [
                 'transaction_id' => 'after-delete', 'skip_bridge' => true,
             ], MatchMethod::CLICK_ID);
@@ -624,8 +625,10 @@ final class ClickExitIntegrationTest extends TestCase
      * A Meta Purchase (type 6) on the deferred pixel passes the gate a
      * conversion request's does: the privacy setting for the poll's visitor,
      * a consent refusal sent with the poll, and the click's campaign's
-     * identity capture. A refusal is final (the conversion is marked fired);
-     * a setting that cannot be read leaves it unmarked, for the next poll.
+     * identity capture. The owner's refusal is final (the conversion is
+     * marked fired); a visitor's consent refusal fires and marks nothing, so
+     * a later consenting poll fires it; a setting that cannot be read leaves
+     * it unmarked, for the next poll.
      */
     public function testDeferredMetaPurchaseFiresOnlyForATrackedConsentingVisitor(): void
     {
@@ -658,7 +661,6 @@ final class ClickExitIntegrationTest extends TestCase
         try {
             $cases = [
                 'tracked and consenting' => ['disabled', $outsideEu, [], 1, true],
-                'consent refused with the poll' => ['disabled', $outsideEu, ['p202_consent' => '0'], 1, false],
                 'privacy holds every visitor back' => ['all', $outsideEu, [], 1, false],
                 'privacy eu, visitor may be in the EU' => ['eu', static fn (): bool => true, [], 1, false],
                 'privacy eu, visitor outside the EU' => ['eu', $outsideEu, [], 1, true],
@@ -675,17 +677,33 @@ final class ClickExitIntegrationTest extends TestCase
                 self::assertSame(['n' => '1'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"), $why);
             }
 
+            // The visitor refuses consent with the poll: nothing renders or is
+            // marked, and the conversion fires in full once they consent.
+            self::q('UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = ' . self::$campaign);
+            $conv = $sale('meta-consent-later');
+            foreach ([['p202_consent' => '0'], ['p202_consent' => 'no'], ['p202_consent' => ['1']]] as $refusal) {
+                $refused = (new PurLinkPixels($conn, $setting('disabled')))->poll($proof, $now, $key, $outsideEu, $refusal);
+                self::assertSame(['waiting', '', 0], [$refused['status'], $refused['markup'], $refused['conversions']]);
+            }
+            self::assertSame(['n' => '0'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"));
+            $consented = (new PurLinkPixels($conn, $setting('disabled')))->poll($proof, $now, $key, $outsideEu, ['p202_consent' => '1']);
+            self::assertSame(['fired', 1], [$consented['status'], $consented['conversions']]);
+            self::assertStringContainsString('t=meta-consent-later', $consented['markup']);
+            self::assertStringContainsString($purchase . 'meta-consent-later', $consented['markup']);
+
             // A setting that cannot be read rolls the poll back: nothing is
             // marked, and the next poll fires the Purchase.
             self::q('UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = ' . self::$campaign);
             $conv = $sale('meta-retry');
             $broken = static fn (Connection $c, int $owner): string => throw new \RuntimeException('privacy unreadable');
+            $thrown = null;
             try {
                 (new PurLinkPixels($conn, $broken))->poll($proof, $now, $key, $outsideEu, []);
-                self::fail('an unreadable privacy setting fires nothing');
             } catch (\RuntimeException $e) {
-                self::assertSame('privacy unreadable', $e->getMessage());
+                $thrown = $e;
             }
+            self::assertNotNull($thrown, 'an unreadable privacy setting fires nothing');
+            self::assertSame('privacy unreadable', $thrown->getMessage());
             self::assertSame(['n' => '0'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"));
             $retried = (new PurLinkPixels($conn, $setting('disabled')))->poll($proof, $now, $key, $outsideEu, []);
             self::assertSame('fired', $retried['status']);
@@ -750,9 +768,16 @@ final class ClickExitIntegrationTest extends TestCase
         // Once any visit converts, another exit records its ordering without
         // rewriting older visits or the paid click's current campaign.
         self::q("UPDATE 202_clicks SET click_lead=1 WHERE click_id=$clickId");
-        self::assertSame('recorded', $exit->recordOrdered($proof, '129979', '4', $now, $key));
+        self::assertSame('converted', $exit->recordOrdered($proof, '129979', '4', $now, $key));
         self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
         self::assertSame('4', self::one("SELECT sequence FROM 202_purlink_exit_order WHERE click_id=$clickId")['sequence']);
+
+        // An earlier-expiring proof of the click never shortens the fence.
+        $longer = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 3600, $key);
+        self::assertSame('converted', $exit->recordOrdered($longer, '11101', '5', $now, $key));
+        self::assertSame('converted', $exit->recordOrdered($proof, '11101', '6', $now, $key));
+        self::assertSame(['sequence' => '6', 'expires_at' => (string) ($now + 3600)],
+            self::one("SELECT sequence, expires_at FROM 202_purlink_exit_order WHERE click_id=$clickId"));
     }
 
     public function testPurLinkConversionClickUpdateRollsBackWithItsRouteAndLedger(): void

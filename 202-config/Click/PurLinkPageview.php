@@ -18,6 +18,22 @@ final class PurLinkPageview
     }
 
     /**
+     * Whether a landing page snippet keeps PurLinks on: on unless it names
+     * p202_purlink, and then only for 1. Any other value (0, off, false, a
+     * list) turns them off, as p202_consent reads (RequestSignals::consentGiven()).
+     *
+     * @param array<string, mixed> $get
+     */
+    public static function requestedBy(array $get): bool
+    {
+        if (!array_key_exists('p202_purlink', $get)) {
+            return true;
+        }
+
+        return is_string($get['p202_purlink']) && trim($get['p202_purlink']) === '1';
+    }
+
+    /**
      * The caller invokes this only after its click transaction commits. If
      * signing is unavailable, tracking continues with its redirect fallback.
      * Proofs never appear in a request URL or a cookie.

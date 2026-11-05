@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification\JVZoo;
 
-use Prosper202\Click\ClickId;
+use Prosper202\Click\ClickRef;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
@@ -277,14 +277,14 @@ final class JVZooAdapter implements ProviderAdapter
      *
      * @param array<array-key, mixed> $fields
      */
-    private function clickId(array $fields, string $type, string $receipt): ?int
+    private function clickId(array $fields, string $type, string $receipt): ?ClickRef
     {
         if ($this->role === JVZooRole::AFFILIATE) {
             $tid = self::text($fields, 'caffitid');
             if ($tid === null) {
                 return null;
             }
-            $clickId = ClickId::parse($tid);
+            $clickId = ClickRef::parse($tid);
             if ($clickId !== null) {
                 return $clickId;
             }
@@ -305,7 +305,7 @@ final class JVZooAdapter implements ProviderAdapter
         if (count($subids) > 1) {
             throw self::malformed('cvendthru carries subid more than once, with different values.');
         }
-        $clickId = ClickId::parse($subids[0]);
+        $clickId = ClickRef::parse($subids[0]);
         if ($clickId === null) {
             throw self::malformed(
                 'cvendthru carries subid "' . self::shown($subids[0]) . '", which is not a click id. The buy link'
