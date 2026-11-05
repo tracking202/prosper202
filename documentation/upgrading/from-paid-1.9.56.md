@@ -17,12 +17,16 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   their visits. You don't need to paste the code again.
 - **Pixels and postbacks with an order number.** `gpb.php`, `gpx.php` and
   `upx.php` read the order number from `t202txid`, as 1.9.56 code sends it.
-  Each new order number on a click is recorded as its own sale.
+  Each new order number on a click is recorded as its own sale. `gpb.php`
+  also takes its values from a form `POST` body, as well as the query string.
 - **Publisher links.** A link that carries `t202pubid` credits the click to
   that publisher, but only when the link's account has granted them the
   Publisher role.
-- **Reports API v1.** `api/v1/reports/` still answers with the API keys your
-  accounts made before the upgrade.
+- **API v1.** `api/v1/reports/` and the setup reads (`api/v1/campaigns/`
+  and the others) still answer with the API keys your accounts made before
+  the upgrade.
+- **Redirector rules.** Rules on c1–c4, UTM values, keyword, referer and the
+  other 1.9.56 types still match.
 - **Passwords.** Stored 1.9.56 passwords still sign in.
 - **Privacy.** Accounts that existed before the upgrade keep tracking as they
   did. Only accounts created on 1.9.79 or later start with privacy set to
@@ -60,7 +64,8 @@ These differ from 1.9.56 on purpose and stay that way.
 - **The Export tab is now Setup › Offline Conversions.** It makes Google Ads
   and Microsoft Advertising files for a rolling window of 1 to 90 days, and
   gives scheduled fetch URLs. See
-  [Offline conversions](../features/offline-conversions.md).
+  [Offline conversions](../features/offline-conversions.md). The old
+  scheduled Google feed URL answers `410 Gone` and names its replacement.
 - **The daily email report is retired.** Its cron address,
   `202-cronjobs/daily-email.php`, now answers `410 Gone`.
 - **The `landing.js` loader ignores `defpixel` and `rsid`** in old snippets.
@@ -85,19 +90,9 @@ and its line comes off this list when the fix ships.
   format (`<click>-<campaign>`) on postbacks, and the deferred pixel
   (`defpixel=1`).
 - Dynamic landing-page content, such as the visit's SubID.
-- A global postback (`gpb.php`) that sends its values in a form `POST` body.
-  The query string works.
-- The password column. In 1.9.56 it held 32 characters, and the upgrade
-  doesn't widen it until the user signs in. A password set any other way
-  before then (API, admin, CLI) is cut, and the account can't sign in.
 - JVZoo IPN URLs without `?role=`, which is the URL 1.9.56 showed. Add
   `?role=affiliate` or `?role=vendor`.
-- API v1 setup reads (`/api/v1/campaigns/` and the others) and the old
-  scheduled Google feed URL.
 - Google Ads parallel tracking templates (`tracking202/redirect/pt.php`).
 - Update Subids lines with payout, order number and time.
 - Shopify order webhooks.
-- Redirector rules on c1–c4, UTM values, keyword, referer and the other types
-  1.9.80 doesn't yet match. Rules of those types never match, so the visitor
-  goes to the next rule or the default.
 - The Bot202 Facebook Pixel Assistant. Its settings are kept.

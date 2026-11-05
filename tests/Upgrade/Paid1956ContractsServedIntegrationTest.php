@@ -379,12 +379,9 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
     /**
      * The paid line's 1.9.56 never widened user_pass or made user_data_feedback;
      * the upgrade has to, or a password set before first sign-in is cut.
-     *
-     * @group pending
      */
     public function testThePaidSchemaIsTheInstalledOneAfterTheUpgrade(): void
     {
-        self::markTestSkipped('pending #388');
         self::assertSame('varchar(255)', self::requireScratch()
             ->query("SHOW COLUMNS FROM 202_users LIKE 'user_pass'")->fetch_assoc()['Type'] ?? null);
         self::assertSame('1', self::scalar(
@@ -584,17 +581,14 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         self::assertSame(['ORDER-8001'], array_column($page['rows'], 'transaction_id'));
     }
 
-    // Contracts whose fix is in review. Each is skipped and in the group
-    // `pending`, which the CI runner leaves out; its pull request removes both.
+    // Contracts restored after 1.9.80 branched. One whose fix is still in review
+    // is skipped and in the group `pending`; its pull request removes both.
 
     /**
      * 1.9.56's gpb.php took its values from a form POST body as well as the query.
-     *
-     * @group pending
      */
     public function testTheGlobalPostbackTakesAFormPostBody(): void
     {
-        self::markTestSkipped('pending #387');
         $click = $this->directLinkClick();
         [$status, $headers] = self::http('/tracking202/static/gpb.php?amount=&subid=', [],
             ['subid' => (string) $click, 'amount' => '40.00', 't202txid' => 'ORDER-6001']);
@@ -672,12 +666,9 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
 
     /**
      * 1.9.56's API v1 setup reads (campaigns, version) answer with the account's key.
-     *
-     * @group pending
      */
     public function testTheV1SetupApiAnswers(): void
     {
-        self::markTestSkipped('pending #393');
         [$status, , $body] = self::http('/api/v1/version/?apikey=' . self::API_KEY);
         self::assertSame(200, $status, $body);
         self::assertSame(['version' => '1.9.80'], json_decode($body, true));
@@ -688,12 +679,9 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
 
     /**
      * The scheduled Google feed URL says where its replacement is instead of a blank page.
-     *
-     * @group pending
      */
     public function testTheOldGoogleFeedUrlNamesItsReplacement(): void
     {
-        self::markTestSkipped('pending #393');
         [$status, , $body] = self::http('/tracking202/static/feeds/google/offlineconversions/?cn=Purchase&ac=--');
         self::assertSame(410, $status);
         self::assertStringContainsString('Setup > Offline Conversions', $body);
@@ -765,12 +753,9 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
 
     /**
      * 1.9.56 redirector rules matched c1-c4, utm_*, t202kw, referer and more.
-     *
-     * @group pending
      */
     public function testARedirectorRuleOnC1Matches(): void
     {
-        self::markTestSkipped('pending #398');
         self::row('202_rotators', ['id' => self::ROTATOR, 'public_id' => self::ROTATOR + self::PUBLIC_OFFSET,
             'user_id' => self::OWNER, 'name' => 'Spring split', 'default_url' => 'https://shop.example/default',
             'default_campaign' => null, 'default_lp' => null]);
