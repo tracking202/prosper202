@@ -12,8 +12,8 @@ include_once(substr(__DIR__, 0, -19) . '/202-config/static-endpoint-helpers.php'
 // click is the role's field (JVZooAdapter); a sale or rebill is recorded, a
 // refund or chargeback reverses it, and every answer says why in the status
 // JVZoo retries on (Response). The URL with no role, which 1.9.56 showed, is
-// refused (JVZooAdapter::ROLELESS_REFUSAL). The sender is JVZoo's server: no
-// visitor, so no privacy state applies.
+// the affiliate's, as in 1.9.56. The sender is JVZoo's server: no visitor, so
+// no privacy state applies.
 
 $receiver = new \Prosper202\PaymentNotification\Receiver(
     \Prosper202\PaymentNotification\JVZoo\JVZooAdapter::forQuery($_GET['role'] ?? null),

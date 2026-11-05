@@ -175,6 +175,13 @@ final class ShopifyAdapterTest extends TestCase
         }
     }
 
+    public function testASignedPurLinkSubidNamesItsClickForTheProcessorToVerify(): void
+    {
+        $order = self::order(['line_items' => [['id' => 1, 'properties' => [['name' => 't202subid', 'value' => '41-987-0123456789ab']]]]]);
+        $n = self::parse(self::webhook('orders/paid', $order));
+        self::assertSame([41, '41-987-0123456789ab'], [$n->clickId, $n->purLinkSubid]);
+    }
+
     public function testTheClickIsReadAsPaid1956ReadIt(): void
     {
         $hidden = self::order(['line_items' => [['id' => 1, 'properties' => [['name' => '_T202SUBID', 'value' => ' 77 ']]]]]);

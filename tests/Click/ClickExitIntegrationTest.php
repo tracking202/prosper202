@@ -10,7 +10,16 @@ use Prosper202\Click\ClickExit;
 use Prosper202\Click\ClickRecord;
 use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Click\OfferRoute;
+use Prosper202\Click\PurLinkExit;
+use Prosper202\Click\PurLinkLegacySubid;
+use Prosper202\Click\PurLinkPixels;
+use Prosper202\Click\PurLinkProof;
+use Prosper202\Click\PurLinkSubid;
+use Prosper202\Click\RecordedClicks;
 use Prosper202\Click\RotatorRoute;
+use Prosper202\Conversion\Ledger\MatchMethod;
+use Prosper202\Conversion\MysqlConversionRepository;
+use Prosper202\Conversion\PurLinkCampaignChanged;
 use Prosper202\Database\Connection;
 
 /**
@@ -64,10 +73,13 @@ final class ClickExitIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $range = 'BETWEEN ' . self::FIRST_CLICK . ' AND ' . (self::FIRST_CLICK + 99);
+        self::q('DELETE p FROM 202_attribution_pending p JOIN 202_conversion_logs c ON c.conv_id = p.conv_id'
+            . " WHERE c.click_id $range");
+        self::q("DELETE FROM 202_conversion_logs WHERE click_id $range");
         $tables = [
             '202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_variable',
             '202_google', '202_clicks_rotator', '202_clicks_record', '202_clicks_site',
-            '202_attribution_rollup_dirty_clicks',
+            '202_attribution_rollup_dirty_clicks', '202_purlink_exit_order', '202_purlink_pixel_fires',
         ];
         foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
@@ -78,6 +90,9 @@ final class ClickExitIntegrationTest extends TestCase
         self::q("DELETE ru FROM 202_rotator_rules ru JOIN 202_rotators r ON r.id = ru.rotator_id"
             . " WHERE r.user_id IN ($users)");
         self::q("DELETE FROM 202_rotators WHERE user_id IN ($users)");
+        self::q("DELETE FROM 202_landing_pages WHERE user_id IN ($users)");
+        self::q("DELETE x FROM 202_ppc_account_pixels x JOIN 202_ppc_accounts a USING (ppc_account_id) WHERE a.user_id IN ($users)");
+        self::q("DELETE FROM 202_ppc_accounts WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_aff_campaigns WHERE user_id IN ($users)");
     }
 
@@ -153,6 +168,749 @@ final class ClickExitIntegrationTest extends TestCase
         'click_outbound_site_url_id' => '42', 'click_redirect_site_url_id' => '44',
         'click_landing_site_url_id' => '41', 'click_cloaking_site_url_id' => '43', 'routes' => '0', 'marks' => '0',
     ];
+
+    public function testPageScopedExitOnlyMarksItsOwnActiveLandingPage(): void
+    {
+        $clickId = self::FIRST_CLICK + 90;
+        self::click($clickId);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = " . self::$campaign . ", landing_page_nickname = 'proof',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        $otherPage = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OTHER
+            . ", aff_campaign_id = " . self::$othersCampaign . ", landing_page_nickname = 'other',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        $nextPage = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = " . self::$campaign . ", landing_page_nickname = 'next',"
+            . " landing_page_url = 'https://example.test/next', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        $otherOffer = self::campaign(self::OWNER);
+
+        self::assertFalse(self::repo()->recordExit(new ClickExit(self::OWNER, $clickId, landingPageId: $otherPage)));
+        self::assertFalse(self::repo()->recordExit(new ClickExit(
+            self::OWNER,
+            $clickId,
+            offer: new OfferRoute($otherOffer, '7.25'),
+            landingPageId: $page,
+        )));
+        self::assertSame('0', self::state($clickId)['click_out']);
+        self::q("UPDATE 202_landing_pages SET landing_page_deleted = 1 WHERE landing_page_id = $page");
+        self::assertFalse(self::repo()->recordExit(new ClickExit(self::OWNER, $clickId, landingPageId: $page)));
+        self::assertSame('0', self::state($clickId)['click_out']);
+        self::q("UPDATE 202_landing_pages SET landing_page_deleted = 0 WHERE landing_page_id = $page");
+        self::q("UPDATE 202_clicks SET landing_page_id = $nextPage WHERE click_id = $clickId");
+        self::assertFalse(self::repo()->recordExit(new ClickExit(self::OWNER, $clickId, landingPageId: $page)));
+        self::assertSame('0', self::state($clickId)['click_out']);
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        self::assertTrue(self::repo()->recordExit(new ClickExit(self::OWNER, $clickId, landingPageId: $page)));
+        self::assertSame('1', self::state($clickId)['click_out']);
+    }
+
+    public function testPurLinkRoutesOnlyAValidProofToTheSimplePagesOwnCampaign(): void
+    {
+        $clickId = self::FIRST_CLICK + 91;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11102 WHERE aff_campaign_id = ' . self::$othersCampaign);
+        $anotherOffer = self::campaign(self::OWNER);
+        self::q("UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11103 WHERE aff_campaign_id = $anotherOffer");
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = " . self::$campaign . ", landing_page_nickname = 'simple',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+        $exit = new PurLinkExit(new Connection(self::requireScratch()));
+
+        self::assertSame('refused', $exit->recordOrdered($proof . 'x', null, '11', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, null, '12', $now + 60, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11102', '13', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11103', '14', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11101e0', '15', $now, $key));
+        self::assertNull($exit->subid($proof, '11102', $now, $key));
+        self::assertNull($exit->subid($proof, '11103', $now, $key));
+        self::assertSame('0', self::state($clickId)['click_out']);
+        self::assertSame('recorded', $exit->recordOrdered($proof, '11101', '16', $now, $key));
+        self::assertSame('1', self::state($clickId)['click_out']);
+        self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
+    }
+
+    public function testPurLinkAdvancedPageCanSelectOnlyItsAccountsActiveOffer(): void
+    {
+        $clickId = self::FIRST_CLICK + 92;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11102 WHERE aff_campaign_id = ' . self::$othersCampaign);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'advanced',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+        $exit = new PurLinkExit(new Connection(self::requireScratch()));
+
+        self::assertSame('refused', $exit->recordOrdered($proof, null, '17', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '11102', '18', $now, $key));
+        self::assertNull($exit->subid($proof, '11102', $now, $key));
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = ' . self::$campaign);
+        self::assertSame('refused', $exit->recordOrdered($proof, '11101', '19', $now, $key));
+        self::assertNull($exit->subid($proof, '11101', $now, $key));
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 0 WHERE aff_campaign_id = ' . self::$campaign);
+        $subid = $exit->subid($proof, '11101', $now, $key);
+        self::assertIsString($subid);
+        self::assertSame([
+            'click_id' => $clickId,
+            'landing_page_id' => $page,
+            'user_id' => self::OWNER,
+            'campaign_public_id' => 11101,
+        ], $exit->claims($subid, $key));
+        self::assertMatchesRegularExpression('/\A' . $clickId . '-11101-[0-9a-f]{12}\z/', $subid);
+        self::assertNull($exit->claims($subid, str_repeat('y', 32)));
+        self::assertNull($exit->claims(str_replace('-11101-', '-11102-', $subid), $key));
+        self::assertNull($exit->claims($clickId . '-11101', $key));
+        self::assertSame('0', self::state($clickId)['click_out']);
+        self::assertSame('recorded', $exit->recordOrdered($proof, '11101', '20', $now, $key));
+        self::assertSame('1', self::state($clickId)['click_out']);
+        self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
+    }
+
+    public function testPurLinkExitDoesNotRewriteAConvertedClicksValue(): void
+    {
+        $clickId = self::FIRST_CLICK + 93;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'converted',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page, click_lead = 1 WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+
+        $exit = new PurLinkExit(new Connection(self::requireScratch()));
+        $subid = $exit->subid($proof, '11101', $now, $key);
+        self::assertIsString($subid);
+        $seen = $exit->convert(
+            $subid,
+            $key,
+            static fn (int $user, int $click, int $campaign, string $payout): array => [$user, $click, $campaign, $payout]
+        );
+        self::assertSame([self::OWNER, $clickId, self::$campaign, '7.25'], $seen);
+        // The click had converted: its click-out is recorded, its offer is not, and the answer says so.
+        self::assertSame('converted', $exit->recordOrdered($proof, '11101', '21', $now, $key));
+        self::assertSame('1', self::state($clickId)['click_out']);
+        self::assertSame('4', self::state($clickId)['aff_campaign_id']);
+        self::assertSame('2.50000', self::state($clickId)['click_payout']);
+    }
+
+    public function testPurLinkConversionCanArriveBeforeTheExitReport(): void
+    {
+        $clickId = self::FIRST_CLICK + 94;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'early',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+        $conn = new Connection(self::requireScratch());
+        $exit = new PurLinkExit($conn);
+        $subid = $exit->subid($proof, '11101', $now, $key);
+        self::assertIsString($subid);
+        self::q("UPDATE 202_clicks SET landing_page_id = 0 WHERE click_id = $clickId");
+        $called = false;
+        self::assertNull($exit->convert($subid, $key, static function () use (&$called): void {
+            $called = true;
+        }));
+        self::assertFalse($called);
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        $writer = new MysqlConversionRepository($conn);
+
+        $result = $exit->convert($subid, $key, static function (
+            int $user,
+            int $click,
+            int $campaign,
+            string $payout
+        ) use ($writer): array {
+            return $writer->recordInTransaction(
+                $user,
+                ['click_id' => $click, 'transaction_id' => 'purlink-early', 'campaign_id' => $campaign, 'payout' => $payout],
+                MatchMethod::CLICK_ID,
+            );
+        });
+
+        self::assertIsArray($result);
+        self::assertGreaterThan(0, $result['convId']);
+        self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
+        self::assertSame('7.25000', self::state($clickId)['click_payout']);
+        $conversion = self::one('SELECT campaign_id, click_payout FROM 202_conversion_logs WHERE conv_id = '
+            . (int) $result['convId']);
+        self::assertSame(['campaign_id' => (string) self::$campaign, 'click_payout' => '7.25000'], $conversion);
+    }
+
+    public function testPurLinkConversionFailureRollsBackTheOfferAndExit(): void
+    {
+        $clickId = self::FIRST_CLICK + 95;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'rollback',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+        $exit = new PurLinkExit(new Connection(self::requireScratch()));
+        $subid = $exit->subid($proof, '11101', $now, $key);
+        self::assertIsString($subid);
+        $e = null;
+        try {
+            $exit->convert($subid, $key, static function (): never {
+                throw new \RuntimeException('conversion failed');
+            });
+        } catch (\RuntimeException $caught) {
+            $e = $caught;
+        }
+        self::assertNotNull($e, 'The failure was swallowed');
+        self::assertSame('conversion failed', $e->getMessage());
+        self::assertSame('0', self::state($clickId)['click_out']);
+        self::assertSame('4', self::state($clickId)['aff_campaign_id']);
+        self::assertSame('2.50000', self::state($clickId)['click_payout']);
+    }
+
+    /** @dataProvider offerPayoutModes */
+    public function testTwoAdvancedOffersRecordTheirOwnCampaignAndPayout(
+        string $mode,
+        int $offset,
+        string $expectedTotal,
+        ?string $firstSuperseded
+    ): void
+    {
+        $clickId = self::FIRST_CLICK + $offset;
+        self::click($clickId);
+        self::q("UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101, payout_mode = '$mode'"
+            . ' WHERE aff_campaign_id = ' . self::$campaign);
+        $second = self::campaign(self::OWNER);
+        $secondPublic = 11104 + $offset;
+        self::q("UPDATE 202_aff_campaigns SET aff_campaign_id_public = $secondPublic, aff_campaign_payout = 12.50"
+            . " WHERE aff_campaign_id = $second");
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'two offers',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+        $conn = new Connection(self::requireScratch());
+        $exit = new PurLinkExit($conn);
+        $firstToken = $exit->subid($proof, '11101', $now, $key);
+        $secondToken = $exit->subid($proof, (string) $secondPublic, $now, $key);
+        self::assertIsString($firstToken);
+        self::assertIsString($secondToken);
+        $first = $exit->recordConversion($firstToken, $key, [
+            'transaction_id' => 'offer-first', 'click_id' => 1, 'campaign_id' => self::$othersCampaign,
+            'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        $last = $exit->recordConversion($secondToken, $key, [
+            'transaction_id' => 'offer-second', 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($first);
+        self::assertIsArray($last);
+        self::assertGreaterThan(0, $first['convId']);
+        self::assertGreaterThan(0, $last['convId']);
+        self::assertSame(
+            ['campaign_id' => (string) self::$campaign, 'click_payout' => '7.25000'],
+            self::one('SELECT campaign_id, click_payout FROM 202_conversion_logs WHERE conv_id = ' . (int) $first['convId'])
+        );
+        self::assertSame(
+            ['campaign_id' => (string) $second, 'click_payout' => '12.50000'],
+            self::one('SELECT campaign_id, click_payout FROM 202_conversion_logs WHERE conv_id = ' . (int) $last['convId'])
+        );
+        self::assertSame($expectedTotal, self::state($clickId)['click_payout']);
+        self::assertSame(
+            ['superseded_reason' => $firstSuperseded],
+            self::one('SELECT superseded_reason FROM 202_conversion_logs WHERE conv_id = ' . (int) $first['convId'])
+        );
+        $retry = $exit->recordConversion($secondToken, $key, [
+            'transaction_id' => 'offer-second', 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($retry);
+        self::assertTrue($retry['duplicate']);
+        self::assertSame($expectedTotal, self::state($clickId)['click_payout']);
+        // A later campaign payout change must not change the amount reversed.
+        self::q("UPDATE 202_aff_campaigns SET aff_campaign_payout = 99 WHERE aff_campaign_id = $second");
+        $reversal = $exit->recordConversion($secondToken, $key, [
+            'transaction_id' => 'offer-second', 'reversal' => true, 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($reversal);
+        self::assertSame(
+            ['click_payout' => '-12.50000'],
+            self::one('SELECT click_payout FROM 202_conversion_logs WHERE conv_id = ' . (int) $reversal['convId'])
+        );
+        self::assertSame($mode === 'replace' ? '0.00000' : '7.25000', self::state($clickId)['click_payout']);
+        $explicit = $exit->recordConversion($secondToken, $key, [
+            'transaction_id' => 'offer-explicit', 'payout' => '3.125', 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($explicit);
+        self::assertSame(
+            ['campaign_id' => (string) $second, 'click_payout' => '3.12500'],
+            self::one('SELECT campaign_id, click_payout FROM 202_conversion_logs WHERE conv_id = ' . (int) $explicit['convId'])
+        );
+        self::assertSame($mode === 'replace' ? '3.12500' : '10.37500', self::state($clickId)['click_payout']);
+        self::q("UPDATE 202_aff_campaigns SET payout_mode = 'replace' WHERE aff_campaign_id = " . self::$campaign);
+    }
+
+    public function testASignedSubidStillConvertsAfterItsPageAndCampaignAreDeleted(): void
+    {
+        $clickId = self::FIRST_CLICK + 72;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'ended',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+        $conn = new Connection(self::requireScratch());
+        $exit = new PurLinkExit($conn);
+        $subid = $exit->subid($proof, '11101', $now, $key);
+        self::assertIsString($subid);
+
+        // The campaign ends: its page and campaign are deleted, and the
+        // network's postbacks keep coming. The SubID's MAC proves the route.
+        self::q("UPDATE 202_landing_pages SET landing_page_deleted = 1 WHERE landing_page_id = $page");
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = ' . self::$campaign);
+        try {
+            self::assertNull($exit->subid($proof, '11101', $now, $key), 'a deleted page prepares no new SubID');
+            self::assertSame('refused', $exit->recordOrdered($proof, '11101', '22', $now, $key), 'nor records a new click-out');
+            self::assertTrue($exit->convert($subid, $key, static fn (): bool => true), 'pb.php routes the late postback');
+            $late = $exit->recordConversion($subid, $key, [
+                'transaction_id' => 'after-delete', 'skip_bridge' => true,
+            ], MatchMethod::CLICK_ID);
+            self::assertIsArray($late);
+            self::assertSame(
+                ['campaign_id' => (string) self::$campaign],
+                self::one('SELECT campaign_id FROM 202_conversion_logs WHERE conv_id = ' . (int) $late['convId'])
+            );
+            $subject = $conn->transaction(static fn () => (new \Prosper202\Goals\PurLinkGoalSubjects($conn))
+                ->forRouteInTransaction(self::OWNER, $clickId, $page, self::$campaign));
+            self::assertNotNull($subject, 'goal events of the deleted page still find their subject');
+        } finally {
+            self::q('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 0 WHERE aff_campaign_id = ' . self::$campaign);
+            self::q("DELETE FROM 202_purlink_goal_subjects WHERE click_id = $clickId");
+        }
+    }
+
+    public function testDeferredPixelsFireEachServerConversionOnceForItsOwnPageview(): void
+    {
+        $clickId = self::FIRST_CLICK + 70;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'deferred',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        $account = self::insert('INSERT INTO 202_ppc_accounts SET user_id = ' . self::OWNER
+            . ", ppc_network_id = 1, ppc_account_name = 'source', ppc_account_time = 1");
+        self::q("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 1,"
+            . " pixel_code = 'https://source.example/px?v=[[payout]]&t=[[transactionid]]&s=[[subid]]'");
+        self::q("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 4,"
+            . " pixel_code = 'https://source.example/server?t=[[transactionid]]'");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page, ppc_account_id = $account WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $exitProof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 3600, $key);
+        $pixelProof = PurLinkProof::issue(PurLinkProof::PIXELS, $clickId, $page, self::OWNER, $now, 3600, $key);
+        $conn = new Connection(self::requireScratch());
+        $exit = new PurLinkExit($conn);
+        $pixels = new PurLinkPixels($conn);
+        $inEu = static fn (): bool => true;
+
+        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key, $inEu)['status'], 'no conversion yet');
+        self::assertSame('refused', $pixels->poll($exitProof, $now, $key, $inEu)['status'], 'an exit proof is not a pixel proof');
+        self::assertSame('refused', $pixels->poll($pixelProof, $now + 3600, $key, $inEu)['status'], 'expired');
+        self::assertSame('refused', $pixels->poll($pixelProof, $now, str_repeat('y', 32), $inEu)['status'], 'another key');
+
+        $subid = $exit->subid($exitProof, '11101', $now, $key);
+        self::assertIsString($subid);
+        $sale = $exit->recordConversion($subid, $key, [
+            'transaction_id' => 'deferred-sale', 'pixel_type' => 2, 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($sale);
+        $fired = $pixels->poll($pixelProof, $now, $key, $inEu);
+        self::assertSame('fired', $fired['status']);
+        self::assertSame(1, $fired['conversions']);
+        self::assertStringContainsString('https://source.example/px?v=7.25000&amp;t=deferred-sale&amp;s=' . $clickId, $fired['markup']);
+        self::assertStringNotContainsString('/server', $fired['markup'], 'server postbacks are never resent');
+        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key, $inEu)['status'], 'each conversion fires once');
+        self::assertSame(
+            ['expires_at' => (string) ($now + 3600)],
+            self::one('SELECT expires_at FROM 202_purlink_pixel_fires WHERE conv_id = ' . (int) $sale['convId'])
+        );
+
+        // A browser pixel conversion rendered its own markup; a reversed sale
+        // is not announced; a replaced one no longer counts.
+        $browser = $exit->recordConversion($subid, $key, [
+            'transaction_id' => 'browser-sale', 'pixel_type' => 1, 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($browser);
+        $taken = $exit->recordConversion($subid, $key, [
+            'transaction_id' => 'taken-back', 'pixel_type' => 2, 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($taken);
+        $reversal = $exit->recordConversion($subid, $key, [
+            'transaction_id' => 'taken-back', 'pixel_type' => 2, 'reversal' => true, 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($reversal);
+        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key, $inEu)['status']);
+
+        // A PurLink offer's goal outcome fires; a click subject's goal outcome
+        // (which a browser pixel may have reported) does not.
+        $outcome = static fn (string $key, string $tx): int => self::insert('INSERT INTO 202_conversion_logs SET click_id = '
+            . $clickId . ', user_id = ' . self::OWNER . ', campaign_id = ' . self::$campaign . ", click_payout = 3,"
+            . " click_time = $now, conv_time = $now, time_difference = '', pixel_type = 0, user_agent = '',"
+            . " source = 'goal', transaction_id = '$tx', dedupe_key = '$key'");
+        $offerGoal = $outcome('pgoal:1:2:1:1:e1', 'goal-offer');
+        // As in 1.9.56, a payment notification's sale (pixel_type 0) fires too;
+        // a carried pre-ledger value is not a conversion and never does.
+        $row = static fn (string $source, string $tx): int => self::insert('INSERT INTO 202_conversion_logs SET click_id = '
+            . $clickId . ', user_id = ' . self::OWNER . ', campaign_id = ' . self::$campaign . ", click_payout = 4,"
+            . " click_time = $now, conv_time = $now, time_difference = '', pixel_type = 0, user_agent = '',"
+            . " source = '$source', transaction_id = '$tx', dedupe_key = 'k-$tx'");
+        $ipn = $row('clickbank', 'cb-receipt');
+        $row('legacy_baseline', 'carried');
+        $outcome('goal:2:1:1:e2', 'goal-click');
+        $goal = $pixels->poll($pixelProof, $now, $key, $inEu);
+        self::assertSame(['fired', 2], [$goal['status'], $goal['conversions']]);
+        self::assertStringContainsString('t=goal-offer', $goal['markup']);
+        self::assertStringContainsString('t=cb-receipt', $goal['markup']);
+        self::assertStringNotContainsString('t=carried', $goal['markup']);
+        self::assertSame(['n' => '1'], self::one('SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = ' . $ipn));
+        self::assertSame(['n' => '1'], self::one('SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = ' . $offerGoal));
+
+        // A pageview's proof cannot read the click once it is on another page,
+        // and another account's click is never this proof's.
+        $moved = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'moved',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $moved WHERE click_id = $clickId");
+        self::assertSame('refused', $pixels->poll($pixelProof, $now, $key, $inEu)['status']);
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        $foreign = self::FIRST_CLICK + 71;
+        self::click($foreign, self::OTHER);
+        RecordedClicks::note($foreign);
+        $forged = PurLinkProof::issue(PurLinkProof::PIXELS, $foreign, $page, self::OWNER, $now, 3600, $key);
+        self::assertSame('refused', $pixels->poll($forged, $now, $key, $inEu)['status']);
+
+        // Fired rows go once no proof can poll for them.
+        (new \Prosper202\Click\PurLinkExitRetention($conn))->prune($now + 3601);
+        self::assertSame(
+            ['n' => '0'],
+            self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE click_id = $clickId")
+        );
+    }
+
+    /**
+     * A Meta Purchase (type 6) on the deferred pixel passes the gate a
+     * conversion request's does: the privacy setting for the poll's visitor,
+     * a consent refusal sent with the poll, and the click's campaign's
+     * identity capture. The owner's refusal is final (the conversion is
+     * marked fired); a visitor's consent refusal fires and marks nothing, so
+     * a later consenting poll fires it; a setting that cannot be read leaves
+     * it unmarked, for the next poll.
+     */
+    public function testDeferredMetaPurchaseFiresOnlyForATrackedConsentingVisitor(): void
+    {
+        $clickId = self::FIRST_CLICK + 73;
+        self::click($clickId);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'meta',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        $account = self::insert('INSERT INTO 202_ppc_accounts SET user_id = ' . self::OWNER
+            . ", ppc_network_id = 1, ppc_account_name = 'meta', ppc_account_time = 1");
+        self::q("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 1,"
+            . " pixel_code = 'https://source.example/px?t=[[transactionid]]'");
+        self::q("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 6,"
+            . " pixel_code = '123456789012345'");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page, ppc_account_id = $account,"
+            . ' aff_campaign_id = ' . self::$campaign . " WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::PIXELS, $clickId, $page, self::OWNER, $now, 3600, $key);
+        $conn = new Connection(self::requireScratch());
+        $sale = static fn (string $tx): int => self::insert('INSERT INTO 202_conversion_logs SET click_id = '
+            . $clickId . ', user_id = ' . self::OWNER . ', campaign_id = ' . self::$campaign . ', click_payout = 4,'
+            . " click_time = $now, conv_time = $now, time_difference = '', pixel_type = 0, user_agent = '',"
+            . " source = 'clickbank', transaction_id = '$tx', dedupe_key = 'k-$tx'");
+        $setting = static fn (string $privacy): \Closure => static fn (Connection $c, int $owner): string => $privacy;
+        $outsideEu = static fn (): bool => false;
+        $purchase = "facebook.com/tr?id=123456789012345&amp;ev=Purchase&amp;noscript=1&amp;eid=";
+
+        try {
+            $cases = [
+                'tracked and consenting' => ['disabled', $outsideEu, [], 1, true],
+                'privacy holds every visitor back' => ['all', $outsideEu, [], 1, false],
+                'privacy eu, visitor may be in the EU' => ['eu', static fn (): bool => true, [], 1, false],
+                'privacy eu, visitor outside the EU' => ['eu', $outsideEu, [], 1, true],
+                'campaign capture off' => ['disabled', $outsideEu, [], 0, false],
+            ];
+            foreach ($cases as $why => [$privacy, $inEu, $signals, $capture, $fires]) {
+                self::q("UPDATE 202_aff_campaigns SET identity_signals = $capture WHERE aff_campaign_id = " . self::$campaign);
+                $tx = 'meta-' . md5($why);
+                $conv = $sale($tx);
+                $polled = (new PurLinkPixels($conn, $setting($privacy)))->poll($proof, $now, $key, $inEu, $signals);
+                self::assertSame(['fired', 1], [$polled['status'], $polled['conversions']], $why);
+                self::assertStringContainsString('t=' . $tx, $polled['markup'], $why . ': other pixel types still render');
+                self::assertSame($fires, str_contains($polled['markup'], $purchase . $tx), $why);
+                self::assertSame(['n' => '1'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"), $why);
+            }
+
+            // The visitor refuses consent with the poll: nothing renders or is
+            // marked, and the conversion fires in full once they consent.
+            self::q('UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = ' . self::$campaign);
+            $conv = $sale('meta-consent-later');
+            foreach ([['p202_consent' => '0'], ['p202_consent' => 'no'], ['p202_consent' => ['1']]] as $refusal) {
+                $refused = (new PurLinkPixels($conn, $setting('disabled')))->poll($proof, $now, $key, $outsideEu, $refusal);
+                self::assertSame(['waiting', '', 0], [$refused['status'], $refused['markup'], $refused['conversions']]);
+            }
+            self::assertSame(['n' => '0'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"));
+            $consented = (new PurLinkPixels($conn, $setting('disabled')))->poll($proof, $now, $key, $outsideEu, ['p202_consent' => '1']);
+            self::assertSame(['fired', 1], [$consented['status'], $consented['conversions']]);
+            self::assertStringContainsString('t=meta-consent-later', $consented['markup']);
+            self::assertStringContainsString($purchase . 'meta-consent-later', $consented['markup']);
+
+            // A setting that cannot be read rolls the poll back: nothing is
+            // marked, and the next poll fires the Purchase.
+            self::q('UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = ' . self::$campaign);
+            $conv = $sale('meta-retry');
+            $broken = static fn (Connection $c, int $owner): string => throw new \RuntimeException('privacy unreadable');
+            $thrown = null;
+            try {
+                (new PurLinkPixels($conn, $broken))->poll($proof, $now, $key, $outsideEu, []);
+            } catch (\RuntimeException $e) {
+                $thrown = $e;
+            }
+            self::assertNotNull($thrown, 'an unreadable privacy setting fires nothing');
+            self::assertSame('privacy unreadable', $thrown->getMessage());
+            self::assertSame(['n' => '0'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"));
+            $retried = (new PurLinkPixels($conn, $setting('disabled')))->poll($proof, $now, $key, $outsideEu, []);
+            self::assertSame('fired', $retried['status']);
+            self::assertStringContainsString($purchase . 'meta-retry', $retried['markup']);
+        } finally {
+            self::q('UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = ' . self::$campaign);
+        }
+    }
+
+    public function testExpiredExitFencesArePrunedInBoundedBatches(): void
+    {
+        $base = 7888000000;
+        $now = time();
+        $rows = [];
+        for ($i = 0; $i < 1001; $i++) {
+            $rows[] = '(' . ($base + $i) . ',' . self::OWNER . ',1,1,1,' . ($now - 1) . ')';
+        }
+        $rows[] = '(' . ($base + 1001) . ',' . self::OWNER . ',1,1,1,' . ($now + 1) . ')';
+        self::q('INSERT INTO 202_purlink_exit_order VALUES ' . implode(',', $rows));
+        try {
+            $retention = new \Prosper202\Click\PurLinkExitRetention(new Connection(self::requireScratch()));
+            self::assertSame(1000, $retention->prune($now));
+            self::assertSame(1, $retention->prune($now));
+            self::assertSame(0, $retention->prune($now));
+            self::assertSame(['n' => '1'], self::one('SELECT COUNT(*) AS n FROM 202_purlink_exit_order WHERE click_id BETWEEN '
+                . $base . ' AND ' . ($base + 1001)));
+            self::assertSame(1, $retention->prune($now + 1));
+        } finally {
+            self::q('DELETE FROM 202_purlink_exit_order WHERE click_id BETWEEN ' . $base . ' AND ' . ($base + 1001));
+        }
+    }
+
+    public function testOrderedPurLinkExitsIgnoreRetriesAndOutOfOrderReports(): void
+    {
+        $clickId = self::FIRST_CLICK + 86;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public=11101 WHERE aff_campaign_id=' . self::$campaign);
+        $other = self::campaign(self::OWNER);
+        self::q("UPDATE 202_aff_campaigns SET aff_campaign_id_public=129979, aff_campaign_payout=12.5 WHERE aff_campaign_id=$other");
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id=' . self::OWNER
+            . ", aff_campaign_id=0, landing_page_type=1, landing_page_nickname='ordered',"
+            . " landing_page_url='https://example.test/', landing_page_time=1");
+        self::q("UPDATE 202_clicks SET landing_page_id=$page WHERE click_id=$clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+        $exit = new PurLinkExit(new Connection(self::requireScratch()));
+        self::assertSame('recorded', $exit->recordOrdered($proof, '129979', '2', $now, $key));
+        self::assertSame('stale', $exit->recordOrdered($proof, '11101', '1', $now, $key));
+        self::assertSame('duplicate', $exit->recordOrdered($proof, '129979', '2', $now, $key));
+        self::assertSame('conflict', $exit->recordOrdered($proof, '11101', '2', $now, $key));
+        self::assertSame((string) $other, self::state($clickId)['aff_campaign_id']);
+        self::assertSame('refused', $exit->recordOrdered($proof, '129979', '2.5', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '129979', '2147483648', $now, $key));
+        self::assertSame('refused', $exit->recordOrdered($proof, '129979', '3', $now + 60, $key));
+        self::assertSame('recorded', $exit->recordOrdered($proof, '11101', '3', $now, $key));
+        self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
+        self::assertSame(['sequence' => '3', 'campaign_id' => (string) self::$campaign],
+            self::one("SELECT sequence,campaign_id FROM 202_purlink_exit_order WHERE click_id=$clickId"));
+
+        // Once any visit converts, another exit records its ordering without
+        // rewriting older visits or the paid click's current campaign.
+        self::q("UPDATE 202_clicks SET click_lead=1 WHERE click_id=$clickId");
+        self::assertSame('converted', $exit->recordOrdered($proof, '129979', '4', $now, $key));
+        self::assertSame((string) self::$campaign, self::state($clickId)['aff_campaign_id']);
+        self::assertSame('4', self::one("SELECT sequence FROM 202_purlink_exit_order WHERE click_id=$clickId")['sequence']);
+
+        // An earlier-expiring proof of the click never shortens the fence.
+        $longer = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 3600, $key);
+        self::assertSame('converted', $exit->recordOrdered($longer, '11101', '5', $now, $key));
+        self::assertSame('converted', $exit->recordOrdered($proof, '11101', '6', $now, $key));
+        self::assertSame(['sequence' => '6', 'expires_at' => (string) ($now + 3600)],
+            self::one("SELECT sequence, expires_at FROM 202_purlink_exit_order WHERE click_id=$clickId"));
+    }
+
+    public function testPurLinkConversionClickUpdateRollsBackWithItsRouteAndLedger(): void
+    {
+        $clickId = self::FIRST_CLICK + 87;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'atomic update',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+        $exit = new PurLinkExit(new Connection(self::requireScratch()));
+        $subid = $exit->subid($proof, '11101', $now, $key);
+        self::assertIsString($subid);
+        $error = null;
+        try {
+            $exit->recordConversion($subid, $key, ['transaction_id' => 'callback-rollback', 'skip_bridge' => true],
+                MatchMethod::CLICK_ID, static function (): void { throw new \RuntimeException('failed click update'); });
+        } catch (\RuntimeException $caught) {
+            $error = $caught;
+        }
+        self::assertNotNull($error, 'a failed click update must roll back the conversion');
+        self::assertSame('failed click update', $error->getMessage());
+        self::assertSame(['campaign_id' => '4'], self::one("SELECT aff_campaign_id AS campaign_id FROM 202_clicks WHERE click_id = $clickId"));
+        self::assertSame(['n' => '0'], self::one("SELECT COUNT(*) AS n FROM 202_conversion_logs WHERE click_id = $clickId"));
+        $called = 0;
+        $result = $exit->recordConversion($subid, $key, ['transaction_id' => 'callback-rollback', 'skip_bridge' => true],
+            MatchMethod::CLICK_ID, static function (int $updatedClick, float $payout) use (&$called, $clickId): void {
+                self::assertSame($clickId, $updatedClick);
+                self::assertSame(7.25, $payout);
+                ++$called;
+            });
+        self::assertIsArray($result);
+        self::assertSame(1, $called);
+        self::assertSame(['campaign_id' => (string) self::$campaign],
+            self::one('SELECT campaign_id FROM 202_conversion_logs WHERE conv_id = ' . (int) $result['convId']));
+    }
+
+    public function testConvertedOldMultiVisitClickDoesNotHaveAnUnconvertedVisitRerouted(): void
+    {
+        $clickId = self::FIRST_CLICK + 89;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'old visits',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
+        self::q("INSERT INTO 202_clicks SELECT * FROM 202_clicks WHERE click_id = $clickId");
+        self::q("UPDATE 202_clicks SET click_lead = 1 WHERE click_id = $clickId LIMIT 1");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $page, self::OWNER, $now, 60, $key);
+        $exit = new PurLinkExit(new Connection(self::requireScratch()));
+        $subid = $exit->subid($proof, '11101', $now, $key);
+        self::assertIsString($subid);
+        $result = $exit->recordConversion($subid, $key, [
+            'transaction_id' => 'old-multiple-visits', 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertIsArray($result);
+        self::assertSame(
+            ['visits' => '2'],
+            self::one("SELECT COUNT(*) AS visits FROM 202_clicks WHERE click_id = $clickId AND aff_campaign_id = 4")
+        );
+        self::assertSame(
+            ['campaign_id' => (string) self::$campaign, 'click_payout' => '7.25000'],
+            self::one('SELECT campaign_id, click_payout FROM 202_conversion_logs WHERE conv_id = ' . (int) $result['convId'])
+        );
+    }
+
+    /** @return iterable<string, array{string, int, string, string|null}> */
+    public static function offerPayoutModes(): iterable
+    {
+        yield 'replace' => ['replace', 98, '12.50000', 'replace'];
+        yield 'accumulate' => ['accumulate', 99, '19.75000', null];
+    }
+
+    public function testLegacyPurLinkSubidOnlyResolvesTheClicksCurrentOwnedCampaign(): void
+    {
+        $clickId = self::FIRST_CLICK + 96;
+        self::click($clickId);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11101 WHERE aff_campaign_id = ' . self::$campaign);
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = 11102 WHERE aff_campaign_id = ' . self::$othersCampaign);
+        $resolver = new PurLinkLegacySubid(new Connection(self::requireScratch()));
+
+        self::assertNull($resolver->resolve($clickId . '-11101'));
+        self::q('UPDATE 202_clicks SET aff_campaign_id = ' . self::$campaign . " WHERE click_id = $clickId");
+        self::assertSame([
+            'click_id' => $clickId, 'user_id' => self::OWNER, 'campaign_id' => self::$campaign,
+        ], $resolver->resolve($clickId . '-11101'));
+        self::assertNull($resolver->resolve($clickId . '-11102'));
+        self::assertNull($resolver->resolve($clickId . '-11101x'));
+        self::q('UPDATE 202_clicks SET aff_campaign_id = ' . self::$othersCampaign . " WHERE click_id = $clickId");
+        self::assertNull($resolver->resolve($clickId . '-11102'));
+        self::assertNull($resolver->resolve($clickId . '-11101'));
+    }
+
+    public function testLegacyCampaignCheckRunsUnderTheConversionLock(): void
+    {
+        $clickId = self::FIRST_CLICK + 88;
+        self::click($clickId);
+        $writer = new MysqlConversionRepository(new Connection(self::requireScratch()));
+        try {
+            $writer->record(self::OWNER, [
+                'click_id' => $clickId, 'expected_campaign_id' => self::$campaign,
+                'transaction_id' => 'legacy-guard', 'skip_bridge' => true,
+            ], MatchMethod::CLICK_ID);
+            self::fail('A changed campaign was accepted');
+        } catch (PurLinkCampaignChanged) {
+            self::assertSame('0', self::one("SELECT COUNT(*) AS n FROM 202_conversion_logs WHERE click_id = $clickId")['n']);
+            self::assertSame('0', self::state($clickId)['click_out']);
+        }
+        self::q('UPDATE 202_clicks SET aff_campaign_id = ' . self::$campaign . " WHERE click_id = $clickId");
+        self::q('UPDATE 202_clicks_spy SET aff_campaign_id = ' . self::$campaign . " WHERE click_id = $clickId");
+        $result = $writer->record(self::OWNER, [
+            'click_id' => $clickId, 'expected_campaign_id' => self::$campaign,
+            'transaction_id' => 'legacy-guard', 'skip_bridge' => true,
+        ], MatchMethod::CLICK_ID);
+        self::assertGreaterThan(0, $result['convId']);
+        self::assertSame((string) self::$campaign, self::one('SELECT campaign_id FROM 202_conversion_logs WHERE conv_id = '
+            . (int) $result['convId'])['campaign_id']);
+    }
+
+    public function testExitInTransactionRefusesToRunWithoutACallerTransaction(): void
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('outside one');
+        self::repo()->recordExitInTransaction(new ClickExit(self::OWNER, self::FIRST_CLICK + 97));
+    }
 
     /**
      * off.php: the offer's campaign and payout, the click-out mark and its

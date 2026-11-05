@@ -83,6 +83,7 @@ final class SetupCodeController
             'landing_page_url' => $url,
             'base_url' => $base,
             'loader' => LandingPageCode::loader($base, $publicId),
+            'loader_deferred_pixel' => LandingPageCode::loader($base, $publicId, true),
         ];
 
         if ($type === 0) {
@@ -91,9 +92,10 @@ final class SetupCodeController
                     'offers' => "Landing page $id is a simple page: it links out to its own campaign. Offers are for an advanced page (landing_page_type 1); drop offers.",
                 ]);
             }
-            $this->requireLiveCampaign($page);
+            $campaignUrl = $this->requireLiveCampaign($page);
             $data += [
                 'aff_campaign_id' => (int) $page['aff_campaign_id'],
+                'purlink' => LandingPageCode::simplePurLink($campaignUrl),
                 'outbound_link' => LandingPageCode::simpleOutboundLink($base, $publicId),
                 'outbound_php' => LandingPageCode::simpleOutboundPhp($base, $publicId, $url, $now),
                 'outbound_javascript' => LandingPageCode::simpleOutboundJavascript($base, $publicId),
@@ -266,6 +268,7 @@ final class SetupCodeController
             'id' => $campaignId,
             'public_id' => (int) $publicId,
             'name' => $name,
+            'purlink' => LandingPageCode::campaignPurLink((string) $campaign['aff_campaign_url'], $publicId),
             'outbound_link' => LandingPageCode::campaignOutboundLink($base, $publicId),
             'outbound_php' => LandingPageCode::campaignOutboundPhp($base, $publicId, $name, $landingPageUrl, $now),
         ];
@@ -323,16 +326,19 @@ final class SetupCodeController
      *
      * @param array<string, mixed> $page
      */
-    private function requireLiveCampaign(array $page): void
+    private function requireLiveCampaign(array $page): string
     {
-        $stmt = $this->prepare('SELECT 1 FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1');
+        $stmt = $this->prepare('SELECT aff_campaign_url FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1');
         $campaignId = (int) $page['aff_campaign_id'];
         $this->bind($stmt, 'ii', $campaignId, $this->userId);
-        if ($this->fetchOne($stmt, 'Campaign lookup failed') === null) {
+        $campaign = $this->fetchOne($stmt, 'Campaign lookup failed');
+        if ($campaign === null) {
             throw new ValidationException('This landing page\'s campaign was removed', [
                 'aff_campaign_id' => 'Landing page ' . (int) $page['landing_page_id'] . " promotes campaign $campaignId, which is not yours or was removed: Get LP Code does not offer its code. Point it at a live campaign first (`p202 landing-page update " . (int) $page['landing_page_id'] . ' --aff-campaign-id <id>`).',
             ]);
         }
+
+        return (string) $campaign['aff_campaign_url'];
     }
 
     /**
@@ -344,7 +350,7 @@ final class SetupCodeController
     private function liveCampaign(int $campaignId): ?array
     {
         $stmt = $this->prepare(
-            'SELECT ac.aff_campaign_id, ac.aff_campaign_id_public, ac.aff_campaign_name
+            'SELECT ac.aff_campaign_id, ac.aff_campaign_id_public, ac.aff_campaign_name, ac.aff_campaign_url
              FROM 202_aff_campaigns ac
              INNER JOIN 202_aff_networks an ON an.aff_network_id = ac.aff_network_id AND an.user_id = ac.user_id
              WHERE ac.aff_campaign_id = ? AND ac.user_id = ? AND ac.aff_campaign_deleted = 0 AND an.aff_network_deleted = 0

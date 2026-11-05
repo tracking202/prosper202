@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification\Zaxaa;
 
-use Prosper202\Click\ClickId;
+use Prosper202\Click\ClickRef;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
@@ -195,7 +195,7 @@ final class ZaxaaAdapter implements ProviderAdapter, SignsThePaymentNotTheClick
      *
      * @param array<array-key, mixed> $fields
      */
-    private static function clickId(array $fields): ?int
+    private static function clickId(array $fields): ?ClickRef
     {
         $products = $fields['products'] ?? [];
         if (!is_array($products)) {
@@ -218,7 +218,7 @@ final class ZaxaaAdapter implements ProviderAdapter, SignsThePaymentNotTheClick
             throw self::malformed('The products carry different custom values, so they name no one click.');
         }
         $custom = (string) array_key_first($customs);
-        $clickId = ClickId::parse($custom);
+        $clickId = ClickRef::parse($custom);
         if ($clickId === null) {
             throw self::malformed(
                 'products[x][custom] is "' . self::shown($custom) . '", which is not a click id. The order link'

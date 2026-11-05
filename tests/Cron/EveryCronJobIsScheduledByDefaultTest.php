@@ -100,7 +100,8 @@ final class EveryCronJobIsScheduledByDefaultTest extends TestCase
         'sync-worker.php' => 'sync job worker; predates the measurement rewrite',
         'daily-email.php' => 'does nothing: the hosted daily email it served was switched off on 2026-10-29,'
             . ' and the file stays so an upgrade replaces the old one',
-        'dni.php' => 'DNI callback fetched by the hosted service with the install hash',
+        'dni.php' => 'does nothing: the hosted service stopped calling this DNI callback on 2026-10-12,'
+            . ' and the file stays so an upgrade replaces the old one',
         'dej.php' => 'data-engine summary fetched on demand',
         'process_dataengine_job.php' => 'included by DataEngine (class-dataengine.php), not scheduled',
         'health.php' => 'an authenticated status endpoint, not a job',

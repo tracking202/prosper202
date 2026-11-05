@@ -206,6 +206,13 @@ final class PayKickstartAdapterTest extends TestCase
         self::assertSame(9, self::parsed(['custom_subid' => ' 9 '])->clickId, 'trimmed, as signed');
     }
 
+    public function testASignedPurLinkSubidNamesItsClickForTheProcessorToVerify(): void
+    {
+        $n = self::parsed(['custom_subid' => '41-987-0123456789ab']);
+        self::assertSame([41, '41-987-0123456789ab'], [$n->clickId, $n->purLinkSubid]);
+        self::assertNull(self::parsed(['custom_subid' => '41'])->purLinkSubid);
+    }
+
     /** @return array<string, array{array<string, mixed>, string}> */
     public static function malformed(): array
     {

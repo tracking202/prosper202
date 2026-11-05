@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\PaymentNotification;
 
 use InvalidArgumentException;
+use Prosper202\Click\ClickRef;
 
 /**
  * A provider's notification as the processor reads it: one shape for every
@@ -18,6 +19,11 @@ final class Notification
     /** The last second a conversion row's int(10) conv_time holds. */
     public const LAST_TIME = 2147483647;
 
+    public readonly ?int $clickId;
+
+    /** The signed PurLink SubID that named the click, unverified; null for a plain click id. */
+    public readonly ?string $purLinkSubid;
+
     /**
      * @param string $event the provider's own name for the event ("sales", "refund")
      * @param string|null $transactionId the provider's id for this payment (for a
@@ -27,8 +33,9 @@ final class Notification
      * @param string|null $amount what the payment is worth, or how much a refund
      *        takes back (null: all of it)
      * @param string|null $currency ISO 4217, when the provider states one
-     * @param int|null $clickId the click the payment came from; null when the
-     *        notification names none
+     * @param ClickRef|int|null $clickId the click the payment came from; null
+     *        when the notification names none. A signed PurLink SubID is kept
+     *        in $purLinkSubid for the processor to verify.
      * @param int|null $occurredAt when the provider says it happened (Unix
      *        time), which dates the row; null when the notification states none
      */
@@ -39,9 +46,12 @@ final class Notification
         public readonly ?string $originalTransactionId = null,
         public readonly ?string $amount = null,
         public readonly ?string $currency = null,
-        public readonly ?int $clickId = null,
+        ClickRef|int|null $clickId = null,
         public readonly ?int $occurredAt = null,
     ) {
+        $this->purLinkSubid = $clickId instanceof ClickRef ? $clickId->purLinkSubid : null;
+        $clickId = $clickId instanceof ClickRef ? $clickId->clickId : $clickId;
+        $this->clickId = $clickId;
         if ($amount !== null && preg_match(self::AMOUNT, $amount) !== 1) {
             throw new InvalidArgumentException('a notification\'s amount is an exact decimal that is not negative');
         }

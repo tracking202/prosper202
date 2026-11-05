@@ -136,8 +136,8 @@ final class GoalsController
         $this->mustFind($id);
         $filters = ['goal_id' => $id];
         if (isset($params['subject_type'])) {
-            if (!in_array($params['subject_type'], [GoalSubject::CLICK, GoalSubject::INSTALL], true)) {
-                throw new ValidationException('Invalid subject_type', ['subject_type' => 'must be click or install']);
+            if (!in_array($params['subject_type'], [GoalSubject::CLICK, GoalSubject::INSTALL, GoalSubject::PURLINK], true)) {
+                throw new ValidationException('Invalid subject_type', ['subject_type' => 'must be click, install or purlink']);
             }
             $filters['subject_type'] = $params['subject_type'];
         }
@@ -147,6 +147,29 @@ final class GoalsController
         [$limit, $offset] = self::paging($params);
         $rows = $this->guard(fn () => $this->goals->liveOutcomes($this->userId, $filters, $limit, $offset));
         $total = $this->guard(fn () => $this->goals->countLiveOutcomes($this->userId, $filters));
+        $purLinkIds = [];
+        foreach ($rows as $row) {
+            if ($row['subject_type'] === GoalSubject::PURLINK) {
+                $purLinkIds[(int) $row['subject_id']] = (int) $row['subject_id'];
+            }
+        }
+        $purLinks = $this->guard(function () use ($purLinkIds): array {
+            if ($purLinkIds === []) {
+                return [];
+            }
+            $ids = array_values($purLinkIds);
+            $stmt = $this->conn->prepareRead('SELECT subject_id,click_id,landing_page_id FROM 202_purlink_goal_subjects'
+                . ' WHERE user_id=? AND subject_id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')');
+            $this->conn->bind($stmt, 'i' . str_repeat('i', count($ids)), [$this->userId, ...$ids]);
+            $found = [];
+            foreach ($this->conn->fetchAll($stmt) as $row) {
+                $found[(int) $row['subject_id']] = ['click_id' => (int) $row['click_id'], 'landing_page_id' => (int) $row['landing_page_id']];
+            }
+            if (count($found) !== count($ids)) {
+                throw new \RuntimeException('A PurLink outcome has no owned subject');
+            }
+            return $found;
+        });
 
         return [
             'data' => array_map(static fn (array $r): array => [
@@ -166,7 +189,7 @@ final class GoalsController
                 'campaign_id' => $r['campaign_id'] !== null ? (int) $r['campaign_id'] : null,
                 'app_registration_id' => $r['app_registration_id'] !== null ? (int) $r['app_registration_id'] : null,
                 'conversion_id' => $r['conversion_id'] !== null ? (int) $r['conversion_id'] : null,
-            ], $rows),
+            ] + ($r['subject_type'] === GoalSubject::PURLINK ? ['purlink' => $purLinks[(int) $r['subject_id']]] : []), $rows),
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
         ];
     }
@@ -447,8 +470,8 @@ final class GoalsController
             throw new ValidationException('Invalid subject', ['subject' => 'must be an object: {"type": "click" | "install", "click_at", "install_at"}']);
         }
         self::onlyKeys($s, ['type', 'click_at', 'install_at', 'rebases'], 'subject');
-        if (!in_array($s['type'] ?? null, [GoalSubject::CLICK, GoalSubject::INSTALL], true)) {
-            throw new ValidationException('Invalid subject', ['subject.type' => 'must be click or install']);
+        if (!in_array($s['type'] ?? null, [GoalSubject::CLICK, GoalSubject::INSTALL, GoalSubject::PURLINK], true)) {
+            throw new ValidationException('Invalid subject', ['subject.type' => 'must be click, install or purlink']);
         }
         $rebases = [];
         if (isset($s['rebases'])) {
@@ -465,6 +488,8 @@ final class GoalsController
             isset($s['click_at']) ? self::time($s['click_at'], 'subject.click_at') : null,
             isset($s['install_at']) ? self::time($s['install_at'], 'subject.install_at') : null,
             $rebases,
+            $s['type'] === GoalSubject::PURLINK ? 1 : null,
+            $s['type'] === GoalSubject::PURLINK ? 1 : null,
         );
 
         $rawEvents = $payload['events'] ?? null;
@@ -537,8 +562,8 @@ final class GoalsController
         $after = array_key_exists('after', $input) ? self::id($input['after'], 'after', allowZero: true) : 0;
         $subjectType = null;
         if (array_key_exists('subject_type', $input)) {
-            if (!in_array($input['subject_type'], [GoalSubject::CLICK, GoalSubject::INSTALL], true)) {
-                throw new ValidationException('Invalid subject_type', ['subject_type' => 'must be click or install (default: click for a campaign goal, install otherwise)']);
+            if (!in_array($input['subject_type'], [GoalSubject::CLICK, GoalSubject::INSTALL, GoalSubject::PURLINK], true)) {
+                throw new ValidationException('Invalid subject_type', ['subject_type' => 'must be click, install or purlink (default: click for a campaign goal, install otherwise)']);
             }
             $subjectType = (string) $input['subject_type'];
         }

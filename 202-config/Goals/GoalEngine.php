@@ -237,6 +237,22 @@ final class GoalEngine
      */
     private function current(int $userId, GoalSubject $subject): GoalSubject
     {
+        if ($subject->type === GoalSubject::PURLINK) {
+            $click = (new MysqlConversionLedger($this->conn))->lockClick((int) $subject->clickId, $userId);
+            if ($click === null) {
+                throw new GoalEngineException('PurLink click not found', GoalEngineException::NOT_FOUND);
+            }
+            $stmt = $this->conn->prepareWrite(
+                'SELECT click_id,campaign_id FROM 202_purlink_goal_subjects WHERE subject_id=? AND user_id=?'
+            );
+            $this->conn->bind($stmt, 'ii', [$subject->id, $userId]);
+            $row = $this->conn->fetchOne($stmt);
+            if ($row === null || (int) $row['click_id'] !== $subject->clickId || (int) $row['campaign_id'] !== $subject->campaignId) {
+                throw new GoalEngineException('PurLink goal subject not found', GoalEngineException::NOT_FOUND);
+            }
+            return new GoalSubject(GoalSubject::PURLINK, $subject->id, (int) $click['click_time'], null,
+                $subject->rebases, $subject->clickId, $subject->campaignId);
+        }
         if ($subject->type === GoalSubject::CLICK) {
             $click = (new MysqlConversionLedger($this->conn))->lockClick($subject->id, $userId);
             if ($click === null) {
@@ -432,12 +448,22 @@ final class GoalEngine
      *
      * @param list<GoalEvent> $events
      * @param (callable(list<string>): void)|null $onStored
+     * @param int|null $expectedCampaignId refuse a click event if its locked current campaign differs
      * @return array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int, outcomes: list<array<string, mixed>>, notifications: list<array<string, mixed>>}
      */
-    public function ingest(int $userId, GoalSubject $subject, array $events, MatchMethod $matchedBy, ?callable $onStored = null): array
-    {
+    public function ingest(
+        int $userId,
+        GoalSubject $subject,
+        array $events,
+        MatchMethod $matchedBy,
+        ?callable $onStored = null,
+        ?int $expectedCampaignId = null,
+    ): array {
+        if ($expectedCampaignId !== null && ($subject->type !== GoalSubject::CLICK || $expectedCampaignId < 1)) {
+            throw new \InvalidArgumentException('Expected campaign requires a click subject and a positive campaign ID');
+        }
         $events = array_map(static fn (GoalEvent $event): GoalEvent => $event->matchedBy($matchedBy), $events);
-        $work = fn (): array => $this->ingestLocked($userId, $subject, $events, $onStored);
+        $work = fn (): array => $this->ingestLocked($userId, $subject, $events, $onStored, $expectedCampaignId);
         try {
             $done = $this->conn->transaction($work);
         } catch (Throwable $e) {
@@ -454,14 +480,59 @@ final class GoalEngine
     }
 
     /**
+     * Store an isolated PurLink event inside the caller's click transaction.
+     * The caller must resolve the signed route and subject in that transaction,
+     * retry the whole transaction on a lock error, and call finishPurLinkIngest
+     * only after commit. A failed event rolls the route and subject back too.
+     *
+     * @param list<GoalEvent> $events
+     * @return array<string, mixed> opaque result for finishPurLinkIngest()
+     */
+    public function ingestPurLinkInTransaction(int $userId, GoalSubject $subject, array $events, MatchMethod $matchedBy): array
+    {
+        if ($subject->type !== GoalSubject::PURLINK) {
+            throw new \InvalidArgumentException('A PurLink goal subject is required');
+        }
+        $events = array_map(static fn (GoalEvent $event): GoalEvent => $event->matchedBy($matchedBy), $events);
+        return $this->conn->joinTransaction(function () use ($userId, $subject, $events): array {
+            $done = $this->ingestLocked($userId, $subject, $events);
+            $done['subject'] = $subject;
+            return $done;
+        });
+    }
+
+    /** Finish a committed ingest and run its notifications, never inside a transaction. */
+    public function finishPurLinkIngest(int $userId, array $done): array
+    {
+        if ($this->conn->inTransaction() || !isset($done['subject'], $done['result'], $done['post'])
+            || !$done['subject'] instanceof GoalSubject || $done['subject']->type !== GoalSubject::PURLINK) {
+            throw new \LogicException('A committed PurLink ingest result is required');
+        }
+        $result = $done['result'];
+        $result['outcomes'] = $done['post']['notices'];
+        $result['notifications'] = $this->afterCommit($userId, $done['subject'], $done['post']);
+        return $result;
+    }
+
+    /**
      * @param list<GoalEvent> $events
      * @return array{result: array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int}, post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>}}
      */
-    private function ingestLocked(int $userId, GoalSubject $subject, array $events, ?callable $onStored = null): array
-    {
+    private function ingestLocked(
+        int $userId,
+        GoalSubject $subject,
+        array $events,
+        ?callable $onStored = null,
+        ?int $expectedCampaignId = null,
+    ): array {
         $now = $this->now();
         $post = ['ledger' => [], 'clicks' => [], 'notices' => []];
         $subject = $this->current($userId, $subject);
+        // Check the locked visit, not the caller's earlier snapshot. An
+        // unsigned historical PurLink may only credit its current campaign.
+        if ($expectedCampaignId !== null && $subject->campaignId !== $expectedCampaignId) {
+            throw new GoalEngineException('Click campaign no longer matches', GoalEngineException::NOT_FOUND);
+        }
         $row = $this->lockSubject($userId, $subject, $now);
         $subject = $subject->withRebases(self::decodeRebases($row));
 
@@ -579,6 +650,7 @@ final class GoalEngine
      * $after, at most $limit per call; `next_after` continues:
      * - click: the clicks that have events, on the campaigns the goal
      *   applies to (its own campaign and those that attach it);
+     * - purlink: per-offer event streams for campaigns the goal applies to;
      * - install: the installs the goal applies to — every install of its
      *   registration (a registration goal), of the account (an account
      *   goal), or whose click is on a campaign it applies to.
@@ -615,8 +687,8 @@ final class GoalEngine
         }
         $scope = GoalScope::fromStored($goal['scope']);
         $subjectType ??= $scope === GoalScope::CAMPAIGN ? GoalSubject::CLICK : GoalSubject::INSTALL;
-        if ($subjectType !== GoalSubject::CLICK && $subjectType !== GoalSubject::INSTALL) {
-            throw new GoalEngineException('subject_type must be click or install', GoalEngineException::INVALID, ['subject_type' => 'must be click or install']);
+        if (!in_array($subjectType, [GoalSubject::CLICK, GoalSubject::INSTALL, GoalSubject::PURLINK], true)) {
+            throw new GoalEngineException('subject_type must be click, install or purlink', GoalEngineException::INVALID, ['subject_type' => 'must be click, install or purlink']);
         }
         $version ??= (int) $goal['current_version'];
         $versionRow = $this->goals->version($goalId, $version);
@@ -677,7 +749,19 @@ final class GoalEngine
                 $this->conn->bind($stmt, 'ii' . $types . 'i', [$userId, $after, ...$binds, $limit + 1]);
                 $subjectIds = array_map(static fn (array $r): int => (int) $r['subject_id'], $this->conn->fetchAll($stmt));
             }
-        } elseif ($campaigns !== []) {
+        } elseif ($subjectType === GoalSubject::PURLINK && $campaigns !== []) {
+            $marks = implode(',', array_fill(0, count($campaigns), '?'));
+            $stmt = $this->conn->prepareWrite(
+                "SELECT s.subject_id FROM 202_goal_subjects s
+                 JOIN 202_purlink_goal_subjects p ON p.subject_id=s.subject_id AND p.user_id=s.user_id
+                 WHERE s.subject_type='purlink' AND s.user_id=? AND s.subject_id>? AND s.event_count>0
+                   AND p.campaign_id IN ($marks)
+                   AND EXISTS (SELECT 1 FROM 202_clicks c WHERE c.click_id=p.click_id AND c.user_id=p.user_id)
+                 ORDER BY s.subject_id LIMIT ?"
+            );
+            $this->conn->bind($stmt, 'ii' . str_repeat('i', count($campaigns)) . 'i', [$userId, $after, ...$campaigns, $limit + 1]);
+            $subjectIds = array_map(static fn (array $r): int => (int) $r['subject_id'], $this->conn->fetchAll($stmt));
+        } elseif ($subjectType === GoalSubject::CLICK && $campaigns !== []) {
             $marks = implode(',', array_fill(0, count($campaigns), '?'));
             $stmt = $this->conn->prepareWrite(
                 "SELECT DISTINCT s.subject_id FROM 202_goal_subjects s JOIN 202_clicks c ON c.click_id = s.subject_id
@@ -693,9 +777,12 @@ final class GoalEngine
 
         $subjects = [];
         foreach ($subjectIds as $subjectId) {
-            $subject = $subjectType === GoalSubject::INSTALL
-                ? $this->installSubject($userId, $subjectId)
-                : $this->clickSubject($userId, $subjectId);
+            $subject = match ($subjectType) {
+                GoalSubject::INSTALL => $this->installSubject($userId, $subjectId),
+                GoalSubject::PURLINK => (new PurLinkGoalSubjects($this->conn))->find($userId, $subjectId)
+                    ?? throw new GoalEngineException('PurLink subject not found', GoalEngineException::NOT_FOUND),
+                default => $this->clickSubject($userId, $subjectId),
+            };
             if ($apply) {
                 $work = fn (): array => $this->reevaluateLocked($userId, $subject, $goalId, $version);
                 try {
@@ -1190,7 +1277,7 @@ final class GoalEngine
                         $convId,
                         $userId,
                         $subject->clickId,
-                        self::dedupeKeyFor($o, $v['install'])
+                        self::dedupeKeyFor($o, $v['install'], $subject)
                     );
                 } catch (LedgerIntegrityException $e) {
                     throw new GoalEngineException(
@@ -1326,9 +1413,14 @@ final class GoalEngine
         ];
     }
 
-    private static function dedupeKeyFor(Outcome $o, bool $isInstallGoal): string
+    private static function dedupeKeyFor(Outcome $o, bool $isInstallGoal, GoalSubject $subject): string
     {
-        return $isInstallGoal ? DedupeKey::install() : DedupeKey::goal($o->goalId, $o->version, $o->n, $o->eventId);
+        if ($isInstallGoal) {
+            return DedupeKey::install();
+        }
+        return $subject->type === GoalSubject::PURLINK
+            ? DedupeKey::purLinkGoal($subject->id, $o->goalId, $o->version, $o->n, $o->eventId)
+            : DedupeKey::goal($o->goalId, $o->version, $o->n, $o->eventId);
     }
 
     /**
@@ -1358,12 +1450,17 @@ final class GoalEngine
             'event_name' => $event?->name,
             'payable' => $payable,
             'payout' => Amount::fromUnits($payable ? (int) $amountUnits : ($amountUnits ?? 0)),
-            'dedupe_key' => self::dedupeKeyFor($o, false),
+            'dedupe_key' => self::dedupeKeyFor($o, false, $subject),
             'conv_time' => $o->reachedAt,
             // A tracked outcome is not a sale: no revenue event, no bridge.
             'skip_ltv' => !$payable,
             'skip_bridge' => !$payable,
         ];
+        if ($subject->type === GoalSubject::PURLINK) {
+            // The click may already have converted under another offer; the
+            // subject's signed route, not its current visit, owns this row.
+            $data['campaign_id'] = $subject->campaignId;
+        }
         if ($isInstallGoal) {
             // The install conversion itself (plan §5.2 step 5): one per
             // click by its key, pixel_type 4, at Google's install time.
@@ -1434,7 +1531,7 @@ final class GoalEngine
         if ($subject->clickId === null) {
             throw new \LogicException('a ledger row is attached only on a click');
         }
-        $key = self::dedupeKeyFor($o, $v['install']);
+        $key = self::dedupeKeyFor($o, $v['install'], $subject);
         // UNIQUE (click_id, dedupe_key) ignores `deleted`: a retired row
         // still holds the slot, so it is found here and never written twice.
         $stmt = $this->conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ? AND user_id = ? LIMIT 1');
