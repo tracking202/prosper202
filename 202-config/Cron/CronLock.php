@@ -32,6 +32,13 @@ final class CronLock
     public const ANALYTICS_DELIVERY_FILE = 'analytics-delivery.lock';
 
     /**
+     * A page's analytics delivery (202-account/ajax/messaging/track.php,
+     * MessagingService::syncExclusive()): one page at a time, and the cron's
+     * delivery waits for it rather than sending the same rows beside it.
+     */
+    public const ANALYTICS_PAGE_FILE = 'analytics-page.lock';
+
+    /**
      * @param resource $handle
      */
     private function __construct(private $handle)
@@ -44,7 +51,7 @@ final class CronLock
         fclose($this->handle);
     }
 
-    /** @param self::FILE|self::ANALYTICS_DELIVERY_FILE $file */
+    /** @param self::FILE|self::ANALYTICS_DELIVERY_FILE|self::ANALYTICS_PAGE_FILE $file */
     public static function path(string $file = self::FILE): string
     {
         return dirname(__DIR__, 2) . '/202-cronjobs/' . $file;
@@ -72,6 +79,25 @@ final class CronLock
         }
         throw new CronLockFailed('the cron job could not lock ' . $path . ', so it ran nothing: the filesystem'
             . ' it is on may not support locks (flock).');
+    }
+
+    /**
+     * The lock, waited for up to $seconds while another holder has it; null
+     * when it is still held then. For a holder whose hold is short and
+     * bounded (a page's delivery), never for another cron run.
+     *
+     * @throws CronLockFailed as take()
+     */
+    public static function takeWithin(string $path, float $seconds): ?self
+    {
+        $deadline = microtime(true) + max(0.0, $seconds);
+        while (true) {
+            $lock = self::take($path);
+            if ($lock !== null || microtime(true) >= $deadline) {
+                return $lock;
+            }
+            usleep(100000);
+        }
     }
 
     /**

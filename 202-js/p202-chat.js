@@ -95,11 +95,12 @@
 
     /* track.php delivers what it records unless the last delivery was too
        recent, and sends one batch a request; when it held rows back
-       ('throttled') or more are pending ('more') it says when to ask again.
+       ('throttled'), more are pending ('more') or another delivery is
+       running ('busy') it says when to ask again.
        The hourly cron delivers whatever a closed page leaves behind. */
     function scheduleFlush(res) {
         var body = res.body;
-        if (flushTimer !== null || !body || (body.delivery !== 'throttled' && body.delivery !== 'more')) {
+        if (flushTimer !== null || !body || (body.delivery !== 'throttled' && body.delivery !== 'more' && body.delivery !== 'busy')) {
             return;
         }
         var wait = typeof body.retry_after_s === 'number' && body.retry_after_s > 0 ? body.retry_after_s : 20;

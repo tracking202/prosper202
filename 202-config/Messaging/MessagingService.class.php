@@ -49,6 +49,10 @@ class MessagingService
     public const SYNC_MORE = 'more';           // batches were delivered and rows are still pending
     public const SYNC_FAILED = 'failed';       // delivery (or reading what to deliver) failed
     public const SYNC_UNACKED = 'unacknowledged'; // delivered, but the portal did not acknowledge a consent change
+    public const SYNC_BUSY = 'busy';           // another delivery (the cron's or another page's) is running; nothing sent
+
+    /** How long the cron's delivery waits for a page's delivery already under way (one batch, bounded by the client's timeouts). */
+    public const PAGE_DELIVERY_WAIT_SECONDS = 30;
 
     /** Events per /track call. */
     public const BATCH_SIZE = 100;
@@ -304,6 +308,42 @@ class MessagingService
         return self::SYNC_FAILED;
     }
 
+    /**
+     * A page's sync() (202-account/ajax/messaging/track.php), apart from every
+     * other delivery: under the page lock beside $deliveryLockPath, and only
+     * while the cron's delivery ($deliveryLockPath) is not running. Run beside
+     * either, the same pending rows were read and sent twice (J5TK). Nothing
+     * here waits: SYNC_BUSY leaves the rows queued for the page's next ask or
+     * the cron. The cron takes its lock, then waits for this one
+     * (deliverPendingExclusive()), so a page that found the cron's lock free
+     * sends before the cron reads anything. A lock that cannot be taken is
+     * SYNC_FAILED, never a delivery without it.
+     *
+     * @return self::SYNC_* the outcome
+     */
+    public function syncExclusive(string $deliveryLockPath): string
+    {
+        try {
+            $page = CronLock::take(self::pageLockPath($deliveryLockPath));
+            if ($page === null || CronLock::isHeld($deliveryLockPath) !== false) {
+                return self::SYNC_BUSY;
+            }
+        } catch (\Prosper202\Cron\CronLockFailed $e) {
+            error_log('MessagingService: the page delivery of user ' . $this->userId . ' could not lock: ' . $e->getMessage());
+
+            return self::SYNC_FAILED;
+        }
+
+        // $page is held until this returns.
+        return $this->sync();
+    }
+
+    /** The page delivery's lock, beside the cron delivery's. */
+    public static function pageLockPath(string $deliveryLockPath): string
+    {
+        return dirname($deliveryLockPath) . '/' . CronLock::ANALYTICS_PAGE_FILE;
+    }
+
     /** Whether an event, a changed snapshot or a consent change waits for delivery. */
     private function somethingPending(): bool
     {
@@ -352,7 +392,9 @@ class MessagingService
      * on every default deployment; 202-cronjobs/sync-messaging.php is the
      * same run on its own. Two at once read the same pending rows: each
      * event went out twice, and while the portal was down each spent two of
-     * its attempts on one outage.
+     * its attempts on one outage. A page's delivery (syncExclusive()) under
+     * way is waited for, up to PAGE_DELIVERY_WAIT_SECONDS; null too when it
+     * outlasts that.
      *
      * @return array{sent: int, more: int, idle: int, failed: int, stopped: int}|null
      * @throws \Prosper202\Cron\CronLockFailed when the lock cannot be taken for any other reason
@@ -367,6 +409,14 @@ class MessagingService
         // Held until this returns.
         $lock = CronLock::take($lockPath);
         if ($lock === null) {
+            return null;
+        }
+        // A page's delivery already under way is waited for, not run beside (J5TK); held until this returns.
+        $pages = CronLock::takeWithin(self::pageLockPath($lockPath), self::PAGE_DELIVERY_WAIT_SECONDS);
+        if ($pages === null) {
+            error_log('Analytics delivery: a page delivery held ' . self::pageLockPath($lockPath) . ' for over '
+                . self::PAGE_DELIVERY_WAIT_SECONDS . ' s; nothing delivered this run');
+
             return null;
         }
 
