@@ -134,12 +134,9 @@ final class DestinationStore
                 [$settings, $credentials] = $this->settings($userId, $adapter, $settings, $given);
                 if ($credentials !== null && $adapter instanceof AuthorisedDestination && (string) $row['credentials'] !== '') {
                     // Typed credentials never carry the grant; it stays while it is the same client's.
-                    try {
-                        $stored = self::decode(self::open((string) $row['credentials'], $this->key(false), $destinationId, $userId));
-                    } catch (\JsonException | \RuntimeException) {
-                        // Unreadable ones are replaced: typing them again is how they are mended.
-                        $stored = [];
-                    }
+                    // The key is read (and minted, as writeCredentials() would) outside the forgiving decode, so a
+                    // lock error on that read reaches transaction() instead of being taken for unreadable ones.
+                    $stored = self::readableOrNone((string) $row['credentials'], $this->key(true), $destinationId, $userId);
                     $credentials = $adapter->keptOnReplace($stored, $credentials);
                 }
             }
@@ -391,6 +388,21 @@ final class DestinationStore
     private static function json(array $value): string
     {
         return json_encode($value === [] ? new \stdClass() : $value, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * Sealed credentials decrypted and decoded, or [] when they cannot be: unreadable ones are replaced, since typing
+     * them again is how they are mended. Pure (no database work), so its catch cannot swallow a lock error.
+     *
+     * @return array<string, mixed>
+     */
+    private static function readableOrNone(string $sealed, #[\SensitiveParameter] string $key, int $destinationId, int $userId): array
+    {
+        try {
+            return self::decode(self::open($sealed, $key, $destinationId, $userId));
+        } catch (\JsonException | \RuntimeException) {
+            return [];
+        }
     }
 
     /** @return array<string, mixed> */
