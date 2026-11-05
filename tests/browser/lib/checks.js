@@ -304,6 +304,7 @@ const SETUP_PAGES = [
   { path: '/tracking202/setup/get_trackers.php', menu: 'Get Links' },
   { path: '/tracking202/setup/get_postback.php', menu: 'Postback/Pixel' },
   { path: '/tracking202/setup/offline_conversions.php', menu: 'Offline Conversions' },
+  { path: '/tracking202/setup/inbound_log.php', menu: 'Inbound Log' },
 ];
 
 /**

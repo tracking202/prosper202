@@ -1,0 +1,2 @@
+-- Fixed: Redirector rules on c1-c4, utm values, the keyword or the referer now work on a landing page's offer link (go.php?rpi= and offrtr.php?rpi=). That link carries none of the visitor's values, so the rules now read them from the click the landing page recorded, as paid 1.9.56 customers expect; if that click cannot be read, those rules are skipped and the next rule decides.
+app: Fixed: Redirector rules on c1-c4, UTM values, keyword and referer work on offer links.

@@ -60,6 +60,7 @@ final class ConversionTables
             self::attributionRollupDirtyClicks(),
             self::offlineConversionFeeds(),
             self::offlineConversionNames(),
+            self::inboundLog(),
         ];
     }
 
@@ -375,6 +376,40 @@ final class ConversionTables
                 `conversion_name` varchar(100) NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`user_id`,`platform`,`aff_campaign_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The postbacks, pixels and payment notifications this install answered,
+     * and what became of each (Prosper202\InboundLog). user_id 0 is a request
+     * no account could be found for. Bounded per account by the hourly prune
+     * (InboundLog::KEEP_PER_ACCOUNT backed, KEEP_REFUSED others: accepted
+     * is 1 for an account's request that wrote a conversion or event,
+     * InboundLog::BACKED_OUTCOMES); fields hold the request with every
+     * secret and visitor value redacted. From 1.9.80, added by its rung.
+     */
+    public static function inboundLog(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::INBOUND_LOG,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::INBOUND_LOG . "` (
+                `inbound_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL DEFAULT '0',
+                `received_at` int(10) unsigned NOT NULL,
+                `endpoint` varchar(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `method` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `http_status` smallint(5) unsigned NOT NULL,
+                `outcome` varchar(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `accepted` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `reason` varchar(500) NOT NULL DEFAULT '',
+                `click_id` bigint(20) unsigned DEFAULT NULL,
+                `conversion_id` int(11) unsigned DEFAULT NULL,
+                `transaction_id` varchar(255) DEFAULT NULL,
+                `fields` text,
+                PRIMARY KEY (`inbound_id`),
+                KEY `user_recent` (`user_id`,`inbound_id`),
+                KEY `user_kind_recent` (`user_id`,`accepted`,`inbound_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
