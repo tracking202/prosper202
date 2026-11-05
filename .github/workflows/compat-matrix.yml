@@ -161,9 +161,10 @@ jobs:
           path: ${{ runner.temp }}/integration-logs/
           if-no-files-found: ignore
 
-  # One stable check name for the whole matrix.
+  # One stable check name for the whole matrix. Skipped after a cancel, as
+  # php-integration.yml's gate is, so the cancelled run releases its group.
   compat:
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [unit, integration-shard]
     runs-on: ubuntu-latest
     steps:

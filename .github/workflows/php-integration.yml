@@ -126,9 +126,11 @@ jobs:
           path: ${{ runner.temp }}/integration-logs/
           if-no-files-found: ignore
 
-  # Keep the stable check name and fail it if any shard fails or is cancelled.
+  # Keep the stable check name and fail it if any shard fails. Not after a
+  # cancel: the gate would still queue for a runner and hold the concurrency
+  # group, so the newer run that cancelled this one waited on it.
   integration:
-    if: always()
+    if: ${{ !cancelled() }}
     needs: integration-shard
     runs-on: ubuntu-latest
     steps:
