@@ -423,31 +423,28 @@ final class JVZooAdapterTest extends TestCase
         }
     }
 
-    /** The URL 1.9.56 showed has no role and is read as the affiliate's, as 1.9.56 read it, saying so. */
-    public function testAUrlWithNoRoleIsReadAsTheAffiliatesAndSaysSo(): void
+    /**
+     * The URL 1.9.56 showed names no role. Its sale could be the affiliate's
+     * or the vendor's, so it is refused, recording nothing, and the answer
+     * names the two URLs to set instead.
+     */
+    public function testAUrlWithNoRoleIsRefusedNamingTheUrlsToSet(): void
     {
-        $roleless = JVZooAdapter::forQuery(null);
-        $notification = $roleless->parse(self::request(self::sale()));
-
-        self::assertEquals(
-            (new JVZooAdapter(JVZooRole::AFFILIATE))->parse(self::request(self::sale()))->withNote(JVZooAdapter::ROLELESS_NOTE),
-            $notification
-        );
-        self::assertSame(42, $notification->clickId);
-        self::assertSame('caffitid', $roleless->clickField()->field);
-        self::assertNull(JVZooAdapter::forQuery('affiliate')->parse(self::request(self::sale()))->note);
-        // A role that is neither is refused, as before.
-        foreach (['', 'seller', ['vendor']] as $other) {
+        foreach ([null, ''] as $none) {
+            $refusal = self::refusal(static fn () => JVZooAdapter::forQuery($none)->parse(self::request(self::sale())));
+            self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
+            self::assertSame(JVZooAdapter::ROLELESS_REFUSAL, $refusal->outcome->message);
+        }
+        self::assertStringContainsString('1.9.56', JVZooAdapter::ROLELESS_REFUSAL);
+        self::assertStringContainsString('?role=affiliate', JVZooAdapter::ROLELESS_REFUSAL);
+        self::assertStringContainsString('?role=vendor', JVZooAdapter::ROLELESS_REFUSAL);
+        // A role that is neither is refused as one.
+        foreach (['seller', 'Vendor', ['vendor']] as $other) {
             $refusal = self::refusal(static fn () => JVZooAdapter::forQuery($other)->parse(self::request(self::sale())));
             self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
+            self::assertStringContainsString('role is neither affiliate nor vendor', $refusal->outcome->message);
         }
-        // The vendor's subid is not read at the URL with no role.
-        $vendorOnly = $roleless->parse(self::request(self::sale(['caffitid' => '', 'cvendthru' => 'subid=42'])));
-        self::assertNull($vendorOnly->clickId);
-        // A notification it cannot read is refused saying how the URL was read, too.
-        $refusal = self::refusal(static fn () => $roleless->parse(self::request(self::sale(['ctransaction' => '']))));
-        self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
-        self::assertStringEndsWith(' ' . JVZooAdapter::ROLELESS_NOTE, $refusal->outcome->message);
+        self::assertSame(42, JVZooAdapter::forQuery('affiliate')->parse(self::request(self::sale()))->clickId);
     }
 
     public function testTheRoleIsReadFromTheQueryExactly(): void

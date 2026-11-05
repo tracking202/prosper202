@@ -43,17 +43,6 @@ final class Processor
         ProviderAdapter $provider,
         InboundRequest $request
     ): Outcome {
-        $outcome = $this->outcome($notification, $verification, $provider, $request);
-
-        return $notification->note === null ? $outcome : self::noted($outcome, ' ' . $notification->note);
-    }
-
-    private function outcome(
-        Notification $notification,
-        Verification $verification,
-        ProviderAdapter $provider,
-        InboundRequest $request
-    ): Outcome {
         $event = $notification->event;
         $accounts = $verification->accounts();
         $account = count($accounts) === 1 ? $accounts[0] : null;

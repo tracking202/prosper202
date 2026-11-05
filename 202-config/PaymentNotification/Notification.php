@@ -31,7 +31,6 @@ final class Notification
      *        notification names none
      * @param int|null $occurredAt when the provider says it happened (Unix
      *        time), which dates the row; null when the notification states none
-     * @param string|null $note said after every answer to it (how an old URL was read)
      */
     public function __construct(
         public readonly NotificationKind $kind,
@@ -42,7 +41,6 @@ final class Notification
         public readonly ?string $currency = null,
         public readonly ?int $clickId = null,
         public readonly ?int $occurredAt = null,
-        public readonly ?string $note = null,
     ) {
         if ($amount !== null && preg_match(self::AMOUNT, $amount) !== 1) {
             throw new InvalidArgumentException('a notification\'s amount is an exact decimal that is not negative');
@@ -53,20 +51,5 @@ final class Notification
         if ($occurredAt !== null && ($occurredAt <= 0 || $occurredAt > self::LAST_TIME)) {
             throw new InvalidArgumentException('a notification\'s time is a Unix time a conversion row can hold');
         }
-    }
-
-    public function withNote(string $note): self
-    {
-        return new self(
-            $this->kind,
-            $this->event,
-            $this->transactionId,
-            $this->originalTransactionId,
-            $this->amount,
-            $this->currency,
-            $this->clickId,
-            $this->occurredAt,
-            $note
-        );
     }
 }
