@@ -872,6 +872,11 @@ if (!function_exists('_upgrade_measurement_tables')) {
      * The table must be one of $definitions; anything that cannot be set
      * fails the step.
      *
+     * $hashApiKeys is set by the 1.9.80 step only: once 202_api_keys has
+     * converged, the keys still stored whole are hashed
+     * (_upgrade_hash_api_keys()), and one left whole fails the step. The
+     * released 1.9.78 step reconciles the same table and does not hash.
+     *
      * @param  array<int, \Prosper202\Database\Schema\SchemaDefinition> $definitions
      * @param  list<string> $retirements
      * @param  array<string, list<string>> $defaults table => its columns
@@ -880,7 +885,12 @@ if (!function_exists('_upgrade_measurement_tables')) {
      *         retired table is gone. False leaves the version where it is,
      *         so the next run retries the whole step.
      */
-    function _upgrade_measurement_tables(array $definitions, array $retirements = [], array $defaults = []): bool
+    function _upgrade_measurement_tables(
+        array $definitions,
+        array $retirements = [],
+        array $defaults = [],
+        bool $hashApiKeys = false
+    ): bool
     {
         $reconciler = new \Prosper202\Database\SchemaReconciler(
             static function (string $sql) {
@@ -950,9 +960,8 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 $ok = false;
                 continue;
             }
-            // The keys still stored whole are hashed once key_hash is there
-            // (_upgrade_hash_api_keys()).
-            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::API_KEYS
+            if ($hashApiKeys
+                && $definition->tableName === \Prosper202\Database\Schema\TableRegistry::API_KEYS
                 && !_upgrade_hash_api_keys()) {
                 $ok = false;
             }
@@ -4968,7 +4977,7 @@ class UPGRADE
                 \Prosper202\Database\Tables\UserTables::ipqsProgress(),
                 // Each API key as its SHA-256 and prefix, and an AI connection's
                 // key with its watcher token (Prosper202\User\ApiKeyStore); the
-                // reconcile hashes the keys already there.
+                // keys already there are hashed (the last argument, this step only).
                 \Prosper202\Database\Tables\UserTables::apiKeys(),
                 // The money-loss alerts' settings per account (no row is on;
                 // a row with enabled 0 is off), and the incident each was last
@@ -4986,7 +4995,7 @@ class UPGRADE
                 // install seeds them (DataSeeder); a paid install's are kept.
                 \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelContentType(),
                 \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelClickEvents(),
-            ]) && $paid_ok;
+            ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();
             }
