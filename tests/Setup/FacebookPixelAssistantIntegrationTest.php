@@ -54,7 +54,7 @@ final class FacebookPixelAssistantIntegrationTest extends TestCase
         foreach ([self::USER, self::OTHER] as $u) {
             self::$db->query("DELETE fb FROM 202_bot202_facebook_pixel_assistant fb JOIN 202_landing_pages lp ON lp.landing_page_id = fb.landing_page_id WHERE lp.user_id = $u");
             self::$db->query("DELETE p FROM 202_ppc_account_pixels p JOIN 202_ppc_accounts a ON a.ppc_account_id = p.ppc_account_id WHERE a.user_id = $u");
-            foreach (['202_dataengine', '202_landing_pages', '202_aff_campaigns', '202_ppc_accounts', '202_ppc_networks', '202_users_pref'] as $table) {
+            foreach (['202_clicks', '202_dataengine', '202_landing_pages', '202_aff_campaigns', '202_ppc_accounts', '202_ppc_networks', '202_users_pref'] as $table) {
                 self::$db->query("DELETE FROM $table WHERE user_id = $u");
             }
         }
@@ -156,10 +156,27 @@ final class FacebookPixelAssistantIntegrationTest extends TestCase
         $account = $this->ids['account mine'];
         self::exec("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 6, pixel_code = '123456789012345'");
 
-        $out = TrafficSourcePixels::fire(new Connection(self::$db), $account, ['payout' => '12', 'transactionid' => 'T1'], static fn (): bool => true);
+        $out = TrafficSourcePixels::fire(new Connection(self::$db), $account, ['payout' => '12', 'transactionid' => 'T1'], static fn (): bool => true, true, true, static fn (): bool => true);
 
         self::assertStringContainsString('https://www.facebook.com/tr?id=123456789012345&amp;ev=Purchase&amp;noscript=1&amp;cd%5Bvalue%5D=12.00&amp;cd%5Bcurrency%5D=EUR&amp;eid=T1', $out['markup']);
         self::assertSame([6], $out['types']);
+    }
+
+    /** The conversion's Purchase asks the click's own campaign, as the landing page events do. */
+    public function testTheConversionsVisitorCheckReadsTheClicksCampaign(): void
+    {
+        $campaign = $this->ids['offer mine'] - 70000;
+        self::exec('INSERT INTO 202_clicks SET click_id = 5341001, user_id = ' . self::USER . ", aff_campaign_id = $campaign,"
+            . " ppc_account_id = {$this->ids['account mine']}, click_cpc = 0, click_time = 0");
+        $ask = static fn (array $get = [], bool $tracking = true): bool
+            => TrafficSourcePixels::visitorMayBeTracked(new Connection(self::$db), 5341001, $tracking, $get);
+
+        self::assertTrue($ask());
+        self::assertFalse($ask(['p202_consent' => '0']), 'refused consent');
+        self::assertFalse($ask([], false), 'held back by the privacy setting');
+        self::assertFalse(TrafficSourcePixels::visitorMayBeTracked(new Connection(self::$db), 5341999, true, []), 'no such click');
+        self::exec("UPDATE 202_aff_campaigns SET identity_signals = 0 WHERE aff_campaign_id = $campaign");
+        self::assertFalse($ask(), 'identity capture off');
     }
 
     /** A fresh install seeds the lookup rows; seeding again keeps them. */

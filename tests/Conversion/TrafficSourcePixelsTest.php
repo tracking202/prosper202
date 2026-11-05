@@ -127,7 +127,7 @@ final class TrafficSourcePixelsTest extends TestCase
         ]);
         $db->whenQueryContainsReturnRows('user_account_currency', [['user_account_currency' => 'EUR']]);
 
-        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12', 'payout' => '24.5', 'transactionid' => 'ORDER-9'], static fn (): bool => true);
+        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12', 'payout' => '24.5', 'transactionid' => 'ORDER-9'], static fn (): bool => true, true, true, static fn (): bool => true);
 
         self::assertSame(
             "<img src='https://www.facebook.com/tr?id=123456789012345&amp;ev=Purchase&amp;noscript=1&amp;cd%5Bvalue%5D=24.50&amp;cd%5Bcurrency%5D=EUR&amp;eid=ORDER-9' height='1' width='1' style='display:none' alt='' />\n"
@@ -139,6 +139,70 @@ final class TrafficSourcePixelsTest extends TestCase
         $currency = $db->statementsContaining('user_account_currency');
         self::assertCount(1, $currency);
         self::assertSame([3], $currency[0]->boundValues);
+    }
+
+    /**
+     * The Purchase is held back as the landing page's events are: for a
+     * visitor the privacy setting holds back (an EU-covered one under 'eu'),
+     * who refused consent, or when nothing answered. Types 1-3 still fire.
+     */
+    public function testAPurchaseIsHeldBackForAVisitorWhoMayNotBeTracked(): void
+    {
+        $fire = static function (?\Closure $mayTrack): array {
+            $db = new FakeMysqliConnection();
+            $db->whenQueryContainsReturnRows('FROM 202_ppc_account_pixels WHERE ppc_account_id = ?', [
+                ['pixel_id' => 7, 'pixel_code' => '123456789012345', 'pixel_type_id' => 6],
+                ['pixel_id' => 8, 'pixel_code' => 'https://img.test/p?s=[[subid]]', 'pixel_type_id' => 1],
+            ]);
+
+            return TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12', 'payout' => '5'], null, true, false, $mayTrack);
+        };
+        $image = "<img src='https://img.test/p?s=12' height='0' width='0' style='display:none' />\n";
+
+        $asked = 0;
+        $eu = $fire(static function () use (&$asked): bool {
+            $asked++;
+
+            return \Prosper202\Http\PrivacyMode::tracksInFull('eu', static fn (): bool => true);
+        });
+        self::assertSame($image, $eu['markup'], 'an EU-covered visitor under eu');
+        self::assertSame(1, $asked);
+        self::assertSame($image, $fire(static fn (): bool => false)['markup'], 'refused consent');
+        self::assertSame($image, $fire(null)['markup'], 'nothing answered');
+        self::assertStringContainsString('ev=Purchase', $fire(static fn (): bool => true)['markup'], 'otherwise it fires');
+    }
+
+    /** The answer for a conversion: the landing page's check, on the click's own campaign. */
+    public function testWhetherTheVisitorMayBeTrackedIsTheLandingPagesCheck(): void
+    {
+        $ask = static function (bool $trackingEnabled, array $get, ?array $row, bool $fails = false): bool {
+            $db = new FakeMysqliConnection();
+            if ($fails) {
+                $db->whenQueryContainsResultFails('202_aff_campaigns');
+            } elseif ($row !== null) {
+                $db->whenQueryContainsReturnRows('202_aff_campaigns', [$row]);
+            }
+
+            return TrafficSourcePixels::visitorMayBeTracked(new Connection($db), 42, $trackingEnabled, $get);
+        };
+        $eu = \Prosper202\Http\PrivacyMode::tracksInFull('eu', static fn (): bool => true);
+
+        self::assertTrue($ask(true, [], ['identity_signals' => '1']));
+        self::assertTrue($ask(true, ['p202_consent' => '1'], ['identity_signals' => null]), 'no campaign: on');
+        self::assertFalse($ask($eu, [], ['identity_signals' => '1']), 'an EU-covered visitor under eu');
+        self::assertFalse($ask(true, ['p202_consent' => '0'], ['identity_signals' => '1']), 'refused consent');
+        self::assertFalse($ask(true, [], ['identity_signals' => '0']), 'identity capture off');
+        self::assertFalse($ask(true, [], null), 'no such click');
+
+        $log = (string) tempnam(sys_get_temp_dir(), 'p202-fb-log');
+        $previous = ini_set('error_log', $log);
+        try {
+            self::assertFalse($ask(true, [], null, true), 'an unreadable click');
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+        self::assertStringContainsString('Meta Purchase held back', (string) file_get_contents($log));
+        unlink($log);
     }
 
     public function testAFacebookPixelAssistantPixelWithoutABrowserIsSkipped(): void
@@ -164,7 +228,7 @@ final class TrafficSourcePixelsTest extends TestCase
         $log = (string) tempnam(sys_get_temp_dir(), 'p202-fb-log');
         $previous = ini_set('error_log', $log);
         try {
-            $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '5'], static fn (): bool => true);
+            $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '5'], static fn (): bool => true, true, true, static fn (): bool => true);
         } finally {
             ini_set('error_log', (string) $previous);
         }
@@ -196,7 +260,7 @@ final class TrafficSourcePixelsTest extends TestCase
             ['pixel_id' => 7, 'pixel_code' => '123456789012345', 'pixel_type_id' => 6],
         ]);
 
-        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '24.5', 'transactionid' => 'T'], static fn (): bool => true);
+        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '24.5', 'transactionid' => 'T'], static fn (): bool => true, true, true, static fn (): bool => true);
 
         self::assertStringContainsString('ev=Purchase', $out['markup']);
         self::assertStringNotContainsString('cd%5B', $out['markup']);
