@@ -160,7 +160,8 @@ function p202_alerts_card(AlertSettings $settings, array $contact, array $errors
         ? 'Your account has no valid email address; set one under your profile above.'
         : 'To ' . $e($contact['email']) . ', sent by this server\'s mail().';
     $webhookHelp = 'Queued for your account\'s webhooks subscribed to <code>' . $e(AlertKind::ConversionsStopped->value)
-        . '</code> or <code>' . $e(AlertKind::SpendWithoutConversions->value) . '</code> (or to every event).';
+        . '</code>, <code>' . $e(AlertKind::SpendWithoutConversions->value) . '</code> or <code>'
+        . $e(AlertKind::PostbackRefusalsSpiked->value) . '</code> (or to every event).';
 
     return '<section class="p202-panel mt-4" id="money-loss-alerts">'
         . '<div class="p202-panel__head"><h2 class="p202-panel__title">Money-loss alerts</h2>'
@@ -169,8 +170,9 @@ function p202_alerts_card(AlertSettings $settings, array $contact, array $errors
         . '<p class="form-text mt-0">A postback or pixel that breaks quietly costs every click until someone looks.'
         . ' Once an hour the cron job checks each of your campaigns, and tells you once per incident when a campaign'
         . ' that converts steadily has had no conversion for several times its usual gap while real clicks keep'
-        . ' arriving, or when a campaign\'s cost today passes your daily cap with no conversion today. A conversion'
-        . ' re-arms the first; the second is told at most once a day. Email goes to your account\'s address, Slack'
+        . ' arriving, when a campaign\'s cost today passes your daily cap with no conversion today, or when far more'
+        . ' of your postbacks and pixels are refused in an hour than usual (Setup › Inbound Log). A conversion'
+        . ' re-arms the first; the others are told at most once a day. Email goes to your account\'s address, Slack'
         . ' only if you set a webhook, and webhooks only to ones subscribed to the alerts.</p>'
         . '<form method="post" action="' . $action . '">'
         . '<input type="hidden" name="update_money_loss_alerts" value="1">' . p202_account_token_field()

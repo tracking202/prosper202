@@ -360,18 +360,24 @@ logged `blocked: …` and nothing is sent. A receiver on the operator's own
 network is admitted by `P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php`, the
 export webhooks' setting; link-local and metadata addresses never are.
 
-`alert.conversions_stopped` and `alert.spend_without_conversions` are the
-money-loss alerts (Account › Personal settings › Money-loss alerts). The
-cron job's hourly run queues them for webhooks subscribed to them, or to
-every event, unless the account turned the alerts or their webhook channel
-off. Both carry `{alert, campaign_id, campaign_name, message}`.
+`alert.conversions_stopped`, `alert.spend_without_conversions` and
+`alert.postback_refusals_spiked` are the money-loss alerts (Account ›
+Personal settings › Money-loss alerts). The cron job's hourly run queues
+them for webhooks subscribed to them, or to every event, unless the account
+turned the alerts or their webhook channel off. All carry `{alert,
+campaign_id, campaign_name, message}`.
 `conversions_stopped` adds `last_conversion_at`,
 `seconds_without_conversion`, `usual_gap_seconds` (between converting
 hours), `clicks_since_last_conversion`, `usual_clicks_per_converting_hour`,
 `conversions_last_7_days`, `converting_hours_last_7_days` and
 `gap_multiple`. Uploaded conversions are not counted in these.
 `spend_without_conversions` adds `day`, `timezone`, `cost_today`,
-`daily_cost_cap`, `currency` and `clicks_today`. See [Money-loss
+`daily_cost_cap`, `currency` and `clicks_today`.
+`postback_refusals_spiked` is about the account, not a campaign
+(`campaign_id` 0, `campaign_name` `all campaigns`), and adds
+`refused_last_hour`, `usual_refused_per_hour`, `baseline_hours`,
+`top_refusals` (a JSON object of the hour's most frequent refusal outcomes
+and their counts) and `inbound_log_kept_per_account`. See [Money-loss
 alerts](../features/money-loss-alerts.md).
 
 `subscription.changed` carries `{subscription_id, customer_id, action}`:
@@ -384,7 +390,7 @@ its status.
 `events` is a list of the events this install sends — `customer.updated`,
 `revenue.recorded`, `subscription.changed`, `conversion.recorded`,
 `engagement.recorded`, `alert.conversions_stopped`,
-`alert.spend_without_conversions` — or `["*"]` alone, which also takes the events later
+`alert.spend_without_conversions`, `alert.postback_refusals_spiked` — or `["*"]` alone, which also takes the events later
 versions add. Left out (or `[]`) it is every event this version sends. Any
 other name is a `422` naming it by position (`events.0`) with the list: a
 misspelled `revenue.recoded` used to make a webhook that received nothing,
