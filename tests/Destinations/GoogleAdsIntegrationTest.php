@@ -136,6 +136,7 @@ final class GoogleAdsIntegrationTest extends TestCase
             self::assertSame(['pending', '0', (string) ($now + GoogleAdsDestination::AUTH_WAIT)], [$row['status'], $row['attempts'], $row['next_attempt_at']], 'waiting is not a try, and every row waits');
         }
         self::assertStringContainsString('not connected', (string) self::deliveries($id)[0]['last_error']);
+        self::assertStringContainsString('not connected', (string) ($this->store()->get(1, $id)['waiting']['reason'] ?? ''));
         self::assertSame(0, array_sum($this->worker()->sendDue(10, 5, $now + 60)), 'not read again before it is connected');
 
         self::assertTrue($this->store()->authorise(1, $id, self::REFRESH, $now + 120));
@@ -168,6 +169,7 @@ final class GoogleAdsIntegrationTest extends TestCase
         $row = self::deliveries($id)[0];
         self::assertSame(['pending', '0', (string) ($clickTime + GoogleAdsDestination::CLICK_HOLD)], [$row['status'], $row['attempts'], $row['next_attempt_at']]);
         self::assertSame([], $this->requests);
+        self::assertNull($this->store()->get(1, $id)['waiting'], 'a click too recent waits for Google, not for the operator');
 
         // The positive control: once Google takes it, it is sent.
         self::assertSame(1, $this->worker()->sendDue(10, 5, $clickTime + GoogleAdsDestination::CLICK_HOLD)['sent']);
@@ -246,12 +248,19 @@ final class GoogleAdsIntegrationTest extends TestCase
             self::assertSame(['pending', '0', (string) ($now + GoogleAdsDestination::AUTH_WAIT)], [$row['status'], $row['attempts'], $row['next_attempt_at']], 'waiting is not a try, and every row waits');
         }
         self::assertStringContainsString('DEVELOPER_TOKEN_NOT_APPROVED', (string) self::deliveries($id)[0]['last_error'], 'the log says why');
+        $waiting = $this->store()->get(1, $id)['waiting'];
+        self::assertIsArray($waiting, 'the destination itself says its conversions wait for the operator');
+        self::assertSame([403, $now + GoogleAdsDestination::AUTH_WAIT], [$waiting['status_code'], $waiting['until']]);
+        self::assertStringStartsWith('fix the developer token', $waiting['reason']);
+        self::assertStringContainsString('DEVELOPER_TOKEN_NOT_APPROVED', $waiting['reason']);
+        self::assertSame($waiting, $this->store()->list(1)[0]['waiting']);
         self::assertSame(0, array_sum($this->worker()->sendDue(10, 5, $now + 60)), 'not tried again within the hour');
 
         // A new token (or customer ID) makes them due at once; Google now takes them.
         $this->store()->update(1, $id, ['settings' => ['customer_id' => '1234567890', 'conversion_action' => '987654'], 'credentials' => ['developer_token' => 'approvedToken12345'] + self::CREDENTIALS], $now + 120);
         self::assertSame(2, $this->worker()->sendDue(10, 5, $now + 120)['sent']);
         self::assertSame(['sent', 'sent'], array_column(self::deliveries($id), 'status'));
+        self::assertNull($this->store()->get(1, $id)['waiting'], 'sent: nothing waits for the operator any more');
     }
 
     public function testAMissingConversionActionHoldsOnlyItsRow(): void
@@ -269,7 +278,9 @@ final class GoogleAdsIntegrationTest extends TestCase
         self::assertSame([1, 1, 0], [$out['sent'], $out['retrying'], $out['failed']], 'another campaign\'s action still sends');
         $first = self::deliveries($id)[0];
         self::assertSame(['pending', '0', (string) ($now + GoogleAdsDestination::AUTH_WAIT)], [$first['status'], $first['attempts'], $first['next_attempt_at']]);
+        self::assertStringContainsString('NO_CONVERSION_ACTION_FOUND', (string) ($this->store()->get(1, $id)['waiting']['reason'] ?? ''), 'the destination says which action to fix');
         self::assertSame(1, $this->worker()->sendDue(10, 5, $now + GoogleAdsDestination::AUTH_WAIT)['sent'], 'once the action is there, it is sent');
+        self::assertNull($this->store()->get(1, $id)['waiting']);
     }
 
     public function testAKeyMintedInATransactionThatRolledBackIsNotKept(): void

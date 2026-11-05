@@ -132,7 +132,7 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
     {
         $secrets = [$credentials['developer_token'] ?? null, $credentials['oauth_client_secret'] ?? null, $credentials[self::GRANT] ?? null];
         if (!$this->authorised($credentials)) {
-            return new SendResult(false, true, null, 'waiting: Google Ads is not connected yet; press Connect Google Ads on Setup › Destinations', waitUntil: $now + self::AUTH_WAIT, destinationWaits: true);
+            return new SendResult(false, true, null, SendResult::FOR_OPERATOR . 'Google Ads is not connected yet; press Connect Google Ads on Setup › Destinations', waitUntil: $now + self::AUTH_WAIT, destinationWaits: true);
         }
         if ($test) {
             $facts = self::withTestClick($facts);
@@ -380,7 +380,7 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
             ? 'the Google authorisation was revoked or expired; press Connect Google Ads on Setup › Destinations again'
             : 'check the OAuth client ID and secret, then connect Google Ads again';
 
-        return new SendResult(false, true, $answer['status'], 'waiting: ' . $error . ' (' . $fix . ')', waitUntil: $now + self::AUTH_WAIT, destinationWaits: true);
+        return new SendResult(false, true, $answer['status'], SendResult::FOR_OPERATOR . $error . ' (' . $fix . ')', waitUntil: $now + self::AUTH_WAIT, destinationWaits: true);
     }
 
     private static function tokenKey(array $credentials): string
@@ -432,9 +432,9 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
             return null;
         }
         // The fix first: the log keeps 255 characters.
-        $fix = $account
-            ? 'waiting until the developer token, the connected Google user\'s access or the customer IDs are fixed on Setup › Destinations'
-            : 'waiting until this conversion action is fixed on Setup › Destinations';
+        $fix = SendResult::FOR_OPERATOR . ($account
+            ? 'fix the developer token, the connected Google user\'s access or the customer IDs on Setup › Destinations'
+            : 'fix this conversion action on Setup › Destinations');
 
         return new SendResult(false, true, $status, $fix . '; ' . $why, waitUntil: $now + self::AUTH_WAIT, destinationWaits: $account);
     }

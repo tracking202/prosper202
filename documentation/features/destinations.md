@@ -215,8 +215,10 @@ approved yet, the connected Google user losing access, a customer that is not
 enabled), any 403, and a wrong customer or login customer ID hold every
 conversion of the destination for an hour at a time; a missing or wrong
 conversion action holds only that conversion (it may be one campaign's
-action). Saving the destination's settings or credentials makes them due at
-once. Anything else Google refuses (an expired click, a malformed field)
+action). Setup › Destinations and the destination's `waiting` (API, `p202
+destination get`) show the latest such wait and Google's error. Saving the
+destination's settings or credentials, or connecting it again, makes them
+due at once. Anything else Google refuses (an expired click, a malformed field)
 fails at once, with Google's error code and message in `last_error`.
 
 **Test it**: *send test* uploads a made-up conversion with `validateOnly`,
@@ -288,4 +290,9 @@ POST /api/v3/destinations
 ```
 
 A read shows `status`: `ready`, `needs_authorisation` (a Google Ads
-destination not connected yet) or `credentials_unreadable`.
+destination not connected yet) or `credentials_unreadable`, and `waiting`:
+null, or `{"reason", "status_code", "until"}` while conversions wait for you
+(not connected, a refused refresh token, a developer token Google has not
+approved, lost access, a wrong customer ID or conversion action). `until` is
+when the next one is tried; saving or connecting the destination makes them
+due at once.

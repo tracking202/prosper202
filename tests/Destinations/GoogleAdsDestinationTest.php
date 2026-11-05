@@ -272,6 +272,7 @@ final class GoogleAdsDestinationTest extends TestCase
     {
         $result = $this->ads()->send($this->settings(), self::credentials(false), self::facts(), false, self::NOW);
         self::assertSame([false, true, true, self::NOW + 3600], [$result->delivered, $result->retry, $result->destinationWaits, $result->waitUntil]);
+        self::assertStringStartsWith(SendResult::FOR_OPERATOR, $result->reason, 'the destination\'s reads show it');
         self::assertStringContainsString('not connected', $result->reason);
         self::assertSame([], $this->sent);
     }
@@ -283,6 +284,7 @@ final class GoogleAdsDestinationTest extends TestCase
         self::assertTrue($result->destinationWaits);
         self::assertSame(self::NOW + 3600, $result->waitUntil);
         self::assertStringContainsString('invalid_grant', $result->reason);
+        self::assertStringStartsWith(SendResult::FOR_OPERATOR, $result->reason, 'the destination\'s reads show it');
         self::assertCount(1, $this->sent, 'no upload without a token');
 
         $this->tokens = [['status' => 503, 'body' => 'busy']];
@@ -330,8 +332,10 @@ final class GoogleAdsDestinationTest extends TestCase
             self::assertSame([$delivered, $retry, $waits, $destinationWaits], [$result->delivered, $result->retry, $result->waitUntil !== null, $result->destinationWaits], $name);
             if ($waits && $destinationWaits) {
                 self::assertSame(self::NOW + GoogleAdsDestination::AUTH_WAIT, $result->waitUntil, $name);
-                self::assertStringStartsWith('waiting until the developer token', $result->reason, $name);
+                self::assertStringStartsWith(SendResult::FOR_OPERATOR . 'fix the developer token', $result->reason, $name);
             }
+            // Only what the operator ends is shown on the destination as waiting for them.
+            self::assertSame(in_array($name, ['NO_CONVERSION_ACTION_FOUND', 'INVALID_CONVERSION_ACTION_TYPE'], true) || $destinationWaits, str_starts_with($result->reason, SendResult::FOR_OPERATOR), $name);
         }
         // "Too recent" a day after the click is a counted retry, not another wait.
         $this->uploads = [self::partialFailure('TOO_RECENT_EVENT')];

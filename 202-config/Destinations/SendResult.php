@@ -8,6 +8,13 @@ namespace Prosper202\Destinations;
 final class SendResult
 {
     /**
+     * How the reason of a wait only the operator ends begins (a destination not
+     * connected, a token not approved, a missing conversion action): the
+     * destination's reads show the latest such wait (DestinationStore).
+     */
+    public const FOR_OPERATOR = 'waiting for you: ';
+
+    /**
      * @param array<string, mixed> $summary what was sent, without identifiers' values
      * @param list<string> $messages the platform's validation messages (a test fire)
      * @param int|null $waitUntil not a try: the row stays pending, its attempts unchanged, until then

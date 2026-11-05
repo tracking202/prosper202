@@ -17237,6 +17237,19 @@ components:
             needs_authorisation: a Google Ads destination not yet connected
             to Google (POST /destinations/{id}/oauth/start); its conversions
             wait, pending, and are sent once it is.
+        waiting:
+          type: object
+          nullable: true
+          description: |
+            Null, or the latest wait only you can end while conversions are
+            held by it, using none of their tries: not connected, a refused
+            refresh token, a developer token Google has not approved, lost
+            access, a wrong customer ID or conversion action. Saving the
+            settings or credentials, or connecting again, makes them due.
+          properties:
+            reason: {type: string, description: "What to fix, then Google's error code and message"}
+            status_code: {type: integer, nullable: true}
+            until: {type: integer, description: When the next one is tried (Unix time)}
         created_at: {type: integer}
         updated_at: {type: integer}
     DestinationSettings:

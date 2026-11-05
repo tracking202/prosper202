@@ -242,6 +242,10 @@ echo p202_setup_error_flashes($errors, $formFields);
                             : 'event ' . p202_setup_e((string) ($settings['event_name'] ?? '')) . ' · client id from ' . p202_setup_e((string) ($settings['client_id_source'] ?? '')); ?>
                         <span class="p202-list__meta"><?php echo $typeMeta; ?> · <?php echo empty($settings['campaign_ids']) ? 'every campaign' : count($settings['campaign_ids']) . ' campaign(s)'; ?> · hashed user data <?php echo !empty($settings['send_user_data']) ? 'on' : 'off'; ?></span>
                     </div>
+                    <?php if (is_array($d['waiting'] ?? null)) {
+                        echo p202_flash('bad', 'Conversions are waiting for you, using none of their tries: ' . rtrim((string) $d['waiting']['reason'], '. ')
+                            . '. They are tried again at ' . $when((int) $d['waiting']['until']) . ', or at once when you connect it again or save its settings or credentials (p202 destination update).');
+                    } ?>
                     <?php if ($test !== null && (int) $test['id'] === $id) {
                         echo p202_flash($test['valid'] ? 'ok' : 'bad', $test['valid']
                             ? ($isAds

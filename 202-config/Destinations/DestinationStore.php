@@ -347,6 +347,7 @@ final class DestinationStore
             'settings' => $settings === [] ? new \stdClass() : $settings,
             'credentials_set' => (string) $row['credentials'] !== '',
             'status' => $this->status($row),
+            'waiting' => $this->waiting((int) $row['user_id'], (int) $row['destination_id'], time()),
             'created_at' => (int) $row['created_at'],
             'updated_at' => (int) $row['updated_at'],
         ];
@@ -373,6 +374,33 @@ final class DestinationStore
         }
 
         return $adapter->authorised($credentials) ? 'ready' : 'needs_authorisation';
+    }
+
+    /**
+     * The latest wait only the operator ends (SendResult::FOR_OPERATOR: not
+     * connected, a token Google has not approved, a missing conversion
+     * action), while conversions are held by it; null when none is. Saving
+     * the destination or connecting it again makes them due, which ends it.
+     *
+     * @return array{reason: string, status_code: int|null, until: int}|null
+     */
+    private function waiting(int $userId, int $destinationId, int $now): ?array
+    {
+        // status_next first: only rows waiting now are read, however long the log.
+        $stmt = $this->conn->prepareRead('SELECT last_error, last_status_code, next_attempt_at FROM `' . TableRegistry::DESTINATION_DELIVERIES
+            . "` WHERE status = 'pending' AND next_attempt_at > ? AND destination_id = ? AND user_id = ? AND kind = 'conversion' AND last_error LIKE ?
+             ORDER BY delivery_id DESC LIMIT 1");
+        $this->conn->bind($stmt, 'iiis', [$now, $destinationId, $userId, SendResult::FOR_OPERATOR . '%']);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            return null;
+        }
+
+        return [
+            'reason' => substr((string) $row['last_error'], strlen(SendResult::FOR_OPERATOR)),
+            'status_code' => $row['last_status_code'] === null ? null : (int) $row['last_status_code'],
+            'until' => (int) $row['next_attempt_at'],
+        ];
     }
 
     /** @param array<string, mixed> $credentials */
