@@ -151,6 +151,7 @@ final class UserTables
                 `user_delete_data_clickid` int(10) unsigned DEFAULT NULL,
                 `zaxaa_api_signature` varchar(250) DEFAULT NULL,
                 `jvzoo_ipn_secret_key` varchar(250) DEFAULT NULL,
+                `jvzoo_roleless_role` varchar(16) NOT NULL DEFAULT 'affiliate',
                 `user_account_currency` char(3) NOT NULL DEFAULT 'USD',
                 `revcontent_user_id` varchar(250) DEFAULT NULL,
                 `revcontent_user_secret` varchar(250) DEFAULT NULL,

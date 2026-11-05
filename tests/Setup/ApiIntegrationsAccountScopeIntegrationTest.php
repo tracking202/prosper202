@@ -434,6 +434,41 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
         }
     }
 
+    /** The JVZoo card's choice for the 1.9.56 URL: affiliate unless saved, saved per account, anything else refused. */
+    public function testTheJvzooChoiceForTheUrlWithNoRoleIsSaved(): void
+    {
+        $column = \Prosper202\PaymentNotification\JVZoo\JVZooRole::ROLELESS_COLUMN;
+        $choice = static function () use ($column): string {
+            $found = self::$db->query("SELECT $column FROM 202_users_pref WHERE user_id = " . self::USER);
+            self::assertInstanceOf(\mysqli_result::class, $found);
+
+            return (string) $found->fetch_row()[0];
+        };
+        try {
+            self::assertSame('affiliate', $choice(), 'unset is affiliate');
+            $out = self::page(self::PAGE);
+            self::assertStringContainsString('How should the 1.9.56 JVZIPN URL', $out);
+            self::assertMatchesRegularExpression('~value="affiliate" checked~', $out);
+            self::assertStringContainsString('I sell my own product on JVZoo (vendor)', $out);
+
+            $out = self::page(self::PAGE, [], ['token' => 'SESSION', 'change_jvzoo_roleless_role' => '1', $column => 'vendor']);
+            self::assertRedirected($out, 'vendor is saved');
+            self::assertSame('vendor', $choice());
+            self::assertMatchesRegularExpression('~value="vendor" checked~', self::page(self::PAGE));
+
+            $out = self::page(self::PAGE, [], ['token' => 'SESSION', 'change_jvzoo_roleless_role' => '1', $column => 'seller']);
+            self::assertSame('vendor', $choice(), 'a value that is neither changes nothing');
+            $out = self::page(self::PAGE, [], ['change_jvzoo_roleless_role' => '1', $column => 'affiliate']);
+            self::assertSame('vendor', $choice(), 'no token, nothing saved');
+
+            $out = self::page(self::PAGE, [], ['token' => 'SESSION', 'change_jvzoo_roleless_role' => '1', $column => 'affiliate']);
+            self::assertRedirected($out, 'affiliate is saved');
+            self::assertSame('affiliate', $choice());
+        } finally {
+            self::q("UPDATE 202_users_pref SET $column = 'affiliate' WHERE user_id = " . self::USER);
+        }
+    }
+
     public function testTheProgressEndpointAsksAboutTheAccountsOwnNetworks(): void
     {
         $endpoint = '202-account/ajax/dni.php';
