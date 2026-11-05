@@ -41,6 +41,9 @@ final class ServerFailureAnswersAreListedTest extends TestCase
         'api/legacy/functions.php | http_response_code |  | 500' => [1,
             'legacy_api_json(): the answer could not be encoded; no statement failed'],
         'api/v1/reports/index.php | http_response_code |  | 503' => [1, self::NO_DATABASE],
+        'api/v1/setup-endpoint.php | http_response_code |  | $p202LegacyStatus' => [1, self::CARRIES
+            . 'Api\V1\LegacySetup::answer(): 503 with no database, else failure() names the upgrade'
+            . ' (SchemaVersion::pendingUpgrade()) while it is pending, else 500 "Internal server error"'],
         'api/v2/categories/index.php | http_response_code |  | 503' => [1, self::NO_DATABASE],
         'api/v2/reports/index.php | http_response_code |  | 503' => [1, self::NO_DATABASE],
         'api/v3/Apps/Apple/PostbackIntake.php | errorresponse | $pending | 503' => [1, self::UPGRADE],
