@@ -1,0 +1,2 @@
+-- Fixed: Editing a link in Setup > Get Links gave it a new internal tracker id, so API and CLI clients holding the old one (GET /api/v3/trackers/{id}, /trackers/{id}/url, `p202 tracker get-url`) got a 404 after every edit. An edit now updates the link in place: its tracker id and its public id stay the same.
+app: Fixed: Editing a Get Links link keeps its tracker id, so API and CLI clients keep finding it.

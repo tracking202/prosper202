@@ -692,16 +692,18 @@
             if (!value.hasAttribute('data-suggest-template')) {
                 value.setAttribute('data-suggest-template', value.getAttribute('data-p202-suggest-url') || '');
             }
-            if (type === 'device') {
-                value.removeAttribute('data-p202-suggest-url');
-                value.setAttribute('list', 'rotator-devices');
-            } else if (type === 'ip') {
-                value.removeAttribute('data-p202-suggest-url');
+            // The page lists a fixed set's values; the hosted list knows the geo and user-agent ones.
+            var lists = { device: 'rotator-devices', eu: 'rotator-eu', fraud: 'rotator-fraud', visitor: 'rotator-visitor' };
+            var hosted = ['country', 'region', 'city', 'isp', 'browser', 'platform'];
+            if ((value.getAttribute('list') || '').indexOf('rotator-') === 0) {
                 value.removeAttribute('list');
+            }
+            if (lists[type]) {
+                value.removeAttribute('data-p202-suggest-url');
+                value.setAttribute('list', lists[type]);
+            } else if (hosted.indexOf(type) === -1) {
+                value.removeAttribute('data-p202-suggest-url');
             } else {
-                if (value.getAttribute('list') === 'rotator-devices') {
-                    value.removeAttribute('list');
-                }
                 value.setAttribute('data-p202-suggest-url', value.getAttribute('data-suggest-template').replace('%TYPE%', encodeURIComponent(type)));
             }
         }

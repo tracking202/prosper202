@@ -94,20 +94,43 @@ final class Criterion
         ));
     }
 
+    /** The values a criterion of a fixed set takes, compared in any case (CriterionMatcher). */
+    public const FIXED_VALUES = [
+        'eu' => ['true', 'false', 'Unknown'],
+        'fraud' => ['true', 'false'],
+        'visitor' => ['filtered', 'unique'],
+    ];
+
     /**
      * Why a typed value cannot be stored as a criterion of this type, in
-     * words for the person who typed it, or null. Only an IP criterion has a
-     * form of its own (IpCriterion::refusal()), and a value holding ALL is
-     * held to none: it matches every visitor whatever the type, and the IP
-     * check refused it as no address.
+     * words for the person who typed it, or null. An IP address or range has
+     * a form of its own, and eu, fraud and visitor a fixed set of values; a
+     * value holding ALL is held to none: it matches every visitor whatever
+     * the type, and the IP check refused it as no address.
      */
     public static function refusal(string $type, string $value): ?string
     {
-        if ($type !== 'ip' || self::matchesEveryone(self::values($value))) {
+        $values = self::values($value);
+        if (self::matchesEveryone($values)) {
             return null;
         }
+        if ($type === 'ip') {
+            return IpCriterion::refusal($value);
+        }
+        if ($type === 'iprange') {
+            return $values === [] ? 'An IP range rule needs at least one range.' : IpRange::refusal($value);
+        }
+        $allowed = self::FIXED_VALUES[$type] ?? null;
+        if ($allowed === null) {
+            return null;
+        }
+        $unknown = array_values(array_filter(
+            $values,
+            static fn (string $v): bool => !in_array(strtolower($v), array_map('strtolower', $allowed), true)
+        ));
 
-        return IpCriterion::refusal($value);
+        return $unknown === [] ? null
+            : '"' . implode('", "', $unknown) . '" never matches a ' . $type . ' rule: use ' . implode(' or ', $allowed) . '.';
     }
 
     /** A value as the writers store it for its type: an IP list as canonical addresses, unless it holds ALL. */
