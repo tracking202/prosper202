@@ -60,6 +60,8 @@ $rotator_sql = "SELECT
 					   ac.aff_campaign_payout,
 					   ac.aff_campaign_cloaking,
 					   up.maxmind_isp,
+					   up.user_keyword_searched_or_bidded,
+					   up.user_pref_referer_data,
 					   lp.landing_page_url
 				FROM 202_rotators AS rt
 				LEFT JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = rt.default_campaign
@@ -135,150 +137,44 @@ if( !$detect->isMobile() && !$detect->isTablet() ){
 
 $default = true;
 
-foreach ($rule_row as $rule) {
-	
-	$rotate = [];
-	$count = 0;
+// A visitor rule reads the click as the landing page recorded it. The
+// request is the landing page's offer link, not the visitor's own, so a
+// c1-c4, utm, keyword or referer rule cannot be decided here and is skipped.
+$offrtrVisitor = p202RotatorVisitor(
+	$db,
+	(int) $rotator_row['user_id'],
+	$ip_address,
+	$GeoData,
+	$IspData,
+	$result,
+	$rotator_row['user_keyword_searched_or_bidded'] ?? null,
+	$rotator_row['user_pref_referer_data'] ?? null,
+	// A failed read skips the rule; the visitor goes on to the next one.
+	static function () use ($mysql, $db, $offrtrClickId, $rotator_row): ?bool {
+		try {
+			$conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
+			$stmt = $conn->prepareWrite('SELECT c.click_filtered FROM ' . \Prosper202\Click\LatestVisit::of('?') . ' AS c WHERE c.user_id = ?');
+			$conn->bind($stmt, 'ii', [(int) $offrtrClickId, (int) $rotator_row['user_id']]);
+			$row = $conn->fetchOne($stmt);
+		} catch (\Throwable $offrtrFilteredError) {
+			error_log('offrtr.php: reading whether click ' . $mysql['click_id'] . ' is filtered failed ('
+				. $offrtrFilteredError->getMessage() . '); its visitor rules are skipped');
 
+			return null;
+		}
+
+		return $row === null ? null : (string) ($row['click_filtered'] ?? '0') === '1';
+	}
+)->withoutLinkFacts();
+
+foreach ($rule_row as $rule) {
 	$mysql['rule_id'] = $db->real_escape_string((string)$rule['rule_id']);
 	$criteria_sql = "SELECT type, statement, value
 				 FROM 202_rotator_rules_criteria
 				 WHERE rule_id='".$mysql['rule_id']."'"; 
 	$criteria_row = foreach_memcache_mysql_fetch_assoc($db, $criteria_sql);
 
-	foreach ($criteria_row as $criteria) {
-		switch ($criteria['statement']) {
-			case 'is':
-				$statement = true;		
-			break;
-					
-			case 'is_not':
-				$statement = false;	
-			break;
-		}
-
-		$values = \Prosper202\Rotator\Criterion::values($criteria['value']);
-
-		if (\Prosper202\Rotator\Criterion::matchesEveryone($values)) {
-			
-			$rotate[] = true;
-
-		} else {
-
-			switch ($criteria['type']) {
-				case 'country':
-					$country = $GeoData['country']."(".$GeoData['country_code'].")";
-
-					if ($statement) {
-						if (in_array($country, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($country, $values)) {
-							$rotate[] = true;
-						}
-					}
-						
-				break;
-				
-				case 'region':
-					$region = $GeoData['region']."(".$GeoData['country_code'].")";
-					
-					if ($statement) {
-						if (in_array($region, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($region, $values)) {
-							$rotate[] = true;
-						}
-					}
-
-				break;
-
-				case 'city':
-					$city = $GeoData['city']."(".$GeoData['country_code'].")";
-					
-					if ($statement) {
-						if (in_array($city, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($city, $values)) {
-							$rotate[] = true;
-						}
-					}
-				break;
-
-				case 'isp':
-					
-					if ($statement) {
-						if (in_array($IspData, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($IspData, $values)) {
-							$rotate[] = true;
-						}
-					}
-				break;
-
-				case 'ip':
-					if ($statement) {
-						if (\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
-							$rotate[] = true;
-						}
-					}
-
-				break;
-
-				case 'platform':
-					if ($statement) {
-						if (in_array($result->os->family, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($result->os->family, $values)) {
-							$rotate[] = true;
-						}
-					}
-				break;
-
-				case 'device':
-					if ($statement) {
-						if (in_array(strtolower($result->device->family), $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array(strtolower($result->device->family), $values)) {
-							$rotate[] = true;
-						}
-					}
-				break;
-
-				case 'browser':
-					if ($statement) {
-						if (in_array($result->ua->family, $values)) {
-							$rotate[] = true;
-						}
-					} else {
-						if (!in_array($result->ua->family, $values)) {
-							$rotate[] = true;
-						}
-					}
-				break;
-			}
-		}
-
-		$count++;
-
-	}
-
-	if ($count == count($rotate)) {
+	if (\Prosper202\Rotator\CriterionMatcher::rule($criteria_row, $offrtrVisitor)) {
 		$rule_redirects_sql = "SELECT
 					   2c.click_id, 
 					   2c.user_id,
