@@ -14,11 +14,14 @@ $mysql['use_pixel_payout'] = 0;
 $mysql['cid'] = 0;
 $mysql['click_id'] = 0;
 
+// Query string, then a form-encoded POST body (as paid 1.9.56 read): the query wins a name both send.
+$request = p202PostbackRequest($_GET, $_POST);
+
 // The click: an exact positive integer from subid (or sid), or a 404.
 // is_numeric() plus a cast used to turn "123.9" into click 123, and a
 // subid of 0 fell back to "the last click from this IP" — for a
 // server-to-server postback, the network's own server.
-$parsedClickId = p202ParseClickId($_GET['subid'] ?? null) ?? p202ParseClickId($_GET['sid'] ?? null);
+$parsedClickId = p202ParseClickId($request['subid'] ?? null) ?? p202ParseClickId($request['sid'] ?? null);
 if ($parsedClickId === null) {
 	p202RespondJsonError(404, 'SubID not found');
 }
@@ -71,10 +74,10 @@ $mysql['click_time'] = $db->real_escape_string((string)($cvar_sql_row['click_tim
 $mysql['ppc_account_id'] = $db->real_escape_string((string) ($source_row['ppc_account_id'] ?? ''));
 $mysql['referer'] = urlencode((string) $db->real_escape_string((string)($cvar_sql_row['site_url_address'] ?? '')));
 
-if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
+if (array_key_exists('amount', $request) && is_numeric($request['amount'])) {
 	$mysql['use_pixel_payout'] = 1;
-	$mysql['payout'] = $db->real_escape_string((string)$_GET['amount']);
-	$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
+	$mysql['payout'] = $db->real_escape_string((string)$request['amount']);
+	$mysql['click_payout'] = $db->real_escape_string((string)$request['amount']);
 }
 
 // Raw: replaceTokens() encodes them, and no statement here reads them.
@@ -126,7 +129,7 @@ $mysql['conv_time'] = $conv_time;
 // campaign without goals records its plain conversion below, as it always
 // has, with the event's name kept on the row.
 try {
-	$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['browser' => false]);
+	$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $request, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['browser' => false]);
 } catch (\Throwable $webEventError) {
 	error_log('gpb: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
 	p202RespondJsonError(500, 'Failed to record event');
@@ -137,7 +140,7 @@ if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
 }
 $eventName = $webEvent['event_name'] ?? null;
 
-$reversal = p202ExtractReversal($_GET);
+$reversal = p202ExtractReversal($request);
 try {
 	$conversionResult = p202RecordConversion(
 		$db,
@@ -148,7 +151,7 @@ try {
 			'ip'              => p202StoredVisitorIp(),
 			'pixel_type'      => 2,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
-			'click_payout'    => ($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '0') : '',
+			'click_payout'    => ($mysql['use_pixel_payout'] == 1) ? (string) ($request['amount'] ?? '0') : '',
 			'source'          => \Prosper202\Conversion\Ledger\ConversionSource::POSTBACK->value,
 			'reversal'        => $reversal['reversal'],
 			'reversal_ref'    => $reversal['reversal_ref'],
@@ -157,7 +160,7 @@ try {
 			// from a repeat, so it converts the click once; the writer checks
 			// click_lead under the click lock (as gpx.php does). A reversal
 			// always names its sale's transaction id.
-			'once_per_click'  => p202ExtractTransactionId($_GET) === '',
+			'once_per_click'  => p202ExtractTransactionId($request) === '',
             // The traffic source's server postbacks are queued with the row,
             // in its transaction, and sent below; see after the record.
             'notify_traffic_source' => true,
@@ -166,10 +169,10 @@ try {
 		\Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,
-		($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
-		p202ExtractTransactionId($_GET),
-		p202ExtractCustomer($_GET),
-		p202ExtractItems($_GET)
+		($mysql['use_pixel_payout'] == 1) ? (string) ($request['amount'] ?? '') : '',
+		p202ExtractTransactionId($request),
+		p202ExtractCustomer($request),
+		p202ExtractItems($request)
 	);
 } catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
 	p202RespondJsonError(
@@ -184,7 +187,7 @@ try {
 }
 $conversionId = $conversionResult['conv_id'];
 if ($conversionId > 0) {
-	p202LinkConversionIdentity($db, (int) $mysql['click_id'], $_GET);
+	p202LinkConversionIdentity($db, (int) $mysql['click_id'], $request);
 }
 $newlyRecorded = $conversionId > 0 && !$conversionResult['duplicate'];
 
