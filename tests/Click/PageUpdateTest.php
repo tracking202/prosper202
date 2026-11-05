@@ -139,8 +139,18 @@ final class PageUpdateTest extends TestCase
 
     public function testAListOrATwiceSentFieldIsRefused(): void
     {
-        self::assertSame(['values' => [], 'refused' => ['t202c1']], PageUpdate::fields(['t202c1' => ['a', 'b']]));
+        self::assertSame(['values' => [], 'refused' => ['t202c1'], 'consent' => true], PageUpdate::fields(['t202c1' => ['a', 'b']]));
         self::assertNull(PageUpdate::fields(['t202C1' => 'a', 't202c1' => 'b']), 'which one is meant is unknown');
-        self::assertSame(['values' => [], 'refused' => ['0']], PageUpdate::fields(['x']));
+        self::assertSame(['values' => [], 'refused' => ['0'], 'consent' => true], PageUpdate::fields(['x']));
+        self::assertNull(PageUpdate::fields(['p202_consent' => '1', 'P202_CONSENT' => '0']));
+    }
+
+    public function testARefusalInAnyCaseIsARefusal(): void
+    {
+        foreach (['p202_consent', 'P202_CONSENT', 'P202_Consent'] as $name) {
+            self::assertFalse(PageUpdate::fields([$name => '0', 't202c1' => 'a'])['consent'] ?? null, $name);
+        }
+        self::assertTrue(PageUpdate::fields(['P202_CONSENT' => '1'])['consent'] ?? null);
+        self::assertTrue(PageUpdate::fields(['t202c1' => 'a'])['consent'] ?? null, 'absent gives consent');
     }
 }

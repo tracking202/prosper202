@@ -10,7 +10,6 @@ use Api\V3\Apps\Android\InstallTokenKey;
 use Api\V3\Apps\PublicIntake;
 use Prosper202\Click\PageUpdate;
 use Prosper202\Database\Connection;
-use Prosper202\Identity\RequestSignals;
 
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
@@ -36,15 +35,25 @@ if (!is_file($root . '/202-config.php') || !is_file($root . '/vendor/autoload.ph
     exit;
 }
 require_once $root . '/vendor/autoload.php';
+require_once $root . '/202-config.php';
+// Before any refusal: each one writes a log line.
+PublicIntake::rateLimit('dcs-update', 600, 60);
 if ($method !== 'POST') {
+    if (($p202UpdateGetImage ?? false) === true && ($method === 'GET' || $method === 'HEAD')) {
+        error_log('dcs update refused (' . $p202UpdateEndpoint . '): a GET carries no update proof');
+        header('Content-Type: image/gif');
+        header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
+        if ($method === 'GET') {
+            echo base64_decode('R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
+        }
+        exit;
+    }
     $p202UpdateRefuse('method ' . (preg_match('/\A[A-Z]{1,10}\z/', $method) === 1 ? $method : '?'));
 }
 $declared = $_SERVER['CONTENT_LENGTH'] ?? null;
 if (is_string($declared) && ctype_digit($declared) && (int) $declared > PageUpdate::BODY_LIMIT) {
     $p202UpdateRefuse('body over ' . PageUpdate::BODY_LIMIT . ' bytes');
 }
-require_once $root . '/202-config.php';
-PublicIntake::rateLimit('dcs-update', 600, 60);
 if (str_starts_with(strtolower((string) ($_SERVER['CONTENT_TYPE'] ?? '')), 'multipart/form-data')) {
     // 1.9.56's beacon sent FormData; PHP has parsed it.
     $fields = $_POST;
@@ -59,12 +68,12 @@ $proof = $fields['proof'] ?? null;
 if (!is_string($proof) || $proof === '') {
     $p202UpdateRefuse('no update proof');
 }
-if (!RequestSignals::consentGiven($fields)) {
-    $p202UpdateRefuse('the visitor refused tracking');
-}
 $parsed = PageUpdate::fields($fields);
 if ($parsed === null) {
     $p202UpdateRefuse('a field was sent twice');
+}
+if (!$parsed['consent']) {
+    $p202UpdateRefuse('the visitor refused tracking');
 }
 if ($parsed['refused'] !== []) {
     $names = array_map(

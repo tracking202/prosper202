@@ -32,6 +32,7 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
     private static $server = null;
     private static string $base = '';
     private static string $log = '';
+    private static string $state = '';
 
     public static function setUpBeforeClass(): void
     {
@@ -51,6 +52,9 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
         $port = (int) substr($name, strrpos($name, ':') + 1);
         fclose($probe);
         self::$log = (string) tempnam(sys_get_temp_dir(), 'p202srv');
+        // The server's state (its rate limit) where this process finds it too.
+        self::$state = sys_get_temp_dir() . '/p202-dcs-state-' . bin2hex(random_bytes(6));
+        putenv('P202_SERVER_STATE_DIR=' . self::$state);
         self::$server = proc_open(
             [PHP_BINARY, '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . self::$log,
                 '-S', "127.0.0.1:$port", '-t', $root],
@@ -76,6 +80,10 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
         }
         if (self::$log !== '') {
             @unlink(self::$log);
+        }
+        putenv('P202_SERVER_STATE_DIR');
+        if (self::$state !== '' && is_dir(self::$state)) {
+            exec('rm -rf ' . escapeshellarg(self::$state));
         }
         if (self::$db !== null) {
             self::cleanUp();
@@ -261,6 +269,7 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
             'no proof' => ['/tracking202/static/dcs-update.php', 't202Subid=' . $other . '&t202c1=hijack'],
             'tampered' => ['/tracking202/static/dcs-update.php', 'proof=' . rawurlencode($proof . 'x') . '&t202c1=hijack'],
             'refused' => ['/tracking202/static/dcs-update.php', 'proof=' . rawurlencode($proof) . '&t202c1=hijack&p202_consent=0'],
+            'refused in capitals' => ['/tracking202/static/dcs-update.php', 'proof=' . rawurlencode($proof) . '&t202c1=hijack&P202_CONSENT=0'],
             'too long' => ['/tracking202/static/dcs-update.php', 'proof=' . rawurlencode($proof) . '&t202c1=' . str_repeat('h', 30000)],
         ] as $why => [$path, $body]) {
             $sent = self::post($path, $body);
@@ -278,6 +287,27 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
             'dcs update (dcs-update.php): ignored fields a page may not change: t202id, t202utm_source',
         ] as $line) {
             self::assertStringContainsString($line, $log);
+        }
+    }
+
+    /** Every refusal is logged, so none is past the limit. The window is emptied after. */
+    public function testNothingIsLoggedPastTheRateLimit(): void
+    {
+        $store = \Api\V3\Support\ServerStateStore::forInstall(self::requireScratch());
+        $buckets = $store->baseDir() . '/rate_limits/*dcs-update*';
+        try {
+            for ($i = 0; $i < 600; $i++) {
+                $store->softIpRateLimit('dcs-update', 600, 60, '127.0.0.1');
+            }
+            $before = (string) file_get_contents(self::$log);
+            self::assertSame(429, self::get('/tracking202/redirect/u.php?t202Subid=1&t202C1=x')[0], 'u.php\'s image');
+            self::assertSame(429, self::get('/tracking202/static/dcs-update.php')[0], 'a GET to the endpoint');
+            self::assertSame(429, self::post('/tracking202/static/dcs-update.php', 't202c1=x')[0], 'no proof');
+            self::assertSame($before, (string) file_get_contents(self::$log), 'no refusal written');
+        } finally {
+            foreach ((array) glob($buckets) as $file) {
+                @unlink((string) $file);
+            }
         }
     }
 }

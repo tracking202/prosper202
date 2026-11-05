@@ -82,10 +82,11 @@ final class PageUpdate
      * The values a request may change, as the click recorder reads c1-c4
      * (ClickRequest::text(), %20 as a space); the repository cuts each to its
      * column. An empty value changes nothing, as in 1.9.56. Null when a
-     * field is sent twice in different case.
+     * field is sent twice in different case. consent reads p202_consent in
+     * any case, as the fields are read.
      *
      * @param array<array-key, mixed> $request
-     * @return array{values: array<string, string>, refused: list<string>}|null
+     * @return array{values: array<string, string>, refused: list<string>, consent: bool}|null
      */
     public static function fields(array $request): ?array
     {
@@ -115,7 +116,7 @@ final class PageUpdate
             }
         }
 
-        return ['values' => $values, 'refused' => $refused];
+        return ['values' => $values, 'refused' => $refused, 'consent' => RequestSignals::consentGiven($lowered)];
     }
 
     /**
