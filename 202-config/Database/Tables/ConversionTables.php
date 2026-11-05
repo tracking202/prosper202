@@ -32,6 +32,9 @@ use Prosper202\Database\Schema\TableRegistry;
  * already had them (_upgrade_conversion_ledger_columns()); its default,
  * 'unknown', is what every row from before then holds.
  *
+ * `user_conv_time` is the money-loss alerts' read of an account's last week
+ * of conversions (Prosper202\Alerts\AccountActivity), from 1.9.80.
+ *
  * `reverses_conv_id` is indexed because every conversion's counted amount
  * (Attribution\CountedAmount — the worker, the journey drill-down, the
  * recent conversions) looks up the reversals naming it. Without the index
@@ -96,7 +99,8 @@ final class ConversionTables
                 KEY `user_id` (`user_id`),
                 KEY `campaign_id` (`campaign_id`),
                 KEY `customer_id` (`customer_id`),
-                KEY `reverses_conv_id` (`reverses_conv_id`)
+                KEY `reverses_conv_id` (`reverses_conv_id`),
+                KEY `user_conv_time` (`user_id`,`conv_time`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
