@@ -1,0 +1,1 @@
+-- New: Upgrading from paid 1.9.56 has its own page (documentation/upgrading/from-paid-1.9.56.md): what keeps working, what changed on purpose and what is still being restored. A regression suite now checks the 1.9.56 landing-page code, t202txid order numbers on gpb, gpx and upx, and t202pubid publisher links on a database upgraded from paid 1.9.56.

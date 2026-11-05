@@ -27,11 +27,16 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
     /** A campaign the trigger below refuses a tracker on. */
     private const REFUSED_CAMPAIGN = 990082;
     private const NETWORK = 990081;
+    private const LANDING_PAGE = 990081;
     /** The campaign an edit moves a link to. */
     private const SECOND_CAMPAIGN = 990084;
     /** Another account, with a link of its own. */
     private const OTHER = 990083;
     private const THEIR_LINK = 99008399;
+    /** A publisher this account may credit on its links (t202pubid). */
+    private const PUBLISHER = 990085;
+    private const PUBLISHER_PUBLIC_ID = 'c0ffee0085';
+    private const INSTALL = 'tracker-link-test';
 
     private static string $sessions = '';
 
@@ -39,6 +44,10 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
     private static ?array $versions = null;
 
     private static ?int $addedPermission = null;
+
+    private static ?int $addedGrantPermission = null;
+
+    private static bool $addedPublisherRole = false;
 
     public static function setUpBeforeClass(): void
     {
@@ -116,6 +125,68 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         self::assertSame('1', $edited[0]['click_cloaking']);
         self::assertSame('1.25000', $edited[0]['click_cpa']);
         self::assertSame('', $edited[0]['click_cpc'], 'the cost type not sent is cleared, as a new link has it');
+    }
+
+    /**
+     * A landing page's link also gives the Google Ads pair paid 1.9.56 gave:
+     * the page itself as the final URL and pt.php as the tracking template.
+     */
+    public function testALandingPagesLinkGivesTheGoogleAdsFinalUrlAndTrackingTemplate(): void
+    {
+        $out = self::save([
+            'aff_campaign_id' => (string) self::CAMPAIGN,
+            'method_of_promotion' => 'landingpage',
+            'landing_page_id' => (string) self::LANDING_PAGE,
+        ]);
+        $created = self::trackers();
+        self::assertCount(1, $created, $out);
+        $public = $created[0]['tracker_id_public'];
+        $boxes = array_map(
+            static fn (string $v): string => html_entity_decode($v, ENT_QUOTES),
+            preg_match_all('~<pre class="p202-code__value[^"]*">([^<]*)</pre>~', $out, $m) > 0 ? $m[1] : []
+        );
+        self::assertContains('https://shop.example/landing?x=1&t202id=' . $public . '&t202kw=', $boxes, $out);
+        self::assertContains('https://shop.example/landing?x=1', $boxes, 'the final URL: the page as saved');
+        $template = array_values(array_filter($boxes, static fn (string $v): bool => str_contains($v, '/pt.php?')));
+        self::assertCount(1, $template, $out);
+        self::assertMatchesRegularExpression(
+            '~^https?://[^/]+/(?:.*/)?tracking202/redirect/pt\.php\?t202id=' . $public . '&t202kw=&lpurl=\{lpurl\}$~',
+            $template[0]
+        );
+        self::assertStringContainsString('Tracking template', $out);
+    }
+
+    /** The template credits the link's publisher, as the destination URL beside it does. */
+    public function testALandingPagesTemplateCreditsTheLinksPublisher(): void
+    {
+        $out = self::save([
+            'aff_campaign_id' => (string) self::CAMPAIGN,
+            'method_of_promotion' => 'landingpage',
+            'landing_page_id' => (string) self::LANDING_PAGE,
+            'publisher_id' => (string) self::PUBLISHER,
+        ]);
+        $created = self::trackers();
+        self::assertCount(1, $created, $out);
+        $public = $created[0]['tracker_id_public'];
+        $boxes = array_map(
+            static fn (string $v): string => html_entity_decode($v, ENT_QUOTES),
+            preg_match_all('~<pre class="p202-code__value[^"]*">([^<]*)</pre>~', $out, $m) > 0 ? $m[1] : []
+        );
+        $pub = '&t202pubid=' . self::PUBLISHER_PUBLIC_ID;
+        self::assertContains('https://shop.example/landing?x=1&t202id=' . $public . $pub . '&t202kw=', $boxes, $out);
+        $template = array_values(array_filter($boxes, static fn (string $v): bool => str_contains($v, '/pt.php?')));
+        self::assertCount(1, $template, $out);
+        self::assertMatchesRegularExpression(
+            '~/tracking202/redirect/pt\.php\?t202id=' . $public . preg_quote($pub, '~') . '&t202kw=&lpurl=\{lpurl\}$~',
+            $template[0]
+        );
+    }
+
+    public function testADirectLinkGivesNoGoogleAdsTemplate(): void
+    {
+        $out = self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
+        self::assertStringContainsString('dl.php?t202id=', $out);
+        self::assertStringNotContainsString('pt.php', $out);
     }
 
     public function testAnEditThatFailsLeavesTheTrackerAsItWas(): void
@@ -218,16 +289,23 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
     {
         $tables = [
             '202_user_role', '202_users_pref', '202_users', '202_aff_networks', '202_aff_campaigns',
-            '202_trackers', '202_mysql_errors',
+            '202_trackers', '202_mysql_errors', '202_landing_pages',
         ];
         foreach ($tables as $table) {
-            self::q("DELETE FROM $table WHERE user_id IN (" . self::USER . ', ' . self::OTHER . ')');
+            self::q("DELETE FROM $table WHERE user_id IN (" . self::USER . ', ' . self::OTHER . ', ' . self::PUBLISHER . ')');
         }
         self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::ROLE);
         self::q('DELETE FROM 202_roles WHERE role_id = ' . self::ROLE);
-        if (self::$addedPermission !== null) {
-            self::q('DELETE FROM 202_permissions WHERE permission_id = ' . self::$addedPermission);
-            self::$addedPermission = null;
+        foreach ([self::$addedPermission, self::$addedGrantPermission] as $added) {
+            if ($added !== null) {
+                self::q('DELETE FROM 202_permissions WHERE permission_id = ' . $added);
+            }
+        }
+        self::$addedPermission = null;
+        self::$addedGrantPermission = null;
+        if (self::$addedPublisherRole) {
+            self::q('DELETE FROM 202_roles WHERE role_id = ' . \Prosper202\Click\PublisherCredit::PUBLISHER_ROLE_ID);
+            self::$addedPublisherRole = false;
         }
     }
 
@@ -248,6 +326,26 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         self::row('202_roles', ['role_id' => self::ROLE, 'role_name' => 'tracker link test']);
         self::row('202_role_permission', ['role_id' => self::ROLE, 'permission_id' => (int) $permission]);
         self::row('202_user_role', ['user_id' => $u, 'role_id' => self::ROLE]);
+        // The account may credit publishers of its install (PublisherCredit::grantable()).
+        $grant = 'permission_description = ' . self::str(\Prosper202\Click\PublisherCredit::GRANT_PERMISSION);
+        $found = self::$db->query("SELECT permission_id FROM 202_permissions WHERE $grant");
+        $grantPermission = $found instanceof \mysqli_result ? ($found->fetch_row()[0] ?? null) : null;
+        if ($grantPermission === null) {
+            self::$addedGrantPermission = self::insert("INSERT INTO 202_permissions SET $grant");
+            $grantPermission = self::$addedGrantPermission;
+        }
+        self::row('202_role_permission', ['role_id' => self::ROLE, 'permission_id' => (int) $grantPermission]);
+        $publisherRole = \Prosper202\Click\PublisherCredit::PUBLISHER_ROLE_ID;
+        $found = self::$db->query("SELECT 1 FROM 202_roles WHERE role_id = $publisherRole");
+        if (!($found instanceof \mysqli_result) || $found->num_rows === 0) {
+            self::row('202_roles', ['role_id' => $publisherRole, 'role_name' => 'Publisher']);
+            self::$addedPublisherRole = true;
+        }
+        $p = self::PUBLISHER;
+        self::user($p);
+        self::q('UPDATE 202_users SET install_hash = ' . self::str(self::INSTALL) . " WHERE user_id IN ($u, $p)");
+        self::q('UPDATE 202_users SET user_public_publisher_id = ' . self::str(self::PUBLISHER_PUBLIC_ID) . " WHERE user_id = $p");
+        self::row('202_user_role', ['user_id' => $p, 'role_id' => $publisherRole]);
         self::row('202_aff_networks', [
             'aff_network_id' => self::NETWORK, 'user_id' => $u,
             'aff_network_name' => 'Category', 'aff_network_time' => $t,
@@ -263,6 +361,11 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
             'tracker_id' => $o, 'user_id' => $o, 'tracker_id_public' => self::THEIR_LINK, 'aff_campaign_id' => $o,
             'text_ad_id' => 0, 'ppc_account_id' => 0, 'landing_page_id' => 0, 'rotator_id' => 0,
             'click_cpc' => 0.1, 'click_cloaking' => 0, 'tracker_time' => $t,
+        ]);
+        self::row('202_landing_pages', [
+            'landing_page_id' => self::LANDING_PAGE, 'user_id' => $u, 'landing_page_id_public' => self::LANDING_PAGE,
+            'aff_campaign_id' => self::CAMPAIGN, 'landing_page_nickname' => 'Landing', 'landing_page_type' => 0,
+            'landing_page_url' => 'https://shop.example/landing?x=1', 'landing_page_time' => $t,
         ]);
         foreach ([self::CAMPAIGN, self::REFUSED_CAMPAIGN, self::SECOND_CAMPAIGN] as $campaign) {
             self::row('202_aff_campaigns', [

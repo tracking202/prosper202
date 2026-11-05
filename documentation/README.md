@@ -7,6 +7,7 @@
 
 - [Introduction](00-introduction.md)
 - [Deploying Prosper202 on Coolify](deploying-on-coolify.md)
+- [Upgrading from paid Prosper202 1.9.56](upgrading/from-paid-1.9.56.md)
 
 ### Setting Up Prosper202 Pro
 
