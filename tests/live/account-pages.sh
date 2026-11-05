@@ -250,7 +250,7 @@ eq "$(Q "SELECT COUNT(*) FROM 202_api_keys WHERE user_id=$OWNER")" "$((KEYS_BEFO
 NEWKEY=$(grep -o '<pre class="p202-code__value">[0-9a-f]\{64\}</pre>' "$OUT/k-new.html" | head -1 | sed -E 's/<[^>]+>//g')
 if [[ "$NEWKEY" =~ ^[0-9a-f]{64}$ ]]; then ok "the server minted a 64-hex key, shown once"; else bad "new key shape: '$NEWKEY'"; fi
 REF=$(Q "SELECT SHA2('$NEWKEY', 256)")
-eq "$(Q "SELECT COUNT(*) FROM 202_api_keys WHERE user_id=$OWNER AND api_key='' AND key_hash='$REF'")" "1" "only its hash is stored"
+eq "$(Q "SELECT COUNT(*) FROM 202_api_keys WHERE user_id=$OWNER AND key_hash='$REF' AND api_key LIKE '!%' AND CHAR_LENGTH(api_key)=65 AND api_key<>'$NEWKEY'")" "1" "only its hash is stored, the key column holds a placeholder"
 hasnt "$OUT/k-new.html" "data-p202-value=" "no key is kept behind a Reveal"
 get "202-account/account.php" "$OUT/account.html"
 hasnt "$OUT/account.html" "$NEWKEY" "a reload shows the key nowhere"

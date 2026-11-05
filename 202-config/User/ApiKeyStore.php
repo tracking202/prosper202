@@ -23,8 +23,8 @@ use Prosper202\Database\Exceptions\QueryException;
  *
  * A row the upgrade has not hashed yet (key_hash NULL) keeps its key in
  * api_key and is matched exactly; before the upgrade adds key_hash, keys are
- * written and matched as before, but exactly too. The 1.9.79 rung hashes
- * every stored key (hashStoredKeys()).
+ * written and matched as before, but exactly too. The 1.9.80 rung (the one
+ * gated on 1.9.79) hashes every stored key (hashStoredKeys()).
  *
  * A key is named in pages and forms by its ref, the SHA-256 in hex, never by
  * the key itself.
@@ -169,6 +169,10 @@ final class ApiKeyStore
     /**
      * The condition that finds the row a ref names.
      *
+     * A row not yet hashed is found by SHA2 of its api_key's stored bytes, so
+     * a non-ASCII key in a pre-1.9.55 latin1 table cannot be named by ref
+     * until the upgrade hashes it.
+     *
      * @return array{0: string, 1: string, 2: list<string>} SQL, bind types, values
      */
     public static function matchRef(\mysqli $db, string $ref, string $alias = ''): array
@@ -235,8 +239,8 @@ final class ApiKeyStore
     }
 
     /**
-     * The 1.9.79 rung's step: hashes every key still stored whole, row by
-     * row, and empties its api_key. A run that stops part way is picked up by
+     * The 1.9.80 rung's step: hashes every key still stored whole, row by
+     * row, and puts a placeholder in its api_key. A run that stops part way is picked up by
      * the next, since only rows with no key_hash are read. True when no key
      * is left whole.
      */

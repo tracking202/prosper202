@@ -162,7 +162,8 @@ module.exports = {
         const key = (await ui.text('#api-keys [data-new-api-key] pre')).trim();
         expect.match(key, /^[0-9a-f]{64}$/, 'the new 64-hex key is shown once');
         expect.eq(db.value('SELECT COUNT(*) FROM 202_api_keys WHERE user_id=' + state.owner
-          + " AND api_key='' AND key_hash=SHA2('" + key + "', 256)"), '1', 'only its hash is stored');
+          + " AND key_hash=SHA2('" + key + "', 256) AND api_key LIKE '!%' AND CHAR_LENGTH(api_key)=65 AND api_key<>'" + key + "'"),
+          '1', 'only its hash is stored, the key column holds a placeholder');
         await ui.page.context().grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => {});
         const copied = await app.copy('#api-keys [data-new-api-key] .p202-copy');
         expect.eq(copied, key, 'Copy puts the whole key on the clipboard');
