@@ -426,7 +426,8 @@ final class RevenueUploadImporter
             return null;
         }
         try {
-            return Amount::fromUnits(Amount::toUnits($clean));
+            // An amount a conversion row cannot hold is refused with the line, never clamped (Y5N2).
+            return Amount::fromUnits(Amount::checkedForColumn(Amount::toUnits($clean), 'amount'));
         } catch (\InvalidArgumentException) {
             return null;
         }

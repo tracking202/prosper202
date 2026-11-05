@@ -75,6 +75,40 @@ final class Amount
         return $negative ? -$units : $units;
     }
 
+    /**
+     * The largest amount, in units, a conversion row's click_payout holds:
+     * 999999.99999 for its decimal(11,5), read from the table's definition so
+     * the bound moves with the column.
+     */
+    public static function columnMaxUnits(): int
+    {
+        static $max = null;
+        if ($max !== null) {
+            return $max;
+        }
+        $ddl = \Prosper202\Database\Tables\ConversionTables::conversionLogs()->createStatement;
+        $found = preg_match('/`click_payout`\s+decimal\((\d+),(\d+)\)/i', $ddl, $m) === 1;
+        if (!$found || (int) $m[2] !== self::SCALE || (int) $m[1] > 18) {
+            throw new \LogicException('202_conversion_logs.click_payout is not a decimal(P,' . self::SCALE . ') column');
+        }
+
+        return $max = (int) str_repeat('9', (int) $m[1]);
+    }
+
+    /**
+     * $units when a conversion row can hold them; AmountOutOfRange naming
+     * $field otherwise, never a value the database would clamp (Y5N2).
+     */
+    public static function checkedForColumn(int $units, string $field): int
+    {
+        $max = self::columnMaxUnits();
+        if (abs($units) > $max) {
+            throw new AmountOutOfRange($field, self::fromUnits($units), $max);
+        }
+
+        return $units;
+    }
+
     /** Format units as the decimal string a decimal(11,5) column stores. */
     public static function fromUnits(int $units): string
     {

@@ -8,6 +8,7 @@ use Prosper202\Click\ClickRef;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Conversion\Ledger\AmountOutOfRange;
 use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Conversion\PurLinkCampaignChanged;
 use Prosper202\Database\Connection;
@@ -91,6 +92,9 @@ final class Processor
             return $notification->kind->records()
                 ? $this->sale($notification, $verification, $provider, $request)
                 : $this->reversal($notification, $verification, $provider, $request);
+        } catch (AmountOutOfRange $e) {
+            // Not worth a retry: the same amount is refused again (Y5N2).
+            return new Outcome(OutcomeKind::MALFORMED, 'The ' . $event . ' was not recorded: ' . $e->getMessage() . '.', null, $account);
         } catch (\Throwable $e) {
             error_log(sprintf(
                 '%s notification: the %s on click %s could not be recorded: %s',

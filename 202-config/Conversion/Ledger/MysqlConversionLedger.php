@@ -313,6 +313,11 @@ final class MysqlConversionLedger
             $changed[] = $row->convId;
         }
 
+        // The click's value sums its conversions, each in range, and the sum can
+        // still pass what its decimal(11,5) holds: refused, never clamped (Y5N2).
+        if ($value->lead) {
+            Amount::checkedForColumn((int) $value->valueUnits, 'click value');
+        }
         foreach (['202_clicks', '202_clicks_spy'] as $table) {
             if ($value->lead) {
                 $stmt = $this->conn->prepareWrite(

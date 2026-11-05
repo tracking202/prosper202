@@ -20,7 +20,6 @@ use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\LedgerReportSql;
 use Prosper202\Conversion\Ledger\MatchMethod;
-use Prosper202\Database\Tables\ConversionTables;
 
 class ConversionsController
 {
@@ -385,25 +384,6 @@ class ConversionsController
         return $errors;
     }
 
-    /**
-     * The largest amount, in Amount's units, 202_conversion_logs.click_payout
-     * holds, read from the table's definition rather than restated:
-     * decimal(P,S) holds P nines' worth of units of 10^-S, and S has to be
-     * Amount's scale for those to be Amount's units.
-     */
-    private static function payoutColumnMaxUnits(): int
-    {
-        $ddl = ConversionTables::conversionLogs()->createStatement;
-        $found = preg_match('/`click_payout`\s+decimal\((\d+),(\d+)\)/i', $ddl, $m) === 1;
-        if (!$found || (int) $m[2] !== Amount::SCALE || (int) $m[1] > 18) {
-            throw new \LogicException(
-                '202_conversion_logs.click_payout is not a decimal(P,' . Amount::SCALE . ') column'
-            );
-        }
-
-        return (int) str_repeat('9', (int) $m[1]);
-    }
-
     public function create(array $payload): array
     {
         // Every key below is read; anything else was dropped with a 201 — a
@@ -463,7 +443,7 @@ class ConversionsController
             } catch (\InvalidArgumentException) {
                 $units = null;
             }
-            $max = self::payoutColumnMaxUnits();
+            $max = Amount::columnMaxUnits();
             if ($units === null || abs($units) > $max) {
                 throw new ValidationException('payout is out of range', ['payout' => 'Must be from -'
                     . Amount::fromUnits($max) . ' to ' . Amount::fromUnits($max) . ', what one conversion holds']);
