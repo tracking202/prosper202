@@ -96,6 +96,9 @@ try {
 		// A signed SubID records on its own offer, routed in the same transaction.
 		'purlink_subid'  => $pbSignedSubid !== null ? (string) $pbRawSubid : null,
 		'purlink_key'    => $pbSignedSubid['key'] ?? null,
+		// The traffic source's server postbacks are queued with the row, as
+		// gpb.php's, and sent after the answer (below) or by the worker (QZ3M).
+		'notify_traffic_source' => true,
 	] + p202ExtractReversal($_GET));
 } catch (\Prosper202\Conversion\PurLinkCampaignChanged $campaignError) {
 	p202RespondJsonError(404, 'Unknown subid for this campaign');
@@ -119,4 +122,8 @@ if (!$outcome['recorded'] && !$outcome['duplicate'] && $outcome['reason'] !== 'a
 	// unknown_click or campaign_mismatch: the same 404 gpb.php answers for a
 	// subid it cannot convert, so the sender's log shows the mismatch.
 	p202RespondJsonError(404, 'Unknown subid for this campaign');
+}
+
+if ($outcome['recorded']) {
+	p202SendQueuedPostbacksAfterAnswer($db, (int) $outcome['conv_id']);
 }
