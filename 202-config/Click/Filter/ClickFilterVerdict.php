@@ -15,9 +15,14 @@ final class ClickFilterVerdict
     public const CRAWLER_RANGE = 'crawler_range';
     public const REPEAT_VISIT = 'repeat_visit';
     public const FILTER_LIST = 'filter_list';
+    /** Set after the click, never on the click path: IPQualityScore scored its address as fraud (Prosper202\Fraud\IpqsScoring). */
+    public const FRAUD_SCORE = 'fraud_score';
 
-    /** Every reason a filtered click is recorded with. */
+    /** Every reason the click path records a filtered click with. */
     public const REASONS = [self::SIGN_IN_ADDRESS, self::CRAWLER_RANGE, self::REPEAT_VISIT, self::FILTER_LIST];
+
+    /** Every reason 202_clicks_filter_reason holds. */
+    public const STORED_REASONS = [...self::REASONS, self::FRAUD_SCORE];
 
     private function __construct(
         public readonly bool $filtered,

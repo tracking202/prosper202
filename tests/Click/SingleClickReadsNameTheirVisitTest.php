@@ -111,8 +111,9 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         '202-cronjobs/index.php::ClearOldClicks' => [1, 'The day the Slack message names for a finished deletion'
             . ' scheduled by click id, from the marker\'s own click, which that deletion keeps.'],
         // Every visit's row.
-        '202-config/Click/MysqlClickRepository.php::accountsClickFirstTime' => [1, 'Reads every visit\'s row'
-            . ' (fetchAll): each must be the account\'s, and the earliest time is the click\'s first.'],
+        '202-config/Click/MysqlClickRepository.php::accountsClickTimes' => [1, 'Reads every visit\'s row'
+            . ' (fetchAll): each must be the account\'s; the earliest time is the click\'s first, and'
+            . ' filterAsFraud() updates the span of them all.'],
         '202-config/Click/MysqlClickRepository.php::repairVisits' => [1, 'Reads every visit\'s row (fetchAll):'
             . ' their accounts must agree, and their times name the rows the backfill rewrites.'],
         '202-config/Click/MysqlClickRepository.php::writeVisitRows' => [1, 'COUNT(*) of the click\'s rows in the'

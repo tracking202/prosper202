@@ -31,7 +31,7 @@ setting what a set of past clicks cost: `POST /clicks/cpc`, in the
 | `ip` | string | — | One address, IPv4 or IPv6, however it is written |
 | `click_lead` | `0` or `1` | — | 0 = clicks only, 1 = conversions only |
 | `click_bot` | `0` or `1` | — | 0 = human traffic, 1 = bot traffic |
-| `filter_reason` | string | — | Only filtered clicks, by why ([below](#why-a-click-is-filtered)): `sign_in_address`, `crawler_range`, `repeat_visit`, `filter_list`, `bot`, or `not_recorded` for a filtered click with no reason (one filtered before 1.9.79) |
+| `filter_reason` | string | — | Only filtered clicks, by why ([below](#why-a-click-is-filtered)): `sign_in_address`, `crawler_range`, `repeat_visit`, `filter_list`, `fraud_score`, `bot`, or `not_recorded` for a filtered click with no reason (one filtered before 1.9.79) |
 
 These are the Visitors page's filters, the same ones every report takes
 ([Reports](11-reports.md)). A parameter not listed here, a malformed value, a
@@ -166,6 +166,7 @@ other and left out of "Real clicks". `filter_reason` says which rule did it:
 | `crawler_range` | came from one of the built-in search engine crawler ranges |
 | `repeat_visit` | came from an address that clicked already within the account's repeat window |
 | `filter_list` | came from an "always filter" entry of the account's address list (`filter_entry_id`) |
+| `fraud_score` | was counted, then filtered a few minutes later because IPQualityScore scored its address at 90 or more ([IPQualityScore](../tutorials-and-guides/09-3rd-party-integrations.md#ipqualityscore)) |
 | `bot` | was filtered by the bot detector ([Bot clicks](#bot-clicks)) |
 | `null` | is counted, or was filtered before 1.9.79, which recorded no reason (a bot click says `bot` all the same) |
 

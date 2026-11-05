@@ -4803,6 +4803,10 @@ class UPGRADE
                 // log (Prosper202\Destinations).
                 \Prosper202\Database\Tables\ConversionTables::destinations(),
                 \Prosper202\Database\Tables\ConversionTables::destinationDeliveries(),
+                // IPQualityScore scoring (Prosper202\Fraud\IpqsScoring): each
+                // account's cached address scores and how far it has walked.
+                \Prosper202\Database\Tables\UserTables::ipqsScores(),
+                \Prosper202\Database\Tables\UserTables::ipqsProgress(),
                 // Each API key as its SHA-256 and prefix, and an AI connection's
                 // key with its watcher token (Prosper202\User\ApiKeyStore); the
                 // reconcile hashes the keys already there.

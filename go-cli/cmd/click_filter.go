@@ -24,7 +24,7 @@ var clickFilterWindows = []string{"1h", "6h", "24h", "7d"}
 
 // clickFilterReasons are ClicksController::FILTER_REASONS, what GET /clicks
 // filters filter_reason by.
-var clickFilterReasons = []string{"sign_in_address", "crawler_range", "repeat_visit", "filter_list", "bot", "not_recorded"}
+var clickFilterReasons = []string{"sign_in_address", "crawler_range", "repeat_visit", "filter_list", "fraud_score", "bot", "not_recorded"}
 
 // clickFilterActions are ClickFilterEntry::ACTIONS.
 var clickFilterActions = []string{"count", "filter"}

@@ -746,7 +746,7 @@ if (isset($_GET['lpo']) && $_GET['lpo'] === 'disconnected') {
 $keyIntegrations = [
 	'ipqs' => [
 		'title' => 'IPQualityScore', 'icon' => 'ipqs.png', 'help' => '',
-		'desc' => 'Detect and redirect click fraud in real time.',
+		'desc' => p202_ipqs_card_desc(),
 		'extra' => '<a href="https://202.redirexit.com/tracking202/redirect/dl.php?t202id=12608&amp;t202kw=" target="_blank" rel="noopener">Get a free API key</a>',
 		'flag' => 'change_ipqs_api_key', 'field' => 'ipqs_api_key', 'label' => 'IPQS API key', 'error' => 'ipqs_api_key_error',
 		'endpoint' => null,
@@ -774,6 +774,9 @@ $keyIntegrations = [
 	],
 ];
 $cb_crypto_ok = function_exists('openssl_decrypt');
+
+$ipqsSaved = SavedSecret::isSaved($user_row['ipqs_api_key'] ?? null);
+$ipqsNote = p202_ipqs_card_note($db, (int) $_SESSION['user_id'], $ipqsSaved);
 
 template_top('API Integrations');
 ?>
@@ -1045,7 +1048,7 @@ template_top('API Integrations');
 					<?php } ?>
 				</div>
 				<div class="p202-panel__body">
-					<p class="text-secondary"><?php echo $e($integration['desc']); ?><?php echo $integration['extra'] !== '' ? ' ' . $integration['extra'] . '.' : ''; ?></p>
+					<p class="text-secondary"><?php echo $e($integration['desc']); ?><?php echo $integration['extra'] !== '' ? ' ' . $integration['extra'] . '.' : ''; ?></p><?php echo $anchor === 'ipqs' ? $ipqsNote : ''; ?>
 					<?php if ($isClickbank && !$cb_crypto_ok) { ?>
 						<?php echo p202_flash('bad', 'The OpenSSL PHP extension, which decrypts ClickBank’s notifications, is required for this integration. Install it, or ask your hosting provider for assistance.'); ?>
 					<?php } else { ?>

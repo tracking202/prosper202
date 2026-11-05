@@ -121,6 +121,7 @@ final class LtvWebhooksAreSentEveryMinuteTest extends TestCase
             'ExportRunner',
             'AndroidIntakeJob::runExclusive(',
             'NotificationOutbox',
+            'IpqsScoring',
         ];
         foreach ($jobs as $job) {
             $at = strpos($minute, $job);
