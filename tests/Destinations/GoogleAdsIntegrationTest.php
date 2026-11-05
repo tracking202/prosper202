@@ -294,6 +294,8 @@ final class GoogleAdsIntegrationTest extends TestCase
         try {
             $key->invoke($store, false);
             self::fail('the minted key was rolled back, so there is none');
+        } catch (\PHPUnit\Framework\AssertionFailedError $f) {
+            throw $f;
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('missing', $e->getMessage());
         }
