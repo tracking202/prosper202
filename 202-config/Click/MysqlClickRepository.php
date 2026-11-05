@@ -494,6 +494,62 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     }
 
     /**
+     * Filter a click recorded as counted, after the fact, because
+     * IPQualityScore scored its address as fraud (Prosper202\Fraud\IpqsScoring):
+     * every row of it in 202_clicks and 202_clicks_spy, and its reason
+     * (fraud_score), under its lock. False, writing nothing, for a click that
+     * is not the account's, is already filtered (its first visit decides, as
+     * a re-click copies it) or is a lead: a converting click is never left
+     * filtered. Its report row is the caller's to roll up after the commit;
+     * the attribution rollup sums no filter flag, so nothing is marked.
+     */
+    public function filterAsFraud(int $userId, int $clickId): bool
+    {
+        $ledger = new MysqlConversionLedger($this->conn);
+
+        return $ledger->clickTransaction($clickId, $userId, function (?array $locked) use ($userId, $clickId): bool {
+            if ($locked === null || self::intColumn($locked, 'click_lead') !== 0) {
+                return false;
+            }
+            $times = $this->accountsClickTimes($userId, $clickId);
+            if ($times === null || $this->firstVisitArrival($clickId)['click_filtered'] !== 0) {
+                return false;
+            }
+            // Stopped at the rows read, so the UPDATE locks no gap past
+            // them, where new clicks are inserted (as repairVisits()).
+            $span = [min($times), max($times)];
+            $spyRows = $this->rowCount(
+                'SELECT COUNT(*) AS n FROM 202_clicks_spy WHERE click_id = ? AND user_id = ?',
+                'ii',
+                [$clickId, $userId]
+            );
+            $this->write(
+                'UPDATE 202_clicks SET click_filtered = 1'
+                    . ' WHERE click_id = ? AND user_id = ? AND click_time BETWEEN ? AND ? LIMIT ?',
+                'iiiii',
+                [$clickId, $userId, ...$span, count($times)]
+            );
+            if ($spyRows > 0) {
+                $this->write(
+                    'UPDATE 202_clicks_spy SET click_filtered = 1'
+                        . ' WHERE click_id = ? AND user_id = ? AND click_time BETWEEN ? AND ? LIMIT ?',
+                    'iiiii',
+                    [$clickId, $userId, ...$span, $spyRows]
+                );
+            }
+            // A reason left by an earlier filter that a conversion lifted is replaced.
+            $this->write(
+                'INSERT INTO 202_clicks_filter_reason (click_id, filter_reason, entry_id) VALUES (?, ?, 0)'
+                    . ' ON DUPLICATE KEY UPDATE filter_reason = VALUES(filter_reason), entry_id = 0',
+                'is',
+                [$clickId, \Prosper202\Click\Filter\ClickFilterVerdict::FRAUD_SCORE]
+            );
+
+            return true;
+        });
+    }
+
+    /**
      * The tracking template's hit (pt.php) found a click the page's script
      * recorded first (ParallelTrackingClick): the template brings what the
      * page's URL does not (its tracker's cost and traffic source, keyword,
@@ -563,18 +619,30 @@ final class MysqlClickRepository implements ClickRepositoryInterface
      */
     private function accountsClickFirstTime(int $userId, int $clickId): ?int
     {
+        $times = $this->accountsClickTimes($userId, $clickId);
+
+        return $times === null ? null : min($times);
+    }
+
+    /**
+     * The times of the click's rows when every row is the account's; null
+     * when it has none or one is another's. Not locked, as above.
+     *
+     * @return non-empty-list<int>|null
+     */
+    private function accountsClickTimes(int $userId, int $clickId): ?array
+    {
         $stmt = $this->conn->prepareWrite('SELECT user_id, click_time FROM 202_clicks WHERE click_id = ?');
         $this->conn->bind($stmt, 'i', [$clickId]);
-        $first = null;
+        $times = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
             if (self::intColumn($row, 'user_id') !== $userId) {
                 return null;
             }
-            $time = self::intColumn($row, 'click_time');
-            $first = $first === null ? $time : min($first, $time);
+            $times[] = self::intColumn($row, 'click_time');
         }
 
-        return $first;
+        return $times === [] ? null : $times;
     }
 
     /**

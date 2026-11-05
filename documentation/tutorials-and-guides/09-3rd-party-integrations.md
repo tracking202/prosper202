@@ -10,6 +10,55 @@ Each user's networks are their own: My Account › 3rd Party API Integrations li
 
 The other keys on the page (the IPQualityScore API key, the ClickBank secret key, the Zaxaa API signature, the Slack incoming webhook URL and the JVZoo JVZIPN secret key) are never shown back either: each card says **Saved, ends in** and the last four characters for one of 12 characters or more, **Saved** for a shorter one, and **Not saved** when there is none. To change one, open **Update**, paste the new value into its empty field and save; saving the field empty keeps the stored value as it is.
 
+## IPQualityScore
+
+With an IPQualityScore (IPQS) API key saved under **Account › API
+integrations › IPQualityScore**, Prosper202 scores your clicks for fraud. The
+redirect never waits for it: the cron job looks at each new click a minute or
+a few after it arrives, asks IPQualityScore for the fraud score (0 to 100) of
+the visitor's IP address, and filters a click scoring **90 or more**. A
+filtered click is still recorded; it leaves "Real clicks" and shows under
+"Filtered clicks", and `GET /clicks` (`p202 click get`) gives its
+`filter_reason` as `fraud_score`. The reports, the Spy view and the API all
+count it as filtered once its report row is rolled up again, which the same
+run does. A click that has converted is never filtered, and one already
+filtered for another reason keeps that reason.
+
+What is sent, and what is not:
+
+- **Only the visitor's IP address**, as Prosper202 stored it, with
+  IPQualityScore's fixed lookup options. No user agent, referer, click id,
+  keyword or anything else about the click.
+- **Nothing while your privacy setting is "all"** (or the install's is): no
+  click is sent or scored, and the redirector's "High fraud score" rule is
+  skipped. A click whose address was stored masked (under "eu") is never
+  sent or scored either: a masked address is no visitor's, and one score for
+  it would filter a whole network's clicks.
+- **Never a visitor from the EU, the EEA, the UK or Switzerland, nor one whose
+  country is unknown.** The country is the one GeoIP recorded for the click;
+  those clicks are not sent, not scored and stay as they were. There is no
+  setting that changes this. Places GeoIP records under codes of their own
+  count as Europe too: the EU's outermost regions (Réunion, Guadeloupe,
+  Martinique, French Guiana, Mayotte, Saint Martin) and Åland, and, to stay
+  on the safe side, Gibraltar, the Isle of Man, Jersey, Guernsey and Svalbard
+  and Jan Mayen.
+- Nothing is sent for an account without a key, and an address is looked up
+  at most once a day per account: a repeat visitor uses the score already
+  fetched, which saves your IPQS credits.
+
+IPQualityScore is a company in the USA, and the addresses go there for fraud
+prevention; name it in your own privacy policy as a processor of your
+visitors' IP addresses. Prosper202 keeps only the score of each address, for
+24 hours, after which it is deleted, and why each click was filtered.
+Deleting a user deletes the account's scores.
+
+Up to 50 addresses are looked up a minute across the install, and a click is
+scored within a day of its arrival or not at all. When a lookup fails (the key
+is refused, the credits are spent, IPQualityScore cannot be reached), the
+card says so with IPQualityScore's reason, and the account waits two
+minutes, doubling up to 30, before trying again from the same click; saving a
+corrected key takes effect at the next try.
+
 ## Clickbank Sales Notification
 
 Clickbank doesn't support Postback or custom conversion pixels, so to get real-time reporting of sales you can setup our Clickbank Sales Notification integration.

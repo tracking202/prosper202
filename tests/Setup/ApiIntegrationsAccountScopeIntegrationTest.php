@@ -354,6 +354,10 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
         self::assertStringNotContainsString('-short', $out, 'a short key shows no ending');
         self::assertMatchesRegularExpression('~Zaxaa API signature:</span>\s*<span data-saved-secret>Saved<~', $out);
         self::assertMatchesRegularExpression('~IPQS API key:</span>\s*<span data-saved-secret>Not saved<~', $out);
+        $neverSent = 'Visitors from the EU, the EEA, the UK and Switzerland, and visitors whose country is unknown,'
+            . ' are never sent and are not scored.';
+        self::assertStringContainsString($neverSent, $out, 'the IPQS card says who is never sent');
+        self::assertStringNotContainsString('in real time', $out, 'and no longer promises real-time redirects');
         self::assertStringContainsString("Key ending \u{2026}PK01", $out, 'a long PayKickstart key by its last four');
         self::assertStringContainsString('>Key 2<', $out, 'a short one by its place');
         self::assertStringNotContainsString('8char', $out);
