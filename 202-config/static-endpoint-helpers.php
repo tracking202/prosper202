@@ -112,6 +112,8 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
      *        its dedupe key when the network sent none
      * @param (callable(string): (bool|\Prosper202\Notifications\PostbackResult))|null $fetch
      *        Performs a type-4 GET and says whether it succeeded; injected by tests.
+     * @param (\Closure(): bool)|null $visitorMayBeTracked whether a Meta
+     *        Purchase (type 6) may fire (p202ConversionMayTrack()); held back without it
      * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
     function p202FireTrafficSourcePixels(
@@ -119,14 +121,36 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
         int $ppcAccountId,
         array $tokens,
         ?callable $fetch = null,
-        bool $server = true
+        bool $server = true,
+        ?\Closure $visitorMayBeTracked = null
     ): array {
         // $server false: the type-4 postbacks were queued with the
         // conversion (notify_traffic_source) and go out through the outbox
         // (p202SendQueuedPostbacks()); only the markup types render here.
         $conn = new \Prosper202\Database\Connection($db);
 
-        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server);
+        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server, $visitorMayBeTracked);
+    }
+}
+
+if (!function_exists('p202ConversionMayTrack')) {
+    /**
+     * Whether this conversion request's visitor may be sent the click's
+     * Meta Purchase: the privacy setting in force (trackingEnabled(), after
+     * p202ApplyOwnerPrivacy()), p202_consent and the click's campaign
+     * (TrafficSourcePixels::visitorMayBeTracked()).
+     *
+     * @param array<string, mixed> $get
+     */
+    function p202ConversionMayTrack(mysqli $db, int $clickId, array $get): bool
+    {
+        return function_exists('trackingEnabled')
+            && \Prosper202\Conversion\TrafficSourcePixels::visitorMayBeTracked(
+                new \Prosper202\Database\Connection($db),
+                $clickId,
+                trackingEnabled(),
+                $get
+            );
     }
 }
 
@@ -504,6 +528,11 @@ if (!function_exists('p202RecordConversion')) {
         }
         if (isset($log['reversal_ref']) && (string) $log['reversal_ref'] !== '') {
             $data['reversal_ref'] = (string) $log['reversal_ref'];
+        }
+        if (!empty($log['reversal']) && !empty($log['reverses_carried_value'])) {
+            // With no sale under its id, the reversal nets against the value
+            // the click carried from before the ledger (its legacy baseline).
+            $data['reverses_carried_value'] = true;
         }
         if (!empty($log['notify_traffic_source'])) {
             // Queue the click's traffic-source server postbacks with the row
@@ -950,7 +979,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
      *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
-     *     source?: string, reversal?: bool, reversal_ref?: string, event_name?: string|null,
+     *     source?: string, reversal?: bool, reversal_ref?: string, reverses_carried_value?: bool,
+     *     event_name?: string|null,
      *     conv_time?: int
      * } $opts source is the ledger source the row is recorded under
      *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
@@ -1033,6 +1063,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'source'          => (string) ($opts['source'] ?? \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value),
                 'reversal'        => !empty($opts['reversal']),
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
+                'reverses_carried_value' => !empty($opts['reverses_carried_value']),
                 'event_name'      => (string) ($opts['event_name'] ?? ''),
             ],
             $matchedBy,
@@ -1149,7 +1180,11 @@ if (!function_exists('p202RecordWebEvent')) {
             return ['status' => 'invalid', 'errors' => $e->errors(), 'message' => $e->getMessage()];
         }
 
-        $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, (bool) ($opts['browser'] ?? false));
+        $notifier = new \Prosper202\Goals\TrafficSourceNotifier(
+            $conn,
+            (bool) ($opts['browser'] ?? false),
+            static fn (int $click): bool => p202ConversionMayTrack($db, $click, $get)
+        );
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         try {
             $result = $engine->ingest($click['user_id'], $engine->clickSubject($click['user_id'], $clickId), [$event], $matchedBy);

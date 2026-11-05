@@ -15,6 +15,7 @@ declare(strict_types=1);
 use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\JVZoo\JVZooRole;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
+use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 use Prosper202\Setup\SavedSecret;
 
 include_once(str_repeat("../", 1) . '202-config/connect.php');
@@ -175,7 +176,7 @@ function lpo_ctx_pref_cache_bust($userId)
 $mysql['add_dni'] = $db->real_escape_string((string)($_GET['add_dni_network'] ?? ''));
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2u.install_hash, 2u.p202_customer_api_key FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username, 2u.install_hash, 2u.p202_customer_api_key FROM 202_users AS 2u WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = _mysqli_query($db, $user_sql);
 // A failed query must stop here, not read as an account with no settings:
 // this row supplies the install hash the DNI network lookup below sends
@@ -186,7 +187,7 @@ if (!$user_results) {
 $user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'] ?? '';
 $editing_dni_network = false;
-$dniNetworks = getAllDniNetworks($user_row['install_hash']);
+$dniNetworks = dniNetworkList(getAllDniNetworks($user_row['install_hash']));
 // The network list comes from the DNI service; when it cannot be reached the
 // page says so instead of offering an empty select.
 $dniNetworksAvailable = is_array($dniNetworks);
@@ -194,8 +195,7 @@ if (!$dniNetworksAvailable) {
 	$dniNetworks = [];
 }
 
-if (!empty($user_row['url']))
-	$slack = new Slack($user_row['url']);
+$slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 
 if (isset($_GET['cb_status']) && $_GET['cb_status'] == 1) {
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -317,6 +317,48 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			sendSlackNotification($slack, 'jvzoo_secret_key_updated', $username, $jvzooOld, $jvzooKey);
 			p202_account_flash('ok', 'Your JVZoo secret key was saved.');
 			p202_account_redirect('202-account/api-integrations.php#jvzoo');
+		}
+	}
+
+	// Shopify's webhook secret, held to the rule its endpoint reads it by
+	// (ShopifyWebhookSecret), so a secret saved here is one a webhook verifies with.
+	if (isset($_POST['change_shopify_webhook_secret']) && $_POST['change_shopify_webhook_secret'] == '1') {
+		$shopifyPosted = $_POST[ShopifyWebhookSecret::COLUMN] ?? '';
+		$shopifyOld = (string) ($user_row[ShopifyWebhookSecret::COLUMN] ?? '');
+		$shopifySecret = null;
+		$shopifyKept = false;
+		try {
+			if (!is_string($shopifyPosted)) {
+				throw new InvalidArgumentException('The secret arrived as a list; paste it as one value.');
+			}
+			$shopifySecret = ShopifyWebhookSecret::parse($shopifyPosted);
+			if ($shopifySecret === '' && ShopifyWebhookSecret::stored($shopifyOld) !== null) {
+				// The saved secret is never shown, so an empty field keeps it.
+				$shopifyKept = true;
+			} elseif ($shopifySecret === '') {
+				$shopifyUnusable = ShopifyWebhookSecret::unreadable($shopifyOld) ? 'The saved secret cannot be used. ' : '';
+				throw new InvalidArgumentException($shopifyUnusable . 'Paste the secret your Shopify webhooks are signed'
+					. ' with: Shopify shows it under Settings › Notifications › Webhooks.');
+			} elseif ($shopifySecret !== $shopifyOld) {
+				updateUserPreference(ShopifyWebhookSecret::COLUMN, $shopifySecret, $_SESSION['user_id'], $db);
+			}
+		} catch (InvalidArgumentException $shopifyRefused) {
+			$error['shopify_webhook_secret_error'] = $shopifyRefused->getMessage();
+			$shopifySecret = null;
+		} catch (RuntimeException $e) {
+			error_log('api-integrations.php: ' . $e->getMessage());
+			$error['shopify_webhook_secret_error'] = 'This could not be saved just now; the old value is still in'
+				. ' place. Try again.';
+			$shopifySecret = null;
+		}
+		if ($shopifyKept) {
+			p202_account_flash('ok', 'Nothing changed: your saved Shopify webhook secret is kept.');
+			p202_account_redirect('202-account/api-integrations.php#shopify');
+		}
+		if ($shopifySecret !== null) {
+			sendSlackNotification($slack, 'shopify_webhook_secret_updated', $username, $shopifyOld, $shopifySecret);
+			p202_account_flash('ok', 'Your Shopify webhook secret was saved.');
+			p202_account_redirect('202-account/api-integrations.php#shopify');
 		}
 	}
 
@@ -588,7 +630,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						error_log('api-integrations.php: a DNI network was not saved: ' . $failed->getMessage());
 					}
 					if ($dniSaved) {
-						tagUserByNetwork($user_row['install_hash'], 'affiliate-networks', $dniNetworkName[0]);
 						p202_account_flash('ok', $dniNetworkName[0] . ' network configured. API processing can take up to 5 minutes.');
 						p202_account_redirect('202-account/api-integrations.php#dni');
 					}
@@ -1179,6 +1220,70 @@ template_top('API Integrations');
 					Affiliate IPN cannot update conversions: it carries no click (PayKickstart allows no custom
 					variables in it, and the tid on your affiliate link shows only in your PayKickstart account), and it
 					is not signed. Leave this URL out of the Affiliate IPN setting.</p>
+			</div>
+		</section>
+	</div>
+
+	<?php
+	$shopifyColumn = $user_row[ShopifyWebhookSecret::COLUMN] ?? null;
+	$shopifyColumn = is_string($shopifyColumn) ? $shopifyColumn : null;
+	$shopifyConnected = SavedSecret::isSaved($shopifyColumn) && !ShopifyWebhookSecret::unreadable($shopifyColumn);
+	$shopifyErrors = isset($error['shopify_webhook_secret_error'])
+		? [ShopifyWebhookSecret::COLUMN => (string) $error['shopify_webhook_secret_error']] : [];
+	?>
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel h-100" id="shopify">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Shopify</h2>
+				<?php if ($shopifyConnected) { ?>
+					<span class="p202-pill p202-pill--good">Connected</span>
+				<?php } elseif (ShopifyWebhookSecret::unreadable($shopifyColumn)) { ?>
+					<span class="p202-pill p202-pill--warn">Secret unreadable</span>
+				<?php } else { ?>
+					<span class="p202-pill">Not connected</span>
+				<?php } ?>
+			</div>
+			<div class="p202-panel__body">
+				<p class="text-secondary">Record each Shopify order on the click that sent the buyer, at the order’s
+					total, and take it back on a refund, from Shopify’s webhooks.</p>
+				<ol class="ps-3">
+					<li>On your store, add the click id to the cart as the line item property
+						<code class="text-nowrap">t202subid</code> (or <code class="text-nowrap">_t202subid</code>, which
+						checkout hides), filled from the tracker’s <code>[[subid]]</code>.</li>
+					<li>In Shopify, under Settings › Notifications › Webhooks, create a JSON webhook for
+						<strong>Order payment</strong> and one for <strong>Refund create</strong>, both to this URL.
+						(Order creation records only an order already paid when it is placed.)</li>
+					<li>Store the secret Shopify shows there (“Your webhooks will be signed with …”) below. A
+						webhook it does not verify is refused, and nothing is recorded until a secret is stored.</li>
+				</ol>
+				<?php echo $endpoint('Webhook URL', $trackingBase . 'tracking202/static/shopify.php'); ?>
+				<p>A webhook already sent to your postback URL (<code>tracking202/static/gpb.php</code>) is handled
+					the same way. Each order counts once, under its order id, whichever webhook arrives first.</p>
+				<p class="mb-3"><span class="text-secondary">Webhook secret:</span>
+					<span data-saved-secret><?php echo $e(SavedSecret::hint($shopifyColumn)); ?></span></p>
+				<details class="p202-disclosure"<?php echo $shopifyErrors ? ' open' : ''; ?>>
+					<summary><?php echo $shopifyConnected ? 'Update' : 'Connect'; ?>
+						<span class="p202-disclosure__hint">your webhook secret</span></summary>
+					<div class="p202-disclosure__body">
+						<form method="post" action="<?php echo $e($self . '#shopify'); ?>">
+							<input type="hidden" name="change_shopify_webhook_secret" value="1">
+							<?php echo p202_account_token_field(); ?>
+							<label class="form-label" for="shopify_webhook_secret"><?php
+								echo $shopifyConnected ? 'New webhook secret' : 'Webhook secret'; ?></label>
+							<div class="input-group">
+								<?php // Never filled in, so no secret reaches the page. ?>
+								<input type="text"
+									class="form-control<?php
+										echo p202_account_invalid($shopifyErrors, ShopifyWebhookSecret::COLUMN); ?>"
+									id="shopify_webhook_secret" name="shopify_webhook_secret"<?php echo $shopifyConnected
+										? ' placeholder="Leave empty to keep the saved one"' : ' required'; ?>
+									autocomplete="off" spellcheck="false" value="">
+								<button class="btn btn-secondary" type="submit">Save</button>
+							</div>
+							<?php echo p202_account_field_error($shopifyErrors, ShopifyWebhookSecret::COLUMN); ?>
+						</form>
+					</div>
+				</details>
 			</div>
 		</section>
 	</div>

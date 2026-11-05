@@ -481,6 +481,12 @@ $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
 
 header('Content-Type: application/javascript; charset=UTF-8');
+// Bot202 Facebook Pixel Assistant: the page's Meta Pixel events, for a visitor that may be tracked in full.
+echo \Prosper202\Click\FacebookPixelAssistantScript::forClick(
+	$conn, (int) $mysql['user_id'], (int) $mysql['landing_page_id'], (int) $mysql['ppc_account_id'], (int) $click_id,
+	\Prosper202\Click\FacebookPixelAssistantScript::mayTrack(trackingEnabled(), $_GET, array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
+	\Prosper202\Click\FacebookPixelAssistantScript::bootstrapCache()
+);
 ?>
 
 <?php if (!empty($tracker_row['leave_behind_page_url'])) { ?>

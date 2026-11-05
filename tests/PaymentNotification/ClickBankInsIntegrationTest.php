@@ -452,15 +452,125 @@ final class ClickBankInsIntegrationTest extends TestCase
         );
     }
 
-    /** ClickBank's amounts are USD; an account that counts in another currency is not credited dollars as its own. */
-    public function testAnAccountThatCountsInAnotherCurrencyIsRefused(): void
+    /**
+     * ClickBank's amounts are USD. An account that counts in another currency
+     * records them as stated, as 1.9.56 did, and the answer says so.
+     */
+    public function testAnAccountThatCountsInAnotherCurrencyRecordsTheUsdAmountAndIsToldSo(): void
     {
         $outcome = $this->post(['trackingCodes' => [(string) self::EUROS_CLICK]], self::EUROS_KEY);
 
-        self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $outcome);
-        self::assertSame('The amount is in USD and this account counts in EUR; Prosper202 does not convert it,'
-            . ' so nothing was recorded.', $outcome->message);
-        self::assertSame([], self::conversions());
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $outcome);
+        self::assertStringEndsWith(' at 37.62. The amount is in USD and this account counts in EUR; Prosper202 does'
+            . ' not convert it, so it stands as stated.', $outcome->message);
+        self::assertSame(
+            [[(string) self::EUROS_CLICK, '37.62000']],
+            array_map(static fn (array $r): array => [$r['click_id'], $r['click_payout']], self::conversions())
+        );
+        self::assertStringContainsString('this account counts in EUR', (string) file_get_contents($this->log));
+
+        $refund = $this->post(
+            ['trackingCodes' => [(string) self::EUROS_CLICK], 'transactionType' => 'RFND', 'totalAccountAmount' => '-10.00'],
+            self::EUROS_KEY
+        );
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+        self::assertStringEndsWith('so it stands as stated.', $refund->message);
+    }
+
+    /**
+     * 1.9.56 credited a ClickBank sale on the click alone and wrote no row
+     * under its receipt. A refund of it takes its amount back from the value
+     * the click carried over, once per receipt and never below 0.
+     */
+    public function testARefundOfASaleCreditedBeforeTheUpgradeTakesItBackFromTheCarriedValue(): void
+    {
+        self::q("UPDATE 202_clicks SET click_lead = 1, click_payout = '47.00' WHERE click_id = " . self::CLICK);
+        $refund = [
+            'transactionType' => 'RFND', 'receipt' => 'OLDSALE1', 'totalAccountAmount' => '-30.00',
+            'transactionTime' => self::stated(time()),
+        ];
+
+        $outcome = $this->post($refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);
+        self::assertSame('Reversed transaction OLDSALE1 on click ' . self::CLICK . ' by 30.00, from the value the'
+            . ' click carried from before the upgrade (no sale under OLDSALE1 was recorded since).', $outcome->message);
+        $rows = self::conversions();
+        self::assertSame(
+            [['legacy_baseline', null, '47.00000'], ['clickbank', 'OLDSALE1', '-30.00000']],
+            array_map(static fn (array $r): array => [$r['source'], $r['transaction_id'], $r['click_payout']], $rows)
+        );
+        self::assertSame(self::conversionIds()[0], $rows[1]['reverses_conv_id']);
+        self::assertSame('17.00000', self::clickPayout());
+
+        // ClickBank's retry is the same refund; another reversal of that receipt is refused.
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post(['attemptCount' => 2] + $refund, self::FIRST_KEY));
+        $chargeback = $this->post(['transactionType' => 'CGBK'] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $chargeback);
+        self::assertStringContainsString('was already taken back from the value click', $chargeback->message);
+
+        // Another pre-upgrade receipt takes back at most what is left.
+        $rebill = $this->post(['receipt' => 'OLDBILL1', 'totalAccountAmount' => '-20.00'] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $rebill);
+        self::assertStringContainsString('by 17, all that was left of it: this RFND states 20.00', $rebill->message);
+        self::assertSame('0.00000', self::clickPayout());
+        // Its retry, once nothing is left, is still that refund, not one with nothing to reverse.
+        $retry = $this->post(['attemptCount' => 2, 'receipt' => 'OLDBILL1', 'totalAccountAmount' => '-20.00'] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $retry);
+        $more = $this->post(['receipt' => 'OLDBILL2', 'totalAccountAmount' => '-5.00'] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::NOTHING_TO_REVERSE, 404, $more);
+        self::assertStringContainsString('Nothing is left of the value click', $more->message);
+        self::assertCount(3, self::conversions());
+    }
+
+    /** A click 1.9.56 left below 0 carried nothing over: a refund naming no sale takes nothing from a later sale. */
+    public function testARefundNamingNoSaleTakesNothingFromAClickCarriedOverBelowZero(): void
+    {
+        self::q("UPDATE 202_clicks SET click_lead = 1, click_payout = '-10.00' WHERE click_id = " . self::CLICK);
+        self::assertOutcome(
+            OutcomeKind::RECORDED,
+            200,
+            $this->post(['receipt' => 'NEWSALE1', 'totalAccountAmount' => '30.00'], self::FIRST_KEY)
+        );
+        $before = self::clickPayout();
+
+        $refund = $this->post([
+            'transactionType' => 'RFND', 'receipt' => 'OLDSALE1', 'totalAccountAmount' => '-10.00',
+            'transactionTime' => self::stated(time()),
+        ], self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::NOTHING_TO_REVERSE, 404, $refund);
+        self::assertStringContainsString('Nothing is left of the value click', $refund->message);
+        self::assertSame($before, self::clickPayout());
+        self::assertCount(2, self::conversions());
+    }
+
+    /** A baseline whose superseded reason is empty is live, as the reports count it. */
+    public function testARefundTakesBackFromABaselineWhoseSupersededReasonIsEmpty(): void
+    {
+        self::q("UPDATE 202_clicks SET click_lead = 1, click_payout = '47.00' WHERE click_id = " . self::CLICK);
+        $refund = [
+            'transactionType' => 'RFND', 'receipt' => 'OLDSALE1', 'totalAccountAmount' => '-10.00',
+            'transactionTime' => self::stated(time()),
+        ];
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($refund, self::FIRST_KEY));
+        self::q("UPDATE 202_conversion_logs SET superseded_reason = '' WHERE click_id = " . self::CLICK
+            . " AND source = 'legacy_baseline'");
+
+        $second = $this->post(['receipt' => 'OLDSALE2'] + $refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $second);
+        self::assertSame('27.00000', self::clickPayout());
+    }
+
+    /** Only a value carried from before the upgrade is taken back from: a click the ledger valued is not. */
+    public function testARefundNamingNoSaleOnAClickTheLedgerValuedStillFindsNothing(): void
+    {
+        $this->post(['trackingCodes' => [(string) self::SECOND_CLICK], 'receipt' => 'SECONDR1'], self::SECOND_KEY);
+        $missing = $this->post(
+            ['trackingCodes' => [(string) self::SECOND_CLICK], 'transactionType' => 'RFND', 'receipt' => 'NEVERSOLD',
+                'totalAccountAmount' => '-5.00'],
+            self::SECOND_KEY
+        );
+        self::assertOutcome(OutcomeKind::NOTHING_TO_REVERSE, 404, $missing);
+        self::assertCount(1, self::conversions());
     }
 
     public function testOtherTransactionTypesAreAcknowledgedAndLogged(): void
@@ -571,7 +681,8 @@ final class ClickBankInsIntegrationTest extends TestCase
     public function testARefundOfMoreThanTheSaleTakesBackTheWholeSale(): void
     {
         $this->post([], self::FIRST_KEY);
-        $refund = ['transactionType' => 'RFND', 'totalAccountAmount' => '-50.00'];
+        // Its time fixed, so a retry a second later is the same notification.
+        $refund = ['transactionType' => 'RFND', 'totalAccountAmount' => '-50.00', 'transactionTime' => self::stated(time())];
 
         $outcome = $this->post($refund, self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);

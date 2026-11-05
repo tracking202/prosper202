@@ -230,6 +230,67 @@ final class JVZooIpnIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * The JVZIPN URL 1.9.56 showed names no role: a signed sale there is
+     * refused (400) and records nothing, on the tid or on the buy link's
+     * subid, and the log says why. jvzoo.php runs in a process of its own.
+     */
+    public function testASignedSaleAtTheUrlWithNoRoleIsRefusedAndRecordsNothing(): void
+    {
+        $fields = JVZooAdapterTest::signed(self::fields(['cvendthru' => 'subid=' . self::SECOND_CLICK]), self::KEY);
+        foreach (['absent' => [], 'empty' => ['role' => ''], 'a list' => ['role' => ['vendor']]] as $case => $get) {
+            [$status, $body, $log] = self::jvzoo($get, $fields);
+
+            self::assertSame(400, $status, $case . ': ' . $body);
+            $expected = $get === ['role' => ['vendor']]
+                ? 'This URL\'s role is neither affiliate nor vendor.'
+                : JVZooAdapter::ROLELESS_REFUSAL;
+            self::assertStringContainsString($expected, $body, $case);
+            $logged = 'JVZoo notification from 203.0.113.7: malformed (400): ' . $expected;
+            self::assertStringContainsString($logged, $log, $case);
+            self::assertSame([], self::conversions(), $case);
+        }
+        // The same notification at the affiliate's URL records.
+        [$status] = self::jvzoo(['role' => 'affiliate'], $fields);
+        self::assertSame(200, $status);
+        self::assertSame([(string) self::CLICK], array_column(self::conversions(), 'click_id'));
+    }
+
+    /**
+     * Posts to tracking202/static/jvzoo.php through the static-endpoint runner.
+     *
+     * @param array<string, mixed> $get
+     * @param array<string, string> $post
+     * @return array{int, string, string} status, body and what it logged
+     */
+    private static function jvzoo(array $get, array $post): array
+    {
+        if (!is_file(dirname(__DIR__, 2) . '/202-config.php')) {
+            self::markTestSkipped('No 202-config.php: tests/run-integration-suites.sh writes one.');
+        }
+        $env = getenv();
+        $env['P202_TEST_SCRIPT'] = 'jvzoo.php';
+        $env['P202_TEST_GET'] = json_encode((object) $get, JSON_THROW_ON_ERROR);
+        $env['P202_TEST_POST'] = json_encode((object) $post, JSON_THROW_ON_ERROR);
+        $runner = dirname(__DIR__) . '/StaticEndpoint/fixtures/gpb-runner.php';
+        $proc = proc_open(
+            [PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_log=', $runner],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            null,
+            $env
+        );
+        self::assertIsResource($proc);
+        $out = (string) stream_get_contents($pipes[1]);
+        $err = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        self::assertSame(0, proc_close($proc), "the runner failed: $err\n$out");
+        [$status, $body] = explode("\n", $out, 2) + [1 => ''];
+
+        return [(int) $status, $body, $err];
+    }
+
     public function testAVendorsSaleIsRecordedOnTheBuyLinksSubidNeverOnTheAffiliatesTid(): void
     {
         // An affiliate's tid that happens to name one of the vendor's clicks.
