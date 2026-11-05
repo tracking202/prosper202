@@ -34,6 +34,10 @@ final class VariableReportIntegrationTest extends TestCase
     private const REMOVED = 990072;
     private const LIVE = 990073;
     private const OTHER_VAR = 990074;
+    /** Another account, with the source a split moved there and that source's variable. */
+    private const OTHER_USER = 990075;
+    private const OTHER_SOURCE = 990075;
+    private const THEIR_VAR = 990075;
     private const CLICK = 99007101;
 
     private static int $now = 0;
@@ -78,9 +82,9 @@ final class VariableReportIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         foreach (['202_dataengine', '202_users_pref', '202_users', '202_ppc_networks', '202_ppc_accounts'] as $table) {
-            self::q("DELETE FROM $table WHERE user_id = " . self::USER);
+            self::q("DELETE FROM $table WHERE user_id IN (" . self::USER . ', ' . self::OTHER_USER . ')');
         }
-        $vars = implode(', ', [self::REMOVED, self::LIVE, self::OTHER_VAR]);
+        $vars = implode(', ', [self::REMOVED, self::LIVE, self::OTHER_VAR, self::THEIR_VAR]);
         self::q('DELETE FROM 202_dataengine WHERE click_id = ' . self::CLICK);
         self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id = ' . self::CLICK);
         self::q("DELETE FROM 202_custom_variables WHERE custom_variable_id IN ($vars)");
@@ -137,6 +141,66 @@ final class VariableReportIntegrationTest extends TestCase
         self::assertSame(['Gone (removed) = X: 1', 'Gone = X: 1', 'Keep = K: 1'], $groups);
         $totals = end($result);
         self::assertSame('1', (string) ($totals['total_clicks'] ?? ''), 'the report\'s own total is one click');
+    }
+
+    /**
+     * A click whose variable set names another account's variable (its
+     * source was split off into that account, TrafficSourceOwners) keeps the
+     * value, unnamed: that account's label, and a rename there, never show.
+     */
+    public function testAnotherAccountsVariableUnderTheSameIdStaysUnnamed(): void
+    {
+        self::user(self::OTHER_USER);
+        self::row('202_ppc_networks', [
+            'ppc_network_id' => self::OTHER_SOURCE, 'user_id' => self::OTHER_USER,
+            'ppc_network_name' => 'Their Source', 'ppc_network_time' => self::$now,
+        ]);
+        self::row('202_ppc_network_variables', [
+            'ppc_variable_id' => self::THEIR_VAR, 'ppc_network_id' => self::OTHER_SOURCE, 'name' => 'Theirs',
+            'parameter' => 'theirs', 'placeholder' => '{theirs}', 'deleted' => 0,
+        ]);
+        self::row('202_custom_variables', [
+            'custom_variable_id' => self::THEIR_VAR, 'ppc_variable_id' => self::THEIR_VAR, 'variable' => 'T',
+        ]);
+        self::row('202_variable_sets2', ['variable_set_id' => self::CLICK, 'variables' => (string) self::THEIR_VAR]);
+        try {
+            $unnamed = 'Unnamed variable ' . self::THEIR_VAR . ' = T: 1';
+            self::assertSame(['Gone (removed) = X: 1', 'Gone = X: 1', 'Keep = K: 1', $unnamed], self::groups());
+
+            self::q("UPDATE 202_ppc_network_variables SET name = 'Renamed there' WHERE ppc_variable_id = "
+                . self::THEIR_VAR);
+            self::assertSame(
+                ['Gone (removed) = X: 1', 'Gone = X: 1', 'Keep = K: 1', $unnamed],
+                self::groups(),
+                'a rename in the other account does not show'
+            );
+        } finally {
+            self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id = ' . self::CLICK
+                . ' AND variables = ' . self::THEIR_VAR);
+            self::q('DELETE FROM 202_custom_variables WHERE custom_variable_id = ' . self::THEIR_VAR);
+            self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_variable_id = ' . self::THEIR_VAR);
+            self::q('DELETE FROM 202_ppc_networks WHERE user_id = ' . self::OTHER_USER);
+            self::q('DELETE FROM 202_users WHERE user_id = ' . self::OTHER_USER);
+        }
+    }
+
+    /** @return list<string> each variable group as "name = value: clicks", sorted */
+    private static function groups(): array
+    {
+        $groups = [];
+        foreach ((array) self::read('engine:variable') as $source) {
+            if (!is_array($source) || !isset($source['variables']) || !is_array($source['variables'])) {
+                continue;
+            }
+            foreach ($source['variables'] as $variable) {
+                foreach ((array) ($variable['values'] ?? []) as $value) {
+                    $groups[] = $value['variable_name'] . ' = ' . $value['variable_value'] . ': ' . $value['clicks'];
+                }
+            }
+        }
+        sort($groups);
+
+        return $groups;
     }
 
     public function testLargeVariableDictionaryDoesNotLimitTheReportedValues(): void
