@@ -2218,7 +2218,7 @@ paths:
             1.9.79, which has no reason.
           schema:
             type: string
-            enum: [sign_in_address, crawler_range, repeat_visit, filter_list, bot, not_recorded]
+            enum: [sign_in_address, crawler_range, repeat_visit, filter_list, fraud_score, bot, not_recorded]
       responses:
         "200":
           description: Paginated click list
@@ -13176,13 +13176,15 @@ components:
         filter_reason:
           type: string
           nullable: true
-          enum: [sign_in_address, crawler_range, repeat_visit, filter_list, bot, null]
+          enum: [sign_in_address, crawler_range, repeat_visit, filter_list, fraud_score, bot, null]
           description: >-
             Why a filtered click is filtered: `sign_in_address` (a user of the
             install last signed in from its address), `crawler_range` (a
             built-in crawler range), `repeat_visit` (its address clicked within
             the repeat window), `filter_list` (an always-filter entry of the
-            account's list, `filter_entry_id`) or `bot` (the bot detector).
+            account's list, `filter_entry_id`), `fraud_score` (IPQualityScore
+            scored its address at 90 or more, after the click) or `bot` (the
+            bot detector).
             Null for a counted click, and for one filtered before 1.9.79, which
             recorded no reason. GET /users/{id}/click-filter shows the rules.
         filter_entry_id:

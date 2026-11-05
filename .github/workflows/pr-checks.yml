@@ -4,17 +4,31 @@ on:
   pull_request:
     branches: ["*"]
 
+# A new push to a pull request cancels that PR's older run, which no longer
+# describes its head and would hold runners the newer run is queued for.
+# Other events get a unique group, so no push run is ever dropped.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  php-lint:
-    # PHP 8.3 comes with the pinned runner image, so this job runs no
-    # third-party action. A newer image (ubuntu-latest moving on) could bring a
-    # different PHP, which is why the image is named, not "latest".
+  # One job for every check here. Each was its own job, and each did seconds
+  # of work after a runner setup of about half a minute, so a push took four
+  # runner slots for what one does in under two minutes.
+  checks:
+    # PHP 8.3 and Composer come with the pinned runner image, so this job runs
+    # no third-party action. A newer image (ubuntu-latest moving on) could
+    # bring a different PHP, which is why the image is named, not "latest".
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Runner PHP is 8.3
+        with:
+          # The changelog guard diffs against the base branch.
+          fetch-depth: 0
+      - name: Runner PHP is 8.3, with Composer
         run: |
           php -r 'exit(PHP_MAJOR_VERSION === 8 && PHP_MINOR_VERSION === 3 ? 0 : 1);' || { php -v; echo "::error::expected PHP 8.3 on ubuntu-24.04"; exit 1; }
+          composer --version
       - name: PHP Syntax Check
         id: php_lint
         run: |
@@ -91,23 +105,11 @@ jobs:
               echo "> All checks completed without detected errors."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Fail when lint errors detected
-        if: ${{ steps.php_lint.outputs.exit_code != '0' || steps.shell_lint.outputs.exit_code != '0' }}
-        run: exit 1
-
-  # The release zip is extracted into the web root of hosts with no terminal.
-  # build/release-manifest.php decides what it carries and is fail-closed, so
-  # a new top-level path must be classified in the PR that adds it; without
-  # this job that only surfaced when the tag build refused to package.
-  release-manifest:
-    # Runner-image PHP and Composer, as in php-lint above.
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Runner PHP is 8.3, with Composer
-        run: |
-          php -r 'exit(PHP_MAJOR_VERSION === 8 && PHP_MINOR_VERSION === 3 ? 0 : 1);' || { php -v; echo "::error::expected PHP 8.3 on ubuntu-24.04"; exit 1; }
-          composer --version
+      # The release zip is extracted into the web root of hosts with no
+      # terminal. build/release-manifest.php decides what it carries and is
+      # fail-closed, so a new top-level path must be classified in the PR that
+      # adds it; without this check that only surfaced when the tag build
+      # refused to package.
       - name: Every tracked path is classified for the release zip
         run: php build/scripts/release-tree.php check-manifest
       # The zip's vendor/ is installed from composer.lock; a lock that has
@@ -115,16 +117,10 @@ jobs:
       - name: composer.lock matches composer.json
         run: composer validate --no-check-publish --no-check-all
 
-  # Each pull request adds its changelog entries as a fragment under
-  # changelogs.d/, folded into changelogs.txt and changelogs.json at release.
-  # When every pull request appended to the same lines of those two files,
-  # each merge made every other open pull request conflict.
-  changelog:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
+      # Each pull request adds its changelog entries as a fragment under
+      # changelogs.d/, folded into changelogs.txt and changelogs.json at
+      # release. When every pull request appended to the same lines of those
+      # two files, each merge made every other open pull request conflict.
       - name: Every changelog fragment can be folded in
         run: python3 -I scripts/changelog.py check
       - name: Entries come as fragments, not edits of the two files
@@ -132,10 +128,11 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: python3 -I scripts/changelog.py guard "origin/$BASE_REF"
 
-  # Flags are written in kebab-case everywhere; snake_case is an accepted alias.
-  flag-spelling:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Flags are written in kebab-case everywhere; snake_case is an accepted alias.
       - name: No tracked text spells a flag in snake_case
         run: python3 -I scripts/check-flag-spelling.py
+
+      # Last, so a syntax error does not hide what the checks above found.
+      - name: Fail when lint errors detected
+        if: ${{ steps.php_lint.outputs.exit_code != '0' || steps.shell_lint.outputs.exit_code != '0' }}
+        run: exit 1

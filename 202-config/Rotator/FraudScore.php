@@ -6,12 +6,17 @@ namespace Prosper202\Rotator;
 
 use Prosper202\Click\ClickRequest;
 use Prosper202\Database\Connection;
+use Prosper202\Http\EuropeanCountries;
+
+require_once dirname(__DIR__) . '/FraudDetectionIPQS.class.php';
 
 /**
  * A redirector's "High fraud score" criterion: whether IPQualityScore scores
  * the visitor 80 or more with the account's key (Settings › API
  * Integrations). No key or no answer is null, "could not tell"; a failed
- * answer is logged, so a rule that stopped matching can be traced.
+ * answer is logged, so a rule that stopped matching can be traced. A visitor
+ * from the EU/EEA, the UK or Switzerland, or one not placed, is never sent:
+ * null, as for IpqsScoring.
  */
 final class FraudScore
 {
@@ -30,12 +35,13 @@ final class FraudScore
     }
 
     /**
+     * @param ?string $countryCode the visitor's ISO country (getGeoData()'s country_code)
      * @param array<array-key, mixed> $server
      * @param (\Closure(array<string, mixed>): \FraudDetectionInterface)|null $detector the IPQS client, for tests
      */
-    public static function isHigh(string $key, string $ip, array $server, ?\Closure $detector = null): ?bool
+    public static function isHigh(string $key, string $ip, ?string $countryCode, array $server, ?\Closure $detector = null): ?bool
     {
-        if (trim($key) === '' || $ip === '') {
+        if (trim($key) === '' || $ip === '' || !EuropeanCountries::isOutside($countryCode)) {
             return null;
         }
         $config = [
