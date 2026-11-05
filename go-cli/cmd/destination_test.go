@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -153,5 +155,39 @@ func TestCampaignConversionActionsMergeIntoTheStoredOnes(t *testing.T) {
 	}
 	if _, err := destinationSettings(destinationFlagsCmd(t, "--campaign-conversion-action", "12="), nil); err == nil || exitCodeForError(err) != 1 || hintFor(err) == "" {
 		t.Errorf("12= on a create should be refused with a hint: %v", err)
+	}
+}
+
+// connect asks this install for the consent link and prints it: one POST to
+// the destination's oauth/start, nothing else, and the answer as JSON.
+func TestDestinationConnectPostsOAuthStartAndPrintsTheLink(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		w.Write([]byte(`{"data":{"authorisation_url":"https://accounts.google.com/o/oauth2/v2/auth?state=v1.1.7.x","redirect_uri":"https://track.example/tracking202/setup/destination-oauth.php","expires_at":1767225600}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	out, _, err := executeCommand("destination", "connect", "7", "--json")
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if !reflect.DeepEqual(calls, []string{"POST /api/v3/destinations/7/oauth/start"}) {
+		t.Errorf("requests = %v", calls)
+	}
+	if !strings.Contains(out, "accounts.google.com/o/oauth2/v2/auth") || !strings.Contains(out, "destination-oauth.php") {
+		t.Errorf("the consent link and redirect URI should be printed, got %s", out)
+	}
+
+	calls = nil
+	_, _, err = executeCommand("destination", "connect", "seven")
+	if err == nil || exitCodeForError(err) != 1 || hintFor(err) == "" {
+		t.Errorf("a bad id: err %v, exit %d, hint %q", err, exitCodeForError(err), hintFor(err))
+	}
+	if len(calls) != 0 {
+		t.Errorf("a bad id reached the server: %v", calls)
 	}
 }
