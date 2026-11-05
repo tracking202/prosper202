@@ -176,7 +176,12 @@ final class ServerPostbacksAreQueuedTest extends TestCase
         $sending = [];
         $read = 0;
         foreach (self::files() as $file) {
-            $senders = ['202-config/Notifications/NotificationOutbox.php', '202-config/static-endpoint-helpers.php'];
+            // The queues' definitions; DestinationQueue::sendDue() is called only by the cron worker, which the scan does not read.
+            $senders = [
+                '202-config/Notifications/NotificationOutbox.php',
+                '202-config/Destinations/DestinationQueue.php',
+                '202-config/static-endpoint-helpers.php',
+            ];
             if (in_array($file, $senders, true)) {
                 continue;
             }
