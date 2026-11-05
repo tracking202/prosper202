@@ -11,6 +11,7 @@ use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationInputException;
+use Prosper202\Destinations\DestinationKeyMissing;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\GoogleAdsDestination;
@@ -294,7 +295,7 @@ final class GoogleAdsIntegrationTest extends TestCase
         $refused = null;
         try {
             $key->invoke($store, false);
-        } catch (\RuntimeException $e) {
+        } catch (DestinationKeyMissing $e) {
             $refused = $e->getMessage();
         }
         self::assertNotNull($refused, 'the minted key was rolled back, so there is none');
@@ -304,5 +305,56 @@ final class GoogleAdsIntegrationTest extends TestCase
         self::assertSame($minted, $key->invoke($store, false));
         self::$db->query("DELETE FROM 202_deployment_secrets WHERE secret_name = '" . DestinationStore::SECRET_NAME . "'");
         self::assertSame($minted, $key->invoke($store, false));
+    }
+
+    public function testASecondMintInTheSameRolledBackTransactionIsNotKeptEither(): void
+    {
+        // update() mints once to read the stored credentials, then writeCredentials() asks again: the second
+        // call's INSERT changes no row and reads the first call's uncommitted key back.
+        self::$db->query("DELETE FROM 202_deployment_secrets WHERE secret_name = '" . DestinationStore::SECRET_NAME . "'");
+        $store = $this->store();
+        $key = new \ReflectionMethod($store, 'key');
+        self::$db->begin_transaction();
+        $first = $key->invoke($store, true);
+        self::assertSame($first, $key->invoke($store, true), 'the same transaction reads its own key back');
+        self::$db->rollback();
+        $this->expectException(DestinationKeyMissing::class);
+        $key->invoke($store, false);
+    }
+
+    public function testAMissingKeyReadsAsUnreadableButADatabaseErrorIsNot(): void
+    {
+        $id = $this->destination();
+        $this->store()->authorise(1, $id, self::REFRESH, time());
+        self::assertSame('ready', $this->store()->get(1, $id)['status']);
+        $this->adsClick(130, time() - 7 * 3600);
+        $this->record(130, 'ORD-130');
+        $pending = self::deliveries($id);
+        self::assertSame(['pending', '0'], [$pending[0]['status'], $pending[0]['attempts']]);
+
+        self::$db->query('RENAME TABLE 202_deployment_secrets TO 202_deployment_secrets_away');
+        try {
+            $listed = null;
+            try {
+                $listed = $this->store()->get(1, $id)['status'];
+            } catch (\Throwable $e) {
+                self::assertNotInstanceOf(DestinationKeyMissing::class, $e);
+            }
+            self::assertNull($listed, 'a failed read of the key is an error, not credentials_unreadable (got ' . var_export($listed, true) . ')');
+            $sent = null;
+            try {
+                $sent = $this->worker()->sendDue(10, 15, time());
+            } catch (\Throwable $e) {
+                self::assertNotInstanceOf(DestinationKeyMissing::class, $e);
+            }
+            self::assertNull($sent, 'the run stops on a database error');
+            self::assertSame(['pending', '0'], [self::deliveries($id)[0]['status'], self::deliveries($id)[0]['attempts']], 'and the row keeps its tries');
+        } finally {
+            self::$db->query('RENAME TABLE 202_deployment_secrets_away TO 202_deployment_secrets');
+        }
+
+        // The positive control: a key that is really not there reads as unreadable credentials.
+        self::$db->query("DELETE FROM 202_deployment_secrets WHERE secret_name = '" . DestinationStore::SECRET_NAME . "'");
+        self::assertSame('credentials_unreadable', $this->store()->get(1, $id)['status']);
     }
 }

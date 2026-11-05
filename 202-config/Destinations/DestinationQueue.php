@@ -9,6 +9,7 @@ use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\DataEngine\IpAddressSql;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Database\Schema\TableRegistry;
 use Prosper202\Http\EuropeanVisitor;
 use Prosper202\Http\PrivacySetting;
@@ -395,6 +396,9 @@ final class DestinationQueue
             return $d;
         } catch (DestinationInputException $e) {
             return 'destination ' . $destinationId . ' has an unknown type: ' . $e->getMessage();
+        } catch (QueryException | \mysqli_sql_exception $e) {
+            // A database error is the run's, not the destination's: its rows keep their tries for the next run.
+            throw $e;
         } catch (\RuntimeException | \JsonException $e) {
             return 'destination ' . $destinationId . ' cannot be read: ' . $e->getMessage();
         }

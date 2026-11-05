@@ -168,8 +168,8 @@ final class DestinationStore
                 return false;
             }
             $cancel = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
-                . "` SET status = 'cancelled', last_error = 'the destination was deleted before this was sent' WHERE destination_id = ? AND status = 'pending'");
-            $this->conn->bind($cancel, 'i', [$destinationId]);
+                . "` SET status = 'cancelled', last_error = 'the destination was deleted before this was sent' WHERE destination_id = ? AND user_id = ? AND status = 'pending'");
+            $this->conn->bind($cancel, 'ii', [$destinationId, $userId]);
             $this->conn->executeUpdate($cancel);
 
             return true;
@@ -366,11 +366,20 @@ final class DestinationStore
             return 'ready';
         }
         $sealed = (string) $row['credentials'];
-        try {
-            $credentials = $sealed === '' ? [] : self::decode(self::open($sealed, $this->key(false), (int) $row['destination_id'], (int) $row['user_id']));
-        } catch (\JsonException | \RuntimeException) {
-            // One unreadable row is shown as such, not a failed list (CLAUDE.md #24).
-            return 'credentials_unreadable';
+        $credentials = [];
+        if ($sealed !== '') {
+            // The key is read outside the forgiving catch: a database error on that read reaches the caller,
+            // and is never shown as unreadable credentials, whose repair (typing them again) drops the grant.
+            try {
+                $key = $this->key(false);
+            } catch (DestinationKeyMissing) {
+                return 'credentials_unreadable';
+            }
+            $credentials = self::opened($sealed, $key, (int) $row['destination_id'], (int) $row['user_id']);
+            if ($credentials === null) {
+                // One unreadable row is shown as such, not a failed list (CLAUDE.md #24).
+                return 'credentials_unreadable';
+            }
         }
 
         return $adapter->authorised($credentials) ? 'ready' : 'needs_authorisation';
@@ -436,10 +445,21 @@ final class DestinationStore
      */
     private static function readableOrNone(string $sealed, #[\SensitiveParameter] string $key, int $destinationId, int $userId): array
     {
+        return self::opened($sealed, $key, $destinationId, $userId) ?? [];
+    }
+
+    /**
+     * Sealed credentials decrypted and decoded, or null when they cannot be. Pure (no database work), so its catch
+     * cannot swallow a lock error.
+     *
+     * @return array<string, mixed>|null
+     */
+    private static function opened(string $sealed, #[\SensitiveParameter] string $key, int $destinationId, int $userId): ?array
+    {
         try {
             return self::decode(self::open($sealed, $key, $destinationId, $userId));
         } catch (\JsonException | \RuntimeException) {
-            return [];
+            return null;
         }
     }
 
@@ -481,29 +501,33 @@ final class DestinationStore
         return $plaintext;
     }
 
-    /** The key; minted first when $mint and absent. An existing key is never replaced. */
+    /**
+     * The key; minted first when $mint and absent. An existing key is never replaced.
+     *
+     * @throws DestinationKeyMissing when there is no well-formed key (a database error is thrown as itself)
+     */
     private function key(bool $mint): string
     {
         if ($this->key !== null) {
             return $this->key;
         }
-        $minted = false;
         if ($mint) {
             $insert = $this->conn->prepareWrite('INSERT INTO `' . TableRegistry::DEPLOYMENT_SECRETS . '` (secret_name, secret_value, created_at) VALUES (?, ?, ?)
                  ON DUPLICATE KEY UPDATE secret_name = secret_name');
             $this->conn->bind($insert, 'ssi', [self::SECRET_NAME, bin2hex(random_bytes(32)), time()]);
-            $minted = $this->conn->executeUpdate($insert) === 1;
+            $this->conn->executeUpdate($insert);
         }
         $read = $this->conn->prepareWrite('SELECT secret_value FROM `' . TableRegistry::DEPLOYMENT_SECRETS . '` WHERE secret_name = ? LIMIT 1');
         $this->conn->bind($read, 's', [self::SECRET_NAME]);
         $hex = $this->conn->fetchOne($read)['secret_value'] ?? null;
         if (!is_string($hex) || preg_match('/^[0-9a-f]{64}$/D', $hex) !== 1) {
-            throw new \RuntimeException('The destinations\' credential key is missing from 202_deployment_secrets or is not 64 lower-case hex characters; set the credentials again');
+            throw new DestinationKeyMissing('The destinations\' credential key is missing from 202_deployment_secrets or is not 64 lower-case hex characters; set the credentials again');
         }
 
         $key = (string) hex2bin($hex);
-        // A key this call minted is not kept: the caller's transaction may roll its INSERT back (CLAUDE.md #11).
 
-        return $minted ? $key : $this->key = $key;
+        // Only a plain read is kept. A minting call may have read its own uncommitted INSERT, or a key a second
+        // call in the same transaction read back after the first minted it; either may be rolled back (CLAUDE.md #11).
+        return $mint ? $key : $this->key = $key;
     }
 }
