@@ -66,14 +66,22 @@ final class JVZooAdapter implements ProviderAdapter
     /** The vendor's pass-through variable on the buy link. */
     public const VENDOR_VARIABLE = 'subid';
 
-    public function __construct(private readonly ?JVZooRole $role)
+    /** At 1.9.56's URL, a notification with no caffitid is a vendor's: refused so JVZoo retries and says why. */
+    public const ROLELESS_NO_AFFILIATE = 'This notification has no caffitid, so it is not an affiliate\'s, and this URL'
+        . ' (the one Prosper202 1.9.56 showed, with no ?role=) reads only affiliates\' sales. Nothing was recorded.'
+        . ' If you are the vendor, paste the URL ending ?role=vendor from Account > API integrations > JVZoo into'
+        . ' your product\'s JVZIPN URL.';
+
+    public function __construct(private readonly ?JVZooRole $role, private readonly bool $roleless = false)
     {
     }
 
     /** The adapter for a request's ?role: none (absent or empty) is 1.9.56's URL, the affiliate's. */
     public static function forQuery(mixed $role): self
     {
-        return new self($role === null || $role === '' ? JVZooRole::AFFILIATE : JVZooRole::fromQuery($role));
+        return $role === null || $role === ''
+            ? new self(JVZooRole::AFFILIATE, true)
+            : new self(JVZooRole::fromQuery($role));
     }
 
     public function name(): string
@@ -210,6 +218,9 @@ final class JVZooAdapter implements ProviderAdapter
         }
         if ($kind === NotificationKind::TEST || $kind === NotificationKind::IGNORED) {
             return new Notification($kind, $type);
+        }
+        if ($this->roleless && self::text($fields, 'caffitid') === null) {
+            throw self::malformed(self::ROLELESS_NO_AFFILIATE);
         }
 
         $receipt = self::text($fields, 'ctransreceipt');

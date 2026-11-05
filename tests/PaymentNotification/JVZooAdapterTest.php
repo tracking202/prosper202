@@ -459,6 +459,31 @@ final class JVZooAdapterTest extends TestCase
         self::assertSame(77, JVZooAdapter::forQuery('vendor')->parse(self::request($sale))->clickId);
     }
 
+    /**
+     * A vendor's notification at the role-less URL carries no caffitid: it is
+     * refused (JVZoo retries and shows why), not answered as "no click".
+     */
+    public function testAVendorsNotificationAtTheUrlWithNoRoleIsRefusedNamingTheVendorUrl(): void
+    {
+        foreach (['SALE', 'BILL', 'RFND', 'CGBK'] as $type) {
+            $vendors = self::sale(['caffitid' => '', 'cvendthru' => 'subid=77', 'ctransaction' => $type]);
+            foreach ([null, ''] as $none) {
+                $refusal = self::refusal(static fn () => JVZooAdapter::forQuery($none)->parse(self::request($vendors)));
+                self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind, $type);
+                self::assertSame(JVZooAdapter::ROLELESS_NO_AFFILIATE, $refusal->outcome->message);
+            }
+            // The vendor URL reads it, and the affiliate URL answers it as before.
+            self::assertSame(77, JVZooAdapter::forQuery('vendor')->parse(self::request($vendors))->clickId, $type);
+            self::assertNotSame(
+                OutcomeKind::MALFORMED,
+                self::refusal(static fn () => JVZooAdapter::forQuery('affiliate')->parse(self::request($vendors)))->outcome->kind,
+                $type
+            );
+        }
+        // A test notification at that URL is still answered.
+        self::assertSame('TEST', JVZooAdapter::forQuery(null)->parse(self::request(self::sale(['caffitid' => '', 'ctransaction' => 'TEST'])))->kind->name);
+    }
+
     public function testTheRoleIsReadFromTheQueryExactly(): void
     {
         self::assertSame(JVZooRole::AFFILIATE, JVZooRole::fromQuery('affiliate'));

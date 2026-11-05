@@ -1,0 +1,3 @@
+# JVZoo vendors on the old 1.9.56 URL are told to switch, not silently dropped.
+-- Fixed: At the JVZIPN URL paid 1.9.56 showed (tracking202/static/jvzoo.php with no ?role=), which records affiliates' sales, a notification with no caffitid (a vendor's) is refused with a 400 naming the ?role=vendor URL, so JVZoo retries it and shows the error, instead of being answered as recorded with no click. Account › API integrations › JVZoo says the same to accounts with a JVZIPN key saved.
+app: Fixed: A JVZoo vendor still on the 1.9.56 URL sees an error naming the vendor URL, rather than losing the sale silently.

@@ -1107,6 +1107,14 @@ template_top('API Integrations');
 						its JVZIPN URL. (Not the v2 URL: v2 does not sign the amount or the click.)</li>
 				</ol>
 				<?php echo $endpoint('Vendor JVZIPN URL', JVZooRole::VENDOR->url($trackingBase)); ?>
+				<?php if ($jvzooConnected) { ?>
+				<div class="alert alert-warning small" role="note" data-jvzoo-roleless-note>
+					<strong>Upgraded from Prosper202 1.9.56?</strong> The JVZIPN URL 1.9.56 showed, which ends
+					<code>jvzoo.php</code> with no <code>?role=</code>, now records only affiliates’ sales. If you
+					sell your own product, replace your product’s JVZIPN URL in JVZoo with the Vendor JVZIPN URL
+					above: until you do, its notifications are refused and JVZoo shows the error.
+				</div>
+				<?php } ?>
 				<p>Both are verified with your JVZIPN secret key, which JVZoo shows under My Account ›
 					Account Details › Seller Settings; store it below. A notification it does not verify is
 					refused. For a subscription, set the campaign’s “When a click converts more than once”
