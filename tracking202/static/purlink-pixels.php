@@ -33,7 +33,11 @@ if (strlen($body) > P202_PURLINK_PIXELS_BODY_LIMIT) {
     exit;
 }
 parse_str($body, $fields);
-if (array_keys($fields) !== ['proof'] || !is_string($fields['proof']) || $fields['proof'] === '') {
+// p202_consent=0 with the poll refuses the Meta Purchase (RequestSignals::consentGiven()).
+$names = array_keys($fields);
+sort($names);
+if (!in_array($names, [['proof'], ['p202_consent', 'proof']], true)
+    || !is_string($fields['proof']) || $fields['proof'] === '') {
     Bootstrap::errorResponse('Invalid PurLink pixel request', 422);
     exit;
 }
@@ -43,7 +47,14 @@ try {
     if ($key === null) {
         throw new RuntimeException('installation token key is missing');
     }
-    $result = (new PurLinkPixels(new Connection($db)))->poll($fields['proof'], time(), $key);
+    $result = (new PurLinkPixels(new Connection($db)))->poll(
+        $fields['proof'],
+        time(),
+        $key,
+        // p202VisitorMayBeInEu(), without connect2.php's bootstrap.
+        static fn (): bool => \Prosper202\Http\EuropeanVisitor::mayBe(\Prosper202\Http\VisitorIp::fromServer($_SERVER)),
+        array_intersect_key($fields, ['p202_consent' => true])
+    );
 } catch (Throwable $error) {
     error_log('PurLink deferred pixel failed: ' . $error->getMessage());
     Bootstrap::errorResponse('Service unavailable', 503);

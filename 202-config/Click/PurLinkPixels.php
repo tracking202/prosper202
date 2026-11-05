@@ -7,6 +7,8 @@ namespace Prosper202\Click;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
+use Prosper202\Http\PrivacyMode;
+use Prosper202\Http\PrivacySetting;
 
 /**
  * The deferred pixel: a landing page that sent its visitor straight to an
@@ -15,20 +17,34 @@ use Prosper202\Database\Connection;
  * click counts (postbacks, payment notifications, the API, uploads), except
  * one a browser pixel reported, which already rendered its own markup.
  * Each conversion is handed out at most once, under the click lock.
+ *
+ * A Meta Purchase (type 6) passes the gate a conversion request's does
+ * (TrafficSourcePixels::visitorMayBeTracked()), read under the lock so a
+ * failed read rolls the poll back and the next poll retries it.
  */
 final class PurLinkPixels
 {
     /** Conversions given to one poll; any more wait for the next. */
     public const BATCH = 10;
 
-    public function __construct(private readonly Connection $conn)
+    /** @var \Closure(Connection, int): string */
+    private readonly \Closure $privacy;
+
+    /**
+     * @param (\Closure(Connection, int): string)|null $privacy the privacy
+     *        setting for an account's visitors; throws when it cannot be read
+     */
+    public function __construct(private readonly Connection $conn, ?\Closure $privacy = null)
     {
+        $this->privacy = $privacy ?? PrivacySetting::forAccountOrFail(...);
     }
 
     /**
+     * @param \Closure(): bool $visitorMayBeInEu the polling visitor's (p202VisitorMayBeInEu())
+     * @param array<string, mixed> $signals the poll's fields: p202_consent=0 refuses the Meta Purchase
      * @return array{status: 'refused'|'waiting'|'fired', markup: string, conversions: int}
      */
-    public function poll(string $proof, int $now, string $key): array
+    public function poll(string $proof, int $now, string $key, \Closure $visitorMayBeInEu, array $signals = []): array
     {
         $claims = PurLinkProof::verify($proof, PurLinkProof::PIXELS, $now, $key);
         if ($claims === null) {
@@ -39,7 +55,7 @@ final class PurLinkPixels
             $claims['user_id'],
             fn (?array $click): array => $click === null
                 ? ['status' => 'refused', 'markup' => '', 'conversions' => 0]
-                : $this->pollLocked($claims)
+                : $this->pollLocked($claims, $visitorMayBeInEu, $signals)
         );
         try {
             return $work();
@@ -53,12 +69,17 @@ final class PurLinkPixels
 
     /**
      * @param array{click_id: int, landing_page_id: int, user_id: int, expires: int} $claims
+     * @param \Closure(): bool $visitorMayBeInEu
+     * @param array<string, mixed> $signals
      * @return array{status: 'refused'|'waiting'|'fired', markup: string, conversions: int}
      */
-    private function pollLocked(array $claims): array
+    private function pollLocked(array $claims, \Closure $visitorMayBeInEu, array $signals): array
     {
         // Read after the lock: a re-click onto another page is visible here.
-        $stmt = $this->conn->prepareWrite('SELECT c.landing_page_id FROM ' . LatestVisit::of('?') . ' AS c');
+        $stmt = $this->conn->prepareWrite(
+            'SELECT c.landing_page_id, ac.identity_signals FROM ' . LatestVisit::of('?') . ' AS c'
+            . ' LEFT JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id'
+        );
         $this->conn->bind($stmt, 'i', [$claims['click_id']]);
         $visit = $this->conn->fetchOne($stmt);
         if ($visit === null || (int) $visit['landing_page_id'] !== $claims['landing_page_id']) {
@@ -88,6 +109,14 @@ final class PurLinkPixels
         }
 
         $source = TrafficSourcePixels::clickTokens($this->conn, $claims['user_id'], $claims['click_id'], true);
+        $mayTrack = null;
+        $visitorMayBeTracked = function () use (&$mayTrack, $claims, $visit, $visitorMayBeInEu, $signals): bool {
+            return $mayTrack ??= FacebookPixelAssistantScript::mayTrack(
+                PrivacyMode::tracksInFull(($this->privacy)($this->conn, $claims['user_id']), $visitorMayBeInEu),
+                $signals,
+                $visit['identity_signals'] ?? null
+            );
+        };
         $markup = '';
         foreach ($due as $conversion) {
             if ($source !== null && $source['ppc_account_id'] > 0) {
@@ -103,7 +132,8 @@ final class PurLinkPixels
                     $tokens,
                     null,
                     true,
-                    false
+                    false,
+                    $visitorMayBeTracked
                 )['markup'];
             }
             $stmt = $this->conn->prepareWrite(

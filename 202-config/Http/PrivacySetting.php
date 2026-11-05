@@ -44,22 +44,31 @@ final class PrivacySetting
 
     public static function forAccount(Connection $conn, ?int $ownerId): string
     {
-        $ids = [self::INSTALL_USER_ID];
-        if ($ownerId !== null && $ownerId > 0 && $ownerId !== self::INSTALL_USER_ID) {
-            $ids[] = $ownerId;
-        }
         try {
-            $stmt = $conn->prepareRead(
-                'SELECT user_id, user_pref_privacy FROM 202_users_pref WHERE user_id IN ('
-                . implode(', ', array_fill(0, count($ids), '?')) . ')'
-            );
-            $conn->bind($stmt, str_repeat('i', count($ids)), $ids);
-            $rows = $conn->fetchAll($stmt);
+            return self::forAccountOrFail($conn, $ownerId);
         } catch (\Throwable $e) {
             error_log('p202 privacy: user_pref_privacy could not be read (' . $e->getMessage() . '); holding back');
 
             return 'all';
         }
+    }
+
+    /**
+     * forAccount(), but a failed read throws instead of holding back: for a
+     * caller that can retry later rather than treat the failure as final.
+     */
+    public static function forAccountOrFail(Connection $conn, ?int $ownerId): string
+    {
+        $ids = [self::INSTALL_USER_ID];
+        if ($ownerId !== null && $ownerId > 0 && $ownerId !== self::INSTALL_USER_ID) {
+            $ids[] = $ownerId;
+        }
+        $stmt = $conn->prepareRead(
+            'SELECT user_id, user_pref_privacy FROM 202_users_pref WHERE user_id IN ('
+            . implode(', ', array_fill(0, count($ids), '?')) . ')'
+        );
+        $conn->bind($stmt, str_repeat('i', count($ids)), $ids);
+        $rows = $conn->fetchAll($stmt);
 
         $rank = array_flip(self::SETTINGS);
         $strictest = self::SETTINGS[0];
