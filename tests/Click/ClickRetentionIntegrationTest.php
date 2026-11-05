@@ -455,6 +455,9 @@ final class ClickRetentionIntegrationTest extends TestCase
         try {
             $this->retention()->runAutomatic(PHP_INT_MAX);
             self::fail('a batch that cannot delete from every table is an error');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $e) {
             self::assertStringContainsString($missing, $e->getMessage());
         } finally {

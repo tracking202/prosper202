@@ -353,6 +353,9 @@ if (!$canExport) {
                     echo p202_flash('warn', 'Fetch URLs are made on this install\'s tracking domain, ' . $feedBase . ', which is not https://. Google Ads fetches only https:// URLs: set an https:// tracking domain in the install owner\'s Personal settings. Microsoft Advertising takes http:// too.');
                 } ?>
                 <p class="mb-2"><strong>Google Ads:</strong> Goals › Conversions › Uploads, then Schedules, a new schedule from HTTPS; or Data Manager's HTTPS source for the Data Manager file. <strong>Microsoft Advertising:</strong> Conversions › Offline conversions › Schedules › Schedule, HTTPS. Paste the URL; both ask for a user name and password, which Prosper202 does not read (the key is in the URL), so enter anything. Schedule a daily fetch.</p>
+                <p class="form-text">Upgraded from paid Prosper202? Its Google Ads schedule URL,
+                    …/tracking202/static/feeds/google/offlineconversions/?cn=…, answers 410 Gone since 1.9.80:
+                    make a URL here and paste it into that schedule instead.</p>
                 <?php if ($feeds === []) { ?>
                 <div class="p202-empty">
                     <i class="bi bi-link-45deg p202-empty__icon"></i>

@@ -35,6 +35,11 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             1,
             'a traffic source pixel: WebhookGuard::checkPostback() at every hop, pinned, no proxy',
         ],
+        '202-config/Setup/LandingPageCheck.php' => [
+            1,
+            "a landing page's saved URL (Get LP Code's Check my page): WebhookGuard::checkPage() at every hop,"
+            . " PostbackSender's pin, no proxy, body capped",
+        ],
         '202-config/Attribution/WebhookSender.php' => [
             1,
             'an export webhook, an LTV webhook delivery or a Slack notice (SlackWebhook): WebhookGuard::check(),'
@@ -53,6 +58,7 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             1,
             "Google's pinned endpoints; the override is loopback only",
         ],
+        '202-config/Update/ReleaseSignature.php' => [1, 'the fixed host my.tracking202.com, https only, redirects only to that host'],
         '202-config/Lpo/PairingClient.php' => [1, 'the operator constant LPO_SAAS_BASE_URL, https only, no redirects'],
         '202-config/Messaging/MessagingClient.class.php' => [
             1,

@@ -130,6 +130,9 @@ final class AccountQueryResultsAreCheckedTest extends TestCase
             try {
                 p202_account_save_currency(new Connection($db), 7, 'USD', 'EUR', static fn (): mixed => $answer);
                 self::fail('a missing rate re-priced the campaigns: ' . json_encode($answer));
+            } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+                // A failed assertion is the test's verdict, never the error this catch is for.
+                throw $failed;
             } catch (\RuntimeException $refused) {
                 self::assertStringContainsString('did not answer with a payout', $refused->getMessage());
             }
@@ -147,6 +150,9 @@ final class AccountQueryResultsAreCheckedTest extends TestCase
         try {
             p202_account_save_currency(new Connection($db), 7, 'USD', 'EUR', static fn (string $c, string $p): array => ['exchange_payout' => 2]);
             self::fail('a failed campaign write was reported as saved');
+        } catch (\PHPUnit\Framework\AssertionFailedError $failed) {
+            // A failed assertion is the test's verdict, never the error this catch is for.
+            throw $failed;
         } catch (\Throwable $expected) {
         }
         self::assertSame(1, $db->statementsContaining('UPDATE `202_users_pref`')[0]->executeCount, 'the currency was written first');
