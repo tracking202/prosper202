@@ -7,7 +7,7 @@
  * What is here is what only a browser can answer: every page's baseline at a
  * desktop and a phone width and in both themes (lib/checks.js ACCOUNT_PAGES),
  * native validation letting through what the server then refuses in its own
- * words, the Advanced disclosures that remember, Reveal and Copy on API keys,
+ * words, the Advanced disclosures that remember, a new API key shown once with Copy,
  * and every confirmation — saying no must change nothing, saying yes must do
  * what the dialog said.
  *
@@ -153,29 +153,33 @@ module.exports = {
     },
 
     {
-      name: 'API keys: generate, reveal, copy, and revoke only when confirmed',
+      name: 'API keys: generate, shown once, copy, and revoke only when confirmed',
       async run(ctx) {
         const { app, ui, db, expect, state } = ctx;
         await app.goto('/202-account/account.php');
         await app.submit('#api-keys button:has-text("Generate")');
         expect.match(await app.messages(), /API key created/, 'generating says so');
-        const key = db.value('SELECT api_key FROM 202_api_keys WHERE user_id=' + state.owner + ' ORDER BY created_at DESC, api_key LIMIT 1');
-        expect.match(key, /^[0-9a-f]{64}$/, 'a 64-hex key was stored');
-
-        const row = '#api-keys [data-api-key-row]:has(pre[data-p202-value="' + key + '"])';
-        const masked = await ui.text(row + ' pre');
-        expect.notOk(masked.includes(key), 'the key is masked on screen', masked);
-        const revealed = await app.reveal(row + ' pre', row + ' [data-p202-reveal]');
-        expect.eq(revealed, key, 'Reveal shows the whole key');
+        const key = (await ui.text('#api-keys [data-new-api-key] pre')).trim();
+        expect.match(key, /^[0-9a-f]{64}$/, 'the new 64-hex key is shown once');
+        expect.eq(db.value('SELECT COUNT(*) FROM 202_api_keys WHERE user_id=' + state.owner
+          + " AND api_key='' AND key_hash=SHA2('" + key + "', 256)"), '1', 'only its hash is stored');
         await ui.page.context().grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => {});
-        const copied = await app.copy(row + ' .p202-copy');
+        const copied = await app.copy('#api-keys [data-new-api-key] .p202-copy');
         expect.eq(copied, key, 'Copy puts the whole key on the clipboard');
+
+        const ref = db.value("SELECT SHA2('" + key + "', 256)");
+        const row = '#api-keys [data-api-key-row]:has(input[name="api_key_ref"][value="' + ref + '"])';
+        const masked = await ui.text(row + ' pre');
+        expect.ok(masked.startsWith(key.slice(0, 8)), 'the list shows its first 8 characters', masked);
+        expect.notOk(masked.includes(key), 'and masks the rest', masked);
+        await app.goto('/202-account/account.php');
+        expect.notOk((await ui.page.content()).includes(key), 'a reload shows the key nowhere');
 
         const said = await app.confirmAnd('dismiss', row + ' button:has-text("Revoke")');
         expect.match(said, /Revoke this API key\?/, 'revoking asks first', said || '(no dialog)');
-        expect.eq(db.value("SELECT COUNT(*) FROM 202_api_keys WHERE api_key='" + key + "'"), '1', 'saying no keeps the key');
+        expect.eq(db.value("SELECT COUNT(*) FROM 202_api_keys WHERE key_hash='" + ref + "'"), '1', 'saying no keeps the key');
         await app.confirmAnd('accept', row + ' button:has-text("Revoke")');
-        expect.eq(db.value("SELECT COUNT(*) FROM 202_api_keys WHERE api_key='" + key + "'"), '0', 'saying yes revokes it');
+        expect.eq(db.value("SELECT COUNT(*) FROM 202_api_keys WHERE key_hash='" + ref + "'"), '0', 'saying yes revokes it');
         expect.match(await app.messages(), /API key revoked/, 'and says so');
         expect.eq(db.value('SELECT COUNT(*) FROM 202_api_keys WHERE user_id=' + state.owner), state.keys, 'back to the keys it had');
       },

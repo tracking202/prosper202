@@ -433,8 +433,12 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
  * (CLAUDE.md #11), and so does a failed read: an unreadable list must not
  * render as "no keys yet".
  *
- * @return list<array<string, mixed>>  api_key, created_at, scope (null when
- *   the install has no scope column)
+ * No key itself is returned: a key is stored hashed (ApiKeyStore) and named
+ * by its ref; a key still stored whole is shown as a hashed one would be.
+ *
+ * @return list<array<string, mixed>>  ref, prefix, created_at, scope (null
+ *   when the install has no scope column), label, and watcher_token for an AI
+ *   connection's key (null otherwise)
  * @throws Throwable when the keys cannot be read
  */
 function p202_account_api_keys(mysqli $db, int $userId): array
@@ -443,23 +447,32 @@ function p202_account_api_keys(mysqli $db, int $userId): array
     // label came with 1.9.78; the files can land before its upgrade runs.
     $hasLabel = \Api\V3\Auth::apiKeyLabelColumnExists($db);
     $conn = new \Prosper202\Database\Connection($db);
-    $columns = 'api_key, created_at' . ($hasScope ? ', scope' : '') . ($hasLabel ? ', label' : '');
+    $columns = \Prosper202\User\ApiKeyStore::columns($db) . ', created_at'
+        . ($hasScope ? ', scope' : '') . ($hasLabel ? ', label' : '');
     $stmt = $conn->prepareRead('SELECT ' . $columns
         . ' FROM 202_api_keys WHERE user_id = ? ORDER BY created_at DESC');
     $conn->bind($stmt, 'i', [$userId]);
     $keys = [];
     foreach ($conn->fetchAll($stmt) as $row) {
-        $row['scope'] = $hasScope ? ($row['scope'] ?? null) : null;
-        $row['label'] = $hasLabel ? ($row['label'] ?? null) : null;
-        $keys[] = $row;
+        $label = $hasLabel && isset($row['label']) ? (string) $row['label'] : null;
+        $keys[] = [
+            'ref' => \Prosper202\User\ApiKeyStore::ref($row),
+            'prefix' => \Prosper202\User\ApiKeyStore::prefixOf($row),
+            'created_at' => $row['created_at'],
+            'scope' => $hasScope ? ($row['scope'] ?? null) : null,
+            'label' => $label,
+            'watcher_token' => \Api\V3\Support\AiConnect::isConnectionLabel($label)
+                ? \Prosper202\User\ApiKeyStore::watcherTokenOf($row)
+                : null,
+        ];
     }
     return $keys;
 }
 
 /**
  * Each AI-connection key's watchers, as Tracking202's MCP server reports
- * them (AiWatchers::list()): api_key => the list, or null where it could not
- * be read. Keys of no AI connection get no entry, so an account without one
+ * them (AiWatchers::list()): the key's ref => the list, or null where it
+ * could not be read. Keys of no AI connection get no entry, so an account without one
  * makes no call.
  *
  * @param list<array<string, mixed>> $keys p202_account_api_keys()
@@ -469,9 +482,9 @@ function p202_account_ai_watchers(array $keys, \Api\V3\Support\AiWatchers $relay
 {
     $watchers = [];
     foreach ($keys as $key) {
-        if (\Api\V3\Support\AiConnect::isConnectionLabel(isset($key['label']) ? (string) $key['label'] : null)) {
-            $apiKey = (string) $key['api_key'];
-            $watchers[$apiKey] = $relay->list(\Api\V3\Support\AiConnect::watcherToken($apiKey));
+        $token = $key['watcher_token'] ?? null;
+        if (is_string($token) && $token !== '') {
+            $watchers[(string) $key['ref']] = $relay->list($token);
         }
     }
     return $watchers;
@@ -565,23 +578,26 @@ function p202_account_watcher_rule(array $watcher): string
 
 /**
  * Account › API keys' Stop: stops one watcher of one of the signed-in user's
- * AI-connection keys, named byte for byte as the page printed it. Another
- * user's key, or a key of no AI connection, stops nothing.
+ * AI-connection keys, named by the ref the page printed (ApiKeyStore::ref()).
+ * Another user's key, or a key of no AI connection, stops nothing.
  *
  * @return array{kind: 'ok'|'bad'|'warn', text: string} the flash to show
  */
 function p202_account_stop_ai_watcher(
     mysqli $db,
     int $userId,
-    string $postedKey,
+    string $postedRef,
     string $watcherId,
     \Api\V3\Support\AiWatchers $relay
 ): array {
     if (preg_match(\Api\V3\Support\AiWatchers::ID, $watcherId) !== 1) {
         return ['kind' => 'warn', 'text' => 'That watcher was not recognised; nothing was stopped.'];
     }
+    if (!\Prosper202\User\ApiKeyStore::isRef($postedRef)) {
+        return ['kind' => 'warn', 'text' => 'That AI connection key was not found on this account; nothing was stopped.'];
+    }
     try {
-        $tokens = \Api\V3\Support\AiWatchers::connectionTokens($db, $userId, $postedKey, true);
+        $tokens = \Api\V3\Support\AiWatchers::connectionTokens($db, $userId, null, $postedRef);
     } catch (Throwable $e) {
         error_log('Account page: the AI connection key could not be read: ' . $e->getMessage());
         return ['kind' => 'bad', 'text' => 'The watcher could not be stopped just now; try again.'];
@@ -607,7 +623,7 @@ function p202_account_stop_ai_watcher(
  * @param array<int, string> $campaignNames p202_account_campaign_names()
  * @param string $action where the Stop form posts
  */
-function p202_account_render_watchers(string $apiKey, ?array $watchers, array $campaignNames, string $action): string
+function p202_account_render_watchers(string $keyRef, ?array $watchers, array $campaignNames, string $action): string
 {
     $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
     $html = '<div class="mt-2 ms-3" data-ai-watchers><div class="form-text mt-0 mb-1"><strong>Watchers</strong>'
@@ -644,7 +660,7 @@ function p202_account_render_watchers(string $apiKey, ?array $watchers, array $c
                 . '" class="mt-1"'
                 . ' data-p202-confirm="Stop this watcher? It reads nothing more and sends no more alerts.">'
                 . '<input type="hidden" name="stop_ai_watcher" value="1">'
-                . '<input type="hidden" name="rest_api_key" value="' . $e($apiKey) . '">'
+                . '<input type="hidden" name="api_key_ref" value="' . $e($keyRef) . '">'
                 . '<input type="hidden" name="watcher_id" value="' . $e($watcher['id']) . '">'
                 . p202_account_token_field()
                 . '<button class="btn btn-outline-danger btn-sm" type="submit">Stop</button></form>';

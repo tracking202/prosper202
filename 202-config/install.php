@@ -245,19 +245,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// local 202_api_keys Bearer key, distinct from the my.tracking202
 			// install key (p202_customer_api_key) collected above. Best-effort:
 			// failing to persist a key just means it isn't shown, not a failed install.
+			// Stored hashed (ApiKeyStore), so the success screen is the one
+			// place it is shown.
 			$rest_api_key = bin2hex(random_bytes(32));
-			$apikey_stmt = $db->prepare("INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)");
-			if ($apikey_stmt === false) {
-				$rest_api_key = '';
-			} else {
-				$apikey_created_at = time();
+			try {
 				// $user_id is already a real int in this flow (cast on insert and lookup).
-				$apikey_stmt->bind_param('isi', $user_id, $rest_api_key, $apikey_created_at);
-				if (!$apikey_stmt->execute()) {
-					// Don't surface a key we failed to persist.
-					$rest_api_key = '';
-				}
-				$apikey_stmt->close();
+				\Prosper202\User\ApiKeyStore::insert($db, (int) $user_id, $rest_api_key, null, null, time());
+			} catch (\Throwable $e) {
+				// Don't surface a key we failed to persist.
+				error_log('Prosper202 install: the REST API key could not be stored: ' . $e->getMessage());
+				$rest_api_key = '';
 			}
 			$html['rest_api_key'] = htmlentities($rest_api_key, ENT_QUOTES, 'UTF-8');
 			$html['user_id'] = $user_id;

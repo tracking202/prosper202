@@ -97,12 +97,8 @@ if (isset($_POST['add_rest_api_key'])) {
 	$keyUserId = (int)$_SESSION['user_id'];
 	$keyCreated = time();
     try {
-        $keyConn = new \Prosper202\Database\Connection($db);
-        $key_stmt = $keyConn->prepareWrite('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
-        $keyConn->bind($key_stmt, 'isi', [$keyUserId, $newKey, $keyCreated]);
-        $keyConn->execute($key_stmt);
-        $key_stmt->close();
-    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+        \Prosper202\User\ApiKeyStore::insert($db, $keyUserId, $newKey, null, null, $keyCreated);
+    } catch (\Prosper202\Database\Exceptions\QueryException | \Api\V3\AuthException | \mysqli_sql_exception) {
         p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
         p202_account_redirect('202-account/account.php#api-keys');
     }
@@ -110,7 +106,10 @@ if (isset($_POST['add_rest_api_key'])) {
 	if ($slack)
 		$slack->push('user_added_app_api_key', ['user' => $username]);
 
-	p202_account_flash('ok', 'API key created. It has full access; reveal or copy it below.');
+	// Stored hashed, so this is the one time the key can be shown: the next
+	// render of the page shows it and forgets it.
+	$_SESSION['p202_new_api_key'] = $newKey;
+	p202_account_flash('ok', 'API key created. It has full access. Copy it now: it is not shown again.');
 	p202_account_redirect('202-account/account.php#api-keys');
 }
 
@@ -120,16 +119,22 @@ if (isset($_POST['remove_rest_api_key'])) {
 		p202_account_redirect('202-account/account.php#api-keys');
 	}
 	$keyUserId = (int)$_SESSION['user_id'];
-	$removeKey = (string)($_POST['rest_api_key'] ?? '');
+	// The page names a key by its ref (ApiKeyStore::ref()), never the key.
+	$removeRef = (string)($_POST['api_key_ref'] ?? '');
+	if (!\Prosper202\User\ApiKeyStore::isRef($removeRef)) {
+		p202_account_flash('warn', 'That API key was not found on this account; nothing was revoked.');
+		p202_account_redirect('202-account/account.php#api-keys');
+	}
     // An AI connection's watchers end first; best effort, the key goes either way.
-    $watchersEnded = (new \Api\V3\Support\AiWatchers())->stopBeforeDelete($db, $keyUserId, $removeKey);
+    $watchersEnded = (new \Api\V3\Support\AiWatchers())->stopBeforeDelete($db, $keyUserId, null, $removeRef);
 	// scope to owner
     try {
         $keyConn = new \Prosper202\Database\Connection($db);
-        $key_stmt = $keyConn->prepareWrite('DELETE FROM 202_api_keys WHERE api_key = ? AND user_id = ?');
-        $keyConn->bind($key_stmt, 'si', [$removeKey, $keyUserId]);
+        [$refMatch, $refTypes, $refValues] = \Prosper202\User\ApiKeyStore::matchRef($db, $removeRef);
+        $key_stmt = $keyConn->prepareWrite('DELETE FROM 202_api_keys WHERE user_id = ? AND ' . $refMatch);
+        $keyConn->bind($key_stmt, 'i' . $refTypes, [$keyUserId, ...$refValues]);
         $removed = $keyConn->executeUpdate($key_stmt);
-    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+    } catch (\Prosper202\Database\Exceptions\QueryException | \Api\V3\AuthException | \mysqli_sql_exception) {
         p202_account_flash('bad', 'The API key could not be revoked. It still works; try again.');
         p202_account_redirect('202-account/account.php#api-keys');
     }
@@ -158,7 +163,7 @@ if (isset($_POST['stop_ai_watcher'])) {
     $stopped = p202_account_stop_ai_watcher(
         $db,
         (int)$_SESSION['user_id'],
-        (string)($_POST['rest_api_key'] ?? ''),
+        (string)($_POST['api_key_ref'] ?? ''),
         (string)($_POST['watcher_id'] ?? ''),
         new \Api\V3\Support\AiWatchers()
     );
@@ -840,10 +845,11 @@ $pageFlashes = array_merge($pageFlashes, $clickFilterView['flashes'] ?? []);
 $alertsView = $canPersonal ? p202_alerts_view($db, (int) $_SESSION['user_id']) : null;
 $pageFlashes = array_merge($pageFlashes, $alertsView['flashes'] ?? []);
 
-/** A key shown as its first and last four characters around a mask. */
-$maskKey = static fn (string $key): string => strlen($key) > 12
-	? substr($key, 0, 4) . str_repeat("\u{2022}", 20) . substr($key, -4)
-	: str_repeat("\u{2022}", 20);
+/** A stored key as its prefix around a mask: only its hash is kept (ApiKeyStore). */
+$maskKey = static fn (string $prefix): string => $prefix . str_repeat("\u{2022}", 20);
+// The key created on the request before this one: shown once, then forgotten.
+$newApiKey = $canPersonal && is_string($_SESSION['p202_new_api_key'] ?? null) ? $_SESSION['p202_new_api_key'] : '';
+unset($_SESSION['p202_new_api_key']);
 /** What a key may do, in words: the same reading api/v3/Auth.php applies. */
 $keyScope = static function (mixed $raw): array {
 	$scopes = \Api\V3\Auth::parseScopes((string)($raw ?? ''));
@@ -1109,6 +1115,15 @@ echo p202_account_render_flashes($extraFlashes);
 				</div>
 				<div class="p202-panel__body">
 					<p class="form-text mt-0">For the REST API, the p202 command line and agents. Make one key per integration, so revoking one stops only that one.</p>
+					<?php if ($newApiKey !== '') { ?>
+						<div class="mb-3" data-new-api-key>
+							<div class="form-text mt-0 mb-1"><strong>Your new key.</strong> Copy it now: Prosper202 keeps only a fingerprint of it, so it cannot be shown again.</div>
+							<div class="p202-code">
+								<pre class="p202-code__value"><?php echo $e($newApiKey); ?></pre>
+								<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php echo $e($newApiKey); ?>">Copy</button>
+							</div>
+						</div>
+					<?php } ?>
 					<?php if (!$apiKeys) { ?>
 						<div class="p202-empty">
 							<i class="bi bi-key p202-empty__icon"></i>
@@ -1124,27 +1139,25 @@ echo p202_account_render_flashes($extraFlashes);
 						</div>
 					<?php } else { ?>
 						<?php foreach ($apiKeys as $index => $apiKey) {
-							$keyValue = (string)$apiKey['api_key'];
+							$keyRef = (string)$apiKey['ref'];
 							[$scopeLabel, $scopeTone] = $keyScope($apiKey['scope'] ?? null);
 							$keyId = 'api-key-' . $index;
 							?>
 							<div class="mb-3" data-api-key-row>
 								<div class="form-text mt-0 mb-1"><?php echo (string)($apiKey['label'] ?? '') !== '' ? '<strong>' . $e((string)$apiKey['label']) . '</strong> · ' : ''; ?>Created <?php echo $e(date('M j, Y', (int)$apiKey['created_at'])); ?> · <span class="p202-pill<?php echo $scopeTone; ?>"><?php echo $e($scopeLabel); ?></span></div>
 								<div class="p202-code">
-									<pre class="p202-code__value p202-code__value--masked" id="<?php echo $keyId; ?>" data-p202-value="<?php echo $e($keyValue); ?>"><?php echo $e($maskKey($keyValue)); ?></pre>
-									<button type="button" class="btn btn-secondary btn-sm" data-p202-reveal="#<?php echo $keyId; ?>">Reveal</button>
-									<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php echo $e($keyValue); ?>">Copy</button>
+									<pre class="p202-code__value p202-code__value--masked" id="<?php echo $keyId; ?>"><?php echo $e($maskKey((string)$apiKey['prefix'])); ?></pre>
 									<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#api-keys'); ?>" class="d-inline" data-p202-confirm="Revoke this API key? Anything still using it is refused from the next request. Your other keys keep working.">
 										<input type="hidden" name="remove_rest_api_key" value="1">
-										<input type="hidden" name="rest_api_key" value="<?php echo $e($keyValue); ?>">
+										<input type="hidden" name="api_key_ref" value="<?php echo $e($keyRef); ?>">
 										<?php echo p202_account_token_field(); ?>
 										<button class="btn btn-outline-danger btn-sm" type="submit">Revoke…</button>
 									</form>
 								</div>
-                                <?php if (array_key_exists($keyValue, $aiWatchers)) {
-                                    $keyWatchers = $aiWatchers[$keyValue];
+                                <?php if (array_key_exists($keyRef, $aiWatchers)) {
+                                    $keyWatchers = $aiWatchers[$keyRef];
                                     $stopAt = get_absolute_url() . '202-account/account.php#api-keys';
-                                    echo p202_account_render_watchers($keyValue, $keyWatchers, $campaignNames, $stopAt);
+                                    echo p202_account_render_watchers($keyRef, $keyWatchers, $campaignNames, $stopAt);
                                 } ?>
 							</div>
 						<?php } ?>

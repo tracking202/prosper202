@@ -249,6 +249,26 @@ final class ScopeRefusalTest extends TestCase
                 $writers[] = $path;
             }
         }
-        self::assertSame(['api/v3/Support/AiConnect.php'], $writers);
+        // No literal statement writes it: ApiKeyStore::insert() builds the one
+        // that does, from its fifth argument.
+        self::assertSame([], $writers);
+        self::assertStringContainsString(
+            "\$add('label', 's', \$label)",
+            (string) file_get_contents(dirname(__DIR__, 3) . '/202-config/User/ApiKeyStore.php')
+        );
+
+        $labelled = [];
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            if (preg_match_all('/ApiKeyStore::insert\(([^;]*)\);/', $source, $calls) < 1) {
+                continue;
+            }
+            foreach ($calls[1] as $args) {
+                $parts = array_map('trim', explode(',', $args));
+                if (count($parts) >= 5 && $parts[4] !== 'null') {
+                    $labelled[] = $path;
+                }
+            }
+        }
+        self::assertSame(['api/v3/Support/AiConnect.php'], array_values(array_unique($labelled)));
     }
 }
