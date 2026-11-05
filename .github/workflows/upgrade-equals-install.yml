@@ -9,24 +9,45 @@ name: Upgrade Equals Install
 # 1.9.55 predates PHP 8 (a parse error on 8.x), so the origin installer runs
 # on PHP 7.4 and everything else on 8.3; the second setup-php makes 8.3 the
 # default `php` and leaves `php7.4` on PATH.
+#
+# What it proves depends on the schema, the installer, the upgrade and the
+# bootstrap they load (all under 202-config/), the config template, the two
+# pages the fresh install calls, the lock file and the test itself. It ran on
+# every `**.php` change, which put it on nearly every pull request; a change
+# elsewhere cannot alter the schema either side produces.
 
 on:
   pull_request:
     paths:
-      - '**.php'
-      - 'tests/live/upgrade-equals-install.sh'
-      - 'tests/live/schema-diff.php'
+      - '202-config/**'
+      - '202-config-sample.php'
+      - '202-account/ajax/validate-apikey.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'tests/live/**'
       - 'tests/fixtures/agent-eval/ci/**'
       - '.github/workflows/upgrade-equals-install.yml'
   push:
-    branches: [master]
+    branches:
+      - master
+      - '[0-9]+.[0-9]+.[0-9]+'
     paths:
-      - '**.php'
-      - 'tests/live/upgrade-equals-install.sh'
-      - 'tests/live/schema-diff.php'
+      - '202-config/**'
+      - '202-config-sample.php'
+      - '202-account/ajax/validate-apikey.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'tests/live/**'
       - 'tests/fixtures/agent-eval/ci/**'
       - '.github/workflows/upgrade-equals-install.yml'
   workflow_dispatch:
+
+# A new push to a pull request cancels that PR's older run, which no longer
+# describes its head and would hold runners the newer run is queued for.
+# Other events get a unique group, so no push run is ever dropped.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   upgrade-equals-install:
