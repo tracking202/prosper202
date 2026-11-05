@@ -17,6 +17,7 @@ final class InboundRequest
      *        provider's server, never a visitor's (VisitorIp)
      * @param string $peerAddress REMOTE_ADDR, which the request cannot choose: the one the log names
      * @param string $body the raw body, for a provider that does not post a form (ClickBank's JSON)
+     * @param array<string, string> $headers the request's headers, by lowercase name (x-shopify-topic)
      */
     public function __construct(
         public readonly string $method,
@@ -26,7 +27,14 @@ final class InboundRequest
         public readonly string $peerAddress = '',
         public readonly string $userAgent = '',
         public readonly string $body = '',
+        public readonly array $headers = [],
     ) {
+    }
+
+    /** A header's value, or null when the request has none. */
+    public function header(string $name): ?string
+    {
+        return $this->headers[strtolower($name)] ?? null;
     }
 
     /**
@@ -46,6 +54,23 @@ final class InboundRequest
             $text($server['REMOTE_ADDR'] ?? ''),
             $text($server['HTTP_USER_AGENT'] ?? ''),
             $body,
+            self::headersOf($server),
         );
+    }
+
+    /**
+     * @param array<string, mixed> $server
+     * @return array<string, string>
+     */
+    private static function headersOf(array $server): array
+    {
+        $headers = [];
+        foreach ($server as $key => $value) {
+            if (is_string($value) && str_starts_with((string) $key, 'HTTP_')) {
+                $headers[strtolower(str_replace('_', '-', substr((string) $key, 5)))] = $value;
+            }
+        }
+
+        return $headers;
     }
 }

@@ -4687,6 +4687,9 @@ class UPGRADE
             // version moves only when both succeeded.
             $baseline_ok = _upgrade_1956_baseline();
             $step_ok = _upgrade_measurement_tables([
+                // 202_users_pref gains shopify_webhook_secret, which Shopify's
+                // order webhooks are verified with (ShopifyWebhookSecret).
+                \Prosper202\Database\Tables\UserTables::usersPref(),
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
