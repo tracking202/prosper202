@@ -93,6 +93,14 @@ lets the outbox grow, and the backlog is processed once it is fixed.
   then after a minute, doubling to an hour, for as long as the failure lasts
   (a lock wait or deadlock with the ledger, a lost connection, a missing
   table). `--retry-now` makes failed merges due again.
+- A model change is fanned out the same way
+  (`202_attribution_models.recompute_retry_at`): a run takes the models never
+  failed first, then those whose retry is due. A batch that fails is
+  recorded on the model (`recompute_failures`, `recompute_error`) and passed,
+  so the models after it, the outbox and the rollup still run; it is tried
+  again on the next run, then after a minute, doubling to an hour. A batch
+  that succeeds, or an edit that asks for a new recompute, clears the record.
+  `--retry-now` makes failed recomputes due again.
 - A person can have more visitor keys than one statement takes values
   (65,535). Their journeys and their merges' conversions are read in groups
   of keys (`JourneyBuilder::KEYS_PER_STATEMENT`), so such a person is

@@ -647,9 +647,9 @@ function RunSecondsCronjob()
                 new \Prosper202\Database\Connection($db),
                 20
             );
-            $mergesNotRequeued = $attribution === null ? 0 : $attribution->mergesFailed;
+            $unitsFailed = $attribution === null ? 0 : $attribution->mergesFailed + $attribution->modelsFailed;
             $worthALine = $attribution !== null
-                && ($attribution->processed() > 0 || $attribution->backfill !== null || $mergesNotRequeued > 0);
+                && ($attribution->processed() > 0 || $attribution->backfill !== null || $unitsFailed > 0);
             if ($worthALine) {
                 echo 'Attribution: ' . htmlspecialchars($attribution->summary(), ENT_QUOTES) . '<br>';
             }
