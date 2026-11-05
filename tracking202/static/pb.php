@@ -3,6 +3,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
+p202InboundLogWatch($db, 'pb');
 
 // The per-campaign server-to-server postback: pb.php?acip=...&subid=...
 // It records a real conversion row (pixel_type 2, like the global postback)
@@ -23,6 +24,7 @@ if ($pbCampaignId !== null) {
 }
 
 if ($aff_campaign_row === null) {
+    \Prosper202\InboundLog\RequestLog::current()?->refuse('unknown_campaign', 'No campaign has this acip; copy the postback URL from Setup › Postback/Pixel.');
     die();
 }
 
@@ -30,6 +32,7 @@ if ($aff_campaign_row === null) {
 // campaign's account's (p202ApplyOwnerPrivacy()), before the conversion
 // stores the address.
 p202ApplyOwnerPrivacy($aff_campaign_row['user_id'] ?? null);
+\Prosper202\InboundLog\RequestLog::current()?->account($aff_campaign_row['user_id'] ?? null);
 
 // Postback authentication: the campaign's account's token or signature, before anything is written.
 p202RequirePostbackAuth($db, $aff_campaign_row['user_id'] ?? null, 'pb');

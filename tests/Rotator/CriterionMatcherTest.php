@@ -238,6 +238,40 @@ final class CriterionMatcherTest extends TestCase
         self::assertNull($offer->param('c1'));
     }
 
+    /** offrtr.php reads the link's values from the recorded click (R7FX): they match as on the visitor's own link. */
+    public function testTheRecordedLinkMatchesAsTheVisitorsOwn(): void
+    {
+        $offer = self::visitor()->withoutLinkFacts()->withLink(
+            ['c1' => 'spring', 'utm_source' => 'newsletter', 'utm_term' => ''],
+            'crm trial',
+            'https://www.search.example/results'
+        );
+        self::assertTrue(CriterionMatcher::criterion('c1', 'is', 'spring', $offer));
+        self::assertTrue(CriterionMatcher::criterion('utm_source', 'is', 'newsletter', $offer));
+        self::assertFalse(CriterionMatcher::criterion('utm_source', 'is_not', 'newsletter', $offer));
+        self::assertTrue(CriterionMatcher::criterion('utm_source', 'is_not', 'facebook', $offer));
+        self::assertTrue(CriterionMatcher::criterion('t202kw', 'is', 'crm trial', $offer));
+        self::assertTrue(CriterionMatcher::criterion('referer', 'is', 'search\.example', $offer));
+        self::assertFalse(CriterionMatcher::criterion('c2', 'is', 'spring', $offer), 'a value the click did not carry');
+        self::assertSame('', $offer->param('utm_term'));
+        self::assertTrue(CriterionMatcher::criterion('visitor', 'is', 'unique', $offer), 'the verdict still reads');
+    }
+
+    /**
+     * The lookup tables are install-wide and case-insensitive: a recorded
+     * value carries the casing of whichever click stored it first, so the
+     * recorded link compares regardless of case, as the visitor's own did.
+     */
+    public function testTheRecordedLinkComparesRegardlessOfCase(): void
+    {
+        $offer = self::visitor()->withLink(['c1' => 'Spring', 'utm_source' => 'Newsletter'], 'CRM Trial', '');
+        self::assertTrue(CriterionMatcher::criterion('c1', 'is', 'spring', $offer));
+        self::assertTrue(CriterionMatcher::criterion('utm_source', 'is', 'newsletter', $offer));
+        self::assertFalse(CriterionMatcher::criterion('utm_source', 'is_not', 'newsletter', $offer));
+        self::assertTrue(CriterionMatcher::criterion('t202kw', 'is', 'crm trial', $offer));
+        self::assertFalse(CriterionMatcher::criterion('utm_source', 'is', 'Newsletter', self::visitor()), 'the visitor\'s own link is unchanged');
+    }
+
     public function testARuleMatchesWhenEveryCriterionDoes(): void
     {
         $visitor = self::visitor();

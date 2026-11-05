@@ -4839,8 +4839,11 @@ class UPGRADE
             $paid_ok = $baseline_ok && $carried_ok;
             $step_ok = _upgrade_measurement_tables([
                 // 202_users_pref gains shopify_webhook_secret, which Shopify's
-                // order webhooks are verified with (ShopifyWebhookSecret).
+                // order webhooks are verified with (ShopifyWebhookSecret), and
+                // jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole).
                 \Prosper202\Database\Tables\UserTables::usersPref(),
+                // The inbound postback and notification log (Prosper202\InboundLog).
+                \Prosper202\Database\Tables\ConversionTables::inboundLog(),
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
