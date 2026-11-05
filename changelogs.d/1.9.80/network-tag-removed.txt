@@ -1,3 +1,3 @@
 # K3QP: the network tag call is gone.
--- Removed: Adding an affiliate network, a DNI network or a traffic source no longer sends its name and the install's hash to my.tracking202.com. The call had no time limit, so a slow answer held up the save, and a connection error was printed into the page; it fed a support tool Tracking202 no longer uses.
-app: Removed: Adding a network or traffic source no longer reports its name to Tracking202, and a slow or failed report can no longer hold up or clutter the save.
+-- Changed: Adding an affiliate network, a DNI network or a traffic source no longer sends its name and the install's hash to my.tracking202.com. The call had no time limit, so a slow answer held up the save, and a connection error was printed into the page; it fed a support tool Tracking202 no longer uses.
+app: Changed: Adding a network or traffic source no longer reports its name to Tracking202, and a slow or failed report can no longer hold up or clutter the save.
