@@ -147,6 +147,10 @@ final class DestinationStore
             if ($credentials !== null) {
                 $this->writeCredentials($userId, $destinationId, $credentials);
             }
+            if (array_key_exists('settings', $patch) || array_key_exists('credentials', $patch)) {
+                // Conversions waiting for the operator to mend the destination go out with the next run.
+                $this->releaseWaiting($userId, $destinationId, $now);
+            }
 
             return true;
         });
@@ -193,13 +197,19 @@ final class DestinationStore
             $touch = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATIONS . '` SET updated_at = ? WHERE destination_id = ? AND user_id = ?');
             $this->conn->bind($touch, 'iii', [$now, $destinationId, $userId]);
             $this->conn->execute($touch);
-            $due = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
-                . "` SET next_attempt_at = ? WHERE destination_id = ? AND user_id = ? AND status = 'pending' AND kind = 'conversion' AND next_attempt_at > ?");
-            $this->conn->bind($due, 'iiii', [$now, $destinationId, $userId, $now]);
-            $this->conn->executeUpdate($due);
+            $this->releaseWaiting($userId, $destinationId, $now);
 
             return true;
         });
+    }
+
+    /** The destination's waiting conversions made due now (one still too recent for its platform just waits again, uncounted). */
+    private function releaseWaiting(int $userId, int $destinationId, int $now): void
+    {
+        $due = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
+            . "` SET next_attempt_at = ? WHERE destination_id = ? AND user_id = ? AND status = 'pending' AND kind = 'conversion' AND next_attempt_at > ?");
+        $this->conn->bind($due, 'iiii', [$now, $destinationId, $userId, $now]);
+        $this->conn->executeUpdate($due);
     }
 
     /** The key OAuth states are signed with: derived from the credential key, never the key itself. */
@@ -449,11 +459,12 @@ final class DestinationStore
         if ($this->key !== null) {
             return $this->key;
         }
+        $minted = false;
         if ($mint) {
             $insert = $this->conn->prepareWrite('INSERT INTO `' . TableRegistry::DEPLOYMENT_SECRETS . '` (secret_name, secret_value, created_at) VALUES (?, ?, ?)
                  ON DUPLICATE KEY UPDATE secret_name = secret_name');
             $this->conn->bind($insert, 'ssi', [self::SECRET_NAME, bin2hex(random_bytes(32)), time()]);
-            $this->conn->executeUpdate($insert);
+            $minted = $this->conn->executeUpdate($insert) === 1;
         }
         $read = $this->conn->prepareWrite('SELECT secret_value FROM `' . TableRegistry::DEPLOYMENT_SECRETS . '` WHERE secret_name = ? LIMIT 1');
         $this->conn->bind($read, 's', [self::SECRET_NAME]);
@@ -462,6 +473,9 @@ final class DestinationStore
             throw new \RuntimeException('The destinations\' credential key is missing from 202_deployment_secrets or is not 64 lower-case hex characters; set the credentials again');
         }
 
-        return $this->key = (string) hex2bin($hex);
+        $key = (string) hex2bin($hex);
+        // A key this call minted is not kept: the caller's transaction may roll its INSERT back (CLAUDE.md #11).
+
+        return $minted ? $key : $this->key = $key;
     }
 }

@@ -301,24 +301,37 @@ final class GoogleAdsDestinationTest extends TestCase
 
     public function testPartialFailuresAndHttpErrorsMapToFailedOrPending(): void
     {
+        $error = static fn (int $status, string $family, string $code): array => ['status' => $status, 'body' => json_encode(['error' => ['code' => $status, 'details' => [['errors' => [['errorCode' => [$family => $code], 'message' => 'm']]]]]])];
         $cases = [
-            // [answer, delivered, retry, waits]
-            'EXPIRED_EVENT' => [self::partialFailure('EXPIRED_EVENT'), false, false, false],
-            'NO_CONVERSION_ACTION_FOUND' => [self::partialFailure('NO_CONVERSION_ACTION_FOUND'), false, false, false],
-            'TOO_RECENT_EVENT' => [self::partialFailure('TOO_RECENT_EVENT'), false, true, true],
-            'TOO_RECENT_CONVERSION_ACTION' => [self::partialFailure('TOO_RECENT_CONVERSION_ACTION'), false, true, true],
-            'ORDER_ID_ALREADY_IN_USE' => [self::partialFailure('ORDER_ID_ALREADY_IN_USE'), true, false, false],
-            'HTTP 503' => [['status' => 503, 'body' => '{"error":{"code":503,"message":"unavailable"}}'], false, true, false],
-            '429 quota' => [['status' => 429, 'body' => '{"error":{"code":429,"details":[{"errors":[{"errorCode":{"quotaError":"RESOURCE_EXHAUSTED"},"message":"q"}]}]}}'], false, true, false],
-            'HTTP 400' => [['status' => 400, 'body' => '{"error":{"code":400,"details":[{"errors":[{"errorCode":{"requestError":"INVALID_CUSTOMER_ID"},"message":"bad"}]}]}}'], false, false, false],
-            'HTTP 403' => [['status' => 403, 'body' => '{"error":{"code":403,"details":[{"errors":[{"errorCode":{"authorizationError":"DEVELOPER_TOKEN_NOT_APPROVED"},"message":"no"}]}]}}'], false, false, false],
-            'no answer' => [['status' => 0, 'error' => 'Operation timed out'], false, true, false],
+            // [answer, delivered, retry, waits, the whole destination waits]
+            'EXPIRED_EVENT' => [self::partialFailure('EXPIRED_EVENT'), false, false, false, false],
+            'TOO_RECENT_EVENT' => [self::partialFailure('TOO_RECENT_EVENT'), false, true, true, false],
+            'TOO_RECENT_CONVERSION_ACTION' => [self::partialFailure('TOO_RECENT_CONVERSION_ACTION'), false, true, true, false],
+            'ORDER_ID_ALREADY_IN_USE' => [self::partialFailure('ORDER_ID_ALREADY_IN_USE'), true, false, false, false],
+            'HTTP 503' => [['status' => 503, 'body' => '{"error":{"code":503,"message":"unavailable"}}'], false, true, false, false],
+            '429 quota' => [$error(429, 'quotaError', 'RESOURCE_EXHAUSTED'), false, true, false, false],
+            '401 stale token' => [$error(401, 'authenticationError', 'OAUTH_TOKEN_EXPIRED'), false, true, false, false],
+            'HTTP 400 in the conversion' => [$error(400, 'fieldError', 'REQUIRED'), false, false, false, false],
+            'no answer' => [['status' => 0, 'error' => 'Operation timed out'], false, true, false, false],
+            // What the operator mends waits, uncounted: nothing queued meanwhile is lost.
+            'DEVELOPER_TOKEN_NOT_APPROVED' => [$error(403, 'authorizationError', 'DEVELOPER_TOKEN_NOT_APPROVED'), false, true, true, true],
+            'USER_PERMISSION_DENIED' => [$error(403, 'authorizationError', 'USER_PERMISSION_DENIED'), false, true, true, true],
+            'CUSTOMER_NOT_ENABLED' => [$error(403, 'authorizationError', 'CUSTOMER_NOT_ENABLED'), false, true, true, true],
+            'a 403 Google did not explain' => [['status' => 403, 'body' => 'Forbidden'], false, true, true, true],
+            'CUSTOMER_NOT_FOUND' => [$error(400, 'authenticationError', 'CUSTOMER_NOT_FOUND'), false, true, true, true],
+            'INVALID_CUSTOMER_ID' => [$error(400, 'requestError', 'INVALID_CUSTOMER_ID'), false, true, true, true],
+            'INVALID_LOGIN_CUSTOMER_ID' => [$error(400, 'headerError', 'INVALID_LOGIN_CUSTOMER_ID'), false, true, true, true],
+            'NO_CONVERSION_ACTION_FOUND' => [self::partialFailure('NO_CONVERSION_ACTION_FOUND'), false, true, true, false],
+            'INVALID_CONVERSION_ACTION_TYPE' => [self::partialFailure('INVALID_CONVERSION_ACTION_TYPE'), false, true, true, false],
         ];
-        foreach ($cases as $name => [$answer, $delivered, $retry, $waits]) {
+        foreach ($cases as $name => [$answer, $delivered, $retry, $waits, $destinationWaits]) {
             $this->uploads = [$answer];
             $result = $this->ads()->send($this->settings(), self::credentials(), self::facts(), false, self::NOW);
-            self::assertSame([$delivered, $retry, $waits], [$result->delivered, $result->retry, $result->waitUntil !== null], $name);
-            self::assertFalse($result->destinationWaits, $name);
+            self::assertSame([$delivered, $retry, $waits, $destinationWaits], [$result->delivered, $result->retry, $result->waitUntil !== null, $result->destinationWaits], $name);
+            if ($waits && $destinationWaits) {
+                self::assertSame(self::NOW + GoogleAdsDestination::AUTH_WAIT, $result->waitUntil, $name);
+                self::assertStringStartsWith('waiting until the developer token', $result->reason, $name);
+            }
         }
         // "Too recent" a day after the click is a counted retry, not another wait.
         $this->uploads = [self::partialFailure('TOO_RECENT_EVENT')];
@@ -328,7 +341,9 @@ final class GoogleAdsDestinationTest extends TestCase
         self::assertSame('Google Ads refused it: EXPIRED_EVENT: The click is too old', $this->ads()->send($this->settings(), self::credentials(), self::facts(), false, self::NOW)->reason);
         $this->uploads = [['status' => 0, 'error' => 'timed out']];
         self::assertTrue($this->ads()->send($this->settings(), self::credentials(), self::facts(), false, self::NOW)->unanswered(), 'a host that gave no answer is skipped for the run');
-        $this->uploads = [['status' => 403, 'body' => '{"error":{"code":403,"details":[{"errors":[{"errorCode":{"authorizationError":"CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE"},"message":"no"}]}]}}']];
+        $this->uploads = [$error(403, 'authorizationError', 'DEVELOPER_TOKEN_NOT_APPROVED')];
+        self::assertStringContainsString('DEVELOPER_TOKEN_NOT_APPROVED', $this->ads()->send($this->settings(), self::credentials(), self::facts(), false, self::NOW)->reason, 'the wait says what Google said');
+        $this->uploads = [$error(403, 'authorizationError', 'CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE')];
         self::assertStringContainsString('17 December 2025', $this->ads()->send($this->settings(), self::credentials(), self::facts(), false, self::NOW)->reason);
     }
 

@@ -36,6 +36,8 @@ final class GoogleAdsIntegrationTest extends TestCase
 
     /** @var list<array{url: string, body: string}> */
     private array $requests = [];
+    /** @var list<array{status: int, body: string}> the upload endpoint's answers, in order (then 200) */
+    private array $answers = [];
 
     protected function setUp(): void
     {
@@ -52,6 +54,7 @@ final class GoogleAdsIntegrationTest extends TestCase
         $this->campaign(31, null);
         $this->campaign(40, null, user: 2);
         $this->requests = [];
+        $this->answers = [];
     }
 
     private function store(): DestinationStore
@@ -61,8 +64,10 @@ final class GoogleAdsIntegrationTest extends TestCase
             $url = (string) $options[CURLOPT_URL];
             $this->requests[] = ['url' => $url, 'body' => (string) $options[CURLOPT_POSTFIELDS]];
 
-            return ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.10', 'location' => null,
-                'body' => str_contains($url, 'oauth2') ? '{"access_token":"ya29.a","expires_in":3599}' : '{"results":[{}]}'];
+            $answer = str_contains($url, 'oauth2') ? null : array_shift($this->answers);
+
+            return ['status' => $answer['status'] ?? 200, 'error' => null, 'primary_ip' => '203.0.113.10', 'location' => null,
+                'body' => $answer['body'] ?? (str_contains($url, 'oauth2') ? '{"access_token":"ya29.a","expires_in":3599}' : '{"results":[{}]}')];
         };
 
         return new DestinationStore(new Connection(self::$db), [GoogleAdsDestination::TYPE => new GoogleAdsDestination(new WebhookSender($guard, $transport))]);
@@ -221,5 +226,70 @@ final class GoogleAdsIntegrationTest extends TestCase
         self::assertStringContainsString('not connected', (string) $result['reason']);
         self::assertSame([], $this->requests);
         self::assertSame('failed', self::$db->query("SELECT status FROM 202_destination_deliveries WHERE destination_id = $id AND kind = 'test'")->fetch_row()[0]);
+    }
+
+    public function testATokenGoogleHasNotApprovedYetLosesNoConversion(): void
+    {
+        $id = $this->destination();
+        $this->store()->authorise(1, $id, self::REFRESH, time());
+        $this->adsClick(100, time() - 7 * 3600);
+        $this->adsClick(101, time() - 7 * 3600);
+        $this->record(100, 'ORD-6');
+        $this->record(101, 'ORD-7');
+        $this->answers = [['status' => 403, 'body' => '{"error":{"code":403,"details":[{"errors":[{"errorCode":{"authorizationError":"DEVELOPER_TOKEN_NOT_APPROVED"},"message":"The developer token is not approved."}]}]}}']];
+        $now = time() + 1;
+
+        $out = $this->worker()->sendDue(10, 5, $now);
+        self::assertSame([0, 1, 0], [$out['sent'], $out['retrying'], $out['failed']], 'the first row learns the destination waits; the second is not tried');
+        self::assertCount(1, $this->uploads());
+        foreach (self::deliveries($id) as $row) {
+            self::assertSame(['pending', '0', (string) ($now + GoogleAdsDestination::AUTH_WAIT)], [$row['status'], $row['attempts'], $row['next_attempt_at']], 'waiting is not a try, and every row waits');
+        }
+        self::assertStringContainsString('DEVELOPER_TOKEN_NOT_APPROVED', (string) self::deliveries($id)[0]['last_error'], 'the log says why');
+        self::assertSame(0, array_sum($this->worker()->sendDue(10, 5, $now + 60)), 'not tried again within the hour');
+
+        // A new token (or customer ID) makes them due at once; Google now takes them.
+        $this->store()->update(1, $id, ['settings' => ['customer_id' => '1234567890', 'conversion_action' => '987654'], 'credentials' => ['developer_token' => 'approvedToken12345'] + self::CREDENTIALS], $now + 120);
+        self::assertSame(2, $this->worker()->sendDue(10, 5, $now + 120)['sent']);
+        self::assertSame(['sent', 'sent'], array_column(self::deliveries($id), 'status'));
+    }
+
+    public function testAMissingConversionActionHoldsOnlyItsRow(): void
+    {
+        $id = $this->destination();
+        $this->store()->authorise(1, $id, self::REFRESH, time());
+        $this->adsClick(100, time() - 7 * 3600);
+        $this->adsClick(101, time() - 7 * 3600);
+        $this->record(100, 'ORD-8');
+        $this->record(101, 'ORD-9');
+        $this->answers = [['status' => 200, 'body' => '{"partialFailureError":{"code":3,"message":"m","details":[{"errors":[{"errorCode":{"conversionUploadError":"NO_CONVERSION_ACTION_FOUND"},"message":"The conversion action cannot be found."}]}]},"results":[{}]}']];
+        $now = time() + 1;
+
+        $out = $this->worker()->sendDue(10, 5, $now);
+        self::assertSame([1, 1, 0], [$out['sent'], $out['retrying'], $out['failed']], 'another campaign\'s action still sends');
+        $first = self::deliveries($id)[0];
+        self::assertSame(['pending', '0', (string) ($now + GoogleAdsDestination::AUTH_WAIT)], [$first['status'], $first['attempts'], $first['next_attempt_at']]);
+        self::assertSame(1, $this->worker()->sendDue(10, 5, $now + GoogleAdsDestination::AUTH_WAIT)['sent'], 'once the action is there, it is sent');
+    }
+
+    public function testAKeyMintedInATransactionThatRolledBackIsNotKept(): void
+    {
+        self::$db->query("DELETE FROM 202_deployment_secrets WHERE secret_name = '" . DestinationStore::SECRET_NAME . "'");
+        $store = $this->store();
+        $key = new \ReflectionMethod($store, 'key');
+        self::$db->begin_transaction();
+        $key->invoke($store, true);
+        self::$db->rollback();
+        try {
+            $key->invoke($store, false);
+            self::fail('the minted key was rolled back, so there is none');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('missing', $e->getMessage());
+        }
+        // The positive control: a key that was read is kept for the store's life.
+        $minted = $key->invoke($store, true);
+        self::assertSame($minted, $key->invoke($store, false));
+        self::$db->query("DELETE FROM 202_deployment_secrets WHERE secret_name = '" . DestinationStore::SECRET_NAME . "'");
+        self::assertSame($minted, $key->invoke($store, false));
     }
 }

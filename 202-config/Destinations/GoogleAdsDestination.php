@@ -16,7 +16,8 @@ use Prosper202\Attribution\WebhookSender;
  * Google matches a conversion to its click by gclid, wbraid or gbraid (one,
  * in that order), or, for enhanced conversions for leads, by hashed email and
  * phone. A conversion with neither is withheld. Google refuses a click less
- * than 6 hours old (TOO_RECENT_EVENT): such a row waits, uncounted.
+ * than 6 hours old (TOO_RECENT_EVENT): such a row waits, uncounted. So
+ * does one Google refuses for something the operator mends (operatorWait()).
  */
 final class GoogleAdsDestination implements DestinationType, AuthorisedDestination
 {
@@ -35,6 +36,11 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
     /** Google already holds this conversion (the same order id, or the same click and time). */
     private const ALREADY_THERE = ['ORDER_ID_ALREADY_IN_USE', 'CLICK_CONVERSION_ALREADY_EXISTS'];
     private const RETRY_FAMILIES = ['quotaError', 'internalError'];
+    /** The token, the OAuth user's access or the account: nothing sends until the operator mends it, so every row of the destination waits. */
+    private const OPERATOR_FAMILIES = ['authenticationError', 'authorizationError'];
+    private const OPERATOR_CODES = ['INVALID_CUSTOMER_ID', 'INVALID_LOGIN_CUSTOMER_ID', 'INVALID_LINKED_CUSTOMER_ID', 'CUSTOMER_NOT_ACCEPTED_CUSTOMER_DATA_TERMS'];
+    /** The conversion action, which may be one campaign's: only the row waits. */
+    private const ACTION_CODES = ['NO_CONVERSION_ACTION_FOUND', 'INVALID_CONVERSION_ACTION_TYPE'];
     private const NOT_ALLOWLISTED = 'CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE';
     private const ACTION = '/\Acustomers\/([0-9]{10})\/conversionActions\/([1-9][0-9]{0,18})\z/D';
 
@@ -197,6 +203,10 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
                 || array_intersect($families, self::RETRY_FAMILIES) !== [];
             $text = $errors !== [] ? self::describe($errors)
                 : trim(mb_substr((string) preg_replace('/\s+/', ' ', (string) ($decoded['error']['message'] ?? $body)), 0, 200));
+            $waits = self::operatorWait($status, $errors, $test, $now, 'Google Ads answered ' . $status . ($text !== '' ? ': ' . $text : '') . self::allowlistNote($errors));
+            if ($waits !== null) {
+                return $waits;
+            }
 
             return new SendResult(false, $retry && !$test, $status, 'Google Ads answered ' . $status . ($text !== '' ? ': ' . $text : '') . self::allowlistNote($errors), messages: $test ? self::messages($errors) : []);
         }
@@ -227,6 +237,10 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         }
         if (in_array('TOO_RECENT_EVENT', $codes, true)) {
             return new SendResult(false, true, $status, 'waiting: ' . self::describe($errors), waitUntil: max($now + 900, ($facts->clickTime ?? $now) + self::CLICK_HOLD));
+        }
+        $waits = self::operatorWait($status, $errors, false, $now, 'Google Ads refused it: ' . self::describe($errors) . self::allowlistNote($errors));
+        if ($waits !== null) {
+            return $waits;
         }
         if (in_array('TOO_RECENT_CONVERSION_ACTION', $codes, true)) {
             return new SendResult(false, true, $status, 'waiting: ' . self::describe($errors), waitUntil: $now + self::CLICK_HOLD);
@@ -395,6 +409,34 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         }
 
         return $out;
+    }
+
+    /**
+     * An error the operator mends (the developer token not yet approved, the
+     * OAuth user's access, the customer or login customer, the conversion
+     * action) waits uncounted rather than failing: Google takes a click's
+     * conversion for 90 days, so nothing queued meanwhile is lost.
+     *
+     * @param list<array{0: string, 1: string, 2: string}> $errors
+     */
+    private static function operatorWait(int $status, array $errors, bool $test, int $now, string $why): ?SendResult
+    {
+        if ($test) {
+            return null;
+        }
+        $families = array_column($errors, 0);
+        $codes = array_column($errors, 1);
+        // A 401 is an access token gone stale mid-run: a plain retry mints another.
+        $account = $status !== 401 && ($status === 403 || array_intersect($families, self::OPERATOR_FAMILIES) !== [] || array_intersect($codes, self::OPERATOR_CODES) !== []);
+        if (!$account && array_intersect($codes, self::ACTION_CODES) === []) {
+            return null;
+        }
+        // The fix first: the log keeps 255 characters.
+        $fix = $account
+            ? 'waiting until the developer token, the connected Google user\'s access or the customer IDs are fixed on Setup › Destinations'
+            : 'waiting until this conversion action is fixed on Setup › Destinations';
+
+        return new SendResult(false, true, $status, $fix . '; ' . $why, waitUntil: $now + self::AUTH_WAIT, destinationWaits: $account);
     }
 
     /** @param list<array{0: string, 1: string, 2: string}> $errors */

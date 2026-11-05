@@ -37,7 +37,7 @@ Set them up on **Setup › Destinations**, with `p202 destination`, or through
 
 | Status | Meaning |
 | --- | --- |
-| `pending` | Waiting, or backing off after a failed try. A Google Ads row also waits, without using a try, for its click to be 6 hours old and for the destination to be connected to Google. |
+| `pending` | Waiting, or backing off after a failed try. A Google Ads row also waits, without using a try, for its click to be 6 hours old, for the destination to be connected to Google, and for you to fix what Google refused (the developer token, access, the customer IDs or the conversion action). |
 | `sent` | The platform accepted it. |
 | `failed` | Tries ran out, or the platform refused it, or it was not sent (a GA4 event more than 72 hours old, a private address). `last_error` says which. |
 | `withheld` | Nothing was sent: the click was guessed, or the visitor is held back (below). `last_error` says which. Never retried. |
@@ -208,9 +208,16 @@ fails: no conversion window is longer.
 Google's answers: a conversion Google already holds (`ORDER_ID_ALREADY_IN_USE`,
 `CLICK_CONVERSION_ALREADY_EXISTS`) counts as sent; `TOO_RECENT_EVENT` and
 `TOO_RECENT_CONVERSION_ACTION` wait 6 hours; a quota error, a timeout and a
-5xx are retried with backoff; anything else Google refuses (an expired
-click, a missing conversion action, a permission error) fails at once, with
-Google's error code and message in `last_error`.
+5xx are retried with backoff. What only you can mend waits instead of
+failing, using none of its tries, with Google's error code in `last_error`:
+an authentication or authorization error (a developer token Google has not
+approved yet, the connected Google user losing access, a customer that is not
+enabled), any 403, and a wrong customer or login customer ID hold every
+conversion of the destination for an hour at a time; a missing or wrong
+conversion action holds only that conversion (it may be one campaign's
+action). Saving the destination's settings or credentials makes them due at
+once. Anything else Google refuses (an expired click, a malformed field)
+fails at once, with Google's error code and message in `last_error`.
 
 **Test it**: *send test* uploads a made-up conversion with `validateOnly`,
 which records nothing in Google Ads. It mints an access token and has Google
