@@ -614,6 +614,61 @@ if (!function_exists('_upgrade_conversion_ledger_probe')) {
     }
 }
 
+if (!function_exists('_upgrade_withhold_unconsented_analytics')) {
+    /**
+     * Before 1.9.80 analytics was recorded with no consent check. Before the
+     * reconcile gives those rows a tier and consent version that would read
+     * as consented, the unsent events (all but sign-ins and new accounts)
+     * become 'withheld' and the attribute snapshot is marked withheld: kept,
+     * and never delivered. The enum value and column are added here in the
+     * installer's words so the reconcile finds them. Keyed on the columns the reconcile
+     * adds, so a rerun marks nothing recorded since. False on any failure.
+     */
+    function _upgrade_withhold_unconsented_analytics(): bool
+    {
+        foreach ([
+            '202_messaging_events' => ['tier', [
+                "ALTER TABLE `202_messaging_events` MODIFY COLUMN `delivery_status`
+                    enum('pending','sent','failed','withheld') NOT NULL DEFAULT 'pending'",
+                "UPDATE `202_messaging_events` SET delivery_status = 'withheld'
+                    WHERE delivery_status <> 'sent' AND event_name NOT IN ('login', 'account_created')",
+            ]],
+            '202_messaging_attributes' => ['consent_version', [
+                "ALTER TABLE `202_messaging_attributes` ADD COLUMN `withheld` tinyint(1) NOT NULL DEFAULT '0' AFTER `updated_at`",
+                'UPDATE `202_messaging_attributes` SET withheld = 1, dirty = 0',
+            ]],
+        ] as $table => [$marker, $statements]) {
+            $exists = _upgrade_query("SHOW TABLES LIKE '$table'");
+            if (!($exists instanceof \mysqli_result)) {
+                return false;
+            }
+            $found = $exists->num_rows > 0;
+            $exists->free();
+            if (!$found) {
+                continue;
+            }
+            $columns = _upgrade_conversion_ledger_probe("SHOW COLUMNS FROM `$table`", 'Field', 'Type');
+            if ($columns === null) {
+                return false;
+            }
+            if (isset($columns[$marker])) {
+                continue;
+            }
+            // A run stopped between the two: the columns are there, the marking is not.
+            if ($table === '202_messaging_attributes' && isset($columns['withheld'])) {
+                $statements = [$statements[1]];
+            }
+            foreach ($statements as $sql) {
+                if (_upgrade_query($sql) === false) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_reclick_backfill_mark')) {
     /**
      * ReClickBackfill's marker: the newest click, read by a statement of its
@@ -870,6 +925,20 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
         }
 
+        // The analytics queued before 1.9.80 had no consent check: withheld
+        // before the reconcile gives it a tier and consent version.
+        $messagingEvents = false;
+        foreach ($definitions as $definition) {
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::MESSAGING_EVENTS) {
+                if (!_upgrade_withhold_unconsented_analytics()) {
+                    error_log('Prosper202 upgrade: the analytics queued before consent could not be withheld');
+                    return false;
+                }
+                $messagingEvents = true;
+                break;
+            }
+        }
+
         $ok = true;
         foreach ($definitions as $definition) {
             if (_upgrade_query($definition->createStatement) === false) {
@@ -887,6 +956,13 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 && !_upgrade_hash_api_keys()) {
                 $ok = false;
             }
+        }
+
+        // The sign-ins and new accounts it kept are essential.
+        if ($ok && $messagingEvents && _upgrade_query("UPDATE `202_messaging_events` SET tier = 'essential'
+                WHERE event_name IN ('login', 'account_created') AND tier <> 'essential'") === false) {
+            $ok = false;
+            error_log('Prosper202 upgrade: the essential events could not be marked');
         }
 
         if ($ok) {
@@ -4843,8 +4919,15 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.79') {
 
+            // Product-analytics consent: 202_users_pref's consent flags, the
+            // EU/UK location and the consent versions (in usersPref()),
+            // 202_messaging_events' tier (existing rows take 'analytics'), its
+            // user/event/time key and the consent version each row and the
+            // attribute snapshot were captured under.
             // A schema change for 1.9.80 belongs in this block, reconciled
             // before the version is written.
+            // What was queued before consent existed is kept and never goes out
+            // (_upgrade_withhold_unconsented_analytics(), run by the reconcile).
             //
             // Postback authentication (Prosper202\Conversion\PostbackAuth):
             // 202_postback_auth, made with a row for every account already
@@ -4863,9 +4946,12 @@ class UPGRADE
             $paid_ok = $baseline_ok && $carried_ok;
             $step_ok = _upgrade_measurement_tables([
                 // 202_users_pref gains shopify_webhook_secret, which Shopify's
-                // order webhooks are verified with (ShopifyWebhookSecret), and
-                // jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole).
+                // order webhooks are verified with (ShopifyWebhookSecret),
+                // jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole),
+                // and the consent columns (ConsentPolicy); the messaging tables carry them.
                 \Prosper202\Database\Tables\UserTables::usersPref(),
+                \Prosper202\Database\Tables\CoreTables::messagingEvents(),
+                \Prosper202\Database\Tables\CoreTables::messagingAttributes(),
                 // The inbound postback and notification log (Prosper202\InboundLog).
                 \Prosper202\Database\Tables\ConversionTables::inboundLog(),
                 // The publisher a publisher link's click is credited to

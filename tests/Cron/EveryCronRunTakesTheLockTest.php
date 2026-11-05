@@ -208,6 +208,7 @@ final class EveryCronRunTakesTheLockTest extends TestCase
         );
         self::assertStringContainsString(
             '{$lock=CronLock::take($lockPath);if($lock===null){returnnull;}'
+                . 'self::refreshProfiles($db);'
                 . 'returnself::deliverPending($db,$maxBatchesPerUser,$maxConsecutiveFailures);}',
             self::code(self::DELIVERS[0]),
             'deliverPendingExclusive() takes the lock it is handed, delivers nothing while another run holds it,'

@@ -7,7 +7,9 @@ namespace Tests\Messaging;
 /**
  * A `php -S` on a free loopback port that records every request it gets
  * (method, the request target as received, body) and answers JSON: a chat
- * pass for a path ending in /chat/pass, {"ok":true} for anything else. It
+ * pass for a path ending in /chat/pass, {"ok":true} for anything else
+ * (with `consent_ack`, the consent version the body carried, after
+ * acknowledgeConsent()). It
  * stands in for the portal, and for a proxy (a proxied request arrives with
  * an absolute target, http://host:port/path).
  *
@@ -56,6 +58,11 @@ final class LocalHttpRecorder
             header('Content-Type: application/json');
             if (str_ends_with((string) parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/chat/pass')) {
                 echo json_encode(['ok' => true, 'pass' => '%PASS%', 'expires_at_s' => time() + 86400, 'chat_url' => 'https://chat.example.test']);
+                return true;
+            }
+            $sent = json_decode((string) file_get_contents('php://input'), true);
+            if (is_file(__DIR__ . '/ack') && is_int($sent['consent']['version'] ?? null)) {
+                echo json_encode(['ok' => true, 'consent_ack' => $sent['consent']['version']]);
                 return true;
             }
             echo '{"ok":true}';
@@ -111,6 +118,14 @@ final class LocalHttpRecorder
         }
 
         return $requests;
+    }
+
+    /** From now on, answer each request with the consent version it carried. */
+    public function acknowledgeConsent(): void
+    {
+        if (!touch($this->dir . '/ack')) {
+            throw new \RuntimeException('could not turn on consent acknowledgements');
+        }
     }
 
     public function hold(): void

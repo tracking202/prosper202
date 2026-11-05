@@ -22,6 +22,25 @@ final class AiConnectTest extends TestCase
 {
     private string $stateDir;
 
+    /** @dataProvider clientNamesForAnalytics */
+    public function testAnalyticsGetsTheClientsKindNeverItsName(string $clientName, string $expected): void
+    {
+        self::assertSame($expected, AiConnect::analyticsClientKind($clientName));
+    }
+
+    /** @return array<string, array{string, string}> */
+    public static function clientNamesForAnalytics(): array
+    {
+        return [
+            'a known client' => ['Claude', 'claude'],
+            'spacing and case' => [' ChatGPT ', 'chatgpt'],
+            'an unknown client' => ['custom app', 'other'],
+            'an email' => ['alice@example.com', 'other'],
+            'a known name with more after it' => ['Claude secret-token-123', 'other'],
+            'empty' => ['', 'other'],
+        ];
+    }
+
     protected function setUp(): void
     {
         $this->stateDir = sys_get_temp_dir() . '/p202-ai-connect-' . bin2hex(random_bytes(6));

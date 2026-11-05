@@ -33,6 +33,8 @@ final class CityDatabaseReadersTest extends TestCase
         '202-config/GeoIp/CityDatabase.php' => 'status() reads the metadata and closes',
         '202-config/GeoIp/DatabaseInstaller.php' => 'check() opens the candidate before it is renamed into place,'
             . ' and closes it',
+        '202-config/functions-auth.php' => 'detect_client_is_eu() opens CityDatabase::PATH for the signing-in'
+            . ' address and closes it',
     ];
 
     private const STRING_TOKENS = [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE, T_INLINE_HTML];

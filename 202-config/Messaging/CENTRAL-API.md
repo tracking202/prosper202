@@ -62,7 +62,16 @@ targeting.
     "registered_at": 1700000000,
     "attributes": {
       "plan": "pro",
-      "monthly_clicks": 18204
+      "clicks_30d": 18204,
+      "offers": [ { "name": "…", "url": "…", "payout": 38.0 } ],
+      "ltv": { "mrr": 546.0, "customers": 32 }
+    },
+    "consent": {
+      "analytics":          "granted",
+      "analytics_source":   "settings",
+      "analytics_at":       "2026-07-16 16:09:24",
+      "email_marketing":    "granted",
+      "email_marketing_at": "2026-07-16 09:48:05"
     }
   }
 }
@@ -76,10 +85,32 @@ targeting.
 | `user_email`   | `202_users.user_email`                   | Targeting                            |
 | `registered_at`| `202_users.user_time_register` (unix seconds) | Cohort targeting (e.g. "new users") |
 | `attributes`   | `202_messaging_attributes` snapshot      | **Custom attributes for segmentation** |
+| `consent`      | `202_users_pref` via `ConsentPolicy::deliveryState()` | **Consent bookkeeping** (see below) |
+
+`attributes` is the latest snapshot of the user's segmentation profile: the offer/volume
+profile computed by the sync cron (`OfferProfile::compute()` — 30-day volumes, per-offer
+detail, account-level LTV aggregates, feature flags) merged with any custom attributes set
+by page JavaScript via `Prosper202Messenger('update', {...})` (see *Client JavaScript API*
+below). Values may be **nested objects and arrays** (e.g. `offers[]`, `ltv`, `device_mix`);
+store them as JSON, not flat key/value pairs.
+
+**Consent-driven variance:** the attribute snapshot is analytics-tier data. For users who
+have not granted analytics consent, the client **omits `identity.attributes` entirely**.
+Treat a missing `attributes` key as "no consent", not as an empty profile — and never wipe
+a previously-stored profile because a request arrived without one.
+
+`consent` is attached for **all** users — including analytics-denied ones — because the
+server must know a user is denied. Semantics: each flag is `granted|denied|unset`;
+anything other than an explicit `email_marketing: "granted"` (including a missing
+`consent` object from an older client) means **no marketing email** to that user.
+Analytics consent and email consent are independent flags. A client that
+cannot read a user's consent sends nothing for that user rather than a
+stand-in block, so a stored denial is never overwritten with `unset`.
 
 Only an active, undeleted user has an identity
 (`MessagingService::identityFor()`, which the chat pass request is built from
-too). If `api_key`/`install_hash` do not validate, respond `401`.
+too). If `api_key`/`install_hash` do not validate, respond `401`. The client degrades
+gracefully (shows cached data, no error to the user).
 
 ---
 
@@ -94,16 +125,25 @@ snapshot plus several events.
 ```json
 {
   "identity": { ... },
+  "consent": {
+    "analytics":          "granted",
+    "analytics_source":   "settings",
+    "analytics_at":       "2026-07-16 16:09:24",
+    "email_marketing":    "granted",
+    "email_marketing_at": "2026-07-16 09:48:05",
+    "version":            7
+  },
   "attributes": {
     "plan": "pro",
-    "monthly_clicks": 18204
+    "clicks_30d": 18204
   },
   "events": [
     {
-      "name": "created_tracker",
+      "name": "tracker_created",
       "metadata": { "tracker_id": 42, "source": "google" },
       "occurred_at": "2026-06-16 07:05:00",
-      "client_token": "uuid for idempotency"
+      "client_token": "uuid for idempotency",
+      "tier": "analytics"
     }
   ]
 }
@@ -112,14 +152,41 @@ snapshot plus several events.
 **Response**
 
 ```json
-{ "ok": true }
+{ "ok": true, "consent_ack": 7 }
 ```
 
-- `attributes` mirrors `identity.attributes`.
-- Each event has a `client_token`; treat a repeated token as idempotent so a
-  retry does not double-count.
-- The client calls `/track` only when an event is pending or the attribute
-  snapshot changed since the last delivery, at most once per
+`consent_ack` is the `consent.version` of this request, as a JSON integer, and
+the portal sends it **only after the consent block is stored**. A response
+without it (or with another number) leaves the change pending on the install:
+the events and snapshot it carried are marked delivered, and the consent block
+is sent again by the next cron run, every run, until a response acknowledges
+that version (`MessagingService::SYNC_UNACKED`). A storage failure must
+therefore answer without `consent_ack`, or with a non-200, never `ok` alone.
+
+- `attributes` mirrors what is sent inside `identity.attributes`; it is included here too
+  so a dedicated flush can update the central profile even when no message is pulled.
+  For non-consented users the client sends `{}` — treat that as "no update", never as an
+  instruction to clear the stored profile.
+- `consent` is the same block as `identity.consent` (top-level here per the receiver
+  contract), plus `version`; store the latest values. Tolerate its absence (older clients)
+  and fail closed: no explicit `email_marketing: "granted"` means no marketing email.
+  `version` is an integer that grows with each of the user's consent changes on the
+  install (at least the Unix time of the change, so a restored backup does not reuse
+  one), and it only grows: a block
+  whose version is lower than one already stored for the user is an older delivery
+  arriving late; acknowledge it, but do not let it replace the newer values.
+- Every event carries `tier`: `"essential"` (operational/lifecycle — arrives for all users;
+  usable for support and account operations) or `"analytics"` (behavioural — arrives only
+  for consented users; usable for segmentation and marketing). Store it; never treat an
+  unrecognized tier as `essential`, and never feed essential-only users into marketing
+  segmentation.
+- Each event has a `client_token`; treat repeated tokens as idempotent so retries do not
+  double-count.
+- The central server stores attributes on the user profile and records events on a
+  timeline, both usable to define audiences for broadcasts.
+- The client calls `/track` only when an event is pending, the attribute
+  snapshot changed since the last delivery, or a consent change is not yet
+  acknowledged (then with `events: []` if nothing else is pending), at most once per
   `MESSAGING_SYNC_THROTTLE` seconds (default 20) per user from a page, and
   once per run from the cron job.
 
@@ -148,7 +215,8 @@ Prosper202Messenger('toggle');   // toggle it
 `update` and `trackEvent` POST to `202-account/ajax/messaging/track.php`, which
 records the data (`202_messaging_attributes`, `202_messaging_events`) and then
 delivers whatever is pending to `POST /track`, throttled per user. Its answer
-says what happened (`delivery`: `sent`, `idle`, `throttled` or `failed`); when
+says what happened (`delivery`: `sent`, `more`, `idle`, `throttled`,
+`unacknowledged` or `failed`); when
 the delivery was held back it carries `retry_after_s`, and the page posts
 `flush=1` after that long so a held-back event does not wait for the next one.
 Attribute values should be scalars.
@@ -163,6 +231,7 @@ Attribute values should be scalars.
 | Malformed request                 | `400`            | Logged; an event is retried up to five times, then marked failed |
 | Transient server error            | `5xx`            | Retried once at once, then on the next delivery |
 | Success                           | `200` + `ok:true`| Rows marked sent, snapshot marked clean |
+| Success, consent stored           | `200` + `ok:true` + `consent_ack` | The consent change is marked delivered |
 
 The client never shows transport errors to users.
 
@@ -171,12 +240,15 @@ The client never shows transport errors to users.
 ## Operational note: the cron delivers users one by one
 
 `MessagingService::deliverPendingExclusive()` lists the active users with an event
-still pending or a changed attribute snapshot, and delivers each one's rows in
+still pending, a changed attribute snapshot or an unacknowledged consent change,
+and delivers each one's rows in
 batches of 100 events, one `/track` call per batch, up to 10 batches a user a
 run. Users with nothing pending are not visited. After three failed
 deliveries in a row the run stops and the rest wait for the next run: the
 portal is most likely down, and each failed delivery spends one of an event's
-five attempts.
+five attempts. A delivery the portal answered without acknowledging its consent
+version is not a failure here: the run goes on, and the change is sent again
+next run.
 
 `202-cronjobs/index.php` runs it hourly, so a portal outage of a few hours
 does not use up those attempts. `202-cronjobs/sync-messaging.php` is the same

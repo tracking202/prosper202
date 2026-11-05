@@ -302,6 +302,21 @@ final class AiConnect
     }
 
     /**
+     * The client's kind for analytics: a fixed category, never the name the
+     * approval link carried, which anyone can set to anything.
+     */
+    public static function analyticsClientKind(string $clientName): string
+    {
+        return match (strtolower(trim($clientName))) {
+            'claude' => 'claude',
+            'chatgpt' => 'chatgpt',
+            'cursor' => 'cursor',
+            'gemini' => 'gemini',
+            default => 'other',
+        };
+    }
+
+    /**
      * What the MCP server knows a connection's watchers by: HMAC-SHA256 of
      * WATCHER_TOKEN_INFO keyed with the key, hex. One-way from the key, so an
      * install that stores keys hashed can keep it from the key's creation.
@@ -480,6 +495,13 @@ final class AiConnect
             error_log('p202: AI connect: ' . $e->getMessage());
             return $refuse(500, 'server_error', 'The key could not be created; nothing was connected.' . $again);
         }
+
+        // Analytics milestone (consent-gated): the app's kind and the access granted.
+        require_once dirname(__DIR__, 3) . '/202-config/Messaging/Analytics.class.php';
+        \Analytics::eventFor($db, $userId, 'ai_connector_connected', [
+            'client' => self::analyticsClientKind((string) $grant['client_name']),
+            'access' => (string) $access,
+        ], 'analytics');
 
         return [200, ['data' => [
             'api_key' => $apiKey,
