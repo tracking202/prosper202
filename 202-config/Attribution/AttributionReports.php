@@ -905,11 +905,11 @@ final class AttributionReports
             'retry_at' => (int) $r['retry_at'],
         ], $this->conn->fetchAll($stmt));
 
-        // A retired merge is not awaiting anything: its own data refused the
-        // re-queue, and it is not tried again (AttributionWorker::requeueMerges()).
+        // A merge 1.9.79 retired (requeue_retired_at) awaits its re-queue like
+        // any other: the worker takes it again (AttributionWorker::requeueMerges()).
         $stmt = $this->conn->prepareRead(
-            'SELECT COALESCE(SUM(requeue_retired_at IS NULL), 0) AS awaiting,
-                    COALESCE(SUM(requeue_retired_at IS NULL AND requeue_failures > 0), 0) AS failing,
+            'SELECT COUNT(*) AS awaiting,
+                    COALESCE(SUM(requeue_failures > 0), 0) AS failing,
                     COALESCE(SUM(requeue_retired_at IS NOT NULL), 0) AS retired
              FROM 202_identity_merges WHERE user_id = ? AND requeued_at IS NULL'
         );

@@ -647,7 +647,7 @@ function RunSecondsCronjob()
                 new \Prosper202\Database\Connection($db),
                 20
             );
-            $mergesNotRequeued = $attribution === null ? 0 : $attribution->mergesFailed + $attribution->mergesRetired;
+            $mergesNotRequeued = $attribution === null ? 0 : $attribution->mergesFailed;
             $worthALine = $attribution !== null
                 && ($attribution->processed() > 0 || $attribution->backfill !== null || $mergesNotRequeued > 0);
             if ($worthALine) {
