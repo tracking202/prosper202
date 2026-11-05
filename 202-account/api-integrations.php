@@ -320,6 +320,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
+	// How the 1.9.56 JVZoo URL (no ?role=) reads this account's notifications (JVZooRole::ROLELESS_COLUMN).
+	if (isset($_POST['change_jvzoo_roleless_role']) && $_POST['change_jvzoo_roleless_role'] == '1') {
+		$jvzooRolelessRole = JVZooRole::fromQuery($_POST[JVZooRole::ROLELESS_COLUMN] ?? null);
+		if ($jvzooRolelessRole === null) {
+			p202_account_flash('bad', 'Choose affiliate or vendor for the 1.9.56 JVZIPN URL.');
+			p202_account_redirect('202-account/api-integrations.php#jvzoo');
+		}
+		try {
+			updateUserPreference(JVZooRole::ROLELESS_COLUMN, $jvzooRolelessRole->value, $_SESSION['user_id'], $db);
+		} catch (RuntimeException $e) {
+			error_log('api-integrations.php: ' . $e->getMessage());
+			p202_account_flash('bad', 'This could not be saved just now; the old choice is still in place. Try again.');
+			p202_account_redirect('202-account/api-integrations.php#jvzoo');
+		}
+		p202_account_flash('ok', 'Saved: the 1.9.56 JVZIPN URL reads your notifications as '
+			. ($jvzooRolelessRole === JVZooRole::VENDOR ? 'a vendor\'s.' : 'an affiliate\'s.'));
+		p202_account_redirect('202-account/api-integrations.php#jvzoo');
+	}
+
 	// Shopify's webhook secret, held to the rule its endpoint reads it by
 	// (ShopifyWebhookSecret), so a secret saved here is one a webhook verifies with.
 	if (isset($_POST['change_shopify_webhook_secret']) && $_POST['change_shopify_webhook_secret'] == '1') {
@@ -1107,14 +1126,6 @@ template_top('API Integrations');
 						its JVZIPN URL. (Not the v2 URL: v2 does not sign the amount or the click.)</li>
 				</ol>
 				<?php echo $endpoint('Vendor JVZIPN URL', JVZooRole::VENDOR->url($trackingBase)); ?>
-				<?php if ($jvzooConnected) { ?>
-				<div class="alert alert-warning small" role="note" data-jvzoo-roleless-note>
-					<strong>Upgraded from Prosper202 1.9.56?</strong> The JVZIPN URL 1.9.56 showed, which ends
-					<code>jvzoo.php</code> with no <code>?role=</code>, now records only affiliates’ sales. If you
-					sell your own product, replace your product’s JVZIPN URL in JVZoo with the Vendor JVZIPN URL
-					above: until you do, its notifications are refused and JVZoo shows the error.
-				</div>
-				<?php } ?>
 				<p>Both are verified with your JVZIPN secret key, which JVZoo shows under My Account ›
 					Account Details › Seller Settings; store it below. A notification it does not verify is
 					refused. For a subscription, set the campaign’s “When a click converts more than once”
@@ -1144,6 +1155,33 @@ template_top('API Integrations');
 						</form>
 					</div>
 				</details>
+				<?php $jvzooRoleless = JVZooRole::fromQuery($user_row[JVZooRole::ROLELESS_COLUMN] ?? null)
+					?? JVZooRole::AFFILIATE; ?>
+				<form method="post" action="<?php echo $e($self . '#jvzoo'); ?>" class="mt-3" data-jvzoo-roleless>
+					<input type="hidden" name="change_jvzoo_roleless_role" value="1">
+					<?php echo p202_account_token_field(); ?>
+					<fieldset>
+						<legend class="form-label fs-6 fw-semibold">How should the 1.9.56 JVZIPN URL (no
+							<code>?role=</code>) read your notifications?</legend>
+						<p class="small text-secondary mb-2">Upgraded from Prosper202 1.9.56? Its JVZIPN URL ends
+							<code>jvzoo.php</code> with no <code>?role=</code>. If you sell your own product, choose vendor
+							here or paste the Vendor JVZIPN URL above into your product: read as an affiliate’s, a
+							vendor’s sale is refused and JVZoo shows the error.</p>
+						<?php foreach ([
+							JVZooRole::AFFILIATE->value => 'I promote JVZoo products (affiliate)',
+							JVZooRole::VENDOR->value => 'I sell my own product on JVZoo (vendor)',
+						] as $jvzooRoleValue => $jvzooRoleLabel) { ?>
+						<div class="form-check">
+							<input class="form-check-input" type="radio" name="<?php echo $e(JVZooRole::ROLELESS_COLUMN); ?>"
+								id="jvzoo_roleless_<?php echo $e($jvzooRoleValue); ?>" value="<?php echo $e($jvzooRoleValue); ?>"<?php
+								echo $jvzooRoleless->value === $jvzooRoleValue ? ' checked' : ''; ?>>
+							<label class="form-check-label" for="jvzoo_roleless_<?php echo $e($jvzooRoleValue); ?>"><?php
+								echo $e($jvzooRoleLabel); ?></label>
+						</div>
+						<?php } ?>
+					</fieldset>
+					<button class="btn btn-secondary btn-sm mt-2" type="submit">Save</button>
+				</form>
 			</div>
 		</section>
 	</div>
