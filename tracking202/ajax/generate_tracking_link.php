@@ -626,6 +626,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
             \Prosper202\Click\GoogleAdsParallelTracking::trackingTemplate(
                 $linkBase,
                 (string) $tracker_id_public,
+                $publisherParam,
                 $tracking_variable_string
             ),
         ];

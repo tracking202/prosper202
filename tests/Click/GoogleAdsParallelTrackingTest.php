@@ -25,7 +25,23 @@ final class GoogleAdsParallelTrackingTest extends TestCase
             GoogleAdsParallelTracking::trackingTemplate(
                 'https://track.example/',
                 '12345',
+                '',
                 '&c1={campaignid}&t202kw={keyword}'
+            )
+        );
+    }
+
+    /** A link saved for a publisher credits it on template clicks too, as 1.9.56's did. */
+    public function testTheTemplateCarriesTheLinksPublisherAfterTheTrackerId(): void
+    {
+        self::assertSame(
+            'https://track.example/tracking202/redirect/pt.php?t202id=12345&t202pubid=a1b2c3d4e5&t202kw={keyword}'
+                . '&lpurl={lpurl}',
+            GoogleAdsParallelTracking::trackingTemplate(
+                'https://track.example/',
+                '12345',
+                '&t202pubid=a1b2c3d4e5',
+                '&t202kw={keyword}'
             )
         );
     }

@@ -31,12 +31,17 @@ final class GoogleAdsParallelTracking
 
     /**
      * @param string $linkBase the links' base, `scheme://host/…/` (TrackingBaseUrl)
+     * @param string $publisherQuery '&t202pubid=…' for a publisher's link, or ''
      * @param string $variableQuery '&…' (TrackingLinkVariables::query())
      */
-    public static function trackingTemplate(string $linkBase, string $trackerIdPublic, string $variableQuery): string
-    {
-        return $linkBase . 'tracking202/redirect/pt.php?t202id=' . $trackerIdPublic . $variableQuery
-            . '&lpurl={lpurl}';
+    public static function trackingTemplate(
+        string $linkBase,
+        string $trackerIdPublic,
+        string $publisherQuery,
+        string $variableQuery
+    ): string {
+        return $linkBase . 'tracking202/redirect/pt.php?t202id=' . $trackerIdPublic . $publisherQuery
+            . $variableQuery . '&lpurl={lpurl}';
     }
 
     /**

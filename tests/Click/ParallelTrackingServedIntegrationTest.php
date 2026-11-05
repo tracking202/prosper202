@@ -33,6 +33,12 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
     private const DIRECT_TRACKER = 4133;
     private const FOREIGN_PAGE_TRACKER = 4134;
     private const PUBLIC = 100000;
+    /** A publisher the owner may credit (t202pubid), and the owner's role that grants it. */
+    private const PUBLISHER = 4103;
+    private const PUBLISHER_PUBLIC_ID = 'pt4103pub';
+    private const GRANT_ROLE = 4141;
+
+    private static ?int $addedGrantPermission = null;
 
     /** @var resource|null */
     private static $server = null;
@@ -111,7 +117,15 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         foreach ($tables as $table => $id) {
             self::q("DELETE FROM $table WHERE $id BETWEEN 4100 AND 4199");
         }
-        $users = self::OWNER . ', ' . self::OTHER;
+        $users = self::OWNER . ', ' . self::OTHER . ', ' . self::PUBLISHER;
+        self::q('DELETE FROM 202_clicks_publisher WHERE publisher_user_id = ' . self::PUBLISHER);
+        self::q("DELETE FROM 202_user_role WHERE user_id IN ($users)");
+        self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::GRANT_ROLE);
+        self::q('DELETE FROM 202_roles WHERE role_id = ' . self::GRANT_ROLE);
+        if (self::$addedGrantPermission !== null) {
+            self::q('DELETE FROM 202_permissions WHERE permission_id = ' . self::$addedGrantPermission);
+            self::$addedGrantPermission = null;
+        }
         self::q("DELETE FROM 202_clicks WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users_pref WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users WHERE user_id IN ($users)");
@@ -156,6 +170,26 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         $tracker(self::DIRECT_TRACKER, self::CAMPAIGN, 0);
         // A legacy row naming another account's page.
         $tracker(self::FOREIGN_PAGE_TRACKER, self::CAMPAIGN, self::OTHER_LP);
+
+        // The owner may credit PUBLISHER (PublisherCredit::forClick()).
+        $grant = 'permission_description = ' . self::str(\Prosper202\Click\PublisherCredit::GRANT_PERMISSION);
+        $found = self::$db->query("SELECT permission_id FROM 202_permissions WHERE $grant");
+        $permission = $found instanceof \mysqli_result ? ($found->fetch_row()[0] ?? null) : null;
+        if ($permission === null) {
+            self::$addedGrantPermission = self::insert("INSERT INTO 202_permissions SET $grant");
+            $permission = self::$addedGrantPermission;
+        }
+        self::row('202_roles', ['role_id' => self::GRANT_ROLE, 'role_name' => 'pt grant test']);
+        self::row('202_role_permission', ['role_id' => self::GRANT_ROLE, 'permission_id' => (int) $permission]);
+        self::row('202_user_role', ['user_id' => self::OWNER, 'role_id' => self::GRANT_ROLE]);
+        $publisherRole = \Prosper202\Click\PublisherCredit::PUBLISHER_ROLE_ID;
+        self::q("INSERT IGNORE INTO 202_roles (role_id, role_name) VALUES ($publisherRole, 'Publisher')");
+        self::user(self::PUBLISHER);
+        self::q("UPDATE 202_users SET install_hash = 'pt-test-install' WHERE user_id IN ("
+            . self::OWNER . ', ' . self::PUBLISHER . ')');
+        self::q('UPDATE 202_users SET user_public_publisher_id = ' . self::str(self::PUBLISHER_PUBLIC_ID)
+            . ' WHERE user_id = ' . self::PUBLISHER);
+        self::row('202_user_role', ['user_id' => self::PUBLISHER, 'role_id' => $publisherRole]);
     }
 
     /**
@@ -251,6 +285,21 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         $cookie = '~^Set-Cookie: tracking202subid[^=]*=' . $click['click_id'] . '~mi';
         self::assertMatchesRegularExpression($cookie, $headers);
         self::assertStringContainsString('pci.php?pci=' . $click['click_id_public'], $body);
+    }
+
+    /** A publisher's template, as Get Links issues it, credits the publisher with the click. */
+    public function testAPublishersTemplateCreditsThePublisher(): void
+    {
+        [$status, $headers] = self::get(
+            self::pt(self::SIMPLE_TRACKER, '&t202pubid=' . self::PUBLISHER_PUBLIC_ID . '&t202kw=&gclid=G-pub-1'),
+            'https://www.google.com/'
+        );
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        $click = self::clickWithGclid('G-pub-1');
+        $credit = self::requireScratch()->query(
+            'SELECT publisher_user_id FROM 202_clicks_publisher WHERE click_id = ' . (int) $click['click_id']
+        )->fetch_row();
+        self::assertSame((string) self::PUBLISHER, (string) ($credit[0] ?? ''), 'the click is credited to the publisher');
     }
 
     /**
