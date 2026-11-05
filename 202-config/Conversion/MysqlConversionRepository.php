@@ -302,7 +302,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             }
             // Throws on anything that is not a decimal number: an amount that
             // cannot be read must never be recorded as 0.
-            $explicitPayout = Amount::toUnits($rawPayout);
+            $explicitPayout = Amount::checkedForColumn(Amount::toUnits($rawPayout), 'payout');
         }
         // The ip column is varchar(45): exactly one address fits, a forwarding
         // chain does not, and an over-long value fails the INSERT under strict
@@ -514,6 +514,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         } else {
             $amountUnits = Amount::toUnits((string) ($click['click_payout'] ?? '0'));
         }
+        // The campaign's default, or the click's cached total for a repeat
+        // conversion, can be out of range too: refused, never clamped (Y5N2).
+        Amount::checkedForColumn($amountUnits, $explicitPayout !== null ? 'payout' : 'default payout');
         $payout = (float) Amount::fromUnits($amountUnits);
         $campaignId = isset($data['campaign_id']) ? (int) $data['campaign_id'] : $clickCampaignId;
         $clickTime = isset($data['click_time']) ? (int) $data['click_time'] : (int) ($click['click_time'] ?? 0);

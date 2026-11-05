@@ -117,6 +117,9 @@ if ($click_id > 0) {
 		if (!$outcome['recorded'] && $outcome['reason'] !== 'already_lead') {
 			error_log('px: no conversion recorded for click ' . $click_id . ': ' . $outcome['reason']);
 		}
+	} catch (\Prosper202\Conversion\Ledger\AmountOutOfRange $amountError) {
+		// The pixel answers its image either way; the inbound log says why nothing was recorded (Y5N2).
+		\Prosper202\InboundLog\RequestLog::current()?->refuse('amount_out_of_range', $amountError->getMessage(), 422);
 	} catch (\Throwable $conversionError) {
 		error_log('px: conversion recording failed for click ' . $click_id . ': ' . $conversionError->getMessage());
 		\Prosper202\InboundLog\RequestLog::current()?->refuse('failed', 'The conversion could not be recorded just now.');

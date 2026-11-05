@@ -229,6 +229,9 @@ try {
 	);
 } catch (\Prosper202\Conversion\PurLinkCampaignChanged $campaignError) {
     p202RespondJsonError(404, 'SubID no longer matches the campaign');
+} catch (\Prosper202\Conversion\Ledger\AmountOutOfRange $amountError) {
+	// Not a failure to retry: the same amount would be refused again (Y5N2).
+	p202RespondJsonError(422, $amountError->getMessage());
 } catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
 	p202RespondJsonError(
 		$reversalError->kind === \Prosper202\Conversion\Ledger\ReversalException::CONFLICT ? 422 : 404,
