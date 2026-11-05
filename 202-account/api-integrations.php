@@ -322,7 +322,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	// How the 1.9.56 JVZoo URL (no ?role=) reads this account's notifications (JVZooRole::ROLELESS_COLUMN).
 	if (isset($_POST['change_jvzoo_roleless_role']) && $_POST['change_jvzoo_roleless_role'] == '1') {
-		$jvzooRolelessRole = JVZooRole::fromQuery($_POST[JVZooRole::ROLELESS_COLUMN] ?? null);
+		$jvzooRolelessRole = JVZooRole::fromQuery($_POST['jvzoo_roleless_role'] ?? null);
 		if ($jvzooRolelessRole === null) {
 			p202_account_flash('bad', 'Choose affiliate or vendor for the 1.9.56 JVZIPN URL.');
 			p202_account_redirect('202-account/api-integrations.php#jvzoo');
@@ -1155,7 +1155,7 @@ template_top('API Integrations');
 						</form>
 					</div>
 				</details>
-				<?php $jvzooRoleless = JVZooRole::fromQuery($user_row[JVZooRole::ROLELESS_COLUMN] ?? null)
+				<?php $jvzooRoleless = JVZooRole::fromQuery($user_row['jvzoo_roleless_role'] ?? null)
 					?? JVZooRole::AFFILIATE; ?>
 				<form method="post" action="<?php echo $e($self . '#jvzoo'); ?>" class="mt-3" data-jvzoo-roleless>
 					<input type="hidden" name="change_jvzoo_roleless_role" value="1">
