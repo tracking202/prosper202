@@ -304,6 +304,12 @@ final class ClickBankAdapterTest extends TestCase
         self::assertSame('CWOGBZLN-0001', self::parsed(self::sale(['receipt' => 'CWOGBZLN-0001']))->transactionId);
     }
 
+    public function testASignedPurLinkSubidNamesItsClickForTheProcessorToVerify(): void
+    {
+        $n = self::parsed(self::sale(['trackingCodes' => ['41-987-0123456789ab']]));
+        self::assertSame([41, '41-987-0123456789ab'], [$n->clickId, $n->purLinkSubid]);
+    }
+
     public function testTheClickIsTheFirstTrackingCode(): void
     {
         $none = self::sale();

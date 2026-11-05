@@ -62,10 +62,6 @@ final class AccountScopedWriteTest extends TestCase
 
     private const THROUGH = 'owned through its parent';
 
-    private const ROTATOR_RULES = 'a rule, redirect or criterion of the redirector the request names: the'
-        . ' redirector is checked to be the account\'s (`id = … AND user_id = …`, else "ERROR") and every saved'
-        . ' rule, redirect and criterion the payload names to hang off it, for the whole payload before anything'
-        . ' is written';
     private const ROTATOR_REMOVAL = 'the rules, criteria and redirects of the redirector removed in the same'
         . ' transaction, which first locks it `WHERE id = ? AND user_id = ?` and removes nothing when that finds'
         . ' none';
@@ -90,17 +86,6 @@ final class AccountScopedWriteTest extends TestCase
             "202_ppc_network_variables | ppc_network_id = '{\$ppcNetworkId}' AND deleted = '0'"
                 => self::SOURCE_VARIABLES,
         ],
-        'tracking202/ajax/rotator.php' => [
-            "202_rotator_rules | id = '{(int)\$rule['rule_id']}'" => self::ROTATOR_RULES,
-            "202_rotator_rules_redirects | id = '{\$rule_redirect_id}'" => self::ROTATOR_RULES,
-            "202_rotator_rules_criteria | id = '{(int)\$criteria['criteria_id']}'" => self::ROTATOR_RULES,
-            "202_rotator_rules_redirects | id NOT IN ( {\$redirects_ids} ) AND rule_id = '{\$rule_id}'"
-                => self::ROTATOR_RULES,
-            "202_rotator_rules | `id` NOT IN ( {\$rules_id} ) AND rotator_id = '{\$rotator_id}'"
-                => self::ROTATOR_RULES,
-            "202_rotator_rules_criteria | `id` NOT IN ( {\$criteria_id} ) AND rotator_id = '{\$rotator_id}'"
-                => self::ROTATOR_RULES,
-        ],
         'tracking202/setup/rotator.php' => [
             '202_rotator_rules_criteria | rotator_id = ?' => self::ROTATOR_REMOVAL,
             '202_rotator_rules_redirects | rule_id IN ( SELECT id FROM 202_rotator_rules WHERE rotator_id = ? )'
@@ -110,7 +95,7 @@ final class AccountScopedWriteTest extends TestCase
     ];
 
     /** The number of THROUGH_PARENT entries: the list may only shrink. */
-    private const CEILING = 12;
+    private const CEILING = 6;
 
     private const STATEMENT_ENDS = ['ORDER', 'LIMIT'];
 

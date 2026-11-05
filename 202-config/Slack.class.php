@@ -9,6 +9,23 @@ class Slack {
     }
 
     /**
+     * A notifier for the account's own saved webhook (SlackWebhook::ofAccount()),
+     * or null when it has none or it could not be read, which is logged.
+     */
+    public static function forAccount(\mysqli $db, int $accountId): ?self
+    {
+        try {
+            $conn = new \Prosper202\Database\Connection($db);
+            $url = \Prosper202\Notifications\SlackWebhook::ofAccount($conn, $accountId);
+        } catch (\Throwable $e) {
+            error_log('Slack: the webhook of account ' . $accountId . ' could not be read: ' . $e->getMessage());
+            return null;
+        }
+
+        return $url === null ? null : new self($url);
+    }
+
+    /**
      * Send a notice: true when the webhook took it. A notice that was not
      * sent or not taken is logged here with why, and answers false; it never
      * throws, so the action that sent it goes on and answers for itself.
@@ -146,6 +163,7 @@ class Slack {
 	  'jvzoo_secret_key_updated' => '#[user] entered a new JVZoo Secret Key',
 	  'ipqs_api_key_updated' => '#[user] entered a new IPQualityScore API Key',
 	  'paykickstart_ipn_keys_updated' => '#[user] changed the PayKickstart IPN secret keys',
+	  'shopify_webhook_secret_updated' => '#[user] entered a new Shopify webhook secret',
 
       //User Management
       'user_management_user' => '#[user] [type] a Prosper202 ClickServer User: #[username] ([role])',

@@ -251,6 +251,7 @@ function RunHourlyCronJob()
         // pass covers only Apple postbacks and only while they arrive,
         // so without this nothing aged out Android install rows at all.
         PruneAppRetention();
+        PrunePurLinkExitOrder();
 
         // Product analytics a page recorded and could not deliver (held
         // back by the throttle, then the tab closed, or a backlog left by
@@ -411,6 +412,23 @@ function PruneAppRetention(): void
         }
     } catch (\Throwable $e) {
         error_log('App retention failed: ' . $e->getMessage());
+    }
+}
+
+/** Remove expired PurLink replay fences in bounded hourly batches. */
+function PrunePurLinkExitOrder(): void
+{
+    try {
+        $retention = new \Prosper202\Click\PurLinkExitRetention(new \Prosper202\Database\Connection(getDatabaseConnection()));
+        $now = time();
+        for ($pass = 0; $pass < 40; $pass++) {
+            if ($retention->prune($now) < \Prosper202\Click\PurLinkExitRetention::BATCH) {
+                return;
+            }
+        }
+        error_log('PurLink exit retention: backlog remains; the next hourly run continues');
+    } catch (\Throwable $error) {
+        error_log('PurLink exit retention failed: ' . $error->getMessage());
     }
 }
 

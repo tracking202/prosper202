@@ -12,6 +12,8 @@
 # database, and PHPUnit exits 0 on a run that skipped everything — or that a
 # bootstrap die() ended before any test (tests/DataEngine did exactly that
 # without a 202-config.php). "Skipped" here is "did not run", so it fails.
+# A case skipped until an open pull request lands is in the group `pending`
+# and left out here, so it does not read as a suite that did not run.
 #
 # Environment:
 #   P202_TEST_DB_HOST / _PORT / _USER / _PASS   MySQL (127.0.0.1 / 3306 / root / empty)
@@ -184,7 +186,7 @@ for u in "${SHARD_UNITS[@]}"; do
         exit 2
     }
     started=$SECONDS
-    "${PHPUNIT[@]}" --configuration phpunit.ci.xml --group integration --no-coverage ${filter[@]+"${filter[@]}"} "$suite" > "$log" 2>&1
+    "${PHPUNIT[@]}" --configuration phpunit.ci.xml --group integration --exclude-group pending --no-coverage ${filter[@]+"${filter[@]}"} "$suite" > "$log" 2>&1
     rc=$?
     took=$((SECONDS - started))
     ran=$(grep -oE '^OK \([0-9]+ tests?' "$log" | grep -oE '[0-9]+' | tail -1)

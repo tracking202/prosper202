@@ -21,9 +21,14 @@ use PHPUnit\Framework\TestCase;
  * `false` as its fifth argument ($server), and each call of
  * TrafficSourcePixels::fire() passes a literal `false` as its sixth. A file
  * that renders the markup types that way and records its own conversion
- * also asks the writer to queue (`'notify_traffic_source' => true`) and
- * sends what it queued (p202SendQueuedPostbacks()). The goal notifier queues
- * through the engine, so it is held only to the first rule.
+ * also asks the writer to queue (`'notify_traffic_source' => true`). The goal
+ * notifier queues through the engine, so it is held only to the first rule.
+ *
+ * And none of them sends the queue before answering (66H8): gpb.php and
+ * upx.php did, up to 20 URLs at 10 seconds each, so a slow traffic source held
+ * the network's postback open. Outside the outbox and the cron worker, only
+ * p202SendQueuedPostbacksAfterAnswer() calls sendDue(), after releasing the
+ * client, and both endpoints call it last.
  */
 final class ServerPostbacksAreQueuedTest extends TestCase
 {
@@ -141,7 +146,7 @@ final class ServerPostbacksAreQueuedTest extends TestCase
                     'false',
                     strtolower($args[4] ?? '(omitted)'),
                     "$file:$line calls p202FireTrafficSourcePixels() without \$server = false, so it sends the type-4 postbacks "
-                    . 'itself; queue them with the conversion (notify_traffic_source) and send with p202SendQueuedPostbacks()'
+                    . 'itself; queue them with the conversion (notify_traffic_source); the worker sends them'
                 );
                 $firing[$file] = true;
             }
@@ -163,7 +168,45 @@ final class ServerPostbacksAreQueuedTest extends TestCase
                 $queues = $queues || preg_match("/'notify_traffic_source'\s*=>\s*true\b/i", $args[1] ?? '') === 1;
             }
             self::assertTrue($queues, "$file renders the traffic source's pixels but never asks p202RecordConversion() to queue its server postbacks");
-            self::assertNotSame([], self::calls($src, 'p202SendQueuedPostbacks'), "$file queues server postbacks but never sends them");
+        }
+    }
+
+    public function testNoRequestPathSendsTheQueue(): void
+    {
+        $sending = [];
+        $read = 0;
+        foreach (self::files() as $file) {
+            $senders = ['202-config/Notifications/NotificationOutbox.php', '202-config/static-endpoint-helpers.php'];
+            if (in_array($file, $senders, true)) {
+                continue;
+            }
+            $read++;
+            $t = self::tokens((string) file_get_contents(self::ROOT . $file));
+            foreach ($t as $i => $token) {
+                if (strcasecmp($token[1], 'sendDue') === 0 && ($t[$i + 1][1] ?? null) === '(') {
+                    $sending[] = $file . ':' . $token[2];
+                }
+            }
+        }
+        self::assertGreaterThan(100, $read, 'the scan read the tree');
+        self::assertSame([], $sending, 'a request path sends queued postbacks before it answers');
+
+        $helpers = (string) file_get_contents(self::ROOT . '202-config/static-endpoint-helpers.php');
+        self::assertSame(1, substr_count($helpers, '->sendDue('), 'the helpers send in one place');
+        $body = substr($helpers, (int) strpos($helpers, 'function p202SendQueuedPostbacksAfterAnswer('));
+        $body = substr($body, 0, (int) strpos($body, '->sendDue('));
+        self::assertStringContainsString('$released = fastcgi_finish_request();', $body, 'after releasing the client');
+        self::assertStringContainsString("if (\$released !== true) {\n            return;", $body, 'and only then');
+
+        foreach (['tracking202/static/gpb.php', 'tracking202/static/upx.php'] as $file) {
+            $t = self::tokens((string) file_get_contents(self::ROOT . $file));
+            $last = null;
+            foreach ($t as $i => $token) {
+                if ($token[0] === T_STRING && ($t[$i + 1][1] ?? null) === '(') {
+                    $last = $token[1];
+                }
+            }
+            self::assertSame('p202SendQueuedPostbacksAfterAnswer', $last, "$file sends after its last output");
         }
     }
 

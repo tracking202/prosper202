@@ -105,7 +105,7 @@ final class PreferencesWriteIntegrationTest extends TestCase
     public function testACurrencyChangeRepricesTheCampaignsWithEverythingElseInTheRequest(): void
     {
         $asked = [];
-        $rate = static function (string $to, string $from, string $payout) use (&$asked): array {
+        $rate = static function (string $from, string $to, string $payout) use (&$asked): array {
             $asked[] = "$from>$to:$payout";
             return ['exchange_payout' => number_format((float) $payout * 2, 2, '.', '')];
         };
@@ -124,9 +124,32 @@ final class PreferencesWriteIntegrationTest extends TestCase
         self::assertSame([], $asked);
     }
 
+    public function testACampaignWithNoForeignPayoutIsConvertedFromTheOldAccountCurrency(): void
+    {
+        // An EUR account whose campaigns carry the column default USD and no
+        // foreign payout: their payouts are in EUR, and are converted from it.
+        self::$db->query("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::USER);
+        $asked = [];
+        $rate = static function (string $from, string $to, string $payout) use (&$asked): array {
+            $asked[] = "$from>$to:$payout";
+            return ['exchange_payout' => number_format((float) $payout * 2, 2, '.', '')];
+        };
+        (new UsersController(self::$db))->updatePreferences(self::USER, ['user_account_currency' => 'GBP'], $rate);
+        self::assertSame(['EUR>GBP:12.50', 'EUR>GBP:4.00'], $asked);
+        self::assertSame([9101 => ['25.00', '12.50'], 9102 => ['8.00', '4.00']], $this->payouts());
+        $currencies = self::$db->query('SELECT aff_campaign_currency FROM 202_aff_campaigns WHERE user_id = ' . self::USER . ' ORDER BY aff_campaign_id')->fetch_all();
+        self::assertSame([['EUR'], ['EUR']], $currencies, 'the old account currency becomes the campaign\'s');
+
+        // Back to EUR: the originals return, no rate asked.
+        $asked = [];
+        (new UsersController(self::$db))->updatePreferences(self::USER, ['user_account_currency' => 'EUR'], $rate);
+        self::assertSame([9101 => ['12.50', '0.00'], 9102 => ['4.00', '0.00']], $this->payouts());
+        self::assertSame([], $asked);
+    }
+
     public function testARateTheServiceDoesNotGiveChangesNothingInTheRequest(): void
     {
-        $rate = static fn (string $to, string $from, string $payout): ?array => $payout === '4.00' ? null : ['exchange_payout' => '20.00'];
+        $rate = static fn (string $from, string $to, string $payout): ?array => $payout === '4.00' ? null : ['exchange_payout' => '20.00'];
         try {
             (new UsersController(self::$db))->updatePreferences(self::USER, ['user_account_currency' => 'EUR', 'user_pref_limit' => 100], $rate);
             self::fail('a missing rate must refuse the change');

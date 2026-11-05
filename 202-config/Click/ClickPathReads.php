@@ -167,6 +167,37 @@ final readonly class ClickPathReads
     }
 
     /**
+     * A tracker's landing page (pt.php, the Google Ads tracking template),
+     * when the page is the tracker's account's; landing_page_id_public is
+     * null for a tracker with none (landing_page_id 0) and for one whose
+     * page is another account's (landing_page_id set).
+     *
+     * @return Row|null
+     */
+    public function trackerLandingPage(int $publicId): ?array
+    {
+        if ($publicId < 1) {
+            return null;
+        }
+
+        return $this->setupRow(
+            'SELECT tr.user_id,
+                    tr.landing_page_id,
+                    lp.landing_page_id_public,
+                    lp.landing_page_type,
+                    lp.landing_page_url
+               FROM 202_trackers AS tr
+               LEFT JOIN 202_landing_pages AS lp
+                      ON lp.landing_page_id = tr.landing_page_id AND lp.user_id = tr.user_id
+              WHERE tr.tracker_id_public = ?
+              ORDER BY tr.tracker_id
+              LIMIT 1',
+            'i',
+            [$publicId]
+        );
+    }
+
+    /**
      * A redirector's tracker (rtr.php), with its rotator and the rotator's
      * default campaign and landing page when each is the tracker's
      * account's, and the account's settings. rotator_id is 0 when the
@@ -364,6 +395,8 @@ final readonly class ClickPathReads
      * the setting of the campaign of the tracker the visit names, each only
      * when it is the page's account's. tracker_campaign is null when the
      * visit names no such tracker or its tracker no such campaign.
+     * page_user_id and page_timezone are the page's account and its zone,
+     * for the dynamic-content segments (privacy setting, dates).
      *
      * @return Row|null
      */
@@ -379,8 +412,11 @@ final readonly class ClickPathReads
                     trc.identity_signals AS tracker_setting,
                     trc.aff_campaign_id AS tracker_campaign,
                     tr.tracker_id AS tracker_found,
-                    tr.aff_campaign_id AS tracker_campaign_named
+                    tr.aff_campaign_id AS tracker_campaign_named,
+                    lp.user_id AS page_user_id,
+                    u.user_timezone AS page_timezone
                FROM 202_landing_pages AS lp
+               LEFT JOIN 202_users AS u ON u.user_id = lp.user_id
                LEFT JOIN 202_aff_campaigns AS lpc
                       ON lpc.aff_campaign_id = lp.aff_campaign_id AND lpc.user_id = lp.user_id
                LEFT JOIN 202_trackers AS tr

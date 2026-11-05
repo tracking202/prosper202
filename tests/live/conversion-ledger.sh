@@ -125,9 +125,12 @@ value()  { Q "SELECT CONCAT(click_lead, '/', click_payout) FROM 202_clicks WHERE
 rows()   { Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$1 AND deleted=0"; }
 col()    { Q "SELECT GROUP_CONCAT(COALESCE($2,'-') ORDER BY conv_id SEPARATOR ',') FROM 202_conversion_logs WHERE click_id=$1"; }
 gpb()    { curl -sS -o "$OUT/gpb.out" -w '%{http_code}' "$BASE/tracking202/static/gpb.php?$1"; }
+# The postbacks are queued; the notification worker sends them (66H8).
+worker() { "${P202_PHP:-php}" 202-cronjobs/app-installs.php > "$OUT/worker.out" 2>&1; }
 
 say "global postback, replace campaign: the latest conversion is the click's value"
 eq "$(gpb "subid=$R&amount=2&txid=T1")" 202 "a postback for a click with a server-to-server pixel answers 202"
+worker
 eq "$(value $R)" "1/2.00000" "the click is a lead worth the postback's \$2"
 eq "$(col $R source)" "postback" "the row says what produced it"
 eq "$(col $R dedupe_key)" "tx:T1" "and is keyed by the network's transaction id"
@@ -135,6 +138,7 @@ gpb "subid=$R&amount=9&txid=T1" >/dev/null
 eq "$(rows $R)" 1 "a replay of T1 adds no row"
 eq "$(value $R)" "1/2.00000" "and changes nothing"
 gpb "subid=$R&amount=5&txid=T2" >/dev/null
+worker
 eq "$(value $R)" "1/5.00000" "a second transaction replaces the first (replace mode)"
 eq "$(col $R superseded_reason)" "replace,-" "the first row says it was replaced"
 
@@ -147,6 +151,7 @@ has "$OUT/fired.txt" "tx=T2&pay=5" "T2 carried its own transaction id and amount
 
 say "reversals net a sale, once"
 eq "$(gpb "subid=$R&txid=T2&status=reversed")" 200 "status=reversed with T2's id answers 200, with no pixel fired"
+worker
 eq "$(value $R)" "1/0.00000" "the click nets to \$0 and is still a converting click"
 eq "$(col $R source_ref)" "-,-,conv:$(Q "SELECT conv_id FROM 202_conversion_logs WHERE click_id=$R AND dedupe_key='tx:T2'")" "the reversal names the sale it reverses"
 gpb "subid=$R&txid=T2&status=reversed" >/dev/null

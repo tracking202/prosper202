@@ -93,12 +93,9 @@ abstract class SetupController
         
         $this->user = $userObj;
         
-        // Get user data with Slack webhook
         $userId = $db->real_escape_string((string)$_SESSION['user_own_id']);
-        $userSql = "SELECT 2u.user_name as username, 2u.install_hash, 
-                           2up.user_slack_incoming_webhook AS url 
-                    FROM 202_users AS 2u 
-                    INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) 
+        $userSql = "SELECT 2u.user_name as username, 2u.install_hash
+                    FROM 202_users AS 2u
                     WHERE 2u.user_id = '" . $userId . "'";
         
         $userResults = $db->query($userSql);
@@ -113,9 +110,9 @@ abstract class SetupController
      */
     private function initializeSlack(): void
     {
-        if (!empty($this->userData['url'])) {
-            $this->slack = new Slack($this->userData['url']);
-        }
+        global $db;
+
+        $this->slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0));
     }
     
     /**
