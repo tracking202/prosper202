@@ -9,6 +9,23 @@ class Slack {
     }
 
     /**
+     * A notifier for the account's own saved webhook (SlackWebhook::ofAccount()),
+     * or null when it has none or it could not be read, which is logged.
+     */
+    public static function forAccount(\mysqli $db, int $accountId): ?self
+    {
+        try {
+            $conn = new \Prosper202\Database\Connection($db);
+            $url = \Prosper202\Notifications\SlackWebhook::ofAccount($conn, $accountId);
+        } catch (\Throwable $e) {
+            error_log('Slack: the webhook of account ' . $accountId . ' could not be read: ' . $e->getMessage());
+            return null;
+        }
+
+        return $url === null ? null : new self($url);
+    }
+
+    /**
      * Send a notice: true when the webhook took it. A notice that was not
      * sent or not taken is logged here with why, and answers false; it never
      * throws, so the action that sent it goes on and answers for itself.

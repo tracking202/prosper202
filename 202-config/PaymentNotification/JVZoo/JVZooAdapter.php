@@ -21,7 +21,10 @@ use Prosper202\PaymentNotification\Verification;
  * JVZoo's JVZIPN (v1), as support.jvzoo.com documents it: a form post signed
  * with the receiving JVZoo account's JVZIPN secret key (JVZooSignature),
  * sent to an affiliate's Affiliate IPN or a product's JVZIPN URL. The URL
- * says which (JVZooRole), and that decides the field naming the click.
+ * says which (JVZooRole), and that decides the field naming the click. The
+ * URL 1.9.56 showed names none, so a notification there could be either
+ * party's: it is refused, recording nothing, naming the URLs to set
+ * (ROLELESS_REFUSAL).
  *
  * `ctransaction` decides what is done: SALE and BILL (a rebill, under its
  * own receipt) are recorded at `ctransamount`, the amount paid to the party
@@ -64,8 +67,20 @@ final class JVZooAdapter implements ProviderAdapter
     /** The vendor's pass-through variable on the buy link. */
     public const VENDOR_VARIABLE = 'subid';
 
-    public function __construct(private readonly ?JVZooRole $role)
+    /** The answer at the URL with no role, which paid 1.9.56 showed. */
+    public const ROLELESS_REFUSAL = 'This URL names no role. It is the JVZIPN URL Prosper202 1.9.56 showed, which is'
+        . ' no longer read: a notification there could be the affiliate\'s or the vendor\'s, so nothing was'
+        . ' recorded. Paste the URL Account > API integrations > JVZoo gives: the one ending ?role=affiliate into'
+        . ' your Affiliate IPN, the one ending ?role=vendor into your product\'s JVZIPN URL.';
+
+    public function __construct(private readonly ?JVZooRole $role, private readonly bool $roleless = false)
     {
+    }
+
+    /** The adapter for a request's ?role: none (absent or empty) is the 1.9.56 URL; both are refused (parse()). */
+    public static function forQuery(mixed $role): self
+    {
+        return $role === null || $role === '' ? new self(null, true) : new self(JVZooRole::fromQuery($role));
     }
 
     public function name(): string
@@ -163,9 +178,13 @@ final class JVZooAdapter implements ProviderAdapter
     public function parse(InboundRequest $request): Notification
     {
         $fields = $request->fields;
+        if ($this->roleless) {
+            throw self::malformed(self::ROLELESS_REFUSAL);
+        }
         if ($this->role === null) {
             throw self::malformed(
-                'This URL names no role. Paste the URL Account > API integrations > JVZoo gives: the one ending'
+                'This URL\'s role is neither affiliate nor vendor. Paste the URL Account > API integrations > JVZoo'
+                . ' gives: the one ending'
                 . ' ?role=affiliate into your Affiliate IPN, the one ending ?role=vendor into your product\'s JVZIPN'
                 . ' URL.'
             );

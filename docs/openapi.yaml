@@ -2727,11 +2727,30 @@ paths:
       tags: [Update]
       summary: Mark subids converted (Update Subids)
       description: |
-        Each subid's click is recorded as converted at its campaign's
-        payout, through the conversion ledger (`source: subid_upload`), once
-        per click: a click that is already a lead is answered
-        `already_converted` and nothing is added, so sending the same list
-        twice is safe. A converting click is no longer filtered.
+        Each item is a line `SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP`, every
+        field after the subid optional (leave it empty to skip it), as
+        Update Subids took it in paid 1.9.56. Each subid's click is recorded
+        as converted through the conversion ledger (`source: subid_upload`),
+        at the line's payout, else `payout`, else the campaign's; at the
+        line's time, read in `timezone` (else the account's zone), else now.
+        A line without a transaction id is once per click: a click that is
+        already a lead is answered `already_converted` and nothing is added.
+        A line with one records that sale once: the same id on the click
+        again is `already_converted`, another id is another sale. The same
+        id stating another payout or time than the recorded sale (or than
+        an earlier line with that click and id) is a 422 like an unreadable
+        line; only what the line states is compared. Sending
+        the same list twice is safe. A converting click is no longer
+        filtered.
+
+        A line whose payout, transaction id or time cannot be read (a
+        currency sign, a thousands separator or decimal comma, a negative
+        amount, a date that does not exist, is in the future or is before its
+        click, more than four fields) is a 422
+        naming it (`subids.3`), and nothing in the request is written; a dry
+        run refuses it the same way. Times read as `11/03/2026 2:30:00 PM`
+        (month first, two- or four-digit year, 12- or 24-hour),
+        `2026-11-03 14:30:00`, or a Unix timestamp.
 
         Every item is reported in `lines` with its 1-based position in the
         list (blank items skipped, but counted in positions): `marked`
@@ -2758,7 +2777,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SubidList"
+              $ref: "#/components/schemas/SubidMarkList"
       responses:
         "200":
           description: Every subid's outcome
@@ -13561,6 +13580,33 @@ components:
               - type: integer
           example: ["940001", "940002"]
 
+    SubidMarkList:
+      type: object
+      required: [subids]
+      properties:
+        subids:
+          type: array
+          maxItems: 5000
+          description: |
+            One line per item, `SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP`, as
+            strings or integers; items are trimmed and blank ones skipped. Any
+            other type is a 422.
+          items:
+            oneOf:
+              - type: string
+              - type: integer
+          example: ["940001", "940002, 12.50, order-9, 11/03/2026 2:30:00 PM", "940003,,order-10"]
+        payout:
+          oneOf:
+            - type: string
+            - type: number
+          description: The payout of every line that gives none (a plain decimal from 0 to 999999.99). Omitted, those lines record the campaign's.
+          example: "4.25"
+        timezone:
+          type: string
+          description: The time zone the lines' times are in. Omitted, the account's.
+          example: America/New_York
+
     SubidLine:
       type: object
       properties:
@@ -13570,7 +13616,10 @@ components:
         status:
           type: string
           enum: [marked, would_mark, cleared, would_clear, already_converted, not_found, not_a_subid, duplicate_in_list]
-        first_line: {type: integer, description: "For duplicate_in_list: the earlier item with the same click."}
+        first_line: {type: integer, description: "For duplicate_in_list: the earlier item with the same click (and the same transaction id)."}
+        payout: {type: string, description: "Update Subids: the line's own payout, when it gives one."}
+        transaction_id: {type: string, description: "Update Subids: the line's transaction id, when it gives one."}
+        conv_time: {type: integer, description: "Update Subids: the line's time as a Unix timestamp, when it gives one."}
         conversions: {type: integer, description: "In a delete dry run: the click's live conversions."}
 
     SubidMarkResponse:

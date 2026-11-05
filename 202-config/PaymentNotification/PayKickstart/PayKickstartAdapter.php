@@ -100,6 +100,19 @@ final class PayKickstartAdapter implements ProviderAdapter
             );
         }
         $hash = $request->fields['hash'] ?? null;
+        $affiliateIpn = array_key_exists('tracking_id', $request->fields)
+            || array_key_exists('affiliate_commission_amount', $request->fields);
+        if ((!is_string($hash) || $hash === '') && $affiliateIpn) {
+            // The form 1.9.56's handler took: refused by name, never dropped in silence.
+            throw Refusal::of(
+                OutcomeKind::UNVERIFIED,
+                'This is PayKickstart\'s Affiliate IPN (tracking_id, affiliate_commission_amount), which Prosper202'
+                . ' 1.9.56 recorded. It carries no signature, so anyone who knows this URL could send one, and'
+                . ' Prosper202 no longer records it; nothing was recorded. A vendor sets this URL as the product\'s'
+                . ' IPN, which is signed, with subid=[[subid]] on the checkout link and the IPN secret key stored in'
+                . ' Account > API integrations > PayKickstart.'
+            );
+        }
         if (!is_string($hash) || $hash === '') {
             throw Refusal::of(
                 OutcomeKind::UNVERIFIED,

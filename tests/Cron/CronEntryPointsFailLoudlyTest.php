@@ -42,6 +42,9 @@ final class CronEntryPointsFailLoudlyTest extends TestCase
     private const ROOT = __DIR__ . '/../../';
     private const BOOTSTRAP = "__DIR__.'/../202-config/connect.php'";
 
+    /** Retired callbacks: they answer 410 and load nothing, so no bootstrap can fail first. */
+    private const RETIRED = ['dni.php'];
+
     /** @return list<string> */
     private static function entryPoints(): array
     {
@@ -77,6 +80,13 @@ final class CronEntryPointsFailLoudlyTest extends TestCase
         foreach (self::entryPoints() as $file) {
             $name = basename($file);
             $tokens = self::tokens($file);
+            if (in_array($name, self::RETIRED, true)) {
+                $ids = array_column($tokens, 0);
+                foreach ([T_REQUIRE, T_REQUIRE_ONCE, T_INCLUDE, T_INCLUDE_ONCE] as $load) {
+                    self::assertNotContains($load, $ids, "$name is retired and loads nothing");
+                }
+                continue;
+            }
             $bootstraps = 0;
             foreach ($tokens as $i => [$id, $text, $line]) {
                 if ($id === T_INCLUDE || $id === T_INCLUDE_ONCE) {
@@ -196,6 +206,9 @@ final class CronEntryPointsFailLoudlyTest extends TestCase
         }
         foreach (self::entryPoints() as $file) {
             $name = basename($file);
+            if (in_array($name, self::RETIRED, true)) {
+                continue;
+            }
             $proc = proc_open(
                 [PHP_BINARY, '-d', 'display_errors=stderr', $file],
                 [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
