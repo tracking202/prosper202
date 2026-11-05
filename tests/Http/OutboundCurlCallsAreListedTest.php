@@ -83,7 +83,6 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             1,
             'getUrl(): redirects followed, no address check; called only with a fixed my.tracking202.com URL',
         ],
-        '202-cronjobs/dni.php' => [1, self::FIXED],
         '202-appstore/index.php' => [1, self::FIXED],
         '202-resources/index.php' => [1, self::FIXED],
         'api/v3/Support/AiWatchers.php' => [
