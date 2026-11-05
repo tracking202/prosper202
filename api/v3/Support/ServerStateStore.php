@@ -52,7 +52,28 @@ class ServerStateStore implements QuotaStore
     /** What an install's directory inside P202_SERVER_STATE_DIR is called, before the hash of its id. */
     private const string INSTALL_DIR_PREFIX = 'install-';
 
+    /**
+     * Records a database restore makes wrong (P4QS): an Idempotency-Key
+     * recorded after the dump replays a create the restore took away, and a
+     * staged change, change-feed entry, sync job or manifest recorded after
+     * it describes data the database no longer has. Each is stamped with the
+     * database epoch it was written at (state_epoch); those stamped past the
+     * database's epoch are set aside, never deleted. Files holding many
+     * records ('items') are split record by record; the others are one record.
+     */
+    private const array RESTORE_SENSITIVE_ITEM_DIRS = ['idempotency', 'staged_changes', 'changes'];
+    private const array RESTORE_SENSITIVE_RECORD_DIRS = ['jobs', 'manifests'];
+
+    /** The stamp a restore-sensitive record carries: the database epoch it was last written at. */
+    private const string EPOCH_STAMP = 'state_epoch';
+
+    /** The file beside the records that holds the highest database epoch (StateEpoch) they were written at. */
+    private const string EPOCH_FILE = 'epoch.json';
+
     private readonly string $baseDir;
+
+    /** Whether this store has checked its records against the database's epoch (once, before the first use of them). */
+    private bool $restoreChecked = false;
 
     /**
      * @param (\Closure(): string)|null $installId The install's id
@@ -61,8 +82,11 @@ class ServerStateStore implements QuotaStore
      *        P202_SERVER_STATE_DIR. Not called for $baseDir. The served tree
      *        builds stores with forInstall().
      */
-    public function __construct(?string $baseDir = null, ?\Closure $installId = null)
-    {
+    public function __construct(
+        ?string $baseDir = null,
+        ?\Closure $installId = null,
+        private readonly ?StateEpoch $epoch = null
+    ) {
         $this->baseDir = rtrim($baseDir ?? $this->resolveDefaultBaseDir($installId), '/');
         $this->ensureDir($this->baseDir);
         foreach (self::STATE_DIRS as $name) {
@@ -79,12 +103,187 @@ class ServerStateStore implements QuotaStore
      */
     public static function forInstall(\mysqli $db): self
     {
-        return new self(null, static fn (): string => InstallId::of($db));
+        return new self(null, static fn (): string => InstallId::of($db), new StateEpoch($db));
     }
 
     public function baseDir(): string
     {
         return $this->baseDir;
+    }
+
+    /**
+     * The database's epoch, or a refusal: a store that cannot tell whether
+     * its database was restored behind its records reads none of them.
+     */
+    private function databaseEpoch(): int
+    {
+        try {
+            return ($this->epoch ?? throw new \LogicException('no epoch'))->current();
+        } catch (\Throwable $e) {
+            throw new DatabaseException('', new \RuntimeException(
+                'The API state is checked against the database\'s epoch, which could not be read, so no state'
+                . ' is read or written',
+                0,
+                $e
+            ));
+        }
+    }
+
+    /** The highest database epoch this store's records were written at; 0 before the first. */
+    private function fileEpoch(): int
+    {
+        return max(0, (int) ($this->readJsonFile($this->baseDir . '/' . self::EPOCH_FILE, ['epoch' => 0])['epoch'] ?? 0));
+    }
+
+    /**
+     * Before a record a restore can make wrong is written: move the
+     * database's epoch on and note it beside the records, first, so a record
+     * never outruns the epoch written beside it. Nothing when the store has
+     * no epoch (a directory given by hand) or the epoch stays where it is
+     * (inside a transaction, StateEpoch::advance()).
+     */
+    private function noteRestoreSensitiveWrite(): ?int
+    {
+        if ($this->epoch === null) {
+            return null;
+        }
+        $this->checkAgainstARestore();
+        try {
+            $advanced = $this->epoch->advance();
+        } catch (\Throwable $e) {
+            throw new DatabaseException('', new \RuntimeException(
+                'The database\'s API state epoch could not be moved on, so the record was not written',
+                0,
+                $e
+            ));
+        }
+        if ($advanced === null) {
+            return null;
+        }
+        $this->mutateJsonFile($this->baseDir . '/' . self::EPOCH_FILE, ['epoch' => 0], static function (array $state) use ($advanced): array {
+            $state['epoch'] = max((int) ($state['epoch'] ?? 0), $advanced);
+
+            return $state;
+        });
+
+        return $advanced;
+    }
+
+    /**
+     * $record stamped with $epoch (noteRestoreSensitiveWrite()'s answer);
+     * unchanged when there is none, so it keeps any stamp it had.
+     *
+     * @param array<string, mixed> $record
+     * @return array<string, mixed>
+     */
+    private static function stamped(array $record, ?int $epoch): array
+    {
+        if ($epoch !== null) {
+            $record[self::EPOCH_STAMP] = $epoch;
+        }
+
+        return $record;
+    }
+
+    /** @param mixed $record */
+    private static function writtenAfter($record, int $database): bool
+    {
+        return is_array($record) && (int) ($record[self::EPOCH_STAMP] ?? 0) > $database;
+    }
+
+    /**
+     * Records written after the database's epoch were written after the dump
+     * it was restored from (P4QS): their directories are moved aside into
+     * restored-<time>-<random>/, the change feed keeps its sequence so a
+     * cursor only moves forward, and the log names where they went. Under a
+     * lock, and checked again under it: two requests that both find the
+     * database behind set the records aside once.
+     */
+    /**
+     * Before the first read or write of a record a restore can make wrong:
+     * set aside what the database is behind. Once per store; nothing for a
+     * store without an epoch. A rate limit or a metric never asks.
+     */
+    private function checkAgainstARestore(): void
+    {
+        if ($this->restoreChecked || $this->epoch === null) {
+            return;
+        }
+        $this->setAsideWhatTheDatabaseIsBehind();
+        $this->restoreChecked = true;
+    }
+
+    private function setAsideWhatTheDatabaseIsBehind(): void
+    {
+        $database = $this->databaseEpoch();
+        if ($this->fileEpoch() <= $database) {
+            return;
+        }
+        $lock = fopen($this->dir('locks') . '/restore.lock', 'c');
+        if ($lock === false || !flock($lock, LOCK_EX)) {
+            throw new DatabaseException('Unable to lock the API state to set aside what a database restore left behind');
+        }
+        try {
+            $database = $this->databaseEpoch();
+            $written = $this->fileEpoch();
+            if ($written <= $database) {
+                return;
+            }
+            $aside = $this->baseDir . '/restored-' . gmdate('Ymd\THis\Z') . '-' . bin2hex(random_bytes(3));
+            $moved = 0;
+            foreach (self::RESTORE_SENSITIVE_ITEM_DIRS as $name) {
+                foreach (glob($this->baseDir . '/' . $name . '/*.json') ?: [] as $file) {
+                    $state = $this->readJsonFile($file, ['items' => []]);
+                    $items = is_array($state['items'] ?? null) ? $state['items'] : [];
+                    $later = array_filter($items, static fn ($item): bool => self::writtenAfter($item, $database));
+                    if ($later === []) {
+                        continue;
+                    }
+                    $this->ensureDir($aside . '/' . $name);
+                    $this->writeJsonFileAtomic($aside . '/' . $name . '/' . basename($file), ['items' => $later] + $state);
+                    // A list stays a list (the change feed); its sequence stays where it was.
+                    $kept = array_diff_key($items, $later);
+                    $state['items'] = array_is_list($items) ? array_values($kept) : $kept;
+                    $this->writeJsonFileAtomic($file, $state);
+                    $moved += count($later);
+                }
+            }
+            foreach (self::RESTORE_SENSITIVE_RECORD_DIRS as $name) {
+                foreach (glob($this->baseDir . '/' . $name . '/*.json') ?: [] as $file) {
+                    if (str_ends_with($file, '.events.json')
+                        || !self::writtenAfter($this->readJsonFile($file, []), $database)) {
+                        continue;
+                    }
+                    $this->ensureDir($aside . '/' . $name);
+                    $files = [$file];
+                    $events = substr($file, 0, -strlen('.json')) . '.events.json';
+                    if ($name === 'jobs' && is_file($events)) {
+                        $files[] = $events;
+                    }
+                    foreach ($files as $one) {
+                        if (!@rename($one, $aside . '/' . $name . '/' . basename($one))) {
+                            throw new DatabaseException('Could not set ' . $one . ' aside after a database restore');
+                        }
+                    }
+                    $moved++;
+                }
+            }
+            $this->writeJsonFileAtomic($this->baseDir . '/' . self::EPOCH_FILE, ['epoch' => $database]);
+            error_log(sprintf(
+                'p202: the database is behind the API state in %s (its epoch is %d, the state was written up to %d):'
+                . ' it was restored from an older backup. The %d idempotency records, staged changes, sync jobs,'
+                . ' manifests and change-feed entries written since were set aside in %s and are not used;'
+                . ' remove it once nothing in it is needed.',
+                $this->baseDir,
+                $database,
+                $written,
+                $moved,
+                $moved > 0 ? $aside : '(nothing to set aside)'
+            ));
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
     }
 
     /** @param array<string, mixed> $payload */
@@ -148,6 +347,7 @@ class ServerStateStore implements QuotaStore
      */
     public function lookupIdempotent(string $scope, string $key, string $fingerprint = ''): array
     {
+        $this->checkAgainstARestore();
         $data = $this->readJsonFile($this->idempotencyPath($scope, $key), ['items' => []]);
         $items = $data['items'] ?? [];
         $item = is_array($items) ? ($items[$key] ?? null) : null;
@@ -186,11 +386,12 @@ class ServerStateStore implements QuotaStore
      */
     public function reserveIdempotent(string $scope, string $key, string $fingerprint = ''): array
     {
+        $epoch = $this->noteRestoreSensitiveWrite();
         $result = ['state' => 'claimed', 'response' => null];
         $this->mutateJsonFile(
             $this->idempotencyPath($scope, $key),
             ['items' => []],
-            static function (array $data) use ($key, $fingerprint, &$result): array {
+            static function (array $data) use ($key, $fingerprint, $epoch, &$result): array {
                 $item = $data['items'][$key] ?? null;
 
                 // Checked before every other outcome: a body mismatch makes
@@ -232,11 +433,11 @@ class ServerStateStore implements QuotaStore
                     return $data;
                 }
                 // Free: take it.
-                $data['items'][$key] = [
+                $data['items'][$key] = self::stamped([
                     'stored_at' => time(),
                     'claimed_at' => time(),
                     'fingerprint' => $fingerprint,
-                ];
+                ], $epoch);
                 $data['items'] = self::pruneIdempotencyItems($data['items'], $key);
                 return $data;
             }
@@ -251,6 +452,7 @@ class ServerStateStore implements QuotaStore
      */
     public function releaseIdempotent(string $scope, string $key): void
     {
+        $this->checkAgainstARestore();
         $this->mutateJsonFile(
             $this->idempotencyPath($scope, $key),
             ['items' => []],
@@ -272,6 +474,7 @@ class ServerStateStore implements QuotaStore
      */
     public function markIdempotentIndeterminate(string $scope, string $key): void
     {
+        $this->checkAgainstARestore();
         $this->mutateJsonFile(
             $this->idempotencyPath($scope, $key),
             ['items' => []],
@@ -294,17 +497,18 @@ class ServerStateStore implements QuotaStore
      */
     public function putIdempotent(string $scope, string $key, array $response, string $fingerprint = ''): void
     {
+        $epoch = $this->noteRestoreSensitiveWrite();
         $path = $this->idempotencyPath($scope, $key);
-        $this->mutateJsonFile($path, ['items' => []], static function (array $data) use ($key, $response, $fingerprint): array {
+        $this->mutateJsonFile($path, ['items' => []], static function (array $data) use ($key, $response, $fingerprint, $epoch): array {
             // Prefer the fingerprint the claim recorded: without it a replay
             // could no longer tell that a later retry changed the body.
             $existing = $data['items'][$key] ?? null;
             $stored = is_array($existing) ? (string)($existing['fingerprint'] ?? '') : '';
-            $data['items'][$key] = [
+            $data['items'][$key] = self::stamped([
                 'stored_at' => time(),
                 'fingerprint' => $stored !== '' ? $stored : $fingerprint,
                 'response' => $response,
-            ];
+            ], $epoch);
 
             $data['items'] = self::pruneIdempotencyItems($data['items'], $key);
 
@@ -361,12 +565,13 @@ class ServerStateStore implements QuotaStore
 
     public function recordChange(string $entity, string $operation, array $record, int $actorUserId): void
     {
+        $epoch = $this->noteRestoreSensitiveWrite();
         $path = $this->changesPath($entity);
-        $this->mutateJsonFile($path, ['next_seq' => 1, 'items' => []], static function (array $state) use ($entity, $operation, $record, $actorUserId): array {
+        $this->mutateJsonFile($path, ['next_seq' => 1, 'items' => []], static function (array $state) use ($entity, $operation, $record, $actorUserId, $epoch): array {
             $seq = (int)($state['next_seq'] ?? 1);
             $state['next_seq'] = $seq + 1;
 
-            $state['items'][] = [
+            $state['items'][] = self::stamped([
                 'seq' => $seq,
                 'entity' => $entity,
                 'operation' => $operation,
@@ -375,7 +580,7 @@ class ServerStateStore implements QuotaStore
                 'actor_user_id' => $actorUserId,
                 'natural_key_digest' => sha1(json_encode($record, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: ''),
                 'record' => $record,
-            ];
+            ], $epoch);
 
             if (count($state['items']) > self::DEFAULT_RETENTION) {
                 $state['items'] = array_slice($state['items'], -self::DEFAULT_RETENTION);
@@ -387,6 +592,7 @@ class ServerStateStore implements QuotaStore
 
     public function listChanges(string $entity, ?string $cursor, int $limit, int $cursorTtl, ?int $updatedSince = null, ?int $deletedSince = null): array
     {
+        $this->checkAgainstARestore();
         $state = $this->readJsonFile($this->changesPath($entity), ['next_seq' => 1, 'items' => []]);
         $items = is_array($state['items'] ?? null) ? $state['items'] : [];
 
@@ -456,6 +662,7 @@ class ServerStateStore implements QuotaStore
             'cancel_requested' => false,
         ];
 
+        $job = self::stamped($job, $this->noteRestoreSensitiveWrite());
         $this->writeJsonFileAtomic($this->jobPath($jobId), $job);
         $this->writeJsonFileAtomic($this->jobEventsPath($jobId), ['items' => []]);
 
@@ -464,6 +671,7 @@ class ServerStateStore implements QuotaStore
 
     public function getJob(string $jobId): ?array
     {
+        $this->checkAgainstARestore();
         $path = $this->jobPath($jobId);
         if (!is_file($path)) {
             return null;
@@ -481,6 +689,7 @@ class ServerStateStore implements QuotaStore
         if (!isset($job['job_id'])) {
             throw new DatabaseException('Job payload missing job_id');
         }
+        $job = self::stamped($job, $this->noteRestoreSensitiveWrite());
         $this->mutateJsonFile($this->jobPath((string)$job['job_id']), [], static function (array $current) use ($job): array {
             // The worker saves its whole in-memory copy after long-running
             // work; a cancel flag set concurrently on disk must survive that.
@@ -494,6 +703,7 @@ class ServerStateStore implements QuotaStore
 
     public function appendJobEvent(string $jobId, string $level, string $message, array $data = []): void
     {
+        $this->checkAgainstARestore();
         $event = [
             'event_id' => bin2hex(random_bytes(8)),
             'timestamp' => gmdate('c'),
@@ -512,6 +722,7 @@ class ServerStateStore implements QuotaStore
 
     public function listJobEvents(string $jobId, int $offset, int $limit): array
     {
+        $this->checkAgainstARestore();
         $events = $this->readJsonFile($this->jobEventsPath($jobId), ['items' => []]);
         $items = is_array($events['items'] ?? null) ? $events['items'] : [];
         $total = count($items);
@@ -560,6 +771,7 @@ class ServerStateStore implements QuotaStore
             throw new DatabaseException('Staged change missing change_id');
         }
         $maxPending = self::maxPendingChanges();
+        $change = self::stamped($change, $this->noteRestoreSensitiveWrite());
         $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $change, $maxPending): array {
             // Counted under the same lock as the write, so concurrent stages
             // cannot both slip past the cap.
@@ -620,6 +832,7 @@ class ServerStateStore implements QuotaStore
 
     public function getStagedChangeForUser(int $userId, string $changeId): ?array
     {
+        $this->checkAgainstARestore();
         $state = $this->readJsonFile($this->stagedChangesPath($userId), ['items' => []]);
         $item = $state['items'][$changeId] ?? null;
         return is_array($item) ? $item : null;
@@ -631,6 +844,7 @@ class ServerStateStore implements QuotaStore
      */
     public function findStagedChange(string $changeId): ?array
     {
+        $this->checkAgainstARestore();
         foreach ($this->listStagedChangeFiles() as $path) {
             $state = $this->readJsonFile($path, ['items' => []]);
             $item = $state['items'][$changeId] ?? null;
@@ -644,6 +858,7 @@ class ServerStateStore implements QuotaStore
     /** @return array<int, array<string, mixed>> newest first */
     public function listStagedChangesForUser(int $userId): array
     {
+        $this->checkAgainstARestore();
         $state = $this->readJsonFile($this->stagedChangesPath($userId), ['items' => []]);
         $items = array_values(array_filter($state['items'] ?? [], 'is_array'));
         usort($items, static fn(array $a, array $b): int => ((int)($b['created_at_epoch'] ?? 0)) <=> ((int)($a['created_at_epoch'] ?? 0)));
@@ -653,6 +868,7 @@ class ServerStateStore implements QuotaStore
     /** @return array<int, array<string, mixed>> newest first, across all users */
     public function listStagedChangesAllUsers(): array
     {
+        $this->checkAgainstARestore();
         $items = [];
         foreach ($this->listStagedChangeFiles() as $path) {
             $state = $this->readJsonFile($path, ['items' => []]);
@@ -675,14 +891,16 @@ class ServerStateStore implements QuotaStore
      */
     public function updateStagedChange(int $userId, string $changeId, callable $mutator): ?array
     {
+        $epoch = $this->noteRestoreSensitiveWrite();
         $result = null;
-        $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $mutator, &$result): array {
+        $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $mutator, $epoch, &$result): array {
             $item = $state['items'][$changeId] ?? null;
             if (!is_array($item)) {
                 return $state;
             }
             $updated = $mutator($item);
             if (is_array($updated)) {
+                $updated = self::stamped($updated, $epoch);
                 $state['items'][$changeId] = $updated;
                 $result = $updated;
             }
@@ -898,6 +1116,7 @@ class ServerStateStore implements QuotaStore
     /** @return array<int, array<string, mixed>> */
     public function listJobs(array $statuses = [], int $limit = 50): array
     {
+        $this->checkAgainstARestore();
         $files = glob($this->dir('jobs') . '/*.json') ?: [];
         sort($files, SORT_STRING);
 
@@ -951,6 +1170,7 @@ class ServerStateStore implements QuotaStore
 
     public function loadSyncManifest(string $pairKey): array
     {
+        $this->checkAgainstARestore();
         return $this->readJsonFile($this->manifestPath($pairKey), ['pair_key' => $pairKey, 'last_sync_epoch' => 0, 'mappings' => []]);
     }
 
@@ -958,6 +1178,7 @@ class ServerStateStore implements QuotaStore
     {
         $manifest['pair_key'] = $pairKey;
         $manifest['updated_at'] = gmdate('c');
+        $manifest = self::stamped($manifest, $this->noteRestoreSensitiveWrite());
         $this->writeJsonFileAtomic($this->manifestPath($pairKey), $manifest);
     }
 
