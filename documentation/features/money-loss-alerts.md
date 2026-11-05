@@ -40,6 +40,18 @@ at most once a day. Any conversion recorded today counts, an upload included.
 "Today" is your account's day in its time zone, and cost
 is every click's, filtered clicks included, since each was paid for.
 
+**Postback refusals jumped.** This alert watches the [inbound
+log](../api/00-api-integrations.md) (Setup › Inbound Log): every postback and
+pixel the install refused for the account, with why. It is alerted when the
+last hour holds at least 10 refusals and at least 5 times the account's
+average refusals per hour over the 24 hours before: a network that changed
+its postback format, a rotated token or signature secret, or a campaign
+deleted under a live offer. The message names the hour's most frequent
+refusal reasons. An account refused at the same rate all day is not alerted
+(its log shows it). The alert is about the account rather than a campaign,
+and is sent at most once a day while the jump lasts. Requests the install
+could not attribute to an account are not counted.
+
 Conversions are counted by when they arrived. A reversal does not count as
 one. Each alert is sent once per incident.
 
@@ -54,7 +66,8 @@ and each sends only where it has somewhere to go:
   integrations.
 - **Webhooks**: your account webhooks (`p202 ltv webhooks create`, or
   `POST /ltv/webhooks`) subscribed to `alert.conversions_stopped`,
-  `alert.spend_without_conversions`, or every event (`*`). They are signed and
+  `alert.spend_without_conversions`, `alert.postback_refusals_spiked`, or
+  every event (`*`). They are signed and
   retried as every webhook event is; see [the payloads](../api/20-ltv.md).
 
 An account with no email address, no Slack webhook and no subscribed webhook

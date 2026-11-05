@@ -39,6 +39,7 @@ final class MysqlWebhookRepository
         'engagement.recorded',
         'alert.conversions_stopped',
         'alert.spend_without_conversions',
+        'alert.postback_refusals_spiked',
     ];
 
     /** Max delivery attempts before a delivery is failed and the hook may die. */

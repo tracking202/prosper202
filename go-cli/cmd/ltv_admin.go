@@ -24,7 +24,7 @@ var ltvFieldTypes = []string{"text", "number", "date", "boolean", "select", "ema
 // wildcard (every event, including ones later versions add). The server
 // accepts any well-formed name, so a typo would subscribe to an event that
 // never fires; the CLI takes only the names it knows, and "*".
-var ltvWebhookEvents = []string{"customer.updated", "revenue.recorded", "subscription.changed", "conversion.recorded", "engagement.recorded", "alert.conversions_stopped", "alert.spend_without_conversions", "*"}
+var ltvWebhookEvents = []string{"customer.updated", "revenue.recorded", "subscription.changed", "conversion.recorded", "engagement.recorded", "alert.conversions_stopped", "alert.spend_without_conversions", "alert.postback_refusals_spiked", "*"}
 
 // ltvProviderPattern is MysqlIntegrationRepository::create's provider rule.
 var ltvProviderPattern = regexp.MustCompile(`^[a-z0-9_-]{1,50}$`)
