@@ -15,7 +15,8 @@ use PHPUnit\Framework\TestCase;
  *
  * The scratch database is put in a paid 1.9.56's shape, seeded with an
  * account's setup, upgraded by the ladder as the upgrade page runs it, and
- * then served by `php -S` over the 202-config.php the integration job writes.
+ * then served by `php -S` over the 202-config.php the integration job writes,
+ * once both its connections are seen to reach the scratch database.
  * A contract whose fix is still in review is a case skipped with its pull
  * request's number and in the group `pending`, which the CI runner leaves
  * out; that request removes both when it lands.
@@ -73,6 +74,12 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
             self::$db = null; // no config for the served tree: skipped, as without a database
 
             return;
+        }
+        // The served tree reads that config, which on a developer checkout can
+        // name another install: nothing is served unless it reaches this one.
+        $mismatch = self::servedConfigMismatch($root . '/202-config.php');
+        if ($mismatch !== null) {
+            throw new \RuntimeException("202-config.php does not point at the scratch database, so it is not served: $mismatch");
         }
         $found = self::$db->query('SELECT version FROM 202_version');
         if (!$found instanceof \mysqli_result) {
@@ -259,6 +266,32 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         return [trim($out), $err];
     }
 
+    /**
+     * Null when the config's primary and read connections both reach the
+     * scratch database (they read a token written there), else what they read.
+     */
+    private static function servedConfigMismatch(string $config): ?string
+    {
+        $table = 'p202_served_config_probe';
+        $token = bin2hex(random_bytes(12));
+        self::q("DROP TABLE IF EXISTS $table");
+        self::q("CREATE TABLE $table (token varchar(32) NOT NULL)");
+        try {
+            self::row($table, ['token' => $token]);
+            $out = shell_exec(implode(' ', array_map('escapeshellarg', [
+                PHP_BINARY, __DIR__ . '/fixtures/served-config-probe.php', $config, $table,
+            ])) . ' 2>&1');
+        } finally {
+            self::q("DROP TABLE IF EXISTS $table");
+        }
+        $found = json_decode((string) $out, true);
+        if (!is_array($found)) {
+            return 'the probe printed ' . var_export($out, true);
+        }
+
+        return $found === ['primary' => $token, 'read' => $token] ? null : (string) json_encode($found);
+    }
+
     private static function serve(string $root): void
     {
         $probe = stream_socket_server('tcp://127.0.0.1:0');
@@ -355,6 +388,50 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
             static fn (array $r): array => [$r[0], number_format((float) $r[1], 2, '.', '')],
             $result->fetch_all(MYSQLI_NUM)
         );
+    }
+
+    /** A 202-config.php from the sample, its connections to the scratch server and $dbname as given. */
+    private static function sampleConfig(string $dbname, string $readDbname = ''): string
+    {
+        $host = (string) getenv('P202_TEST_DB_HOST') . ':' . (string) (getenv('P202_TEST_DB_PORT') ?: 3306);
+        $config = strtr((string) file_get_contents(dirname(__DIR__, 2) . '/202-config-sample.php'), [
+            "'putyourdbnamehere'" => var_export($dbname, true),
+            "'usernamehere'" => var_export((string) (getenv('P202_TEST_DB_USER') ?: 'root'), true),
+            "'yourpasswordhere'" => var_export((string) (getenv('P202_TEST_DB_PASS') ?: ''), true),
+            "'localhosthere'" => var_export($host, true),
+            "'localhostreplica'" => var_export($host, true),
+        ]);
+        if ($readDbname !== '') {
+            // A replica that is another database: the read connection alone goes elsewhere.
+            $config = str_replace(
+                '$this->_connectionro = new mysqli($dbhostro, $dbuser, $dbpass, $dbname);',
+                '$this->_connectionro = new mysqli($dbhostro, $dbuser, $dbpass, ' . var_export($readDbname, true) . ');',
+                $config
+            );
+            self::assertStringContainsString(var_export($readDbname, true) . ');', $config);
+        }
+        $file = (string) tempnam(sys_get_temp_dir(), 'p202cfg');
+        file_put_contents($file, $config);
+
+        return $file;
+    }
+
+    /** A config for another install is refused before anything is served from it. */
+    public function testAServedConfigForAnotherDatabaseIsRefused(): void
+    {
+        $scratch = (string) self::scalar('SELECT DATABASE()');
+        $files = [
+            'scratch' => self::sampleConfig($scratch),
+            'other' => self::sampleConfig('information_schema'),
+            'other replica' => self::sampleConfig($scratch, 'information_schema'),
+        ];
+        try {
+            self::assertNull(self::servedConfigMismatch($files['scratch']), 'the scratch config is accepted');
+            self::assertNotNull(self::servedConfigMismatch($files['other']), 'another database is refused');
+            self::assertNotNull(self::servedConfigMismatch($files['other replica']), 'a read connection elsewhere is refused');
+        } finally {
+            array_map('unlink', $files);
+        }
     }
 
     public function testThePaidDatabaseUpgradesTo1980AndKeepsItsData(): void
@@ -643,13 +720,11 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
     }
 
     /**
-     * The JVZIPN URL 1.9.56 showed named no role; a signed sale there is recorded.
-     *
-     * @group pending
+     * The JVZIPN URL 1.9.56 showed named no role. A sale there is refused, by
+     * design, naming the URL to use; at ?role=affiliate the same sale records.
      */
-    public function testARolelessJvzooIpnIsRecorded(): void
+    public function testARolelessJvzooIpnNamesTheUrlToUseInstead(): void
     {
-        self::markTestSkipped('pending #391');
         self::q('UPDATE 202_users_pref SET jvzoo_ipn_secret_key = ' . self::str(self::JVZIPN_KEY)
             . ' WHERE user_id = ' . self::OWNER);
         $click = $this->directLinkClick();
@@ -660,6 +735,10 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         ksort($fields, SORT_STRING);
         $fields['cverify'] = strtoupper(substr(sha1(implode('|', $fields) . '|' . self::JVZIPN_KEY), 0, 8));
         [$status, $headers, $body] = self::http('/tracking202/static/jvzoo.php', [], $fields);
+        self::assertSame(400, $status, $headers . $body . $this->serverLog());
+        self::assertStringContainsString('?role=affiliate', $body);
+        self::assertSame([], self::conversions($click));
+        [$status, $headers, $body] = self::http('/tracking202/static/jvzoo.php?role=affiliate', [], $fields);
         self::assertSame(200, $status, $headers . $body . $this->serverLog());
         self::assertSame([['JVZ-RECEIPT-1956', '47.00']], self::conversions($click));
     }
@@ -706,12 +785,9 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
 
     /**
      * Update Subids took `SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP` per line.
-     *
-     * @group pending
      */
     public function testUpdateSubidsReadsPayoutOrderNumberAndTime(): void
     {
-        self::markTestSkipped('pending #395');
         $click = $this->directLinkClick();
         // A sale at the click's own second (a later one would be in the future), in 1.9.56's m/d/Y g:i:s A.
         $sold = (int) self::scalar("SELECT click_time FROM 202_clicks WHERE click_id = $click");
@@ -727,12 +803,9 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
 
     /**
      * 1.9.56 took Shopify's order webhook at the global postback.
-     *
-     * @group pending
      */
     public function testAShopifyOrderWebhookAtTheGlobalPostbackIsRecorded(): void
     {
-        self::markTestSkipped('pending #397');
         self::q('UPDATE 202_users_pref SET shopify_webhook_secret = ' . self::str(self::SHOPIFY_SECRET)
             . ' WHERE user_id = ' . self::OWNER);
         $click = $this->directLinkClick();
@@ -780,12 +853,9 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
 
     /**
      * A page's Bot202 Facebook Pixel Assistant settings from 1.9.56 fire the account's pixel again.
-     *
-     * @group pending
      */
     public function testTheFacebookPixelAssistantFiresOnTheLandingPage(): void
     {
-        self::markTestSkipped('pending #399');
         self::row('202_ppc_networks', ['ppc_network_id' => self::NETWORK, 'user_id' => self::OWNER,
             'ppc_network_name' => 'Social ads', 'ppc_network_time' => time()]);
         self::row('202_ppc_accounts', ['ppc_account_id' => self::PPC_ACCOUNT, 'user_id' => self::OWNER,
