@@ -218,7 +218,7 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
         $tokens,
         null,
         false,
-        static fn (): bool => p202ConversionMayTrack($db, (int) $mysql['click_id'], $_GET)
+        static fn (): bool => p202ConversionMayTrack($db, (int) $mysql['click_id'], $request)
     );
 	if (array_intersect($fired['types'], [1, 2, 3, 4]) !== []) {
 		header('HTTP/1.1 202 Accepted', true, 202);
