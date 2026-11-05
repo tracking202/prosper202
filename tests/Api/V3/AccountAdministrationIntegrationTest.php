@@ -450,7 +450,7 @@ final class AccountAdministrationIntegrationTest extends TestCase
         $answer = $this->admin()->integrations(['HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443, 'DOCUMENT_ROOT' => dirname(__DIR__, 3)])['data'];
         self::assertSame('https://track.example.com/', $answer['base_url']);
         $byKey = array_column($answer['integrations'], null, 'integration');
-        self::assertSame(['clickbank', 'jvzoo', 'jvzoo_vendor', 'zaxaa', 'paykickstart'], array_keys($byKey));
+        self::assertSame(['clickbank', 'jvzoo', 'jvzoo_vendor', 'zaxaa', 'paykickstart', 'shopify'], array_keys($byKey));
         self::assertSame('https://track.example.com/tracking202/static/cb202.php', $byKey['clickbank']['url']);
         self::assertSame(
             'https://track.example.com/tracking202/static/jvzoo.php?role=affiliate',
@@ -469,6 +469,8 @@ final class AccountAdministrationIntegrationTest extends TestCase
         self::assertFalse($byKey['zaxaa']['secret_stored']);
         self::assertFalse($byKey['paykickstart']['secret_stored']);
         self::assertSame(0, $byKey['paykickstart']['keys_stored']);
+        self::assertSame('https://track.example.com/tracking202/static/shopify.php', $byKey['shopify']['url']);
+        self::assertFalse($byKey['shopify']['secret_stored']);
         self::assertStringNotContainsString('cb-secret-xyz', (string) json_encode($answer));
 
         // PayKickstart's keys, one for each of its campaigns: how many, never
@@ -496,8 +498,20 @@ final class AccountAdministrationIntegrationTest extends TestCase
             self::assertSame($usable, $byKey['jvzoo']['secret_stored']);
             self::assertSame($usable, $byKey['jvzoo_vendor']['secret_stored']);
         }
+        // Shopify's secret likewise: one with a space in it verifies nothing.
+        foreach (['shopify secret with spaces' => false, ' demo-store-webhook-secret-01 ' => true] as $stored => $usable) {
+            self::q("UPDATE 202_users_pref SET shopify_webhook_secret = '" . self::$db->real_escape_string($stored)
+                . "' WHERE user_id = " . self::ADMIN);
+            $answer = $this->admin()->integrations([
+                'HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443,
+                'DOCUMENT_ROOT' => dirname(__DIR__, 3),
+            ])['data'];
+            $byKey = array_column($answer['integrations'], null, 'integration');
+            self::assertSame($usable, $byKey['shopify']['secret_stored']);
+            self::assertStringNotContainsString('demo-store-webhook', (string) json_encode($answer));
+        }
         self::q('UPDATE 202_users_pref SET cb_key = NULL, cb_verified = 0, paykickstart_ipn_secret_keys = NULL,'
-            . ' jvzoo_ipn_secret_key = NULL WHERE user_id = ' . self::ADMIN);
+            . ' jvzoo_ipn_secret_key = NULL, shopify_webhook_secret = NULL WHERE user_id = ' . self::ADMIN);
 
         // With no domain stored, the URLs go back to the caller to paste, as
         // the Integrations page shows them: on the host the request used, not

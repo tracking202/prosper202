@@ -63,6 +63,7 @@ var prefFlags = []prefFlag{
 	{name: "zaxaa_api_signature", desc: "Zaxaa API signature (\"\" removes it)", clear: true},
 	{name: "jvzoo_ipn_secret_key", desc: "JVZoo JVZIPN secret key, as JVZoo shows it under Seller Settings; it verifies both JVZoo URLs (\"\" removes it)", clear: true},
 	{name: "paykickstart_ipn_secret_keys", desc: "PayKickstart IPN secret keys, one for each PayKickstart campaign, separated by commas; replaces every stored key (\"\" removes them all)", clear: true},
+	{name: "shopify_webhook_secret", desc: "Shopify webhook signing secret, as Shopify shows it under Settings > Notifications > Webhooks; it verifies the Shopify webhook URL (\"\" removes it)", clear: true},
 	// LTV › Settings
 	{name: "user_ltv_customer_cparam", desc: "Tracking variable that carries a customer id: 0 off, 1-4 for c1-c4", values: []string{"0", "1", "2", "3", "4"}},
 	{name: "user_ltv_personalization_fields", desc: "Fields a landing page may personalize with: comma list of first_name, last_name, company, city, country, cf:<field_key>, rec:next_offer (\"\" none)", clear: true},

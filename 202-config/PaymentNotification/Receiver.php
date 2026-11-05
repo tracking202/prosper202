@@ -63,6 +63,14 @@ final class Receiver
         return $outcome;
     }
 
+    /** The status the provider is answered with, which the log line names too. */
+    public function status(Outcome $outcome): int
+    {
+        return $this->provider instanceof AnswersWithItsOwnStatus
+            ? $this->provider->deliveryStatus($outcome->kind)
+            : Response::status($outcome->kind);
+    }
+
     /** @return array{0: Outcome, 1: ?Notification} */
     private function decide(InboundRequest $request): array
     {
@@ -129,7 +137,7 @@ final class Receiver
         if ($notification === null) {
             $line .= ' from ' . ($request->peerAddress !== '' ? $request->peerAddress : 'an unknown address');
         }
-        $line .= ': ' . $outcome->kind->value . ' (' . Response::status($outcome->kind) . ')';
+        $line .= ': ' . $outcome->kind->value . ' (' . $this->status($outcome) . ')';
         if ($notification !== null) {
             $parts = [$notification->event . ' (' . $notification->kind->value . ')'];
             if ($notification->clickId !== null) {
