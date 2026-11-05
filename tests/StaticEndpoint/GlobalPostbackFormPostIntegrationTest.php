@@ -86,7 +86,8 @@ final class GlobalPostbackFormPostIntegrationTest extends TestCase
                 self::q("DELETE FROM $table WHERE click_id = $click");
             }
         }
-        foreach (['202_aff_campaigns', '202_revenue_events', '202_dirty_hours', '202_postback_auth', '202_users'] as $table) {
+        $tables = ['202_aff_campaigns', '202_revenue_events', '202_dirty_hours', '202_postback_auth', '202_users'];
+        foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE user_id = " . self::USER);
         }
     }
