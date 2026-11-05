@@ -231,29 +231,34 @@ final class JVZooIpnIntegrationTest extends TestCase
     }
 
     /**
-     * The JVZIPN URL 1.9.56 showed names no role: a signed sale there is
-     * refused (400) and records nothing, on the tid or on the buy link's
-     * subid, and the log says why. jvzoo.php runs in a process of its own.
+     * The JVZIPN URL 1.9.56 showed names no role, and 1.9.56 read it as the
+     * affiliate's: a signed sale there records on caffitid's click, never on
+     * the buy link's subid; one no stored key signs is refused (403).
+     * jvzoo.php runs in a process of its own.
      */
-    public function testASignedSaleAtTheUrlWithNoRoleIsRefusedAndRecordsNothing(): void
+    public function testASignedSaleAtTheUrlWithNoRoleIsRecordedOnTheTidsClick(): void
     {
-        $fields = JVZooAdapterTest::signed(self::fields(['cvendthru' => 'subid=' . self::SECOND_CLICK]), self::KEY);
-        foreach (['absent' => [], 'empty' => ['role' => ''], 'a list' => ['role' => ['vendor']]] as $case => $get) {
-            [$status, $body, $log] = self::jvzoo($get, $fields);
-
-            self::assertSame(400, $status, $case . ': ' . $body);
-            $expected = $get === ['role' => ['vendor']]
-                ? 'This URL\'s role is neither affiliate nor vendor.'
-                : JVZooAdapter::ROLELESS_REFUSAL;
-            self::assertStringContainsString($expected, $body, $case);
-            $logged = 'JVZoo notification from 203.0.113.7: malformed (400): ' . $expected;
-            self::assertStringContainsString($logged, $log, $case);
+        $sale = self::fields(['cvendthru' => 'subid=' . self::SECOND_CLICK]);
+        foreach (['absent' => [], 'empty' => ['role' => '']] as $case => $get) {
+            [$status, $body, $log] = self::jvzoo($get, JVZooAdapterTest::signed($sale, 'WRONGKEY-' . self::KEY));
+            self::assertSame(403, $status, $case . ': ' . $body);
+            self::assertStringContainsString('JVZoo notification from 203.0.113.7: unverified (403)', $log, $case);
             self::assertSame([], self::conversions(), $case);
         }
-        // The same notification at the affiliate's URL records.
-        [$status] = self::jvzoo(['role' => 'affiliate'], $fields);
-        self::assertSame(200, $status);
-        self::assertSame([(string) self::CLICK], array_column(self::conversions(), 'click_id'));
+
+        [$status, $body] = self::jvzoo([], JVZooAdapterTest::signed($sale, self::KEY));
+        self::assertSame(200, $status, $body);
+        self::assertStringContainsString('Recorded transaction ' . self::RECEIPT . ' on click ' . self::CLICK, $body);
+        [$status, $body] = self::jvzoo(['role' => ''], JVZooAdapterTest::signed($sale, self::KEY));
+        self::assertSame(200, $status, $body);
+        self::assertSame([(string) self::CLICK], array_column(self::conversions(), 'click_id'), 'once, on caffitid');
+
+        // A role that is neither is still refused.
+        $other = JVZooAdapterTest::signed(self::fields(['ctransreceipt' => 'OTHER-1']), self::KEY);
+        [$status, $body] = self::jvzoo(['role' => ['vendor']], $other);
+        self::assertSame(400, $status, $body);
+        self::assertStringContainsString('This URL\'s role is neither affiliate nor vendor.', $body);
+        self::assertCount(1, self::conversions());
     }
 
     /**
