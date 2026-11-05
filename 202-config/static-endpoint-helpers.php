@@ -14,6 +14,11 @@ if (!function_exists('p202RespondJsonError')) {
 
 const P202_POSTBACK_USER_AGENT = \Prosper202\Conversion\TrafficSourcePixels::POSTBACK_USER_AGENT;
 
+// Request names read as one value, first non-blank wins; p202PostbackRequest() merges each as a unit.
+const P202_ORDER_NUMBER_NAMES = ['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'];
+const P202_CUSTOMER_NAMES = ['cust', 'customer_ref'];
+const P202_CUSTOMER_TYPE_NAMES = ['cust_type', 'customer_ref_type'];
+
 if (!function_exists('p202ApplyConversionClickSide')) {
     /**
      * The click-side part of a conversion that is not its value: a CPA
@@ -107,6 +112,8 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
      *        its dedupe key when the network sent none
      * @param (callable(string): (bool|\Prosper202\Notifications\PostbackResult))|null $fetch
      *        Performs a type-4 GET and says whether it succeeded; injected by tests.
+     * @param (\Closure(): bool)|null $visitorMayBeTracked whether a Meta
+     *        Purchase (type 6) may fire (p202ConversionMayTrack()); held back without it
      * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
     function p202FireTrafficSourcePixels(
@@ -114,46 +121,67 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
         int $ppcAccountId,
         array $tokens,
         ?callable $fetch = null,
-        bool $server = true
+        bool $server = true,
+        ?\Closure $visitorMayBeTracked = null
     ): array {
         // $server false: the type-4 postbacks were queued with the
-        // conversion (notify_traffic_source) and go out through the outbox
-        // (p202SendQueuedPostbacks()); only the markup types render here.
+        // conversion (notify_traffic_source) and go out after the answer
+        // (p202SendQueuedPostbacksAfterAnswer()) or from the worker.
         $conn = new \Prosper202\Database\Connection($db);
 
-        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server);
+        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server, $visitorMayBeTracked);
     }
 }
 
-if (!function_exists('p202SendQueuedPostbacks')) {
+if (!function_exists('p202ConversionMayTrack')) {
     /**
-     * Send, now, the traffic-source postbacks queued for one conversion
-     * (p202RecordConversion() with notify_traffic_source) — after the commit
-     * that queued them. Best effort by design: the rows are already durable,
-     * so a send that fails, throws or never happens is retried by the
-     * notification worker (202-cronjobs/index.php every minute) instead of
-     * being lost. A retried request for the same conversion calls this
-     * again, which sends whatever is still due. Never throws.
+     * Whether this conversion request's visitor may be sent the click's
+     * Meta Purchase: the privacy setting in force (trackingEnabled(), after
+     * p202ApplyOwnerPrivacy()), p202_consent and the click's campaign
+     * (TrafficSourcePixels::visitorMayBeTracked()).
      *
-     * @return array{sent: int, failed: int, retrying: int, queued: int}
+     * @param array<string, mixed> $get
      */
-    function p202SendQueuedPostbacks(mysqli $db, int $convId): array
+    function p202ConversionMayTrack(mysqli $db, int $clickId, array $get): bool
     {
-        $out = ['sent' => 0, 'failed' => 0, 'retrying' => 0, 'queued' => 0];
-        if ($convId <= 0) {
-            return $out;
-        }
-        try {
-            $conn = new \Prosper202\Database\Connection($db);
-            $outbox = new \Prosper202\Notifications\NotificationOutbox($conn);
-            $out = $outbox->sendDue(20, [$convId]) + $out;
-            $out['queued'] = $outbox->reachedState($convId)['total'];
-        } catch (\Throwable $e) {
-            error_log('conversion ' . $convId . ': its queued postbacks were not sent now; the worker retries them: '
-                . $e->getMessage());
-        }
+        return function_exists('trackingEnabled')
+            && \Prosper202\Conversion\TrafficSourcePixels::visitorMayBeTracked(
+                new \Prosper202\Database\Connection($db),
+                $clickId,
+                trackingEnabled(),
+                $get
+            );
+    }
+}
 
-        return $out;
+if (!function_exists('p202SendQueuedPostbacksAfterAnswer')) {
+    /**
+     * Send a conversion's queued postbacks once the answer has gone to the
+     * network (PHP-FPM, LiteSpeed). Where the client cannot be released first
+     * the worker sends them, so the network never waits on a traffic source.
+     */
+    function p202SendQueuedPostbacksAfterAnswer(mysqli $db, int $convId): void
+    {
+        if ($convId <= 0) {
+            return;
+        }
+        if (function_exists('fastcgi_finish_request')) {
+            $released = fastcgi_finish_request();
+        } elseif (function_exists('litespeed_finish_request')) {
+            $released = litespeed_finish_request();
+        } else {
+            return;
+        }
+        if ($released !== true) {
+            return;
+        }
+        ignore_user_abort(true);
+        try {
+            (new \Prosper202\Notifications\NotificationOutbox(new \Prosper202\Database\Connection($db)))
+                ->sendDue(20, [$convId], 20);
+        } catch (\Throwable $e) {
+            error_log('conversion ' . $convId . ': its queued postbacks were left to the worker: ' . $e->getMessage());
+        }
     }
 }
 
@@ -171,7 +199,7 @@ if (!function_exists('p202ExtractTransactionId')) {
      */
     function p202ExtractTransactionId(array $source): string
     {
-        foreach (['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'] as $key) {
+        foreach (P202_ORDER_NUMBER_NAMES as $key) {
             if (array_key_exists($key, $source) && is_scalar($source[$key])) {
                 $value = trim((string) $source[$key]);
                 if ($value !== '') {
@@ -204,7 +232,7 @@ if (!function_exists('p202ExtractCustomer')) {
         // Deliberately NOT 'customer_id': on public pixels that name would be
         // ambiguous with the authenticated API's internal numeric id (which
         // carries tenant-ownership checks). External references only here.
-        foreach (['cust', 'customer_ref'] as $key) {
+        foreach (P202_CUSTOMER_NAMES as $key) {
             if (array_key_exists($key, $source) && is_scalar($source[$key])) {
                 $value = trim((string) $source[$key]);
                 if ($value !== '') {
@@ -218,7 +246,7 @@ if (!function_exists('p202ExtractCustomer')) {
         }
 
         $out = ['customer_ref' => $ref];
-        foreach (['cust_type', 'customer_ref_type'] as $key) {
+        foreach (P202_CUSTOMER_TYPE_NAMES as $key) {
             if (array_key_exists($key, $source) && is_scalar($source[$key])) {
                 $type = trim((string) $source[$key]);
                 if ($type !== '') {
@@ -427,6 +455,8 @@ if (!function_exists('p202RecordConversion')) {
      *        LTV customer identity (see p202ExtractCustomer); [] = unlinked.
      * @param list<array<string,mixed>> $items Product line items for the
      *        revenue ledger event (see p202ExtractItems); [] = none.
+     * @param string|null $purLinkSubid verified again under the route transaction when supplied
+     * @param string|null $purLinkKey installation signing key for that SubID
      * @return array{conv_id:int, duplicate:bool, transaction_id:string, dedupe_key:string, payout:string, reverses_conv_id:int}
      *         conv_id is 0 when the source click no longer exists (no orphan
      *         row is written) or an id-less hit found the click already
@@ -445,7 +475,9 @@ if (!function_exists('p202RecordConversion')) {
         string $clickPayout,
         string $transactionId = '',
         array $customer = [],
-        array $items = []
+        array $items = [],
+        ?string $purLinkSubid = null,
+        ?string $purLinkKey = null,
     ): array {
         $clickId = (int) ($log['click_id'] ?? 0);
         if ($clickId <= 0) {
@@ -479,6 +511,9 @@ if (!function_exists('p202RecordConversion')) {
             'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
             'user_agent'      => (string) ($log['user_agent'] ?? ''),
         ];
+        if (isset($log['expected_campaign_id'])) {
+            $data['expected_campaign_id'] = (int) $log['expected_campaign_id'];
+        }
         if ($usePixelPayout) {
             // An explicit amount. Without one the writer applies the campaign's
             // default — the click's current value in replace mode, the
@@ -500,10 +535,15 @@ if (!function_exists('p202RecordConversion')) {
         if (isset($log['reversal_ref']) && (string) $log['reversal_ref'] !== '') {
             $data['reversal_ref'] = (string) $log['reversal_ref'];
         }
+        if (!empty($log['reversal']) && !empty($log['reverses_carried_value'])) {
+            // With no sale under its id, the reversal nets against the value
+            // the click carried from before the ledger (its legacy baseline).
+            $data['reverses_carried_value'] = true;
+        }
         if (!empty($log['notify_traffic_source'])) {
             // Queue the click's traffic-source server postbacks with the row
-            // (NotificationOutbox), in its transaction; the caller sends
-            // them with p202SendQueuedPostbacks() and the worker retries.
+            // (NotificationOutbox), in its transaction; they are sent after
+            // the answer or by the worker.
             $data['notify_traffic_source'] = true;
         }
         if (isset($log['event_name']) && (string) $log['event_name'] !== '') {
@@ -543,16 +583,24 @@ if (!function_exists('p202RecordConversion')) {
             $data['items'] = $items;
         }
 
-        $result = $repo->record(
-            (int) ($log['user_id'] ?? 0),
-            $data,
-            $matchedBy,
-            function (int $lockedClickId, float $payout) use ($db, $clickCpa): void {
-                if (!p202ApplyConversionClickSide($db, $lockedClickId, $clickCpa)) {
-                    throw new \RuntimeException('p202RecordConversion: click update failed for click ' . $lockedClickId);
-                }
+        $clickSideUpdate = function (int $lockedClickId, float $payout) use ($db, $clickCpa): void {
+            if (!p202ApplyConversionClickSide($db, $lockedClickId, $clickCpa)) {
+                throw new \RuntimeException('p202RecordConversion: click update failed for click ' . $lockedClickId);
             }
-        );
+        };
+        if ($purLinkSubid !== null) {
+            if ($purLinkKey === null) {
+                throw new \InvalidArgumentException('A signed PurLink requires an installation key');
+            }
+            $result = (new \Prosper202\Click\PurLinkExit($conn))->recordConversion(
+                $purLinkSubid, $purLinkKey, $data, $matchedBy, $clickSideUpdate
+            );
+            if ($result === null) {
+                throw new \Prosper202\Conversion\PurLinkCampaignChanged('PurLink no longer matches its click and campaign');
+            }
+        } else {
+            $result = $repo->record((int) ($log['user_id'] ?? 0), $data, $matchedBy, $clickSideUpdate);
+        }
 
         // The report row (202_dataengine) is re-rolled by the repository's
         // record() after its commit, for this path and every other writer
@@ -582,6 +630,59 @@ if (!function_exists('p202RecordConversion')) {
             'payout' => isset($result['payout']) ? (string) $result['payout'] : '',
             'reverses_conv_id' => (int) ($result['reversesConvId'] ?? 0),
         ];
+    }
+}
+
+if (!function_exists('p202PostbackRequest')) {
+    /**
+     * A server postback's parameters: the query string's, with a form-encoded
+     * body's for any name the query leaves out or blank (paid 1.9.56 gpb.php
+     * read a POST body, and its URLs carry blank `amount=&subid=`).
+     * Aliases of one value (subid/sid, the order-number names, ...) are one
+     * group: a query naming any member keeps all of the body's out, since the
+     * readers pick by alias rank. A value that trims to '' is blank, as the
+     * readers see it. p202_consent is a switch: present in the query, even
+     * blank, it keeps the body's out. Body names are lowercased, as
+     * connect2.php does $_GET's.
+     *
+     * @param array<array-key,mixed> $query $_GET
+     * @param array<array-key,mixed> $body  $_POST (empty unless a form-encoded POST)
+     * @return array<array-key,mixed>
+     */
+    function p202PostbackRequest(array $query, array $body): array
+    {
+        $blank = static fn (mixed $value): bool => $value === null || (is_string($value) && trim($value) === '');
+        $body = array_change_key_case($body, CASE_LOWER);
+        $consent = \Prosper202\Identity\RequestSignals::CONSENT_PARAM;
+        if (array_key_exists($consent, $query)) {
+            unset($body[$consent]);
+        }
+        // cust_sig signs cust: both come from one source.
+        $groups = [
+            ['subid', 'sid'],
+            P202_ORDER_NUMBER_NAMES,
+            [...P202_CUSTOMER_NAMES, 'cust_sig'],
+            P202_CUSTOMER_TYPE_NAMES,
+            ['sku', 'product_id'],
+        ];
+        foreach ($groups as $group) {
+            foreach ($group as $name) {
+                if (!$blank($query[$name] ?? null)) {
+                    foreach ($group as $alias) {
+                        unset($body[$alias]);
+                    }
+                    break;
+                }
+            }
+        }
+        $request = $query;
+        foreach ($body as $name => $value) {
+            if (!array_key_exists($name, $request) || ($blank($request[$name]) && !$blank($value))) {
+                $request[$name] = $value;
+            }
+        }
+
+        return $request;
     }
 }
 
@@ -645,11 +746,13 @@ if (!function_exists('p202ClickIdFromRequest')) {
      *
      * @param array<string, mixed> $get
      * @param array<string, mixed> $cookies
-     * @return array{click_id: int|null, malformed: string|null, method: \Prosper202\Conversion\Ledger\MatchMethod|null}
+     * @return array{click_id: int|null, malformed: string|null, method: \Prosper202\Conversion\Ledger\MatchMethod|null, purlink: string|null}
      *         click_id null with malformed null: nothing named a click, the
      *         IP fallback may run. malformed set: the name of the value that
      *         was present and unreadable; record nothing. method is how the
      *         click was found (a parameter or a cookie), null when none was.
+     *         purlink: a signed PurLink SubID parameter, not yet verified
+     *         (p202PurLinkFromRequest()).
      */
     function p202ClickIdFromRequest(array $get, array $cookies, int $campaignId): array
     {
@@ -669,15 +772,50 @@ if (!function_exists('p202ClickIdFromRequest')) {
             if ($value === null || $value === '') {
                 continue;
             }
-            $clickId = p202ParseClickId(is_string($value) ? $value : (is_int($value) ? $value : null));
+            $value = is_string($value) ? $value : (is_int($value) ? $value : null);
+            // A parameter may be a signed PurLink SubID; a cookie only ever holds a click id.
+            $ref = $method === $parameter ? \Prosper202\Click\ClickRef::parse($value) : null;
+            $clickId = $ref?->clickId ?? p202ParseClickId($value);
             if ($clickId === null) {
-                return ['click_id' => null, 'malformed' => $name, 'method' => null];
+                return ['click_id' => null, 'malformed' => $name, 'method' => null, 'purlink' => null];
             }
 
-            return ['click_id' => $clickId, 'malformed' => null, 'method' => $method];
+            return ['click_id' => $clickId, 'malformed' => null, 'method' => $method, 'purlink' => $ref?->purLinkSubid];
         }
 
-        return ['click_id' => null, 'malformed' => null, 'method' => null];
+        return ['click_id' => null, 'malformed' => null, 'method' => null, 'purlink' => null];
+    }
+}
+
+if (!function_exists('p202PurLinkFromRequest')) {
+    /**
+     * The verified claims and key of the signed PurLink SubID a pixel request
+     * named (p202ClickIdFromRequest()'s purlink); null when it named none,
+     * false (logged) when it does not verify.
+     *
+     * @throws \RuntimeException when it cannot be checked now (the key or the
+     *         click could not be read): the caller answers 5xx, not "forged".
+     *
+     * @param array{purlink?: string|null} $requested
+     * @return array{claims: array{click_id: int, landing_page_id: int, user_id: int, campaign_public_id: int}, key: string}|false|null
+     */
+    function p202PurLinkFromRequest(mysqli $db, array $requested, string $endpoint): array|false|null
+    {
+        $subid = $requested['purlink'] ?? null;
+        if ($subid === null) {
+            return null;
+        }
+        try {
+            $verified = \Prosper202\Click\ClickRef::verify(new \Prosper202\Database\Connection($db), $subid);
+        } catch (\Throwable $error) {
+            throw new \RuntimeException($endpoint . ': signed PurLink verification unavailable: ' . $error->getMessage(), 0, $error);
+        }
+        if ($verified === null) {
+            error_log($endpoint . ': refusing a signed PurLink SubID that does not match its click');
+            return false;
+        }
+
+        return $verified;
     }
 }
 
@@ -892,7 +1030,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
      *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
-     *     source?: string, reversal?: bool, reversal_ref?: string, event_name?: string|null,
+     *     source?: string, reversal?: bool, reversal_ref?: string, reverses_carried_value?: bool,
+     *     event_name?: string|null,
      *     conv_time?: int
      * } $opts source is the ledger source the row is recorded under
      *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
@@ -937,8 +1076,12 @@ if (!function_exists('p202RecordLegacyConversion')) {
         if (isset($opts['user_id']) && (int) $click['user_id'] !== (int) $opts['user_id']) {
             return $none + ['reason' => 'foreign_click'];
         }
+        // A signed PurLink SubID proves its offer: the writer routes the click
+        // there and records together, even after another offer converted it.
+        $purLinkSubid = isset($opts['purlink_subid'], $opts['purlink_key'])
+            ? [(string) $opts['purlink_subid'], (string) $opts['purlink_key']] : null;
         if (
-            isset($opts['campaign_id'])
+            $purLinkSubid === null && isset($opts['campaign_id'])
             && !p202ClickVisitedCampaign($conn, $clickId, (int) $click['user_id'], (int) $opts['campaign_id'])
         ) {
             return $none + ['reason' => 'campaign_mismatch'];
@@ -975,13 +1118,18 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'source'          => (string) ($opts['source'] ?? \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value),
                 'reversal'        => !empty($opts['reversal']),
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
+                'reverses_carried_value' => !empty($opts['reverses_carried_value']),
                 'event_name'      => (string) ($opts['event_name'] ?? ''),
             ],
             $matchedBy,
             (string) ($click['click_cpa'] ?? ''),
             $usePixelPayout,
             $usePixelPayout ? $payout : '',
-            $transactionId
+            $transactionId,
+            [],
+            [],
+            $purLinkSubid[0] ?? null,
+            $purLinkSubid[1] ?? null,
         );
 
         // conv_id 0 with duplicate = the writer's under-lock gate: another
@@ -1041,7 +1189,7 @@ if (!function_exists('p202RecordWebEvent')) {
      * @param \Prosper202\Conversion\Ledger\MatchMethod $matchedBy how the
      *        endpoint found the click, which the event and the ledger rows it
      *        reaches carry (GoalEngine::ingest())
-     * @param array{user_id?: int, campaign_id?: int, browser?: bool, trusted?: bool} $opts
+     * @param array{user_id?: int, campaign_id?: int, expected_campaign_id?: int, browser?: bool, trusted?: bool} $opts
      *        user_id: the click must belong to that owner (px scope);
      *        campaign_id: some visit of it must be on that campaign (pb
      *        scope, p202ClickVisitedCampaign()). browser: a browser renders the
@@ -1091,10 +1239,20 @@ if (!function_exists('p202RecordWebEvent')) {
             return ['status' => 'invalid', 'errors' => $e->errors(), 'message' => $e->getMessage()];
         }
 
-        $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, (bool) ($opts['browser'] ?? false));
+        $notifier = new \Prosper202\Goals\TrafficSourceNotifier(
+            $conn,
+            (bool) ($opts['browser'] ?? false),
+            static fn (int $click): bool => p202ConversionMayTrack($db, $click, $get)
+        );
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         try {
-            $result = $engine->ingest($click['user_id'], $engine->clickSubject($click['user_id'], $clickId), [$event], $matchedBy);
+            $result = $engine->ingest(
+                $click['user_id'],
+                $engine->clickSubject($click['user_id'], $clickId),
+                [$event],
+                $matchedBy,
+                expectedCampaignId: $opts['expected_campaign_id'] ?? null,
+            );
         } catch (\Prosper202\Goals\GoalEngineException $e) {
             if ($e->reason === \Prosper202\Goals\GoalEngineException::EVENT_CONFLICT) {
                 return ['status' => 'refused', 'code' => 409, 'message' => $e->getMessage()];
@@ -1111,6 +1269,109 @@ if (!function_exists('p202RecordWebEvent')) {
             p202LinkConversionIdentity($db, $clickId, $get);
         }
 
+        return ['status' => 'recorded', 'event_id' => $event->eventId, 'result' => $result, 'markup' => $notifier->markup()];
+    }
+}
+
+if (!function_exists('p202VerifyPurLinkSubid')) {
+    /**
+     * A signed PurLink SubID (`click-offer-mac`) checked against its click.
+     * Null when the value does not have that shape. Answers and exits with
+     * 503 when the installation key is unavailable, 404 when it is forged.
+     *
+     * @return array{claims: array{click_id: int, landing_page_id: int, user_id: int, campaign_public_id: int}, key: string}|null
+     */
+    function p202VerifyPurLinkSubid(mysqli $db, mixed $raw, string $endpoint): ?array
+    {
+        $ref = \Prosper202\Click\ClickRef::parse($raw);
+        if ($ref === null || $ref->purLinkSubid === null) {
+            return null;
+        }
+        try {
+            $verified = \Prosper202\Click\ClickRef::verify(new \Prosper202\Database\Connection($db), $ref->purLinkSubid);
+        } catch (\Throwable $error) {
+            error_log($endpoint . ': signed PurLink verification unavailable: ' . $error->getMessage());
+            p202RespondJsonError(503, 'Service unavailable');
+        }
+        if ($verified === null) {
+            p202RespondJsonError(404, 'SubID not found');
+        }
+
+        return $verified;
+    }
+}
+
+if (!function_exists('p202RecordPurLinkWebEvent')) {
+    /**
+     * A signed PurLink goal event: resolve its offer and write its isolated
+     * subject, event and outcomes in the same click transaction. A campaign
+     * without goals rolls that route back so the normal signed conversion
+     * writer can record its plain conversion atomically instead.
+     *
+     * @param array<string, mixed> $get
+     * @return array<string, mixed>|null
+     */
+    function p202RecordPurLinkWebEvent(mysqli $db, string $subid, string $key, array $get): ?array
+    {
+        if (!\Prosper202\Goals\WebEvents::requested($get)) {
+            return null;
+        }
+        $now = time();
+        $conn = new \Prosper202\Database\Connection($db);
+        $claims = (new \Prosper202\Click\PurLinkExit($conn))->claims($subid, $key);
+        if ($claims === null) {
+            return ['status' => 'not_found', 'reason' => 'unknown_click'];
+        }
+        $events = new \Prosper202\Goals\WebEvents($conn);
+        $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, false);
+        $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
+        $event = null;
+        try {
+            $done = (new \Prosper202\Click\PurLinkExit($conn))->convert(
+                $subid,
+                $key,
+                function (int $user, int $click, int $campaign, string $payout) use ($conn, $events, $engine, $claims, $get, $now, &$event): array {
+                    if (!$events->campaignEvaluatesGoals($user, $campaign, $now)) {
+                        throw new \Prosper202\Goals\PurLinkNoGoals();
+                    }
+                    if (p202ExtractReversal($get)['reversal']) {
+                        throw new \Prosper202\Goals\PurLinkEventReversal();
+                    }
+                    $event = \Prosper202\Goals\WebEvents::fromQuery($get, p202ExtractTransactionId($get), $now, true);
+                    $subject = (new \Prosper202\Goals\PurLinkGoalSubjects($conn))->forRouteInTransaction(
+                        $user, $click, $claims['landing_page_id'], $campaign
+                    );
+                    if ($subject === null) {
+                        throw new \Prosper202\Goals\GoalEngineException('PurLink subject not found', \Prosper202\Goals\GoalEngineException::NOT_FOUND);
+                    }
+                    return $engine->ingestPurLinkInTransaction($user, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+                }
+            );
+        } catch (\Prosper202\Goals\PurLinkNoGoals) {
+            return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
+        } catch (\Prosper202\Goals\PurLinkEventReversal) {
+            return ['status' => 'refused', 'code' => 422, 'message' => 'An event cannot also be a reversal: send status=reversed with the transaction id of the conversion it reverses, and no event.'];
+        } catch (\Prosper202\Goals\InvalidGoalDefinition $error) {
+            return ['status' => 'invalid', 'errors' => $error->errors(), 'message' => $error->getMessage()];
+        } catch (\Prosper202\Goals\GoalEngineException $error) {
+            if ($error->reason === \Prosper202\Goals\GoalEngineException::EVENT_CONFLICT) {
+                return ['status' => 'refused', 'code' => 409, 'message' => $error->getMessage()];
+            }
+            if ($error->reason === \Prosper202\Goals\GoalEngineException::EVENT_CAP) {
+                return ['status' => 'refused', 'code' => 422, 'message' => $error->getMessage()];
+            }
+            if ($error->reason === \Prosper202\Goals\GoalEngineException::NOT_FOUND) {
+                return ['status' => 'not_found', 'reason' => 'unknown_click'];
+            }
+            throw $error;
+        }
+        if ($done === null || $event === null) {
+            return ['status' => 'not_found', 'reason' => 'unknown_click'];
+        }
+        $result = $engine->finishPurLinkIngest($claims['user_id'], $done);
+        if ($result['accepted'] !== []) {
+            p202LinkConversionIdentity($db, $claims['click_id'], $get);
+        }
         return ['status' => 'recorded', 'event_id' => $event->eventId, 'result' => $result, 'markup' => $notifier->markup()];
     }
 }

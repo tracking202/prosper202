@@ -38,7 +38,7 @@ if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
 
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string) $_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = _mysqli_query($db, $user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
@@ -47,8 +47,7 @@ $user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'];
 $user_time_register = $user_row['user_time_register'];
 
-if (!empty($user_row['url']))
-	$slack = new Slack($user_row['url']);
+$slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 
 /** Settings this page changes, and the field errors of a refused submit. */
 $fieldErrors = [];

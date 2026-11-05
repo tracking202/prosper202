@@ -61,7 +61,7 @@ final class ServedPreferences
         'cb_key', 'jvzoo_ipn_secret_key', 'zaxaa_api_signature', 'ipqs_api_key',
         'revcontent_user_id', 'revcontent_user_secret',
         'user_slack_incoming_webhook', 'lpo_site_key', 'lpo_bridge_config',
-        'paykickstart_ipn_secret_keys',
+        'paykickstart_ipn_secret_keys', 'shopify_webhook_secret',
     ];
 
     private function __construct()

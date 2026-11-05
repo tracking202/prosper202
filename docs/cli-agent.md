@@ -821,10 +821,12 @@ Landing page code (Setup > Get LP Code):
 p202 landing-page code <id> [--offer campaign:N|rotator:N]... [--json]
 ```
 
-`data`: `landing_page_type` (`simple`/`advanced`), `base_url`, `loader`, and
-for a simple page `outbound_link`, `outbound_php`, `outbound_javascript`; for
-an advanced page `offers[]` (`position`, `type`, `id`, `public_id`, `name`,
-`outbound_link`, `outbound_php`); `segments`. Accepts the public id (`lpip=`).
+`data`: `landing_page_type` (`simple`/`advanced`), `base_url`, `loader`,
+`loader_deferred_pixel`, and for a simple page `purlink`, `outbound_link`,
+`outbound_php`, `outbound_javascript`; for an advanced page `offers[]`
+(`position`, `type`, `id`, `public_id`, `name`, `purlink` for a campaign,
+`outbound_link`, `outbound_php`); `segments`. `purlink` is null when the
+campaign URL cannot be one. Accepts the public id (`lpip=`).
 
 #### Text ad fields
 
@@ -1487,3 +1489,11 @@ Servers with `features.response_sanitization` sanitize these fields before servi
 2. **Fence before feeding to a model.** A harness that forwards report or click output into an LLM context should wrap these fields in a fixed delimiter with a label (e.g. `<untrusted source="visitor-traffic">...</untrusted>`), strip control and bidirectional-override characters, and cap per-field length, so a hostile value can neither imitate a conversation turn nor fill the context.
 3. **Validate before reuse.** Never pass one of these values onward as a command argument, URL, or file path without validating it against the shape you expect (e.g. a country code, a numeric ID).
 4. **Operator-authored is not visitor-authored.** Campaign, network, tracker, text-ad, and landing-page names come from authenticated operators. They are lower risk, but on a multi-user install they are still cross-user content -- the fencing rule is cheap insurance there too.
+
+## PurLink goal outcomes
+
+Use `p202 goal outcomes ID --subject-type purlink --json` to inspect per-offer
+goal outcomes, and `p202 goal reevaluate ID --subject-type purlink --json`
+to preview them. Add `--apply` to apply and pass each `next_after` as
+`--after` until it is null. Ordinary click and PurLink subjects are separate
+streams; re-evaluate each type independently when both need updating.

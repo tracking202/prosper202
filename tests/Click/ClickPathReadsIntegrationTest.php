@@ -283,6 +283,9 @@ final class ClickPathReadsIntegrationTest extends TestCase
         self::assertText($named);
         self::assertSame((string) self::$id['ownCampaign'], $named['tracker_campaign']);
         self::assertSame('0', $named['lp_setting']);
+        // The page's account and its zone (dynamic-content segments).
+        self::assertSame((string) self::OWNER, $named['page_user_id']);
+        self::assertSame('Europe/Paris', $named['page_timezone']);
 
         self::assertNotNull($named['tracker_found']);
         self::assertSame((string) self::$id['ownCampaign'], $named['tracker_campaign_named']);

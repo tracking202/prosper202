@@ -44,7 +44,7 @@ var goalPredicateOps = []string{"eq", "neq", "gt", "gte", "lt", "lte", "in", "ex
 
 // goalSubjectTypes are the subjects a goal is evaluated for
 // (Prosper202\Goals\GoalSubject; features.goals.subjects in /capabilities).
-var goalSubjectTypes = []string{"click", "install"}
+var goalSubjectTypes = []string{"click", "install", "purlink"}
 
 // goalNotifyEnum takes the spellings strconv.ParseBool reads, resolved to
 // true or false.
@@ -713,8 +713,8 @@ var goalEvaluateCmd = &cobra.Command{
 var goalReevaluateCmd = &cobra.Command{
 	Use:   "reevaluate <id>",
 	Short: "Re-evaluate past clicks or installs under a goal version (preview; --apply to apply)",
-	Long: "Without --apply, shows per subject (a click, or an Android install with --subject-type\n" +
-		"install) the outcomes that would be retired and written, and what happens to their\n" +
+	Long: "Without --apply, shows per subject (a click, a PurLink offer, or an Android install)\n" +
+		"the outcomes that would be retired and written, and what happens to their\n" +
 		"conversions (superseded by the new row, or deleted when the version no longer reaches\n" +
 		"the goal). Goals that wait on this one (their definition's after, directly or through\n" +
 		"another) are re-decided with it: listed in goals, each row names its goal_id.\n" +
@@ -883,12 +883,12 @@ func init() {
 	goalEvaluateCmd.Flags().StringP("file", "F", "", "JSON body: goals, subject, events (- for stdin)")
 
 	goalReevaluateCmd.Flags().String("version", "", "The version to re-evaluate under (default: the current one)")
-	goalReevaluateCmd.Flags().String("limit", "", "Clicks per call (default 100, at most 1000)")
-	goalReevaluateCmd.Flags().String("after", "", "Continue after this click id (the previous answer's next_after)")
+	goalReevaluateCmd.Flags().String("limit", "", "Subjects per call (default 100, at most 1000)")
+	goalReevaluateCmd.Flags().String("after", "", "Continue after the previous answer's next_after")
 	goalReevaluateCmd.Flags().Bool("apply", false, "Apply the re-evaluation (without it: preview only)")
 	goalReevaluateCmd.Flags().String("subject-type", "", "Subjects to re-evaluate (default: click for a campaign goal, install for a registration or account goal)")
 	enumFlag(goalReevaluateCmd, "subject-type", newEnum(goalSubjectTypes,
-		enumHint("click re-evaluates a campaign goal's clicks; install re-evaluates Android installs (the default for registration and account goals).")))
+		enumHint("click re-evaluates campaign clicks; purlink re-evaluates per-offer PurLink events; install re-evaluates Android installs (the default for registration and account goals).")))
 
 	registerSingleDeleteFlags(goalCampaignRemoveCmd)
 	goalCampaignCmd.AddCommand(goalCampaignListCmd, goalCampaignSetCmd, goalCampaignRemoveCmd)

@@ -141,7 +141,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        reversal (true = this reverses the earlier row carrying the same
      *        transaction_id; a negative explicit payout with a transaction id
      *        on file is a reversal too), reversal_ref (the network's reversal
-     *        id, default "1"),
+     *        id, default "1"), reverses_carried_value (true = with no row
+     *        under the transaction_id, the reversal nets against the click's
+     *        legacy baseline, the value it carried from before the ledger;
+     *        each transaction_id is taken back from it once),
      *        once_per_click (true = record only while the click is not yet a
      *        lead; checked under the click lock),
      *        once_per_click_unkeyed (true = the same check, applied only when
@@ -239,12 +242,16 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * @return array<string, mixed> as record(), plus '_prepared' for afterRecordCommit()
      * @throws ReversalException
      */
-    public function recordInTransaction(int $userId, array $data, MatchMethod $matchedBy): array
-    {
-        return $this->conn->joinTransaction(function () use ($userId, $data, $matchedBy): array {
+    public function recordInTransaction(
+        int $userId,
+        array $data,
+        MatchMethod $matchedBy,
+        ?callable $clickSideUpdate = null,
+    ): array {
+        return $this->conn->joinTransaction(function () use ($userId, $data, $matchedBy, $clickSideUpdate): array {
             $prepared = $this->prepareRecord($data, $matchedBy);
             $click = (new MysqlConversionLedger($this->conn))->lockClick((int) $prepared['clickId'], $userId);
-            $result = $this->recordLocked($userId, $prepared, null, $click);
+            $result = $this->recordLocked($userId, $prepared, $clickSideUpdate, $click);
             $result['_prepared'] = $prepared;
 
             return $result;
@@ -356,6 +363,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         $clickCampaignId = (int) $click['aff_campaign_id'];
+        // An unsigned legacy PurLink names an offer but cannot authorize a
+        // route change. Check again under this lock: a re-click could have
+        // moved the click since the endpoint resolved its SubID.
+        if (isset($data['expected_campaign_id']) && (int) $data['expected_campaign_id'] !== $clickCampaignId) {
+            throw new PurLinkCampaignChanged('The click no longer belongs to the PurLink campaign');
+        }
         $terms = $ledger->campaignTerms($clickCampaignId, $userId);
 
         // A reversal names the row it reverses by that row's transaction
@@ -364,6 +377,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // duplicate and a second, different reversal of one sale is
         // refused rather than netting the sale twice.
         $reverses = null;
+        $reversesCarried = false;
         if ($transactionId !== null && ($wantsReversal || ($explicitPayout !== null && $explicitPayout < 0))) {
             $targetStmt = $this->conn->prepareWrite(
                 'SELECT conv_id, click_payout, deleted FROM 202_conversion_logs
@@ -374,7 +388,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $target = $this->conn->fetchOne($targetStmt);
             if ($target !== null && (int) $target['deleted'] === 0) {
                 $reverses = $target;
-            } elseif ($wantsReversal) {
+            } elseif ($target === null && $wantsReversal && !empty($data['reverses_carried_value'])) {
+                $reverses = $this->carriedValue($ledger, $clickId, $userId);
+                $reversesCarried = $reverses !== null;
+            }
+            if ($reverses === null && $wantsReversal) {
                 throw new ReversalException(
                     'There is no conversion with transaction id "' . $transactionId . '" on click ' . $clickId
                     . ' to reverse' . ($target !== null ? ' (it was deleted)' : '') . '.',
@@ -430,12 +448,26 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         if ($reverses !== null) {
+            // The carried value stands for every sale before the ledger: each
+            // transaction id is taken back from it once.
             $otherStmt = $this->conn->prepareWrite(
                 'SELECT conv_id, dedupe_key FROM 202_conversion_logs
-                 WHERE click_id = ? AND reverses_conv_id = ? AND deleted = 0 ORDER BY conv_id LIMIT 1'
+                 WHERE click_id = ? AND reverses_conv_id = ? AND deleted = 0'
+                . ($reversesCarried ? ' AND transaction_id = ?' : '') . ' ORDER BY conv_id LIMIT 1'
             );
-            $this->conn->bind($otherStmt, 'ii', [$clickId, (int) $reverses['conv_id']]);
+            $this->conn->bind(
+                $otherStmt,
+                $reversesCarried ? 'iis' : 'ii',
+                $reversesCarried ? [$clickId, (int) $reverses['conv_id'], $transactionId] : [$clickId, (int) $reverses['conv_id']]
+            );
             $other = $this->conn->fetchOne($otherStmt);
+            if ($other !== null && $reversesCarried) {
+                throw new ReversalException(
+                    'Transaction id "' . $transactionId . '" was already taken back from the value click ' . $clickId
+                    . ' carried from before the upgrade, by conversion ' . (int) $other['conv_id'] . '.',
+                    ReversalException::CONFLICT
+                );
+            }
             if ($other !== null) {
                 throw new ReversalException(
                     'Conversion ' . (int) $reverses['conv_id'] . ' (transaction id "' . $transactionId
@@ -461,7 +493,18 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // cache; carry it into the ledger before this row changes it.
         $ledger->ensureManaged($clickId, $userId);
 
-        if ($reverses !== null) {
+        if ($reverses !== null && $reversesCarried) {
+            // Capped under the lock, so concurrent refunds cannot take back more than is left.
+            $left = $this->carriedLeft($reverses, $userId);
+            if ($left <= 0) {
+                throw new ReversalException(
+                    'Nothing is left of the value click ' . $clickId . ' carried from before the upgrade to take'
+                    . ' transaction id "' . $transactionId . '" back from.',
+                    ReversalException::NO_TARGET
+                );
+            }
+            $amountUnits = -min(abs($explicitPayout ?? $left), $left);
+        } elseif ($reverses !== null) {
             $amountUnits = -abs($explicitPayout ?? Amount::toUnits((string) $reverses['click_payout']));
         } elseif ($explicitPayout !== null) {
             $amountUnits = $explicitPayout;
@@ -641,6 +684,51 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             // LTV fields recorded nowhere, as no customer resolved
             'ltvDropped' => $ltvDropped,
         ];
+    }
+
+    /**
+     * The click's live legacy baseline, carried in first when the click is
+     * still a pre-ledger lead (ensureManaged()), or null when it has none.
+     * Runs under the click's lock.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function carriedValue(MysqlConversionLedger $ledger, int $clickId, int $userId): ?array
+    {
+        $ledger->ensureManaged($clickId, $userId);
+        $stmt = $this->conn->prepareWrite(
+            'SELECT conv_id, click_payout, deleted, superseded_reason FROM 202_conversion_logs
+             WHERE click_id = ? AND user_id = ? AND dedupe_key = ? AND reverses_conv_id IS NULL AND deleted = 0
+             LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'iis', [$clickId, $userId, DedupeKey::legacy()]);
+
+        return $this->conn->fetchOne($stmt);
+    }
+
+    /**
+     * What is left of a legacy baseline, in units, read under the click's
+     * lock: nothing once a later sale superseded it or when it carried no
+     * value above 0, else its value less what live reversals took back.
+     *
+     * @param array<string, mixed> $baseline from carriedValue()
+     */
+    private function carriedLeft(array $baseline, int $userId): int
+    {
+        if ($baseline['superseded_reason'] !== null && $baseline['superseded_reason'] !== '') {
+            return 0;
+        }
+        // Signed: 1.9.56 could leave a click below 0, which leaves nothing.
+        $left = Amount::toUnits((string) $baseline['click_payout']);
+        $stmt = $this->conn->prepareWrite(
+            'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0'
+        );
+        $this->conn->bind($stmt, 'ii', [(int) $baseline['conv_id'], $userId]);
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $left -= abs(Amount::toUnits((string) $row['click_payout']));
+        }
+
+        return max(0, $left);
     }
 
     /**

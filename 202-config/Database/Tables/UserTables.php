@@ -165,6 +165,7 @@ final class UserTables
                 `lpo_ctx_kw` tinyint(1) NOT NULL DEFAULT '1',
                 `user_delete_data_before` int(10) unsigned DEFAULT NULL,
                 `paykickstart_ipn_secret_keys` text DEFAULT NULL,
+                `shopify_webhook_secret` varchar(250) DEFAULT NULL,
                 `analytics_consent` enum('granted','denied','unset') NOT NULL DEFAULT 'unset',
                 `analytics_consent_at` datetime DEFAULT NULL,
                 `analytics_consent_source` varchar(32) DEFAULT NULL,

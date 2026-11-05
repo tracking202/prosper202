@@ -1,0 +1,2 @@
+-- Fixed: A JVZoo notification at the JVZIPN URL paid 1.9.56 showed (tracking202/static/jvzoo.php, with no ?role=) is recorded again, as the affiliate's: the click is caffitid, the tid on the JVZoo affiliate link, as in 1.9.56, and the cverify signature is checked as on ?role=affiliate. A ?role= that is neither affiliate nor vendor is still refused with a 400.
+app: Fixed: JVZoo notifications at the paid 1.9.56 JVZIPN URL record sales again, as the affiliate's.

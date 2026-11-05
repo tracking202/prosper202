@@ -232,6 +232,50 @@
         "p202 user prefs update 1 --jvzoo-ipn-secret-key '' --json >/dev/null"
       ],
       "notes": "Account › API integrations › JVZoo (PUT /users/{id}/preferences jvzoo_ipn_secret_key; GET /system/integrations jvzoo and jvzoo_vendor). JVZoo has two URLs, verified with the one key: an affiliate's notification names the click by the tid on the affiliate link, a vendor's by the subid on the buy link, so the affiliate URL is this ask's."
+    },
+    {
+      "id": "admin-007-a-shopify-webhook-secret-is-stored-never-repeated",
+      "priority": "medium",
+      "state": "seeded fixture; the key is the installer's (Super user, user 1); no Shopify webhook secret stored",
+      "setup": [
+        "p202 user prefs update 1 --shopify-webhook-secret '' --json >/dev/null"
+      ],
+      "ask": "My Shopify store's webhooks are signed with demo-eval-shopify-SIGNING-0001. Save that in Prosper202 and tell me the URL to give Shopify's order payment webhook.",
+      "expected": {
+        "runs_one_of": [
+          "user prefs update"
+        ],
+        "checks": [
+          {
+            "run": "p202 system integrations --json | jq -r '.data.integrations[] | select(.integration==\"shopify\") | \"\\(.secret_stored) \\(.url)\"'",
+            "includes": [
+              "true http",
+              "tracking202/static/shopify.php"
+            ]
+          },
+          {
+            "run": "p202 user prefs get 1 --json | jq -c '.data.shopify_webhook_secret'; p202 user prefs get 1 --json",
+            "includes": [
+              "{\"stored\":true}"
+            ],
+            "omits": [
+              "demo-eval-shopify-SIGNING-0001"
+            ]
+          }
+        ],
+        "rubric": "PASS if the secret is stored with `p202 user prefs update <user_id> --shopify-webhook-secret`, and the reply gives the Shopify webhook URL that `p202 system integrations` answers (ending tracking202/static/shopify.php) and says the cart carries the click id as the t202subid line item property. FAIL if the reply repeats the secret, builds the URL by hand, or says webhooks are recorded without a stored secret.",
+        "reply_includes": [
+          "tracking202/static/shopify.php",
+          "t202subid"
+        ],
+        "reply_omits": [
+          "demo-eval-shopify-SIGNING-0001"
+        ]
+      },
+      "cleanup": [
+        "p202 user prefs update 1 --shopify-webhook-secret '' --json >/dev/null"
+      ],
+      "notes": "Account › API integrations › Shopify (PUT /users/{id}/preferences shopify_webhook_secret; GET /system/integrations shopify). The secret is never served back, and a webhook no stored secret verifies is refused 403."
     }
   ]
 }

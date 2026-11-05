@@ -556,36 +556,6 @@ final class ConsentSyncIntegrationTest extends TestCase
         $this->assertSame('0', $db->query('SELECT COUNT(*) FROM 202_messaging_attributes')->fetch_row()[0]);
     }
 
-    /** @return list<string> the URLs tagUserByNetwork() would have posted to */
-    private function tagged(?mysqli $db = null): array
-    {
-        $sent = [];
-        tagUserByNetwork(self::USER_ID, 'ih', 'traffic-sources', 'Search Ads', $db ?? self::$db,
-            static function (string $url) use (&$sent): void {
-                $sent[] = $url;
-            });
-        return $sent;
-    }
-
-    public function test_a_network_name_goes_to_tracking202_only_with_analytics_on(): void
-    {
-        $db = self::$db;
-        $this->assertSame([], $this->tagged(), 'location unknown: held');
-
-        $this->assertTrue(ConsentPolicy::rememberGeo($db, self::USER_ID, true));
-        $this->assertSame([], $this->tagged(), 'EU/UK, not asked yet');
-
-        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'granted', 'eu_prompt'));
-        $this->assertSame(['https://my.tracking202.com/api/v2/tag/user/ih/traffic-sources'], $this->tagged());
-
-        $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'));
-        $this->assertSame([], $this->tagged(), 'denied');
-
-        $failing = $this->createMock(mysqli::class);
-        $failing->method('prepare')->willReturn(false);
-        $this->assertSame([], $this->tagged($failing), 'a consent that cannot be read sends nothing');
-    }
-
     public function test_a_stored_value_that_is_no_choice_holds_analytics(): void
     {
         $db = self::$db;

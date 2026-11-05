@@ -20,15 +20,14 @@ $network_editing = false;
 $editing = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2u.install_hash, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username, 2u.install_hash FROM 202_users AS 2u WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
 }
 $user_row = p202FetchRow($user_results, $user_sql);
 
-if (!empty($user_row['url']))
-	$slack = new Slack($user_row['url']);
+$slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 
 if (!empty($_GET['edit_ppc_account_id'])) {
 	$editing = true;
@@ -138,8 +137,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
 				Analytics::event('traffic_source_added', ['via' => 'ui'], 'analytics');
 			}
-
-			tagUserByNetwork((int) $_SESSION['user_id'], $user_row['install_hash'], 'traffic-sources', $_POST['ppc_network_name']);
 		}
 	}
 
