@@ -351,7 +351,7 @@ module.exports = {
         await ui.fill({
           'input[name="default_url"]': 'https://default.example/',
           '[data-rule-field="rule_name"]': 'US visitors',
-          '[data-rule-field="value"]': 'US,GB',
+          '[data-rule-field="value"]': 'United States(US),United Kingdom(GB)',
         });
         await ui.select('[data-rule] [data-rule-field="redirect_type"]', 'url');
         await ui.fill({ '[data-rule] [data-rule-field="redirect_url"]': 'https://us.example/' });
@@ -366,7 +366,7 @@ module.exports = {
         expect.match((await app.flashes()).join(' '), /Rules saved/, 'saving the rules reloads with a sentence');
         expect.eq(db.value('SELECT default_url FROM 202_rotators WHERE id=' + state.rotator), 'https://default.example/', 'the default is stored');
         expect.eq(db.value("SELECT GROUP_CONCAT(CONCAT(type,':',value) ORDER BY id) FROM 202_rotator_rules_criteria WHERE rotator_id=" + state.rotator),
-          'country:US,GB,device:mobile', 'both criteria are stored');
+          'country:United States(US),United Kingdom(GB),device:mobile', 'both criteria are stored');
         expect.eq(db.value('SELECT redirect_url FROM 202_rotator_rules_redirects'), 'https://us.example/', 'and the destination');
 
         // A split test: two destinations with weights.

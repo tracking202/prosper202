@@ -60,20 +60,8 @@ final class DniNetworksReadOnlyTheAccountsTest extends TestCase
 
     private const CLASS_NAME = 'Prosper202\\Setup\\DniNetworks';
 
-    private const CALLBACK = 'the hosted service\'s callback names a network only by its networkId, with the'
-        . ' install hash (InstallHash::matches()) as its credential: it is not an account\'s request, and the'
-        . ' key it reads goes back to my.tracking202.com';
-
-    private const CALLBACK_READ = 'SELECT apiKey, install_hash, type FROM 202_dni_networks'
-        . " JOIN 202_users USING (user_id) WHERE networkId = '…'";
-
     /** @var array<string, array<string, string>> file => folded statement => why it names no account */
-    private const WITHOUT_ACCOUNT = [
-        '202-cronjobs/dni.php' => [
-            self::CALLBACK_READ => self::CALLBACK,
-            "UPDATE 202_dni_networks SET processed = '1' WHERE networkId = '…' AND apiKey = '…'" => self::CALLBACK,
-        ],
-    ];
+    private const WITHOUT_ACCOUNT = [];
 
     /** @var array<string, string> the files that name the table outside a statement */
     private const NAMED_ONLY = [
@@ -91,9 +79,6 @@ final class DniNetworksReadOnlyTheAccountsTest extends TestCase
         'tracking202/setup/aff_campaigns.php' => [
             'SELECT networkId, apiKey, affiliateId FROM 202_dni_networks WHERE user_id = "…" AND id = "…"'
                 => 'setupDniOfferTrack(), when a campaign is set up from a network offer',
-        ],
-        '202-cronjobs/dni.php' => [
-            self::CALLBACK_READ => 'the service\'s offer cache request, and the callback\'s own UPDATE',
         ],
         self::CLASS_FILE => [
             'SELECT networkId, apiKey FROM 202_dni_networks WHERE user_id = ? AND id = ?'
@@ -115,12 +100,6 @@ final class DniNetworksReadOnlyTheAccountsTest extends TestCase
             '$dniApiKey = (string)($_POST[\'dni_network_api_key\'] ?? \'\');'
                 => 'the key typed into the form, or the one keptKey() answers: authDniNetworks() and the'
                 . ' INSERT or UPDATE, never the page',
-        ],
-        '202-cronjobs/dni.php' => [
-            '\'api_key\' => $row[\'apiKey\'],' => 'the service\'s offer cache request (CALLBACK)',
-            '$sql = "UPDATE 202_dni_networks SET processed = \'1\' WHERE networkId = \'" . $mysql[\'networkId\']'
-                . ' . "\' AND apiKey = \'" . $row[\'apiKey\'] . "\'";'
-                => 'the callback marks the network it names (CALLBACK)',
         ],
         self::CLASS_FILE => [
             'return [(string) $stored[\'apiKey\'], null];' => 'keptKey(), read by the page into $dniApiKey (above)',
@@ -154,7 +133,7 @@ final class DniNetworksReadOnlyTheAccountsTest extends TestCase
             $problems[] = "$file:$line $why: $folded";
         }
         $blind = 'the scan found too few statements on ' . self::TABLE . ': it is blind, not the tree clean';
-        self::assertGreaterThanOrEqual(14, $statements, $blind);
+        self::assertGreaterThanOrEqual(12, $statements, $blind);
         $why = 'a read of ' . self::TABLE . ' must name the signed-in account (`user_id = ` the session\'s),'
             . ' not account 1 or none';
         self::assertSame([], $problems, $why);
@@ -328,7 +307,7 @@ final class DniNetworksReadOnlyTheAccountsTest extends TestCase
                 $problems[] = "$file:{$t[2]} reads a DNI key outside a call that sends it to the service: $text";
             }
         }
-        self::assertGreaterThanOrEqual(10, $reads, 'the scan found too few key reads: it is blind');
+        self::assertGreaterThanOrEqual(9, $reads, 'the scan found too few key reads: it is blind');
         $why = 'a DNI key goes to my.tracking202.com and nowhere else;'
             . ' list a read in KEY_READS only with where it goes';
         self::assertSame([], $problems, $why);

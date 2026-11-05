@@ -70,6 +70,7 @@ final class AccountZoneTest extends TestCase
         $lists = [
             '202-config/install.php' => 'the installer\'s option list, for an install with no zone yet',
             '202-account/account.php' => 'Personal settings\' option list, with the account\'s own zone added',
+            'tracking202/update/subids.php' => 'Update Subids\' time zone option list, with the account\'s own zone added; the post is checked with isZone()',
         ];
         $found = [];
         $files = SourceScan::phpFiles();

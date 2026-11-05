@@ -47,6 +47,14 @@ final class DedupeKey
             . ':' . self::positive($n, 'repeat index') . ':' . self::text($eventId, 'event id');
     }
 
+    /** A goal outcome in a PurLink offer's separate event stream. */
+    public static function purLinkGoal(int $subjectId, int $goalId, int $goalVersion, int $n, string $eventId): string
+    {
+        return 'pgoal:' . self::positive($subjectId, 'subject id') . ':' . self::positive($goalId, 'goal id')
+            . ':' . self::positive($goalVersion, 'goal version') . ':' . self::positive($n, 'repeat index')
+            . ':' . self::text($eventId, 'event id');
+    }
+
     /** The built-in install goal's row. One per click. */
     public static function install(): string
     {

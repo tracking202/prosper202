@@ -36,15 +36,16 @@ final class NamedTablesExistTest extends TestCase
     private const EXEMPT = ['202-config/functions-upgrade.php'];
 
     /**
-     * Unknown tables a file may still name, with the reason. Empty: the one
-     * entry it held, class-indexes.php's INDEXES::get_c1_id()..get_c4_id()
-     * on 202_clicks_c1..c4, was dead code (reached only through
-     * functions-indexes.php's get_cN_id() wrappers, which nothing called) and
-     * is gone with them.
+     * Unknown tables a file may still name, with the reason.
      *
      * @var array<string, array{list<string>, string}>
      */
-    private const KNOWN_UNKNOWN = [];
+    private const KNOWN_UNKNOWN = [
+        '202-config/Click/PurLinkPaidCarryOver.php' => [
+            ['202_clicks_purlink'],
+            'paid 1.9.56 created it; the upgrade only reads it to carry pending clicks over',
+        ],
+    ];
 
     private const REFERENCE = '/\b(?:FROM|JOIN|INTO|UPDATE|TRUNCATE(?:\s+TABLE)?|TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?)'
         . '\s+`?(202_[a-z0-9_]+)`?/i';

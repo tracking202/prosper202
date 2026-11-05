@@ -1,6 +1,12 @@
 <?php
 declare(strict_types=1);
 
+// A Shopify order webhook, which paid 1.9.56 took at this URL, is verified and recorded by shopify.php.
+if (isset($_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256']) || isset($_SERVER['HTTP_X_SHOPIFY_TOPIC'])) {
+	require __DIR__ . '/shopify.php';
+	exit;
+}
+
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
@@ -14,13 +20,51 @@ $mysql['use_pixel_payout'] = 0;
 $mysql['cid'] = 0;
 $mysql['click_id'] = 0;
 
+// Query string, then a form-encoded POST body (as paid 1.9.56 read): the query wins a name both send.
+$request = p202PostbackRequest($_GET, $_POST);
+
 // The click: an exact positive integer from subid (or sid), or a 404.
 // is_numeric() plus a cast used to turn "123.9" into click 123, and a
 // subid of 0 fell back to "the last click from this IP" — for a
 // server-to-server postback, the network's own server.
-$parsedClickId = p202ParseClickId($_GET['subid'] ?? null) ?? p202ParseClickId($_GET['sid'] ?? null);
+$parsedClickId = p202ParseClickId($request['subid'] ?? null) ?? p202ParseClickId($request['sid'] ?? null);
+$legacyPurLink = null;
+$signedPurLink = null;
+$signedPurLinkValue = null;
+$purLinkKey = null;
+// As for a plain id, sid is read when subid names no click in any form.
+$rawSubid = $request['subid'] ?? $request['sid'] ?? null;
+foreach (['subid', 'sid'] as $subidName) {
+    $subidValue = $request[$subidName] ?? null;
+    if (\Prosper202\Click\ClickRef::parse($subidValue) !== null
+        || (is_string($subidValue) && \Prosper202\Click\PurLinkSubid::legacy($subidValue) !== null)) {
+        $rawSubid = $subidValue;
+        break;
+    }
+}
+$signedPurLinkRead = $parsedClickId === null ? p202VerifyPurLinkSubid($db, $rawSubid, 'gpb') : null;
+if ($signedPurLinkRead !== null) {
+    $signedPurLink = $signedPurLinkRead['claims'];
+    $purLinkKey = $signedPurLinkRead['key'];
+    $parsedClickId = $signedPurLink['click_id'];
+    $signedPurLinkValue = $rawSubid;
+}
 if ($parsedClickId === null) {
-	p202RespondJsonError(404, 'SubID not found');
+    $legacyValue = $rawSubid;
+    if (is_string($legacyValue)) {
+        try {
+            $legacyPurLink = (new \Prosper202\Click\PurLinkLegacySubid(
+                \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+            ))->resolve($legacyValue);
+        } catch (\Throwable $legacyError) {
+            error_log('gpb: legacy PurLink lookup failed: ' . $legacyError->getMessage());
+            p202RespondJsonError(500, 'Failed to read SubID');
+        }
+    }
+    if ($legacyPurLink === null) {
+        p202RespondJsonError(404, 'SubID not found');
+    }
+    $parsedClickId = $legacyPurLink['click_id'];
 }
 $mysql['click_id'] = (string) $parsedClickId;
 
@@ -31,7 +75,7 @@ if ($cvar_sql_result === false) {
     record_mysql_error($db, $cvar_sql);
 }
 $cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
-if (!$cvar_sql_row) {
+if (!$cvar_sql_row || ($signedPurLink !== null && (int) $cvar_sql_row['user_id'] !== $signedPurLink['user_id'])) {
 	p202RespondJsonError(404, 'Click data not found');
 }
 // The traffic source and cost, whose pixels announce it: the first visit's,
@@ -67,10 +111,10 @@ $mysql['click_time'] = $db->real_escape_string((string)($cvar_sql_row['click_tim
 $mysql['ppc_account_id'] = $db->real_escape_string((string) ($source_row['ppc_account_id'] ?? ''));
 $mysql['referer'] = urlencode((string) $db->real_escape_string((string)($cvar_sql_row['site_url_address'] ?? '')));
 
-if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
+if (array_key_exists('amount', $request) && is_numeric($request['amount'])) {
 	$mysql['use_pixel_payout'] = 1;
-	$mysql['payout'] = $db->real_escape_string((string)$_GET['amount']);
-	$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
+	$mysql['payout'] = $db->real_escape_string((string)$request['amount']);
+	$mysql['click_payout'] = $db->real_escape_string((string)$request['amount']);
 }
 
 // Raw: replaceTokens() encodes them, and no statement here reads them.
@@ -122,7 +166,12 @@ $mysql['conv_time'] = $conv_time;
 // campaign without goals records its plain conversion below, as it always
 // has, with the event's name kept on the row.
 try {
-	$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['browser' => false]);
+    $webEvent = $signedPurLinkValue !== null
+        ? p202RecordPurLinkWebEvent($db, $signedPurLinkValue, $purLinkKey, $request)
+        : p202RecordWebEvent($db, (int) $mysql['click_id'], $request, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, [
+            'browser' => false,
+            'expected_campaign_id' => $legacyPurLink['campaign_id'] ?? null,
+        ]);
 } catch (\Throwable $webEventError) {
 	error_log('gpb: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
 	p202RespondJsonError(500, 'Failed to record event');
@@ -133,18 +182,19 @@ if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
 }
 $eventName = $webEvent['event_name'] ?? null;
 
-$reversal = p202ExtractReversal($_GET);
+$reversal = p202ExtractReversal($request);
 try {
 	$conversionResult = p202RecordConversion(
 		$db,
 		[
 			'click_id'        => (int) $mysql['click_id'],
+            'expected_campaign_id' => $legacyPurLink['campaign_id'] ?? null,
 			'user_id'         => (string) ($cvar_sql_row['user_id'] ?? '0'),
 			'conv_time'       => $conv_time,
 			'ip'              => p202StoredVisitorIp(),
 			'pixel_type'      => 2,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
-			'click_payout'    => ($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '0') : '',
+			'click_payout'    => ($mysql['use_pixel_payout'] == 1) ? (string) ($request['amount'] ?? '0') : '',
 			'source'          => \Prosper202\Conversion\Ledger\ConversionSource::POSTBACK->value,
 			'reversal'        => $reversal['reversal'],
 			'reversal_ref'    => $reversal['reversal_ref'],
@@ -153,7 +203,7 @@ try {
 			// from a repeat, so it converts the click once; the writer checks
 			// click_lead under the click lock (as gpx.php does). A reversal
 			// always names its sale's transaction id.
-			'once_per_click'  => p202ExtractTransactionId($_GET) === '',
+			'once_per_click'  => p202ExtractTransactionId($request) === '',
             // The traffic source's server postbacks are queued with the row,
             // in its transaction, and sent below; see after the record.
             'notify_traffic_source' => true,
@@ -162,11 +212,15 @@ try {
 		\Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,
-		($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
-		p202ExtractTransactionId($_GET),
-		p202ExtractCustomer($_GET),
-		p202ExtractItems($_GET)
+		($mysql['use_pixel_payout'] == 1) ? (string) ($request['amount'] ?? '') : '',
+		p202ExtractTransactionId($request),
+		p202ExtractCustomer($request),
+		p202ExtractItems($request),
+        $signedPurLinkValue,
+        $purLinkKey,
 	);
+} catch (\Prosper202\Conversion\PurLinkCampaignChanged $campaignError) {
+    p202RespondJsonError(404, 'SubID no longer matches the campaign');
 } catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
 	p202RespondJsonError(
 		$reversalError->kind === \Prosper202\Conversion\Ledger\ReversalException::CONFLICT ? 422 : 404,
@@ -180,18 +234,12 @@ try {
 }
 $conversionId = $conversionResult['conv_id'];
 if ($conversionId > 0) {
-	p202LinkConversionIdentity($db, (int) $mysql['click_id'], $_GET);
+	p202LinkConversionIdentity($db, (int) $mysql['click_id'], $request);
 }
 $newlyRecorded = $conversionId > 0 && !$conversionResult['duplicate'];
 
-// The server postbacks were queued with the conversion (the row and the
-// promise to announce it committed together). Send what is due for it now —
-// on a retry of a conversion already recorded too, so a first request that
-// died after its commit is recovered by the network's retry as well as by the
-// worker, which retries anything still pending.
-if ($conversionId > 0) {
-    p202SendQueuedPostbacks($db, $conversionId);
-}
+// The server postbacks were queued with the conversion. They go out after
+// this answer (p202SendQueuedPostbacksAfterAnswer(), at the end) or from the worker.
 
 // A reversal nets an earlier sale; announcing it to the traffic source as a
 // conversion would tell the network about a sale that was taken back.
@@ -202,8 +250,15 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
 	// This conversion's amount, not the click's cached total, which in an
 	// accumulating campaign is the sum of every conversion so far.
 	$tokens['payout'] = $conversionResult['payout'];
-    // Markup only: the type-4 postbacks went out through the outbox above.
-    $fired = p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens, null, false);
+    // Markup only: the type-4 postbacks were queued.
+    $fired = p202FireTrafficSourcePixels(
+        $db,
+        (int) $mysql['ppc_account_id'],
+        $tokens,
+        null,
+        false,
+        static fn (): bool => p202ConversionMayTrack($db, (int) $mysql['click_id'], $request)
+    );
 	if (array_intersect($fired['types'], [1, 2, 3, 4]) !== []) {
 		header('HTTP/1.1 202 Accepted', true, 202);
 	}
@@ -214,3 +269,4 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
 	}
 }
 
+p202SendQueuedPostbacksAfterAnswer($db, $conversionId);

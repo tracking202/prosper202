@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace Prosper202\Conversion;
 
-use Prosper202\Click\ClickId;
+use Prosper202\Click\ClickRef;
+use Prosper202\Click\PurLinkExit;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
@@ -97,7 +98,7 @@ final class RevenueUploadImporter
             $amount = (string) $line['amount'];
 
             try {
-                $result = $this->conversions->record($userId, [
+                $data = [
                     'click_id' => $clickId,
                     'payout' => $amount,
                     'source' => ConversionSource::REVENUE_UPLOAD->value,
@@ -110,7 +111,11 @@ final class RevenueUploadImporter
                     // exactly as the upload never did.
                     'skip_ltv' => true,
                     'skip_bridge' => true,
-                ], MatchMethod::CLICK_ID); // the line's subid named the click
+                ];
+                // The line's subid named the click; a signed PurLink SubID records on its offer.
+                $result = $line['purlink'] === null
+                    ? $this->conversions->record($userId, $data, MatchMethod::CLICK_ID)
+                    : $this->recordPurLink($userId, (string) $line['purlink'], $data);
             } catch (\Throwable $e) {
                 // Every line before this one is a committed row of the batch:
                 // say so, and leave the batch's counts saying what was read so
@@ -176,11 +181,18 @@ final class RevenueUploadImporter
         // Which of the subids are the account's clicks, read in chunks: the
         // question record() answers with clickFound.
         $ids = [];
+        $signed = [];
         $lineNo = 0;
         while (($line = self::readLine($handle, $lineNo, $subidColumn, $amountColumn)) !== false) {
             if ($line !== null && $line['status'] === null) {
                 $ids[(int) $line['click_id']] = true;
+                if ($line['purlink'] !== null) {
+                    $signed[(string) $line['purlink']] = true;
+                }
             }
+        }
+        foreach (array_keys($signed) as $subid) {
+            $signed[$subid] = $this->verifiedPurLink($userId, (string) $subid) !== null;
         }
         $owned = [];
         foreach (array_chunk(array_keys($ids), 500) as $chunk) {
@@ -215,7 +227,7 @@ final class RevenueUploadImporter
                 continue;
             }
             $clickId = (int) $line['click_id'];
-            if (!isset($owned[$clickId])) {
+            if (!isset($owned[$clickId]) || ($line['purlink'] !== null && !$signed[$line['purlink']])) {
                 $skipped++;
                 self::notRecorded($unrecorded, ['line' => $line['line'], 'subid' => $line['subid'], 'amount' => $line['raw_amount'], 'status' => self::SKIPPED,
                     'reason' => self::NO_CLICK]);
@@ -283,8 +295,8 @@ final class RevenueUploadImporter
         $subid = trim((string) ($row[$subidColumn] ?? ''));
         $rawAmount = trim((string) ($row[$amountColumn] ?? ''));
 
-        $clickId = ClickId::parse($subid);
-        if ($clickId === null) {
+        $ref = ClickRef::parse($subid);
+        if ($ref === null) {
             return $lineNo > 1
                 ? ['line' => $lineNo, 'subid' => $subid, 'amount' => $rawAmount, 'status' => self::SKIPPED,
                     'reason' => 'not a subid (a click id is a whole number)']
@@ -298,7 +310,36 @@ final class RevenueUploadImporter
                 'reason' => 'the commission is not a number'];
         }
 
-        return ['line' => $lineNo, 'subid' => $subid, 'click_id' => $clickId, 'amount' => $amount, 'raw_amount' => $rawAmount, 'status' => null];
+        return ['line' => $lineNo, 'subid' => $subid, 'click_id' => $ref->clickId, 'purlink' => $ref->purLinkSubid,
+            'amount' => $amount, 'raw_amount' => $rawAmount, 'status' => null];
+    }
+
+    /**
+     * A signed SubID's claims and key when its MAC verifies and its click is
+     * the account's; null otherwise.
+     *
+     * @return array{claims: array{click_id: int, landing_page_id: int, user_id: int, campaign_public_id: int}, key: string}|null
+     */
+    private function verifiedPurLink(int $userId, string $subid): ?array
+    {
+        $verified = ClickRef::verify($this->conn, $subid);
+
+        return $verified !== null && $verified['claims']['user_id'] === $userId ? $verified : null;
+    }
+
+    /**
+     * record() for a signed SubID: routed to its offer and recorded together.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private function recordPurLink(int $userId, string $subid, array $data): array
+    {
+        $verified = $this->verifiedPurLink($userId, $subid);
+        $result = $verified === null ? null
+            : (new PurLinkExit($this->conn))->recordConversion($subid, $verified['key'], $data, MatchMethod::CLICK_ID);
+
+        return $result ?? ['convId' => 0, 'duplicate' => false, 'clickFound' => false];
     }
 
     /**
