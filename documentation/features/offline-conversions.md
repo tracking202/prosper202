@@ -134,6 +134,17 @@ nothing when a fetch fails, and a conversion held for its click's first six
 hours is still in it the next day. The page shows when each URL was last
 fetched and how many conversions it sent.
 
+### Moving from the paid 1.9.56 feed
+
+Paid 1.9.56's Google Ads schedule URL,
+`…/tracking202/static/feeds/google/offlineconversions/?cn=…&ac=…`, answers
+`410 Gone` from 1.9.80, with these steps in its body, so the schedule shows
+as failed in Google Ads. Its user name and password are not carried over.
+Under *Conversion names*, enter the schedule's `cn` value on the row of the
+campaign its `ac` named, or on *Every other campaign* for `ac=--`; make a
+fetch URL in the Google Ads Uploads template
+format (90 days matches the old feed), and replace the schedule's URL with it.
+
 ## What a fetch does not do
 
 A conversion the platform already has stays there: a refund, a deletion or
