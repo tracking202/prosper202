@@ -4799,6 +4799,10 @@ class UPGRADE
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
+                // The ad platforms conversions are sent to, and their delivery
+                // log (Prosper202\Destinations).
+                \Prosper202\Database\Tables\ConversionTables::destinations(),
+                \Prosper202\Database\Tables\ConversionTables::destinationDeliveries(),
                 // IPQualityScore scoring (Prosper202\Fraud\IpqsScoring): each
                 // account's cached address scores and how far it has walked.
                 \Prosper202\Database\Tables\UserTables::ipqsScores(),

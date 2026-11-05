@@ -757,6 +757,20 @@ function RunSecondsCronjob()
             error_log('LTV webhooks failed: ' . $e->getMessage());
         }
 
+        // Destinations: the conversions queued for the account's ad
+        // platforms (Prosper202\Destinations), under their own budget. Each
+        // row is claimed before it is sent; a failure is recorded on its row.
+        try {
+            $destinations = (new \Prosper202\Destinations\DestinationQueue(new \Prosper202\Database\Connection($db)))
+                ->sendDue(200, \Prosper202\Destinations\DestinationQueue::RUN_SECONDS);
+            if (array_sum($destinations) > 0) {
+                echo 'Destinations: ' . (int) $destinations['sent'] . ' sent, ' . (int) $destinations['retrying'] . ' retrying, '
+                    . (int) $destinations['failed'] . ' failed, ' . (int) $destinations['withheld'] . ' withheld<br>';
+            }
+        } catch (\Throwable $e) {
+            error_log('Destinations failed: ' . $e->getMessage());
+        }
+
         echo 'Done<br>';
         ob_flush();
         flush();
