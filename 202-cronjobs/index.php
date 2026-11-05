@@ -253,6 +253,9 @@ function RunHourlyCronJob()
         PruneAppRetention();
         PrunePurLinkExitOrder();
 
+        // The inbound log keeps each account's newest requests (InboundLog::KEEP_PER_ACCOUNT).
+        PruneInboundLog();
+
         // Product analytics a page recorded and could not deliver (held
         // back by the throttle, then the tab closed, or a backlog left by
         // a portal outage). Hourly, not every minute: each failed try
@@ -412,6 +415,18 @@ function PruneAppRetention(): void
         }
     } catch (\Throwable $e) {
         error_log('App retention failed: ' . $e->getMessage());
+    }
+}
+
+function PruneInboundLog(): void
+{
+    try {
+        $deleted = (new \Prosper202\InboundLog\InboundLog(getDatabaseConnection()))->prune();
+        if ($deleted > 0) {
+            echo 'Inbound log: ' . $deleted . ' old request(s) pruned<br>';
+        }
+    } catch (\Throwable $e) {
+        error_log('Inbound log prune failed: ' . $e->getMessage());
     }
 }
 

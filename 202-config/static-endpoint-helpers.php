@@ -5,10 +5,26 @@ declare(strict_types=1);
 if (!function_exists('p202RespondJsonError')) {
     function p202RespondJsonError(int $code, string $message): never
     {
+        \Prosper202\InboundLog\RequestLog::current()?->refuse(null, $message, $code);
         http_response_code($code);
         header('Content-Type: application/json');
         echo json_encode(['error' => true, 'code' => $code, 'msg' => $message]);
         die();
+    }
+}
+
+if (!function_exists('p202InboundLogWatch')) {
+    /** Logs this postback or pixel request when it ends (Prosper202\InboundLog\RequestLog). */
+    function p202InboundLogWatch(mixed $db, string $endpoint): void
+    {
+        if (!$db instanceof mysqli) {
+            return; // no database: the endpoint answers its own outage
+        }
+        try {
+            \Prosper202\InboundLog\RequestLog::watch($db, $endpoint, (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'), $_GET);
+        } catch (\Throwable $e) {
+            error_log('Inbound log: could not watch the ' . $endpoint . ' request: ' . $e->getMessage());
+        }
     }
 }
 
@@ -622,6 +638,14 @@ if (!function_exists('p202RecordConversion')) {
             ));
         }
 
+        \Prosper202\InboundLog\RequestLog::current()?->conversionWritten(
+            $clickId,
+            (int) $result['convId'],
+            (bool) $result['duplicate'],
+            trim($transactionId),
+            (bool) ($result['clickFound'] ?? true)
+        );
+
         return [
             'conv_id' => $result['convId'],
             'duplicate' => $result['duplicate'],
@@ -1070,10 +1094,14 @@ if (!function_exists('p202RecordLegacyConversion')) {
         $click = $conn->fetchOne($stmt);
 
         $none = ['recorded' => false, 'duplicate' => false, 'conv_id' => 0];
+        $inbound = \Prosper202\InboundLog\RequestLog::current();
+        $inbound?->click($clickId);
         if (!is_array($click)) {
+            $inbound?->legacyResult('unknown_click');
             return $none + ['reason' => 'unknown_click'];
         }
         if (isset($opts['user_id']) && (int) $click['user_id'] !== (int) $opts['user_id']) {
+            $inbound?->legacyResult('foreign_click');
             return $none + ['reason' => 'foreign_click'];
         }
         // A signed PurLink SubID proves its offer: the writer routes the click
@@ -1084,6 +1112,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
             $purLinkSubid === null && isset($opts['campaign_id'])
             && !p202ClickVisitedCampaign($conn, $clickId, (int) $click['user_id'], (int) $opts['campaign_id'])
         ) {
+            $inbound?->legacyResult('campaign_mismatch');
             return $none + ['reason' => 'campaign_mismatch'];
         }
 
@@ -1095,6 +1124,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
             ? null
             : p202LegacyConversionGate((int) $click['click_lead'] === 1, $transactionId);
         if ($blocked !== null) {
+            $inbound?->legacyResult($blocked);
             return $none + ['reason' => $blocked];
         }
 
@@ -1388,6 +1418,7 @@ if (!function_exists('p202RespondWebEvent')) {
     {
         switch ($outcome['status']) {
             case 'invalid':
+                \Prosper202\InboundLog\RequestLog::current()?->refuse('invalid_event', (string) $outcome['message'], 422);
                 http_response_code(422);
                 header('Content-Type: application/json');
                 echo json_encode(['error' => true, 'code' => 422, 'msg' => (string) $outcome['message'], 'field_errors' => $outcome['errors']]);
@@ -1400,6 +1431,12 @@ if (!function_exists('p202RespondWebEvent')) {
                 return;
             case 'recorded':
                 $result = $outcome['result'];
+                \Prosper202\InboundLog\RequestLog::current()?->converted(
+                    $result['accepted'] !== [] ? 'event_recorded' : 'duplicate',
+                    null,
+                    null,
+                    $result['accepted'] !== [] ? 'The event was recorded.' : 'The event was on file already.'
+                );
                 if ($echoMarkup && $outcome['markup'] !== '') {
                     echo $outcome['markup'];
                     die();
