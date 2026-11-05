@@ -87,7 +87,7 @@ get() { curl -sS -c "$JAR" -b "$JAR" -o "$2" -w '%{http_code}' "$BASE/$1"; }
 value() { Q "SELECT CONCAT(click_lead, '/', click_payout) FROM 202_clicks WHERE click_id=$1"; }
 table() { python3 "$HERE/html-table.py" "$1" "$2"; }
 
-OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
+OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE (key_hash = SHA2('$P202_API_KEY', 256) OR (key_hash IS NULL AND api_key COLLATE utf8mb4_bin = '$P202_API_KEY'))")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
 NOW=$(date +%s)
 # Ten minutes ago, or just after the account's newest click if that is
@@ -204,7 +204,7 @@ eq "$(field "[(r['transaction_id'], r['counted'], r['not_counted_reason'], r['su
    '[["R-1", false, "superseded", "replace"], ["R-2", true, null, null], ["R-API", false, "deleted", null]]' \
    "R-1 superseded by R-2, R-API deleted, R-2 counts"
 eq "$(field "d['data'][0]['superseded_by']")" "$(Q "SELECT conv_id FROM 202_conversion_logs WHERE click_id=$R AND transaction_id='R-2'")" "R-1 names the row that replaced it"
-eq "$(field "d['data'][2]['linked_to']['label']")" "API key created $(Q "SELECT DATE(FROM_UNIXTIME(created_at)) FROM 202_api_keys WHERE api_key='$P202_API_KEY'" | tr -d '\n')" "the API row names its key by when it was created"
+eq "$(field "d['data'][2]['linked_to']['label']")" "API key created $(Q "SELECT DATE(FROM_UNIXTIME(created_at)) FROM 202_api_keys WHERE (key_hash = SHA2('$P202_API_KEY', 256) OR (key_hash IS NULL AND api_key COLLATE utf8mb4_bin = '$P202_API_KEY'))" | tr -d '\n')" "the API row names its key by when it was created"
 hasnt "$OUT/body" "$P202_API_KEY" "and never by its value"
 eq "$(api GET /clicks/$N/conversions)" 200 "a click with no conversions has an empty breakdown"
 eq "$(field "[d['data'], d['click']['lead'], d['click']['ledger_value'], d['click']['matches_click']]")" '[[], false, null, true]' "not a lead, nothing to add up"

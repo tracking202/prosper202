@@ -92,7 +92,7 @@ skan() { # app-id transaction-id
       "$BASE/.well-known/skadnetwork/report-attribution/"
 }
 
-OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'" 2>/dev/null)
+OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE (key_hash = SHA2('$P202_API_KEY', 256) OR (key_hash IS NULL AND api_key COLLATE utf8mb4_bin = '$P202_API_KEY'))" 2>/dev/null)
 [ -n "$OWNER" ] || OWNER=$(Q "SELECT user_id FROM 202_users ORDER BY user_id LIMIT 1")
 [ -n "$OWNER" ] || { echo "no user in $DB" >&2; exit 2; }
 IOS=990088001; SHARED=990088002

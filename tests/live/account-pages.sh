@@ -247,24 +247,27 @@ msgs "$OUT/k-new.html"
 eq "$FIRST_STATUS" "303" "a created key redirects"
 has "$OUT/k-new.html" 'API key created.' "and says so"
 eq "$(Q "SELECT COUNT(*) FROM 202_api_keys WHERE user_id=$OWNER")" "$((KEYS_BEFORE+1))" "one key more"
-NEWKEY=$(Q "SELECT api_key FROM 202_api_keys WHERE user_id=$OWNER ORDER BY created_at DESC, api_key LIMIT 1")
-if [[ "$NEWKEY" =~ ^[0-9a-f]{64}$ ]]; then ok "the server minted a 64-hex key"; else bad "new key shape: '$NEWKEY'"; fi
-# Revealable, and masked on screen: the full key is only in the reveal/copy data.
-has "$OUT/k-new.html" "data-p202-value=\"$NEWKEY\"" "the key is behind Reveal"
-hasnt "$OUT/k-new.html" ">$NEWKEY</pre>" "and not printed in the clear"
+NEWKEY=$(grep -o '<pre class="p202-code__value">[0-9a-f]\{64\}</pre>' "$OUT/k-new.html" | head -1 | sed -E 's/<[^>]+>//g')
+if [[ "$NEWKEY" =~ ^[0-9a-f]{64}$ ]]; then ok "the server minted a 64-hex key, shown once"; else bad "new key shape: '$NEWKEY'"; fi
+REF=$(Q "SELECT SHA2('$NEWKEY', 256)")
+eq "$(Q "SELECT COUNT(*) FROM 202_api_keys WHERE user_id=$OWNER AND api_key='' AND key_hash='$REF'")" "1" "only its hash is stored"
+hasnt "$OUT/k-new.html" "data-p202-value=" "no key is kept behind a Reveal"
+get "202-account/account.php" "$OUT/account.html"
+hasnt "$OUT/account.html" "$NEWKEY" "a reload shows the key nowhere"
+has "$OUT/account.html" "${NEWKEY:0:8}" "the list shows its first 8 characters"
 # A key the API really accepts: the page wrote the same row the API reads.
 API_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $NEWKEY" "$BASE/api/v3/campaigns")
 eq "$API_CODE" "200" "the new key authenticates against the v3 API"
 
 get "202-account/account.php" "$OUT/account.html"
-submit "$OUT/account.html" "rest_api_key=$NEWKEY" "202-account/account.php" "$OUT/r-bad.html" token=forged
+submit "$OUT/account.html" "api_key_ref=$REF" "202-account/account.php" "$OUT/r-bad.html" token=forged
 has "$OUT/r-bad.html" "$REFUSED" "a revoke with a bad token is refused"
-eq "$(Q "SELECT COUNT(*) FROM 202_api_keys WHERE api_key='$NEWKEY'")" "1" "the key survives it"
+eq "$(Q "SELECT COUNT(*) FROM 202_api_keys WHERE key_hash='$REF'")" "1" "the key survives it"
 get "202-account/account.php" "$OUT/account.html"
-submit "$OUT/account.html" "rest_api_key=$NEWKEY" "202-account/account.php" "$OUT/r-ok.html"
+submit "$OUT/account.html" "api_key_ref=$REF" "202-account/account.php" "$OUT/r-ok.html"
 msgs "$OUT/r-ok.html"
 has "$OUT/r-ok.html" 'API key revoked.' "revoking says so"
-eq "$(Q "SELECT COUNT(*) FROM 202_api_keys WHERE api_key='$NEWKEY'")" "0" "the key is gone"
+eq "$(Q "SELECT COUNT(*) FROM 202_api_keys WHERE key_hash='$REF'")" "0" "the key is gone"
 API_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $NEWKEY" "$BASE/api/v3/campaigns")
 eq "$API_CODE" "401" "and the API refuses it"
 

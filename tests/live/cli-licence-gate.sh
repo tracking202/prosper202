@@ -153,7 +153,7 @@ request() {
 }
 
 if [ -z "$USER_ID" ]; then
-    USER_ID=$(mysql_q "SELECT user_id FROM 202_api_keys WHERE api_key = '$API_KEY' LIMIT 1")
+    USER_ID=$(mysql_q "SELECT user_id FROM 202_api_keys WHERE (key_hash = SHA2('$API_KEY', 256) OR (key_hash IS NULL AND api_key COLLATE utf8mb4_bin = '$API_KEY')) LIMIT 1")
     if [ -z "$USER_ID" ]; then
         echo "P202_API_KEY is not in 202_api_keys of $DB: the instance at $BASE and the database must be the same install" >&2
         exit 2

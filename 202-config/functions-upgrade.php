@@ -170,6 +170,23 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
             error_log('Prosper202 upgrade: the cached licence answers could not be copied: ' . $e->getMessage());
         }
     }
+
+    /**
+     * Hash the API keys still stored whole (ApiKeyStore::hashStoredKeys()),
+     * for the 1.9.80 rung. False when one is left whole.
+     */
+    function _upgrade_hash_api_keys(): bool
+    {
+        global $db;
+
+        try {
+            $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
+            return \Prosper202\User\ApiKeyStore::hashStoredKeys($conn);
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade: the API keys could not be hashed: ' . $e->getMessage());
+            return false;
+        }
+    }
 }
 
 if (!function_exists('_upgrade_purlink_carryover')) {
@@ -795,6 +812,13 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 continue;
             }
             if (!$reconciler->reconcile($definition)) {
+                $ok = false;
+                continue;
+            }
+            // The keys still stored whole are hashed once key_hash is there
+            // (_upgrade_hash_api_keys()).
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::API_KEYS
+                && !_upgrade_hash_api_keys()) {
                 $ok = false;
             }
         }
@@ -4779,6 +4803,10 @@ class UPGRADE
                 // log (Prosper202\Destinations).
                 \Prosper202\Database\Tables\ConversionTables::destinations(),
                 \Prosper202\Database\Tables\ConversionTables::destinationDeliveries(),
+                // Each API key as its SHA-256 and prefix, and an AI connection's
+                // key with its watcher token (Prosper202\User\ApiKeyStore); the
+                // reconcile hashes the keys already there.
+                \Prosper202\Database\Tables\UserTables::apiKeys(),
                 // The money-loss alerts' settings per account (no row is on;
                 // a row with enabled 0 is off), and the incident each was last
                 // sent for (Prosper202\Alerts).
@@ -4807,7 +4835,7 @@ class UPGRADE
                 }
             } else {
                 error_log('Prosper202 upgrade: a table of the 1.9.80 step or the paid 1.9.56 baseline could not be reconciled (the list above),'
-                    . ' or the paid PurLink clicks carried over; leaving version at 1.9.79 so the next run retries.');
+                    . ' an API key hashed, or the paid PurLink clicks carried over; leaving version at 1.9.79 so the next run retries.');
             }
         }
 

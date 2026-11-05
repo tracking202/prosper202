@@ -95,7 +95,7 @@ ev()    { # id name occurred-offset [extra json fields]
     printf '{"event_id":"%s","name":"%s","occurred_at":%s%s}' "$1" "$2" "$((T + $3))" "${4:+,$4}"
 }
 
-OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
+OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE (key_hash = SHA2('$P202_API_KEY', 256) OR (key_hash IS NULL AND api_key COLLATE utf8mb4_bin = '$P202_API_KEY'))")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
 T=$(( $(date +%s) - 86400 ))
 ACC=940001; REP=940002; MISS=940003; LATE=940004; TRUST=940005; REEV=940006; DEP=940007; BACK=940008
