@@ -64,6 +64,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"rename category", "rename affiliate network"}},
 	{Run: "p202 campaign list", Pages: []string{"Setup › Campaigns"},
 		Phrases: []string{"affiliate offers", "my offers"}},
+	{Run: "p202 campaign replace-url",
+		Phrases: []string{"bulk url change", "rewrite offer urls"}},
 	{Run: "p202 landing-page list", Pages: []string{"Setup › Landing Pages"}},
 	{Run: "p202 text-ad list", Pages: []string{"Setup › Text Ads"}},
 	{Run: "p202 rotator list", Pages: []string{"Setup › Redirector"},
