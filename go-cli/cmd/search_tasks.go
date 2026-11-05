@@ -92,6 +92,9 @@ var searchTasks = []searchTask{
 			"conversions api", "send conversions to ad platforms"}},
 	{Run: "p202 destination deliveries",
 		Phrases: []string{"ga4 delivery log", "why did a conversion not reach google analytics", "test ga4 destination"}},
+	{Run: "p202 conversion inbound-log --outcome refused", Pages: []string{"Setup › Inbound Log"},
+		Phrases: []string{"postback log", "refused postbacks", "why a postback failed", "conversions not showing",
+			"ipn log", "rejected pixel", "inbound requests"}},
 
 	// Overview
 	{Run: "p202 report breakdown --breakdown campaign", Pages: []string{"Overview › Campaign Overview"},

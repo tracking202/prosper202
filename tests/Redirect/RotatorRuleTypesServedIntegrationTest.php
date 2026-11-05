@@ -93,6 +93,8 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
         self::q('DELETE FROM 202_last_ips WHERE user_id = ' . self::OWNER);
         self::q('DELETE FROM 202_users_pref WHERE user_id = ' . self::OWNER);
         self::q('DELETE FROM 202_users WHERE user_id = ' . self::OWNER);
+        self::q("DELETE FROM 202_utm_source WHERE utm_source = 'r7fx-cased'");
+        self::q("DELETE FROM 202_keywords WHERE keyword = 'r7fx cased kw'");
     }
 
     private static function seed(): void
@@ -111,6 +113,9 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
             'aff_campaign_id' => 0, 'text_ad_id' => 0, 'ppc_account_id' => 0, 'landing_page_id' => 0,
             'rotator_id' => self::ROTATOR, 'click_cloaking' => 0, 'tracker_time' => time(),
         ]);
+        // Another account's click stored these first, in other casing: the lookup is shared and case-insensitive.
+        self::q("INSERT INTO 202_utm_source SET utm_source = 'R7FX-Cased'");
+        self::q("INSERT INTO 202_keywords SET keyword = 'R7FX Cased KW'");
         // Tried in this order; the visitor rules match everyone else, so they come last.
         $rules = [
             // The account has no IPQualityScore key: the score is unknown, so this matches nobody.
@@ -119,6 +124,8 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
             7342 => ['c1', 'is', 'spring', 'https://c1.example/'],
             7343 => ['t202kw', 'is', 'crm trial', 'https://keyword.example/'],
             7344 => ['referer', 'is', 'partner\.example', 'https://referer.example/'],
+            7348 => ['utm_source', 'is', 'r7fx-cased', 'https://utm-cased.example/'],
+            7349 => ['t202kw', 'is', 'r7fx cased kw', 'https://keyword-cased.example/'],
             7345 => ['iprange', 'is', '192.0.2.0/24', 'https://range.example/'],
             7346 => ['visitor', 'is', 'filtered', 'https://filtered.example/'],
             7347 => ['visitor', 'is_not', 'filtered', 'https://unique.example/'],
@@ -213,23 +220,36 @@ final class RotatorRuleTypesServedIntegrationTest extends TestCase
     }
 
     /**
-     * offrtr.php, a landing page's offer link, reads the same rules through
-     * the same matcher, but its request is the landing page's ?rpi= link, not
-     * the visitor's: a c1-c4, utm, keyword or referer rule is skipped there,
-     * whatever that request carries, and the visitor rule decides.
+     * offrtr.php is reached by the landing page's bare ?rpi= link, which
+     * carries none of the visitor's values: its c1-c4, utm, keyword and
+     * referer rules match on the click the landing page recorded (R7FX),
+     * never on the offer request, and a click with none of them falls to the
+     * visitor rule.
+     *
+     * @return iterable<string, array{string, string, string, string, string}>
      */
-    public function testTheOfferLinkMatchesTheSameRules(): void
+    public static function offerLinkCases(): iterable
     {
-        $ip = '198.51.100.17';
-        self::get('/tracking202/redirect/rtr.php?t202id=' . (self::TRACKER + self::PUBLIC), $ip);
+        // [the visitor's own link query, its referer, ip, extra on the offer request, expected destination]
+        yield 'utm from the click' => ['&utm_source=newsletter', '', '198.51.100.21', '', 'https://utm.example/'];
+        yield 'c1 from the click' => ['&c1=spring', '', '198.51.100.22', '', 'https://c1.example/'];
+        yield 'keyword from the click' => ['&t202kw=crm%20trial', '', '198.51.100.23', '', 'https://keyword.example/'];
+        yield 'referer from the click' => ['', 'https://www.partner.example/post', '198.51.100.24', '', 'https://referer.example/'];
+        yield 'utm stored in other casing' => ['&utm_source=r7fx-cased', '', '198.51.100.26', '', 'https://utm-cased.example/'];
+        yield 'keyword stored in other casing' => ['&t202kw=r7fx%20cased%20kw', '', '198.51.100.27', '', 'https://keyword-cased.example/'];
+        yield 'the offer request is not read' => ['', '', '198.51.100.25', '&utm_source=newsletter&c1=spring', 'https://unique.example/'];
+    }
+
+    /** @dataProvider offerLinkCases */
+    public function testTheOfferLinkMatchesTheRecordedClick(string $link, string $referer, string $ip, string $offerExtra, string $expected): void
+    {
+        self::get('/tracking202/redirect/rtr.php?t202id=' . (self::TRACKER + self::PUBLIC) . $link, $ip, $referer);
         $click = (int) (self::requireScratch()->query('SELECT MAX(click_id) FROM 202_clicks WHERE user_id = ' . self::OWNER)
             ->fetch_row()[0] ?? 0);
         self::assertGreaterThan(0, $click, 'the redirector link recorded a click' . $this->serverLog());
-        $offer = '/tracking202/redirect/offrtr.php?rpi=' . (self::ROTATOR + self::PUBLIC);
-        foreach (['', '&utm_source=newsletter', '&c1=spring', '&t202kw=crm%20trial'] as $query) {
-            [$status, $headers] = self::get($offer . $query, $ip, 'https://www.partner.example/landing', 'tracking202subid=' . $click);
-            self::assertSame(302, $status, $query . $headers . $this->serverLog());
-            self::assertStringStartsWith('https://unique.example/', self::location($headers), $query . $headers);
-        }
+        $offer = '/tracking202/redirect/offrtr.php?rpi=' . (self::ROTATOR + self::PUBLIC) . $offerExtra;
+        [$status, $headers] = self::get($offer, $ip, 'https://lp.example/landing', 'tracking202subid=' . $click);
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertStringStartsWith($expected, self::location($headers), $headers);
     }
 }

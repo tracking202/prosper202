@@ -2512,6 +2512,108 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /conversions/inbound-log:
+    get:
+      tags: [Conversions]
+      summary: Postbacks, pixels and payment notifications received, and why each was refused
+      description: |
+        The requests the postback (`pb`, `gpb`), pixel (`px`, `gpx`, `upx`)
+        and payment notification (`clickbank`, `jvzoo`, `paykickstart`)
+        endpoints answered for the account, newest first, with the HTTP
+        status the sender got, the outcome and the reason: the same list as
+        Setup › Inbound Log, asked with the role's access to the Setup
+        section. An admin also gets the requests no account could be found
+        for, with `user_id` null. The newest 5,000 per account are kept.
+        `fields` holds every field's name, and its value only for the
+        fields the endpoint is known to send and only when it holds no
+        email or IP address; every other value is `[redacted]`.
+      operationId: listInboundLog
+      parameters:
+        - name: outcome
+          in: query
+          description: >-
+            refused (recorded nothing), accepted, or one outcome name such as
+            unknown_click or unverified.
+          schema:
+            type: string
+        - name: endpoint
+          in: query
+          schema:
+            type: string
+            enum: [pb, gpb, px, gpx, upx, clickbank, jvzoo, paykickstart, shopify, zaxaa]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+        - name: before
+          in: query
+          description: Only requests older than this inbound_id (the previous page's next_before).
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The requests, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        inbound_id:
+                          type: integer
+                        received_at:
+                          type: integer
+                          description: Unix time
+                        endpoint:
+                          type: string
+                        method:
+                          type: string
+                        http_status:
+                          type: integer
+                        accepted:
+                          type: boolean
+                          description: >-
+                            True for recorded, reversed, duplicate, test,
+                            ignored and event_recorded; every other outcome
+                            recorded nothing.
+                        outcome:
+                          type: string
+                        reason:
+                          type: string
+                        user_id:
+                          type: integer
+                          nullable: true
+                        click_id:
+                          type: integer
+                          nullable: true
+                        conversion_id:
+                          type: integer
+                          nullable: true
+                        transaction_id:
+                          type: string
+                          nullable: true
+                        fields:
+                          type: object
+                          nullable: true
+                          additionalProperties: true
+                  next_before:
+                    type: integer
+                    nullable: true
+                  kept_per_account:
+                    type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /conversions/offline-export:
     get:
       tags: [Conversions]

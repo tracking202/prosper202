@@ -898,6 +898,9 @@ p202 conversion offline-export --format google|google_uploads|microsoft [--days 
                        [--output FILE] [--summary] [--json]
                        # Setup › Offline Conversions: the Google Ads / Microsoft Advertising import CSV;
                        # --summary says how many conversions it holds and why each other one is left out
+p202 conversion inbound-log [--outcome refused|accepted|<outcome>] [--endpoint pb|gpb|px|gpx|upx|clickbank|jvzoo|paykickstart]
+                       [--limit 1-500] [--before ID] [--json]
+                       # Setup › Inbound Log: postbacks, pixels and IPNs received, newest first, with why each was refused
 p202 conversion get    <id> [--json]
 p202 conversion create --click-id N [--payout F] [--transaction-id S] [--conv-time T] [--idempotency-key S]
                        [--status reversed [--reversal-id S]]      # a reversal of the sale with --transaction-id

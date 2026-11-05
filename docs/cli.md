@@ -814,6 +814,24 @@ with every method's totals over the campaigns it lists; `--json` is
 `GET /conversions/match-methods`. The PHP CLI's `conversion:match-methods`
 prints the same.
 
+### Inbound log: postbacks, pixels and payment notifications received
+
+```bash
+p202 conversion inbound-log --outcome refused
+p202 conversion inbound-log --endpoint jvzoo --limit 20 --json
+```
+
+Every request the postback (`pb`, `gpb`), pixel (`px`, `gpx`, `upx`) and
+payment notification (`clickbank`, `jvzoo`, `paykickstart`) endpoints
+answered, newest first: the HTTP status the sender got, the outcome
+(`recorded`, `duplicate`, `unknown_click`, `unverified`, `no_click`, ...)
+and why. `--outcome refused` lists only the requests that recorded
+nothing. Each row keeps the request's fields with signatures, keys, tokens,
+addresses, emails and names redacted. An admin's key also lists the
+requests no account could be found for (`user_id` null). The newest 5,000
+per account are kept. `--json` is `GET /conversions/inbound-log`; page with
+`--before` set to the previous answer's `next_before`.
+
 ### Offline conversion files for Google Ads and Microsoft Advertising
 
 ```bash
