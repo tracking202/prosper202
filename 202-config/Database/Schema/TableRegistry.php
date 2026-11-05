@@ -116,6 +116,7 @@ final class TableRegistry
     public const string NOTIFICATION_CORRECTION_URLS = '202_notification_correction_urls';
     public const string OFFLINE_CONVERSION_FEEDS = '202_offline_conversion_feeds';
     public const string OFFLINE_CONVERSION_NAMES = '202_offline_conversion_names';
+    public const string INBOUND_LOG = '202_inbound_log';
 
     // Deployment-wide secrets (SecretTables): owned by the installation, not
     // by any user

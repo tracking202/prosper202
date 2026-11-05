@@ -11,6 +11,7 @@ header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
+p202InboundLogWatch($db, 'gpb');
 // getUrl() for server-side postback pixels (not pulled in by connect2.php)
 include_once(substr(__DIR__, 0,-19) . '/202-config/functions-tracking202api.php');
 
@@ -90,6 +91,7 @@ $source_row = p202FetchRow($source_result, $source_sql);
 // install's and this click's account's (p202ApplyOwnerPrivacy()), before
 // the address is stored or a cookie set.
 p202ApplyOwnerPrivacy($cvar_sql_row['user_id'] ?? null);
+\Prosper202\InboundLog\RequestLog::current()?->account($cvar_sql_row['user_id'] ?? null);
 $mysql['t202kw'] = $db->real_escape_string((string)($cvar_sql_row['keyword'] ?? ''));
 $mysql['c1'] = $db->real_escape_string((string)($cvar_sql_row['c1'] ?? ''));
 $mysql['c2'] = $db->real_escape_string((string)($cvar_sql_row['c2'] ?? ''));
