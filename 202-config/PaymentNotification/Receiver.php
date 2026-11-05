@@ -6,12 +6,16 @@ namespace Prosper202\PaymentNotification;
 
 use Prosper202\Database\Connection;
 use Prosper202\Database\SchemaVersion;
+use Prosper202\InboundLog\Entry;
+use Prosper202\InboundLog\InboundLog;
+use Prosper202\InboundLog\Redactor;
 
 /**
  * One notification endpoint's work, for any provider: refuse what is not
  * a POST, verify the request against every account's stored secrets before
  * anything reads it as a notification, process it, and log one line saying
- * what became of it. Nothing is written before the signature verifies.
+ * what became of it, in the server log and the inbound log (InboundLog).
+ * Nothing else is written before the signature verifies.
  *
  * A failure while the files are deployed and the upgrade has not run says
  * so (a 503 naming the upgrade), as the API's answers do: the older schema
@@ -22,6 +26,7 @@ final class Receiver
     public function __construct(
         private readonly ProviderAdapter $provider,
         private readonly \mysqli $db,
+        private readonly ?InboundLog $inboundLog = null,
     ) {
     }
 
@@ -37,6 +42,23 @@ final class Receiver
             }
         }
         error_log($this->logLine($request, $outcome, $notification));
+        try {
+            $endpoint = strtolower($this->provider->name());
+            ($this->inboundLog ?? new InboundLog($this->db))->append(new Entry(
+                $endpoint,
+                $request->method !== '' ? $request->method : 'GET',
+                Response::status($outcome->kind),
+                $outcome->kind->value,
+                $outcome->message,
+                $outcome->accountId ?? 0,
+                $notification?->clickId,
+                $outcome->conversionId,
+                $notification?->transactionId,
+                Redactor::fields($request->fields, $endpoint),
+            ));
+        } catch (\Throwable $e) {
+            error_log($this->provider->name() . ' notification: the inbound log could not be written: ' . $e->getMessage());
+        }
 
         return $outcome;
     }
@@ -69,6 +91,7 @@ final class Receiver
                 'The stored secret keys could not be read just now; nothing was recorded. Send it again.'
             ), null];
         }
+        $verification = null;
         try {
             $verification = $this->provider->verify($request, $secrets);
             if ($verification === null) {
@@ -81,7 +104,14 @@ final class Receiver
             }
             $notification = $this->provider->parse($request);
         } catch (Refusal $refusal) {
-            return [$refusal->outcome, null];
+            // A verified request is its account's, so the inbound log can show it there.
+            $accounts = $verification?->accounts() ?? [];
+            $refused = $refusal->outcome;
+            if ($refused->accountId === null && count($accounts) === 1) {
+                $refused = new Outcome($refused->kind, $refused->message, $refused->conversionId, $accounts[0]);
+            }
+
+            return [$refused, null];
         } catch (\Throwable $e) {
             error_log($name . ' notification: it could not be read: ' . $e->getMessage());
 

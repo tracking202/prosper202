@@ -5,6 +5,7 @@ header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
+p202InboundLogWatch($db, 'upx');
 include_once(substr(__DIR__, 0,-19) . '/202-config/functions-tracking202api.php');
 
 //get the aff_camapaign_id
@@ -23,6 +24,7 @@ $mysql['cid'] = (string) $campaignIdFromRequest;
 $requestedClick = p202ClickIdFromRequest($_GET, $_COOKIE, $campaignIdFromRequest);
 if ($requestedClick['malformed'] !== null) {
     error_log('upx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
+    \Prosper202\InboundLog\RequestLog::current()?->refuse('malformed_click', 'The ' . $requestedClick['malformed'] . ' does not hold a click id.');
     exit;
 }
 // A signed PurLink SubID names its click once its MAC verifies, and records
@@ -94,6 +96,7 @@ $source_row = p202FetchRow($source_result, $source_sql);
 // install's and this click's account's (p202ApplyOwnerPrivacy()), before
 // the conversion stores the address.
 p202ApplyOwnerPrivacy($cvar_sql_row['user_id'] ?? null);
+\Prosper202\InboundLog\RequestLog::current()?->account($cvar_sql_row['user_id'] ?? null);
 $mysql['t202kw'] = $db->real_escape_string((string) ($cvar_sql_row['keyword'] ?? ''));
 $mysql['c1'] = $db->real_escape_string((string) ($cvar_sql_row['c1'] ?? ''));
 $mysql['c2'] = $db->real_escape_string((string) ($cvar_sql_row['c2'] ?? ''));
@@ -220,6 +223,7 @@ if (is_numeric($mysql['click_id'])) {
 	);
 	} catch (\Throwable $conversionError) {
 		error_log('upx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
+		\Prosper202\InboundLog\RequestLog::current()?->refuse('failed', 'The conversion could not be recorded just now.');
 	}
 	$conversionId = $conversionResult['conv_id'];
 	if ($conversionId > 0) {
