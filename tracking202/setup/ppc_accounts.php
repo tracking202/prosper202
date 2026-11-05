@@ -133,8 +133,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				if ($slack)
 					$slack->push('traffic_source_created', ['name' => $_POST['ppc_network_name'], 'user' => $user_row['username']]);
 			}
-
-			tagUserByNetwork($user_row['install_hash'], 'traffic-sources', $_POST['ppc_network_name']);
 		}
 	}
 
