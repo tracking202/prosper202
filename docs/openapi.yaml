@@ -17084,7 +17084,7 @@ components:
         summary:
           type: object
           nullable: true
-          description: What was sent - event, params, consent, and which identifiers went (client_id and user_id true or false, user_data the hashed fields' names), never their values.
+          description: What was sent - event, value, currency and transaction_id, the mapped params' names (true), consent, and which identifiers went (client_id and user_id true or false, user_data the hashed fields' names), never their values.
         created_at: {type: integer}
         sent_at: {type: integer, nullable: true}
     AppNotification:

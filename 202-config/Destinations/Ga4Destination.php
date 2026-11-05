@@ -212,10 +212,15 @@ final class Ga4Destination implements DestinationType
     public static function summary(array $body): array
     {
         $event = $body['events'][0] ?? [];
+        // A mapped parameter carries whatever the link put in the field: its name is kept, not its value.
+        $params = [];
+        foreach ((array) ($event['params'] ?? []) as $name => $value) {
+            $params[$name] = in_array($name, ['value', 'currency', 'transaction_id'], true) ? $value : true;
+        }
 
         return [
             'event' => $event['name'] ?? null,
-            'params' => $event['params'] ?? [],
+            'params' => $params,
             'client_id' => isset($body['client_id']),
             'user_id' => isset($body['user_id']),
             'user_data' => array_keys($body['user_data'] ?? []),

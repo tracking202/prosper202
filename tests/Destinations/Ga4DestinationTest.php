@@ -102,6 +102,7 @@ final class Ga4DestinationTest extends TestCase
         self::assertStringNotContainsString(hash('sha256', 'a@example.com'), (string) json_encode($summary), 'and never their values');
         self::assertSame([true, true], [$summary['client_id'], $summary['user_id']], 'nor the client and user ids\' values');
         self::assertStringNotContainsString('p202.4242', (string) json_encode($summary));
+        self::assertSame(['currency' => 'USD', 'value' => 19.9, 'transaction_id' => 'ORD-1001', 'campaign' => true], $summary['params'], 'a mapped parameter\'s value is not kept');
     }
 
     public function testAUserIdIsSentOnlyForACustomerAndOnlyWhenAsked(): void

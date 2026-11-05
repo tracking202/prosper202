@@ -30,8 +30,9 @@ Set them up on **Setup › Destinations**, with `p202 destination`, or through
    parse, is tried again like a timeout.
 3. Every row is in the destination's delivery log with its status, the
    number of tries, the platform's last answer and a summary of what was
-   sent: the event, its parameters and consent, and which identifiers went
-   (client id, user id, hashed email or phone), never their values.
+   sent: the event, its value, currency and transaction id, the names of
+   the mapped parameters, consent, and which identifiers went (client id,
+   user id, hashed email or phone), never their values.
 
 | Status | Meaning |
 | --- | --- |
@@ -91,7 +92,10 @@ receives twice once), at the conversion's own time. A conversion that
 replaces an earlier one on the same click (a campaign that pays the latest
 conversion, or a newer revenue upload) is sent with the transaction id of
 the first one it replaced, so GA4 counts the sale once and keeps the value
-it received first.
+it received first. Delivery is at least once: a send whose result could not be
+recorded (a crash mid-run) is sent again, and only `purchase` events are
+de-duplicated by GA4 on `transaction_id`, so a custom event name can count
+such a conversion twice.
 
 | Setting | |
 | --- | --- |

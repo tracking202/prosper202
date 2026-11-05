@@ -54,7 +54,9 @@ final class DestinationQueue
      * Queue a new conversion for each of the account's enabled destinations
      * that takes its campaign, in the caller's transaction. Before the
      * upgrade has made the table (code first, upgrade after) nothing is
-     * queued; any other failure fails the transaction, as the outbox's does.
+     * queued; any other failure throws. record() runs this in a savepoint and
+     * rethrows only a lock error or a rollback-only transaction: anything else
+     * is logged and the conversion commits unqueued.
      */
     public function queueConversion(int $userId, int $convId, int $campaignId, int $now): int
     {
