@@ -22,3 +22,5 @@ $outcome = $receiver->receive(
     \Prosper202\PaymentNotification\InboundRequest::fromGlobals($_SERVER, $_POST, $body === false ? '' : $body)
 );
 \Prosper202\PaymentNotification\Response::send($outcome, $receiver->status($outcome));
+// A sale's traffic-source postbacks were queued with it; sent now that Shopify has its answer (QZ3M).
+p202SendQueuedPostbacksAfterAnswer($db, (int) ($outcome->conversionId ?? 0));

@@ -17,6 +17,7 @@ $receiver = new \Prosper202\PaymentNotification\Receiver(
     new \Prosper202\PaymentNotification\PayKickstart\PayKickstartAdapter(),
     $db
 );
-\Prosper202\PaymentNotification\Response::send(
-    $receiver->receive(\Prosper202\PaymentNotification\InboundRequest::fromGlobals($_SERVER, $_POST))
-);
+$outcome = $receiver->receive(\Prosper202\PaymentNotification\InboundRequest::fromGlobals($_SERVER, $_POST));
+\Prosper202\PaymentNotification\Response::send($outcome);
+// A sale's traffic-source postbacks were queued with it; sent now that the provider has its answer (QZ3M).
+p202SendQueuedPostbacksAfterAnswer($db, (int) ($outcome->conversionId ?? 0));
