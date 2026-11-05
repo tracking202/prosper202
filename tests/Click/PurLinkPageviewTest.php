@@ -93,7 +93,7 @@ final class PurLinkPageviewTest extends TestCase
     {
         $root = dirname(__DIR__, 2);
         $callers = [];
-        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS)) as $file) {
+        foreach (new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root)) as $file) {
             $path = substr((string) $file, strlen($root) + 1);
             if (!str_ends_with($path, '.php') || preg_match('#^(vendor|tests|node_modules)/#', $path) === 1) {
                 continue;
