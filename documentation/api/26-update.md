@@ -148,7 +148,10 @@ empty to skip it (`"940003,,order-10"`).
 - **Transaction id**: a line without one marks its click once (a click that
   is already a lead is `already_converted`). A line with one records that
   sale once: the same id on the same click again is `already_converted`,
-  another id is another sale on the click.
+  another id is another sale on the click. The same id sent with another
+  payout or time than the sale recorded (or than an earlier line with that
+  click and id) is refused like an unreadable line, naming both: a recorded
+  sale is not changed here. Only what the line states is compared.
 - **Time**: read in the body's `timezone` (a zone name such as
   `America/New_York`), else the account's zone; a line without one is
   recorded now. `11/03/2026 2:30:00 PM` (month first, two- or four-digit

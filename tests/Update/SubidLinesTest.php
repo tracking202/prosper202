@@ -170,6 +170,32 @@ final class SubidLinesTest extends TestCase
         self::assertSame(4, $entries[4]['first_line']);
     }
 
+    /**
+     * A repeat that states another payout or time is not the earlier line
+     * again: it is refused, never dropped as a repeat. One that states less
+     * (no payout) is the earlier line.
+     */
+    public function testARepeatStatingAnotherPayoutOrTimeIsRefused(): void
+    {
+        $entries = self::read([
+            '940001, 5, A, 2026-11-03 14:30:00',
+            '940001, 5.00, A',
+            '940001, 7, A',
+            '940001, 5, A, 2026-11-03 14:31:00',
+            '940002',
+            '940002, 9',
+            '940003, 4',
+            '940003',
+        ]);
+        self::assertSame(
+            [null, SubidBatch::DUPLICATE_IN_LIST, SubidBatch::INVALID_LINE, SubidBatch::INVALID_LINE, null, SubidBatch::INVALID_LINE, null, SubidBatch::DUPLICATE_IN_LIST],
+            array_column($entries, 'status')
+        );
+        self::assertSame('repeats line 1 (the same click and transaction id) with payout 7 (5.00 there): give a different sale its own transaction id, or remove the repeat', $entries[2]['error']);
+        self::assertStringContainsString('time 2026-11-03 14:31:00 UTC (2026-11-03 14:30:00 UTC there)', $entries[3]['error']);
+        self::assertStringContainsString('repeats line 5 (the same click) with payout 9 (none given there)', $entries[5]['error']);
+    }
+
     public function testTheDefaultPayoutIsHeldToTheSameRule(): void
     {
         self::assertNull(SubidBatch::payoutError('0'));

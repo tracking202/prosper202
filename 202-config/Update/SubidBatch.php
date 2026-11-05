@@ -8,6 +8,7 @@ use Prosper202\Click\ClickId;
 use Prosper202\Click\FirstVisit;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\BatchInterrupted;
+use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\MatchMethod;
@@ -113,7 +114,8 @@ final class SubidBatch
      * to skip it. A field that cannot be read makes the line invalid_line,
      * with `error` saying why; a time is read in $zone (a time with no zone
      * to read it in is refused). A repeat is the same click with the same
-     * transaction id (or none).
+     * transaction id (or none); one stating another payout or time than the
+     * earlier line is invalid_line.
      *
      * @param list<mixed> $items
      * @return list<array{line: int, subid: string, click_id: int|null, status: string|null, first_line?: int, payout?: string, transaction_id?: string, conv_time?: int, error?: string}>
@@ -190,15 +192,52 @@ final class SubidBatch
 
             $key = $entry['click_id'] . "\0" . ($entry['transaction_id'] ?? '');
             if (isset($firstLine[$key])) {
-                $entry['status'] = self::DUPLICATE_IN_LIST;
-                $entry['first_line'] = $firstLine[$key];
+                $first = $entries[$firstLine[$key]];
+                // A repeat stating another payout or time is not that line again (CLAUDE.md #15).
+                $differs = self::statedDifference($entry, $first['payout'] ?? null, $first['conv_time'] ?? null, $zone);
+                if ($differs !== null) {
+                    $entry['status'] = self::INVALID_LINE;
+                    $entry['error'] = 'repeats line ' . $first['line'] . ' (the same click' . (isset($entry['transaction_id']) ? ' and transaction id' : '')
+                        . ') with ' . $differs . ': give a different sale its own transaction id, or remove the repeat';
+                } else {
+                    $entry['status'] = self::DUPLICATE_IN_LIST;
+                    $entry['first_line'] = $first['line'];
+                }
             } else {
-                $firstLine[$key] = $entry['line'];
+                $firstLine[$key] = count($entries);
             }
             $entries[] = $entry;
         }
 
         return $entries;
+    }
+
+    /**
+     * What a line states that differs from a payout and time on record (or
+     * on an earlier line), or null. Only what the line states is compared:
+     * one with no payout or time takes a default, which a repeat cannot be
+     * held to.
+     *
+     * @param array<string, mixed> $entry
+     */
+    private static function statedDifference(array $entry, ?string $payout, ?int $convTime, ?\DateTimeZone $zone = null): ?string
+    {
+        $differences = [];
+        if (isset($entry['payout']) && ($payout === null || Amount::toUnits($entry['payout']) !== Amount::toUnits($payout))) {
+            $differences[] = 'payout ' . $entry['payout'] . ' (' . ($payout === null ? 'none given' : self::amount($payout)) . ' there)';
+        }
+        if (isset($entry['conv_time']) && $entry['conv_time'] !== $convTime) {
+            $at = static fn (int $t): string => (new \DateTimeImmutable('@' . $t))->setTimezone($zone ?? new \DateTimeZone('UTC'))->format('Y-m-d H:i:s T');
+            $differences[] = 'time ' . $at((int) $entry['conv_time']) . ' (' . ($convTime === null ? 'none given' : $at($convTime)) . ' there)';
+        }
+
+        return $differences === [] ? null : implode(' and ', $differences);
+    }
+
+    /** An amount as text with at least two decimals and no trailing zeros past them. */
+    private static function amount(string $value): string
+    {
+        return (string) preg_replace('/(\.\d\d\d*?)0+$/D', '$1', Amount::fromUnits(Amount::toUnits($value)));
     }
 
     /**
@@ -312,7 +351,8 @@ final class SubidBatch
      * click's report row once committed). A line without a transaction id is
      * once_per_click: a click that is already a lead changes nothing. A line
      * with one records that sale, once: the same id on the same click again
-     * is already_converted, and another id is another sale, as a postback's.
+     * is already_converted, unless it states another payout or time, which
+     * refuses the list (refuseChangedSales()); another id is another sale.
      * A sale recorded and deleted since keeps its id: its line is
      * already_converted with deleted true, and nothing is recorded.
      *
@@ -699,7 +739,7 @@ final class SubidBatch
         if ($defaultPayout !== null && ($problem = self::payoutError($defaultPayout)) !== null) {
             throw new \InvalidArgumentException('default ' . $problem);
         }
-        $entries = $this->refuseTimesBeforeTheirClick($userId, self::readLines($items, $zone));
+        $entries = $this->refuseChangedSales($userId, $this->refuseTimesBeforeTheirClick($userId, self::readLines($items, $zone)), $zone);
         $invalid = self::invalidLines($entries);
         if ($invalid !== []) {
             throw new SubidLinesRefused($invalid);
@@ -741,6 +781,56 @@ final class SubidBatch
                 if ((int) $entries[$i]['conv_time'] < (int) $row['click_time']) {
                     $entries[$i]['status'] = self::INVALID_LINE;
                     $entries[$i]['error'] = 'time is before the click (' . gmdate('Y-m-d H:i:s', (int) $row['click_time']) . ' UTC)';
+                }
+            }
+        }
+
+        return $entries;
+    }
+
+    /**
+     * A line whose transaction id is already on its click, stating another
+     * payout or time than that sale holds, is invalid_line: the ledger key
+     * locates the sale, and answering already_converted would drop the
+     * difference (CLAUDE.md #15). Only what the line states is compared, as
+     * statedDifference() says; a click that is not the account's is left
+     * for mark() to report not_found.
+     *
+     * @param list<array<string, mixed>> $entries
+     * @return list<array<string, mixed>>
+     */
+    private function refuseChangedSales(int $userId, array $entries, ?\DateTimeZone $zone): array
+    {
+        $keyed = [];
+        foreach ($entries as $i => $entry) {
+            if ($entry['status'] === null && isset($entry['transaction_id']) && (isset($entry['payout']) || isset($entry['conv_time']))) {
+                $keyed[$i] = DedupeKey::transaction($entry['transaction_id']);
+            }
+        }
+        foreach (array_chunk($keyed, self::PREVIEW_CHUNK, true) as $chunk) {
+            $clicks = array_values(array_unique(array_map(static fn (int $i): int => (int) $entries[$i]['click_id'], array_keys($chunk))));
+            $keys = array_values(array_unique($chunk));
+            $stmt = $this->conn->prepareWrite(
+                'SELECT conv_id, click_id, dedupe_key, click_payout, conv_time, deleted FROM 202_conversion_logs
+                 WHERE user_id = ? AND click_id IN (' . implode(', ', array_fill(0, count($clicks), '?')) . ')
+                   AND dedupe_key IN (' . implode(', ', array_fill(0, count($keys), '?')) . ')'
+            );
+            $this->conn->bind($stmt, 'i' . str_repeat('i', count($clicks)) . str_repeat('s', count($keys)), array_merge([$userId], $clicks, $keys));
+            $sales = [];
+            foreach ($this->conn->fetchAll($stmt) as $row) {
+                $sales[$row['click_id'] . "\0" . $row['dedupe_key']] = $row;
+            }
+            foreach ($chunk as $i => $key) {
+                $sale = $sales[$entries[$i]['click_id'] . "\0" . $key] ?? null;
+                if ($sale === null) {
+                    continue;
+                }
+                $differs = self::statedDifference($entries[$i], (string) $sale['click_payout'], (int) $sale['conv_time'], $zone);
+                if ($differs !== null) {
+                    $entries[$i]['status'] = self::INVALID_LINE;
+                    $entries[$i]['error'] = 'transaction id "' . $entries[$i]['transaction_id'] . '" is already recorded on this click as conversion '
+                        . (int) $sale['conv_id'] . ((int) $sale['deleted'] === 1 ? ' (deleted since)' : '') . ', with another ' . $differs
+                        . ': a recorded sale is not changed here; give a different sale its own transaction id';
                 }
             }
         }

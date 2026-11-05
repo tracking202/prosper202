@@ -2733,7 +2733,10 @@ paths:
         A line without a transaction id is once per click: a click that is
         already a lead is answered `already_converted` and nothing is added.
         A line with one records that sale once: the same id on the click
-        again is `already_converted`, another id is another sale. Sending
+        again is `already_converted`, another id is another sale. The same
+        id stating another payout or time than the recorded sale (or than
+        an earlier line with that click and id) is a 422 like an unreadable
+        line; only what the line states is compared. Sending
         the same list twice is safe. A converting click is no longer
         filtered.
 

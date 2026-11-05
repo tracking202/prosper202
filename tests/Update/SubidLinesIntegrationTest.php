@@ -112,7 +112,7 @@ final class SubidLinesIntegrationTest extends TestCase
         self::assertSame(array_fill(0, 4, SubidBatch::ALREADY_CONVERTED), array_column($again['lines'], 'status'));
         self::assertCount(2, self::rows($a), 'the same transaction ids are not recorded again');
 
-        $preview = $batch->markPreview(self::USER, ["$a, 1, order-1", "$a, 1, order-3"], null, $zone);
+        $preview = $batch->markPreview(self::USER, ["$a, 12.5, order-1", "$a, 1, order-3"], null, $zone);
         self::assertSame([SubidBatch::ALREADY_CONVERTED, SubidBatch::WOULD_MARK], array_column($preview['lines'], 'status'));
 
         // Deleted since (Delete Subids): the sale keeps its id, so the line
@@ -123,6 +123,51 @@ final class SubidLinesIntegrationTest extends TestCase
         $replay = $batch->mark(self::USER, ["$a, 12.50, order-1", "$b"], null, $zone);
         self::assertSame([[SubidBatch::ALREADY_CONVERTED, true], [SubidBatch::ALREADY_CONVERTED, false]], array_map(static fn (array $l): array => [$l['status'], $l['deleted'] ?? false], $replay['lines']));
         self::assertSame([], self::rows($a));
+    }
+
+    /**
+     * A transaction id already on its click, sent with another payout or
+     * time, is refused naming both, in the preview, the write and the API,
+     * and nothing in the list is written; the recorded sale is unchanged.
+     */
+    public function testARecordedSaleSentWithAnotherPayoutOrTimeIsRefused(): void
+    {
+        self::requireScratch();
+        $d = self::CLICKS[3];
+        $zone = new \DateTimeZone('UTC');
+        $when = (new \DateTimeImmutable('-1 day', $zone))->setTime(10, 0);
+        $batch = new SubidBatch(new Connection(self::$db));
+        self::assertSame(1, $batch->mark(self::USER, ["$d, 12.50, fix-1, " . $when->format('Y-m-d H:i:s')], null, $zone)['marked']);
+
+        $changed = [
+            ["$d, 15.00, fix-1", 'payout 15.00 (12.50 there)'],
+            ["$d, , fix-1, " . $when->modify('+1 hour')->format('Y-m-d H:i:s'), 'time ' . $when->modify('+1 hour')->format('Y-m-d H:i:s') . ' UTC'],
+        ];
+        foreach ($changed as [$line, $why]) {
+            foreach (['markPreview', 'mark'] as $method) {
+                try {
+                    $batch->$method(self::USER, ["$d, 3, fix-2", $line], null, $zone);
+                    self::fail($method . ' accepted ' . $line);
+                } catch (SubidLinesRefused $e) {
+                    self::assertSame([2], array_column($e->lines, 'line'));
+                    self::assertStringContainsString('transaction id "fix-1" is already recorded on this click as conversion', $e->lines[0]['error']);
+                    self::assertStringContainsString($why, $e->lines[0]['error']);
+                }
+            }
+        }
+        try {
+            (new UpdateController(self::$db, self::USER))->markSubids(['subids' => ["$d, 15, fix-1"]], false);
+            self::fail('the API accepted another payout under a recorded transaction id');
+        } catch (ValidationException $ex) {
+            self::assertArrayHasKey('subids.0', $ex->getFieldErrors());
+        }
+        self::assertSame([['payout' => '12.5', 'tx' => 'fix-1', 'time' => $when->getTimestamp()]], self::rows($d), 'the sale is unchanged and the other line was not written');
+
+        // The same sale as recorded, or with nothing stated, is that sale again.
+        foreach (["$d, 12.5, fix-1, " . $when->format('Y-m-d H:i:s'), "$d,,fix-1"] as $line) {
+            self::assertSame([SubidBatch::ALREADY_CONVERTED], array_column($batch->mark(self::USER, [$line], '99', $zone)['lines'], 'status'), $line);
+        }
+        $batch->clear(self::USER, [(string) $d]);
     }
 
     public function testALineThatCannotBeReadStopsTheWholeList(): void
