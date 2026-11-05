@@ -31,6 +31,7 @@ final class OwnerPrivacyTest extends TestCase
     private const FUNCTIONS = [
         'p202StoredVisitorIp', 'p202ApplyOwnerPrivacy', 'p202PrivacyInForce', 'trackingEnabled',
         'p202MayRecogniseVisitor', 'p202ClickIdentity', 'p202ClickCookieJs', 'p202VisitorMayBeInEu',
+        'p202DcsClickJs',
     ];
 
     private const VISITOR = '203.0.113.77';
@@ -150,6 +151,22 @@ final class OwnerPrivacyTest extends TestCase
         $db->method('prepare')->willThrowException(new \mysqli_sql_exception('gone away'));
         p202ApplyOwnerPrivacy('2', new Connection($db));
         self::assertSame([false, '203.0.113.0', '', null], self::visitor());
+    }
+
+    /** The landing page's t202Subid segment follows the click cookies' rule and the visitor's consent. */
+    public function testTheSubidSegmentFollowsTheCookieRuleAndConsent(): void
+    {
+        $_SESSION = ['privacy' => 'disabled'];
+        p202ApplyOwnerPrivacy(2, $this->conn([1 => 'disabled', 2 => 'disabled']));
+        self::assertSame(
+            'try { if (typeof window.p202DcsClick === "function") window.p202DcsClick({"t202Subid":"41"}); } catch (e) {}' . "\n",
+            p202DcsClickJs([], 41)
+        );
+        self::assertSame('', p202DcsClickJs(['p202_consent' => '0'], 41), 'refused');
+        self::assertSame('', p202DcsClickJs([], 0), 'no click');
+
+        p202ApplyOwnerPrivacy(2, $this->conn([1 => 'disabled', 2 => 'all']));
+        self::assertSame('', p202DcsClickJs([], 41), 'held back by the owner\'s setting');
     }
 
     public function testALaterOwnerReplacesAnEarlierOne(): void

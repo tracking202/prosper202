@@ -395,6 +395,8 @@ final readonly class ClickPathReads
      * the setting of the campaign of the tracker the visit names, each only
      * when it is the page's account's. tracker_campaign is null when the
      * visit names no such tracker or its tracker no such campaign.
+     * page_user_id and page_timezone are the page's account and its zone,
+     * for the dynamic-content segments (privacy setting, dates).
      *
      * @return Row|null
      */
@@ -410,8 +412,11 @@ final readonly class ClickPathReads
                     trc.identity_signals AS tracker_setting,
                     trc.aff_campaign_id AS tracker_campaign,
                     tr.tracker_id AS tracker_found,
-                    tr.aff_campaign_id AS tracker_campaign_named
+                    tr.aff_campaign_id AS tracker_campaign_named,
+                    lp.user_id AS page_user_id,
+                    u.user_timezone AS page_timezone
                FROM 202_landing_pages AS lp
+               LEFT JOIN 202_users AS u ON u.user_id = lp.user_id
                LEFT JOIN 202_aff_campaigns AS lpc
                       ON lpc.aff_campaign_id = lp.aff_campaign_id AND lpc.user_id = lp.user_id
                LEFT JOIN 202_trackers AS tr

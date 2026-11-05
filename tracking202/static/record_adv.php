@@ -447,6 +447,8 @@ var pci = <?php echo json_encode((string) $click_id_public); ?>;
 echo p202ClickCookieJs(['tracking202subid' => (string) $click_id, 'tracking202pci' => (string) $click_id_public]);
 $p13nOwner = (int) ($tracker_row['user_id'] ?? 0);
 echo p202MintPersonalizationCookieJs($db, $p13nOwner, $_GET, (int) $click_id, trackingEnabled());
+echo p202DcsClickJs($_GET, (int) $click_id);
+echo \Prosper202\Click\PurLinkPageview::forDatabase($_GET, trackingEnabled(), (int) $click_id, (int) $mysql['landing_page_id'], (int) $mysql['user_id'], $db);
 ?>
 
 }

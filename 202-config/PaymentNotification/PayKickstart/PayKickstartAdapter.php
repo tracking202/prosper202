@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification\PayKickstart;
 
-use Prosper202\Click\ClickId;
+use Prosper202\Click\ClickRef;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
@@ -241,13 +241,13 @@ final class PayKickstartAdapter implements ProviderAdapter
     }
 
     /** @param array<array-key, mixed> $fields */
-    private static function clickId(array $fields): ?int
+    private static function clickId(array $fields): ?ClickRef
     {
         $raw = self::text($fields, 'custom_subid');
         if ($raw === null) {
             return null;
         }
-        $clickId = ClickId::parse($raw);
+        $clickId = ClickRef::parse($raw);
         if ($clickId === null) {
             throw self::malformed(
                 'custom_subid is "' . self::shown($raw) . '", which is not a click id. The checkout link carries'

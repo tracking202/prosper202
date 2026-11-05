@@ -130,6 +130,26 @@ if ($t202LandingPageId !== null) {
     }
 }
 
+// 1.9.56's other segments. The visitor's IP only when the page's account's
+// privacy setting tracks this visitor in full; dates in that account's zone.
+$t202ServerData['t202IP'] = '';
+$p202PageOwner = isset($identityRow) ? (int) ($identityRow['page_user_id'] ?? 0) : 0;
+if ($p202PageOwner > 0) {
+    p202ApplyOwnerPrivacy($p202PageOwner);
+    if (trackingEnabled()) {
+        $t202ServerData['t202IP'] = $visitorIp;
+    }
+}
+$p202PageNow = new DateTimeImmutable('now', new DateTimeZone(
+    \Prosper202\Report\AccountZone::normalize(isset($identityRow) ? ($identityRow['page_timezone'] ?? null) : null)
+));
+foreach ([
+    't202DayOfWeek' => 'l', 't202DayOfWeekShort' => 'D', 't202MonthOfYear' => 'F', 't202MonthOfYearShort' => 'M',
+    't202DayOfMonth' => 'j', 't202Year' => 'Y', 't202YearShort' => 'y',
+] as $p202Segment => $p202Format) {
+    $t202ServerData[$p202Segment] = $p202PageNow->format($p202Format);
+}
+
 $baseUrl = $strProtocol . '://' . getTrackingDomain() . get_absolute_url();
 // p202_beacon=0: a page that only reports events (a thank-you page on the
 // same site as the landing page) loads the script without recording its own
@@ -150,6 +170,12 @@ $p202TrackerHostJs = $p202Js((string) parse_url($baseUrl, PHP_URL_HOST));
 $p202CampaignCaptureJs = $p202Js($p202CampaignCapture);
 $p202CustomVarsJs = $p202Js($t202CustomVars);
 $p202BeaconFinishedJs = $p202Js(!$p202SendsBeacon);
+// PurLinks are on for every landing page, as in 1.9.56; p202_purlink=0 opts a snippet out.
+$p202PurLinkRequestedJs = $p202Js($p202SendsBeacon && isset($identityRow) && \Prosper202\Click\PurLinkPageview::requestedBy($_GET));
+$p202PurLinkBaseJs = $p202Js($baseUrl);
+$p202PurLinkAdvancedJs = $p202Js(isset($identityRow) && (int) $identityRow['landing_page_type'] === 1);
+// The deferred pixel: p202_defpixel=1, or defpixel=1 from a 1.9.56 snippet.
+$p202PurLinkDeferredJs = $p202Js(($_GET['p202_defpixel'] ?? $_GET['defpixel'] ?? null) === '1');
 $p202ServerDataJs = $p202Js($t202ServerData, true);
 $p202ClientParamMapJs = $p202Js($t202ClientParamMap);
 ?>
@@ -285,6 +311,7 @@ var p202ConsentParam = p202PhpParam(_params, P202_CONSENT_KEY);
 var p202Refused = p202ConsentParam !== undefined
     && (p202ConsentParam === null || p202ConsentParam.replace(/^[ \t\n\r\0\x0B]+|[ \t\n\r\0\x0B]+$/g, '') !== '1');
 if (p202Refused || (window.p202 && window.p202.consent === false)) {
+    var p202PurLinkInitialRefusal = true;
     p202Store('set', P202_CONSENT_KEY, '0');
     p202Store('del', P202_LPID_KEY);
 }
@@ -294,12 +321,109 @@ window.p202.consent = function(given) {
 	if (given === false) {
 		p202Store('set', P202_CONSENT_KEY, '0');
 		p202Store('del', P202_LPID_KEY);
+        p202PurLinkRevoked = true;
+        p202PurLinkPending = null;
+        p202ConfigurePurLinks(null);
 	} else if (given === true) {
 		p202Store('del', P202_CONSENT_KEY);
+        p202PurLinkRevoked = false;
 	}
 	return p202ConsentGiven();
 };
 window.p202.lpid = p202Lpid;
+
+// The record response and browser module load independently. Keep the
+// capability in this closure until both arrive, and fence it on revocation.
+var p202PurLinkEnabled = <?php echo $p202PurLinkRequestedJs; ?>;
+var p202PurLinkBase = <?php echo $p202PurLinkBaseJs; ?>;
+var p202PurLinkAdvanced = <?php echo $p202PurLinkAdvancedJs; ?>;
+var p202PurLinkPage = <?php echo $lpip_js; ?>;
+var p202PurLinkPending = null;
+var p202PurLinkReporter = null;
+var p202PurLinkReporterProof = null;
+var p202PurLinkDeferred = <?php echo $p202PurLinkDeferredJs; ?>;
+var p202PurLinkPoller = null;
+var p202PurLinkPollerProof = null;
+var p202PurLinkRevoked = !!p202PurLinkInitialRefusal || !p202ConsentGiven();
+function p202PurLinkFallback(offer) {
+    if (offer) { return p202PurLinkBase + 'tracking202/redirect/go.php?acip=' + t202Enc(offer); }
+    return p202PurLinkAdvanced ? null : p202PurLinkBase + 'tracking202/redirect/go.php?lpip=' + t202Enc(p202PurLinkPage);
+}
+function p202ConfigurePurLinks(pageview) {
+    if (!p202PurLinkEnabled || !window.p202PurLink) { return; }
+    var currentProof = pageview && pageview.exitProof;
+    if (p202PurLinkReporter && (!currentProof || currentProof !== p202PurLinkReporterProof || p202PurLinkRevoked)) {
+        p202PurLinkReporter.cancel();
+        p202PurLinkReporter = null;
+        p202PurLinkReporterProof = null;
+    }
+    var currentPixelProof = pageview && pageview.pixelProof;
+    if (p202PurLinkPoller && (!currentPixelProof || currentPixelProof !== p202PurLinkPollerProof || p202PurLinkRevoked)) {
+        p202PurLinkPoller.cancel();
+        p202PurLinkPoller = null;
+        p202PurLinkPollerProof = null;
+    }
+    var config = {
+        directEnabled: true,
+        newTab: p202PurLinkDeferred,
+        trackerBase: p202PurLinkBase,
+        fallback: p202PurLinkFallback,
+        tokens: {t202kw: t202kw, c1: c1, c2: c2, c3: c3, c4: c4,
+            utm_source: utm_source, utm_medium: utm_medium, utm_campaign: utm_campaign,
+            utm_term: utm_term, utm_content: utm_content, t202pubid: t202GetVar('t202pubid'),
+            gclid: t202GetVar('gclid'), gbraid: t202GetVar('gbraid'), wbraid: t202GetVar('wbraid'),
+            ttclid: t202GetVar('ttclid'), msclkid: t202GetVar('msclkid'), fbclid: t202GetVar('fbclid'),
+            referer: document.referrer || null, referrer: document.referrer || null,
+            random: String(Math.floor(Math.random() * 1000000000)),
+            // 1.9.56 listed [[sourceid]] but nothing on the page knows it: fill it empty.
+            sourceid: ''}
+    };
+    if (pageview && pageview.exitProof && !p202PurLinkRevoked && p202ConsentGiven()) {
+        try {
+            var prepare = window.p202PurLink.createPreparer(p202PurLinkBase + 'tracking202/static/purlink-prepare.php', pageview.exitProof);
+            if (!p202PurLinkReporter) {
+                p202PurLinkReporter = window.p202PurLink.createReporter(
+                    p202PurLinkBase + 'tracking202/static/purlink-exit.php', pageview.exitProof,
+                    function () { return !p202PurLinkRevoked && p202ConsentGiven(); }
+                );
+                p202PurLinkReporterProof = pageview.exitProof;
+            }
+            config.report = p202PurLinkReporter;
+            if (p202PurLinkDeferred && typeof pageview.pixelProof === 'string' && pageview.pixelProof) {
+                if (!p202PurLinkPoller) {
+                    p202PurLinkPoller = window.p202PurLink.createPixelPoller(
+                        p202PurLinkBase + 'tracking202/static/purlink-pixels.php', pageview.pixelProof,
+                        function () { return !p202PurLinkRevoked && p202ConsentGiven(); },
+                        window.p202PurLink.renderPixels
+                    );
+                    p202PurLinkPollerProof = pageview.pixelProof;
+                }
+                config.afterExit = p202PurLinkPoller;
+            }
+            config.prepareOffer = function (offer) {
+                if (p202PurLinkAdvanced && !offer) { return Promise.reject(new Error('Offer required')); }
+                return prepare(offer);
+            };
+        } catch (e) { /* The normal redirect remains available. */ }
+    }
+    window.p202PurLink.init(config);
+}
+if (p202PurLinkEnabled) {
+    window.p202PurLinkPageview = function (pageview) {
+        if (p202PurLinkRevoked || !p202ConsentGiven() || !pageview || typeof pageview.exitProof !== 'string') { return; }
+        p202PurLinkPending = pageview;
+        p202ConfigurePurLinks(p202PurLinkPending);
+    };
+    if (window.p202PurLink) {
+        p202ConfigurePurLinks(null);
+    } else {
+        var p202PurLinkScript = document.createElement('script');
+        p202PurLinkScript.async = true;
+        p202PurLinkScript.src = p202PurLinkBase + '202-js/p202-purlink.js';
+        p202PurLinkScript.onload = function () { p202ConfigurePurLinks(p202PurLinkPending); };
+        (document.head || document.getElementsByTagName('script')[0].parentNode).appendChild(p202PurLinkScript);
+    }
+}
 
 // Links into the tracker carry the id (or the refusal) when they are
 // followed, so a later click through this page joins the same visitor.
@@ -419,12 +543,13 @@ function p202SendBeacon() {
 		// bare presence flag '1' (conservative: treated as usable).
 		"p13n_have=" + t202Enc(readCookie('tracking202p13nh') || (readCookie('tracking202p13n') ? '1' : '0'))
 	];
+    if (<?php echo $p202PurLinkRequestedJs; ?>) { parts.push('p202_purlink=1'); }
 	for (var i = 0; i < customVarNames.length; i++) {
 		parts.push(customVarNames[i] + "=" + t202Enc(customVarValues[i]));
 	}
 	// First-party identity: the refusal, or this site's visitor id when the
 	// campaign captures identity (nothing at all when it does not).
-	if (!p202ConsentGiven()) {
+	if (!p202ConsentGiven() || p202PurLinkRevoked) {
 		parts.push("p202_consent=0");
 	} else {
 		var p202Id = p202Lpid();
@@ -535,27 +660,154 @@ if (document.readyState === 'loading') {
 }
 <?php } ?>
 
-// --- Dynamic content replacement ---
+// --- Dynamic content: 1.9.56's dcs.t202DataObj ---
+// An element whose name contains a key, or whose t202attribute is a key,
+// shows its value (else its t202Default): form fields as their value, other
+// elements as text, never as HTML.
 (function() {
-	// Build data object: server-side geo/UA + client-side URL params (read once above)
-	var t202DataObj = <?php echo $p202ServerDataJs; ?>;
+	var serverData = <?php echo $p202ServerDataJs; ?>;
 	var clientParamMap = <?php echo $p202ClientParamMapJs; ?>;
 	var clientValues = {t202kw: t202kw, c1: c1, c2: c2, c3: c3, c4: c4, utm_source: utm_source, utm_medium: utm_medium, utm_term: utm_term, utm_content: utm_content, utm_campaign: utm_campaign};
-	for (var urlParam in clientParamMap) {
-		if (clientParamMap.hasOwnProperty(urlParam)) {
-			t202DataObj[clientParamMap[urlParam]] = clientValues[urlParam];
+	// The keys 1.9.56's server-side redirect/u.php stored from updateDataObj().
+	var clickKeys = /^t202(kw|c[1-4]|referrer|id|utm_(source|medium|term|content|campaign))$/i;
+	var notText = {FORM: 1, SCRIPT: 1, STYLE: 1, META: 1, LINK: 1, IFRAME: 1, OBJECT: 1, HTML: 1, HEAD: 1, BODY: 1};
+	// Inputs whose value is what they post or their label, not a field's text.
+	var notValue = {radio: 1, checkbox: 1, submit: 1, button: 1, reset: 1, image: 1, file: 1};
+	var warned = false;
+	function own(obj, key) { return Object.prototype.hasOwnProperty.call(obj, key); }
+	function consented() { return !p202PurLinkRevoked && p202ConsentGiven(); }
+
+	function initialData() {
+		var data = {}, key;
+		for (key in serverData) { if (own(serverData, key)) { data[key] = serverData[key]; } }
+		if (!consented()) { data.t202IP = ''; }
+		for (key in clientParamMap) { if (own(clientParamMap, key)) { data[clientParamMap[key]] = clientValues[key]; } }
+		data.t202Subid = '';
+		data.t202Pci = t202GetVar('pci');
+		data.t202Id = t202GetVar('t202id');
+		data.t202Kw = t202kw;
+		data.t202C1 = c1; data.t202C2 = c2; data.t202C3 = c3; data.t202C4 = c4;
+		// 1.9.56's three ad click ids, and those 1.9.79 added.
+		var adClickIds = {t202GCLID: 'gclid', t202GBRAID: 'gbraid', t202WBRAID: 'wbraid', t202TTCLID: 'ttclid', t202FBCLID: 'fbclid', t202MSCLKID: 'msclkid'};
+		for (key in adClickIds) { if (own(adClickIds, key)) { data[key] = t202GetVar(adClickIds[key]); } }
+		data.t202Utm_source = utm_source; data.t202Utm_medium = utm_medium; data.t202Utm_term = utm_term;
+		data.t202Utm_content = utm_content; data.t202Utm_campaign = utm_campaign;
+		data.t202Referrer = document.referrer;
+		data.t202Random = Math.floor(Math.random() * 9000000) + 1000000;
+		return data;
+	}
+
+	// The longest key the name contains: t202CountryCode, not t202Country.
+	function keyInName(data, name, extra) {
+		var best = null, keys = Object.keys(data).concat(extra || []);
+		for (var i = 0; i < keys.length; i++) {
+			if (name.indexOf(keys[i]) !== -1 && (best === null || keys[i].length >= best.length)) { best = keys[i]; }
+		}
+		return best;
+	}
+
+	// byName: a button matched only by a name that contains a key keeps its label.
+	function write(el, data, key, byName) {
+		var value = data[key] ? String(data[key]) : (el.getAttribute('t202Default') || '');
+		var tag = el.tagName;
+		try {
+			if (tag === 'INPUT' && notValue[String(el.type || el.getAttribute('type') || '').toLowerCase()]) {
+				return;
+			} else if (tag === 'INPUT' || tag === 'TEXTAREA') {
+				el.value = value;
+			} else if (tag === 'SELECT') {
+				for (var i = 0; i < el.options.length; i++) {
+					if (el.options[i].value === value || el.options[i].text === value) { el.selectedIndex = i; break; }
+				}
+			} else if (!notText[tag] && !(byName && tag === 'BUTTON')) {
+				el.textContent = value;
+			}
+		} catch (e) { /* a field that refuses the value (a file input) keeps its own */ }
+	}
+
+	// Every key, or only those listed (renderChanges()).
+	function render(dcs, only) {
+		var data = (dcs && dcs.t202DataObj && typeof dcs.t202DataObj === 'object') ? dcs.t202DataObj : {};
+		var wanted = null;
+		if (only) {
+			wanted = {};
+			for (var w = 0; w < only.length; w++) { wanted[only[w]] = true; }
+		}
+		var els = document.querySelectorAll('[name],[t202attribute]');
+		for (var i = 0; i < els.length; i++) {
+			var el = els[i];
+			// PurLink's own form fields are p202-purlink.js's.
+			if (el.hasAttribute('data-p202-purlink-input')) { continue; }
+			var name = el.getAttribute('name');
+			// t202p13n_ fields are the personalization block's.
+			if (name && name.indexOf('t202p13n_') !== 0) {
+				var key = keyInName(data, name, only);
+				if (key !== null && (!wanted || wanted[key])) { write(el, data, key, true); }
+			}
+			var attr = el.getAttribute('t202attribute');
+			if (attr && (wanted ? wanted[attr] : own(data, attr))) { write(el, data, attr, false); }
 		}
 	}
 
-	// Single DOM query instead of 19 separate getElementsByName calls
-	var selector = Object.keys(t202DataObj).map(function(k) { return '[name="' + k + '"]'; }).join(',');
-	var matchedElements = document.querySelectorAll(selector);
-	for (var i = 0; i < matchedElements.length; i++) {
-		var el = matchedElements[i];
-		var name = el.getAttribute('name');
-		var val = t202DataObj[name];
-		el.textContent = (val !== undefined && val !== null && val !== '') ? val : (el.getAttribute('t202Default') || '');
+	function T202Data() {
+		this.t202DataObj = initialData();
+		render(this, null);
 	}
+	T202Data.prototype.renderChanges = function(changes) {
+		if (Object.prototype.toString.call(changes) === '[object Array]') { render(this, changes); }
+	};
+	// Merges values in, new keys too; nothing is rendered.
+	T202Data.prototype.addDataObj = function(mergeDataObj) {
+		var next = {}, key;
+		for (key in this.t202DataObj) { if (own(this.t202DataObj, key)) { next[key] = this.t202DataObj[key]; } }
+		for (key in mergeDataObj) { if (own(mergeDataObj, key) && key !== '__proto__') { next[key] = mergeDataObj[key]; } }
+		this.t202DataObj = next;
+	};
+	// Changes keys the object already has and renders them. The page only:
+	// the recorded click keeps the values it was recorded with.
+	T202Data.prototype.updateDataObj = function(changes) {
+		var changed = [];
+		changes = changes || {};
+		for (var key in changes) {
+			if (own(changes, key) && own(this.t202DataObj, key)) {
+				this.t202DataObj[key] = changes[key];
+				changed.push(key);
+			}
+		}
+		this.renderChanges(changed);
+		for (var i = 0; i < changed.length && !warned; i++) {
+			if (clickKeys.test(changed[i]) && window.console && console.warn) {
+				warned = true;
+				console.warn('Prosper202: dcs.updateDataObj() changes the page only; the recorded click is not updated.');
+			}
+		}
+	};
+
+	var dcs = new T202Data();
+	window.dcs = dcs;
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', function() { if (window.dcs === dcs) { render(dcs, null); } });
+	}
+	// The click's id, from record.php's answer (p202DcsClickJs()).
+	window.p202DcsClick = function(click) {
+		if (!click || typeof click.t202Subid !== 'string' || !consented() || window.dcs !== dcs) { return; }
+		dcs.t202DataObj.t202Subid = click.t202Subid;
+		render(dcs, ['t202Subid']);
+	};
+	// A withdrawal clears what came from the visitor's request.
+	var consent = window.p202.consent;
+	window.p202.consent = function(given) {
+		var answer = consent(given);
+		if (given === false && window.dcs === dcs) {
+			dcs.t202DataObj.t202IP = '';
+			dcs.t202DataObj.t202Subid = '';
+			render(dcs, ['t202IP', 't202Subid']);
+		} else if (given === true && window.dcs === dcs && consented()) {
+			dcs.t202DataObj.t202IP = serverData.t202IP;
+			render(dcs, ['t202IP']);
+		}
+		return answer;
+	};
 })();
 
 // --- Manual ABM event instrumentation ---

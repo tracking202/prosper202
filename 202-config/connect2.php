@@ -428,6 +428,22 @@ function p202ClickCookieJs(array $cookies): string
 }
 
 /**
+ * The statement that gives the landing page's dcs.t202DataObj its t202Subid
+ * (1.9.56's segment): under the click cookies' rule and with consent.
+ *
+ * @param array<string, mixed> $get
+ */
+function p202DcsClickJs(array $get, int $clickId): string
+{
+    if ($clickId < 1 || !\Prosper202\Identity\RequestSignals::consentGiven($get) || !trackingEnabled()) {
+        return '';
+    }
+
+    return 'try { if (typeof window.p202DcsClick === "function") window.p202DcsClick('
+        . json_encode(['t202Subid' => (string) $clickId], JSON_THROW_ON_ERROR) . "); } catch (e) {}\n";
+}
+
+/**
  * Whether privacy 'eu' applies to this visitor: unless the GeoIP lookup of
  * their address places them outside Europe and outside the European Union,
  * it does (EuropeanVisitor, which the app intakes ask too).

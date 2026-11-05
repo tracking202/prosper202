@@ -2011,5 +2011,6 @@ function renderDynamicContentSegmentHelp(): void
 		   <span class="infotext">Currently Dynamic Content Segments can dynamically display the following information on your landing pages:
 		   <ul style="font-size: 12px;">' . $listItems . '</ul>
 		   So how easy is it to display the visitor\'s country on your landing page? Here\'s the html for it:<br/>
-		   <code>Welcome I see you are reading this from &lt;span name=&quot;t202Country&quot; t202Default=&apos;Your Country&apos;&gt;Your Country&lt;/span&gt;</code></span>');
+		   <code>Welcome I see you are reading this from &lt;span name=&quot;t202Country&quot; t202Default=&apos;Your Country&apos;&gt;Your Country&lt;/span&gt;</code><br/>
+		   A form field (input, select or textarea) named with a segment gets it as its value, and <code>t202attribute=&quot;t202Country&quot;</code> works on any element.</span>');
 }
