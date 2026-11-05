@@ -234,11 +234,12 @@ final class PayKickstartAdapter implements ProviderAdapter, FingerprintsNotifica
      * documents no field that changes from one delivery to the next (no
      * attempt count, no delivery time; the hash covers the values), but
      * nothing says a retry is not rendered again from the order, so a field
-     * that could be (the buyer's details, licenses, the amount's spelling, a
-     * hash under a rotated key) is not part of it. transaction_time is the
-     * transaction's own time, which a retry repeats. Two refunds of one sale
-     * that carry the same transaction_time, or none, cannot be told apart and
-     * read as one, compared by amount as before.
+     * that could be (the buyer's details, licenses, a hash under a rotated
+     * key) is not part of it. transaction_time is the transaction's own time,
+     * which a retry repeats. The amount is compared, not keyed: only the sale
+     * says that 47 and none both take back the whole of a 47 sale. Two
+     * refunds of one sale with the same transaction_time, or none, and the
+     * same amount cannot be told apart and read as one.
      */
     public function fingerprint(InboundRequest $request): string
     {

@@ -320,16 +320,28 @@ final class Processor
         // takes its refund back from the value the click carried over, capped
         // under the click lock at what is left of it.
         $carriedPath = $sale === null && $amount !== null && $provider instanceof ReversesPreUpgradeSales;
+        $write = fn (string $ref): array => $this->record($clickId, $owner, $provider, $request, [
+            'transaction_id' => $original,
+            'reversal' => true,
+            'reversal_ref' => $ref,
+            'reverses_carried_value' => $carriedPath,
+            'use_pixel_payout' => $amount !== null,
+            'payout' => $amount ?? '',
+            'conv_time' => $time,
+        ]);
         try {
-            $result = $this->record($clickId, $owner, $provider, $request, [
-                'transaction_id' => $original,
-                'reversal' => true,
-                'reversal_ref' => $reference,
-                'reverses_carried_value' => $carriedPath,
-                'use_pixel_payout' => $amount !== null,
-                'payout' => $amount ?? '',
-                'conv_time' => $time,
-            ]);
+            $result = $write($reference);
+            // Its key names a reversal since deleted, but it takes back
+            // another amount, which that refund sent again would not: it is a
+            // later refund, recorded under its body as before 1.9.80, so the
+            // sale is reversed again as it would have been.
+            if (
+                $result['reason'] === 'duplicate' && !$carriedPath && !$ownId
+                && $provider instanceof KeyedRefundsByBodyBefore1980
+                && $this->deletedReversalOfAnotherAmount($n, $result['conv_id'], $owner)
+            ) {
+                $result = $write('body:' . self::bodyFingerprint($request->fields));
+            }
         } catch (ReversalException $e) {
             $standing = !$ownId && $e->kind === ReversalException::CONFLICT
                 ? $this->liveReversalOfTransaction($clickId, $original, $owner)
@@ -497,7 +509,9 @@ final class Processor
     private function saleOnFile(int $clickId, string $transactionId, int $owner): ?array
     {
         $conn = new Connection($this->db);
-        $stmt = $conn->prepareRead(
+        // From the primary: the writer reverses what the primary holds, and a
+        // replica behind it would skip the cap and the 1.9.79 key lookup.
+        $stmt = $conn->prepareWrite(
             'SELECT conv_id, conv_time, click_payout FROM 202_conversion_logs'
             . ' WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL AND user_id = ?'
             . ' ORDER BY conv_id LIMIT 1'
@@ -753,6 +767,19 @@ final class Processor
             'reversed' => abs(Amount::toUnits((string) $row['reversed'])),
             'sale' => abs(Amount::toUnits((string) $row['sale'])),
         ];
+    }
+
+    /**
+     * Whether a reversal is deleted and took back another amount than this
+     * refund states (capped at the sale, the whole sale when it states none),
+     * the comparison repeatedReversal() makes.
+     */
+    private function deletedReversalOfAnotherAmount(Notification $n, int $reversalId, int $owner): bool
+    {
+        $stored = $this->storedReversal($reversalId, $owner);
+        $stated = $n->amount !== null ? min(abs(Amount::toUnits($n->amount)), $stored['sale']) : $stored['sale'];
+
+        return $stored['deleted'] && $stated !== $stored['reversed'];
     }
 
     /** The account's row on a click under a dedupe key, deleted or not, or null. */

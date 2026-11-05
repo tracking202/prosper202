@@ -812,6 +812,32 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         self::assertCount(2, self::conversions(), 'the deleted reversal\'s refund sent again reverses nothing');
     }
 
+    /**
+     * A refund at the time of a reversal since deleted, but taking back
+     * another amount, is a later refund (that refund sent again repeats its
+     * amount): it reverses the sale again, as before 1.9.80. That one sent
+     * again is then a duplicate of its own.
+     */
+    public function testAnotherAmountAtTheTimeOfADeletedReversalReversesTheSaleAgain(): void
+    {
+        $this->post(self::fields(), self::KEY_1);
+        $at = (string) (self::$now + 60);
+        $first = self::fields(['event' => 'refund', 'amount' => '10.00', 'transaction_time' => $at]);
+        $this->post($first, self::KEY_1);
+        $deleted = (int) self::conversionIds()[1];
+        self::conversionRepository()->softDelete($deleted, self::ACCOUNT);
+
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($first, self::KEY_1));
+        $later = self::fields(['event' => 'refund', 'amount' => '20.00', 'transaction_time' => $at]);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($later, self::KEY_1));
+        self::assertSame(
+            [['47.00000', '0'], ['-10.00000', '1'], ['-20.00000', '0']],
+            array_map(static fn (array $r): array => [$r['click_payout'], $r['deleted']], self::conversions())
+        );
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($later, self::KEY_1));
+        self::assertCount(3, self::conversions());
+    }
+
     public function testARefundWithAnIdOfItsOwnIsToldApartByIt(): void
     {
         $processor = new Processor(self::requireScratch());
