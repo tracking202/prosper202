@@ -15,7 +15,9 @@ $mysql['cid'] = 0;
 $mysql['click_id'] = 0;
 
 // Query string, then a form-encoded POST body (as paid 1.9.56 read): the query wins a name both send.
-$request = p202PostbackRequest($_GET, $_POST);
+// A signed request reads its query alone: p202_sig signs nothing else.
+$signedQuery = \Prosper202\Conversion\PostbackAuth\PresentedCredentials::fromQueryString((string) ($_SERVER['QUERY_STRING'] ?? ''))->signature !== null;
+$request = p202PostbackRequest($_GET, $signedQuery ? [] : $_POST);
 
 // The click: an exact positive integer from subid (or sid), or a 404.
 // is_numeric() plus a cast used to turn "123.9" into click 123, and a
