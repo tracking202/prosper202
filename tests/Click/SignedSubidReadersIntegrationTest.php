@@ -226,6 +226,35 @@ final class SignedSubidReadersIntegrationTest extends TestCase
         self::assertSame([[(string) self::$offer, '3.00000']], self::conversions($clickId));
     }
 
+    /** @return iterable<string, array{string, array<string, string>}> */
+    public static function postbacks(): iterable
+    {
+        yield 'gpb.php subid' => ['gpb.php', []];
+        yield 'gpb.php sid, subid empty' => ['gpb.php', ['subid' => '']];
+        yield 'gpb.php sid, subid garbage' => ['gpb.php', ['subid' => 'abc']];
+        yield 'pb.php' => ['pb.php', ['acip' => (string) self::OFFER_PUBLIC]];
+    }
+
+    /**
+     * @dataProvider postbacks
+     * @param array<string, string> $extra
+     */
+    public function testAPostbackRecordsASignedSubidOnItsOffer(string $script, array $extra): void
+    {
+        if (!is_file(dirname(__DIR__, 2) . '/202-config.php')) {
+            self::markTestSkipped('No 202-config.php: tests/run-integration-suites.sh writes one.');
+        }
+        [$clickId, $subid] = self::signedClick();
+        $name = array_key_exists('subid', $extra) ? 'sid' : 'subid';
+
+        [$status] = self::pixel($script, $extra + [$name => self::forged($subid), 'amount' => '3.00']);
+        self::assertSame(404, $status, 'a forged SubID is not found');
+        self::assertSame([], self::conversions($clickId));
+        [$status, $body] = self::pixel($script, $extra + [$name => $subid, 'amount' => '3.00']);
+        self::assertLessThan(300, $status, $body);
+        self::assertSame((string) self::$offer, self::conversions($clickId)[0][0] ?? null, $body);
+    }
+
     public function testUpxAnswersUnavailableNotForgedWhenTheKeyCannotBeRead(): void
     {
         if (!is_file(dirname(__DIR__, 2) . '/202-config.php')) {

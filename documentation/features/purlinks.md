@@ -132,6 +132,10 @@ URL, a cookie or a referrer, and the requests send no cookies.
 
 - A copied PurLink carries the visitor's SubID: anyone who opens it is
   credited to that click, as with a copied redirect link.
+- On an advanced page the visitor's choice is the route: the signature says
+  the SubID was issued by this install for this click and one of the
+  account's offers, not which offer the network's sale was for. `pb.php`
+  checks the offer against its `acip`; `gpb.php` has no offer to check.
 - A browser or extension that blocks the background request loses the
   click-out record; the conversion is still credited through the SubID.
 - Browser conversion pixels on the offer's thank-you page (`gpx.php`,
