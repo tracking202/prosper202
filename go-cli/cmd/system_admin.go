@@ -184,8 +184,8 @@ var systemMetricsCmd = &cobra.Command{
 
 var systemIntegrationsCmd = &cobra.Command{
 	Use:   "integrations",
-	Short: "The URLs to paste into ClickBank, JVZoo, Zaxaa and PayKickstart for this install",
-	Long: "Each integration's notification URL (INS, IPN, ZPN) on this install's tracking base,\n" +
+	Short: "The URLs to paste into ClickBank, JVZoo, Zaxaa, PayKickstart and Shopify for this install",
+	Long: "Each integration's notification URL (INS, IPN, ZPN, webhook) on this install's tracking base,\n" +
 		"and whether its secret is stored (secret_stored; set it with `p202 user prefs update <user_id>`). The\n" +
 		"secrets themselves are never shown. --json adds base_url; --wide shows the URLs in full.\n\n" +
 		systemIntegrationsNeeds + ", and system:read.",

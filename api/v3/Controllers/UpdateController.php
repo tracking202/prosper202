@@ -13,8 +13,10 @@ use Prosper202\Conversion\BatchInterrupted;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Conversion\RevenueUploadImporter;
 use Prosper202\Database\Connection;
+use Prosper202\Report\AccountZone;
 use Prosper202\Update\CpcUpdate;
 use Prosper202\Update\SubidBatch;
+use Prosper202\Update\SubidLinesRefused;
 
 /**
  * The Update section of the UI (tracking202/update/) as REST: update the CPC
@@ -179,27 +181,53 @@ final class UpdateController
     // ─── POST /conversions/subids ───────────────────────────────────────
 
     /**
-     * Mark subids converted (Update Subids): each subid's click is recorded as
-     * converted at its campaign's payout, once per click.
+     * Mark subids converted (Update Subids): each line is
+     * `SUBID[, PAYOUT[, TRANSACTION ID[, TIMESTAMP]]]`, recorded at its own
+     * payout or `payout` or the campaign's, at its time (read in `timezone`,
+     * else the account's) or now; once per click, or once per transaction id.
+     * A line that cannot be read is a 422 naming it, and nothing is written.
      *
      * @param array<string, mixed> $payload
      * @return array<string, mixed>
      */
     public function markSubids(array $payload, bool $dryRun): array
     {
-        PayloadKeys::refuseUnknown($payload, ['subids'], 'a subid update', self::QUERY_NOT_BODY);
+        PayloadKeys::refuseUnknown($payload, ['subids', 'payout', 'timezone'], 'a subid update', self::QUERY_NOT_BODY);
         $items = self::subidList($payload);
+        $errors = [];
+        $defaultPayout = null;
+        if (array_key_exists('payout', $payload)) {
+            $raw = $payload['payout'];
+            $defaultPayout = is_string($raw) ? trim($raw) : (is_int($raw) || is_float($raw) ? (string) $raw : null);
+            $problem = $defaultPayout === null
+                ? 'must be a number or a decimal string such as "12.50" (omit it for each campaign\'s payout), got ' . get_debug_type($raw)
+                : SubidBatch::payoutError($defaultPayout);
+            if ($problem !== null) {
+                $errors['payout'] = $problem;
+            }
+        }
+        $zoneName = null;
+        if (array_key_exists('timezone', $payload)) {
+            $zoneName = $payload['timezone'];
+            if (!is_string($zoneName) || !AccountZone::isZone($zoneName)) {
+                $errors['timezone'] = 'must be a time zone name such as "America/New_York" (the times in the lines are read in it; omit it for the account\'s)';
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Invalid subid update', $errors);
+        }
+        $zone = new \DateTimeZone(is_string($zoneName) ? $zoneName : $this->guard(fn (): string => AccountZone::read($this->conn, $this->userId)));
         $batch = new SubidBatch($this->conn);
 
         if ($dryRun) {
-            $preview = $this->guard(fn (): array => $batch->markPreview($this->userId, $items));
+            $preview = $this->guard(fn (): array => self::refusedLines(fn (): array => $batch->markPreview($this->userId, $items, $defaultPayout, $zone)));
             return ['data' => ['dry_run' => true] + self::countLines($preview['lines'], [SubidBatch::WOULD_MARK, SubidBatch::ALREADY_CONVERTED,
                 SubidBatch::NOT_FOUND, SubidBatch::NOT_A_SUBID, SubidBatch::DUPLICATE_IN_LIST]) + ['lines' => $preview['lines']]];
         }
 
         set_time_limit(0);
         try {
-            $result = $batch->mark($this->userId, $items);
+            $result = self::refusedLines(fn (): array => $batch->mark($this->userId, $items, $defaultPayout, $zone));
         } catch (BatchInterrupted $e) {
             throw self::interrupted($e, static fn (BatchInterrupted $e): string => 'Marking stopped at ' . $e->at . ': '
                 . $e->committed . ' ' . self::plural($e->committed, 'subid was marked before it and stays marked', 'subids were marked before it and stay marked') . '. '
@@ -605,6 +633,27 @@ final class UpdateController
             throw new ValidationException('Invalid subids', ['subids' => 'holds no subid: every item is blank']);
         }
         return $items;
+    }
+
+    /**
+     * Run a subid batch, answering its unreadable lines as a 422 that names
+     * each one by its place in `subids`.
+     *
+     * @template T
+     * @param callable(): T $fn
+     * @return T
+     */
+    private static function refusedLines(callable $fn): mixed
+    {
+        try {
+            return $fn();
+        } catch (SubidLinesRefused $e) {
+            $errors = [];
+            foreach ($e->lines as $line) {
+                $errors['subids.' . ($line['line'] - 1)] = $line['error'];
+            }
+            throw new ValidationException('Invalid subid lines: nothing was recorded', $errors);
+        }
     }
 
     /**

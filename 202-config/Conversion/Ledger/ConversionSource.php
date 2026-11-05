@@ -20,6 +20,7 @@ enum ConversionSource: string
     case CLICKBANK = 'clickbank';
     case PAYKICKSTART = 'paykickstart';
     case JVZOO = 'jvzoo';
+    case SHOPIFY = 'shopify';
     case ZAXAA = 'zaxaa';
     case APP_INSTALL = 'app_install';
     case GOAL = 'goal';
@@ -55,6 +56,7 @@ enum ConversionSource: string
             self::CLICKBANK => 'ClickBank',
             self::PAYKICKSTART => 'PayKickstart',
             self::JVZOO => 'JVZoo',
+            self::SHOPIFY => 'Shopify',
             self::ZAXAA => 'Zaxaa',
             self::APP_INSTALL => 'App install',
             self::GOAL => 'Goal',

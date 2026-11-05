@@ -34,12 +34,16 @@ final class Response
         };
     }
 
-    /** @return array{error: bool, code: int, outcome: string, msg: string, conversion_id?: int} */
-    public static function body(Outcome $outcome): array
+    /**
+     * @param int|null $code the status sent, when the provider is answered otherwise than status() says
+     * @return array{error: bool, code: int, outcome: string, msg: string, conversion_id?: int}
+     */
+    public static function body(Outcome $outcome, ?int $code = null): array
     {
-        $code = self::status($outcome->kind);
+        $error = self::status($outcome->kind) >= 300;
+        $code ??= self::status($outcome->kind);
         $body = [
-            'error' => $code >= 300,
+            'error' => $error,
             'code' => $code,
             'outcome' => $outcome->kind->value,
             'msg' => $outcome->message,
@@ -51,16 +55,16 @@ final class Response
         return $body;
     }
 
-    public static function send(Outcome $outcome): void
+    public static function send(Outcome $outcome, ?int $code = null): void
     {
-        $code = self::status($outcome->kind);
+        $code ??= self::status($outcome->kind);
         http_response_code($code);
         if ($outcome->kind === OutcomeKind::METHOD_NOT_ALLOWED) {
             header('Allow: POST');
         }
         header('Content-Type: application/json');
         header('Cache-Control: no-store');
-        $json = json_encode(self::body($outcome), JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+        $json = json_encode(self::body($outcome, $code), JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
         echo $json !== false ? $json : '{"error":true,"code":' . $code . '}';
     }
 }

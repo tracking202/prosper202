@@ -36,6 +36,7 @@ final class PreferenceSecretsAreNotServedIntegrationTest extends TestCase
         'lpo_site_key' => 'it-lpo-site-secret',
         'lpo_bridge_config' => '{"webhook_id":3,"ctx_key":"it-ctx-secret"}',
         'paykickstart_ipn_secret_keys' => "it-pk-secret-0001\nit-pk-secret-0002",
+        'shopify_webhook_secret' => 'it-shopify-webhook-secret',
     ];
 
     private static ?\mysqli $db = null;

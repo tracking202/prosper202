@@ -26,7 +26,10 @@ use Prosper202\Notifications\PostbackSender;
  * Pixel types, as the setup page defines them:
  *   1 image, 2 iframe, 3 script — markup for a browser, returned;
  *   4 server-to-server postback — fetched here, one GET per URL;
- *   5 raw code — returned with its tokens replaced.
+ *   5 raw code — returned with its tokens replaced;
+ *   6 Bot202 Facebook Pixel Assistant — a Meta Pixel ID (FacebookPixelId):
+ *     a Purchase event image for a browser, returned only for a visitor
+ *     who may be tracked (visitorMayBeTracked()).
  */
 final class TrafficSourcePixels
 {
@@ -112,15 +115,27 @@ final class TrafficSourcePixels
      * `server_skipped`: the goal engine queues them in the notification
      * outbox, which the worker sends with retries.
      *
+     * $visitorMayBeTracked answers, when a type-6 pixel is met, whether the
+     * click's visitor may be sent a Meta Purchase (visitorMayBeTracked()).
+     * Without it the Purchase is held back; types 1-5 do not ask.
+     *
      * @param array<string, scalar|null> $tokens
      * @param (callable(string): (bool|PostbackResult))|null $fetch Performs a
      *        type-4 GET and says whether it succeeded (a 2xx or 3xx status);
      *        defaults to PostbackSender, which refuses an address it does not
      *        call. Injected by tests.
+     * @param (\Closure(): bool)|null $visitorMayBeTracked
      * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
-    public static function fire(Connection $conn, int $ppcAccountId, array $tokens, ?callable $fetch = null, bool $browser = true, bool $server = true): array
-    {
+    public static function fire(
+        Connection $conn,
+        int $ppcAccountId,
+        array $tokens,
+        ?callable $fetch = null,
+        bool $browser = true,
+        bool $server = true,
+        ?\Closure $visitorMayBeTracked = null,
+    ): array {
         $out = ['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0, 'browser_skipped' => 0, 'server_skipped' => 0];
         if ($ppcAccountId <= 0) {
             return $out;
@@ -139,6 +154,8 @@ final class TrafficSourcePixels
         // ''), and refuses anything but http(s) to a public address,
         // redirects included.
         $fetch ??= (new PostbackSender())->send(...);
+        $currency = null;
+        $mayTrack = null;
 
         foreach ($pixels as $pixel) {
             $type = (int) $pixel['pixel_type_id'];
@@ -151,6 +168,26 @@ final class TrafficSourcePixels
                 } else {
                     $out['browser_skipped']++;
                 }
+                continue;
+            }
+            if ($type === FacebookPixelId::PIXEL_TYPE) {
+                if (!$browser) {
+                    $out['browser_skipped']++;
+                    continue;
+                }
+                // Held back as the landing page's Meta Pixel events are.
+                $mayTrack ??= $visitorMayBeTracked !== null && $visitorMayBeTracked() === true;
+                if (!$mayTrack) {
+                    continue;
+                }
+                $currency ??= self::accountCurrency($conn, $ppcAccountId);
+                $markup = self::facebookPurchase($code, $tokens, $currency);
+                if ($markup === null) {
+                    error_log('traffic source pixel ' . (int) ($pixel['pixel_id'] ?? 0) . ' of ppc account ' . $ppcAccountId
+                        . ' is a Bot202 Facebook Pixel Assistant pixel without a Meta Pixel ID; not fired');
+                    continue;
+                }
+                $out['markup'] .= $markup;
                 continue;
             }
 
@@ -197,6 +234,94 @@ final class TrafficSourcePixels
         $out['types'] = array_values(array_unique($out['types']));
 
         return $out;
+    }
+
+    /**
+     * A Meta Pixel Purchase event as the image the Pixel's own <noscript>
+     * code loads: the conversion's payout as its value, in the account's
+     * currency, and its transaction id (or dedupe key) as the event id, so
+     * Meta counts a repeat of one conversion once. Null for a code that
+     * holds no Pixel ID.
+     *
+     * @param array<string, scalar|null> $tokens
+     */
+    public static function facebookPurchase(string $code, array $tokens, string $currency): ?string
+    {
+        $pixelId = FacebookPixelId::fromCode($code);
+        if ($pixelId === null) {
+            return null;
+        }
+        $query = ['id' => $pixelId, 'ev' => 'Purchase', 'noscript' => '1'];
+        $payout = $tokens['payout'] ?? null;
+        if (is_numeric($payout) && preg_match('/^[A-Z]{3}$/D', $currency) === 1) {
+            $query['cd[value]'] = number_format((float) $payout, 2, '.', '');
+            $query['cd[currency]'] = $currency;
+        }
+        $eventId = (string) ($tokens['transactionid'] ?? '');
+        if ($eventId !== '') {
+            $query['eid'] = $eventId;
+        }
+        $src = htmlspecialchars('https://www.facebook.com/tr?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986), ENT_QUOTES);
+
+        return "<img src='{$src}' height='1' width='1' style='display:none' alt='' />\n";
+    }
+
+    /**
+     * Whether the click's visitor may be sent a Meta Pixel Purchase: the
+     * check the landing page's events pass (FacebookPixelAssistantScript::
+     * mayTrack()): the privacy setting in force tracks them in full, the
+     * request did not refuse consent (p202_consent) and the click's campaign
+     * has identity capture on. The setting is the campaign of the click's
+     * own account, as ClickIdentity::attachToStoredClick() reads it; a click
+     * that cannot be read is held back, logged.
+     *
+     * @param array<string, mixed> $get
+     */
+    public static function visitorMayBeTracked(Connection $conn, int $clickId, bool $trackingEnabled, array $get): bool
+    {
+        if (!$trackingEnabled || $clickId <= 0) {
+            return false;
+        }
+        try {
+            $stmt = $conn->prepareRead(
+                'SELECT ac.identity_signals
+                 FROM ' . \Prosper202\Click\LatestVisit::of('?') . ' AS c
+                 LEFT JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id'
+            );
+            $conn->bind($stmt, 'i', [$clickId]);
+            $row = $conn->fetchOne($stmt);
+        } catch (\Throwable $e) {
+            error_log('traffic source pixels: could not read click ' . $clickId . '\'s campaign; Meta Purchase held back: ' . $e->getMessage());
+
+            return false;
+        }
+        if ($row === null) {
+            return false;
+        }
+
+        return \Prosper202\Click\FacebookPixelAssistantScript::mayTrack(true, $get, $row['identity_signals'] ?? null);
+    }
+
+    /** The account's owner's currency (202_users_pref); '' when unknown or unreadable. */
+    private static function accountCurrency(Connection $conn, int $ppcAccountId): string
+    {
+        try {
+            $stmt = $conn->prepareRead(
+                'SELECT up.user_account_currency FROM 202_ppc_accounts AS a
+                 LEFT JOIN 202_users_pref AS up ON up.user_id = a.user_id
+                 WHERE a.ppc_account_id = ?'
+            );
+            $conn->bind($stmt, 'i', [$ppcAccountId]);
+            $row = $conn->fetchOne($stmt);
+        } catch (\Throwable $e) {
+            // The conversion is recorded; its Purchase is still sent, without a value.
+            error_log('traffic source pixels: the currency of ppc account ' . $ppcAccountId . ' could not be read: ' . $e->getMessage());
+
+            return '';
+        }
+
+        // No such account or preferences row is no known currency: '' sends no value.
+        return is_string($row['user_account_currency'] ?? null) ? $row['user_account_currency'] : '';
     }
 
     /**

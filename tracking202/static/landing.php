@@ -456,6 +456,20 @@ document.addEventListener('mousedown', p202OnFollow, true);
 document.addEventListener('click', p202OnFollow, true);
 document.addEventListener('keydown', function(ev) { if (ev.key === 'Enter') { p202OnFollow(ev); } }, true);
 
+// --- Bot202 Facebook Pixel Assistant ---
+// record.php's answer calls this when the page's assistant is on and the
+// visitor may be tracked; nothing loads or fires once consent is refused.
+window.p202FbPixelAssistant = function(settings) {
+	if (!settings || !p202ConsentGiven()) { return; }
+	var start = function() { if (window.p202FbPixel) { window.p202FbPixel.start(settings, p202ConsentGiven, p202TrackerHost); } };
+	if (window.p202FbPixel) { start(); return; }
+	var s = document.createElement('script');
+	s.async = true;
+	s.src = <?php echo $p202Js($baseUrl . '202-js/p202-fb-pixel-assistant.js?v=' . rawurlencode(PROSPER202_VERSION)); ?>;
+	s.onload = start;
+	(document.head || document.getElementsByTagName('script')[0].parentNode).appendChild(s);
+};
+
 // --- Tracking beacon ---
 // Sent once the page's own scripts have run, not while this one is still
 // executing: a consent tool that calls p202.consent(false) in a script after

@@ -133,6 +133,23 @@ if (!function_exists('_upgrade_query')) {
     }
 }
 
+if (!function_exists('_upgrade_seed_bot202_facebook_pixel_lookups')) {
+    /**
+     * The Bot202 Facebook Pixel Assistant's lookup rows, as DataSeeder
+     * writes them on a fresh install, for the 1.9.80 rung; rows already
+     * there are kept. Logged, never fatal: the assistant reads its ids from
+     * FacebookPixelAssistantSettings, not from these rows.
+     */
+    function _upgrade_seed_bot202_facebook_pixel_lookups(): void
+    {
+        foreach (\Prosper202\Setup\FacebookPixelAssistantSettings::seedStatements() as $sql) {
+            if (_upgrade_query($sql) === false) {
+                error_log('Prosper202 upgrade: a Bot202 Facebook Pixel Assistant lookup row could not be written.');
+            }
+        }
+    }
+}
+
 if (!function_exists('_upgrade_seed_licence_answers')) {
     /**
      * Copy the licence answers cached on disk within the grace period into
@@ -4687,6 +4704,9 @@ class UPGRADE
             // version moves only when both succeeded.
             $baseline_ok = _upgrade_1956_baseline();
             $step_ok = _upgrade_measurement_tables([
+                // 202_users_pref gains shopify_webhook_secret, which Shopify's
+                // order webhooks are verified with (ShopifyWebhookSecret).
+                \Prosper202\Database\Tables\UserTables::usersPref(),
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
@@ -4694,7 +4714,14 @@ class UPGRADE
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),
                 \Prosper202\Database\Tables\ClickTables::purLinkPixelFires(),
                 \Prosper202\Database\Tables\GoalTables::purLinkGoalSubjects(),
+                // The Bot202 Facebook Pixel Assistant's lookup rows, as a fresh
+                // install seeds them (DataSeeder); a paid install's are kept.
+                \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelContentType(),
+                \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelClickEvents(),
             ]) && $baseline_ok;
+            if ($step_ok) {
+                _upgrade_seed_bot202_facebook_pixel_lookups();
+            }
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
                     $prosper202_version = '1.9.80';

@@ -52,6 +52,7 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
         'user_slack_incoming_webhook' => 'https://hooks.slack.com/services/T0/B0/it-slack-SL01',
         'jvzoo_ipn_secret_key' => 'it-jvzoo-secret-JV01',
         'paykickstart_ipn_secret_keys' => "it-paykickstart-PK01\npk-8char",
+        'shopify_webhook_secret' => 'it-shopify-webhook-secret-SH01',
     ];
 
     private static string $sessions = '';
@@ -313,7 +314,7 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
     private static function secrets(): array
     {
         $found = self::$db->query('SELECT cb_key, cb_verified, zaxaa_api_signature, user_slack_incoming_webhook,'
-            . ' jvzoo_ipn_secret_key, ipqs_api_key, paykickstart_ipn_secret_keys'
+            . ' jvzoo_ipn_secret_key, ipqs_api_key, paykickstart_ipn_secret_keys, shopify_webhook_secret'
             . ' FROM 202_users_pref WHERE user_id = ' . self::USER);
         self::assertInstanceOf(\mysqli_result::class, $found, (string) self::$db->error);
         $row = $found->fetch_assoc();
@@ -349,13 +350,15 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
         self::assertStringContainsString('Saved, ends in CB01', $out, 'ClickBank\'s key, by its last four');
         self::assertStringContainsString('Saved, ends in SL01', $out, 'the Slack webhook');
         self::assertStringContainsString('Saved, ends in JV01', $out, 'the JVZIPN key');
+        self::assertStringContainsString('Saved, ends in SH01', $out, 'the Shopify webhook secret');
         self::assertStringNotContainsString('-short', $out, 'a short key shows no ending');
         self::assertMatchesRegularExpression('~Zaxaa API signature:</span>\s*<span data-saved-secret>Saved<~', $out);
         self::assertMatchesRegularExpression('~IPQS API key:</span>\s*<span data-saved-secret>Not saved<~', $out);
         self::assertStringContainsString("Key ending \u{2026}PK01", $out, 'a long PayKickstart key by its last four');
         self::assertStringContainsString('>Key 2<', $out, 'a short one by its place');
         self::assertStringNotContainsString('8char', $out);
-        $fields = 'cb_key|zaxaa_api_signature|user_slack_incoming_webhook|jvzoo_ipn_secret_key|ipqs_api_key';
+        $fields = 'cb_key|zaxaa_api_signature|user_slack_incoming_webhook|jvzoo_ipn_secret_key|ipqs_api_key'
+            . '|shopify_webhook_secret';
         self::assertSame(0, preg_match('~name="(?:' . $fields . ')"[^>]*value="[^"]~', $out), 'no field is filled in');
         self::assertStringContainsString('New ClickBank secret key', $out, 'a saved one is replaced, not shown');
         self::assertMatchesRegularExpression('~name="ipqs_api_key" required~', $out, 'one not saved is asked for');
@@ -369,6 +372,7 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
             ['change_zaxaa_api_signature', 'zaxaa_api_signature'],
             ['change_user_slack_incoming_webhook', 'user_slack_incoming_webhook'],
             ['change_jvzoo_secret_key', 'jvzoo_ipn_secret_key'],
+            ['change_shopify_webhook_secret', 'shopify_webhook_secret'],
         ];
         foreach ($cards as [$flag, $field]) {
             foreach (['', '   '] as $empty) {
@@ -410,6 +414,21 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
             $out = self::page(self::PAGE, [], self::save('change_jvzoo_secret_key', 'jvzoo_ipn_secret_key', ''));
             self::assertStringContainsString('The saved key cannot be used.', $out, 'an unusable key is not kept');
             self::assertStringNotContainsString('lines-of-key', $out);
+
+            $refused = 'it shopify typed with spaces';
+            $out = self::page(self::PAGE, [], self::save('change_shopify_webhook_secret', 'shopify_webhook_secret', $refused));
+            self::assertStringContainsString('has a space or a character', $out, 'ShopifyWebhookSecret::parse() decides');
+            self::assertStringNotContainsString('typed with spaces', $out, 'what was posted is not written back');
+            self::assertSame(self::SECRETS['shopify_webhook_secret'], self::secrets()['shopify_webhook_secret']);
+
+            $listed = ['token' => 'SESSION', 'change_shopify_webhook_secret' => '1', 'shopify_webhook_secret' => ['x']];
+            $out = self::page(self::PAGE, [], $listed);
+            self::assertStringContainsString('arrived as a list', $out, 'refused by name, not kept as "nothing changed"');
+            self::assertSame(self::SECRETS['shopify_webhook_secret'], self::secrets()['shopify_webhook_secret']);
+
+            $new = self::save('change_shopify_webhook_secret', 'shopify_webhook_secret', ' it-shopify-rotated-secret-SH02 ');
+            self::assertRedirected(self::page(self::PAGE, [], $new), 'a new Shopify secret is saved');
+            self::assertSame('it-shopify-rotated-secret-SH02', self::secrets()['shopify_webhook_secret'], 'trimmed');
         } finally {
             self::seedSecrets();
         }

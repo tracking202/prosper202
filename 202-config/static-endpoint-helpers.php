@@ -14,6 +14,11 @@ if (!function_exists('p202RespondJsonError')) {
 
 const P202_POSTBACK_USER_AGENT = \Prosper202\Conversion\TrafficSourcePixels::POSTBACK_USER_AGENT;
 
+// Request names read as one value, first non-blank wins; p202PostbackRequest() merges each as a unit.
+const P202_ORDER_NUMBER_NAMES = ['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'];
+const P202_CUSTOMER_NAMES = ['cust', 'customer_ref'];
+const P202_CUSTOMER_TYPE_NAMES = ['cust_type', 'customer_ref_type'];
+
 if (!function_exists('p202ApplyConversionClickSide')) {
     /**
      * The click-side part of a conversion that is not its value: a CPA
@@ -107,6 +112,8 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
      *        its dedupe key when the network sent none
      * @param (callable(string): (bool|\Prosper202\Notifications\PostbackResult))|null $fetch
      *        Performs a type-4 GET and says whether it succeeded; injected by tests.
+     * @param (\Closure(): bool)|null $visitorMayBeTracked whether a Meta
+     *        Purchase (type 6) may fire (p202ConversionMayTrack()); held back without it
      * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
     function p202FireTrafficSourcePixels(
@@ -114,14 +121,36 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
         int $ppcAccountId,
         array $tokens,
         ?callable $fetch = null,
-        bool $server = true
+        bool $server = true,
+        ?\Closure $visitorMayBeTracked = null
     ): array {
         // $server false: the type-4 postbacks were queued with the
         // conversion (notify_traffic_source) and go out through the outbox
         // (p202SendQueuedPostbacks()); only the markup types render here.
         $conn = new \Prosper202\Database\Connection($db);
 
-        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server);
+        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server, $visitorMayBeTracked);
+    }
+}
+
+if (!function_exists('p202ConversionMayTrack')) {
+    /**
+     * Whether this conversion request's visitor may be sent the click's
+     * Meta Purchase: the privacy setting in force (trackingEnabled(), after
+     * p202ApplyOwnerPrivacy()), p202_consent and the click's campaign
+     * (TrafficSourcePixels::visitorMayBeTracked()).
+     *
+     * @param array<string, mixed> $get
+     */
+    function p202ConversionMayTrack(mysqli $db, int $clickId, array $get): bool
+    {
+        return function_exists('trackingEnabled')
+            && \Prosper202\Conversion\TrafficSourcePixels::visitorMayBeTracked(
+                new \Prosper202\Database\Connection($db),
+                $clickId,
+                trackingEnabled(),
+                $get
+            );
     }
 }
 
@@ -171,7 +200,7 @@ if (!function_exists('p202ExtractTransactionId')) {
      */
     function p202ExtractTransactionId(array $source): string
     {
-        foreach (['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'] as $key) {
+        foreach (P202_ORDER_NUMBER_NAMES as $key) {
             if (array_key_exists($key, $source) && is_scalar($source[$key])) {
                 $value = trim((string) $source[$key]);
                 if ($value !== '') {
@@ -204,7 +233,7 @@ if (!function_exists('p202ExtractCustomer')) {
         // Deliberately NOT 'customer_id': on public pixels that name would be
         // ambiguous with the authenticated API's internal numeric id (which
         // carries tenant-ownership checks). External references only here.
-        foreach (['cust', 'customer_ref'] as $key) {
+        foreach (P202_CUSTOMER_NAMES as $key) {
             if (array_key_exists($key, $source) && is_scalar($source[$key])) {
                 $value = trim((string) $source[$key]);
                 if ($value !== '') {
@@ -218,7 +247,7 @@ if (!function_exists('p202ExtractCustomer')) {
         }
 
         $out = ['customer_ref' => $ref];
-        foreach (['cust_type', 'customer_ref_type'] as $key) {
+        foreach (P202_CUSTOMER_TYPE_NAMES as $key) {
             if (array_key_exists($key, $source) && is_scalar($source[$key])) {
                 $type = trim((string) $source[$key]);
                 if ($type !== '') {
@@ -597,6 +626,59 @@ if (!function_exists('p202RecordConversion')) {
             'payout' => isset($result['payout']) ? (string) $result['payout'] : '',
             'reverses_conv_id' => (int) ($result['reversesConvId'] ?? 0),
         ];
+    }
+}
+
+if (!function_exists('p202PostbackRequest')) {
+    /**
+     * A server postback's parameters: the query string's, with a form-encoded
+     * body's for any name the query leaves out or blank (paid 1.9.56 gpb.php
+     * read a POST body, and its URLs carry blank `amount=&subid=`).
+     * Aliases of one value (subid/sid, the order-number names, ...) are one
+     * group: a query naming any member keeps all of the body's out, since the
+     * readers pick by alias rank. A value that trims to '' is blank, as the
+     * readers see it. p202_consent is a switch: present in the query, even
+     * blank, it keeps the body's out. Body names are lowercased, as
+     * connect2.php does $_GET's.
+     *
+     * @param array<array-key,mixed> $query $_GET
+     * @param array<array-key,mixed> $body  $_POST (empty unless a form-encoded POST)
+     * @return array<array-key,mixed>
+     */
+    function p202PostbackRequest(array $query, array $body): array
+    {
+        $blank = static fn (mixed $value): bool => $value === null || (is_string($value) && trim($value) === '');
+        $body = array_change_key_case($body, CASE_LOWER);
+        $consent = \Prosper202\Identity\RequestSignals::CONSENT_PARAM;
+        if (array_key_exists($consent, $query)) {
+            unset($body[$consent]);
+        }
+        // cust_sig signs cust: both come from one source.
+        $groups = [
+            ['subid', 'sid'],
+            P202_ORDER_NUMBER_NAMES,
+            [...P202_CUSTOMER_NAMES, 'cust_sig'],
+            P202_CUSTOMER_TYPE_NAMES,
+            ['sku', 'product_id'],
+        ];
+        foreach ($groups as $group) {
+            foreach ($group as $name) {
+                if (!$blank($query[$name] ?? null)) {
+                    foreach ($group as $alias) {
+                        unset($body[$alias]);
+                    }
+                    break;
+                }
+            }
+        }
+        $request = $query;
+        foreach ($body as $name => $value) {
+            if (!array_key_exists($name, $request) || ($blank($request[$name]) && !$blank($value))) {
+                $request[$name] = $value;
+            }
+        }
+
+        return $request;
     }
 }
 
@@ -1114,7 +1196,11 @@ if (!function_exists('p202RecordWebEvent')) {
             return ['status' => 'invalid', 'errors' => $e->errors(), 'message' => $e->getMessage()];
         }
 
-        $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, (bool) ($opts['browser'] ?? false));
+        $notifier = new \Prosper202\Goals\TrafficSourceNotifier(
+            $conn,
+            (bool) ($opts['browser'] ?? false),
+            static fn (int $click): bool => p202ConversionMayTrack($db, $click, $get)
+        );
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         try {
             $result = $engine->ingest(
