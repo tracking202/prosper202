@@ -6,8 +6,10 @@
 // at most six digits), and query values that are tracking macros or short
 // numbers; everything else (tokens, hashes, dotted names, long numbers) is
 // redacted. A number counts as long when a part holds seven or more digits in
-// all, however they are split up, and so do neighbouring all-number path
-// segments taken together. Macros follow the same rules inside their brackets.
+// all, however they are split up; and when the kept path segments, query keys
+// and query values hold seven or more digits between them, every one of them
+// with a digit in it is redacted, so a number cannot be spread across parts.
+// Macros follow the same rules inside their brackets.
 // Sign-in details and the fragment are never kept, a URL that is not http(s)
 // with a plain host is not sent at all, and the result is cut to 512
 // characters at a part boundary.
@@ -63,61 +65,62 @@ final class UrlScrubber
 
         $out = $scheme . '://' . $host . (isset($parts['port']) ? ':' . (int) $parts['port'] : '');
 
+        $segments = [];
         $path = $parts['path'] ?? '';
         if ($path !== '') {
             $segments = array_map(
                 static fn (string $segment): string => $segment === '' ? '' : self::keep(rawurldecode($segment)),
                 explode('/', $path)
             );
-            $out .= implode('/', self::redactNumberRuns($segments));
         }
 
         // Split by hand: parse_str() keeps only the last of a repeated key
         // and reads `a[b]` as nesting.
-        $query = $parts['query'] ?? '';
-        if ($query !== '') {
-            $pairs = [];
-            foreach (explode('&', $query) as $pair) {
-                if ($pair === '') {
-                    continue;
-                }
-                [$key, $value] = array_pad(explode('=', $pair, 2), 2, null);
-                $key = self::keep(urldecode($key));
-                $pairs[] = $value === null ? $key : $key . '=' . self::keepValue(urldecode($value));
+        $keys = [];
+        $values = [];
+        foreach (explode('&', $parts['query'] ?? '') as $pair) {
+            if ($pair === '') {
+                continue;
             }
-            if ($pairs !== []) {
-                $out .= '?' . implode('&', $pairs);
-            }
+            [$key, $value] = array_pad(explode('=', $pair, 2), 2, null);
+            $keys[] = self::keep(urldecode($key));
+            $values[] = $value === null ? null : self::keepValue(urldecode($value));
+        }
+
+        $digits = 0;
+        foreach ([...$segments, ...$keys, ...$values] as $kept) {
+            $digits += self::digitCount((string) $kept);
+        }
+        if ($digits > self::MAX_DIGITS) {
+            $segments = self::redactDigits($segments);
+            $keys = self::redactDigits($keys);
+            $values = self::redactDigits($values);
+        }
+
+        $out .= implode('/', $segments);
+        $pairs = [];
+        foreach ($keys as $i => $key) {
+            $pairs[] = $values[$i] === null ? $key : $key . '=' . $values[$i];
+        }
+        if ($pairs !== []) {
+            $out .= '?' . implode('&', $pairs);
         }
 
         return self::cap($out, strlen($scheme . '://' . $host));
     }
 
-    /** Neighbouring all-number segments are one number split up: redacted together when they hold too many digits. */
-    private static function redactNumberRuns(array $segments): array
+    /**
+     * Every part with a digit in it redacted, for when the parts together hold too many digits.
+     *
+     * @param array<int, ?string> $parts
+     * @return array<int, ?string>
+     */
+    private static function redactDigits(array $parts): array
     {
-        $run = [];
-        $digits = 0;
-        $flush = static function () use (&$run, &$digits, &$segments): void {
-            if ($digits > self::MAX_DIGITS) {
-                foreach ($run as $i) {
-                    $segments[$i] = self::REDACTED;
-                }
-            }
-            $run = [];
-            $digits = 0;
-        };
-        foreach ($segments as $i => $segment) {
-            if ($segment !== '' && ctype_digit($segment)) {
-                $run[] = $i;
-                $digits += strlen($segment);
-                continue;
-            }
-            $flush();
-        }
-        $flush();
-
-        return $segments;
+        return array_map(
+            static fn (?string $part): ?string => $part !== null && self::digitCount($part) > 0 ? self::REDACTED : $part,
+            $parts
+        );
     }
 
     /** $url cut to the length cap at the last '/', '?' or '&' past the host, with the cut part marked redacted. */
