@@ -291,14 +291,14 @@ final class GoogleAdsIntegrationTest extends TestCase
         self::$db->begin_transaction();
         $key->invoke($store, true);
         self::$db->rollback();
+        $refused = null;
         try {
             $key->invoke($store, false);
-            self::fail('the minted key was rolled back, so there is none');
-        } catch (\PHPUnit\Framework\AssertionFailedError $f) {
-            throw $f;
         } catch (\RuntimeException $e) {
-            self::assertStringContainsString('missing', $e->getMessage());
+            $refused = $e->getMessage();
         }
+        self::assertNotNull($refused, 'the minted key was rolled back, so there is none');
+        self::assertStringContainsString('missing', $refused);
         // The positive control: a key that was read is kept for the store's life.
         $minted = $key->invoke($store, true);
         self::assertSame($minted, $key->invoke($store, false));
