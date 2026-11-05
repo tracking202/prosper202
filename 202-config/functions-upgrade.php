@@ -4845,6 +4845,14 @@ class UPGRADE
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),
                 \Prosper202\Database\Tables\ConversionTables::postbackAuth(),
+                // The money-loss alerts' settings per account (no row is on;
+                // a row with enabled 0 is off), and the incident each was last
+                // sent for (Prosper202\Alerts).
+                \Prosper202\Database\Tables\UserTables::alertSettings(),
+                \Prosper202\Database\Tables\UserTables::alertState(),
+                // 202_conversion_logs gains user_conv_time, the alerts' read of
+                // an account's last week of conversions.
+                \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
                 // PurLinks: click-out ordering, deferred pixels fired, per-offer goal subjects.
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),
                 \Prosper202\Database\Tables\ClickTables::purLinkPixelFires(),

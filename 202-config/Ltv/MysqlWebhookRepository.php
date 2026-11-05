@@ -21,7 +21,8 @@ final class MysqlWebhookRepository
 {
     /**
      * The events this install sends: every name an emitter passes
-     * (LtvController::enqueueEvent(), EventBridge::emit()/emitIfEnabled()),
+     * (LtvController::enqueueEvent(), EventBridge::emit()/emitIfEnabled(),
+     * and the money-loss alerts, one per Alerts\AlertKind),
      * which WebhookEventsAreKnownTest holds it to, and the names a webhook may
      * subscribe to (create() refuses any other). It was a listing only, with
      * well-formedness the only check, so `revenue.recoded` made a hook that
@@ -36,6 +37,8 @@ final class MysqlWebhookRepository
         'subscription.changed',
         'conversion.recorded',
         'engagement.recorded',
+        'alert.conversions_stopped',
+        'alert.spend_without_conversions',
     ];
 
     /** Max delivery attempts before a delivery is failed and the hook may die. */
@@ -264,11 +267,12 @@ final class MysqlWebhookRepository
      * reviving the webhook sends what it missed (revive()); queued as
      * pending like any other, it is sent after all when the webhook is
      * revived before the dispatcher reaches it. A json_encode failure throws
-     * (never silently queue a broken payload).
+     * (never silently queue a broken payload). Answers how many deliveries
+     * it queued, 0 when no webhook subscribes.
      *
      * @param array<string, mixed> $payload
      */
-    public function enqueue(int $userId, string $eventName, array $payload): void
+    public function enqueue(int $userId, string $eventName, array $payload): int
     {
         self::assertEventName($eventName);
 
@@ -280,7 +284,7 @@ final class MysqlWebhookRepository
         $this->conn->bind($stmt, 'is', [$userId, $eventName]);
         $webhooks = $this->conn->fetchAll($stmt);
         if ($webhooks === []) {
-            return;
+            return 0;
         }
 
         $body = json_encode(['event' => $eventName, 'occurred_at' => time(), 'data' => $payload]);
@@ -307,6 +311,8 @@ final class MysqlWebhookRepository
             $this->conn->execute($ins);
             $ins->close();
         }
+
+        return count($webhooks);
     }
 
     /**
