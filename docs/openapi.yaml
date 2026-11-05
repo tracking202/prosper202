@@ -14254,7 +14254,7 @@ components:
                 type: integer
               type:
                 type: string
-                enum: [country, region, city, isp, ip, platform, device, browser]
+                enum: [country, region, eu, city, isp, fraud, ip, iprange, browser, platform, device, visitor, c1, c2, c3, c4, t202kw, referer, utm_source, utm_medium, utm_campaign, utm_term, utm_content]
               statement:
                 type: string
                 enum: [is, is_not]
@@ -14310,7 +14310,7 @@ components:
             properties:
               type:
                 type: string
-                enum: [country, region, city, isp, ip, platform, device, browser]
+                enum: [country, region, eu, city, isp, fraud, ip, iprange, browser, platform, device, visitor, c1, c2, c3, c4, t202kw, referer, utm_source, utm_medium, utm_campaign, utm_term, utm_content]
               statement:
                 type: string
                 enum: [is, is_not]

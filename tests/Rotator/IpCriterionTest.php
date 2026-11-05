@@ -59,19 +59,19 @@ final class IpCriterionTest extends TestCase
         self::assertSame(['value' => $stored, 'invalid' => $invalid], IpCriterion::normalize($typed));
     }
 
+    /** Both redirect scripts match through CriterionMatcher, whose one ip arm asks IpCriterion. */
     public function testEveryIpArmOfTheRedirectsComparesThroughIpCriterion(): void
     {
         foreach (['tracking202/redirect/rtr.php', 'tracking202/redirect/offrtr.php'] as $file) {
             $source = (string) file_get_contents(dirname(__DIR__, 2) . '/' . $file);
-            $arms = preg_match_all("/case 'ip':(.*?)break;/s", $source, $m);
-            self::assertSame(1, $arms, "$file has one ip arm");
-            self::assertSame(
-                2,
-                substr_count($m[1][0], 'IpCriterion::contains($values, $ip_address)'),
-                "$file: is and is_not"
-            );
-            self::assertStringNotContainsString('in_array(', $m[1][0], "$file compares the text again");
+            self::assertSame(0, preg_match_all("/case 'ip':/", $source), "$file keeps its own ip arm");
         }
+        $file = '202-config/Rotator/CriterionMatcher.php';
+        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/' . $file);
+        $arms = preg_match_all("/case 'ip':(.*?)case /s", $source, $m);
+        self::assertSame(1, $arms, "$file has one ip arm");
+        self::assertSame(1, substr_count($m[1][0], 'IpCriterion::contains($values, $visitor->ip)'), "$file: is and is_not");
+        self::assertStringNotContainsString('in_array(', $m[1][0], "$file compares the text again");
     }
 
     /** @return iterable<string, array{string, ?string}> typed, refusal */
