@@ -195,10 +195,16 @@ final class ClickBreakdown
         );
         $keys = [];
         if ($wantKeys) {
-            $stmt = $this->conn->prepareRead('SELECT api_key, created_at FROM 202_api_keys WHERE user_id = ?');
+            // key_hash is the key's whole SHA-256, which the digest begins
+            // (ApiKeyStore); a key still stored whole is digested here.
+            $stmt = $this->conn->prepareRead('SELECT * FROM 202_api_keys WHERE user_id = ?');
             $this->conn->bind($stmt, 'i', [$userId]);
             foreach ($this->conn->fetchAll($stmt) as $k) {
-                $keys[SourceRef::keyDigest((string) $k['api_key'])] = (int) $k['created_at'];
+                $hash = (string) ($k['key_hash'] ?? '');
+                $digest = $hash !== ''
+                    ? SourceRef::hashDigest($hash)
+                    : SourceRef::keyDigest((string) $k['api_key']);
+                $keys[$digest] = (int) $k['created_at'];
             }
         }
 

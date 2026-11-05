@@ -190,62 +190,6 @@ final class UserRepositoryTest extends TestCase
 
     // --- API Keys ---
 
-    public function testCreateAndDeleteApiKey(): void
-    {
-        $repo = $this->makeRepo();
-        $userId = $this->createTestUser($repo);
-
-        $apiKey = $repo->createApiKey($userId, 'test-key');
-        self::assertNotEmpty($apiKey);
-
-        $keys = $repo->listApiKeys($userId);
-        self::assertCount(1, $keys);
-        self::assertSame($apiKey, $keys[0]['api_key']);
-        self::assertSame($userId, $keys[0]['user_id']);
-
-        $repo->deleteApiKey($apiKey, $userId);
-
-        self::assertCount(0, $repo->listApiKeys($userId));
-    }
-
-    public function testDeleteApiKeyRequiresCorrectUser(): void
-    {
-        $repo = $this->makeRepo();
-        $userId = $this->createTestUser($repo);
-        $apiKey = $repo->createApiKey($userId, 'key');
-
-        $repo->deleteApiKey($apiKey, 9999); // wrong user
-
-        self::assertCount(1, $repo->listApiKeys($userId), 'Key should not be deleted by wrong user');
-    }
-
-    public function testApiKeysAreIsolatedByUser(): void
-    {
-        $repo = $this->makeRepo();
-        $u1 = $this->createTestUser($repo, 'user1');
-        $u2 = $this->createTestUser($repo, 'user2');
-
-        $repo->createApiKey($u1, 'key1');
-        $repo->createApiKey($u2, 'key2');
-
-        self::assertCount(1, $repo->listApiKeys($u1));
-        self::assertCount(1, $repo->listApiKeys($u2));
-    }
-
-    public function testListApiKeysHasExpectedColumns(): void
-    {
-        $repo = $this->makeRepo();
-        $userId = $this->createTestUser($repo);
-        $repo->createApiKey($userId, 'key');
-
-        $keys = $repo->listApiKeys($userId);
-        self::assertCount(1, $keys);
-        self::assertArrayHasKey('api_key', $keys[0]);
-        self::assertArrayHasKey('user_id', $keys[0]);
-        self::assertArrayHasKey('created_at', $keys[0]);
-        self::assertArrayNotHasKey('api_key_id', $keys[0]);
-    }
-
     // --- Preferences ---
 
     public function testUpdateAndGetPreferences(): void

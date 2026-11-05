@@ -4,14 +4,21 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/legacy/functions.php';
 
 function getStats($db, $variables): mixed {
-    $mysql['api_key'] = $db->real_escape_string($variables['apikey']);
+    // Found by its hash, byte for byte (ApiKeyStore); an empty key finds nothing,
+    // since a hashed row's api_key is empty.
+    $legacyKey = is_string($variables['apikey'] ?? null) ? $variables['apikey'] : '';
+    try {
+        $keyMatch = $legacyKey === '' ? '1 = 0' : \Prosper202\User\ApiKeyStore::matchKeyLiteral($db, $legacyKey, 'k');
+    } catch (\Throwable) {
+        return legacy_api_database_error($db);
+    }
     // Join 202_users so a soft-deleted user's key stops authenticating, exactly
     // as api/v3/Auth.php does. Deleting a user must revoke access on EVERY API
     // version, not just the newest one; so must deactivating one (below).
     $key_sql = "SELECT 	k.*, u.`user_active`
 				FROM   	`202_api_keys` k
 				INNER JOIN `202_users` u ON u.`user_id` = k.`user_id`
-				WHERE  	k.`api_key`='".$mysql['api_key']."' AND u.`user_deleted` = 0";
+				WHERE  	" . $keyMatch . " AND u.`user_deleted` = 0";
     $key_result = _mysqli_query($db, $key_sql);
     if ($key_result === false) {
         return legacy_api_database_error($db);

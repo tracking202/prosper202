@@ -42,8 +42,9 @@ final class ScopeRefusal
                 return self::API_KEY;
             }
             $conn = new Connection($db);
-            $stmt = $conn->prepareRead('SELECT label FROM 202_api_keys WHERE api_key = ? AND user_id = ? LIMIT 1');
-            $conn->bind($stmt, 'si', [$apiKey, $userId]);
+            [$keyMatch, $keyTypes, $keyValues] = \Prosper202\User\ApiKeyStore::matchKey($db, $apiKey);
+            $stmt = $conn->prepareRead('SELECT label FROM 202_api_keys WHERE ' . $keyMatch . ' AND user_id = ? LIMIT 1');
+            $conn->bind($stmt, $keyTypes . 'i', [...$keyValues, $userId]);
             $row = $conn->fetchOne($stmt);
         } catch (\Throwable $e) {
             error_log('p202: API v3: the refused key\'s label could not be read: ' . $e->getMessage());
