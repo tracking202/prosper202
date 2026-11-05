@@ -788,34 +788,53 @@ if (document.readyState === 'loading') {
 		}
 		return value.slice(0, i);
 	}
-	function postUpdate(body) {
+	// Calls done() once the request has an answer; false when none could start.
+	// No sendBeacon: it never answers, so it cannot keep requests in order.
+	function postUpdate(body, done) {
 		try {
 			if (window.fetch) {
-				return window.fetch(updateUrl, {
+				window.fetch(updateUrl, {
 					method: 'POST', body: body, keepalive: true, mode: 'cors', credentials: 'omit',
 					headers: {'Content-Type': 'application/x-www-form-urlencoded'}
-				}).then(function() {}, function() {});
+				}).then(done, done);
+				return true;
 			}
-			if (navigator.sendBeacon) {
-				navigator.sendBeacon(updateUrl, new Blob([body], {type: 'application/x-www-form-urlencoded'}));
+			if (window.XMLHttpRequest) {
+				var xhr = new window.XMLHttpRequest();
+				xhr.open('POST', updateUrl, true);
+				xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+				xhr.onreadystatechange = function() { if (xhr.readyState === 4) { done(); } };
+				xhr.send(body);
+				return true;
 			}
 		} catch (e) { /* the page goes on */ }
-		return null;
+		return false;
 	}
 	// One request at a time, so a later value is never overtaken by an earlier one.
 	function sendUpdate() {
 		if (updating || !pendingUpdate || !updateProof || !consented() || window.dcs !== dcs) { return; }
+		var values = pendingUpdate;
 		var body = 'proof=' + encodeURIComponent(updateProof);
-		for (var field in pendingUpdate) {
-			if (own(pendingUpdate, field)) {
-				try { body += '&' + field + '=' + encodeURIComponent(pendingUpdate[field]); } catch (e) { /* a lone surrogate */ }
+		for (var field in values) {
+			if (own(values, field)) {
+				try { body += '&' + field + '=' + encodeURIComponent(values[field]); } catch (e) { /* a lone surrogate */ }
 			}
 		}
 		pendingUpdate = null;
-		var sent = postUpdate(body);
-		if (sent) {
-			updating = true;
-			sent.then(function() { updating = false; sendUpdate(); });
+		updating = true;
+		var answered = false;
+		var started = postUpdate(body, function() {
+			if (answered) { return; }
+			answered = true;
+			updating = false;
+			sendUpdate();
+		});
+		if (!started && !answered) {
+			// Kept for the next change, whose newer values win.
+			answered = true;
+			updating = false;
+			pendingUpdate = values;
+			warnOnce('send', 'dcs.updateDataObj() could not be sent to update the recorded click; the next change tries again.');
 		}
 	}
 	function noClick() {

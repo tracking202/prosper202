@@ -62,6 +62,24 @@ function page(serverData, query, elements, options = {}) {
             return answered;
         };
     }
+    if (options.xhr) {
+        // A browser without fetch: XMLHttpRequest, answered when the test says.
+        window.XMLHttpRequest = function () {
+            const xhr = this;
+            xhr.readyState = 0;
+            xhr.headers = {};
+            xhr.open = (method, url, async) => { Object.assign(xhr, {method, url, async}); xhr.readyState = 1; };
+            xhr.setRequestHeader = (name, value) => { xhr.headers[name] = value; };
+            xhr.send = (body) => {
+                if (options.xhr === 'refuses') { throw new Error('refused'); }
+                network.push('xhr');
+                posts.push({url: xhr.url, xhr, body, resolve: () => {
+                    xhr.readyState = 4;
+                    if (xhr.onreadystatechange) { xhr.onreadystatechange(); }
+                }});
+            };
+        };
+    }
     const context = {
         window, document, URLSearchParams,
         console: {warn(m) { warnings.push(m); }},
@@ -309,14 +327,49 @@ for (const options of [{consent: false}, {revoked: true}]) {
         assert.match(warnings[0], /no recorded click to update/, why);
     }
     {
-        // Without fetch, a beacon.
-        const {window, posts, network} = page(server, query, [], {fetch: false});
+        // Without fetch, XMLHttpRequest, still one request at a time.
+        const {window, posts, network} = page(server, query, [], {fetch: false, xhr: true});
         window.p202DcsClick({t202Subid: '41', updateProof: PROOF});
-        window.dcs.updateDataObj({t202C4: 'beacon'});
-        assert.deepStrictEqual(network, ['beacon']);
-        assert.strictEqual(posts[0].url, UPDATE_URL);
-        assert.strictEqual(posts[0].blob.type, 'application/x-www-form-urlencoded');
-        assert.strictEqual(await posts[0].blob.text(), 'proof=' + encodeURIComponent(PROOF) + '&t202c4=beacon');
+        window.dcs.updateDataObj({t202C4: 'older'});
+        window.dcs.updateDataObj({t202C4: 'newer'});
+        assert.deepStrictEqual(network, ['xhr'], 'the newer value waits for the older one to land');
+        const {xhr} = posts[0];
+        assert.deepStrictEqual([xhr.method, xhr.url, xhr.async, xhr.headers['Content-Type'], xhr.withCredentials],
+            ['POST', UPDATE_URL, true, 'application/x-www-form-urlencoded', undefined]);
+        assert.strictEqual(posts[0].body, 'proof=' + encodeURIComponent(PROOF) + '&t202c4=older');
+        posts[0].resolve();
+        assert.deepStrictEqual(network, ['xhr', 'xhr']);
+        assert.strictEqual(posts[1].body, 'proof=' + encodeURIComponent(PROOF) + '&t202c4=newer');
+        posts[1].resolve();
+        posts[0].resolve();
+        assert.strictEqual(posts.length, 2, 'an answer counts once');
+        window.p202.consent(false);
+        window.dcs.updateDataObj({t202C4: 'withdrawn'});
+        assert.strictEqual(posts.length, 2, 'a withdrawal still ends the proof');
+    }
+    {
+        // A request the browser refuses keeps its values for the next change.
+        const {window, posts, warnings} = page(server, query, [], {fetch: false, xhr: 'refuses'});
+        window.p202DcsClick({t202Subid: '41', updateProof: PROOF});
+        window.dcs.updateDataObj({t202C1: 'kept', t202C2: 'old'});
+        assert.strictEqual(posts.length, 0);
+        assert.strictEqual(warnings.length, 1);
+        assert.match(warnings[0], /could not be sent/);
+        const sent = page(server, query, [], {fetch: false, xhr: true});
+        // The same page once the browser takes requests again.
+        window.XMLHttpRequest = sent.window.XMLHttpRequest;
+        window.dcs.updateDataObj({t202C2: 'new'});
+        assert.strictEqual(sent.posts.length, 1);
+        assert.deepStrictEqual(Object.fromEntries(new URLSearchParams(sent.posts[0].body)),
+            {proof: PROOF, t202c1: 'kept', t202c2: 'new'}, 'the refused values go with the next, newer ones winning');
+    }
+    {
+        // Neither fetch nor XMLHttpRequest: nothing sent, said once.
+        const {window, posts, warnings} = page(server, query, [], {fetch: false});
+        window.p202DcsClick({t202Subid: '41', updateProof: PROOF});
+        window.dcs.updateDataObj({t202C1: 'v'});
+        window.dcs.updateDataObj({t202C1: 'w'});
+        assert.deepStrictEqual([posts.length, warnings.length], [0, 1]);
     }
     {
         // A replaced dcs sends nothing.
