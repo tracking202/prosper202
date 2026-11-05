@@ -680,12 +680,14 @@ final class ClickExitIntegrationTest extends TestCase
             self::q('UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = ' . self::$campaign);
             $conv = $sale('meta-retry');
             $broken = static fn (Connection $c, int $owner): string => throw new \RuntimeException('privacy unreadable');
+            $thrown = null;
             try {
                 (new PurLinkPixels($conn, $broken))->poll($proof, $now, $key, $outsideEu, []);
-                self::fail('an unreadable privacy setting fires nothing');
             } catch (\RuntimeException $e) {
-                self::assertSame('privacy unreadable', $e->getMessage());
+                $thrown = $e;
             }
+            self::assertNotNull($thrown, 'an unreadable privacy setting fires nothing');
+            self::assertSame('privacy unreadable', $thrown->getMessage());
             self::assertSame(['n' => '0'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"));
             $retried = (new PurLinkPixels($conn, $setting('disabled')))->poll($proof, $now, $key, $outsideEu, []);
             self::assertSame('fired', $retried['status']);
