@@ -161,6 +161,8 @@ For an **affiliate**:
    **Integrations** and paste the page's **Affiliate IPN URL**
    (`https://<your tracking domain>/tracking202/static/jvzoo.php?role=affiliate`)
    into **Affiliate IPN**.
+   The URL 1.9.56 showed, with no `?role=`, is read the same way, so an
+   Affiliate IPN set before the upgrade keeps recording.
 
 For a **vendor**:
 
@@ -197,7 +199,7 @@ is sent again every hour for 72 hours):
 | a notification with no click (no `caffitid` on the affiliate URL, a tid that is not a click id, no `subid` in `cvendthru` on the vendor URL) | nothing; the answer names the field the URL reads and the link's `?tid=[[subid]]` or `?subid=[[subid]]` that fills it | `200 no_click` |
 | a click that is not one of the account's | nothing; the answer names the field it came in | `404` |
 | a `cverify` no stored key verifies | nothing | `403` |
-| a malformed field (a `ctranstime` that is not a Unix time among them), a field JVZIPN v1 does not post, a URL with no `?role=` | nothing | `400`, naming it |
+| a malformed field (a `ctranstime` that is not a Unix time among them), a field JVZIPN v1 does not post, a `?role=` that is neither `affiliate` nor `vendor` | nothing | `400`, naming it |
 | a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
 
 A few things JVZoo's documentation leaves to the receiver:

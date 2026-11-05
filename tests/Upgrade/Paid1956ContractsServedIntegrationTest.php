@@ -720,10 +720,10 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
     }
 
     /**
-     * The JVZIPN URL 1.9.56 showed named no role. A sale there is refused, by
-     * design, naming the URL to use; at ?role=affiliate the same sale records.
+     * The JVZIPN URL 1.9.56 showed named no role, and 1.9.56 read it as the
+     * affiliate's (caffitid): a signed sale there records, once, as at ?role=affiliate.
      */
-    public function testARolelessJvzooIpnNamesTheUrlToUseInstead(): void
+    public function testARolelessJvzooIpnRecordsTheSaleAsTheAffiliates(): void
     {
         self::q('UPDATE 202_users_pref SET jvzoo_ipn_secret_key = ' . self::str(self::JVZIPN_KEY)
             . ' WHERE user_id = ' . self::OWNER);
@@ -735,12 +735,11 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         ksort($fields, SORT_STRING);
         $fields['cverify'] = strtoupper(substr(sha1(implode('|', $fields) . '|' . self::JVZIPN_KEY), 0, 8));
         [$status, $headers, $body] = self::http('/tracking202/static/jvzoo.php', [], $fields);
-        self::assertSame(400, $status, $headers . $body . $this->serverLog());
-        self::assertStringContainsString('?role=affiliate', $body);
-        self::assertSame([], self::conversions($click));
-        [$status, $headers, $body] = self::http('/tracking202/static/jvzoo.php?role=affiliate', [], $fields);
         self::assertSame(200, $status, $headers . $body . $this->serverLog());
         self::assertSame([['JVZ-RECEIPT-1956', '47.00']], self::conversions($click));
+        [$status, $headers, $body] = self::http('/tracking202/static/jvzoo.php?role=affiliate', [], $fields);
+        self::assertSame(200, $status, $headers . $body . $this->serverLog());
+        self::assertSame([['JVZ-RECEIPT-1956', '47.00']], self::conversions($click), 'the same sale, once');
     }
 
     /**
