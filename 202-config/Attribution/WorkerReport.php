@@ -10,8 +10,6 @@ final class WorkerReport
     public int $mergesRequeued = 0;
     /** Merges whose re-queue failed this run: each is tried again after a backoff. */
     public int $mergesFailed = 0;
-    /** Merges whose own data refused the re-queue this run: none is tried again. */
-    public int $mergesRetired = 0;
     public int $modelsFannedOut = 0;
     /** Models whose recompute batch failed this run: each is tried again after a backoff. */
     public int $modelsFailed = 0;
@@ -45,9 +43,7 @@ final class WorkerReport
             $this->processed(),
             $parts === [] ? 'none' : implode(', ', $parts),
             $this->mergesRequeued,
-            $this->mergesFailed + $this->mergesRetired === 0
-                ? ''
-                : sprintf(' (%d failed, %d retired)', $this->mergesFailed, $this->mergesRetired),
+            $this->mergesFailed === 0 ? '' : sprintf(' (%d failed)', $this->mergesFailed),
             $this->modelsFannedOut,
             $this->modelsFailed === 0 ? '' : sprintf(' (%d failed)', $this->modelsFailed),
             $this->remaining,

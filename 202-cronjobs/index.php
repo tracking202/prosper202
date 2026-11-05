@@ -647,9 +647,7 @@ function RunSecondsCronjob()
                 new \Prosper202\Database\Connection($db),
                 20
             );
-            $notDone = $attribution === null
-                ? 0
-                : $attribution->mergesFailed + $attribution->mergesRetired + $attribution->modelsFailed;
+            $notDone = $attribution === null ? 0 : $attribution->mergesFailed + $attribution->modelsFailed;
             $worthALine = $attribution !== null
                 && ($attribution->processed() > 0 || $attribution->backfill !== null || $notDone > 0);
             if ($worthALine) {
