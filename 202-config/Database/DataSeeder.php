@@ -39,6 +39,7 @@ final readonly class DataSeeder
     public function seed(): void
     {
         $this->seedPixelTypes();
+        $this->seedBot202FacebookPixelLookups();
         $this->seedDeviceTypes();
         $this->seedRoles();
         $this->seedPermissions();
@@ -61,6 +62,17 @@ final readonly class DataSeeder
             ('Raw'),
             ('Bot202 Facebook Pixel Assistant')";
         $this->run($sql);
+    }
+
+    /**
+     * Seed the Bot202 Facebook Pixel Assistant's content types and click
+     * events, as paid 1.9.56 and the 1.9.80 upgrade step seed them.
+     */
+    public function seedBot202FacebookPixelLookups(): void
+    {
+        foreach (\Prosper202\Setup\FacebookPixelAssistantSettings::seedStatements() as $sql) {
+            $this->run($sql);
+        }
     }
 
     /**

@@ -224,6 +224,51 @@ Each notification is logged in the server's error log in one line: the
 outcome, the type, the click, the receipt and the account, never the key or
 the buyer's details.
 
+## Shopify
+
+Prosper202 records each Shopify order on the click that sent the buyer, at the
+order's `total_price`, and a refund takes back what it returned, from Shopify's
+webhooks. Under **Account › API integrations › Shopify**:
+
+1. On your store, add the click id to the cart as the line item property
+   `t202subid` (or `_t202subid`, which checkout hides), filled from the
+   tracker's `[[subid]]`. Prosper202 reads it from the first line item that
+   carries it, as paid 1.9.56 did.
+2. In Shopify, under **Settings › Notifications › Webhooks**, create a JSON
+   webhook for **Order payment** and one for **Refund create**, both to the
+   page's Webhook URL
+   (`https://<your tracking domain>/tracking202/static/shopify.php`). Webhooks
+   already pointed at the global postback (`tracking202/static/gpb.php`) by a
+   paid 1.9.56 install keep working: a request carrying Shopify's headers is
+   handed to the same code.
+3. Store the secret Shopify shows under the webhooks list ("Your webhooks will
+   be signed with …"), or a custom app's client secret, on the page. Each
+   webhook's `X-Shopify-Hmac-Sha256` is checked against it, and the account
+   whose secret verifies it is the one it records for. A webhook no stored
+   secret verifies, or one that arrives before any secret is stored, is
+   refused (`403`) and logged with the reason; nothing is recorded.
+
+An order counts once, under its order id. Order creation records only an order
+already paid when it is placed (not a bank transfer, cash on delivery or a held
+card), so subscribe to Order payment. A test order and other topics are
+acknowledged and record nothing. A refund reverses the order on the click it
+was recorded on, whichever item it refunds, or, when the order is not on file,
+on the click of a refunded line item; one that returns no money (a restock)
+records nothing. A refund that names no click and whose order is not on file
+records nothing. The ledger reverses a sale once, so a second refund of the
+same order is refused.
+
+A webhook that verifies but cannot be recorded (a cart value that is not a
+click id, a click of another account, an order in a currency other than the
+account's, a changed total, a second refund) is logged with the reason and
+answered `200` with the outcome in the body: Shopify retries any other answer
+and removes a subscription made through its API after 8 failures in a row,
+which would lose every later order. A refund naming a click whose order is not
+recorded is answered `404` for an hour after the refund, so Shopify's retry
+reverses it if the order arrives late, and `200` after that (an order placed
+before the secret was stored never arrives). An unverified webhook is answered
+`403`. The server log names the status each webhook was answered with.
+
 ## Zaxaa
 
 Prosper202 records Zaxaa sales from Zaxaa Payment Notifications (ZPN).

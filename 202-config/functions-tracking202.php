@@ -1305,35 +1305,6 @@ function callAutoCron($endpoint)
     return json_decode($result, true);
 }
 
-function tagUserByNetwork($install_hash, $type, $network)
-{
-    $post = [];
-    $post['network'] = $network;
-    $fields = http_build_query($post);
-
-    // Initiate curl
-    $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/tag/user/' . $install_hash . '/' . $type);
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Set to post
-    curl_setopt($ch, CURLOPT_POST, true);
-    // Set post fields
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    // Execute
-    $result = curl_exec($ch);
-
-    if (curl_errno($ch)) {
-        echo 'error:' . curl_error($ch);
-    }
-    // close connection
-    curl_close($ch);
-}
-
 function getDNIHost(): string
 {
     return base64_encode(rtrim(p202TrackingBaseUrl(), '/'));
@@ -1356,6 +1327,24 @@ function getAllDniNetworks($install_hash)
     curl_close($ch);
 
     return json_decode($result, true);
+}
+
+/**
+ * The DNI service's answer as a list of networks, or null when it is not one
+ * (unreachable, not JSON, or an error such as {"code":400,"msg":...}).
+ */
+function dniNetworkList($answer): ?array
+{
+    if (!is_array($answer) || !array_is_list($answer)) {
+        return null;
+    }
+    foreach ($answer as $network) {
+        if (!is_array($network) || !isset($network['networkId'], $network['networkType'], $network['name'])) {
+            return null;
+        }
+    }
+
+    return $answer;
 }
 
 function authDniNetworks($hash, $network, $key, $affId)
@@ -1553,6 +1542,7 @@ function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
     return $result;
 }
 
+// $payout in $currency, converted INTO $payout_currency (ExchangeRates::foreignPayout()).
 function getForeignPayout($currency, $payout_currency, $payout)
 {
     $fields = [

@@ -534,11 +534,12 @@ final class ClickExitIntegrationTest extends TestCase
         $conn = new Connection(self::requireScratch());
         $exit = new PurLinkExit($conn);
         $pixels = new PurLinkPixels($conn);
+        $inEu = static fn (): bool => true;
 
-        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key)['status'], 'no conversion yet');
-        self::assertSame('refused', $pixels->poll($exitProof, $now, $key)['status'], 'an exit proof is not a pixel proof');
-        self::assertSame('refused', $pixels->poll($pixelProof, $now + 3600, $key)['status'], 'expired');
-        self::assertSame('refused', $pixels->poll($pixelProof, $now, str_repeat('y', 32))['status'], 'another key');
+        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key, $inEu)['status'], 'no conversion yet');
+        self::assertSame('refused', $pixels->poll($exitProof, $now, $key, $inEu)['status'], 'an exit proof is not a pixel proof');
+        self::assertSame('refused', $pixels->poll($pixelProof, $now + 3600, $key, $inEu)['status'], 'expired');
+        self::assertSame('refused', $pixels->poll($pixelProof, $now, str_repeat('y', 32), $inEu)['status'], 'another key');
 
         $subid = $exit->subid($exitProof, '11101', $now, $key);
         self::assertIsString($subid);
@@ -546,12 +547,12 @@ final class ClickExitIntegrationTest extends TestCase
             'transaction_id' => 'deferred-sale', 'pixel_type' => 2, 'skip_bridge' => true,
         ], MatchMethod::CLICK_ID);
         self::assertIsArray($sale);
-        $fired = $pixels->poll($pixelProof, $now, $key);
+        $fired = $pixels->poll($pixelProof, $now, $key, $inEu);
         self::assertSame('fired', $fired['status']);
         self::assertSame(1, $fired['conversions']);
         self::assertStringContainsString('https://source.example/px?v=7.25000&amp;t=deferred-sale&amp;s=' . $clickId, $fired['markup']);
         self::assertStringNotContainsString('/server', $fired['markup'], 'server postbacks are never resent');
-        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key)['status'], 'each conversion fires once');
+        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key, $inEu)['status'], 'each conversion fires once');
         self::assertSame(
             ['expires_at' => (string) ($now + 3600)],
             self::one('SELECT expires_at FROM 202_purlink_pixel_fires WHERE conv_id = ' . (int) $sale['convId'])
@@ -571,7 +572,7 @@ final class ClickExitIntegrationTest extends TestCase
             'transaction_id' => 'taken-back', 'pixel_type' => 2, 'reversal' => true, 'skip_bridge' => true,
         ], MatchMethod::CLICK_ID);
         self::assertIsArray($reversal);
-        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key)['status']);
+        self::assertSame('waiting', $pixels->poll($pixelProof, $now, $key, $inEu)['status']);
 
         // A PurLink offer's goal outcome fires; a click subject's goal outcome
         // (which a browser pixel may have reported) does not.
@@ -589,7 +590,7 @@ final class ClickExitIntegrationTest extends TestCase
         $ipn = $row('clickbank', 'cb-receipt');
         $row('legacy_baseline', 'carried');
         $outcome('goal:2:1:1:e2', 'goal-click');
-        $goal = $pixels->poll($pixelProof, $now, $key);
+        $goal = $pixels->poll($pixelProof, $now, $key, $inEu);
         self::assertSame(['fired', 2], [$goal['status'], $goal['conversions']]);
         self::assertStringContainsString('t=goal-offer', $goal['markup']);
         self::assertStringContainsString('t=cb-receipt', $goal['markup']);
@@ -603,13 +604,13 @@ final class ClickExitIntegrationTest extends TestCase
             . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'moved',"
             . " landing_page_url = 'https://example.test/', landing_page_time = 1");
         self::q("UPDATE 202_clicks SET landing_page_id = $moved WHERE click_id = $clickId");
-        self::assertSame('refused', $pixels->poll($pixelProof, $now, $key)['status']);
+        self::assertSame('refused', $pixels->poll($pixelProof, $now, $key, $inEu)['status']);
         self::q("UPDATE 202_clicks SET landing_page_id = $page WHERE click_id = $clickId");
         $foreign = self::FIRST_CLICK + 71;
         self::click($foreign, self::OTHER);
         RecordedClicks::note($foreign);
         $forged = PurLinkProof::issue(PurLinkProof::PIXELS, $foreign, $page, self::OWNER, $now, 3600, $key);
-        self::assertSame('refused', $pixels->poll($forged, $now, $key)['status']);
+        self::assertSame('refused', $pixels->poll($forged, $now, $key, $inEu)['status']);
 
         // Fired rows go once no proof can poll for them.
         (new \Prosper202\Click\PurLinkExitRetention($conn))->prune($now + 3601);
@@ -617,6 +618,81 @@ final class ClickExitIntegrationTest extends TestCase
             ['n' => '0'],
             self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE click_id = $clickId")
         );
+    }
+
+    /**
+     * A Meta Purchase (type 6) on the deferred pixel passes the gate a
+     * conversion request's does: the privacy setting for the poll's visitor,
+     * a consent refusal sent with the poll, and the click's campaign's
+     * identity capture. A refusal is final (the conversion is marked fired);
+     * a setting that cannot be read leaves it unmarked, for the next poll.
+     */
+    public function testDeferredMetaPurchaseFiresOnlyForATrackedConsentingVisitor(): void
+    {
+        $clickId = self::FIRST_CLICK + 73;
+        self::click($clickId);
+        $page = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OWNER
+            . ", aff_campaign_id = 0, landing_page_type = 1, landing_page_nickname = 'meta',"
+            . " landing_page_url = 'https://example.test/', landing_page_time = 1");
+        $account = self::insert('INSERT INTO 202_ppc_accounts SET user_id = ' . self::OWNER
+            . ", ppc_network_id = 1, ppc_account_name = 'meta', ppc_account_time = 1");
+        self::q("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 1,"
+            . " pixel_code = 'https://source.example/px?t=[[transactionid]]'");
+        self::q("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 6,"
+            . " pixel_code = '123456789012345'");
+        self::q("UPDATE 202_clicks SET landing_page_id = $page, ppc_account_id = $account,"
+            . ' aff_campaign_id = ' . self::$campaign . " WHERE click_id = $clickId");
+        RecordedClicks::note($clickId);
+        $key = str_repeat('x', 32);
+        $now = time();
+        $proof = PurLinkProof::issue(PurLinkProof::PIXELS, $clickId, $page, self::OWNER, $now, 3600, $key);
+        $conn = new Connection(self::requireScratch());
+        $sale = static fn (string $tx): int => self::insert('INSERT INTO 202_conversion_logs SET click_id = '
+            . $clickId . ', user_id = ' . self::OWNER . ', campaign_id = ' . self::$campaign . ', click_payout = 4,'
+            . " click_time = $now, conv_time = $now, time_difference = '', pixel_type = 0, user_agent = '',"
+            . " source = 'clickbank', transaction_id = '$tx', dedupe_key = 'k-$tx'");
+        $setting = static fn (string $privacy): \Closure => static fn (Connection $c, int $owner): string => $privacy;
+        $outsideEu = static fn (): bool => false;
+        $purchase = "facebook.com/tr?id=123456789012345&amp;ev=Purchase&amp;noscript=1&amp;eid=";
+
+        try {
+            $cases = [
+                'tracked and consenting' => ['disabled', $outsideEu, [], 1, true],
+                'consent refused with the poll' => ['disabled', $outsideEu, ['p202_consent' => '0'], 1, false],
+                'privacy holds every visitor back' => ['all', $outsideEu, [], 1, false],
+                'privacy eu, visitor may be in the EU' => ['eu', static fn (): bool => true, [], 1, false],
+                'privacy eu, visitor outside the EU' => ['eu', $outsideEu, [], 1, true],
+                'campaign capture off' => ['disabled', $outsideEu, [], 0, false],
+            ];
+            foreach ($cases as $why => [$privacy, $inEu, $signals, $capture, $fires]) {
+                self::q("UPDATE 202_aff_campaigns SET identity_signals = $capture WHERE aff_campaign_id = " . self::$campaign);
+                $tx = 'meta-' . md5($why);
+                $conv = $sale($tx);
+                $polled = (new PurLinkPixels($conn, $setting($privacy)))->poll($proof, $now, $key, $inEu, $signals);
+                self::assertSame(['fired', 1], [$polled['status'], $polled['conversions']], $why);
+                self::assertStringContainsString('t=' . $tx, $polled['markup'], $why . ': other pixel types still render');
+                self::assertSame($fires, str_contains($polled['markup'], $purchase . $tx), $why);
+                self::assertSame(['n' => '1'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"), $why);
+            }
+
+            // A setting that cannot be read rolls the poll back: nothing is
+            // marked, and the next poll fires the Purchase.
+            self::q('UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = ' . self::$campaign);
+            $conv = $sale('meta-retry');
+            $broken = static fn (Connection $c, int $owner): string => throw new \RuntimeException('privacy unreadable');
+            try {
+                (new PurLinkPixels($conn, $broken))->poll($proof, $now, $key, $outsideEu, []);
+                self::fail('an unreadable privacy setting fires nothing');
+            } catch (\RuntimeException $e) {
+                self::assertSame('privacy unreadable', $e->getMessage());
+            }
+            self::assertSame(['n' => '0'], self::one("SELECT COUNT(*) AS n FROM 202_purlink_pixel_fires WHERE conv_id = $conv"));
+            $retried = (new PurLinkPixels($conn, $setting('disabled')))->poll($proof, $now, $key, $outsideEu, []);
+            self::assertSame('fired', $retried['status']);
+            self::assertStringContainsString($purchase . 'meta-retry', $retried['markup']);
+        } finally {
+            self::q('UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = ' . self::$campaign);
+        }
     }
 
     public function testExpiredExitFencesArePrunedInBoundedBatches(): void
