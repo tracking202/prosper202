@@ -153,20 +153,25 @@ final class OwnerPrivacyTest extends TestCase
         self::assertSame([false, '203.0.113.0', '', null], self::visitor());
     }
 
-    /** The landing page's t202Subid segment follows the click cookies' rule and the visitor's consent. */
+    /**
+     * The landing page's t202Subid segment follows the click cookies' rule and
+     * the visitor's consent; its update proof is PageUpdateTest's.
+     */
     public function testTheSubidSegmentFollowsTheCookieRuleAndConsent(): void
     {
+        $noKey = $this->getMockBuilder(\mysqli::class)->disableOriginalConstructor()->getMock();
+        $noKey->method('prepare')->willThrowException(new \mysqli_sql_exception('gone away'));
         $_SESSION = ['privacy' => 'disabled'];
         p202ApplyOwnerPrivacy(2, $this->conn([1 => 'disabled', 2 => 'disabled']));
         self::assertSame(
             'try { if (typeof window.p202DcsClick === "function") window.p202DcsClick({"t202Subid":"41"}); } catch (e) {}' . "\n",
-            p202DcsClickJs([], 41)
+            p202DcsClickJs([], 41, 12, 2, $noKey)
         );
-        self::assertSame('', p202DcsClickJs(['p202_consent' => '0'], 41), 'refused');
-        self::assertSame('', p202DcsClickJs([], 0), 'no click');
+        self::assertSame('', p202DcsClickJs(['p202_consent' => '0'], 41, 12, 2, $noKey), 'refused');
+        self::assertSame('', p202DcsClickJs([], 0, 12, 2, $noKey), 'no click');
 
         p202ApplyOwnerPrivacy(2, $this->conn([1 => 'disabled', 2 => 'all']));
-        self::assertSame('', p202DcsClickJs([], 41), 'held back by the owner\'s setting');
+        self::assertSame('', p202DcsClickJs([], 41, 12, 2, $noKey), 'held back by the owner\'s setting');
     }
 
     public function testALaterOwnerReplacesAnEarlierOne(): void

@@ -429,18 +429,22 @@ function p202ClickCookieJs(array $cookies): string
 
 /**
  * The statement that gives the landing page's dcs.t202DataObj its t202Subid
- * (1.9.56's segment): under the click cookies' rule and with consent.
+ * (1.9.56's segment) and the proof dcs.updateDataObj() changes the click
+ * with (PageUpdate): under the click cookies' rule and with consent.
  *
  * @param array<string, mixed> $get
  */
-function p202DcsClickJs(array $get, int $clickId): string
+function p202DcsClickJs(array $get, int $clickId, int $landingPageId, int $userId, \mysqli $db): string
 {
-    if ($clickId < 1 || !\Prosper202\Identity\RequestSignals::consentGiven($get) || !trackingEnabled()) {
-        return '';
-    }
-
-    return 'try { if (typeof window.p202DcsClick === "function") window.p202DcsClick('
-        . json_encode(['t202Subid' => (string) $clickId], JSON_THROW_ON_ERROR) . "); } catch (e) {}\n";
+    return \Prosper202\Click\PageUpdate::clickScript(
+        $get,
+        trackingEnabled(),
+        $clickId,
+        $landingPageId,
+        $userId,
+        time(),
+        static fn (): ?string => \Api\V3\Apps\Android\InstallTokenKey::load($db)
+    );
 }
 
 /**

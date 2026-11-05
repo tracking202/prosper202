@@ -54,7 +54,22 @@ Welcome, reader from <span name="t202Country" t202Default="your country">your co
   until you render them.
 - `dcs.renderChanges(['name', …])` shows those values in their elements.
 - `dcs.updateDataObj({name: value})` changes values the object already has
-  and shows them.
+  and shows them. A change to `t202C1`…`t202C4` or `t202Kw` (any case) also
+  changes the click this pageview recorded, so your reports show the value
+  the page set, for example after a form step.
+
+### Changing the recorded click
+
+Only c1–c4 and the keyword can be changed, and only on the click the
+pageview recorded: when the click is recorded, the page is given a signed
+proof for that click, and the change is sent with it. Nothing changes when
+the visitor has refused tracking, when your privacy setting holds the visitor
+back, or when the click has since moved to another landing page. An empty
+value leaves the click's value as it is. Values are cut to what the click
+stores (350 characters, the keyword 150).
+
+The traffic source (`t202Id`), the UTM values and the referrer stay as they
+were recorded; changing them on the page says so once in the browser console.
 
 PurLinks use these values for their tokens (`[[c1]]` takes `t202C1`); call
 `updatePurLink()` after changing them. See [PurLinks](purlinks.md).
@@ -63,12 +78,13 @@ PurLinks use these values for their tokens (`[[c1]]` takes `t202C1`); call
 
 - `name`, `t202attribute`, form fields and the `dcs` methods work as before,
   with the 1.9.56 key names.
-- **`updateDataObj()` changes the page only.** In 1.9.56 it also rewrote the
-  recorded click's `c1`–`c4`, keyword, UTM values, referrer and traffic source
-  (`redirect/u.php`), trusting the click id the browser sent. 1.9.80 does not:
-  the click keeps the values it was recorded with, and the browser console
-  says so once. Put the values in the landing page URL instead, where they
-  are recorded with the click.
+- **`updateDataObj()` changes the recorded click's `c1`–`c4` and keyword
+  again**, with no change to your page. In 1.9.56 it also rewrote the UTM
+  values, the referrer and the traffic source, cost and payout
+  (`redirect/u.php`), trusting the click id the browser sent. 1.9.80 changes
+  only the click the pageview recorded (see above) and keeps the rest as
+  recorded. `redirect/u.php` still answers, but a request without the
+  pageview's proof, such as a page that calls it directly, changes nothing.
 - Values are shown as text. A `t202Default` holding HTML shows the markup.
 - `t202SubidOrig`, `t202SourceId` and the `t202Settings` options are not
   restored; an element named `t202SubidOrig` gets `t202Subid`.
