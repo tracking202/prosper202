@@ -44,6 +44,10 @@ final class AssetManifestTest extends TestCase
                 self::assertStringStartsWith('https://', $asset['url'], "$id: external assets load over https");
                 self::assertStringContainsString('/' . $asset['version'] . '/', $asset['url'], "$id: the external URL pins the version in its path");
                 self::assertArrayNotHasKey('sha384', $asset, "$id: no integrity hash for a file we do not serve");
+                // SYX9: a CDN that refuses a request without a Referer (Highcharts' 403) gets the install's
+                // origin whatever the page's Referrer-Policy; never a policy that sends a page's path.
+                self::assertSame('strict-origin-when-cross-origin', $asset['referrerpolicy'] ?? null,
+                    "$id: an external file carries its own referrer policy");
                 continue;
             }
 
@@ -91,7 +95,15 @@ final class AssetManifestTest extends TestCase
         self::assertSame('<script src="https://example.test/p202/202-js/vendor/jquery-3.7.1.min.js?v=3.7.1"></script>', $js);
 
         $external = p202_asset_tag('highcharts.js', $base);
-        self::assertSame('<script src="https://code.highcharts.com/11.4.8/highcharts.js"></script>', $external);
+        self::assertSame(
+            '<script src="https://code.highcharts.com/11.4.8/highcharts.js" referrerpolicy="strict-origin-when-cross-origin"></script>',
+            $external
+        );
+        self::assertSame(
+            '<script src="https://code.highcharts.com/11.4.8/highcharts.js" referrerpolicy="strict-origin-when-cross-origin" defer></script>',
+            p202_shell_asset_tag(['asset' => 'highcharts.js'], $base, true),
+            'as the shell emits it on the tracking pages'
+        );
 
         $path = p202_shell_asset_tag(['path' => '202-js/chart.theme.js', 'query' => 'v=a%26b'], $base, true);
         self::assertSame('<script src="https://example.test/p202/202-js/chart.theme.js?v=a%26b" defer></script>', $path);
