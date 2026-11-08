@@ -200,10 +200,15 @@ final class WebhookSenderTest extends TestCase
             $options[CURLOPT_TIMEOUT] = 2;
             $answer = WebhookSender::curlTransport($options);
 
-            self::assertSame('127.0.0.2', $answer['primary_ip'], 'curl connected to the pinned address: ' . (string) $answer['error']);
-            self::assertSame(0, $answer['status'], 'no HTTP answer from a listener that never spoke');
+            // Some curl versions return no primary IP when TLS times out.
+            // The pinned listener accepting the connection proves where it went.
             $accepted = @stream_socket_accept($server, 1);
-            self::assertNotFalse($accepted, 'the listener received the connection');
+            self::assertNotFalse($accepted, 'the pinned listener received the connection: ' . (string) $answer['error']);
+            fclose($accepted);
+            if ($answer['primary_ip'] !== null) {
+                self::assertSame('127.0.0.2', $answer['primary_ip']);
+            }
+            self::assertSame(0, $answer['status'], 'no HTTP answer from a listener that never spoke');
         } finally {
             fclose($server);
         }
