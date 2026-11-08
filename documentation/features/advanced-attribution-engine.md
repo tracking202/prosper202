@@ -90,12 +90,22 @@ lets the outbox grow, and the backlog is processed once it is fixed.
   A merge whose re-queue fails, for whatever reason, is recorded on its row
   (`requeue_failures`, `requeue_error`) and passed, so the merges after it,
   the outbox and the rollup still run; it is tried again on the next run,
-  then after a minute, doubling to an hour. Only a failure the merge's own
-  data determines ends its retries: a merged person with more visitor keys
-  than one statement can name (65,533) is retired (`requeue_retired_at`),
-  since a person's keys are never removed. A lock wait or deadlock with the
-  ledger, a lost connection or a missing table is retried for as long as it
-  lasts. `--retry-now` makes failed and retired merges due again.
+  then after a minute, doubling to an hour, for as long as the failure lasts
+  (a lock wait or deadlock with the ledger, a lost connection, a missing
+  table). `--retry-now` makes failed merges due again.
+- A model change is fanned out the same way
+  (`202_attribution_models.recompute_retry_at`): a run takes the models never
+  failed first, then those whose retry is due. A batch that fails is
+  recorded on the model (`recompute_failures`, `recompute_error`) and passed,
+  so the models after it, the outbox and the rollup still run; it is tried
+  again on the next run, then after a minute, doubling to an hour. A batch
+  that succeeds, or an edit that asks for a new recompute, clears the record.
+  `--retry-now` makes failed recomputes due again.
+- A person can have more visitor keys than one statement takes values
+  (65,535). Their journeys and their merges' conversions are read in groups
+  of keys (`JourneyBuilder::KEYS_PER_STATEMENT`), so such a person is
+  credited like any other. 1.9.79 set their merges aside
+  (`requeue_retired_at`); the worker takes those again.
 - A stored model definition that no longer validates is marked
   `invalid` with the reason; the other models keep computing.
 - The report rollup never answers differently from the full computation: an

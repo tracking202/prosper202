@@ -105,8 +105,10 @@ final class IdentityTables
      * (AttributionWorker::requeueMerges()): `requeue_failures` counts the
      * re-queues in a row that failed, `requeue_retry_at` is when the merge
      * is next taken (0 until one has failed), `requeue_error` says why the
-     * last one failed, and `requeue_retired_at` is set when the merge's own
-     * data refuses the re-queue, which then is not tried again.
+     * last one failed. `requeue_retired_at` is what 1.9.79 set on a merge
+     * it would not try again (a person with more visitor keys than one
+     * statement takes values); from 1.9.80 nothing sets it, and the worker
+     * takes such a merge again and clears it.
      */
     public static function identityMerges(): SchemaDefinition
     {
