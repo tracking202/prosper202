@@ -189,6 +189,9 @@ if (is_numeric($mysql['click_id'])) {
 			$purLinkSubid,
 			$purLinkKey,
 		);
+		} catch (\Prosper202\Conversion\Ledger\AmountOutOfRange $amountError) {
+			// The pixel answers its image either way; the inbound log says why nothing was recorded (Y5N2).
+			\Prosper202\InboundLog\RequestLog::current()?->refuse('amount_out_of_range', $amountError->getMessage(), 422);
 		} catch (\Throwable $conversionError) {
 			error_log('gpx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
 			\Prosper202\InboundLog\RequestLog::current()?->refuse('failed', 'The conversion could not be recorded just now.');

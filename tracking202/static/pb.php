@@ -102,6 +102,9 @@ try {
 	] + p202ExtractReversal($_GET));
 } catch (\Prosper202\Conversion\PurLinkCampaignChanged $campaignError) {
 	p202RespondJsonError(404, 'Unknown subid for this campaign');
+} catch (\Prosper202\Conversion\Ledger\AmountOutOfRange $amountError) {
+	// Not a failure to retry: the same amount would be refused again (Y5N2).
+	p202RespondJsonError(422, $amountError->getMessage());
 } catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
 	// Said to the sender in its own words: which transaction, and for a
 	// second reversal of one sale, the reversal already on file.
