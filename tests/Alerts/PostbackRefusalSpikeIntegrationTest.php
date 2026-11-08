@@ -114,6 +114,23 @@ final class PostbackRefusalSpikeIntegrationTest extends TestCase
         self::assertSame([], self::detect(self::OWNER));
     }
 
+    public function testAnIncompleteBaselineAtTheRetentionLimitDoesNotLookLikeASpike(): void
+    {
+        // The log's 5,000 newest unbacked rows after pruning a steady 900/hour.
+        $rows = [];
+        for ($i = 0; $i < 5000; $i++) {
+            $at = self::NOW - (int) (20000 - $i * 4);
+            $rows[] = '(' . self::OWNER . ", $at, 'pb', 'GET', 400, 'bad_signature', 0)";
+        }
+        self::q('INSERT INTO 202_inbound_log (user_id, received_at, endpoint, method, http_status, outcome, accepted) VALUES '
+            . implode(',', $rows));
+        self::assertSame([], self::detect(self::OWNER));
+
+        // With room in the log, an actual increase over a quiet baseline alerts.
+        self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::OWNER . ' AND received_at < ' . (self::NOW - 3600));
+        self::assertCount(1, self::detect(self::OWNER));
+    }
+
     public function testAFewRefusalsAreNotAJump(): void
     {
         self::log(self::OWNER, PostbackRefusalSpikeDetector::MIN_REFUSED - 1, 3500, 60, 'bad_signature');

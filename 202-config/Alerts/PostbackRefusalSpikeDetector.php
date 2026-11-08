@@ -21,7 +21,8 @@ use Prosper202\InboundLog\InboundLog;
  * the BASELINE_HOURS before it. An account that is refused at the same rate
  * all day is not a jump (its log shows it). The alert is about the account,
  * not a campaign (campaign 0, "all campaigns"), and is sent at most once a
- * day while the jump lasts: the incident is the day it is found in.
+ * UTC day while the jump lasts. It is suppressed when the log's retention
+ * limit may have removed part of the baseline.
  */
 final class PostbackRefusalSpikeDetector implements AlertDetector
 {
@@ -42,6 +43,21 @@ final class PostbackRefusalSpikeDetector implements AlertDetector
         $now = $activity->now;
         $hourStart = $now - self::WINDOW;
         $baselineStart = $hourStart - self::BASELINE_HOURS * 3600;
+        // The log keeps only the newest KEEP_REFUSED unbacked rows. If even
+        // the oldest retained row is inside the baseline, its earlier hours
+        // may have been pruned; treating those hours as zero creates a spike
+        // at a steady high rate. Check all unbacked rows, including retries,
+        // because they share the same retention limit.
+        $oldestKept = $conn->prepareRead(
+            'SELECT received_at FROM `' . TableRegistry::INBOUND_LOG . '`'
+            . ' WHERE user_id = ? AND accepted = 0 ORDER BY inbound_id DESC LIMIT 1 OFFSET '
+            . (InboundLog::KEEP_REFUSED - 1)
+        );
+        $conn->bind($oldestKept, 'i', [$activity->userId]);
+        $oldest = $conn->fetchOne($oldestKept);
+        if ($oldest !== null && (int) $oldest['received_at'] >= $baselineStart) {
+            return [];
+        }
         // accepted marks rows that wrote data, not all successful outcomes:
         // duplicate, test and ignored notifications also require no action.
         $successful = "'" . implode("', '", InboundLog::ACCEPTED_OUTCOMES) . "'";

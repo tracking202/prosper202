@@ -51,6 +51,10 @@ refusal reasons. An account refused at the same rate all day is not alerted
 (its log shows it). The alert is about the account rather than a campaign,
 and is sent at most once a day while the jump lasts. Requests the install
 could not attribute to an account are not counted.
+The alert is suppressed when the log's 5,000-row retention limit may have
+removed part of the 24-hour baseline; check the inbound log directly then.
+Successful retries and test requests share that limit. Incidents are keyed to
+the UTC day, so a continuing spike can be reported again after midnight UTC.
 
 Conversions are counted by when they arrived. A reversal does not count as
 one. Each alert is sent once per incident.
