@@ -28,6 +28,11 @@ declare(strict_types=1);
  * instead of following the CDN's rolling "latest" build. That CDN requires a
  * Referer header and does not advertise CORS, so an integrity attribute would
  * block the script in browsers; the pinned version is the guarantee there.
+ * An external entry's 'referrerpolicy' is the script's own: Highcharts
+ * answers 403 to a request with no Referer, which is what a page served
+ * under Referrer-Policy: same-origin (or no-referrer) sends it, and the
+ * overview charts went blank (SYX9). strict-origin-when-cross-origin sends
+ * the install's origin only, never a page's path or query.
  *
  * The 'legacy.*' entries of the classic shell (Bootstrap 3, Flat UI Pro and
  * the plugins written against them) were deleted with it in U8, with their
@@ -77,6 +82,7 @@ return [
     'highcharts.js' => [
         'url' => 'https://code.highcharts.com/11.4.8/highcharts.js',
         'version' => '11.4.8',
+        'referrerpolicy' => 'strict-origin-when-cross-origin',
     ],
 
     // Framework-free.

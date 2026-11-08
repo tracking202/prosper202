@@ -228,6 +228,7 @@ final class RemovedRowsStayRemovedTest extends TestCase
             }
         }
         $found = false;
+        $caseDepth = 0;
         for ($k = $start; $k <= $end; $k++) {
             $inOn = $onGroup !== null && $k >= $onStart && $depth[$k] === $onGroup
                 && self::inGroup($depth, $onStart, $k, $onGroup);
@@ -236,6 +237,18 @@ final class RemovedRowsStayRemovedTest extends TestCase
                 continue;
             }
             $t = $tokens[$k];
+            // A CASE expression labels rows; its WHEN is not a row filter.
+            if ($t['u'] === 'CASE') {
+                $caseDepth++;
+                continue;
+            }
+            if ($t['u'] === 'END' && $caseDepth > 0) {
+                $caseDepth--;
+                continue;
+            }
+            if ($caseDepth > 0) {
+                continue;
+            }
             if (in_array($t['u'], ['OR', 'XOR'], true) || ($t['k'] === 'op' && $t['v'] === '||')) {
                 return false;
             }
@@ -377,6 +390,10 @@ final class RemovedRowsStayRemovedTest extends TestCase
                 $read,
             ],
             'filter beside an OR' => [$q("SELECT name FROM $v WHERE deleted = 0 OR 1 = 1"), $read],
+            'case labels removed rows, not a filter' => [
+                $q("SELECT CASE WHEN v.deleted = 0 THEN v.name ELSE 'removed' END FROM $v v"),
+                $read,
+            ],
             'filter one level out' => [
                 $q("SELECT 1 FROM t JOIN (SELECT a FROM $v GROUP BY a) d USING (a) WHERE deleted = 0"),
                 $read,
