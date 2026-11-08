@@ -1,0 +1,2 @@
+-- Fixed: Analyze › Custom Variables named each value's variable by its id alone, so after a traffic source was split off into another account (GET /system/traffic-source-owners, p202 system traffic-source-owners), the clicks left behind showed that account's variable names, and any rename made there. A variable is now named only by the click's own traffic source; a value whose variable belongs to another source keeps its clicks and shows as "Unnamed variable <id>".
+app: Fixed: Analyze › Custom Variables never shows another account's variable names.

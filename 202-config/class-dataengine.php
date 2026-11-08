@@ -766,10 +766,23 @@ ORDER BY lp.landing_page_id ASC";
         // only), and the report counted that click twice. A removed
         // variable's values are still its clicks', so it stays, named as
         // removed.
+        //
+        // A variable is named only by the click's own traffic source: the
+        // lookup rows (202_custom_variables, 202_variable_sets2) are shared
+        // and name a variable by id alone, so a click whose source was split
+        // off into another account (TrafficSourceOwners) still names the
+        // original source's variables, now that account's. Its values stay,
+        // since they are this account's clicks, but unnamed: another
+        // account's label, or a rename there, never shows here.
         $click_sql = " SELECT
             2st.user_id,
     ppc_network_name,
-    IF(202_ppc_network_variables.deleted = 0, name, CONCAT(name, ' (removed)')) as variable_name,
+    CASE
+        WHEN 202_ppc_network_variables.ppc_variable_id IS NULL
+            THEN CONCAT('Unnamed variable ', 202_custom_variables.ppc_variable_id)
+        WHEN 202_ppc_network_variables.deleted = 0 THEN name
+        ELSE CONCAT(name, ' (removed)')
+    END as variable_name,
     variable as variable_value," . MetricsSql::GROUPED_SELECT . ",
     2st.ppc_network_id,
     2st.variable_set_id,
@@ -780,8 +793,9 @@ ORDER BY lp.landing_page_id ASC";
     202_variable_sets2 USING (variable_set_id)
         JOIN
     202_custom_variables ON (202_custom_variables.custom_variable_id = 202_variable_sets2.variables)
-        JOIN
-    202_ppc_network_variables ON (202_custom_variables.ppc_variable_id = 202_ppc_network_variables.ppc_variable_id)
+        LEFT JOIN
+    202_ppc_network_variables ON (202_custom_variables.ppc_variable_id = 202_ppc_network_variables.ppc_variable_id
+        AND 202_ppc_network_variables.ppc_network_id = 2st.ppc_network_id)
         JOIN
     202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id AND 202_ppc_networks.user_id = 2st.user_id)
 ";

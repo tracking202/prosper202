@@ -287,7 +287,7 @@ final class UiPartialsTest extends TestCase
             self::assertNotSame([], $assets['js_page']);
             foreach ($assets['js_page'] as $item) {
                 $tag = p202_shell_asset_tag($item, 'http://x/', true);
-                self::assertMatchesRegularExpression('~^<script src="[^"]+" defer></script>$~', $tag, $tag);
+                self::assertMatchesRegularExpression('~^<script src="[^"]+"(?: referrerpolicy="strict-origin-when-cross-origin")? defer></script>$~', $tag, $tag);
             }
             foreach ($assets['js_head'] as $item) {
                 self::assertStringNotContainsString(' defer', p202_shell_asset_tag($item, 'http://x/'), 'head scripts stay blocking, because inline page scripts call jQuery as they parse');
