@@ -60,7 +60,7 @@ final class AlertRun
     /** @return list<AlertDetector> */
     public static function detectors(): array
     {
-        return [new ConversionsStoppedDetector(), new SpendWithoutConversionsDetector()];
+        return [new ConversionsStoppedDetector(), new SpendWithoutConversionsDetector(), new PostbackRefusalSpikeDetector()];
     }
 
     /**

@@ -421,7 +421,9 @@ final class UserTables
     /**
      * The last incident each alert was sent for, per campaign: the campaign's
      * last conversion for conversions_stopped, the local day's start for
-     * spend_without_conversions (Prosper202\Alerts\MysqlAlertStore). A new
+     * spend_without_conversions, the day (in days since 1970, UTC) for
+     * postback_refusals_spiked, which is about the account and is recorded
+     * under campaign 0 (Prosper202\Alerts\MysqlAlertStore). A new
      * incident has another key, so it is sent again. delivered 0 is an
      * incident every channel failed for, tried again until attempts reaches
      * AlertRun::MAX_ATTEMPTS. From 1.9.80.
