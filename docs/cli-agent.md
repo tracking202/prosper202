@@ -1059,7 +1059,10 @@ campaigns) under every active model. The worker computes credits from the
 conversion outbox every minute; `queue` shows what it has not processed yet,
 and the identity merges whose re-queue failed (`merges_failing`, `merge_rows`
 with each one's `last_error`; `merges_retired` is 0 from 1.9.80 once the worker
-has run).
+has run), and the model changes whose recompute failed (`models_failing`,
+`model_rows` with each model's `last_error`, from 1.9.80). A failing merge or
+model is tried again by itself, a minute doubling to an hour, while the rest
+of the worker's run carries on.
 
 ```
 p202 attribution model list      [--type T] [--json]

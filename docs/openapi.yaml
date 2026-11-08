@@ -15569,6 +15569,37 @@ components:
             on its next run, so this is 0 once it has run; kept for clients that read it.
         models_awaiting_recompute:
           type: integer
+          description: >-
+            Models whose change the worker has not yet fanned out over the account's conversions,
+            including the failing ones.
+        models_failing:
+          type: integer
+          description: >-
+            Of those, the models whose last recompute batch failed. Each is tried again, after a wait
+            that doubles to an hour, while the other models, the identity merges and the conversion
+            backlog carry on; model_rows says why. Added in 1.9.80.
+        model_rows:
+          type: array
+          description: The failing model recomputes, most failures first, up to limit. Added in 1.9.80.
+          items:
+            type: object
+            properties:
+              model_id:
+                type: integer
+              model_name:
+                type: string
+              requested_at:
+                type: integer
+                description: When the change that asked for the recompute was made
+              failures:
+                type: integer
+                description: Recompute batches of this model in a row that failed
+              last_error:
+                type: string
+                nullable: true
+              retry_at:
+                type: integer
+                description: When the model's recompute is next taken
         merge_rows:
           type: array
           description: The failing merges, and any 1.9.79 retired, retired first, up to limit.
