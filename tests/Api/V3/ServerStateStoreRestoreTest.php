@@ -17,6 +17,7 @@ final class FakeStateEpoch extends StateEpoch
 {
     public bool $inTransaction = false;
     public bool $unreadable = false;
+    public $onCurrent = null;
 
     public function __construct(public int $value = 0)
     {
@@ -28,7 +29,12 @@ final class FakeStateEpoch extends StateEpoch
             throw new \RuntimeException('the database is gone');
         }
 
-        return $this->value;
+        $value = $this->value;
+        if ($this->onCurrent !== null) {
+            ($this->onCurrent)();
+        }
+
+        return $value;
     }
 
     public function advance(): ?int
@@ -139,6 +145,24 @@ final class ServerStateStoreRestoreTest extends TestCase
         $after->recordChange('campaigns', 'update', ['id' => 1], 1);
         $items = $after->listChanges('campaigns', null, 10, 60)['data'];
         self::assertSame([3], array_column($items, 'seq'), 'the next entry after the restore is 3, not 1 again');
+    }
+
+    public function testConcurrentWriteDuringRestoreCheckIsNotSetAside(): void
+    {
+        $epoch = new FakeStateEpoch(10);
+        $writer = $this->store($epoch);
+        $writer->stageWriteChange(1, ['change_id' => 'before', 'status' => 'pending']);
+        $reads = 0;
+        $epoch->onCurrent = function () use (&$reads, $epoch, $writer): void {
+            ++$reads;
+            if ($reads === 2) {
+                $epoch->onCurrent = null;
+            }
+            $writer->stageWriteChange(1, ['change_id' => 'concurrent-' . $reads, 'status' => 'pending']);
+        };
+        $checker = $this->store($epoch);
+        self::assertNotNull($checker->getStagedChangeForUser(1, 'concurrent-1'));
+        self::assertSame([], glob($this->dir . '/restored-*') ?: [], 'concurrent writes are not a restore');
     }
 
     public function testADatabaseAtOrAheadOfTheRecordsKeepsThem(): void

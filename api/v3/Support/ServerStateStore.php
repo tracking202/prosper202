@@ -215,8 +215,9 @@ class ServerStateStore implements QuotaStore
 
     private function setAsideWhatTheDatabaseIsBehind(): void
     {
+        $written = $this->fileEpoch();
         $database = $this->databaseEpoch();
-        if ($this->fileEpoch() <= $database) {
+        if ($written <= $database) {
             return;
         }
         $lock = fopen($this->dir('locks') . '/restore.lock', 'c');
@@ -224,8 +225,8 @@ class ServerStateStore implements QuotaStore
             throw new DatabaseException('Unable to lock the API state to set aside what a database restore left behind');
         }
         try {
-            $database = $this->databaseEpoch();
             $written = $this->fileEpoch();
+            $database = $this->databaseEpoch();
             if ($written <= $database) {
                 return;
             }
