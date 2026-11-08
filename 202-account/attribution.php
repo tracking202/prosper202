@@ -354,23 +354,23 @@ try {
 	error_log('attribution page: ' . $e->getMessage());
 	$loadError = 'The attribution tables could not be read. Check that the upgrade finished, then reload.';
 }
-// The merges the worker could not re-queue: failing ones are tried again, retired ones are not.
+// The merges the worker could not re-queue: each is tried again.
 $mergeNote = null;
-if ($queue !== null && ((int) $queue['merges_failing'] > 0 || (int) $queue['merges_retired'] > 0)) {
+if ($queue !== null && (int) $queue['merges_failing'] > 0) {
     $failingMerges = (int) $queue['merges_failing'];
-    $retiredMerges = (int) $queue['merges_retired'];
-    $mergeParts = [];
-    if ($failingMerges > 0) {
-        $mergeParts[] = $failingMerges
-            . ($failingMerges === 1 ? ' merge failed to credit its' : ' merges failed to credit their')
-            . ' conversions again; each is tried again, less often the longer it fails';
-    }
-    if ($retiredMerges > 0) {
-        $mergeParts[] = $retiredMerges
-            . ($retiredMerges === 1 ? ' merge cannot credit its' : ' merges cannot credit their')
-            . ' conversions again and ' . ($retiredMerges === 1 ? 'is' : 'are') . ' not tried again';
-    }
-    $mergeNote = implode('; ', $mergeParts) . ' (p202 attribution queue shows why).';
+    $mergeNote = $failingMerges
+        . ($failingMerges === 1 ? ' merge failed to credit its' : ' merges failed to credit their')
+        . ' conversions again; each is tried again, less often the longer it fails'
+        . ' (p202 attribution queue shows why).';
+}
+// The models whose recompute the worker could not queue: each is tried again.
+$modelNote = null;
+if ($queue !== null && (int) $queue['models_failing'] > 0) {
+    $failingModels = (int) $queue['models_failing'];
+    $modelNote = $failingModels
+        . ($failingModels === 1 ? ' model failed to queue its' : ' models failed to queue their')
+        . ' conversions for a recompute; each is tried again, less often the longer it fails,'
+        . ' while the rest of attribution carries on (p202 attribution queue shows why).';
 }
 $activeModels = array_values(array_filter($models, static fn (array $m): bool => $m['status'] === 'active'));
 $defaultModel = null;
@@ -615,6 +615,16 @@ $modelSettings = static function (array $m): string {
             <span class="p202-pill p202-pill--bad">Failing</span>
             <span class="p202-strip__label">Visitors merged into one person</span>
             <span class="p202-strip__value"><?php echo $h($mergeNote); ?></span>
+        </div>
+    </div>
+    <?php } ?>
+
+    <?php if ($modelNote !== null) { ?>
+    <div class="p202-strip mb-3" id="attribution-model-recomputes">
+        <div class="p202-strip__row">
+            <span class="p202-pill p202-pill--bad">Failing</span>
+            <span class="p202-strip__label">Model changes being applied</span>
+            <span class="p202-strip__value"><?php echo $h($modelNote); ?></span>
         </div>
     </div>
     <?php } ?>

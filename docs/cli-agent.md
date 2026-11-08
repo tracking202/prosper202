@@ -939,6 +939,8 @@ p202 destination create --type google_ads --name S --customer-id 123-456-7890 --
                        --credentials-file FILE|- [--login-customer-id N] [--campaign-conversion-action N=ID]...
                        [--send-user-data] [--ad-user-data ...] [--ad-personalization ...] [--json]
                        # credentials JSON: developer_token, oauth_client_id, oauth_client_secret; status needs_authorisation
+                       # a flag of the other type (e.g. --credentials-file without --type google_ads) is a validation error, never ignored
+                       # update: --campaign-conversion-action merges with the stored map; N= removes campaign N's
 p202 destination connect <id> [--json]                  # Google Ads: authorisation_url for a human's browser (same user, 10 min)
 p202 destination update <id> [--enable|--disable] [--name S] [any create flag]   # only the flags given change
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
@@ -1055,8 +1057,12 @@ Multi-touch attribution: credit for each conversion spread over the visitor's
 journey (their clicks, linked by first-party identity signals, across
 campaigns) under every active model. The worker computes credits from the
 conversion outbox every minute; `queue` shows what it has not processed yet,
-and the identity merges whose re-queue failed or was retired (`merges_failing`,
-`merges_retired`, `merge_rows` with each one's `last_error`).
+and the identity merges whose re-queue failed (`merges_failing`, `merge_rows`
+with each one's `last_error`; `merges_retired` is 0 from 1.9.80 once the worker
+has run), and the model changes whose recompute failed (`models_failing`,
+`model_rows` with each model's `last_error`, from 1.9.80). A failing merge or
+model is tried again by itself, a minute doubling to an hour, while the rest
+of the worker's run carries on.
 
 ```
 p202 attribution model list      [--type T] [--json]

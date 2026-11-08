@@ -44,6 +44,14 @@ use Prosper202\Identity\IdentityGraph;
  */
 final class JourneyBuilder
 {
+    /**
+     * The most visitor keys one read names. A person can have more keys
+     * than a prepared statement takes values (65,535; 65,536 is refused,
+     * measured on MariaDB 10.11), so a person's keys are read in groups of
+     * this many. Nearly every person has far fewer, and is one read.
+     */
+    public const KEYS_PER_STATEMENT = 500;
+
     public function __construct(private Connection $conn)
     {
     }
@@ -65,8 +73,57 @@ final class JourneyBuilder
             );
         }
 
-        $placeholders = implode(',', array_fill(0, count($keys), '?'));
+        // The latest MAX_TOUCHES of each group of keys hold the latest
+        // MAX_TOUCHES of them all, so the groups' answers are merged and cut
+        // again. A click has one visitor row, so no click is in two groups.
         $from = max(0, $convTime - $lookbackDays * 86400);
+        $earlier = [];
+        foreach (array_chunk($keys, self::KEYS_PER_STATEMENT) as $group) {
+            $earlier += $this->earlierClicks($userId, $group, $from, $convClickId, $convClickTime);
+        }
+        ['clicks' => $earlier, 'truncated' => $truncated] = self::latestTouches($earlier);
+
+        $touches = [];
+        foreach ($earlier as $clickId => $clickTime) {
+            $touches[] = new Touch(count($touches), $clickId, $clickTime);
+        }
+        $touches[] = $convTouch(count($touches));
+
+        return new Journey($touches, $lookbackDays, $truncated, true);
+    }
+
+    /**
+     * The clicks that fit beside the converting click, oldest first: the
+     * latest MAX_TOUCHES - 1 of $clicks (click_id => click_time), by time
+     * and then click id as each read orders them. Each read fetched
+     * MAX_TOUCHES, one more than fits, which is how a cut journey is told
+     * from a full one.
+     *
+     * @param array<int, int> $clicks
+     * @return array{clicks: array<int, int>, truncated: bool}
+     */
+    public static function latestTouches(array $clicks): array
+    {
+        $ids = array_keys($clicks);
+        usort($ids, static fn (int $a, int $b): int => [$clicks[$b], $b] <=> [$clicks[$a], $a]);
+        $kept = [];
+        foreach (array_reverse(array_slice($ids, 0, Journey::MAX_TOUCHES - 1)) as $id) {
+            $kept[$id] = $clicks[$id];
+        }
+
+        return ['clicks' => $kept, 'truncated' => count($clicks) >= Journey::MAX_TOUCHES];
+    }
+
+    /**
+     * The latest MAX_TOUCHES clicks on a group of the person's keys before
+     * the converting click, click_id => click_time.
+     *
+     * @param list<int> $keys
+     * @return array<int, int>
+     */
+    private function earlierClicks(int $userId, array $keys, int $from, int $convClickId, int $convClickTime): array
+    {
+        $placeholders = implode(',', array_fill(0, count($keys), '?'));
         $stmt = $this->conn->prepareWrite(
             "SELECT DISTINCT cv.click_id, cv.click_time
              FROM 202_clicks_visitor cv
@@ -85,21 +142,12 @@ final class JourneyBuilder
             'i' . str_repeat('i', count($keys)) . 'iiiii',
             array_merge([$userId], $keys, [$from, $convClickTime, $convClickTime, $convClickId, $convClickId])
         );
-        $earlier = $this->conn->fetchAll($stmt);
-
-        // LIMIT MAX_TOUCHES fetched one more than fits beside the converting
-        // click, which is how a cut journey is told from a full one.
-        $truncated = count($earlier) >= Journey::MAX_TOUCHES;
-        $earlier = array_slice($earlier, 0, Journey::MAX_TOUCHES - 1);
-        $earlier = array_reverse($earlier);
-
-        $touches = [];
-        foreach ($earlier as $i => $row) {
-            $touches[] = new Touch($i, (int) $row['click_id'], (int) $row['click_time']);
+        $clicks = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $clicks[(int) $row['click_id']] = (int) $row['click_time'];
         }
-        $touches[] = $convTouch(count($touches));
 
-        return new Journey($touches, $lookbackDays, $truncated, true);
+        return $clicks;
     }
 
     private function visitorKey(int $clickId): ?int

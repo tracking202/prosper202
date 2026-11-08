@@ -876,7 +876,8 @@ final class AttributionReports
     /**
      * The worker's backlog for one account: what is waiting, what is failing
      * and why, and the merges and model changes not yet fanned out, with the
-     * merges that failed or were retired and why.
+     * merges that failed or were retired and the model recomputes that
+     * failed, and why.
      *
      * @return array<string, mixed>
      */
@@ -905,11 +906,11 @@ final class AttributionReports
             'retry_at' => (int) $r['retry_at'],
         ], $this->conn->fetchAll($stmt));
 
-        // A retired merge is not awaiting anything: its own data refused the
-        // re-queue, and it is not tried again (AttributionWorker::requeueMerges()).
+        // A merge 1.9.79 retired (requeue_retired_at) awaits its re-queue like
+        // any other: the worker takes it again (AttributionWorker::requeueMerges()).
         $stmt = $this->conn->prepareRead(
-            'SELECT COALESCE(SUM(requeue_retired_at IS NULL), 0) AS awaiting,
-                    COALESCE(SUM(requeue_retired_at IS NULL AND requeue_failures > 0), 0) AS failing,
+            'SELECT COUNT(*) AS awaiting,
+                    COALESCE(SUM(requeue_failures > 0), 0) AS failing,
                     COALESCE(SUM(requeue_retired_at IS NOT NULL), 0) AS retired
              FROM 202_identity_merges WHERE user_id = ? AND requeued_at IS NULL'
         );
@@ -933,10 +934,27 @@ final class AttributionReports
         ], $this->conn->fetchAll($stmt));
 
         $stmt = $this->conn->prepareRead(
-            'SELECT COUNT(*) AS c FROM 202_attribution_models WHERE user_id = ? AND recompute_requested_at IS NOT NULL'
+            'SELECT COUNT(*) AS c, COALESCE(SUM(recompute_failures > 0), 0) AS failing
+             FROM 202_attribution_models WHERE user_id = ? AND recompute_requested_at IS NOT NULL'
         );
         $this->conn->bind($stmt, 'i', [$userId]);
-        $models = (int) (($this->conn->fetchOne($stmt) ?? [])['c'] ?? 0);
+        $mc = $this->conn->fetchOne($stmt) ?? [];
+
+        $stmt = $this->conn->prepareRead(
+            'SELECT model_id, model_name, recompute_requested_at, recompute_failures, recompute_error, recompute_retry_at
+             FROM 202_attribution_models
+             WHERE user_id = ? AND recompute_requested_at IS NOT NULL AND recompute_failures > 0
+             ORDER BY recompute_failures DESC, model_id LIMIT ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$userId, $limit]);
+        $modelRows = array_map(static fn (array $r): array => [
+            'model_id' => (int) $r['model_id'],
+            'model_name' => (string) $r['model_name'],
+            'requested_at' => (int) $r['recompute_requested_at'],
+            'failures' => (int) $r['recompute_failures'],
+            'last_error' => $r['recompute_error'],
+            'retry_at' => (int) $r['recompute_retry_at'],
+        ], $this->conn->fetchAll($stmt));
 
         return [
             'pending' => (int) ($s['pending'] ?? 0),
@@ -945,11 +963,13 @@ final class AttributionReports
             'merges_awaiting_requeue' => (int) ($m['awaiting'] ?? 0),
             'merges_failing' => (int) ($m['failing'] ?? 0),
             'merges_retired' => (int) ($m['retired'] ?? 0),
-            'models_awaiting_recompute' => $models,
+            'models_awaiting_recompute' => (int) ($mc['c'] ?? 0),
+            'models_failing' => (int) ($mc['failing'] ?? 0),
             // The pre-upgrade backfill while it runs (ConversionBackfill), null after.
             'backfill' => (new ConversionBackfill($this->conn))->progress(),
             'rows' => $rows,
             'merge_rows' => $mergeRows,
+            'model_rows' => $modelRows,
         ];
     }
 

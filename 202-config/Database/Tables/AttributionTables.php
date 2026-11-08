@@ -55,6 +55,11 @@ final class AttributionTables
      * - recompute_requested_at / recompute_cursor: a change to what the model
      *   computes asks the worker to re-derive its credits, which it fans out
      *   in batches from the cursor.
+     * - recompute_failures / recompute_retry_at / recompute_error: the fan-out's
+     *   turn (AttributionWorker::fanOutModelRecomputes()): the batches in a
+     *   row that failed, when the model is next taken (0 until one has
+     *   failed), and why the last one failed. A batch that succeeds, or an
+     *   edit that asks for a new recompute, clears them.
      */
     public static function attributionModels(): SchemaDefinition
     {
@@ -73,6 +78,9 @@ final class AttributionTables
                 `is_default` tinyint(1) unsigned DEFAULT NULL,
                 `recompute_requested_at` int(10) unsigned DEFAULT NULL,
                 `recompute_cursor` int(11) unsigned NOT NULL DEFAULT '0',
+                `recompute_failures` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `recompute_retry_at` int(10) unsigned NOT NULL DEFAULT '0',
+                `recompute_error` varchar(255) DEFAULT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`model_id`),

@@ -203,11 +203,18 @@ A conversion whose click has no gclid, wbraid or gbraid and that carries no
 hashed email or phone is `withheld`: there is nothing Google can match.
 Google takes a click's conversion only 6 hours after the click, so a newer
 one waits until then, using none of its tries. A click more than 90 days old
-fails: no conversion window is longer.
+fails: no conversion window is longer. When the click's time is not on record,
+the conversion's time stands in for it (a click is never later than its
+conversion), so every wait ends by 90 days at the latest.
 
 Google's answers: a conversion Google already holds (`ORDER_ID_ALREADY_IN_USE`,
-`CLICK_CONVERSION_ALREADY_EXISTS`) counts as sent; `TOO_RECENT_EVENT` and
-`TOO_RECENT_CONVERSION_ACTION` wait 6 hours; a quota error, a timeout and a
+`CLICK_CONVERSION_ALREADY_EXISTS`) counts as sent. Google keeps the one it
+holds, and its API reads no click conversion back, so the value and time of
+this one are not compared with it: the row says so in `last_error`, and its
+summary carries `already_in_google_ads: true` (a corrected value sent under the
+same order id does not change Google's; adjusting it is a later feature). `TOO_RECENT_EVENT` and
+`TOO_RECENT_CONVERSION_ACTION` wait 6 hours, uncounted (`TOO_RECENT_EVENT`
+more than a day after the click is an ordinary, counted retry); a quota error, a timeout and a
 5xx are retried with backoff. What only you can mend waits instead of
 failing, using none of its tries, with Google's error code in `last_error`:
 an authentication or authorization error (a developer token Google has not
@@ -247,7 +254,7 @@ p202 destination update 1 --disable
 p202 destination create --type google_ads --name "Search campaigns" --customer-id 123-456-7890 \
     --conversion-action 987654 --credentials-file google-ads.json
 p202 destination connect 2          # open the authorisation_url it prints
-p202 destination update 2 --campaign-conversion-action 12=987655
+p202 destination update 2 --campaign-conversion-action 12=987655   # sets campaign 12's, keeps the others; 12= removes it
 p202 destination test 2
 ```
 
