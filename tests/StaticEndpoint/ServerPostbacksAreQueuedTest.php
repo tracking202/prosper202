@@ -203,7 +203,11 @@ final class ServerPostbacksAreQueuedTest extends TestCase
         self::assertStringContainsString('$released = fastcgi_finish_request();', $body, 'after releasing the client');
         self::assertStringContainsString("if (\$released !== true) {\n            return;", $body, 'and only then');
 
-        foreach (['tracking202/static/gpb.php', 'tracking202/static/upx.php'] as $file) {
+        // pb.php and the payment notifications queue too since QZ3M, and send after their answer the same way.
+        $after = ['tracking202/static/gpb.php', 'tracking202/static/upx.php', 'tracking202/static/pb.php',
+            'tracking202/static/cb202.php', 'tracking202/static/jvzoo.php', 'tracking202/static/paykickstart.php',
+            'tracking202/static/shopify.php', 'tracking202/static/zpn.php'];
+        foreach ($after as $file) {
             $t = self::tokens((string) file_get_contents(self::ROOT . $file));
             $last = null;
             foreach ($t as $i => $token) {

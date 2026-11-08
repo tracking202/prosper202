@@ -40,3 +40,6 @@ if ($outcome->kind === \Prosper202\PaymentNotification\OutcomeKind::TEST && $out
             . ' could not be sent: ' . $e->getMessage());
     }
 }
+
+// A sale's traffic-source postbacks were queued with it; sent now that ClickBank has its answer (QZ3M).
+p202SendQueuedPostbacksAfterAnswer($db, (int) ($outcome->conversionId ?? 0));
