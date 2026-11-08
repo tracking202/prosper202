@@ -88,7 +88,7 @@ server's error log, and the hourly run skips its delivery and goes on. A run
 that cannot make, open or lock the file delivers nothing and says why
 (`sync-messaging.php` exits 1; the hourly run writes `Analytics delivery
 failed: …` to the error log), so the users who can open `cron-run.lock` must
-be able to open this one too.
+be able to open this one too. Page delivery also uses `202-cronjobs/analytics-page.lock`; the web and cron users must both be able to open it. If the web server cannot create files in `202-cronjobs/`, create an empty `analytics-page.lock` alongside `analytics-delivery.lock` before upgrading.
 
 ## Errors
 
