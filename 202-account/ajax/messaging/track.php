@@ -11,13 +11,15 @@ require __DIR__ . '/_auth.php';
  * Prosper202Messenger('trackEvent', name, metadata) post here (202-js/p202-chat.js).
  *
  * The rows are recorded, then delivered to the portal's POST /track by
- * MessagingService::sync(), throttled per user. Nothing else runs that sync
+ * MessagingService::syncExclusive(), throttled per user. Nothing else runs that sync
  * on a page (the chat box no longer polls this install), so a request with
  * flush=1 and nothing to record asks for the delivery alone: the answer's
  * delivery says what happened, and when it is "throttled" or "more" (one
  * batch went out, more is pending), retry_after_s says when the page may ask
  * again. The hourly cron (MessagingService::deliverPendingExclusive()) delivers what
- * a page closed before then leaves behind.
+ * a page closed before then leaves behind. A page never delivers beside the
+ * cron's delivery or another page's: then the answer is "busy", with
+ * retry_after_s too.
  */
 
 header('Content-Type: application/json');
@@ -122,9 +124,12 @@ try {
 
 // Recorded. Delivery is best effort from here: what fails stays queued for
 // the next sync, so it does not change the status.
-$delivery = $service->sync();
+$delivery = $service->syncExclusive(\Prosper202\Cron\CronLock::path(\Prosper202\Cron\CronLock::ANALYTICS_DELIVERY_FILE));
 $answer = ['ok' => true, 'delivery' => $delivery];
-if ($delivery === MessagingService::SYNC_THROTTLED || $delivery === MessagingService::SYNC_MORE) {
+if ($delivery === MessagingService::SYNC_BUSY) {
+    // The other delivery may run for minutes (the cron's): ask again after a throttle, not every second.
+    $answer['retry_after_s'] = max(1, defined('MESSAGING_SYNC_THROTTLE') ? (int) MESSAGING_SYNC_THROTTLE : 20);
+} elseif ($delivery === MessagingService::SYNC_THROTTLED || $delivery === MessagingService::SYNC_MORE) {
     try {
         $answer['retry_after_s'] = max(1, $service->secondsUntilSyncDue());
     } catch (\Throwable $e) {
