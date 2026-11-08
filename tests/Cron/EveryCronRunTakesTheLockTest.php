@@ -57,6 +57,8 @@ final class EveryCronRunTakesTheLockTest extends TestCase
         '202-config/Messaging/MessagingService.class.php' => 'takes the analytics delivery\'s for each delivery'
             . ' (deliverPendingExclusive())',
         '202-cronjobs/sync-messaging.php' => 'names the analytics delivery\'s for deliverPendingExclusive()',
+        '202-account/ajax/messaging/track.php' => 'names the analytics delivery\'s for a page\'s delivery'
+            . ' (syncExclusive(): never beside it, never waiting for it)',
     ];
 
     /** The files that deliver the analytics backlog, which is done only under its lock. */
@@ -208,11 +210,17 @@ final class EveryCronRunTakesTheLockTest extends TestCase
         );
         self::assertStringContainsString(
             '{$lock=CronLock::take($lockPath);if($lock===null){returnnull;}'
-                . 'self::refreshProfiles($db);'
-                . 'returnself::deliverPending($db,$maxBatchesPerUser,$maxConsecutiveFailures);}',
+                . '$pages=CronLock::takeWithin(self::pageLockPath($lockPath),self::PAGE_DELIVERY_WAIT_SECONDS);'
+                . 'if($pages===null){',
             self::code(self::DELIVERS[0]),
             'deliverPendingExclusive() takes the lock it is handed, delivers nothing while another run holds it,'
-                . ' and holds it until the delivery returns'
+                . ' and waits for a page\'s delivery under way (J5TK)'
+        );
+        self::assertStringContainsString(
+            'returnnull;}self::refreshProfiles($db);'
+                . 'returnself::deliverPending($db,$maxBatchesPerUser,$maxConsecutiveFailures);}',
+            self::code(self::DELIVERS[0]),
+            'and holds both locks until the delivery returns'
         );
 
         $callers = [];

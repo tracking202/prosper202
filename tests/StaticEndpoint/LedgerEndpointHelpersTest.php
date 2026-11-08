@@ -184,7 +184,10 @@ final class LedgerEndpointHelpersTest extends TestCase
         yield 'plain' => ['12.5', '12.50000'];
         yield 'dollar sign' => ['$12.50', '12.50000'];
         yield 'thousands separator' => ['$1,234.56', '1234.56000'];
-        yield 'thousands separators, no decimals' => ['1,000,000', '1000000.00000'];
+        yield 'thousands separators, no decimals' => ['999,999', '999999.00000'];
+        // Past what a conversion row's decimal(11,5) holds: refused with the
+        // line, never stored clamped to 999999.99999 (Y5N2).
+        yield 'more than a conversion holds' => ['1,000,000', null];
         yield 'negative with a thousands separator' => ['-1,234.50', '-1234.50000'];
         yield 'spaces' => [' 3 ', '3.00000'];
         // A comma is a thousands separator only between groups of three

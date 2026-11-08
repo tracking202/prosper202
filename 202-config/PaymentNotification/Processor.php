@@ -8,6 +8,7 @@ use Prosper202\Click\ClickRef;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Conversion\Ledger\AmountOutOfRange;
 use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Conversion\PurLinkCampaignChanged;
 use Prosper202\Database\Connection;
@@ -91,6 +92,9 @@ final class Processor
             return $notification->kind->records()
                 ? $this->sale($notification, $verification, $provider, $request)
                 : $this->reversal($notification, $verification, $provider, $request);
+        } catch (AmountOutOfRange $e) {
+            // Not worth a retry: the same amount is refused again (Y5N2).
+            return new Outcome(OutcomeKind::MALFORMED, 'The ' . $event . ' was not recorded: ' . $e->getMessage() . '.', null, $account);
         } catch (\Throwable $e) {
             error_log(sprintf(
                 '%s notification: the %s on click %s could not be recorded: %s',
@@ -286,13 +290,25 @@ final class Processor
         // a duplicate of the one that stands, whatever amount it states.
         $ownId = $n->transactionId !== null && $n->transactionId !== $original;
         $exact = $provider instanceof FingerprintsNotifications;
-        $body = $exact ? $provider->fingerprint($request) : self::fingerprint($request->fields);
+        $body = $exact ? $provider->fingerprint($request) : self::bodyFingerprint($request->fields);
         $reference = $ownId ? (string) $n->transactionId : 'body:' . $body;
         $on = 'Transaction ' . $original . ' on click ' . $clickId;
         // A refund is dated when it happened, the sale keeping its own day;
         // never before the sale it takes back.
         $sale = $this->saleOnFile($clickId, $original, $owner);
         [$time, $dated] = self::dated($n->occurredAt, $sale['time'] ?? 0, 'the sale');
+        // A refund recorded under the key its provider used before, sent
+        // again, is that refund, whether or not its reversal still stands.
+        if (!$ownId && $sale !== null && $provider instanceof KeyedRefundsByBodyBefore1980) {
+            $before = $this->reversalUnderKey(
+                $clickId,
+                DedupeKey::reversal($sale['conv_id'], 'body:' . self::bodyFingerprint($request->fields)),
+                $owner
+            );
+            if ($before !== null) {
+                return $this->repeatedReversal($n, $on, $before, $owner);
+            }
+        }
         // A refund takes back at most what its sale recorded (a sale is
         // reversed once): one stating more (a fee, a mismatched payment) is
         // capped there and answered 200 naming both amounts, which the log
@@ -308,16 +324,28 @@ final class Processor
         // takes its refund back from the value the click carried over, capped
         // under the click lock at what is left of it.
         $carriedPath = $sale === null && $amount !== null && $provider instanceof ReversesPreUpgradeSales;
+        $write = fn (string $ref): array => $this->record($clickId, $owner, $provider, $request, [
+            'transaction_id' => $original,
+            'reversal' => true,
+            'reversal_ref' => $ref,
+            'reverses_carried_value' => $carriedPath,
+            'use_pixel_payout' => $amount !== null,
+            'payout' => $amount ?? '',
+            'conv_time' => $time,
+        ]);
         try {
-            $result = $this->record($clickId, $owner, $provider, $request, [
-                'transaction_id' => $original,
-                'reversal' => true,
-                'reversal_ref' => $reference,
-                'reverses_carried_value' => $carriedPath,
-                'use_pixel_payout' => $amount !== null,
-                'payout' => $amount ?? '',
-                'conv_time' => $time,
-            ]);
+            $result = $write($reference);
+            // Its key names a reversal since deleted, but it takes back
+            // another amount, which that refund sent again would not: it is a
+            // later refund, recorded under its body as before 1.9.80, so the
+            // sale is reversed again as it would have been.
+            if (
+                $result['reason'] === 'duplicate' && !$carriedPath && !$ownId
+                && $provider instanceof KeyedRefundsByBodyBefore1980
+                && $this->deletedReversalOfAnotherAmount($n, $result['conv_id'], $owner)
+            ) {
+                $result = $write('body:' . self::bodyFingerprint($request->fields));
+            }
         } catch (ReversalException $e) {
             $standing = !$ownId && $e->kind === ReversalException::CONFLICT
                 ? $this->liveReversalOfTransaction($clickId, $original, $owner)
@@ -483,13 +511,15 @@ final class Processor
      * When the sale a transaction id names on a click is dated and what it
      * recorded, as positive units (the writer's target), or null with none.
      *
-     * @return array{time: int, units: int}|null
+     * @return array{conv_id: int, time: int, units: int}|null
      */
     private function saleOnFile(int $clickId, string $transactionId, int $owner): ?array
     {
         $conn = new Connection($this->db);
-        $stmt = $conn->prepareRead(
-            'SELECT conv_time, click_payout FROM 202_conversion_logs'
+        // From the primary: the writer reverses what the primary holds, and a
+        // replica behind it would skip the cap and the 1.9.79 key lookup.
+        $stmt = $conn->prepareWrite(
+            'SELECT conv_id, conv_time, click_payout FROM 202_conversion_logs'
             . ' WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL AND user_id = ?'
             . ' ORDER BY conv_id LIMIT 1'
         );
@@ -497,6 +527,7 @@ final class Processor
         $row = $conn->fetchOne($stmt);
 
         return $row === null ? null : [
+            'conv_id' => (int) $row['conv_id'],
             'time' => (int) $row['conv_time'],
             'units' => abs(Amount::toUnits((string) $row['click_payout'])),
         ];
@@ -745,6 +776,34 @@ final class Processor
         ];
     }
 
+    /**
+     * Whether a reversal is deleted and took back another amount than this
+     * refund states (capped at the sale, the whole sale when it states none),
+     * the comparison repeatedReversal() makes.
+     */
+    private function deletedReversalOfAnotherAmount(Notification $n, int $reversalId, int $owner): bool
+    {
+        $stored = $this->storedReversal($reversalId, $owner);
+        $stated = $n->amount !== null ? min(abs(Amount::toUnits($n->amount)), $stored['sale']) : $stored['sale'];
+
+        return $stored['deleted'] && $stated !== $stored['reversed'];
+    }
+
+    /** The account's row on a click under a dedupe key, deleted or not, or null. */
+    private function reversalUnderKey(int $clickId, string $dedupeKey, int $owner): ?int
+    {
+        $conn = new Connection($this->db);
+        // From the primary, as the writer reads its duplicates.
+        $stmt = $conn->prepareWrite(
+            'SELECT conv_id FROM 202_conversion_logs'
+            . ' WHERE click_id = ? AND dedupe_key = ? AND user_id = ? AND reverses_conv_id IS NOT NULL LIMIT 1'
+        );
+        $conn->bind($stmt, 'isi', [$clickId, $dedupeKey, $owner]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? null : (int) $row['conv_id'];
+    }
+
     /** The reversal that still nets a conversion, or null when none does. */
     private function liveReversalOf(int $conversionId, int $owner): ?int
     {
@@ -793,11 +852,14 @@ final class Processor
 
     /**
      * The request's body, which a retry sent unchanged repeats: its fields in
-     * name order, lists included.
+     * name order, lists included. A refund without an id of its own is keyed
+     * by it unless its provider says what one notification is
+     * (FingerprintsNotifications); KeyedRefundsByBodyBefore1980 reads the
+     * keys it wrote before.
      *
      * @param array<array-key, mixed> $fields
      */
-    private static function fingerprint(array $fields): string
+    public static function bodyFingerprint(array $fields): string
     {
         return hash('sha256', serialize(self::byName($fields)));
     }

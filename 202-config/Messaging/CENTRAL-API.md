@@ -262,6 +262,8 @@ Two deliveries at once read the same pending rows, so each event was sent
 twice, and while the portal was down each spent two of its five attempts on
 one outage.
 
+The page and cron also coordinate using `202-cronjobs/analytics-page.lock`. The web and cron users must both be able to open it; if the web server cannot create files in `202-cronjobs/`, create this empty lock alongside `analytics-delivery.lock` before upgrading.
+
 The page's own delivery (`track.php`) sends one batch a request. It answers
 `delivery: "more"` with `retry_after_s` when rows are left, as it does for
 `"throttled"`, and the page asks again then.
