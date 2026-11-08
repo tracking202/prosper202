@@ -76,6 +76,9 @@ final class PostbackRefusalSpikeIntegrationTest extends TestCase
         self::log(self::OWNER, 24, 25 * 3600, 3601, 'bad_signature');      // about one an hour, usually
         self::log(self::OWNER, 30, 3500, 60, 'bad_signature');            // the last hour
         self::log(self::OWNER, 12, 3500, 60, 'unknown_click');
+        self::log(self::OWNER, 30, 3500, 60, 'duplicate');
+        self::log(self::OWNER, 30, 3500, 60, 'test');
+        self::log(self::OWNER, 30, 3500, 60, 'ignored');
         self::log(self::OWNER, 200, 3500, 60, 'recorded', 1);              // accepted ones are not refusals
         self::log(0, 500, 3500, 60, 'unknown_click');                      // unattributed: nobody's
 
@@ -101,6 +104,14 @@ final class PostbackRefusalSpikeIntegrationTest extends TestCase
 
         self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::OWNER . ' AND received_at < ' . (self::NOW - 3600));
         self::assertCount(1, self::detect(self::OWNER));
+    }
+
+    public function testSuccessfulUnbackedNotificationsAreNotRefusals(): void
+    {
+        foreach (['duplicate', 'test', 'ignored'] as $outcome) {
+            self::log(self::OWNER, 20, 3500, 60, $outcome);
+        }
+        self::assertSame([], self::detect(self::OWNER));
     }
 
     public function testAFewRefusalsAreNotAJump(): void

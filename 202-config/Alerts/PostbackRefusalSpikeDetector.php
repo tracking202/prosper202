@@ -42,11 +42,14 @@ final class PostbackRefusalSpikeDetector implements AlertDetector
         $now = $activity->now;
         $hourStart = $now - self::WINDOW;
         $baselineStart = $hourStart - self::BASELINE_HOURS * 3600;
+        // accepted marks rows that wrote data, not all successful outcomes:
+        // duplicate, test and ignored notifications also require no action.
+        $successful = "'" . implode("', '", InboundLog::ACCEPTED_OUTCOMES) . "'";
 
         $stmt = $conn->prepareRead(
             'SELECT SUM(received_at >= ?) AS recent, SUM(received_at < ?) AS earlier'
             . ' FROM `' . TableRegistry::INBOUND_LOG . '`'
-            . ' WHERE user_id = ? AND accepted = 0 AND received_at >= ? AND received_at <= ?'
+            . ' WHERE user_id = ? AND accepted = 0 AND outcome NOT IN (' . $successful . ') AND received_at >= ? AND received_at <= ?'
         );
         $conn->bind($stmt, 'iiiii', [$hourStart, $hourStart, $activity->userId, $baselineStart, $now]);
         $counts = $conn->fetchOne($stmt) ?? [];
@@ -58,7 +61,7 @@ final class PostbackRefusalSpikeDetector implements AlertDetector
 
         $stmt = $conn->prepareRead(
             'SELECT outcome, COUNT(*) AS n FROM `' . TableRegistry::INBOUND_LOG . '`'
-            . ' WHERE user_id = ? AND accepted = 0 AND received_at >= ? AND received_at <= ?'
+            . ' WHERE user_id = ? AND accepted = 0 AND outcome NOT IN (' . $successful . ') AND received_at >= ? AND received_at <= ?'
             . ' GROUP BY outcome ORDER BY n DESC, outcome ASC LIMIT ' . self::TOP_REASONS
         );
         $conn->bind($stmt, 'iii', [$activity->userId, $hourStart, $now]);
