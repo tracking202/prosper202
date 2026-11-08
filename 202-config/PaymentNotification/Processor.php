@@ -399,6 +399,9 @@ final class Processor
             'ip' => $request->senderAddress,
             'user_agent' => $request->userAgent,
             'source' => $provider->source()->value,
+            // A sale is the traffic source's conversion too: its server postbacks are queued with the row,
+            // as gpb.php's, and sent after the answer or by the worker (QZ3M). A reversal announces nothing.
+            'notify_traffic_source' => true,
         ] + $what);
     }
 
