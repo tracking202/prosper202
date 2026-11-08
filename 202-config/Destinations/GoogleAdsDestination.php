@@ -18,6 +18,9 @@ use Prosper202\Attribution\WebhookSender;
  * phone. A conversion with neither is withheld. Google refuses a click less
  * than 6 hours old (TOO_RECENT_EVENT): such a row waits, uncounted. So
  * does one Google refuses for something the operator mends (operatorWait()).
+ * Every wait ends: past CLICK_MAX_AGE the row fails, measured from the click,
+ * or from the conversion when the click's time is unknown (a click is never
+ * later than its conversion, so that age is a floor).
  */
 final class GoogleAdsDestination implements DestinationType, AuthorisedDestination
 {
@@ -33,6 +36,11 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
     /** A test's made-up click id: Google checks everything else, then refuses the click, which is expected. */
     public const TEST_GCLID = 'Prosper202-test-click-id';
     private const TEST_CLICK_ERRORS = ['UNPARSEABLE_GCLID', 'EVENT_NOT_FOUND', 'CLICK_NOT_FOUND', 'TOO_RECENT_EVENT', 'EXPIRED_EVENT'];
+    /**
+     * How a row Google already held is logged. Google keeps the conversion it holds, and the API reads no click
+     * conversion back, so this one's value and time are not compared with it.
+     */
+    public const ALREADY_IN_GOOGLE_ADS = 'already in Google Ads (Google keeps the conversion it holds; this one\'s value and time were not compared with it): ';
     /** Google already holds this conversion (the same order id, or the same click and time). */
     private const ALREADY_THERE = ['ORDER_ID_ALREADY_IN_USE', 'CLICK_CONVERSION_ALREADY_EXISTS'];
     private const RETRY_FAMILIES = ['quotaError', 'internalError'];
@@ -142,11 +150,12 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
             return new SendResult(false, false, null, 'withheld: nothing Google can match: the click has no gclid, wbraid or gbraid, and no hashed email or phone was sent', withheld: true);
         }
         $summary = self::summary($conversion, $clickType, $test);
-        if (!$test && $clickType !== '' && $facts->clickTime !== null) {
-            if ($now - $facts->clickTime > self::CLICK_MAX_AGE) {
+        if (!$test && $clickType !== '') {
+            if ($now - self::clickAgeFrom($facts) > self::CLICK_MAX_AGE) {
                 return new SendResult(false, false, null, 'not sent: the click is more than 90 days old, longer than any Google Ads conversion window', $summary);
             }
-            if ($now < $facts->clickTime + self::CLICK_HOLD) {
+            // The 6-hour hold needs the click's own time; without it Google says whether it is too recent.
+            if ($facts->clickTime !== null && $now < $facts->clickTime + self::CLICK_HOLD) {
                 return new SendResult(false, true, null, 'waiting: Google takes a click\'s conversion 6 hours after the click', $summary, waitUntil: $facts->clickTime + self::CLICK_HOLD);
             }
         }
@@ -181,7 +190,13 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
             unset($this->tokens[self::tokenKey($credentials)]);
         }
 
-        return self::redacted(self::answer($sent['status'], $sent['body'], $test, $facts, $now), $secrets, $summary);
+        $result = self::answer($sent['status'], $sent['body'], $test, $facts, $now);
+        if ($result->delivered && str_starts_with($result->reason, self::ALREADY_IN_GOOGLE_ADS)) {
+            // Findable in the log: a corrected value or time sent under the same order id did not reach Google.
+            $summary['already_in_google_ads'] = true;
+        }
+
+        return self::redacted($result, $secrets, $summary);
     }
 
     /**
@@ -229,14 +244,14 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
             return new SendResult(true, false, $status, '');
         }
         if (array_intersect($codes, self::ALREADY_THERE) !== []) {
-            return new SendResult(true, false, $status, 'already in Google Ads: ' . self::describe($errors));
+            return new SendResult(true, false, $status, self::ALREADY_IN_GOOGLE_ADS . self::describe($errors));
         }
         // Still "too recent" a day after the click is not the click's age: an ordinary retry, counted.
-        if (in_array('TOO_RECENT_EVENT', $codes, true) && $now - ($facts->clickTime ?? $now) > 4 * self::CLICK_HOLD) {
+        if (in_array('TOO_RECENT_EVENT', $codes, true) && $now - self::clickAgeFrom($facts) > 4 * self::CLICK_HOLD) {
             return new SendResult(false, true, $status, 'Google Ads answered ' . self::describe($errors));
         }
         if (in_array('TOO_RECENT_EVENT', $codes, true)) {
-            return new SendResult(false, true, $status, 'waiting: ' . self::describe($errors), waitUntil: max($now + 900, ($facts->clickTime ?? $now) + self::CLICK_HOLD));
+            return new SendResult(false, true, $status, 'waiting: ' . self::describe($errors), waitUntil: max($now + 900, self::clickAgeFrom($facts) + self::CLICK_HOLD));
         }
         $waits = self::operatorWait($status, $errors, false, $now, 'Google Ads refused it: ' . self::describe($errors) . self::allowlistNote($errors));
         if ($waits !== null) {
@@ -247,6 +262,15 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         }
 
         return new SendResult(false, false, $status, 'Google Ads refused it: ' . self::describe($errors) . self::allowlistNote($errors));
+    }
+
+    /**
+     * The time a click's age is measured from: the click's own, or the
+     * conversion's when the click's is unknown (a floor on the click's age).
+     */
+    private static function clickAgeFrom(ConversionFacts $facts): int
+    {
+        return $facts->clickTime ?? $facts->convTime;
     }
 
     /**

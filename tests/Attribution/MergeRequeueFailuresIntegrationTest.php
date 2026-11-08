@@ -7,6 +7,7 @@ namespace Tests\Attribution;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\AttributionReports;
 use Prosper202\Attribution\AttributionWorker;
+use Prosper202\Attribution\ModelType;
 use Prosper202\Attribution\WorkerReport;
 use Tests\Attribution\Support\AttributionDatabase;
 
@@ -18,10 +19,9 @@ use Tests\Attribution\Support\AttributionDatabase;
  * out of the run: a merge that failed on every run was the head of every
  * run, and neither the merges after it, nor the outbox, nor the rollup ran
  * again. Each failing merge here sits ahead of one that must be re-queued.
- * Only a failure the merge's own data determines (a person with more visitor
- * keys than one statement can name) ends its retries; a failure of the
- * server's (a trigger's refusal, a lock wait) is retried, later each time,
- * and never ends them.
+ * A failure (a trigger's refusal, a lock wait) is retried, later each time,
+ * and never ends the merge's retries; a person with more visitor keys than
+ * one statement takes values is read in groups, and credited like any other.
  *
  * @group integration
  */
@@ -32,59 +32,83 @@ final class MergeRequeueFailuresIntegrationTest extends TestCase
     /** The worker's clock: early enough that the rollup finds no hour sealed. */
     private const T = 1_000_000;
     private const WIDE_KEY = 1_000_000;
+    /** More visitor keys than one statement takes values (65,535). */
+    private const WIDE_KEYS = 65_540;
     private const REFUSE_FIRST_MERGE = "CREATE TRIGGER p202_test_refuse_merge BEFORE UPDATE ON 202_identity_merges
         FOR EACH ROW IF NEW.merge_id = %d AND NEW.requeued_at IS NOT NULL THEN
             SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused for the test';
         END IF";
 
-    public function testAMergeItsOwnDataRefusesIsRetiredAndTheMergesAfterItAreRequeued(): void
+    public function testAPersonWithMoreKeysThanAStatementTakesIsCreditedAndTheMergesAfterItAreRequeued(): void
     {
         $this->campaign(1);
+        $linear = $this->addModel('Linear', ModelType::LINEAR);
         [, $right1] = $this->twoVisitors(100);
         [, $right2] = $this->twoVisitors(200);
         $this->workAt(self::T);
-        $wide = $this->wideMerge(65534);
+        // More keys than a statement takes values (65,535), with a click on
+        // a key of the first group of keys read, the last and one between.
+        $wide = $this->wideMerge(self::WIDE_KEYS);
+        $now = time();
+        $this->wideClick(300, 1, $now - 7200);
+        $this->wideClick(301, self::WIDE_KEYS - 1, $now - 3600);
+        $this->wideClick(302, 30_000, $now - 1800);
+        $conv = $this->convert(302, '6.00', 'wide');
         $first = $this->join(100);
         $second = $this->join(200);
-        self::assertLessThan($first, $wide, 'the merge that cannot be re-queued is taken first');
+        self::assertLessThan($first, $wide, 'the wide person\'s merge is taken first');
         $late = $this->convert(102, '3.00', 'late');
 
         $report = $this->workAt(self::T);
 
-        self::assertMerges([2, 0, 1], $report);
+        self::assertMerges([3, 0], $report);
+        self::assertSame(self::T, $this->merge($wide)['requeued_at']);
         self::assertSame(self::T, $this->merge($first)['requeued_at']);
         self::assertSame(self::T, $this->merge($second)['requeued_at']);
-        self::assertSame([100, 101], self::journeyClicks($right1), 'the merge after it joined the two visitors');
+        self::assertSame([300, 301, 302], self::journeyClicks($conv), 'the journey reads every group of keys');
+        self::assertSame(
+            [300 => '0.33333333', 301 => '0.33333333', 302 => '0.33333334'],
+            self::credits($conv, $linear),
+            'credited over the whole journey'
+        );
+        self::assertSame([100, 101], self::journeyClicks($right1), 'the merges after it joined their visitors');
         self::assertSame([200, 201], self::journeyClicks($right2));
         self::assertSame([100, 101, 102], self::journeyClicks($late), 'the outbox ran in the same run');
+        self::assertSame(0, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_pending'), 'nothing left queued');
+    }
 
-        $row = $this->merge($wide);
-        self::assertNull($row['requeued_at'], 'nothing of the wide person was re-queued');
-        self::assertSame(self::T, $row['requeue_retired_at']);
-        self::assertSame(0, $row['requeue_failures'], 'retired, not counted as a failure');
-        self::assertStringContainsString('has 65534 visitor keys', (string) $row['requeue_error']);
-
-        self::assertMerges([0, 0, 0], $this->workAt(self::T + 86400), 'a retired merge is not taken again');
+    public function testAMergeRetiredBefore1980IsTakenAgain(): void
+    {
+        $this->campaign(1);
+        $wide = $this->wideMerge(self::WIDE_KEYS);
+        $now = time();
+        $this->wideClick(300, 1, $now - 7200);
+        $this->wideClick(301, self::WIDE_KEYS - 1, $now - 3600);
+        $conv = $this->convert(301, '4.00', 'wide');
+        $this->workAt(self::T);
+        self::assertSame([300, 301], self::journeyClicks($conv));
+        // 1.9.79 set the merge aside without re-queueing its conversions.
+        self::fixture("UPDATE 202_identity_merges SET requeued_at = NULL, requeue_retired_at = 5,
+            requeue_error = 'the merged person has 65540 visitor keys' WHERE merge_id = $wide");
+        self::fixture('DELETE FROM 202_attribution_journeys');
 
         $queue = (new AttributionReports($this->conn))->queue(1);
         self::assertSame(
-            [0, 0, 1],
+            [1, 0, 1],
+            [$queue['merges_awaiting_requeue'], $queue['merges_failing'], $queue['merges_retired']],
+            'a retired merge awaits its re-queue'
+        );
+
+        self::assertMerges([1, 0], $this->workAt(self::T + 60));
+        $row = $this->merge($wide);
+        self::assertSame([self::T + 60, null], [$row['requeued_at'], $row['requeue_retired_at']]);
+        self::assertSame([300, 301], self::journeyClicks($conv), 'its conversion was queued and credited again');
+
+        $queue = (new AttributionReports($this->conn))->queue(1);
+        self::assertSame(
+            [0, 0, 0],
             [$queue['merges_awaiting_requeue'], $queue['merges_failing'], $queue['merges_retired']]
         );
-        self::assertSame($wide, $queue['merge_rows'][0]['merge_id']);
-        self::assertSame(self::T, $queue['merge_rows'][0]['retired_at']);
-        self::assertSame($row['requeue_error'], $queue['merge_rows'][0]['last_error']);
-    }
-
-    public function testAPersonAtTheLimitIsRequeued(): void
-    {
-        // As many keys as the statement can name (65,535 values, two of them
-        // the account): the limit is the server's, not one below it.
-        $this->campaign(1);
-        $wide = $this->wideMerge(65533);
-
-        self::assertMerges([1, 0, 0], $this->workAt(self::T));
-        self::assertSame(self::T, $this->merge($wide)['requeued_at']);
     }
 
     public function testAServerFailureIsRetriedLaterEachTimeAndNeverEndsTheMerge(): void
@@ -101,7 +125,7 @@ final class MergeRequeueFailuresIntegrationTest extends TestCase
         $minute = AttributionWorker::MERGE_FIRST_BACKOFF;
         $hour = AttributionWorker::MERGE_MAX_BACKOFF;
         try {
-            self::assertMerges([1, 1, 0], $this->workAt(self::T));
+            self::assertMerges([1, 1], $this->workAt(self::T));
             self::assertSame(self::T, $this->merge($second)['requeued_at'], 'the merge after it was re-queued');
             self::assertSame([200, 201], self::journeyClicks($right2));
             $row = $this->merge($first);
@@ -120,7 +144,7 @@ final class MergeRequeueFailuresIntegrationTest extends TestCase
             $row = $this->merge($first);
             self::assertSame([2, self::T + $minute], [$row['requeue_failures'], $row['requeue_retry_at']]);
 
-            self::assertMerges([0, 0, 0], $this->workAt(self::T + $minute - 1), 'not taken before its turn');
+            self::assertMerges([0, 0], $this->workAt(self::T + $minute - 1), 'not taken before its turn');
 
             self::$db->query("UPDATE 202_identity_merges SET requeue_failures = 400 WHERE merge_id = $first");
             $this->workAt(self::T + $minute);
@@ -142,7 +166,7 @@ final class MergeRequeueFailuresIntegrationTest extends TestCase
             self::$db->query('DROP TRIGGER IF EXISTS p202_test_refuse_merge');
         }
 
-        self::assertMerges([1, 0, 0], $this->workAt(self::T + $minute + $hour));
+        self::assertMerges([1, 0], $this->workAt(self::T + $minute + $hour));
         self::assertNotNull($this->merge($first)['requeued_at']);
         self::assertSame([100, 101], self::journeyClicks($right1));
     }
@@ -171,14 +195,14 @@ final class MergeRequeueFailuresIntegrationTest extends TestCase
             $other->close();
         }
 
-        self::assertMerges([1, 1, 0], $report);
+        self::assertMerges([1, 1], $report);
         self::assertSame(self::T, $this->merge($second)['requeued_at']);
         self::assertSame([200, 201], self::journeyClicks($right2));
         $row = $this->merge($first);
         self::assertSame([null, 1, null], [$row['requeued_at'], $row['requeue_failures'], $row['requeue_retired_at']]);
         self::assertStringContainsString('[errno 1205]', (string) $row['requeue_error']);
 
-        self::assertMerges([1, 0, 0], $this->workAt(self::T), 'the next run takes it again');
+        self::assertMerges([1, 0], $this->workAt(self::T), 'the next run takes it again');
         self::assertSame([100, 101], self::journeyClicks($right1));
     }
 
@@ -193,15 +217,15 @@ final class MergeRequeueFailuresIntegrationTest extends TestCase
         self::fixture(sprintf(self::REFUSE_FIRST_MERGE, $first));
         try {
             $worker = new AttributionWorker($this->conn, static fn (): int => self::T);
-            self::assertSame(['requeued' => 0, 'failed' => 1, 'retired' => 0], $worker->requeueMerges(1));
+            self::assertSame(['requeued' => 0, 'failed' => 1], $worker->requeueMerges(1));
             self::assertSame(
-                ['requeued' => 1, 'failed' => 0, 'retired' => 0],
+                ['requeued' => 1, 'failed' => 0],
                 $worker->requeueMerges(1),
                 'the merge never tried goes first'
             );
             self::assertSame(self::T, $this->merge($second)['requeued_at']);
             self::assertSame(
-                ['requeued' => 0, 'failed' => 1, 'retired' => 0],
+                ['requeued' => 0, 'failed' => 1],
                 $worker->requeueMerges(1),
                 'then the one whose turn came'
             );
@@ -211,12 +235,12 @@ final class MergeRequeueFailuresIntegrationTest extends TestCase
         }
     }
 
-    /** @param array{int, int, int} $expected requeued, failed, retired */
+    /** @param array{int, int} $expected requeued, failed */
     private static function assertMerges(array $expected, WorkerReport $report, string $why = ''): void
     {
         self::assertSame(
             $expected,
-            [$report->mergesRequeued, $report->mergesFailed, $report->mergesRetired],
+            [$report->mergesRequeued, $report->mergesFailed],
             trim($why . ' ' . $report->summary())
         );
     }
@@ -276,6 +300,14 @@ final class MergeRequeueFailuresIntegrationTest extends TestCase
             VALUES (1, " . ($canonical + 1) . ", $canonical, 9000, 'vid', '" . str_repeat('e', 64) . "', $at)");
 
         return (int) self::scalar('SELECT MAX(merge_id) FROM 202_identity_merges');
+    }
+
+    /** A click of the wide person, on its key WIDE_KEY + $offset. */
+    private function wideClick(int $clickId, int $offset, int $time): void
+    {
+        $this->click($clickId, 1, $time);
+        self::fixture('INSERT INTO 202_clicks_visitor (click_id, user_id, visitor_key, click_time) VALUES ('
+            . $clickId . ', 1, ' . (self::WIDE_KEY + $offset) . ', ' . $time . ')');
     }
 
     /**
