@@ -286,7 +286,8 @@ webhooks. Under **Account › API integrations › Shopify**:
    tracker's `[[subid]]`. Prosper202 reads it from the first line item that
    carries it, as paid 1.9.56 did.
 2. In Shopify, under **Settings › Notifications › Webhooks**, create a JSON
-   webhook for **Order payment** and one for **Refund create**, both to the
+   webhooks for **Order payment**, **Refund create**, and **Transaction creation**
+   (`order_transactions/create`), all to the
    page's Webhook URL
    (`https://<your tracking domain>/tracking202/static/shopify.php`). Webhooks
    already pointed at the global postback (`tracking202/static/gpb.php`) by a
@@ -306,12 +307,15 @@ acknowledged and record nothing. A refund reverses the order on the click it
 was recorded on, whichever item it refunds, or, when the order is not on file,
 on the click of a refunded line item; one that returns no money (a restock)
 records nothing. A refund that names no click and whose order is not on file
-records nothing. The ledger reverses a sale once, so a second refund of the
-same order is refused.
+records nothing. Multiple partial refunds are recorded once each, capped at
+the remaining sale amount. A refund with pending transactions is saved until
+all of them settle and its order is recorded. Transaction creation reports the
+terminal transaction statuses; without that subscription, pending refunds
+require manual reconciliation. Check Setup › Inbound Log for refusals.
 
 A webhook that verifies but cannot be recorded (a cart value that is not a
 click id, a click of another account, an order in a currency other than the
-account's, a changed total, a second refund) is logged with the reason and
+account's, or a changed total) is logged with the reason and
 answered `200` with the outcome in the body: Shopify retries any other answer
 and removes a subscription made through its API after 8 failures in a row,
 which would lose every later order. A refund naming a click whose order is not

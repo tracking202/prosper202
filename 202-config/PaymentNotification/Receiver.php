@@ -9,6 +9,8 @@ use Prosper202\Database\SchemaVersion;
 use Prosper202\InboundLog\Entry;
 use Prosper202\InboundLog\InboundLog;
 use Prosper202\InboundLog\Redactor;
+use Prosper202\PaymentNotification\Shopify\SettlementCoordinator;
+use Prosper202\PaymentNotification\Shopify\ShopifyAdapter;
 
 /**
  * One notification endpoint's work, for any provider: refuse what is not
@@ -47,7 +49,7 @@ final class Receiver
             ($this->inboundLog ?? new InboundLog($this->db))->append(new Entry(
                 $endpoint,
                 $request->method !== '' ? $request->method : 'GET',
-                Response::status($outcome->kind),
+                $this->status($outcome),
                 $outcome->kind->value,
                 $outcome->message,
                 $outcome->accountId ?? 0,
@@ -121,7 +123,29 @@ final class Receiver
             ), null];
         }
 
-        $outcome = (new Processor($this->db))->process($notification, $verification, $this->provider, $request);
+        try {
+            if ($this->provider instanceof ShopifyAdapter && $this->provider->settlement() !== null) {
+                $outcome = (new SettlementCoordinator($this->db, $this->provider))
+                    ->accept($this->provider->settlement(), $verification, $request);
+            } else {
+                $outcome = (new Processor($this->db))->process($notification, $verification, $this->provider, $request);
+                if ($this->provider instanceof ShopifyAdapter && $notification->kind->records()
+                    && $notification->transactionId !== null && $outcome->accountId !== null
+                    && $outcome->conversionId !== null
+                    && in_array($outcome->kind, [OutcomeKind::RECORDED, OutcomeKind::DUPLICATE, OutcomeKind::CONFLICT], true)) {
+                    $settlement = (new SettlementCoordinator($this->db, $this->provider))
+                        ->reconcile($outcome->accountId, $notification->transactionId, $request);
+                    if ($settlement !== null) {
+                        $outcome = $settlement;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log($name . ' settlement: ' . $e->getMessage());
+            $outcome = new Outcome(OutcomeKind::FAILED,
+                'The Shopify refund settlement could not be reconciled. Send the webhook again.',
+                null, count($verification->accounts()) === 1 ? $verification->accounts()[0] : null);
+        }
 
         return [$outcome, $notification];
     }

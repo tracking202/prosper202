@@ -15,6 +15,7 @@ use Prosper202\PaymentNotification\Receiver;
 use Prosper202\PaymentNotification\Response;
 use Prosper202\PaymentNotification\Shopify\ShopifyAdapter;
 use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
+use Prosper202\PaymentNotification\Shopify\RefundSettlementStore;
 
 /**
  * Shopify's order webhooks end to end on a real server: the secret read
@@ -77,6 +78,8 @@ final class ShopifyWebhookIntegrationTest extends TestCase
     protected function setUp(): void
     {
         $db = self::requireScratch();
+        self::q('DELETE FROM 202_shopify_pending_refunds WHERE user_id IN (' . self::ACCOUNT . ', ' . self::OTHER . ')');
+        self::q('DELETE FROM 202_shopify_refund_transactions WHERE user_id IN (' . self::ACCOUNT . ', ' . self::OTHER . ')');
         $range = 'BETWEEN ' . self::CLICK . ' AND ' . (self::CLICK + 99);
         foreach ([...self::CLICK_TABLES, '202_conversion_logs'] as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
@@ -117,6 +120,8 @@ final class ShopifyWebhookIntegrationTest extends TestCase
             self::q("DELETE FROM $table WHERE click_id $range");
         }
         $users = self::ACCOUNT . ', ' . self::OTHER;
+        self::q("DELETE FROM 202_shopify_pending_refunds WHERE user_id IN ($users)");
+        self::q("DELETE FROM 202_shopify_refund_transactions WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_aff_campaigns WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users_pref WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users WHERE user_id IN ($users)");
@@ -304,6 +309,67 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         self::assertSame(['59.00000', '-20.00000'], array_column(self::conversions(), 'click_payout'));
     }
 
+    public function testPendingRefundWaitsForSettlementAndRetriesAreIdempotent(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $pending = ShopifyAdapterTest::refund(['transactions' => [
+            ['id' => 71001, 'kind' => 'refund', 'status' => 'success', 'amount' => '10.00', 'currency' => 'USD'],
+            ['id' => 71002, 'kind' => 'refund', 'status' => 'pending', 'amount' => '10.00', 'currency' => 'USD'],
+        ]]);
+        [$outcome, $status] = $this->answer(ShopifyAdapterTest::webhook('refunds/create', $pending));
+        self::assertSame(OutcomeKind::IGNORED, $outcome->kind);
+        self::assertSame(200, $status);
+        self::assertSame(['59.00000'], array_column(self::conversions(), 'click_payout'));
+        $transaction = ['id' => 71002, 'order_id' => 5550001234567, 'kind' => 'refund',
+            'status' => 'success', 'amount' => '10.00', 'currency' => 'USD'];
+        $this->deliver('order_transactions/create', $transaction);
+        $this->deliver('order_transactions/create', $transaction);
+        $this->deliver('refunds/create', $pending);
+        self::assertSame(['59.00000', '-20.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testSettlementAndRefundBeforeOrderAreReconciledOnOrderArrival(): void
+    {
+        $transaction = ['id' => 71002, 'order_id' => 5550001234567, 'kind' => 'refund',
+            'status' => 'success', 'amount' => '10.00', 'currency' => 'USD'];
+        $pending = ShopifyAdapterTest::refund(['transactions' => [
+            ['id' => 71002, 'kind' => 'refund', 'status' => 'pending', 'amount' => '10.00', 'currency' => 'USD'],
+        ]]);
+        $this->deliver('order_transactions/create', $transaction);
+        $this->deliver('refunds/create', $pending);
+        self::assertSame([], self::conversions());
+        $this->deliver('orders/paid', self::order());
+        self::assertSame(['59.00000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testFailedSettlementDoesNotReverseAndUnverifiedUpdateIsIgnored(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $pending = ShopifyAdapterTest::refund(['transactions' => [
+            ['id' => 71002, 'kind' => 'refund', 'status' => 'pending', 'amount' => '10.00', 'currency' => 'USD'],
+        ]]);
+        $this->deliver('refunds/create', $pending);
+        $transaction = ['id' => 71002, 'order_id' => 5550001234567, 'kind' => 'refund',
+            'status' => 'failure', 'amount' => '10.00', 'currency' => 'USD'];
+        self::assertSame(OutcomeKind::UNVERIFIED, $this->deliver('order_transactions/create', $transaction, 'wrong-secret')->kind);
+        $this->deliver('order_transactions/create', $transaction);
+        $this->deliver('order_transactions/create', $transaction);
+        self::assertSame(['59.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testRetriedOrderReconcilesAfterAnEarlierPartialRefund(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]));
+        $store = new RefundSettlementStore(new Connection(self::requireScratch()));
+        $store->register(self::ACCOUNT, '9100009', '5550001234567', 0, 0, [
+            ['id' => '71009', 'status' => 'pending', 'amount' => '10.00', 'currency' => 'USD'],
+        ]);
+        $store->update(self::ACCOUNT, '5550001234567', '71009', 'success', '10.00', 'USD', time());
+        $this->deliver('orders/paid', self::order());
+        self::assertSame(['59.00000', '-20.00000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
     public function testARefundOfAnOrderNotOnFileReversesNothing(): void
     {
         $outcome = $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]));
@@ -339,7 +405,7 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         self::assertOutcome(OutcomeKind::RECORDED, 200, $this->deliver('orders/paid', self::order()));
     }
 
-    public function testASecondRefundOfTheOrderIsRefusedAndKeptInTheLog(): void
+    public function testMultiplePartialRefundsAndRetriesNeverExceedTheSale(): void
     {
         $this->deliver('orders/paid', self::order());
         $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]));
@@ -347,12 +413,18 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         [$second, $status] = $this->answer(ShopifyAdapterTest::webhook('refunds/create',
             ShopifyAdapterTest::refund(['id' => 9100002, 'refund_line_items' => []])));
 
-        self::assertOutcome(OutcomeKind::CONFLICT, 409, $second);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $second);
         self::assertSame(200, $status);
-        self::assertSame(['59.00000', '-20.00000'], array_column(self::conversions(), 'click_payout'));
-        // The log names the status Shopify was sent.
-        self::assertStringContainsString('Shopify notification: conflict (200), refunds/create (refund)',
-            (string) file_get_contents($this->log));
+        self::assertSame(['59.00000', '-20.00000', '-20.00000'], array_column(self::conversions(), 'click_payout'));
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->deliver('refunds/create',
+            ShopifyAdapterTest::refund(['id' => 9100002, 'refund_line_items' => []])));
+        $last = $this->deliver('refunds/create', ShopifyAdapterTest::refund(['id' => 9100003, 'refund_line_items' => []]));
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $last);
+        self::assertStringContainsString('19', $last->message);
+        self::assertSame(['59.00000', '-20.00000', '-20.00000', '-19.00000'],
+            array_column(self::conversions(), 'click_payout'));
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->deliver('refunds/create',
+            ShopifyAdapterTest::refund(['id' => 9100003, 'refund_line_items' => []])));
     }
 
     public function testARefundOfAnOrderOnTwoClicksIsRefused(): void
@@ -512,6 +584,15 @@ final class ShopifyWebhookIntegrationTest extends TestCase
             self::assertSame([200, 'reversed'], $post('gpb.php',
                 ShopifyAdapterTest::webhook('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]))));
             self::assertSame(['59.00000', '-20.00000'], array_column(self::conversions(), 'click_payout'));
+
+            $pending = ShopifyAdapterTest::refund(['id' => 9100004, 'transactions' => [[
+                'id' => 71004, 'kind' => 'refund', 'status' => 'pending', 'amount' => '5.00', 'currency' => 'USD',
+            ]]]);
+            $settled = ['id' => 71004, 'order_id' => 5550001234567, 'kind' => 'refund',
+                'status' => 'success', 'amount' => '5.00', 'currency' => 'USD'];
+            self::assertSame([200, 'ignored'], $post('shopify.php', ShopifyAdapterTest::webhook('refunds/create', $pending)));
+            self::assertSame([200, 'ignored'], $post('shopify.php', ShopifyAdapterTest::webhook('order_transactions/create', $settled)));
+            self::assertSame(['59.00000', '-20.00000', '-5.00000'], array_column(self::conversions(), 'click_payout'));
 
             // A refund made just now of an order not on file is retried.
             $now = gmdate('Y-m-d\TH:i:s\Z');

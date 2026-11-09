@@ -1456,12 +1456,14 @@ template_top('API Integrations');
 			<div class="p202-panel__body">
 				<p class="text-secondary">Record each Shopify order on the click that sent the buyer, at the order’s
 					total, and take it back on a refund, from Shopify’s webhooks.</p>
+				<p class="text-secondary">Check Setup › Inbound Log for Shopify refusals.</p>
 				<ol class="ps-3">
 					<li>On your store, add the click id to the cart as the line item property
 						<code class="text-nowrap">t202subid</code> (or <code class="text-nowrap">_t202subid</code>, which
 						checkout hides), filled from the tracker’s <code>[[subid]]</code>.</li>
 					<li>In Shopify, under Settings › Notifications › Webhooks, create a JSON webhook for
-						<strong>Order payment</strong> and one for <strong>Refund create</strong>, both to this URL.
+						<strong>Order payment</strong>, <strong>Refund create</strong>, and <strong>Transaction creation</strong>, all to this URL.
+						Transaction creation reports when a pending refund settles.
 						(Order creation records only an order already paid when it is placed.)</li>
 					<li>Store the secret Shopify shows there (“Your webhooks will be signed with …”) below. A
 						webhook it does not verify is refused, and nothing is recorded until a secret is stored.</li>

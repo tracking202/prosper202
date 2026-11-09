@@ -62,6 +62,15 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
     /** When the refund parse() read happened, or null when it read no refund. */
     private ?int $refundAt = null;
 
+    /** @var array<string, mixed>|null Settlement data from the verified request only. */
+    private ?array $settlement = null;
+
+    /** @return array<string, mixed>|null */
+    public function settlement(): ?array
+    {
+        return $this->settlement;
+    }
+
     /**
      * @param \mysqli|null $db where a refund finds the click its order was recorded on (null: not looked up)
      * @param int|null $now the time deliveryStatus() compares a refund's with (null: the clock's)
@@ -179,12 +188,13 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
             throw new \LogicException('ShopifyAdapter::parse() reads the request verify() verified');
         }
         $this->refundAt = null;
+        $this->settlement = null;
         $topic = trim((string) $request->header(self::TOPIC_HEADER));
         if ($topic === '') {
             throw self::malformed('The webhook carries no ' . self::TOPIC_HEADER . ' header naming its topic.');
         }
         $shown = self::shown($topic);
-        if (!in_array($topic, ['orders/create', 'orders/paid', 'refunds/create'], true)) {
+        if (!in_array($topic, ['orders/create', 'orders/paid', 'refunds/create', 'order_transactions/create'], true)) {
             return new Notification(NotificationKind::IGNORED, $shown);
         }
         $body = json_decode($request->body, true, 64, JSON_BIGINT_AS_STRING);
@@ -192,7 +202,33 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
             throw self::malformed('The ' . $shown . ' webhook\'s body is not a JSON object.');
         }
 
+        if ($topic === 'order_transactions/create') {
+            return $this->transaction($body, $shown);
+        }
         return $topic === 'refunds/create' ? $this->refund($body, $shown) : self::order($body, $shown);
+    }
+
+    /** @param array<string, mixed> $transaction */
+    private function transaction(array $transaction, string $topic): Notification
+    {
+        if (($transaction['kind'] ?? null) !== 'refund' || ($transaction['test'] ?? false) === true) {
+            return new Notification(NotificationKind::IGNORED, $topic);
+        }
+        $status = $transaction['status'] ?? null;
+        if (!in_array($status, ['success', 'failure', 'error'], true)) {
+            throw self::malformed('The refund transaction has no terminal status.');
+        }
+        $amount = self::amount($transaction['amount'] ?? null, 'the refund transaction amount');
+        $currency = self::currency($transaction['currency'] ?? null);
+        if ($amount === null || $currency === null) {
+            throw self::malformed('The refund transaction needs its amount and currency.');
+        }
+        $this->settlement = [
+            'type' => 'transaction', 'order_id' => self::id($transaction, 'order_id', 'The transaction'),
+            'id' => self::id($transaction, 'id', 'The transaction'), 'status' => $status,
+            'amount' => $amount, 'currency' => $currency,
+        ];
+        return new Notification(NotificationKind::IGNORED, $topic);
     }
 
     /** @param array<string, mixed> $order */
@@ -248,7 +284,12 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
         }
         $units = 0;
         $currency = null;
+        $pending = false;
         foreach ($transactions as $transaction) {
+            if (is_array($transaction) && ($transaction['kind'] ?? null) === 'refund'
+                && in_array($transaction['status'] ?? null, ['pending', 'waiting'], true)) {
+                $pending = true;
+            }
             if (!is_array($transaction) || ($transaction['kind'] ?? null) !== 'refund'
                 || ($transaction['status'] ?? null) !== 'success') {
                 continue;
@@ -263,6 +304,27 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
                 throw self::malformed('The refund\'s transactions are in more than one currency.');
             }
             $currency ??= $its;
+        }
+        if ($pending) {
+            $items = [];
+            foreach ($transactions as $transaction) {
+                if (!is_array($transaction) || ($transaction['kind'] ?? null) !== 'refund') {
+                    continue;
+                }
+                $amount = self::amount($transaction['amount'] ?? null, 'a refund transaction amount');
+                $code = self::currency($transaction['currency'] ?? null);
+                $status = $transaction['status'] ?? null;
+                if ($amount === null || $code === null || !in_array($status, ['pending', 'waiting', 'success', 'failure', 'error'], true)) {
+                    throw self::malformed('A pending refund transaction needs an id, amount, currency and supported status.');
+                }
+                $items[] = ['id' => self::id($transaction, 'id', 'The transaction'), 'status' => $status,
+                    'amount' => $amount, 'currency' => $code];
+            }
+            $at = self::time($refund['processed_at'] ?? null, 'processed_at')
+                ?? self::time($refund['created_at'] ?? null, 'created_at');
+            $this->settlement = ['type' => 'refund', 'id' => $refundId, 'order_id' => $orderId,
+                'occurred_at' => $at ?? 0, 'transactions' => $items];
+            return new Notification(NotificationKind::IGNORED, $topic);
         }
         if ($units === 0) {
             // A restock or a refund still pending returns no money yet.
