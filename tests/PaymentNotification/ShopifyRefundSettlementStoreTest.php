@@ -44,9 +44,9 @@ final class ShopifyRefundSettlementStoreTest extends TestCase
         $store->update(self::USER, '10', '20', 'success', '5.00', 'USD', 100);
         $store->update(self::USER, '10', '20', 'success', '5.00', 'USD', 101);
         $tx = [['id' => '20', 'status' => 'pending', 'amount' => '5.00', 'currency' => 'USD']];
-        $store->register(self::USER, '30', '10', 40, 99, $tx);
-        $store->register(self::USER, '30', '10', 40, 99, $tx);
-        self::assertSame([['refund_id' => '30', 'order_id' => '10', 'click_id' => 40, 'occurred_at' => 99,
+        $store->register(self::USER, '30', '10', 99, $tx);
+        $store->register(self::USER, '30', '10', 99, $tx);
+        self::assertSame([['refund_id' => '30', 'order_id' => '10', 'occurred_at' => 99,
             'pending' => false, 'amount' => '5.00000', 'currency' => 'USD']], $store->forOrder(self::USER, '10'));
         $store->complete(self::USER, '30', 102);
         self::assertSame([], $store->forOrder(self::USER, '10'));
@@ -63,7 +63,7 @@ final class ShopifyRefundSettlementStoreTest extends TestCase
     public function testRefundBeforeUpdateWaitsForEveryTransaction(): void
     {
         $store = new RefundSettlementStore(new Connection(self::requireScratch()));
-        $store->register(self::USER, '30', '10', 40, 99, [
+        $store->register(self::USER, '30', '10', 99, [
             ['id' => '20', 'status' => 'pending', 'amount' => '5.00', 'currency' => 'USD'],
             ['id' => '21', 'status' => 'pending', 'amount' => '7.00', 'currency' => 'USD'],
         ]);

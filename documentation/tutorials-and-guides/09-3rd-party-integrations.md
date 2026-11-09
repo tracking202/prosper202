@@ -312,6 +312,9 @@ the remaining sale amount. A refund with pending transactions is saved until
 all of them settle and its order is recorded. Transaction creation reports the
 terminal transaction statuses; without that subscription, pending refunds
 require manual reconciliation. Check Setup › Inbound Log for refusals.
+Early development installations already marked 1.9.80 may need the new refund
+tables: open `202-config/upgrade.php` and run the repair before enabling the
+Transaction creation webhook.
 
 A webhook that verifies but cannot be recorded (a cart value that is not a
 click id, a click of another account, an order in a currency other than the

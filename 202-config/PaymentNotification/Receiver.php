@@ -142,8 +142,13 @@ final class Receiver
             }
         } catch (\Throwable $e) {
             error_log($name . ' settlement: ' . $e->getMessage());
-            $outcome = new Outcome(OutcomeKind::FAILED,
-                'The Shopify refund settlement could not be reconciled. Send the webhook again.',
+            $missingSettlementTable = str_contains($e->getMessage(), '1146')
+                && (str_contains($e->getMessage(), '202_shopify_pending_refunds')
+                    || str_contains($e->getMessage(), '202_shopify_refund_transactions'));
+            $outcome = new Outcome($missingSettlementTable ? OutcomeKind::UPGRADE_PENDING : OutcomeKind::FAILED,
+                $missingSettlementTable
+                    ? 'Shopify refund tables are missing. Open 202-config/upgrade.php to repair the database, then send the webhook again.'
+                    : 'The Shopify refund settlement could not be reconciled. Send the webhook again.',
                 null, count($verification->accounts()) === 1 ? $verification->accounts()[0] : null);
         }
 

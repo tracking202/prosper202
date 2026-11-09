@@ -17,11 +17,11 @@ final class RefundSettlementStore
     }
 
     /** @param list<array{id: string, status: string, amount: string, currency: string}> $transactions */
-    public function register(int $userId, string $refundId, string $orderId, int $clickId, int $occurredAt, array $transactions): void
+    public function register(int $userId, string $refundId, string $orderId, int $occurredAt, array $transactions): void
     {
         self::id($refundId);
         self::id($orderId);
-        if ($userId <= 0 || $clickId < 0 || $occurredAt < 0 || $transactions === []) {
+        if ($userId <= 0 || $occurredAt < 0 || $transactions === []) {
             throw new InvalidArgumentException('A pending refund needs its account, click, time and transactions.');
         }
         RefundSettlement::resolve($transactions, []);
@@ -29,16 +29,16 @@ final class RefundSettlementStore
         $json = json_encode($transactions, JSON_THROW_ON_ERROR);
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_shopify_pending_refunds (user_id, refund_id, order_id, click_id, occurred_at, transactions)'
-            . ' VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE refund_id = refund_id'
+            . ' VALUES (?, ?, ?, 0, ?, ?) ON DUPLICATE KEY UPDATE refund_id = refund_id'
         );
-        $this->conn->bind($stmt, 'issiis', [$userId, $refundId, $orderId, $clickId, $occurredAt, $json]);
+        $this->conn->bind($stmt, 'issis', [$userId, $refundId, $orderId, $occurredAt, $json]);
         $this->conn->executeUpdate($stmt);
         $stmt = $this->conn->prepareWrite(
-            'SELECT order_id, click_id, occurred_at, transactions FROM 202_shopify_pending_refunds WHERE user_id = ? AND refund_id = ?'
+            'SELECT order_id, occurred_at, transactions FROM 202_shopify_pending_refunds WHERE user_id = ? AND refund_id = ?'
         );
         $this->conn->bind($stmt, 'is', [$userId, $refundId]);
         $row = $this->conn->fetchOne($stmt);
-        if ($row === null || $row['order_id'] !== $orderId || (int) $row['click_id'] !== $clickId
+        if ($row === null || $row['order_id'] !== $orderId
             || (int) $row['occurred_at'] !== $occurredAt || $row['transactions'] !== $json) {
             throw new RuntimeException('A Shopify refund id was repeated with different details.');
         }
@@ -70,7 +70,7 @@ final class RefundSettlementStore
         }
     }
 
-    /** @return list<array{refund_id: string, order_id: string, click_id: int, occurred_at: int, pending: bool, amount: string, currency: ?string}> */
+    /** @return list<array{refund_id: string, order_id: string, occurred_at: int, pending: bool, amount: string, currency: ?string}> */
     public function forOrder(int $userId, string $orderId): array
     {
         self::id($orderId);
@@ -83,7 +83,7 @@ final class RefundSettlementStore
             $updates[$row['transaction_id']] = ['status' => $row['status'], 'amount' => $row['amount'], 'currency' => $row['currency']];
         }
         $stmt = $this->conn->prepareWrite(
-            'SELECT refund_id, order_id, click_id, occurred_at, transactions FROM 202_shopify_pending_refunds'
+            'SELECT refund_id, order_id, occurred_at, transactions FROM 202_shopify_pending_refunds'
             . ' WHERE user_id = ? AND order_id = ? AND completed_at IS NULL ORDER BY refund_id'
         );
         $this->conn->bind($stmt, 'is', [$userId, $orderId]);
@@ -92,7 +92,7 @@ final class RefundSettlementStore
             $transactions = json_decode($row['transactions'], true, 64, JSON_THROW_ON_ERROR);
             $result[] = [
                 'refund_id' => $row['refund_id'], 'order_id' => $row['order_id'],
-                'click_id' => (int) $row['click_id'], 'occurred_at' => (int) $row['occurred_at'],
+                'occurred_at' => (int) $row['occurred_at'],
             ] + RefundSettlement::resolve($transactions, $updates);
         }
 

@@ -32,7 +32,7 @@ final class SettlementCoordinator
     {
         foreach ($verification->accounts() as $account) {
             if ($event['type'] === 'refund') {
-                $this->store->register($account, $event['id'], $event['order_id'], 0,
+                $this->store->register($account, $event['id'], $event['order_id'],
                     $event['occurred_at'], $event['transactions']);
             } else {
                 $this->store->update($account, $event['order_id'], $event['id'], $event['status'],

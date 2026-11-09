@@ -8,6 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickRecord;
 use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Tables\ConversionTables;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Outcome;
 use Prosper202\PaymentNotification\OutcomeKind;
@@ -362,12 +363,26 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         $this->deliver('orders/paid', self::order());
         $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]));
         $store = new RefundSettlementStore(new Connection(self::requireScratch()));
-        $store->register(self::ACCOUNT, '9100009', '5550001234567', 0, 0, [
+        $store->register(self::ACCOUNT, '9100009', '5550001234567', 0, [
             ['id' => '71009', 'status' => 'pending', 'amount' => '10.00', 'currency' => 'USD'],
         ]);
         $store->update(self::ACCOUNT, '5550001234567', '71009', 'success', '10.00', 'USD', time());
         $this->deliver('orders/paid', self::order());
         self::assertSame(['59.00000', '-20.00000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testMissingSettlementTablesAskForRepairAndAReplayIsSafe(): void
+    {
+        self::q('DROP TABLE 202_shopify_pending_refunds');
+        try {
+            $outcome = $this->deliver('orders/paid', self::order());
+            self::assertSame(OutcomeKind::UPGRADE_PENDING, $outcome->kind, $outcome->message);
+            self::assertStringContainsString('upgrade.php', $outcome->message);
+        } finally {
+            self::q(ConversionTables::shopifyPendingRefunds()->createStatement);
+        }
+        self::assertSame(OutcomeKind::DUPLICATE, $this->deliver('orders/paid', self::order())->kind);
+        self::assertSame(['59.00000'], array_column(self::conversions(), 'click_payout'));
     }
 
     public function testARefundOfAnOrderNotOnFileReversesNothing(): void
