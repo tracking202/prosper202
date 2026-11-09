@@ -17,6 +17,8 @@ use Prosper202\PaymentNotification\Response;
 use Prosper202\PaymentNotification\Shopify\ShopifyAdapter;
 use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 use Prosper202\PaymentNotification\Shopify\RefundSettlementStore;
+use Prosper202\PaymentNotification\Shopify\SettlementCoordinator;
+use Prosper202\PaymentNotification\Verification;
 
 /**
  * Shopify's order webhooks end to end on a real server: the secret read
@@ -383,6 +385,24 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         }
         self::assertSame(OutcomeKind::DUPLICATE, $this->deliver('orders/paid', self::order())->kind);
         self::assertSame(['59.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testWebhookVerifiedBeforeDeletionCannotRecreateRefundData(): void
+    {
+        $db = self::requireScratch();
+        $verified = new Verification([self::ACCOUNT => 0]);
+        $event = ['type' => 'transaction', 'order_id' => '5550001234567', 'id' => '71002',
+            'status' => 'success', 'amount' => '10.00', 'currency' => 'USD'];
+        self::q('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ' . self::ACCOUNT);
+        try {
+            (new SettlementCoordinator($db, new ShopifyAdapter($db)))->accept(
+                $event, $verified, ShopifyAdapterTest::webhook('order_transactions/create', $event)
+            );
+            $rows = $db->query('SELECT COUNT(*) FROM 202_shopify_refund_transactions WHERE user_id = ' . self::ACCOUNT);
+            self::assertSame('0', (string) $rows->fetch_row()[0]);
+        } finally {
+            self::q('UPDATE 202_users SET user_deleted = 0 WHERE user_id = ' . self::ACCOUNT);
+        }
     }
 
     public function testARefundOfAnOrderNotOnFileReversesNothing(): void

@@ -30,17 +30,33 @@ final class SettlementCoordinator
     /** @param array<string, mixed> $event */
     public function accept(array $event, Verification $verification, InboundRequest $request): Outcome
     {
+        $active = [];
         foreach ($verification->accounts() as $account) {
-            if ($event['type'] === 'refund') {
-                $this->store->register($account, $event['id'], $event['order_id'],
-                    $event['occurred_at'], $event['transactions']);
-            } else {
-                $this->store->update($account, $event['order_id'], $event['id'], $event['status'],
-                    $event['amount'], $event['currency'], time());
+            // The purge locks this same row before deleting settlement data.
+            // Verify and write while holding it so an in-flight webhook cannot
+            // recreate the deleted account's rows after the purge commits.
+            $saved = $this->conn->transaction(function () use ($account, $event): bool {
+                $stmt = $this->conn->prepareWrite('SELECT user_deleted FROM 202_users WHERE user_id = ? FOR UPDATE');
+                $this->conn->bind($stmt, 'i', [$account]);
+                $user = $this->conn->fetchOne($stmt);
+                if ($user === null || (int) $user['user_deleted'] !== 0) {
+                    return false;
+                }
+                if ($event['type'] === 'refund') {
+                    $this->store->register($account, $event['id'], $event['order_id'],
+                        $event['occurred_at'], $event['transactions']);
+                } else {
+                    $this->store->update($account, $event['order_id'], $event['id'], $event['status'],
+                        $event['amount'], $event['currency'], time());
+                }
+                return true;
+            });
+            if ($saved) {
+                $active[] = $account;
             }
         }
         $refusal = null;
-        foreach ($verification->accounts() as $account) {
+        foreach ($active as $account) {
             $outcome = $this->reconcile($account, $event['order_id'], $request);
             if ($outcome !== null) {
                 $refusal ??= $outcome;
@@ -52,8 +68,9 @@ final class SettlementCoordinator
         }
 
         return new Outcome(OutcomeKind::IGNORED,
-            'Verified. Refund settlement is saved and will be reconciled when its transaction and order are available.',
-            null, count($verification->accounts()) === 1 ? $verification->accounts()[0] : null);
+            $active === [] ? 'Verified, but the account is no longer active; nothing was saved.'
+                : 'Verified. Refund settlement is saved and will be reconciled when its transaction and order are available.',
+            null, count($active) === 1 ? $active[0] : null);
     }
 
     /** Returns an operator-visible refusal or failure, otherwise null. */
