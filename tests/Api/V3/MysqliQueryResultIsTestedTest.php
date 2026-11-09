@@ -162,6 +162,12 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             . ' does, or the page would tell a stranger the account exists. Without the install\'s address the'
             . ' email carries the key and the page, with no link (PasswordResetLink).',
         ],
+        'api/v3/Support/StateEpoch.php::probe' => [
+            1,
+            'Asks whether the session is in a transaction by a variable only MariaDB, or a performance_schema'
+            . ' table only MySQL 8.0.16+, has: refused, the server cannot answer it, which is the answer (null),'
+            . ' and Connection::inTransaction() alone decides.',
+        ],
         'tracking202/ajax/generate_tracking_link.php::' => [
             1,
             'The names a Slack notice of an edit gives, read after the edit committed: a failed read is logged,'

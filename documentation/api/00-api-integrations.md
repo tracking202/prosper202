@@ -608,15 +608,21 @@ user.
 
 **Restoring the database from a backup keeps its install id**, and so the
 directory it names, which still holds what the API recorded after the backup
-was taken: a create whose `Idempotency-Key` was recorded after the backup is
-answered as done (`201`, `idempotent_replay: true`) with nothing created, and
-staged changes proposed after it are still listed to apply. After a restore,
-empty the install's directory before the first API request: under
-`P202_SERVER_STATE_DIR` all of it when no other database uses it, or
-`install-<install>`, where `<install>` is the first 12 characters of the
-SHA-1 of the `install_id` row in `202_deployment_secrets`
-(`printf %s "$id" | sha1sum | cut -c1-12`); in the temp dir,
-`p202-api-v3-state-<database>-<install>`.
+was taken. The API tells them apart on its own: every idempotency record,
+staged change, sync job, sync manifest and change-feed entry is stamped with
+a counter the database keeps (`api_state_epoch` in `202_deployment_secrets`),
+and a restored database has the counter the backup had. On the first request
+that uses that state after a restore, the records stamped past the
+database's counter are moved to `restored-<time>-<random>/` inside the
+install's directory and are not used, and the error log names it: a create
+retried under an `Idempotency-Key` recorded after the backup is made again
+rather than answered as done, and a staged change proposed or applied after
+it is no longer listed. Records from before the backup stay, so a create the
+restored database has is still answered as done. Nothing is deleted: remove
+`restored-*` once nothing in it is needed. The change feed keeps counting,
+so a cursor never goes back; a client that read entries after the backup
+should resync. A record written inside a database transaction carries the
+counter as it was, and a restore to that same point does not set it aside.
 
 **The temp-dir default is used only when the server's own user owns it
 alone.** Before 1.9.79 its name could be worked out from the database host

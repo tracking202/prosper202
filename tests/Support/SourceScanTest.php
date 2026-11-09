@@ -212,6 +212,7 @@ final class SourceScanTest extends TestCase
             'tests/Api/V3/ServerStateStoreDefaultDirTest.php' => 1,
             'tests/Api/V3/ServerStateStoreQuotaTest.php' => 1,
             'tests/Api/V3/ServerStateStoreRateLimitTest.php' => 1,
+            'tests/Api/V3/ServerStateStoreRestoreTest.php' => 1,
             'tests/Api/V3/StagedChangeRetentionTest.php' => 1,
             'tests/Api/V3/StagedChangesControllerTest.php' => 2,
             'tests/Api/V3/SyncConflictTest.php' => 1,
