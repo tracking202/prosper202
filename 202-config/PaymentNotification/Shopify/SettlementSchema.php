@@ -10,6 +10,28 @@ use Prosper202\Database\Tables\ConversionTables;
 /** Checks whether an early 1.9.80 database needs its refund tables added. */
 final class SettlementSchema
 {
+    /** Explicitly repair early 1.9.80 schemas under the upgrade lock. */
+    public static function repair(\mysqli $db): bool
+    {
+        try {
+            $reconciler = new SchemaReconciler(static fn (string $sql) => \_upgrade_query($sql));
+            foreach ([ConversionTables::shopifyPendingRefunds(), ConversionTables::shopifyRefundTransactions()] as $definition) {
+                if (\_upgrade_query($definition->createStatement) === false || !$reconciler->reconcile($definition)) {
+                    error_log('Prosper202 upgrade: could not repair ' . $definition->tableName);
+                    return false;
+                }
+            }
+            if (self::needsRepair($db)) {
+                error_log('Prosper202 upgrade: Shopify refund tables remain incomplete.');
+                return false;
+            }
+            return true;
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade: Shopify refund tables could not be repaired: ' . $e->getMessage());
+            return false;
+        }
+    }
+
     public static function needsRepair(\mysqli $db): bool
     {
         foreach ([ConversionTables::shopifyPendingRefunds(), ConversionTables::shopifyRefundTransactions()] as $definition) {

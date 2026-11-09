@@ -1190,6 +1190,12 @@ class UPGRADE
 
         try {
             $laddered = self::ladder($time_from);
+            if ($laddered === true && PROSPER202::prosper202_version() === '1.9.80'
+                && PROSPER202::php_version() === '1.9.80') {
+                $laddered = \Prosper202\PaymentNotification\Shopify\SettlementSchema::repair(
+                    DB::getInstance()->getConnection()
+                );
+            }
         } finally {
             _upgrade_query('SELECT RELEASE_LOCK(' . $lockName . ')');
         }
@@ -1216,7 +1222,7 @@ class UPGRADE
     /** The rungs, in order (the historical body of upgrade_databases()). */
     private static function ladder($time_from)
     {
-        global $dbname, $db;
+        global $dbname;
 
         ini_set('max_execution_time', 60 * 20);
         ini_set('max_input_time', 60 * 20);
@@ -5025,29 +5031,6 @@ class UPGRADE
             $prosper202_version = '1.9.80';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
-        }
-
-        // Early 1.9.80 development installs can already carry that version
-        // without these later-added tables. An explicit upgrade repairs them
-        // under the same upgrade lock, without rewinding or repeating the rung.
-        if ($prosper202_version === '1.9.80'
-            && !_upgrade_measurement_tables([
-                \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
-                \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
-            ])) {
-            error_log('Prosper202 upgrade: Shopify refund tables could not be repaired; run the upgrade again.');
-            return false;
-        }
-        if ($prosper202_version === '1.9.80') {
-            try {
-                if (\Prosper202\PaymentNotification\Shopify\SettlementSchema::needsRepair($db)) {
-                    error_log('Prosper202 upgrade: Shopify refund tables are still incomplete; run the upgrade again.');
-                    return false;
-                }
-            } catch (\Throwable $e) {
-                error_log('Prosper202 upgrade: Shopify refund tables could not be checked: ' . $e->getMessage());
-                return false;
-            }
         }
 
         return true;
