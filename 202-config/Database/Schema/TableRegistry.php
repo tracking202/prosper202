@@ -122,6 +122,8 @@ final class TableRegistry
     public const string DESTINATIONS = '202_destinations';
     public const string DESTINATION_DELIVERIES = '202_destination_deliveries';
     public const string INBOUND_LOG = '202_inbound_log';
+    public const string SHOPIFY_PENDING_REFUNDS = '202_shopify_pending_refunds';
+    public const string SHOPIFY_REFUND_TRANSACTIONS = '202_shopify_refund_transactions';
 
     // Deployment-wide secrets (SecretTables): owned by the installation, not
     // by any user

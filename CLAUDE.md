@@ -66,7 +66,9 @@ entry are in this file's git history.
   failure in the HTTP status, not in prose over a 200
   (`DataEngineHourAnswersItsFailureTest`). So is a verdict: a result type
   needs a way to say "this did not run" (the review workflows' `complete`,
-  NOT FINISHED).
+  NOT FINISHED). One exception, the owner's: an adversarial review stopped
+  by a provider limit passes its check and says UNAVAILABLE in its comment,
+  since a limit is no verdict on the code.
 - Checks: `UncheckedGetResultTest` (`StatementHelpers::resultOf()`),
   `MysqliQueryResultIsNotDiscardedTest`, `MysqliQueryResultIsTestedTest`
   (every `_mysqli_query()` and `->query(` on `$db`, `$this->db`, `$db?->`).

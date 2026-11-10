@@ -23,9 +23,9 @@ var answerBound struct {
 	limit int  // 0: no bound
 	seen  int  // values in the answers read so far
 	over  bool // an answer passed the bound
-	// wrote: the answer refused was to a request that changes data, which
-	// the install had accepted.
-	wrote bool
+	// changed: the call has sent a request that changes data, so a refusal
+	// may follow a change the install made.
+	changed bool
 }
 
 // LimitAnswerValues bounds the JSON values in all the answers read from now
@@ -34,7 +34,7 @@ var answerBound struct {
 func LimitAnswerValues(n int) {
 	answerBound.mu.Lock()
 	defer answerBound.mu.Unlock()
-	answerBound.limit, answerBound.seen, answerBound.over, answerBound.wrote = n, 0, false, false
+	answerBound.limit, answerBound.seen, answerBound.over, answerBound.changed = n, 0, false, false
 }
 
 // AnswerTooManyValues reports whether err holds, anywhere in its chain, the
@@ -63,19 +63,22 @@ func AnswerBoundPassed() bool {
 	return answerBound.limit > 0 && answerBound.over
 }
 
-// AnswerRefusedAfterWrite reports whether an answer the bound refused was to
-// a request that changes data: the install made the change before its
-// answer was refused, so it is looked for before it is made again.
-func AnswerRefusedAfterWrite() bool {
+// ChangeSent reports whether the call has sent a request that changes data
+// since LimitAnswerValues set its bound: the install may have made that
+// change whatever was refused after it, so it is looked for before it is
+// made again (CLAUDE.md #13). Not tracked without a bound.
+func ChangeSent() bool {
 	answerBound.mu.Lock()
 	defer answerBound.mu.Unlock()
-	return answerBound.wrote
+	return answerBound.changed
 }
 
-func noteWriteRefused() {
+func noteChangeSent() {
 	answerBound.mu.Lock()
 	defer answerBound.mu.Unlock()
-	answerBound.wrote = true
+	if answerBound.limit > 0 {
+		answerBound.changed = true
+	}
 }
 
 // readAnswer reads an answer's body, at most limit bytes, and counts its

@@ -64,6 +64,8 @@ final class ConversionTables
             self::destinations(),
             self::destinationDeliveries(),
             self::inboundLog(),
+            self::shopifyPendingRefunds(),
+            self::shopifyRefundTransactions(),
         ];
     }
 
@@ -468,6 +470,44 @@ final class ConversionTables
                 KEY `status_next` (`status`,`next_attempt_at`),
                 KEY `user_destination` (`user_id`,`destination_id`,`delivery_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Conversions queued for and sent to destinations'"
+        );
+    }
+
+    /** Refunds awaiting terminal Shopify transaction statuses. */
+    public static function shopifyPendingRefunds(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::SHOPIFY_PENDING_REFUNDS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::SHOPIFY_PENDING_REFUNDS . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `refund_id` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `order_id` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `click_id` bigint(20) unsigned NOT NULL,
+                `occurred_at` int(10) unsigned NOT NULL,
+                `transactions` text NOT NULL,
+                `completed_at` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`user_id`,`refund_id`),
+                KEY `pending_order` (`user_id`,`order_id`,`completed_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /** Terminal refund transaction statuses, including those arriving before their refund. */
+    public static function shopifyRefundTransactions(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::SHOPIFY_REFUND_TRANSACTIONS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::SHOPIFY_REFUND_TRANSACTIONS . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `transaction_id` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `order_id` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `status` varchar(12) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `amount` decimal(11,5) NOT NULL,
+                `currency` char(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `received_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`,`transaction_id`),
+                KEY `order_lookup` (`user_id`,`order_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
 

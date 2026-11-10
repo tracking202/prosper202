@@ -7,6 +7,7 @@ namespace Prosper202\PaymentNotification;
 use Prosper202\Click\ClickRef;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\AmountOutOfRange;
 use Prosper202\Conversion\Ledger\ReversalException;
@@ -363,6 +364,12 @@ final class Processor
         }
         $taken = $carriedPath && $result['conv_id'] > 0 ? $this->carriedTaken($result['conv_id'], $owner) : null;
         if ($result['recorded']) {
+            if ($provider->source() === ConversionSource::SHOPIFY && $result['payout'] !== '' && $amount !== null) {
+                $actual = abs(Amount::toUnits($result['payout']));
+                if ($actual !== abs(Amount::toUnits($amount))) {
+                    $by = self::units($actual) . ', all that was left of the sale: this ' . $n->event . ' states ' . $amount;
+                }
+            }
             if ($taken !== null) {
                 if ($taken !== abs(Amount::toUnits((string) $amount))) {
                     $by = self::units($taken) . ', all that was left of it: this ' . $n->event . ' states ' . $amount;
@@ -391,7 +398,8 @@ final class Processor
                 );
             }
 
-            return $this->repeatedReversal($n, $on, $result['conv_id'], $owner);
+            return $this->repeatedReversal($n, $on, $result['conv_id'], $owner, false,
+                $provider->source() === ConversionSource::SHOPIFY);
         }
         if ($result['reason'] === 'unknown_click' || $result['reason'] === 'foreign_click') {
             return self::unknownClick($clickId, $provider->clickField());
@@ -682,11 +690,13 @@ final class Processor
         string $on,
         int $reversalId,
         int $owner,
-        bool $another = false
+        bool $another = false,
+        bool $shopifyPartial = false
     ): Outcome {
         $stored = $this->storedReversal($reversalId, $owner);
         // Capped as the reversal was: a refund stating more than its sale took back the whole sale.
-        $stated = $n->amount !== null ? min(abs(Amount::toUnits($n->amount)), $stored['sale']) : $stored['sale'];
+        $cap = $shopifyPartial ? $this->shopifyRemainingBefore($reversalId, $owner, $stored['sale']) : $stored['sale'];
+        $stated = $n->amount !== null ? min(abs(Amount::toUnits($n->amount)), $cap) : $cap;
         $by = self::units($stored['reversed']);
         if ($another || $stated !== $stored['reversed']) {
             $states = '; this ' . $n->event . ($another ? ' is another notification than that reversal\'s and' : '')
@@ -726,6 +736,26 @@ final class Processor
         );
     }
 
+    /** Remaining sale amount immediately before this Shopify reversal, conservatively excluding deleted rows. */
+    private function shopifyRemainingBefore(int $reversalId, int $owner, int $sale): int
+    {
+        $conn = new Connection($this->db);
+        // The writer just found this reversal on the primary. A lagging replica
+        // can otherwise misclassify a retry immediately after it was recorded.
+        $stmt = $conn->prepareWrite(
+            'SELECT earlier.click_payout FROM 202_conversion_logs current'
+            . ' JOIN 202_conversion_logs earlier ON earlier.reverses_conv_id = current.reverses_conv_id'
+            . ' AND earlier.user_id = current.user_id AND earlier.conv_id < current.conv_id AND earlier.deleted = 0'
+            . ' WHERE current.conv_id = ? AND current.user_id = ?'
+        );
+        $conn->bind($stmt, 'ii', [$reversalId, $owner]);
+        foreach ($conn->fetchAll($stmt) as $row) {
+            $sale -= abs(Amount::toUnits((string) $row['click_payout']));
+        }
+
+        return max(0, $sale);
+    }
+
     /**
      * The reversal that stands against the sale a transaction id names on a
      * click (the sale the writer reverses: its first row under that id), or
@@ -756,7 +786,8 @@ final class Processor
     private function storedReversal(int $conversionId, int $owner): array
     {
         $conn = new Connection($this->db);
-        $stmt = $conn->prepareRead(
+        // The duplicate was found on the primary, so read the same database.
+        $stmt = $conn->prepareWrite(
             'SELECT r.click_payout AS reversed, r.deleted, s.click_payout AS sale FROM 202_conversion_logs r'
             . ' JOIN 202_conversion_logs s ON s.conv_id = r.reverses_conv_id AND s.user_id = r.user_id'
             . ' WHERE r.conv_id = ? AND r.user_id = ? LIMIT 1'

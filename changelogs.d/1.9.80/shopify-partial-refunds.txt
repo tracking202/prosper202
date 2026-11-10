@@ -1,0 +1,1 @@
+-- Fixed: Shopify orders can now record more than one partial refund, without taking back more than the sale. Pending refunds reconcile when their transactions settle if the Transaction creation webhook is configured. Check Setup › Inbound Log for refused webhooks.

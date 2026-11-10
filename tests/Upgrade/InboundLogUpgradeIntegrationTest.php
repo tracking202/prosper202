@@ -6,6 +6,7 @@ namespace Tests\Upgrade;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Tables\ConversionTables;
+use Prosper202\PaymentNotification\Shopify\SettlementSchema;
 
 /**
  * The 1.9.79 -> 1.9.80 rung creates 202_inbound_log as the installer makes
@@ -71,6 +72,27 @@ final class InboundLogUpgradeIntegrationTest extends TestCase
         self::assertStringNotContainsString('Prosper202 upgrade', $err);
         self::assertSame($fresh, self::shape());
         self::assertSame('1.9.80', self::storedVersion());
+    }
+
+    public function testAlreadyUpgradedDatabaseCanRepairMissingShopifyTables(): void
+    {
+        $db = self::requireScratch();
+        self::version('1.9.80');
+        self::q('DROP TABLE 202_shopify_pending_refunds');
+        self::q('DROP TABLE 202_shopify_refund_transactions');
+        self::assertTrue(SettlementSchema::needsRepair($db));
+
+        [$out, $err] = self::upgrade();
+
+        self::assertSame('RETURNED true', $out, $err);
+        self::assertFalse(SettlementSchema::needsRepair($db));
+        self::assertSame('1.9.80', self::storedVersion());
+        // A failed reconcile can leave both tables but a missing index.
+        self::q('ALTER TABLE 202_shopify_pending_refunds DROP INDEX pending_order');
+        self::assertTrue(SettlementSchema::needsRepair($db));
+        [$out, $err] = self::upgrade();
+        self::assertSame('RETURNED true', $out, $err);
+        self::assertFalse(SettlementSchema::needsRepair($db));
     }
 
     private static function version(string $version): void

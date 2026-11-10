@@ -728,6 +728,9 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 		return nil, err
 	}
 	readsAsPost := method == http.MethodPost && readOnlyPost[strings.TrimLeft(path, "/")]
+	// A preview is dry_run=1, the only value this client sends; anything
+	// else is taken to change data.
+	changes := method != http.MethodGet && method != http.MethodHead && !readsAsPost && params["dry_run"] != "1"
 	if readOnlyMode && method != http.MethodGet && method != http.MethodHead && !readsAsPost {
 		return nil, &RequestError{Kind: "validation", Op: "read_only", Err: fmt.Errorf(
 			"%s %s would change data, and this connection is read-only; nothing was sent", method, path)}
@@ -805,6 +808,10 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 		req.Header.Set(name, value)
 	}
 
+	if changes {
+		// Before it goes: once sent, it may land whatever comes back.
+		noteChangeSent()
+	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, &RequestError{Kind: "network", Op: "send_request", Err: err}
@@ -829,9 +836,8 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 		return nil, apiErr
 	}
 	if tooMany != nil {
-		if method != http.MethodGet && method != http.MethodHead && !readsAsPost && params["dry_run"] == "" {
+		if changes {
 			// It was sent and accepted: whatever it changed stands (CLAUDE.md #13).
-			noteWriteRefused()
 			return nil, &RequestError{Kind: tooMany.Kind, Op: tooMany.Op, Err: fmt.Errorf(
 				"%w; the install accepted the %s (HTTP %d) before its answer was refused, so it may have changed data", tooMany.Err, method, resp.StatusCode)}
 		}

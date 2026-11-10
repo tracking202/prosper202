@@ -1190,6 +1190,12 @@ class UPGRADE
 
         try {
             $laddered = self::ladder($time_from);
+            if ($laddered === true && PROSPER202::prosper202_version() === '1.9.80'
+                && PROSPER202::php_version() === '1.9.80') {
+                $laddered = \Prosper202\PaymentNotification\Shopify\SettlementSchema::repair(
+                    DB::getInstance()->getConnection()
+                );
+            }
         } finally {
             _upgrade_query('SELECT RELEASE_LOCK(' . $lockName . ')');
         }
@@ -4963,6 +4969,8 @@ class UPGRADE
                 \Prosper202\Database\Tables\CoreTables::messagingAttributes(),
                 // The inbound postback and notification log (Prosper202\InboundLog).
                 \Prosper202\Database\Tables\ConversionTables::inboundLog(),
+                \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
+                \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
                 // The publisher a publisher link's click is credited to
                 // (Prosper202\Click\PublisherCredit).
                 \Prosper202\Database\Tables\ClickTables::clicksPublisher(),

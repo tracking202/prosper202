@@ -28,7 +28,10 @@ if (is_array($partitionRow) && (int)($partitionRow['partition_support'] ?? 0) > 
 $memcacheInstalled = isset($memcacheInstalled) ? (bool)$memcacheInstalled : false;
 
 //check to see if this is already installed, if so don't do anything
-if (upgrade_needed() == false) {
+if (upgrade_needed() == false && !(
+    $version === '1.9.80'
+    && \Prosper202\PaymentNotification\Shopify\SettlementSchema::needsRepair($db)
+)) {
     header('location: ' . get_absolute_url() . '202-login.php');
     _die("<h6>Already Upgraded</h6>
 			   <small>Your Prosper202 version $version is already upgraded. <a href='" . get_absolute_url() . "202-login.php'>log in</a></small>");

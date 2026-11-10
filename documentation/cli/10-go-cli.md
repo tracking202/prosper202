@@ -595,7 +595,9 @@ tools take no `all`: page with `limit` and `offset`. It also decodes at most
 80,000 JSON values from them (a megabyte of real rows holds fewer), and takes at
 most 1,000 in a call's arguments (5,000 in `rotator_set_rules`, whose rules are
 one document: about 150 rules as `rotator_get` answers them); past either, the
-call is refused with how to ask for less.
+call is refused with how to ask for less. A call that had already sent a change
+when an answer was refused says so instead: the install may have made the
+change, so look with the matching get or list tool before calling again.
 A connection keeps the access it was approved with: one approved before the install ran
 1.9.79, to propose or make changes, reads text ads but cannot change them (text_ad_create, text_ad_update and
 text_ad_delete answer 403); connect again for that.
