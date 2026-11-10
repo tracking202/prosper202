@@ -41,6 +41,15 @@ const P202_TS_OWNERS_REASONS = [
     'deleted_user' => 'a user it names is deleted, and nothing moves into a deleted account',
 ];
 
+/** Why the cron job leaves a source to the operator (TrafficSourceOwners' auto_split_blocked_by). */
+const P202_TS_OWNERS_NOT_AUTOMATIC = [
+    'may_be_theirs' => 'an account naming it was saved before the source was last saved, so the source may have'
+        . ' been that user\'s, and moving it back may be what you want',
+    'same_name' => 'a user who would get a copy already has a traffic source of this name',
+    'no_such_user' => 'a user it names no longer exists',
+    'deleted_user' => 'a user it names is deleted, and nothing is copied into a deleted account',
+];
+
 /**
  * The marks no move clears: whichever account the source is in, another
  * user's accounts still name it. The panel offers the split for these.
@@ -231,8 +240,39 @@ function p202_ts_owners_notice(array $report, string $self): string
 {
     $h = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
     $listed = count($report['sources']);
-    $repairable = (int) $report['repairable'];
-    $ambiguous = (int) $report['ambiguous'];
+    $review = $h($self . '?' . P202_TS_OWNERS_REVIEW . '#' . P202_TS_OWNERS_PANEL);
+    if ($listed === 0) {
+        // Nothing waits for a decision: only what was split is said.
+        return '<div class="alert alert-info p202-flash" role="status" id="traffic-source-owners-notice">'
+            . '<i class="bi bi-info-circle"></i><div class="p202-flash__body">'
+            . '<strong>' . $h(p202_ts_owners_splits_count($report)) . '</strong> '
+            . $h((string) ($report['splits_note'] ?? ''))
+            . ' <a href="' . $review . '">See what was split</a>'
+            . '</div></div>';
+    }
+    // What waits for the operator: a source the cron job splits by itself
+    // needs nobody to choose a user for it.
+    $waiting = array_filter(
+        $report['sources'],
+        static fn (array $entry): bool => ($entry['auto_split'] ?? false) !== true
+    );
+    $automatic = $listed - count($waiting);
+    $repairable = count(array_filter(
+        $waiting,
+        static fn (array $entry): bool => ($entry['repair_to_user_id'] ?? null) !== null
+    ));
+    $ambiguous = count($waiting) - $repairable;
+    $soon = match (true) {
+        $automatic === 0 => '',
+        $listed === 1 => ' It is',
+        $automatic === $listed => ' They are all',
+        default => ' ' . $automatic . ' of them ' . ($automatic === 1 ? 'is' : 'are'),
+    };
+    if ($soon !== '') {
+        $soon .= ' split by the cron job within the hour, with nothing for you to do: each other user gets a'
+            . ' copy of their own, and nothing is taken from anyone.';
+    }
+    $done = ($report['splits'] ?? []) === [] ? '' : ' ' . p202_ts_owners_splits_count($report);
     $what = $listed === 1
         ? '1 traffic source is in one user\'s account while another user\'s traffic source accounts name it.'
         : $listed . ' traffic sources are in one user\'s account while another user\'s traffic source accounts'
@@ -250,10 +290,114 @@ function p202_ts_owners_notice(array $report, string $self): string
         . '<strong>' . $h($what) . '</strong>'
         . ' Before 1.9.79, renaming a traffic source in Setup could move it into the account of whoever saved'
         . ' the rename, and the reports of the user whose accounts name it lost it. '
-        . $h(ucfirst(implode('; ', $split))) . '.'
-        . ' <a href="' . $h($self . '?' . P202_TS_OWNERS_REVIEW . '#' . P202_TS_OWNERS_PANEL) . '">'
+        . ($split === [] ? '' : $h(ucfirst(implode('; ', $split))) . '.')
+        . $h($soon . $done)
+        . p202_ts_owners_variables_note($report)
+        . ' <a href="' . $review . '">'
         . ($listed === 1 ? 'Review it' : 'Review them') . '</a>'
         . '</div></div>';
+}
+
+/**
+ * The report's sentence about custom variables, when a listed source has any:
+ * the clicks on the other users' accounts record none of their values.
+ *
+ * @param array<string, mixed> $report the controller's report data
+ */
+function p202_ts_owners_variables_note(array $report): string
+{
+    $note = $report['variables_note'] ?? null;
+
+    return is_string($note) && $note !== ''
+        ? ' <strong>' . htmlspecialchars($note, ENT_QUOTES, 'UTF-8') . '</strong>'
+        : '';
+}
+
+/**
+ * "2 traffic sources were split in the last 30 days, 1 of them automatically."
+ *
+ * @param array<string, mixed> $report the controller's report data
+ */
+function p202_ts_owners_splits_count(array $report): string
+{
+    $splits = $report['splits'] ?? [];
+    $all = count($splits);
+    $automatic = count(array_filter($splits, static fn (array $split): bool => $split['automatic'] === true));
+
+    return $all . ' traffic source' . ($all === 1 ? ' was' : 's were') . ' split in the last 30 days'
+        . match (true) {
+            $automatic === 0 => '',
+            $automatic === $all => $all === 1 ? ', automatically' : ', all automatically',
+            default => ', ' . $automatic . ' of them automatically',
+        } . '.';
+}
+
+/**
+ * Whether the cron job splits a listed source by itself, or why it is left
+ * to the operator.
+ *
+ * @param array<string, mixed> $entry
+ */
+function p202_ts_owners_automatic(array $entry): string
+{
+    $h = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+    if (($entry['auto_split'] ?? false) === true) {
+        return '<div class="mt-2"><span class="p202-pill p202-pill--good">split automatically within the hour</span>'
+            . '<div class="text-secondary">Each other user gets a copy of their own. You need do nothing.</div></div>';
+    }
+    $reasons = array_map(
+        static fn (string $reason): string => '<li>' . $h(P202_TS_OWNERS_NOT_AUTOMATIC[$reason] ?? $reason) . '</li>',
+        (array) ($entry['auto_split_blocked_by'] ?? [])
+    );
+
+    return $reasons === [] ? '' : '<div class="mt-2 text-secondary">Not split automatically:'
+        . '<ul class="mb-0 mt-1 ps-3">' . implode('', $reasons) . '</ul></div>';
+}
+
+/**
+ * The splits of the last 30 days: which source, who it stayed with, who was
+ * given a copy for which accounts, when, and whether the cron job made it.
+ *
+ * @param array<string, mixed> $report the controller's report data
+ */
+function p202_ts_owners_splits(array $report): string
+{
+    $splits = $report['splits'] ?? [];
+    if ($splits === []) {
+        return '';
+    }
+    $h = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+    $user = static fn (int $id, ?string $name): string => $name === null
+        ? 'user ' . $id
+        : $h($name) . ' <span class="text-secondary">(user ' . $id . ')</span>';
+    $rows = '';
+    foreach ($splits as $split) {
+        $copies = '';
+        foreach ($split['copies'] as $copy) {
+            $accounts = array_map('intval', $copy['ppc_account_ids']);
+            $copies .= '<div>' . $user((int) $copy['user_id'], $copy['user_name'] ?? null)
+                . '<div class="text-secondary">copy #' . (int) $copy['ppc_network_id'] . ' · '
+                . count($accounts) . ' traffic source account' . (count($accounts) === 1 ? '' : 's')
+                . ' (' . implode(', ', $accounts) . ') · ' . (int) $copy['custom_variables'] . ' custom variable'
+                . ((int) $copy['custom_variables'] === 1 ? '' : 's') . '</div></div>';
+        }
+        $rows .= '<tr data-split-of="' . (int) $split['ppc_network_id'] . '">'
+            . '<td><strong>' . $h($split['ppc_network_name']) . '</strong> <span class="text-secondary">#'
+            . (int) $split['ppc_network_id'] . '</span></td>'
+            . '<td>' . $user((int) $split['owner_user_id'], $split['owner_user_name'] ?? null) . '</td>'
+            . '<td>' . $copies . '</td>'
+            . '<td>' . $h(date('Y-m-d H:i', (int) $split['split_at'])) . '<div>'
+            . ($split['automatic'] === true
+                ? '<span class="p202-pill p202-pill--good">automatically</span>'
+                : '<span class="text-secondary">by user ' . (int) $split['actor_user_id'] . '</span>')
+            . '</div></td></tr>';
+    }
+
+    return '<h3 class="mt-4">Split in the last 30 days</h3>'
+        . '<p class="text-secondary">' . $h((string) ($report['splits_note'] ?? '')) . '</p>'
+        . '<div class="p202-table-wrap"><table class="table p202-table" id="traffic-source-splits-table">'
+        . '<thead><tr><th>Traffic source</th><th>Stays with</th><th>Given a copy</th><th>When</th></tr></thead>'
+        . '<tbody>' . $rows . '</tbody></table></div>';
 }
 
 /**
@@ -289,7 +433,7 @@ function p202_ts_owners_panel(array $report, TrafficSourceOwnersController $cont
         $panel .= '<p class="text-secondary">Each source below is in one user\'s account while traffic source'
             . ' accounts of another user name it. Moving one back changes only whose account it is in. Where'
             . ' accounts of more than one user name a source, no move clears it, and splitting it gives each other'
-            . ' user a copy of their own.</p>'
+            . ' user a copy of their own.' . p202_ts_owners_variables_note($report) . '</p>'
             . '<div class="p202-table-wrap"><table class="table p202-table" id="traffic-source-owners-table">'
             . '<thead><tr><th>Traffic source</th><th>In the account of</th><th>Named by</th><th>Goes to</th>'
             . '</tr></thead><tbody>';
@@ -303,7 +447,10 @@ function p202_ts_owners_panel(array $report, TrafficSourceOwnersController $cont
             $panel .= '<tr data-ppc-network-id="' . (int) $entry['ppc_network_id'] . '">'
                 . '<td><strong>' . $h($entry['ppc_network_name']) . '</strong> <span class="text-secondary">#'
                 . (int) $entry['ppc_network_id'] . '</span>'
-                . ($entry['removed'] ? ' <span class="p202-pill">removed</span>' : '') . '</td>'
+                . ($entry['removed'] ? ' <span class="p202-pill">removed</span>' : '')
+                . (($entry['variables_unrecorded'] ?? false) === true
+                    ? ' <span class="p202-pill p202-pill--warn">custom variables not recorded</span>' : '')
+                . '</td>'
                 . '<td>' . p202_ts_owners_user($entry['owner'])
                 . ($entry['owner']['ppc_account_ids'] === [] ? '' : '<div class="text-secondary">and their own '
                     . p202_ts_owners_holdings($entry['owner']) . '</div>') . '</td>'
@@ -312,19 +459,23 @@ function p202_ts_owners_panel(array $report, TrafficSourceOwnersController $cont
                         . '<div class="text-secondary">' . p202_ts_owners_holdings($party) . '</div></div>',
                     $entry['named_by']
                 )) . '</td>'
-                . '<td>' . p202_ts_owners_goes_to($entry) . '<div class="mt-2">' . $cell . '</div></td>'
+                . '<td>' . p202_ts_owners_goes_to($entry) . p202_ts_owners_automatic($entry)
+                . '<div class="mt-2">' . $cell . '</div></td>'
                 . '</tr>';
             $modals .= $modal;
         }
         $panel .= '</tbody></table></div>';
     }
+    $panel .= p202_ts_owners_splits($report);
 
     $panel .= '<details class="p202-disclosure mt-3" data-p202-remember="settings-traffic-source-owners">'
         . '<summary>Advanced <span class="p202-disclosure__hint">why a source is listed, and the API</span></summary>'
         . '<div class="p202-disclosure__body">'
         . '<p>Before 1.9.79, renaming a traffic source on Setup › Traffic Sources moved it into the account of the'
         . ' user who saved the rename, and nothing checked whose source it was. Its traffic source accounts stayed'
-        . ' with their user, whose reports have put each click on them under no traffic source since.</p>'
+        . ' with their user, whose reports have put each click on them under no traffic source since. A click'
+        . ' on one of those accounts also records none of the source\'s custom variables; while such clicks'
+        . ' arrive with values, the server log says so about once an hour for each account.</p>'
         . '<p>The same rows have other origins: before 1.9.77 the API put a traffic source account under whatever'
         . ' source it was sent, and an admin may have moved a source on purpose. So nothing moves by itself: a'
         . ' source that may have been shared on purpose moves only to a user you choose. A move changes only'
@@ -334,9 +485,16 @@ function p202_ts_owners_panel(array $report, TrafficSourceOwnersController $cont
         . '<p>A source that accounts of more than one user name is listed again after any move, since another'
         . ' user\'s accounts still name it. A split leaves it where it is and gives each other user a copy of'
         . ' their own, with its name, its custom variables and its removed mark, and moves their traffic source'
-        . ' accounts onto it. Their clicks are reported under the copy after the cron job\'s next run; the custom'
-        . ' variable values recorded on them before the split stay recorded against the source\'s own'
-        . ' variables.</p>'
+        . ' accounts onto it. Their clicks are reported under the copy after the cron job\'s next run, and the'
+        . ' custom variable values recorded on them before the split read under the copy\'s variables in'
+        . ' Analyze › Variables.</p>'
+        . '<p>The cron job splits a source by itself, once an hour, where every traffic source account of'
+        . ' another user that names it was saved after the source was last saved: the source was where it is'
+        . ' when each of those accounts came to name it, so no move would be a move back, and a copy for each'
+        . ' of those users takes nothing from anyone. It leaves a source to you where an account was saved'
+        . ' before the source was (the source may have been taken, and you may want it moved back), where a'
+        . ' user who would get a copy already has a source of that name, and where a user it names is deleted'
+        . ' or gone. Every split, yours or the cron job\'s, is listed here for 30 days.</p>'
         . '<p class="mb-0">The same list, move and split are <code>GET /api/v3/system/traffic-source-owners</code>,'
         . ' <code>POST /api/v3/system/traffic-source-owners/repair</code> and <code>/split</code>, and'
         . ' <code>p202 system traffic-source-owners show</code>, <code>repair</code> and <code>split</code> in the'
@@ -590,7 +748,8 @@ function p202_ts_owners_split_action(array $entry, TrafficSourceOwnersController
         . ' accounts move onto it:</p>'
         . '<ul>' . $copies . '</ul>'
         . '<p class="mb-0">Nothing else changes. Their clicks are reported under the copy after the cron job\'s'
-        . ' next run, and a report filter of theirs set to this source is set to the copy. If it has changed'
+        . ' next run, with the custom variable values they recorded before, and a report filter of theirs set to'
+        . ' this source is set to the copy. If it has changed'
         . ' since this page was read, nothing is copied and the page says so.</p>';
     $modal = '<div class="modal fade" id="' . $modalId . '" tabindex="-1" aria-labelledby="' . $modalId . '-title"'
         . ' aria-hidden="true"><div class="modal-dialog"><div class="modal-content">'

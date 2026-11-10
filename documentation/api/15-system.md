@@ -417,7 +417,9 @@ under no traffic source: a report row takes the source only from the click's
 own account. 1.9.79 refuses the
 rename of another user's source; these routes find the sources taken
 before, and move one back, or split one, on an operator's say-so. Nothing is
-moved by itself, and the upgrade neither looks nor moves.
+moved by itself, and the upgrade neither looks nor moves. From 1.9.80 the cron
+job splits by itself the sources a copy is right for whatever made the
+mismatch (below), and leaves the rest listed.
 
 `GET /system/traffic-source-owners`
 
@@ -435,11 +437,23 @@ moved by itself, and the upgrade neither looks nor moves.
         ],
         "repair_to_user_id": 2,
         "ambiguous": [],
+        "variables_unrecorded": true,
+        "auto_split": false,
+        "auto_split_blocked_by": ["may_be_theirs"],
         "custom_variables": 2
       }
     ],
     "repairable": 1,
-    "ambiguous": 0
+    "ambiguous": 0,
+    "variables_unrecorded": 1,
+    "auto_split": 0,
+    "splits": [
+      { "ppc_network_id": 12, "ppc_network_name": "Search Ads", "removed": false,
+        "owner_user_id": 5, "owner_user_name": "keeper", "automatic": true, "actor_user_id": 0, "split_at": 1794300000,
+        "copies": [ { "user_id": 2, "user_name": "owner", "ppc_network_id": 21, "ppc_account_ids": [9], "custom_variables": 2 } ] }
+    ],
+    "splits_note": "A split gave each of these users a traffic source of their own: …",
+    "variables_note": "Custom variable values are not being recorded for clicks on the traffic source accounts that name another user's traffic source: a click records only the variables of a source in its own user's account. Until the source is moved back or split, the values those clicks arrive with are not stored and cannot be recovered later."
   }
 }
 ```
@@ -452,6 +466,85 @@ those clicks (a reversal is not counted again). `custom_variables` is how
 many live custom variables the source has, which a split copies. The takeover
 changed nothing else, so a source taken with no account under it leaves no
 sign and is not listed.
+
+### Custom variables are not recorded until the source is moved or split
+
+A click records only the custom variables of a traffic source in its own
+user's account. So a click on a traffic source account in `named_by` reads
+none of the listed source's variables, and the values its link carries for
+them are not stored: they are not in Analyze › Variables, and they cannot be
+recovered later. The source's own user's accounts are not affected. This
+holds from the click after the source left the account (or the account was
+put on another user's source) until the source is moved back or split.
+
+- `variables_unrecorded` on a source is `true` when it has live custom
+  variables, so there is something its other users' clicks are not recording.
+  `data.variables_unrecorded` counts those sources, and `data.variables_note`
+  is the sentence above in the report's words (`null` when it counts none).
+  Account › Settings shows the sentence in its notice and marks each such
+  source, and `p202 system traffic-source-owners show` prints it under its
+  table.
+- The server's error log says so while it happens. A line is written when a
+  click on a direct link, a redirector link or a landing page's recorder
+  arrives with a value for at least one of that source's variables, and it
+  names the user, the traffic source account, the source, the user the
+  source is in and how many values came, never a value or the visitor:
+
+  ```
+  p202 click: a click on traffic source account 12 of user 2 came with 2 custom variable values and is stored without them: the account names traffic source 7, which is in user 3's account, …
+  ```
+
+  Where memcache is in use the line is written once an hour for each traffic
+  source account, not for each click; without it, for each such click. A
+  click that came with no value for those variables, a source with no
+  variables and an account on its own user's source write nothing.
+- A landing page's script captures the variables it is given the names of,
+  and it is given none for another user's source. Its clicks lose the values
+  the same way, but the recorder never receives them, so the log has no line
+  for them: the report's `variables_unrecorded` is what says so there.
+
+### What the cron job splits by itself
+
+Once an hour the cron job gives a copy to each user whose accounts name a
+listed source, without being asked, when a copy is right whatever made the
+mismatch: every traffic source account of another user that names the source
+was saved at or after the source's last save. The source was then where it is
+now when each of those accounts came to name it (what the API made before
+1.9.77), so no move would be a move back. The split is the one `POST
+/system/traffic-source-owners/split` makes, below:
+
+- the source stays in its user's account, with its accounts, its variables
+  and its name: nothing is taken from that user;
+- each other user gets a traffic source of their own, a copy with the
+  source's name and custom variables, and their accounts use it;
+- new clicks on those accounts record their custom variable values again;
+- the values their earlier clicks recorded are kept and read under the copy
+  in Analyze › Variables (below), and their reports list those clicks under
+  the copy after the cron job's next run.
+
+A listed source's `auto_split` says whether the next hourly run splits it,
+and `auto_split_blocked_by` why not:
+
+- `may_be_theirs`: a user whose accounts name it saved one of them before the
+  source was last saved. That is what a source taken by a rename looks like,
+  and moving it back may be what you want, which a copy would put out of
+  reach: the source would leave this report. It waits for your move or split;
+- `same_name`: a user who would get a copy already has a live traffic source
+  of that name, and you may want their accounts on that one;
+- `no_such_user`, `deleted_user`: no split copies into such an account.
+
+`data.auto_split` counts the sources waiting for the next run, and
+`data.splits` lists every split of the last 30 days, newest first: the source,
+the user it stayed with, each user's copy and the traffic source accounts
+moved onto it, `split_at`, and `automatic` (`true` for the cron job's, with
+`actor_user_id` 0; a user's split names the user). `data.splits_note` says
+what a split did. Account › Settings shows the same list under the sources
+that still need a decision, and keeps a notice above its tiles while a split
+of the last 30 days is listed; `p202 system traffic-source-owners show` prints
+it under its table. The server's error log has a line for each split.
+
+Nothing else is automatic: no source is ever moved without an operator, and
+the upgrade neither looks nor splits (the first hourly run after it does).
 
 The same rows have other origins: before 1.9.77 the API put a traffic source
 account under whatever source it was sent (an account a user made on a source
@@ -563,11 +656,17 @@ cron job has re-rolled them: until the split, a report row took no source for
 them (it takes the source only from the click's own account, and the source
 was another user's), so the breakdown by traffic source left them out. Pages
 that look a click's source up through its account (the Overview, Visitors,
-`GET /clicks`) show the copy at once. The custom variable values recorded on
-those clicks before the split stay recorded against the source's own
-variables, which the copy does not share: Analyze › Variables lists them under
-the copy with the names those variables have, beside the values recorded
-against the copy's own from then on.
+`GET /clicks`) show the copy at once.
+
+The custom variable values those clicks recorded earlier are kept. While the
+accounts named another user's source, Analyze › Variables showed that user
+none of them: the report lists a value only under a source of the user's own.
+After the split it lists them under the copy, by the copy's variables, in one
+group with the values recorded from then on: each of the copy's variables
+remembers the variable it was copied from (from 1.9.80; a copy made by an
+earlier version lists its earlier values as "Unnamed variable"). A rename of
+the copy's variable renames both; a rename in the other user's account shows
+nowhere in this one.
 
 It is one transaction: the users (a user being deleted is waited for, then
 read as deleted), then the accounts that move, by id, then the source are
@@ -616,7 +715,10 @@ landing on `#traffic-source-owners`), which lists each source as `GET` does:
 the user it is in, each user whose accounts name it with their accounts,
 clicks and conversions, and the user it goes to or why you choose. The notice
 reads only whether anything is listed; the clicks and conversions are counted
-when the panel is open.
+when the panel is open. When a listed source has custom variables, the notice
+also says that their values are not being recorded for clicks on the other
+users' accounts until it is moved back or split, and the panel marks the
+source **custom variables not recorded**.
 
 Each row's **Move back…** opens a confirmation that names the source, the user
 it leaves and the user it goes to, or, for an ambiguous source, asks which of

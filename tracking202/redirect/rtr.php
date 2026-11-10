@@ -485,7 +485,19 @@ if ($rtrCampaignRows) {
 		    AND ppc.user_id = '" . $db->real_escape_string((string) $user_id) . "'"
 	);
 	$rtrVariableIds = [];
-	foreach (\Prosper202\Click\TrackerVariables::pairs(is_array($rtrVariables) ? $rtrVariables : []) as [$rtrParameter, $rtrVariableId]) {
+            $rtrVariablePairs = \Prosper202\Click\TrackerVariables::pairs(
+                is_array($rtrVariables) ? $rtrVariables : []
+            );
+            // Said in the log when the click's traffic source account names another
+            // user's source and the click came with a value of its variables.
+            \Prosper202\Repository\LookupRepositoryFactory::noteUnrecordedVariables(
+                $db,
+                (int) $user_id,
+                (int) $mysql['ppc_account_id'],
+                $rtrVariablePairs,
+                $_GET
+            );
+	foreach ($rtrVariablePairs as [$rtrParameter, $rtrVariableId]) {
 		$rtrValue = str_replace('%20', ' ', ClickRequest::text($_GET, $rtrParameter));
 		if ($rtrValue !== '') {
 			$rtrVariableIds[] = $trackingRepo->findOrCreateVariable($rtrValue, $rtrVariableId);

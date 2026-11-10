@@ -593,6 +593,10 @@ if ($tsReview && $tsOwners['controller'] !== null && $tsOwners['report'] !== nul
     }
 }
 
+// The notice: sources that wait for a decision, or splits of the last 30 days.
+$tsReport = $tsOwners['report'];
+$tsSaid = $tsReport !== null && ($tsReport['sources'] !== [] || $tsReport['splits'] !== []);
+
 template_top('Administration');
 ?>
 
@@ -612,7 +616,7 @@ if ($fieldErrors) {
 echo p202_account_render_flashes($extra);
 if ($tsOwners['error'] !== null) {
     echo p202_flash('bad', $tsOwners['error']);
-} elseif ($tsOwners['report'] !== null && $tsOwners['report']['sources'] !== []) {
+} elseif ($tsSaid) {
     echo p202_ts_owners_notice($tsOwners['report'], $self);
 }
 ?>

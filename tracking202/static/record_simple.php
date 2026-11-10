@@ -165,6 +165,16 @@ foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $pp
 	}
 }
 
+// Said in the log when the click's traffic source account names another
+// user's source and the click came with a value of its variables.
+\Prosper202\Repository\LookupRepositoryFactory::noteUnrecordedVariables(
+    $db,
+    (int) ($tracker_row['user_id'] ?? 0),
+    (int) ($tracker_row['ppc_account_id'] ?? 0),
+    \Prosper202\Click\TrackerVariables::pairs($tracker_row),
+    $_GET
+);
+
 //utm_source
 $utm_source = ClickRequest::text($_GET, 'utm_source');
 if (isset($utm_source) && $utm_source != '') {

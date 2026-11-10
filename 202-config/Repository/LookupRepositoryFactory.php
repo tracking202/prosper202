@@ -6,6 +6,7 @@ namespace Prosper202\Repository;
 
 use mysqli;
 use Prosper202\Click\ClickPathReads;
+use Prosper202\Click\UnrecordedSourceVariables;
 use Prosper202\Database\Connection;
 use Prosper202\Repository\Cache\MemcacheIdCache;
 use Prosper202\Repository\Cache\MemcacheRowCache;
@@ -63,6 +64,52 @@ final class LookupRepositoryFactory
     public static function liveReads(mysqli $db): ClickPathReads
     {
         return ClickPathReads::uncached(new Connection($db));
+    }
+
+    /**
+     * The click scripts' note of a click stored without its source's
+     * variables, said once an hour for each traffic source account where
+     * memcache answers, and for every such click where it does not.
+     */
+    public static function unrecordedVariables(mysqli $db): UnrecordedSourceVariables
+    {
+        $reads = self::reads($db);
+        if (!self::bootstrapCacheWorks()) {
+            return new UnrecordedSourceVariables($reads);
+        }
+
+        return new UnrecordedSourceVariables(
+            $reads,
+            new MemcacheRowCache(
+                static fn (string $key): mixed => \getCache($key),
+                static fn (string $key, string $entry, int $ttl): mixed
+                    => \setCache($key, $entry, $ttl),
+                UnrecordedSourceVariables::SAID_FOR_SECONDS,
+            ),
+            self::cacheNamespace()
+        );
+    }
+
+    /**
+     * The click scripts' one call, after each has read its request for the
+     * source's variables ($read: TrackerVariables::pairs()). Never throws:
+     * the visitor goes on, whatever became of the note.
+     *
+     * @param list<array{string, int}> $read
+     * @param array<array-key, mixed> $request the click's query
+     */
+    public static function noteUnrecordedVariables(
+        mysqli $db,
+        int $userId,
+        int $ppcAccountId,
+        array $read,
+        array $request
+    ): void {
+        try {
+            self::unrecordedVariables($db)->note($userId, $ppcAccountId, $read, $request);
+        } catch (\Throwable $e) {
+            error_log('p202 click: the check for unrecorded custom variables failed: ' . $e->getMessage());
+        }
     }
 
     public static function reset(): void

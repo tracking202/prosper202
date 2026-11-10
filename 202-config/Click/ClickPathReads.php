@@ -390,6 +390,39 @@ final readonly class ClickPathReads
     }
 
     /**
+     * The source an account's traffic source account names when that source
+     * is in another user's account, with the names of its variables: the
+     * variables no read above answers, so the click stores no value of them
+     * (UnrecordedSourceVariables says so in the log). source_user_id is null
+     * for a source of the account's own and for one that does not exist.
+     * Names only, to tell whether a click came with a value; nothing here
+     * records one.
+     *
+     * @return Row|null
+     */
+    public function sourceOfAnotherUser(int $userId, int $ppcAccountId): ?array
+    {
+        if ($userId < 1 || $ppcAccountId < 1) {
+            return null;
+        }
+
+        return $this->setupRow(
+            'SELECT ppc.ppc_network_id,
+                    other.user_id AS source_user_id,
+                    (SELECT GROUP_CONCAT(v.parameter ORDER BY v.ppc_variable_id)
+                       FROM 202_ppc_network_variables AS v
+                      WHERE v.ppc_network_id = other.ppc_network_id AND v.deleted = 0) AS parameters
+               FROM 202_ppc_accounts AS ppc
+               LEFT JOIN 202_ppc_networks AS other
+                      ON other.ppc_network_id = ppc.ppc_network_id AND other.user_id <> ppc.user_id
+              WHERE ppc.ppc_account_id = ? AND ppc.user_id = ?
+              LIMIT 1',
+            'ii',
+            [$ppcAccountId, $userId]
+        );
+    }
+
+    /**
      * What decides whether a landing page's script may capture identity
      * signals (landing.php): the page's type, its campaign's setting, and
      * the setting of the campaign of the tracker the visit names, each only
