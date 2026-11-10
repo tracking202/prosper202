@@ -128,6 +128,23 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: python3 -I scripts/changelog.py guard "origin/$BASE_REF"
 
+      # CLAUDE.md, "Branches": work goes into the version branch version.php
+      # names, a tagged version is frozen, and master takes a finished
+      # version, a Dependabot bump, or workflows and documentation.
+      - name: The pull request is into the branch its version names
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: ./scripts/check-pr-branch.sh
+
+      # Every session loads CLAUDE.md whole: it stays under a size, and the
+      # tests, rules and files it names are in the tree.
+      - name: CLAUDE.md names what exists and stays within its size
+        run: python3 -I scripts/check-claude-md.py
+
       # Flags are written in kebab-case everywhere; snake_case is an accepted alias.
       - name: No tracked text spells a flag in snake_case
         run: python3 -I scripts/check-flag-spelling.py

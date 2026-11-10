@@ -420,6 +420,9 @@ Tests: 2, Assertions: 40, Failures: 1." no
         printf '  FAIL  %-46s\n' "phpcs: report parsing, tool failures never read as 0"; fail=$((fail + 1))
     fi
     REAL_VENDOR="$HERE/../../vendor"
+    # The cases below link the repo's vendor/ into a throwaway tree for its
+    # tools alone; the ladder refuses a linked vendor/ unless told.
+    export P202_VERIFY_ALLOW_LINKED_VENDOR=1
     if [ -x "$REAL_VENDOR/bin/phpcs" ]; then
         ln -s "$(cd "$REAL_VENDOR" && pwd)" vendor
         expect_phpcs() { # name want_verdict

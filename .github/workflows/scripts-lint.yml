@@ -18,11 +18,13 @@ on:
       - '**.sh'
       - '.github/workflows/**'
       - 'scripts/changelog.py'
+      - 'scripts/check-claude-md.py'
   pull_request:
     paths:
       - '**.sh'
       - '.github/workflows/**'
       - 'scripts/changelog.py'
+      - 'scripts/check-claude-md.py'
 
 # A new push to a pull request cancels that PR's older run, which no longer
 # describes its head and would hold runners the newer run is queued for.
@@ -143,6 +145,12 @@ jobs:
       # selected nothing and reported skips that read like a run.
       - name: Run verify-ladder tests
         run: ./scripts/tests/verify-ladder.test.sh
+
+      # The branch check decides which pull requests may merge where, and the
+      # CLAUDE.md check what that file may name: each refusal and each
+      # "could not tell" is run against a throwaway repository.
+      - name: Run check-pr-branch and check-claude-md tests
+        run: ./scripts/tests/check-pr-branch.test.sh
 
       # Fragments only stop the conflicts if the release can fold them in
       # exactly and the guard refuses a pull request that edits the files.
