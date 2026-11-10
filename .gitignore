@@ -32,7 +32,10 @@ build/staging-config.php
 /dist/
 
 # Development and documentation
-/docs/
+/docs/*
+!/docs/cli-agent.md
+!/docs/cli.md
+!/docs/openapi.yaml
 phpstan-errors.txt
 task-plan-*
 multi-touch-qa-runbook.md

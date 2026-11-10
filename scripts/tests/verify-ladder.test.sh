@@ -128,6 +128,19 @@ repo=$(make_repo partial-empty-package)
 check "a manifest with an empty package directory reports partial" "partial" "$(vendor_state_of "$repo")"
 rm -rf "$repo"
 
+# A linked vendor/ is another checkout's code: refused, not probed.
+repo=$(make_repo absent)
+other=$(make_repo full)
+rmdir "$repo/vendor" && ln -s "$other/vendor" "$repo/vendor"
+out=$( cd "$repo" && env -u P202_VERIFY_ALLOW_LINKED_VENDOR "$SCRIPT" --probe 2>&1 ); rc=$?
+check "a symlinked vendor/ exits 2" "2" "$rc"
+if printf '%s' "$out" | grep -q 'symbolic link'; then
+    ok "a symlinked vendor/ says why"
+else
+    no "a symlinked vendor/ says why" "got '$out'"
+fi
+rm -rf "$repo" "$other"
+
 echo
 
 # ---------------------------------------------------------------------
