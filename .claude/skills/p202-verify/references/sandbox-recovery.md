@@ -243,7 +243,6 @@ built.
 
 ## Committing under `docs/`
 
-`docs/` matches a gitignore pattern even though `docs/cli-agent.md`,
-`docs/cli.md`, and `docs/openapi.yaml` are tracked. `git add docs/<file>`
-works but prints an ignored-paths warning and exits 1. Use `git add -f`, or
-ignore the warning after confirming with `git status` that the files staged.
+`docs/` is ignored except for the three tracked files (`docs/cli-agent.md`,
+`docs/cli.md`, `docs/openapi.yaml`), which `git add` takes as usual. A new
+file there is ignored until `.gitignore` names it.

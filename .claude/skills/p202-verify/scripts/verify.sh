@@ -78,6 +78,13 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# A linked vendor/ resolves every class to the checkout it points at, so the
+# ladder would report on that tree, not this one.
+if [ -L vendor ]; then
+    echo "vendor/ is a symbolic link to $(readlink vendor): its autoloader loads that checkout's classes, not this one's. Copy it (cp -a) or run composer install here." >&2
+    exit 2
+fi
+
 # ---------------------------------------------------- environment probe
 
 have() { command -v "$1" >/dev/null 2>&1; }
