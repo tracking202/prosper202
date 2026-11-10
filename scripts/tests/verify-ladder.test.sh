@@ -132,7 +132,7 @@ rm -rf "$repo"
 repo=$(make_repo absent)
 other=$(make_repo full)
 rmdir "$repo/vendor" && ln -s "$other/vendor" "$repo/vendor"
-out=$( cd "$repo" && "$SCRIPT" --probe 2>&1 ); rc=$?
+out=$( cd "$repo" && env -u P202_VERIFY_ALLOW_LINKED_VENDOR "$SCRIPT" --probe 2>&1 ); rc=$?
 check "a symlinked vendor/ exits 2" "2" "$rc"
 if printf '%s' "$out" | grep -q 'symbolic link'; then
     ok "a symlinked vendor/ says why"
