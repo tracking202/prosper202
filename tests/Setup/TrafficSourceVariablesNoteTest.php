@@ -177,10 +177,7 @@ final class TrafficSourceVariablesNoteTest extends TestCase
     {
         $root = dirname(__DIR__, 2);
         $storing = [];
-        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(
-            $root . '/tracking202',
-            \FilesystemIterator::SKIP_DOTS
-        ));
+        $files = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root . '/tracking202'));
         foreach ($files as $file) {
             if ($file->getExtension() !== 'php') {
                 continue;
