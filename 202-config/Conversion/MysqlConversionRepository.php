@@ -381,7 +381,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $reversesCarried = false;
         if ($transactionId !== null && ($wantsReversal || ($explicitPayout !== null && $explicitPayout < 0))) {
             $targetStmt = $this->conn->prepareWrite(
-                'SELECT conv_id, click_payout, deleted FROM 202_conversion_logs
+                'SELECT conv_id, click_payout, deleted, source FROM 202_conversion_logs
                  WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL
                  ORDER BY conv_id LIMIT 1'
             );
@@ -448,7 +448,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             ];
         }
 
-        if ($reverses !== null) {
+        $shopifyPartial = $reverses !== null && !$reversesCarried
+            && $source === ConversionSource::SHOPIFY && ($reverses['source'] ?? null) === ConversionSource::SHOPIFY->value;
+        if ($reverses !== null && !$shopifyPartial) {
             // The carried value stands for every sale before the ledger: each
             // transaction id is taken back from it once.
             $otherStmt = $this->conn->prepareWrite(
@@ -503,6 +505,21 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                     . ' transaction id "' . $transactionId . '" back from.',
                     ReversalException::NO_TARGET
                 );
+            }
+            $amountUnits = -min(abs($explicitPayout ?? $left), $left);
+        } elseif ($shopifyPartial) {
+            // The click transaction serializes refunds. Sum all live reversals,
+            // including those made by another source, before limiting this one.
+            $prior = $this->conn->prepareWrite(
+                'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0'
+            );
+            $this->conn->bind($prior, 'ii', [(int) $reverses['conv_id'], $userId]);
+            $left = max(0, Amount::toUnits((string) $reverses['click_payout']));
+            foreach ($this->conn->fetchAll($prior) as $row) {
+                $left -= abs(Amount::toUnits((string) $row['click_payout']));
+            }
+            if ($left <= 0) {
+                throw new ReversalException('Nothing remains of this sale to refund.', ReversalException::CONFLICT);
             }
             $amountUnits = -min(abs($explicitPayout ?? $left), $left);
         } elseif ($reverses !== null) {

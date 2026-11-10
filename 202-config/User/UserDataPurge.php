@@ -152,6 +152,8 @@ final class UserDataPurge
         'DELETE FROM 202_offline_conversion_names WHERE user_id = ?',
         // The requests the inbound log kept for the account.
         'DELETE FROM 202_inbound_log WHERE user_id = ?',
+        'DELETE FROM 202_shopify_pending_refunds WHERE user_id = ?',
+        'DELETE FROM 202_shopify_refund_transactions WHERE user_id = ?',
     ];
 
     /** Queued traffic-source postbacks, where corrections to them would go, and the destinations and their deliveries: a deleted account's never go out. */

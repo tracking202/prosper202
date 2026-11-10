@@ -1251,6 +1251,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
             'duplicate' => $result['duplicate'],
             'conv_id'   => $result['conv_id'],
             'reason'    => $reason,
+            'payout'    => $result['payout'],
         ];
     }
 }
