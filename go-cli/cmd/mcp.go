@@ -161,15 +161,15 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 }
 
 // mcpAskForLess is the hint on a hosted call whose answers held more values
-// than it decodes. A change the install accepted before its answer was
-// refused is looked for before it is made again; a write tool that sent no
-// change has nothing smaller to ask for; a read gets the refusal's own hint
-// (a command's hint on what it wrapped is about something else) and what
-// the tool takes.
+// than it decodes. A change the call sent is looked for before it is made
+// again, whichever answer was refused, its own or a later read's; a write
+// tool that sent no change has nothing smaller to ask for; a read gets the
+// refusal's own hint (a command's hint on what it wrapped is about something
+// else) and what the tool takes.
 func mcpAskForLess(s mcpToolSpec) string {
 	switch {
-	case api.AnswerRefusedAfterWrite():
-		return "Look with the matching get or list tool before calling " + s.Name + " again: the install made the change before its answer was refused."
+	case api.ChangeSent():
+		return "Look with the matching get or list tool before calling " + s.Name + " again: the call sent a change before an answer was refused, and the install may have made it."
 	case !s.readOnly():
 		return "Nothing that changes data was sent. The install's answers to what " + s.Name + " reads first are more than a hosted call decodes; `p202 mcp` on your own computer has no such bound."
 	}

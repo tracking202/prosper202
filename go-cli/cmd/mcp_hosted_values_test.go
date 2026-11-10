@@ -419,3 +419,80 @@ func TestHostedTextAdUpdateRefusedAtItsReadSendsNoWrite(t *testing.T) {
 		t.Fatalf("asked %q, want the one read of the ad", hits)
 	}
 }
+
+// tracker_create_with_url creates the tracker and then reads its link: an
+// answer past the bound at that read comes after the change, so the hint is
+// to look before calling again, not that nothing was sent (CLAUDE.md #13).
+func TestHostedWriteThenRefusedReadSaysToLookFirst(t *testing.T) {
+	f := &valuesInstall{answer: func(path string) []byte {
+		if path == "/api/v3/trackers" {
+			return []byte(`{"data":{"tracker_id":9}}`)
+		}
+		return tinyRows(hostedAnswerValues/2 + 100)
+	}}
+	f.server(t)
+	withHostedRun(t, true)
+	body, err := json.Marshal(mcpWriteToolInput["tracker_create_with_url"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := mcpExecute(t, "mcp", "call", "tracker_create_with_url", "--input", string(body))
+	if !api.AnswerTooManyValues(err) || exitCodeForError(err) != ExitValidation || api.ErrorCategory(err) != "validation" || stdout != "" {
+		t.Fatalf("tracker_create_with_url: %v (exit %d), printed %d bytes", err, exitCodeForError(err), len(stdout))
+	}
+	if hits := f.requests(); len(hits) != 2 || hits[0] != "POST /api/v3/trackers" || hits[1] != "GET /api/v3/trackers/9/url" {
+		t.Fatalf("asked %q, want the create and then the read of its link", hits)
+	}
+	hint := hintFor(err)
+	for _, want := range []string{"Look with the matching get or list tool before calling tracker_create_with_url again", "sent a change before an answer was refused", "the install may have made it"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint %q does not say %q", hint, want)
+		}
+	}
+	if strings.Contains(hint, "Nothing that changes data was sent") {
+		t.Errorf("hint %q says nothing was sent, after the tracker was created", hint)
+	}
+}
+
+// A delete's preview changes nothing: refused, it says so, and does not send
+// the caller to look for a change.
+func TestHostedPreviewRefusedSaysNothingWasChanged(t *testing.T) {
+	f := &valuesInstall{answer: func(string) []byte { return tinyRows(hostedAnswerValues/2 + 100) }}
+	f.server(t)
+	withHostedRun(t, true)
+	stdout, _, err := mcpExecute(t, "mcp", "call", "campaign_delete", "--input", `{"id":"1","dry_run":true}`)
+	if !api.AnswerTooManyValues(err) || exitCodeForError(err) != ExitValidation || stdout != "" {
+		t.Fatalf("campaign_delete preview: %v (exit %d), printed %d bytes", err, exitCodeForError(err), len(stdout))
+	}
+	if hits := f.requests(); len(hits) != 1 || hits[0] != "DELETE /api/v3/campaigns/1?dry_run=1" {
+		t.Fatalf("asked %q, want the one preview", hits)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "Nothing that changes data was sent") || strings.Contains(hint, "Look with the matching") {
+		t.Fatalf("hint %q, want that nothing was changed", hint)
+	}
+}
+
+// A call's change is its own: the read called after a write that was refused
+// gets the read's hint, how to ask for less, and nothing is left noted
+// between calls.
+func TestHostedChangeSentDoesNotCarryIntoTheNextCall(t *testing.T) {
+	f := &valuesInstall{answer: func(string) []byte { return tinyRows(hostedAnswerValues/2 + 100) }}
+	f.server(t)
+	withHostedRun(t, true)
+	body, err := json.Marshal(mcpWriteToolInput["campaign_create"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = mcpExecute(t, "mcp", "call", "campaign_create", "--input", string(body))
+	if !strings.Contains(hintFor(err), "Look with the matching get or list tool before calling campaign_create again") {
+		t.Fatalf("campaign_create: %v (hint %q)", err, hintFor(err))
+	}
+	if api.ChangeSent() {
+		t.Fatal("the call's change is still noted after it ended")
+	}
+	stdout, _, err := mcpExecute(t, "mcp", "call", "campaign_list", "--input", "{}")
+	wantValuesRefusal(t, "campaign_list", err, stdout)
+	if hint := hintFor(err); strings.Contains(hint, "Look with the matching") {
+		t.Fatalf("campaign_list: hint %q is the last call's", hint)
+	}
+}

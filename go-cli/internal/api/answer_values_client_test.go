@@ -119,24 +119,151 @@ func TestBoundSaysAWriteWasAcceptedBeforeItsAnswerWasRefused(t *testing.T) {
 	if fmt.Sprint(*asked) != "[/api/v3/campaigns]" {
 		t.Fatalf("asked %v", *asked)
 	}
-	if !AnswerRefusedAfterWrite() {
-		t.Fatal("the refused write is not recorded as one")
+	if !ChangeSent() {
+		t.Fatal("the refused write is not recorded as a change sent")
+	}
+}
+
+// What counts as a change sent: any request but a GET, a read that arrives
+// as POST, and a preview, which is dry_run=1 alone. Each is sent to an
+// answer past the bound, whose refusal says the same.
+func TestChangeSentCountsEveryRequestButAReadAndAPreview(t *testing.T) {
+	dry := func(method, value string) func(c *Client) error {
+		return func(c *Client) error {
+			_, err := c.do(method, "campaigns", map[string]string{"dry_run": value}, nil)
+			return err
+		}
+	}
+	for name, tc := range map[string]struct {
+		send    func(c *Client) error
+		changes bool
+	}{
+		"GET":                  {func(c *Client) error { _, err := c.Get("campaigns", nil); return err }, false},
+		"DELETE dry_run=1":     {dry("DELETE", "1"), false},
+		"PUT dry_run=1":        {dry("PUT", "1"), false},
+		"POST goals/validate":  {func(c *Client) error { _, err := c.Post("goals/validate", map[string]string{"a": "b"}); return err }, false},
+		"DELETE":               {func(c *Client) error { return c.Delete("campaigns") }, true},
+		"DELETE dry_run=0":     {dry("DELETE", "0"), true},
+		"DELETE dry_run=false": {dry("DELETE", "false"), true},
+		"PUT dry_run=true":     {dry("PUT", "true"), true},
+		"POST dry_run empty":   {dry("POST", ""), true},
+	} {
+		base, asked := valueInstall(t, map[string][]byte{"/api/v3/campaigns": tinyAnswer(3000), "/api/v3/goals/validate": tinyAnswer(3000)}, nil)
+		boundFor(t, 1000)
+		err := tc.send(newClient(base, "key"))
+		if !AnswerTooManyValues(err) || len(*asked) != 1 {
+			t.Fatalf("%s: %v, asked %v", name, err, *asked)
+		}
+		if ChangeSent() != tc.changes || strings.Contains(err.Error(), "may have changed data") != tc.changes {
+			t.Errorf("%s: ChangeSent() = %v, want %v; refusal %q", name, ChangeSent(), tc.changes, err)
+		}
+	}
+}
+
+// A change sent stays sent whatever is refused after it: a later read past
+// the bound, an error status, or no answer at all.
+func TestChangeSentOutlivesWhatIsRefusedAfterIt(t *testing.T) {
+	answers := map[string][]byte{"/api/v3/campaigns": []byte(`{"data":{"aff_campaign_id":7}}`), "/api/v3/big": tinyAnswer(3000)}
+	base, _ := valueInstall(t, answers, map[string]int{"/api/v3/campaigns": 201})
+	c := newClient(base, "key")
+	boundFor(t, 1000)
+	if _, err := c.Get("campaigns", nil); err != nil || ChangeSent() {
+		t.Fatalf("a read before the write: %v, ChangeSent() = %v", err, ChangeSent())
+	}
+	if _, err := c.Post("campaigns", map[string]string{"aff_campaign_name": "x"}); err != nil || !ChangeSent() {
+		t.Fatalf("a write that was answered: %v, ChangeSent() = %v", err, ChangeSent())
+	}
+	_, err := c.Get("big", nil)
+	if !AnswerTooManyValues(err) || strings.Contains(err.Error(), "may have changed data") {
+		t.Fatalf("the read after the write: %v", err)
+	}
+	if !ChangeSent() {
+		t.Fatal("the refused read forgot the write sent before it")
 	}
 
-	// A preview and a read sent as POST change nothing.
-	for _, send := range []func(c *Client) error{
-		func(c *Client) error {
-			_, err := c.do("DELETE", "campaigns", map[string]string{"dry_run": "1"}, nil)
-			return err
-		},
-		func(c *Client) error { _, err := c.Post("goals/validate", map[string]string{"a": "b"}); return err },
-	} {
-		base, _ := valueInstall(t, map[string][]byte{"/api/v3/campaigns": tinyAnswer(3000), "/api/v3/goals/validate": tinyAnswer(3000)}, nil)
-		boundFor(t, 1000)
-		err := send(newClient(base, "key"))
-		if !AnswerTooManyValues(err) || strings.Contains(err.Error(), "may have changed data") || AnswerRefusedAfterWrite() {
-			t.Fatalf("a request that changes nothing reads as a write: %v", err)
+	// The install answers the write with an error: it was still sent.
+	base, _ = valueInstall(t, nil, map[string]int{"/api/v3/campaigns": 500})
+	boundFor(t, 1000)
+	var apiErr *APIError
+	if _, err := newClient(base, "key").Post("campaigns", map[string]string{"a": "b"}); !errors.As(err, &apiErr) || !ChangeSent() {
+		t.Fatalf("a write answered 500: %v, ChangeSent() = %v", err, ChangeSent())
+	}
+
+	// No answer comes back: the request may have reached the install.
+	saved := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = saved })
+	http.DefaultTransport = installFetch(func(r *http.Request) (*http.Response, error) {
+		return nil, errors.New("connection reset")
+	})
+	c = newClient("https://install.example", "key")
+	boundFor(t, 1000)
+	if _, err := c.Get("campaigns", nil); err == nil || ChangeSent() {
+		t.Fatalf("a read with no answer: %v, ChangeSent() = %v", err, ChangeSent())
+	}
+	if _, err := c.Post("campaigns", map[string]string{"a": "b"}); ErrorCategory(err) != "network" || !ChangeSent() {
+		t.Fatalf("a write with no answer: %v, ChangeSent() = %v", err, ChangeSent())
+	}
+}
+
+// A request that never goes is no change sent: one the client refuses
+// (read-only mode, a call already past its bound), and a refused read alone.
+func TestChangeSentIsFalseWhenNoChangeWent(t *testing.T) {
+	base, asked := valueInstall(t, map[string][]byte{"/api/v3/big": tinyAnswer(3000)}, nil)
+	c := newClient(base, "key")
+
+	boundFor(t, 1000)
+	SetReadOnlyMode(true)
+	t.Cleanup(func() { SetReadOnlyMode(false) })
+	if _, err := c.Post("campaigns", map[string]string{"a": "b"}); err == nil || ChangeSent() {
+		t.Fatalf("a write refused by read-only mode: %v, ChangeSent() = %v", err, ChangeSent())
+	}
+	SetReadOnlyMode(false)
+
+	if _, err := c.Get("big", nil); !AnswerTooManyValues(err) || ChangeSent() {
+		t.Fatalf("a read past the bound: %v, ChangeSent() = %v", err, ChangeSent())
+	}
+	if _, err := c.Post("campaigns", map[string]string{"a": "b"}); !strings.Contains(fmt.Sprint(err), "POST campaigns was not sent") || ChangeSent() {
+		t.Fatalf("a write after the bound was passed: %v, ChangeSent() = %v", err, ChangeSent())
+	}
+	if fmt.Sprint(*asked) != "[/api/v3/big]" {
+		t.Fatalf("asked %v, want the one read", *asked)
+	}
+}
+
+// Each call starts with no change sent: setting the bound again forgets the
+// last call's, and so does removing it. Without a bound nothing is noted.
+func TestChangeSentStartsOverWithEachBound(t *testing.T) {
+	base, _ := valueInstall(t, map[string][]byte{"/api/v3/campaigns": []byte(`{"data":{}}`)}, nil)
+	c := newClient(base, "key")
+	write := func() {
+		t.Helper()
+		if _, err := c.Post("campaigns", map[string]string{"a": "b"}); err != nil {
+			t.Fatal(err)
 		}
+	}
+	t.Cleanup(func() { LimitAnswerValues(0) })
+
+	LimitAnswerValues(1000)
+	write()
+	if !ChangeSent() {
+		t.Fatal("a write under a bound was not noted")
+	}
+	LimitAnswerValues(1000)
+	if ChangeSent() {
+		t.Fatal("the next call began with the last call's change")
+	}
+	write()
+	LimitAnswerValues(0)
+	if ChangeSent() {
+		t.Fatal("removing the bound kept the call's change")
+	}
+	write()
+	if ChangeSent() {
+		t.Fatal("a write with no bound set was noted")
+	}
+	LimitAnswerValues(1000)
+	if ChangeSent() {
+		t.Fatal("a write made before the bound was set counts in the call after it")
 	}
 }
 
