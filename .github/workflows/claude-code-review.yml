@@ -2,6 +2,9 @@ name: Claude Code Review
 
 on:
   pull_request:
+    # Only a PR into master, which is a version's release PR (owner,
+    # 2026-11-10): a PR into a version branch is not reviewed here.
+    branches: [master]
     # On every push too (synchronize). The code-review plugin stops on a PR
     # that already carries a review, which on a later push would be a green
     # check that reviewed nothing: the appended prompt below tells it to
