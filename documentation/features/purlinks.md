@@ -150,5 +150,7 @@ URL, a cookie or a referrer, and the requests send no cookies.
 - Pages carrying the 1.9.56 snippet keep working, including `defpixel=1`.
 - 1.9.56 SubIDs (`<click>-<offer>`) that networks send back after the upgrade
   are still accepted, for a click already on that offer.
-- The 1.9.80 upgrade creates the tables PurLinks need; there is nothing to
-  migrate.
+- The 1.9.80 upgrade creates the tables PurLinks need and carries over the
+  PurLink clicks from the 90 days before it that had not converted, so a
+  postback that arrives afterwards still records its sale. Nothing else needs
+  migrating.
