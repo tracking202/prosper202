@@ -1415,6 +1415,9 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   80,000 JSON values from them and takes at most 1,000 in a call's
   arguments (5,000 in `rotator_set_rules`, whose rules are one document);
   past either, the call is refused (`validation`) with how to ask for less.
+  When the call had already sent a change, the hint is to look with the
+  matching get or list tool before calling again: the install may have
+  made the change.
   The text ad writes (`text_ad_create`, `text_ad_update`, `text_ad_delete`)
   need a connection approved on 1.9.79 or later; an older one answers 403
   for them until it is connected again.
