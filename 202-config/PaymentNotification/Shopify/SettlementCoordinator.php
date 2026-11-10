@@ -165,9 +165,14 @@ final class SettlementCoordinator
         return $shown;
     }
 
-    /** The sale stays counted in full until the operator records the refund. */
-    private const BY_HAND = ' If the refund is real, record it by hand as a reversal of the order\'s conversion'
-        . ' (p202 conversion create --status reversed, with the order id as --transaction-id).';
+    /**
+     * By hand works only for a sale's first reversal: the API reverses a
+     * sale once (run against a Shopify sale with and without a refund).
+     */
+    private const BY_HAND = ' Its amount stays counted in the sale. Check the refund in Shopify; if the order has no'
+        . ' refund recorded here yet, it can be recorded by hand (p202 conversion create --click-id, --transaction-id'
+        . ' with the order id, --payout with the amount, --status reversed). An order that already has one cannot'
+        . ' take another by hand.';
 
     /** 2: a retry can mend it. 1: refused for good. 0: recorded. */
     private static function rank(OutcomeKind $kind): int
