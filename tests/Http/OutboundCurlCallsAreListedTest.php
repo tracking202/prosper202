@@ -75,7 +75,11 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             'a fixed host, www.ipqualityscore.com (IpqsClient::ORIGIN), https only, no redirects; the override is'
             . ' loopback only',
         ],
-        '202-config/User/ExchangeRates.php' => [1, 'a fixed host, ExchangeRates::ENDPOINT'],
+        '202-config/User/ExchangeRates.php' => [
+            1,
+            'a fixed host, ExchangeRates::ENDPOINT, https, no redirects; the override (P202_EXCHANGE_RATES_ORIGIN) is'
+            . ' loopback only',
+        ],
         '202-config/License/ClickServerKeyValidator.php' => [1, self::FIXED . ', each redirect held to that host'],
         '202-config/functions-tracking202.php' => [
             23,
