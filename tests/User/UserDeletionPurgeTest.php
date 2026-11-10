@@ -219,6 +219,7 @@ final class UserDeletionPurgeTest extends TestCase
         '202_click_latest_visits' => 'the traffic record: clicks are kept',
         '202_clicks_filter_reason' => 'the traffic record: clicks are kept, and why each filtered one is',
         '202_clicks_publisher' => 'the traffic record: clicks are kept, and the publisher a publisher link credited each to (a removed publisher keeps its soft-deleted row, so the credit still names it)',
+        '202_clicks_ad_ids' => 'the traffic record: clicks are kept, and which of them carry each ad click id',
         '202_cpa_trackers' => 'the traffic record: clicks are kept',
         '202_google' => 'the traffic record: clicks are kept',
         '202_bing' => 'the traffic record: clicks are kept',

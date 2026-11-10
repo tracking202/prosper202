@@ -104,7 +104,7 @@ var conversionMatchMethodsCmd = &cobra.Command{
 	Short: "Conversions by campaign and by how their click was found (click id, cookie, same IP)",
 	Long: "Counts each campaign's conversions by how the click they credit was found: click_id (the\n" +
 		"postback, pixel, API call or upload named it), ad_click_id (a global postback with no SubID\n" +
-		"sent back an ad click id, such as a gclid, that one click carries), cookie (a tracking cookie\n" +
+		"sent back an ad click id, such as a gclid, that a click carries), cookie (a tracking cookie\n" +
 		"did), visitor_id (the landing-page script's visitor id), same_ip (nothing named a click: the\n" +
 		"latest click from the visitor's address, a guess) or unknown (recorded before 1.9.79). conversions excludes\n" +
 		"reversals, counted is how many count toward their click's value, and income is what those\n" +
@@ -399,7 +399,7 @@ func init() {
 	conversionListCmd.Flags().String("click_id", "", "Only this click's conversions (see also `p202 click conversions <id>`)")
 	conversionListCmd.Flags().String("source", "", "Only conversions from this source")
 	enumFlag(conversionListCmd, "source", newEnum(conversionSources))
-	conversionListCmd.Flags().String("match_method", "", "Only conversions whose click was found this way (same_ip: guessed from the visitor's address)")
+	conversionListCmd.Flags().String("match_method", "", "Only conversions whose click was found this way (same_ip: a guess from the address)")
 	enumFlag(conversionListCmd, "match_method", newEnum(conversionMatchMethods))
 	conversionListCmd.Flags().String("goal", "", "Only this goal's outcomes, every version (goal id from `p202 goal list`)")
 	// An empty filter is refused by name (empty_flags.go): read as "not

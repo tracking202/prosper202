@@ -614,6 +614,61 @@ if (!function_exists('_upgrade_conversion_ledger_probe')) {
     }
 }
 
+if (!function_exists('_upgrade_fill_click_ad_ids')) {
+    /**
+     * 202_clicks_ad_ids for the clicks already here (Prosper202\Click\
+     * AdClickIdIndex): a row for each ad click id of each click visited in
+     * the last 30 days, which is as far back as a postback is matched by one
+     * (ClickByAdClickId::LOOKBACK). From the lowest id among those visits
+     * up, since an old click visited again keeps its id.
+     *
+     * In statements of AdClickIdIndex::BACKFILL_BATCH click ids, so each
+     * holds the 202_google rows it reads for a moment and the click path
+     * keeps writing between them; clicks recorded once the table exists
+     * write their own rows. The range is read again at the end for a click
+     * whose transaction began before the table did. INSERT IGNORE: a re-run
+     * of the step writes nothing twice. False on any failure.
+     */
+    function _upgrade_fill_click_ad_ids(): bool
+    {
+        $scalar = static function (string $sql): string|false|null {
+            $result = _upgrade_query($sql);
+            if (!($result instanceof \mysqli_result)) {
+                return false;
+            }
+            $row = $result->fetch_row();
+            $result->free();
+
+            return is_array($row) && $row[0] !== null ? (string) $row[0] : null;
+        };
+        $since = time() - \Prosper202\Click\ClickByAdClickId::LOOKBACK;
+        $from = $scalar('SELECT MIN(click_id) FROM `202_clicks` WHERE click_time >= ' . $since);
+        if ($from === false) {
+            return false;
+        }
+        if ($from === null) {
+            return true; // no click in the window
+        }
+        $next = (int) $from;
+        for ($pass = 0; $pass < 1000000; $pass++) {
+            $last = $scalar('SELECT MAX(click_id) FROM `202_google`');
+            if ($last === false) {
+                return false;
+            }
+            if ($last === null || (int) $last < $next) {
+                return true;
+            }
+            $to = min((int) $last, $next + \Prosper202\Click\AdClickIdIndex::BACKFILL_BATCH - 1);
+            if (_upgrade_query(\Prosper202\Click\AdClickIdIndex::backfillSql($next, $to)) === false) {
+                return false;
+            }
+            $next = $to + 1;
+        }
+
+        return false;
+    }
+}
+
 if (!function_exists('_upgrade_withhold_unconsented_analytics')) {
     /**
      * Before 1.9.80 analytics was recorded with no consent check. Before the
@@ -1052,6 +1107,19 @@ if (!function_exists('_upgrade_measurement_tables')) {
                         $ok = false;
                         error_log('Prosper202 upgrade: failed to mark the clicks re-clicked before 1.9.79'
                             . ' for their backfill');
+                    }
+                    break;
+                }
+            }
+        }
+
+        // The ad click ids of the clicks a postback can still be matched to.
+        if ($ok) {
+            foreach ($definitions as $definition) {
+                if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::CLICKS_AD_IDS) {
+                    if (!_upgrade_fill_click_ad_ids()) {
+                        $ok = false;
+                        error_log('Prosper202 upgrade: failed to record which clicks carry each ad click id');
                     }
                     break;
                 }
@@ -5011,10 +5079,11 @@ class UPGRADE
                 // attribution worker's run carries on (AttributionWorker::
                 // fanOutModelRecomputes()). Every model already there is at 0.
                 \Prosper202\Database\Tables\AttributionTables::attributionModels(),
-                // 202_google gains a key on each ad click id, which a global
-                // postback with no SubID finds its click by
-                // (Prosper202\Click\ClickByAdClickId).
-                \Prosper202\Database\Tables\TrackingTables::google(),
+                // Which clicks carry an ad click id, which a global postback
+                // with no SubID finds its click by (Prosper202\Click\AdClickIdIndex),
+                // filled for the clicks of the last 30 days
+                // (_upgrade_fill_click_ad_ids()).
+                \Prosper202\Database\Tables\ClickTables::clicksAdIds(),
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();

@@ -62,7 +62,7 @@ conversion stores one:
 | `match_method` | The click was found by | Paths |
 | -------------- | ---------------------- | ----- |
 | `click_id` | the request naming it | a `subid`/`sid` on `gpx.php`, `upx.php`, `gpb.php` and `pb.php`; ClickBank's tracking code (`cb202.php`); `POST /conversions` and `POST /events`; a line of Update Subids or of a revenue upload; an app install's signed token, and the goals its events reach |
-| `ad_click_id` | an ad platform's click id the postback sent back (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid` or `fbclid`), carried by exactly one click with a visit in the last 30 days | `gpb.php` when its `subid` is empty or arrives as the network's unfilled macro |
+| `ad_click_id` | an ad platform's click id the postback sent back (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid` or `fbclid`), carried by a click visited in the last 30 days (the latest of one visitor's clicks on one campaign) | `gpb.php` when its `subid` is empty or arrives as the network's unfilled macro |
 | `cookie` | a tracking cookie in the visitor's browser | `gpx.php` and `upx.php` with no subid (the campaign's `tracking202subid_a_<cid>` cookie, then `tracking202subid`); `px.php` |
 | `visitor_id` | the landing-page script's own visitor id (`p202lpid`), on the click it was last seen on | `p202.track()` events (`event.php`) |
 | `same_ip` | nothing naming a click: the account's latest click from the visitor's address in the last 30 days, a guess, made only for an account with the [same-IP fallback](14-users.md#same-ip-fallback-user_pref_same_ip_fallback) on and a visitor the privacy setting does not hold back | `gpx.php`, `upx.php` and `px.php` with neither a subid nor a cookie |
@@ -188,7 +188,7 @@ under the first that does not:
 1. it counts now: not deleted, not refunded in full, not replaced by a later
    conversion on its click, payable (`not_counted`); a partial refund is
    netted from its value;
-2. its click was named: `match_method` `click_id` or `cookie`. A click found
+2. its click was named: `match_method` `click_id`, `ad_click_id` or `cookie`. A click found
    by the landing page's visitor id (`visitor_id`), guessed from the visitor's
    address (`same_ip`) or recorded before 1.9.79 (`match_unknown`) would teach
    the platform's bidding clicks the conversion may not have come from;

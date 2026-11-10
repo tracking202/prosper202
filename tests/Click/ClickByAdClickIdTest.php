@@ -53,28 +53,44 @@ final class ClickByAdClickIdTest extends TestCase
         self::assertSame('msclkid', $sent['unreadable']);
     }
 
+    /**
+     * A click as its latest visit has it. Every default is the same, so two
+     * clicks differ only in what a test changes.
+     *
+     * @param array<string, int|bool> $with
+     * @return array{click_id: int, user_id: int, campaign_id: int, ppc_account_id: int, click_time: int, lead: bool}
+     */
+    private static function click(int $id, array $with = []): array
+    {
+        return $with + [
+            'click_id' => $id, 'user_id' => 1, 'campaign_id' => 5, 'ppc_account_id' => 9, 'click_time' => 1000,
+            'lead' => false,
+        ];
+    }
+
     public function testOneClickCarryingTheIdIsTheClick(): void
     {
-        $found = ClickByAdClickId::decide(['gclid' => [41]]);
+        $found = ClickByAdClickId::decide(['gclid' => [self::click(41)]]);
 
         self::assertSame(
-            ['status' => ClickByAdClickId::ONE, 'click_id' => 41, 'matched' => ['gclid'], 'why' => ''],
+            ['status' => ClickByAdClickId::ONE, 'click_id' => 41, 'matched' => ['gclid'], 'why' => '', 'of' => 1],
             $found
         );
     }
 
     public function testTwoIdsOfOneClickAreThatClick(): void
     {
-        $found = ClickByAdClickId::decide(['gclid' => [41], 'fbclid' => [41]]);
+        $found = ClickByAdClickId::decide(['gclid' => [self::click(41)], 'fbclid' => [self::click(41)]]);
 
         self::assertSame(ClickByAdClickId::ONE, $found['status']);
         self::assertSame(41, $found['click_id']);
         self::assertSame(['gclid', 'fbclid'], $found['matched']);
+        self::assertSame(1, $found['of']);
     }
 
     public function testAnIdNoClickCarriesIsLeftOut(): void
     {
-        $found = ClickByAdClickId::decide(['gclid' => [], 'msclkid' => [41]]);
+        $found = ClickByAdClickId::decide(['gclid' => [], 'msclkid' => [self::click(41)]]);
 
         self::assertSame(ClickByAdClickId::ONE, $found['status']);
         self::assertSame(['msclkid'], $found['matched']);
@@ -86,24 +102,79 @@ final class ClickByAdClickIdTest extends TestCase
         self::assertSame(ClickByAdClickId::NONE, ClickByAdClickId::decide([])['status']);
     }
 
-    public function testTwoClicksCarryingOneIdAreNobodysToChoose(): void
+    public function testOneVisitorsClicksOnOneCampaignGiveTheLatest(): void
     {
-        // One id only, so the ids cannot disagree with each other.
-        $found = ClickByAdClickId::decide(['gclid' => [41, 42]]);
+        // By the latest visit's time, not the id: ids are not in time order.
+        $found = ClickByAdClickId::decide(['gclid' => [
+            self::click(43, ['click_time' => 1000]),
+            self::click(41, ['click_time' => 3000]),
+            self::click(42, ['click_time' => 2000]),
+        ]]);
+        self::assertSame(ClickByAdClickId::ONE, $found['status']);
+        self::assertSame(41, $found['click_id']);
+        self::assertSame(3, $found['of']);
 
-        self::assertSame(ClickByAdClickId::AMBIGUOUS, $found['status']);
-        self::assertNull($found['click_id']);
-        self::assertStringContainsString('More than one click carries the gclid', $found['why']);
+        // In one second, the greater id.
+        $found = ClickByAdClickId::decide(['gclid' => [self::click(41), self::click(44), self::click(42)]]);
+        self::assertSame(44, $found['click_id']);
+
+        // Found by two ids, still one visitor's clicks.
+        $found = ClickByAdClickId::decide([
+            'gclid' => [self::click(41, ['click_time' => 5000])],
+            'fbclid' => [self::click(42)],
+        ]);
+        self::assertSame(41, $found['click_id']);
+        self::assertSame(['gclid', 'fbclid'], $found['matched']);
     }
 
-    public function testIdsNamingDifferentClicksNameNone(): void
+    public function testAClickThatAlreadyHoldsTheSaleIsTakenBeforeALaterOne(): void
     {
-        // Each id has exactly one click, so neither is ambiguous alone.
-        $found = ClickByAdClickId::decide(['gclid' => [41], 'fbclid' => [42]]);
+        $clicks = ['gclid' => [
+            self::click(41, ['click_time' => 1000]),
+            self::click(42, ['click_time' => 2000]),
+            self::click(43, ['click_time' => 3000]),
+        ]];
+
+        self::assertSame(43, ClickByAdClickId::decide($clicks)['click_id']);
+        self::assertSame(41, ClickByAdClickId::decide($clicks, [41])['click_id']);
+        self::assertSame(42, ClickByAdClickId::decide($clicks, [41, 42])['click_id'], 'the latest of those holding it');
+        $held = ClickByAdClickId::decide($clicks, [99])['click_id'];
+        self::assertSame(43, $held, 'a click that is not one of them holds nothing');
+    }
+
+    /** @return iterable<string, array{string, array<string, int>}> */
+    public static function differences(): iterable
+    {
+        yield 'another account' => ['account', ['user_id' => 2]];
+        yield 'another campaign' => ['campaign', ['campaign_id' => 6]];
+        yield 'another traffic source account' => ['traffic source account', ['ppc_account_id' => 10]];
+    }
+
+    /**
+     * @dataProvider differences
+     * @param array<string, int> $difference the one thing the second click differs in
+     */
+    public function testClicksThatDifferInWhatAReportShowsAreNobodysToChoose(string $what, array $difference): void
+    {
+        // One id, so the ids cannot disagree with each other.
+        $found = ClickByAdClickId::decide(['gclid' => [self::click(41), self::click(42, $difference)]]);
 
         self::assertSame(ClickByAdClickId::AMBIGUOUS, $found['status']);
         self::assertNull($found['click_id']);
-        self::assertStringContainsString('name different clicks', $found['why']);
+        self::assertStringContainsString('are on more than one ' . $what . ',', $found['why']);
+    }
+
+    public function testIdsNamingClicksOfDifferentCampaignsNameNone(): void
+    {
+        // Each id has exactly one click, so neither is ambiguous alone.
+        $found = ClickByAdClickId::decide([
+            'gclid' => [self::click(41)],
+            'fbclid' => [self::click(42, ['campaign_id' => 6])],
+        ]);
+
+        self::assertSame(ClickByAdClickId::AMBIGUOUS, $found['status']);
+        self::assertNull($found['click_id']);
+        self::assertStringContainsString('The clicks carrying the gclid, fbclid sent', $found['why']);
     }
 
     public function testMoreClicksThanCanBeToldApartNameNone(): void
@@ -124,9 +195,14 @@ final class ClickByAdClickIdTest extends TestCase
         self::assertNull(\Prosper202\OfflineConversion\LeftOut::forMatch($method), 'the offline files send it');
     }
 
-    public function testNoAnswerCarriesAnIdsValue(): void
+    public function testNoAnswerCarriesAClicksId(): void
     {
-        foreach ([['gclid' => [41, 42]], ['gclid' => [41], 'fbclid' => [42]], ['gclid' => null]] as $clicks) {
+        $cases = [
+            ['gclid' => [self::click(41), self::click(42, ['campaign_id' => 6])]],
+            ['gclid' => [self::click(41)], 'fbclid' => [self::click(42, ['user_id' => 2])]],
+            ['gclid' => null],
+        ];
+        foreach ($cases as $clicks) {
             self::assertDoesNotMatchRegularExpression('/4[12]/', ClickByAdClickId::decide($clicks)['why']);
         }
     }

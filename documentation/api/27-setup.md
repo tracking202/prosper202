@@ -160,11 +160,18 @@ through a network whose postbacks drop the sub id:
 
 What it will and will not match:
 
-- **One click, or nothing.** The conversion is recorded only when exactly one
-  click carries the id. Two clicks with the same id (a visitor who reloaded
-  the landing URL made two) are not chosen between, and ids sent together
-  that belong to different clicks name none: the postback is answered `409`
-  and nothing is recorded. Send the SubID to settle those.
+- **One visitor's click.** An ad click id names one ad click, so several
+  clicks carrying it are that visitor recorded more than once (a reloaded
+  landing URL makes two). The conversion goes to the latest of them, by the
+  time of its last visit. A retry of a sale stays where the sale is: when one
+  of those clicks already holds the order number or event the postback
+  sends (or, for a postback with neither, already converted), that click
+  is taken, and the retry is answered as the duplicate it is.
+- **Never a choice a report would show.** When the clicks carrying the ids
+  sent are on more than one campaign, from more than one traffic source
+  account, or of more than one account, nothing says which converted: the
+  postback is answered `409` and nothing is recorded. Send the SubID to
+  settle those.
 - **Exactly.** An id's case is part of it: `Cj0KCQ...` and `cj0kcq...` are
   different ids.
 - **The last 30 days.** The click must have been visited in the last 30 days.
@@ -176,7 +183,8 @@ What it will and will not match:
 A conversion found this way is recorded with `match_method` `ad_click_id`
 ([Conversions](10-conversions.md#how-each-conversions-click-was-found)), so
 `GET /conversions?match_method=ad_click_id` lists them, and Setup › Inbound
-Log says which parameter found the click, or why none was found. Only
+Log says which parameter found the click and how many clicks carry it, or
+why none was found. Only
 `gpb.php` does this; the pixels and `pb.php` read the SubID and cookies as
 before.
 

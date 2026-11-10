@@ -260,7 +260,7 @@ $sameIpHelp = 'When a pixel names no click, credit your latest click from the vi
     . ' for a visitor your privacy setting holds back. Conversions it finds read Same IP.';
 $clickIdParamsHelp = 'For a network that cannot send the SubID back. Pass it the ad click id instead (the gclid, say)'
     . ' and name here the postback parameter it returns it in, such as aff_sub3. When a postback\'s SubID is empty,'
-    . ' the conversion goes to your one click carrying that id. A postback sending gclid, gbraid, wbraid, msclkid,'
+    . ' the conversion goes to your click carrying that id. A postback sending gclid, gbraid, wbraid, msclkid,'
     . ' fbclid or ttclid under its own name needs nothing here. Conversions it finds read Ad click id.';
 $cloakChoices = ['origin' => 'Show Prosper202 Domain', 'never' => 'Show Blank Referer'];
 $adChoices = ['show_all' => 'Show All Ads', 'hide_login' => 'Hide Ads On Login Screen', 'hide_all' => 'Hide All Ads'];
@@ -973,7 +973,16 @@ foreach (['clickserver_api_key', 'user_api_key', 'user_stats202_app_key'] as $ke
 	}
 }
 if ($profileErrors) {
-	$extraFlashes[] = ['kind' => 'bad', 'text' => 'Your settings were not saved. The fields below say why.'];
+    // A box under Advanced is far below where the page lands: its reason is said up here too.
+    $clickIdParamsRefusal = $profileErrors['user_pref_click_id_params'] ?? '';
+    $profileRefusal = 'Your settings were not saved. ';
+    if ($clickIdParamsRefusal === '') {
+        $profileRefusal .= 'The fields below say why.';
+    } else {
+        $profileRefusal .= 'Match conversions by ad click id, under Advanced: ' . $clickIdParamsRefusal
+            . (count($profileErrors) > 1 ? '. The other fields below say why too.' : '.');
+    }
+    $extraFlashes[] = ['kind' => 'bad', 'text' => $profileRefusal];
 }
 echo p202_account_render_flashes($extraFlashes);
 ?>
@@ -1019,7 +1028,7 @@ echo p202_account_render_flashes($extraFlashes);
 						</div>
 
 						<details class="p202-disclosure mb-3" data-p202-remember="account-profile-advanced"<?php echo $profileAdvancedErrors ? ' open' : ''; ?>>
-							<summary>Advanced <span class="p202-disclosure__hint">keyword, cost, referer, privacy, IP matching, ads, tracking domain</span></summary>
+							<summary>Advanced <span class="p202-disclosure__hint">keyword, cost, referer, privacy, IP matching, ad click ids, ads, tracking domain</span></summary>
 							<div class="p202-disclosure__body">
 								<div class="row g-3">
 									<div class="col-md-6">

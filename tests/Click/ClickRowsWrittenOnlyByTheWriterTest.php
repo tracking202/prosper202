@@ -46,6 +46,7 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
         '202_clicks_counter', '202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking',
         '202_clicks_variable', '202_google', '202_bing', '202_facebook', '202_clicks_rotator',
         '202_clicks_record', '202_clicks_site', '202_clicks_filter_reason', '202_clicks_publisher',
+        '202_clicks_ad_ids',
     ];
 
     /** @var array<string, array<string, string>> file => click table => why */
@@ -54,10 +55,15 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
             '202_clicks_tracking' => 'stampClickCustomer(): a click already recorded takes its customer, and one'
                 . ' recorded before tracking rows were written gets the row, marked for the rollup',
         ],
+        '202-config/Click/AdClickIdIndex.php' => [
+            '202_clicks_ad_ids' => 'backfillSql(): the 1.9.80 upgrade\'s fill for the clicks recorded before the'
+                . ' table was, from the ids their 202_google rows keep (INSERT IGNORE: a click the writer has'
+                . ' since written is left as it is)',
+        ],
     ];
 
     /** How many writes OTHER_WRITERS holds. Lower it when one goes. */
-    private const CEILING = 1;
+    private const CEILING = 2;
 
     /**
      * file => click table, or the statement as rewrites() reads it when it

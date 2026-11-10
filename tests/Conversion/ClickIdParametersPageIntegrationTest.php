@@ -174,6 +174,9 @@ final class ClickIdParametersPageIntegrationTest extends TestCase
             $refused = self::page(['user_pref_click_id_params' => $bad, 'user_timezone' => 'Europe/Paris'])['output'];
             self::assertStringContainsString($why, $refused, $bad);
             self::assertStringContainsString('is-invalid', self::field($refused), 'the field is marked');
+            $landsOn = '/p202-flash__body[^>]*>\s*Your settings were not saved\. Match conversions by ad click id,'
+                . ' under Advanced: [^<]*' . preg_quote($why, '/') . '/';
+            self::assertSame(1, preg_match($landsOn, $refused), 'the message the page lands on says which box and why');
             $typed = 'value="' . htmlspecialchars($bad, ENT_QUOTES) . '"';
             self::assertStringContainsString($typed, self::field($refused), 'what was typed is kept');
             self::assertSame('aff_sub3', self::stored(), $bad);

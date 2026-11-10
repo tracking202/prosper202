@@ -943,6 +943,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                     $click->utmCampaignId, $click->utmTermId, $click->utmContentId,
                 ]
             );
+            $this->writeAdClickIdRows($click);
         } catch (\RuntimeException $e) {
             if (!AdClickIdColumns::missing($e)) {
                 throw $e;
@@ -1032,6 +1033,46 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         } catch (\Throwable $e) {
             error_log('Prosper202 click filter: click ' . $click->clickId . '\'s filter reason ('
                 . $click->clickFilterReason . ') was not recorded: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Which clicks carry each ad click id (AdClickIdIndex): a row for each
+     * id the click's 202_google row keeps, in the click's transaction, for a
+     * postback that sends one back and no SubID. Nothing while the 1.9.80
+     * upgrade has not made the table: a statement the server will not
+     * prepare changes nothing, and the upgrade writes the rows. Any other
+     * failure fails the click, as the 202_google row's does.
+     */
+    private function writeAdClickIdRows(ClickRecord $click): void
+    {
+        $hashes = [];
+        $ids = [$click->gclid, $click->gbraid, $click->wbraid, $click->ttclid, $click->msclkid, $click->fbclid];
+        foreach ($ids as $id) {
+            if ($id !== '') {
+                $hashes[AdClickIdIndex::hash($id)] = true;
+            }
+        }
+        if ($hashes === []) {
+            return;
+        }
+        $values = [];
+        foreach (array_keys($hashes) as $hash) {
+            $values[] = $click->clickId;
+            // As hexadecimal: the bytes are not text, and a server may refuse them as a string.
+            $values[] = bin2hex((string) $hash);
+        }
+        try {
+            $this->write(
+                'INSERT IGNORE INTO 202_clicks_ad_ids (click_id, id_hash) VALUES '
+                    . implode(', ', array_fill(0, count($hashes), '(?, UNHEX(?))')),
+                str_repeat('is', count($hashes)),
+                $values
+            );
+        } catch (\RuntimeException $e) {
+            if (!AdClickIdIndex::tableMissing($e)) {
+                throw $e;
+            }
         }
     }
 

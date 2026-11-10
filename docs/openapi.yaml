@@ -2461,7 +2461,7 @@ paths:
         `match_method`, how each one's click was found: `click_id` (the
         request named it: a subid, ClickBank's tracking code, the API or an
         upload line, an app install's token), `ad_click_id` (a global
-        postback with no SubID sent back an ad platform's click id that one
+        postback with no SubID sent back an ad platform's click id that a
         click carries), `cookie` (a tracking cookie named it), `visitor_id` (the landing-page script's visitor id),
         `same_ip` (nothing named a click: the latest click from the
         visitor's address) or `unknown` (recorded before 1.9.79).
@@ -13695,8 +13695,8 @@ components:
         it (a subid or sid, ClickBank's tracking code, the API's or an upload
         line's click id, an app install's token); ad_click_id an ad platform's
         click id (gclid, gbraid, wbraid, ttclid, msclkid, fbclid) that a
-        global postback with no SubID sent back and exactly one click
-        carries; cookie a tracking cookie
+        global postback with no SubID sent back and a click carries (one
+        visitor's latest click on one campaign); cookie a tracking cookie
         naming it; visitor_id the landing-page script's visitor id, on the
         click it was last seen on; same_ip the latest click from the
         visitor's address when nothing named one; unknown a conversion
@@ -13828,7 +13828,7 @@ components:
           $ref: "#/components/schemas/MatchMethod"
         match_method_label:
           type: string
-          description: The method in words (Click id, Cookie, Visitor id, Same IP, Unknown).
+          description: The method in words (Click id, Ad click id, Cookie, Visitor id, Same IP, Unknown).
         linked_to:
           type: object
           nullable: true

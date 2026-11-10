@@ -151,9 +151,9 @@ final class TrackingTables
      * measured; MySQL 8 says the same of the last position), and compared
      * byte for byte, since an id's case is part of it. '' is none. The
      * msclkid and fbclid are kept here, not in 202_bing and 202_facebook,
-     * which no version in this repository's history wrote. Each id is keyed
-     * on its first 40 characters (1.9.80), which a postback with no SubID
-     * finds its click by (Prosper202\Click\ClickByAdClickId).
+     * which no version in this repository's history wrote. The ids have no
+     * key here: a click is found by one through 202_clicks_ad_ids
+     * (Prosper202\Click\AdClickIdIndex).
      */
     public static function google(): SchemaDefinition
     {
@@ -172,13 +172,7 @@ final class TrackingTables
                 `ttclid` varchar(1000) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
                 `msclkid` varchar(150) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
                 `fbclid` varchar(1000) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
-                PRIMARY KEY (`click_id`,`gclid`),
-                KEY `by_gclid` (`gclid`(40)),
-                KEY `by_gbraid` (`gbraid`(40)),
-                KEY `by_wbraid` (`wbraid`(40)),
-                KEY `by_ttclid` (`ttclid`(40)),
-                KEY `by_msclkid` (`msclkid`(40)),
-                KEY `by_fbclid` (`fbclid`(40))
+                PRIMARY KEY (`click_id`,`gclid`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

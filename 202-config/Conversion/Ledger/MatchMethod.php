@@ -19,7 +19,8 @@ use Prosper202\Database\Connection;
  *    line, or an app install's signed token;
  *  - ad_click_id: a server postback whose SubID was not filled in sent
  *    back an ad platform's click id (gclid, gbraid, wbraid, ttclid,
- *    msclkid, fbclid) that exactly one click carries
+ *    msclkid, fbclid) that a click carries: one visitor's latest click on
+ *    one campaign
  *    (Prosper202\Click\ClickByAdClickId);
  *  - cookie: a tracking cookie in the visitor's browser named it (the
  *    campaign's tracking202subid_a_<id>, or tracking202subid);

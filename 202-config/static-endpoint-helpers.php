@@ -805,8 +805,9 @@ if (!function_exists('p202ClickByAdClickId')) {
      *
      * Null when the SubID is not missing or the request sends no ad click
      * id: the caller answers as it always has. Otherwise the click, or the
-     * request ends here: no click carries the id (404), more than one could
-     * be meant (409), or the lookup failed (500, so a sender that retries
+     * request ends here: no click carries the id (404), clicks of more than
+     * one account, campaign or traffic source account carry it (409), or the
+     * lookup failed (500, so a sender that retries
      * failures does). The ids' values go to no log.
      *
      * An id under its own name may find any account's click; one in a listed
@@ -841,11 +842,24 @@ if (!function_exists('p202ClickByAdClickId')) {
                 }
             }
             if ($unreadable === null && $names !== []) {
+                // What a retry of this sale is known by, so it lands where the sale already is.
+                $transactionId = p202ExtractTransactionId($request);
+                $eventId = null;
+                if (array_key_exists('event', $request)) {
+                    try {
+                        $event = \Prosper202\Goals\WebEvents::fromQuery($request, $transactionId, time(), false);
+                        $eventId = $event->eventId;
+                    } catch (\Prosper202\Goals\InvalidGoalDefinition) {
+                        $eventId = null; // refused by name where the event is recorded
+                    }
+                }
                 $found = \Prosper202\Click\ClickByAdClickId::find(
                     $conn,
                     $sent['ids'],
                     $ownIds,
-                    time() - \Prosper202\Click\ClickByAdClickId::LOOKBACK
+                    time() - \Prosper202\Click\ClickByAdClickId::LOOKBACK,
+                    $transactionId,
+                    $eventId
                 );
             }
         } catch (\Throwable $lookupError) {
@@ -868,6 +882,8 @@ if (!function_exists('p202ClickByAdClickId')) {
         }
         \Prosper202\InboundLog\RequestLog::current()?->clickFoundBy(
             'The SubID was not filled in; the click was found by the ' . implode(', ', $found['matched']) . ' sent.'
+            . ($found['of'] > 1 ? ' ' . $found['of'] . ' clicks of one campaign carry it (one visitor, recorded'
+                . ' more than once): this is the one the sale was already on, or else the latest.' : '')
         );
 
         return ['click_id' => $found['click_id'], 'owners' => $found['owners']];

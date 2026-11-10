@@ -4,21 +4,35 @@ declare(strict_types=1);
 
 namespace Prosper202\Click;
 
+use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\UnfilledPlaceholder;
 use Prosper202\Database\Connection;
+use Prosper202\Goals\GoalSubject;
 
 /**
  * The click a server postback means when its SubID was not filled in: the
- * one click that carries an ad click id the postback sends back (gclid,
+ * click that carries an ad click id the postback sends back (gclid,
  * gbraid, wbraid, ttclid, msclkid, fbclid: ClickRecord::AD_CLICK_IDS, each
  * by its own parameter name), last visited in the last 30 days.
  *
- * One click or none, never a choice:
- * - an id is compared exactly as it is stored (202_google.gclid's collation
- *   folds case, so the stored value is read back and compared here);
- * - a click visited several times is one click; two clicks carrying the id
- *   are nobody's to choose between (a reloaded landing URL makes two);
- * - ids sent together that name different clicks name none;
+ * An ad click id names one ad click. Several clicks carrying it are that
+ * visitor recorded more than once (a reloaded landing URL, a redirect that
+ * ran twice), so when every click the ids find is one account's, on one
+ * campaign, from one traffic source account, the conversion goes to the
+ * latest of them: the greatest latest-visit time, then the greatest click
+ * id (ids are not in time order, CLAUDE.md #26; a click's time is its
+ * latest visit's, LatestVisit). Each of those three is what a report puts
+ * the sale under, so none of them is decided by which click came last.
+ * When one of the clicks already holds this sale (its transaction id, its
+ * event, or, for a postback with neither, a conversion), that click is
+ * taken instead, and the ledger answers the retry as the duplicate it is
+ * rather than recording the sale again on a newer click.
+ *
+ * Otherwise one click or none, never a choice:
+ * - an id is compared exactly as 202_google stores it (the index only
+ *   narrows, AdClickIdIndex; gclid's collation folds case);
+ * - clicks of more than one account, campaign or traffic source account
+ *   are nobody's to choose between, whether one id finds them or several;
  * - an id as long as its column or longer may be one the column cut, which
  *   names every id sharing that start, so it names no click.
  * An id that no click carries is left out of the decision.
@@ -31,13 +45,16 @@ use Prosper202\Database\Connection;
  * in the request names an account until a click does. The caller reads the
  * click's owner and holds the request to that account's postback
  * authentication, as it does for a click a SubID names.
+ *
+ * @phpstan-type Click array{click_id: int, user_id: int, campaign_id: int, ppc_account_id: int,
+ *     click_time: int, lead: bool}
  */
 final class ClickByAdClickId
 {
     /** How far back a click's latest visit may be: 30 days, as the other fallbacks look. */
     public const LOOKBACK = 2592000;
 
-    /** More rows than this for one id are not told apart. */
+    /** More clicks than this for one id are not told apart. */
     private const ROW_LIMIT = 20;
 
     public const NONE = 'none';
@@ -87,29 +104,39 @@ final class ClickByAdClickId
      * @param array<int, array<string, string>> $ownIds by account, sent() under the
      *        parameters it lists: looked up under every kind of id, among that
      *        account's clicks only
-     * @param int $since the earliest time a visit of the click may have
-     * @return array{status: string, click_id: int|null, matched: list<string>, why: string, owners: list<int>|null}
-     *         matched: the parameters whose id the click carries. owners: the
-     *         accounts the click may belong to, null for any (an id under its
-     *         own name found it); the caller holds the click's owner to it
+     * @param int $since the earliest time the click's latest visit may have
+     * @param string $transactionId the sale's, '' for none
+     * @param string|null $eventId the event's id as the goals engine keys it, null for no event
+     * @return array{status: string, click_id: int|null, matched: list<string>, why: string, of: int,
+     *         owners: list<int>|null}
+     *         matched: the parameters whose id the click carries. of: how
+     *         many clicks carry them. owners: the accounts the click may
+     *         belong to, null for any (an id under its own name found it);
+     *         the caller holds the click's owner to it
      * @throws \RuntimeException when a read fails: the caller answers 5xx, not "no click"
      */
-    public static function find(Connection $conn, array $ids, array $ownIds, int $since): array
-    {
+    public static function find(
+        Connection $conn,
+        array $ids,
+        array $ownIds,
+        int $since,
+        string $transactionId = '',
+        ?string $eventId = null
+    ): array {
         $clicks = [];
         $anyones = [];
         $owners = [];
         foreach ($ids as $name => $value) {
             $clicks[$name] = self::clicksCarrying($conn, [$name], $value, $since, null);
-            foreach ($clicks[$name] ?? [] as $clickId) {
-                $anyones[$clickId] = true;
+            foreach ($clicks[$name] ?? [] as $click) {
+                $anyones[$click['click_id']] = true;
             }
         }
         foreach ($ownIds as $userId => $sent) {
             foreach ($sent as $name => $value) {
                 $found = self::clicksCarrying($conn, array_keys(ClickRecord::AD_CLICK_IDS), $value, $since, $userId);
-                foreach ($found ?? [] as $clickId) {
-                    $owners[$clickId][$userId] = true;
+                foreach ($found ?? [] as $click) {
+                    $owners[$click['click_id']][$userId] = true;
                 }
                 // Two accounts listing one parameter: its clicks in either.
                 $known = array_key_exists($name, $clicks) ? $clicks[$name] : [];
@@ -117,6 +144,16 @@ final class ClickByAdClickId
             }
         }
         $answer = self::decide($clicks);
+        if ($answer['status'] === self::ONE && $answer['of'] > 1) {
+            $all = [];
+            foreach ($clicks as $found) {
+                foreach ($found ?? [] as $click) {
+                    $all[$click['click_id']] = $click;
+                }
+            }
+            $holding = self::holdingTheSale($conn, array_values($all), $transactionId, $eventId);
+            $answer = self::decide($clicks, $holding);
+        }
         $clickId = $answer['click_id'];
         $answer['owners'] = $clickId === null || isset($anyones[$clickId]) ? null : array_keys($owners[$clickId] ?? []);
 
@@ -124,57 +161,136 @@ final class ClickByAdClickId
     }
 
     /**
-     * @param array<string, list<int>|null> $clicks per parameter, the clicks
-     *        carrying its id; null when there are more than can be told apart
-     * @return array{status: string, click_id: int|null, matched: list<string>, why: string}
+     * @param array<string, list<Click>|null> $clicks
+     *        per parameter, the clicks carrying its id; null when there are
+     *        more than can be told apart
+     * @param list<int> $holding the clicks that already hold this sale
+     * @return array{status: string, click_id: int|null, matched: list<string>, why: string, of: int}
      */
-    public static function decide(array $clicks): array
+    public static function decide(array $clicks, array $holding = []): array
     {
         $all = [];
+        $names = [];
         foreach ($clicks as $name => $found) {
             if ($found === null) {
                 return self::answer(self::AMBIGUOUS, null, [], 'Too many clicks carry the ' . $name
                     . ' sent to tell which one converted.');
             }
-            if (count(array_unique($found)) > 1) {
-                return self::answer(self::AMBIGUOUS, null, [], 'More than one click carries the ' . $name
-                    . ' sent, so it does not say which one converted.');
-            }
-            foreach ($found as $clickId) {
-                $all[$clickId][] = $name;
+            foreach ($found as $click) {
+                $all[$click['click_id']] = $click;
+                $names[$click['click_id']][$name] = true;
             }
         }
         if ($all === []) {
             return self::answer(self::NONE, null, [], '');
         }
-        if (count($all) > 1) {
-            $names = implode(', ', array_merge(...array_values($all)));
-
-            $why = 'The click ids sent (' . $names . ') name different clicks.';
-
-            return self::answer(self::AMBIGUOUS, null, [], $why);
+        $sent = implode(', ', array_keys($clicks));
+        // What a report puts the sale under: none of them is decided by which click came last.
+        $shown = ['user_id' => 'account', 'campaign_id' => 'campaign', 'ppc_account_id' => 'traffic source account'];
+        foreach ($shown as $key => $what) {
+            if (count(array_unique(array_column($all, $key))) > 1) {
+                return self::answer(self::AMBIGUOUS, null, [], 'The clicks carrying the ' . $sent
+                    . ' sent are on more than one ' . $what . ', so they do not say which one converted.');
+            }
         }
-        $clickId = array_key_first($all);
+        $candidates = array_intersect_key($all, array_flip($holding)) ?: $all;
+        $latest = null;
+        foreach ($candidates as $click) {
+            if (
+                $latest === null || $click['click_time'] > $latest['click_time']
+                || ($click['click_time'] === $latest['click_time'] && $click['click_id'] > $latest['click_id'])
+            ) {
+                $latest = $click;
+            }
+        }
+        $matched = [];
+        foreach ($names as $carriedBy) {
+            $matched += $carriedBy;
+        }
 
-        return self::answer(self::ONE, $clickId, array_values(array_unique($all[$clickId])), '');
+        return self::answer(self::ONE, $latest['click_id'], array_keys($matched), '', count($all));
     }
 
     /**
      * @param list<string> $matched
-     * @return array{status: string, click_id: int|null, matched: list<string>, why: string}
+     * @return array{status: string, click_id: int|null, matched: list<string>, why: string, of: int}
      */
-    private static function answer(string $status, ?int $clickId, array $matched, string $why): array
+    private static function answer(string $status, ?int $clickId, array $matched, string $why, int $of = 0): array
     {
-        return ['status' => $status, 'click_id' => $clickId, 'matched' => $matched, 'why' => $why];
+        return ['status' => $status, 'click_id' => $clickId, 'matched' => $matched, 'why' => $why, 'of' => $of];
+    }
+
+    /**
+     * Which of one visitor's clicks already hold the sale the postback is
+     * about: a conversion under its transaction id, its event, or, for a
+     * postback that names neither, any conversion (the click is a lead).
+     *
+     * @param list<Click> $clicks
+     *        of one account
+     * @return list<int>
+     */
+    private static function holdingTheSale(
+        Connection $conn,
+        array $clicks,
+        string $transactionId,
+        ?string $eventId
+    ): array {
+        $ids = array_column($clicks, 'click_id');
+        $userId = $clicks[0]['user_id'];
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $holding = [];
+        if ($transactionId !== '') {
+            try {
+                $key = DedupeKey::transaction($transactionId);
+            } catch (\InvalidArgumentException) {
+                $key = null; // not an id the ledger keeps: the write refuses it by name
+            }
+            if ($key !== null) {
+                $stmt = $conn->prepareWrite(
+                    'SELECT click_id, dedupe_key FROM 202_conversion_logs WHERE click_id IN (' . $in . ')'
+                        . ' AND user_id = ? AND dedupe_key = ?'
+                );
+                $conn->bind($stmt, str_repeat('i', count($ids)) . 'is', [...$ids, $userId, $key]);
+                foreach ($conn->fetchAll($stmt) as $row) {
+                    if (($row['dedupe_key'] ?? null) === $key) {
+                        $holding[(int) $row['click_id']] = true;
+                    }
+                }
+            }
+        }
+        if ($eventId !== null) {
+            $stmt = $conn->prepareWrite(
+                'SELECT subject_id, event_id FROM 202_goal_events WHERE subject_type = ?'
+                    . ' AND subject_id IN (' . $in . ') AND user_id = ? AND event_id = ?'
+            );
+            $values = [GoalSubject::CLICK, ...$ids, $userId, $eventId];
+            $conn->bind($stmt, 's' . str_repeat('i', count($ids)) . 'is', $values);
+            foreach ($conn->fetchAll($stmt) as $row) {
+                if (($row['event_id'] ?? null) === $eventId) {
+                    $holding[(int) $row['subject_id']] = true;
+                }
+            }
+        }
+        if ($transactionId === '') {
+            foreach ($clicks as $click) {
+                if ($click['lead']) {
+                    $holding[$click['click_id']] = true;
+                }
+            }
+        }
+
+        return array_keys($holding);
     }
 
     /**
      * The clicks that store exactly $value in one of $columns and whose
-     * latest visit is since $since, $userId's only when one is given. Read on the
-     * write handle: a replica may not have the click yet.
+     * latest visit is since $since, $userId's only when one is given, each
+     * as its latest visit has it. Read on the write handle: a replica may
+     * not have the click yet.
      *
      * @param list<string> $columns ad click ids, by name
-     * @return list<int>|null null: more rows than ROW_LIMIT carry it
+     * @return list<Click>|null
+     *         null: more clicks than ROW_LIMIT may carry it
      */
     private static function clicksCarrying(
         Connection $conn,
@@ -183,48 +299,72 @@ final class ClickByAdClickId
         int $since,
         ?int $userId
     ): ?array {
-        $candidates = [];
+        $readable = [];
         foreach ($columns as $name) {
             $width = ClickRecord::AD_CLICK_IDS[$name] ?? null;
             if ($width === null) {
                 throw new \InvalidArgumentException("$name is not an ad click id a click keeps");
             }
-            if ($value === '' || mb_strlen($value, 'UTF-8') >= $width) {
-                continue;
+            if (mb_strlen($value, 'UTF-8') < $width) {
+                $readable[] = $name;
             }
-            $stmt = $conn->prepareWrite(
-                "SELECT g.click_id, g.`$name` AS stored FROM 202_google AS g WHERE g.`$name` = ?"
-                    . ' ORDER BY g.click_id DESC LIMIT ' . (self::ROW_LIMIT + 1)
-            );
-            $conn->bind($stmt, 's', [$value]);
-            $rows = $conn->fetchAll($stmt);
-            if (count($rows) > self::ROW_LIMIT) {
-                return null;
-            }
-            foreach ($rows as $row) {
-                // The server's comparison folds case (gclid) and trailing spaces; this one does not.
-                if (($row['stored'] ?? null) === $value) {
-                    $candidates[(int) $row['click_id']] = true;
+        }
+        if ($value === '' || $readable === []) {
+            return [];
+        }
+        $indexed = AdClickIdIndex::clicksWith($conn, $value, self::ROW_LIMIT);
+        if (count($indexed) > self::ROW_LIMIT) {
+            return null;
+        }
+        if ($indexed === []) {
+            return [];
+        }
+        $in = implode(',', array_fill(0, count($indexed), '?'));
+        $stmt = $conn->prepareWrite(
+            'SELECT g.click_id, g.`' . implode('`, g.`', $readable) . '` FROM 202_google AS g'
+                . ' WHERE g.click_id IN (' . $in . ')'
+        );
+        $conn->bind($stmt, str_repeat('i', count($indexed)), $indexed);
+        $carrying = [];
+        foreach ($conn->fetchAll($stmt) as $row) {
+            foreach ($readable as $name) {
+                // The id itself: the index holds a hash, and the server's comparison would fold case (gclid).
+                if (($row[$name] ?? null) === $value) {
+                    $carrying[(int) $row['click_id']] = true;
                 }
             }
         }
-        if ($candidates === []) {
+        if ($carrying === []) {
             return [];
         }
-        $in = implode(',', array_fill(0, count($candidates), '?'));
-        // The click's latest visit: its time, and its owner. A re-click gives a click another row: one click, not two.
+        $in = implode(',', array_fill(0, count($carrying), '?'));
+        // The click's latest visit: its time, its owner, its campaign and traffic source.
         $stmt = $conn->prepareWrite(
-            'SELECT c.click_id FROM 202_clicks AS c WHERE c.click_id IN (' . $in . ') AND c.click_time >= ?'
+            'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.ppc_account_id, c.click_time, '
+                . LatestVisit::anyVisitIsLead('c') . ' AS click_lead'
+                . ' FROM 202_clicks AS c WHERE c.click_id IN (' . $in . ') AND c.click_time >= ?'
                 . ($userId === null ? '' : ' AND c.user_id = ?')
                 . ' AND ' . LatestVisit::isLatest('c')
-                . ' GROUP BY c.click_id ORDER BY c.click_id'
+                . ' ORDER BY c.click_id, c.click_time'
         );
-        $values = [...array_keys($candidates), $since];
+        $values = [...array_keys($carrying), $since];
         if ($userId !== null) {
             $values[] = $userId;
         }
         $conn->bind($stmt, str_repeat('i', count($values)), $values);
+        $clicks = [];
+        foreach ($conn->fetchAll($stmt) as $row) {
+            // Two rows of one click in one second (written before 1.9.79) are one click.
+            $clicks[(int) $row['click_id']] = [
+                'click_id' => (int) $row['click_id'],
+                'user_id' => (int) $row['user_id'],
+                'campaign_id' => (int) $row['aff_campaign_id'],
+                'ppc_account_id' => (int) $row['ppc_account_id'],
+                'click_time' => (int) $row['click_time'],
+                'lead' => (int) $row['click_lead'] === 1,
+            ];
+        }
 
-        return array_map(static fn (array $row): int => (int) $row['click_id'], $conn->fetchAll($stmt));
+        return array_values($clicks);
     }
 }

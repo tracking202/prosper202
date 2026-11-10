@@ -461,7 +461,7 @@ case "$ask" in
         else
             split=$(p202 conversion match-methods --aff-campaign-id "$campaign" --json)
             guessed=$(printf '%s' "$split" | jq -r '[.data[] | select(.match_method=="same_ip") | .conversions] | add // 0')
-            matched=$(printf '%s' "$split" | jq -r '[.data[] | select(.match_method=="click_id" or .match_method=="cookie" or .match_method=="visitor_id") | .conversions] | add // 0')
+            matched=$(printf '%s' "$split" | jq -r '[.data[] | select(.match_method=="click_id" or .match_method=="ad_click_id" or .match_method=="cookie" or .match_method=="visitor_id") | .conversions] | add // 0')
             unknown=$(printf '%s' "$split" | jq -r '[.data[] | select(.match_method=="unknown") | .conversions] | add // 0')
             printf '%s of %s'"'"'s conversions were guessed from the visitor'"'"'s IP address (match method same_ip, per `p202 conversion match-methods --aff-campaign-id %s`): nothing named their click, so the pixel credited the latest click from that address. %s were matched to the click that made them (by a click id, a cookie or a visitor id), and %s were recorded before Prosper202 kept the method.\n' \
                 "$guessed" "$name" "$campaign" "$matched" "$unknown"

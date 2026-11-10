@@ -36,6 +36,7 @@ final class ClickTables
             self::reClickBackfill(),
             self::clicksFilterReason(),
             self::clicksPublisher(),
+            self::clicksAdIds(),
         ];
     }
 
@@ -344,6 +345,25 @@ final class ClickTables
                 `publisher_user_id` mediumint(8) unsigned NOT NULL,
                 PRIMARY KEY (`click_id`),
                 KEY `publisher_user_id` (`publisher_user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Which clicks carry an ad click id (Prosper202\Click\AdClickIdIndex):
+     * a row for each id a click keeps in 202_google, from 1.9.80 on, keyed
+     * by the first 8 bytes of the id's SHA-256. Written with the click by
+     * MysqlClickRepository and deleted with it (ClickRetention).
+     */
+    public static function clicksAdIds(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICKS_AD_IDS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICKS_AD_IDS . "` (
+                `click_id` bigint(20) unsigned NOT NULL,
+                `id_hash` binary(8) NOT NULL,
+                PRIMARY KEY (`click_id`,`id_hash`),
+                KEY `id_hash` (`id_hash`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

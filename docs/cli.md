@@ -805,7 +805,7 @@ p202 conversion match-methods --aff-campaign-id 3 --time-from 2026-10-01
 Each campaign's conversions by `match_method`, how the click they credit was
 found: `click_id` (the postback, pixel, API call, upload or app install named
 it), `ad_click_id` (a global postback with no SubID sent back an ad click id,
-such as a gclid, that one click carries), `cookie` (a tracking cookie did),
+such as a gclid, that a click carries), `cookie` (a tracking cookie did),
 `visitor_id` (a landing page's
 `p202.track()` visitor id), `same_ip` (nothing named a click, so the latest
 click from the visitor's address: a guess) or `unknown` (recorded before
