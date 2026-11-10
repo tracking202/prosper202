@@ -216,6 +216,7 @@ func renderClickConversions(data []byte) error {
 		rows = append(rows, map[string]interface{}{
 			"conv_id":        r["conv_id"],
 			"amount":         r["amount"],
+			"currency":       r["currency"],
 			"counts":         counts,
 			"source":         r["source"],
 			"matched_by":     r["match_method"],
