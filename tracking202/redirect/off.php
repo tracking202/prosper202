@@ -142,6 +142,12 @@ if ($offPciId === null) {
     } // if there is no aff_url to redirect to DIE!
     
     $redirect_site_url = rotateTrackerUrl($db, $aff_campaign_row);
+    // A redirect standing in for a PurLink keeps the link's own deep link.
+    $redirect_site_url = \Prosper202\Click\PurLinkDestination::choose(
+        (string) $redirect_site_url,
+        $_GET[\Prosper202\Click\PurLinkDestination::PARAM] ?? null,
+        $aff_campaign_row
+    );
     
     // The click is read for the URL's tokens only if it is the offer's account's.
     $redirect_site_url = replaceTrackerPlaceholders(
@@ -305,6 +311,12 @@ $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 $click_outbound_site_url_id = $locationRepo->findOrCreateClickSiteUrl($outbound_site_url);
 
 $redirect_site_url = rotateTrackerUrl($db, $info_row);
+// A redirect standing in for a PurLink keeps the link's own deep link.
+$redirect_site_url = \Prosper202\Click\PurLinkDestination::choose(
+    (string) $redirect_site_url,
+    $_GET[\Prosper202\Click\PurLinkDestination::PARAM] ?? null,
+    $info_row
+);
 
 // The click leaves its landing page for this offer: it takes the offer's
 // campaign and, unless it has converted, its payout, and the redirect URL's

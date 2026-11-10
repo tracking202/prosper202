@@ -1494,7 +1494,8 @@ function getPrePopVars($vars, bool $toOwnLandingPage = false)
         'utm_medium',
         'utm_campaign',
         'utm_term',
-        'utm_content'
+        'utm_content',
+        \Prosper202\Click\PurLinkDestination::PARAM
     ];
     if (!$toOwnLandingPage) {
         array_push($stoplist, 'cust', 'customer_ref', 'cust_type', 'customer_ref_type', 'cust_sig', 'p202_consent');

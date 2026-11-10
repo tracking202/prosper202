@@ -49,7 +49,9 @@ $redirect_site_url = '';
 
 // Simple LP redirect
 if (isset($_GET['lpip']) && is_numeric($_GET['lpip'])) {
-    if (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202outbound') !== null) {
+    // A link naming its own destination (PurLinkDestination) is resolved by
+    // lp.php: the cookie holds the campaign's URL only.
+    if (!isset($_GET['p202_to']) && \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202outbound') !== null) {
         $tracking202outbound = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202outbound');
     } else {
         require_once substr(__DIR__, 0, -21) . '/tracking202/redirect/lp.php';
