@@ -45,6 +45,12 @@ class UserPreferencesUpdateCommand extends BaseCommand
         $answer = $this->client()->put('users/' . $input->getArgument('user_id') . '/preferences', $body);
         $shown = $this->isJson($input) ? $answer : UserPreferencesGetCommand::withStoredStates($answer);
         $this->render($output, $shown, $input);
+        // What a change of the account's currency does to what is already
+        // recorded, as the server says it (--json carries it in the answer).
+        $note = $answer['currency_change']['earlier_conversions'] ?? null;
+        if (is_string($note) && $note !== '' && !$this->isJson($input)) {
+            $output->writeln('<comment>' . $note . '</comment>');
+        }
         return Command::SUCCESS;
     }
 }

@@ -30,6 +30,7 @@ final class ReasonForTest extends TestCase
             'conv_time' => self::NOW - 3600,
             'match_method' => 'click_id',
             'counted_amount' => '12.50000',
+            'currency' => 'USD',
             'gclid' => 'EAIaIQ_gclid-1',
             'gbraid' => '',
             'wbraid' => '',
@@ -89,6 +90,9 @@ final class ReasonForTest extends TestCase
         self::assertSame(LeftOut::CLICK_TOO_RECENT, self::reason(['click_time' => self::NOW - OfflineExport::HOLD + 1, 'conv_time' => self::NOW]));
         self::assertNull(self::reason(['click_time' => self::NOW - OfflineExport::HOLD, 'conv_time' => self::NOW]));
         self::assertSame(LeftOut::NEGATIVE_VALUE, self::reason(['counted_amount' => '-0.00001']));
+        self::assertSame(LeftOut::NO_CURRENCY, self::reason(['currency' => '']), 'never sent under the account\'s');
+        self::assertSame(LeftOut::NO_CURRENCY, self::reason(['currency' => 'dollars']), 'a value that is not a code is no currency');
+        self::assertSame(LeftOut::NEGATIVE_VALUE, self::reason(['counted_amount' => '-0.00001', 'currency' => '']));
         self::assertSame(LeftOut::NO_CONVERSION_NAME, self::reason([], Format::GOOGLE, null));
     }
 
@@ -100,7 +104,7 @@ final class ReasonForTest extends TestCase
             [['match_method' => 'unknown']], [['gclid' => '']], [['gclid' => '', 'gbraid' => 'b'], Format::GOOGLE_UPLOADS],
             [['gclid' => 'a b']], [['click_time' => 1, 'conv_time' => self::NOW]], [['conv_time' => 1]],
             [['owned' => 0]], [['click_time' => self::NOW, 'conv_time' => self::NOW]],
-            [['counted_amount' => '-1']], [[], Format::GOOGLE, null],
+            [['counted_amount' => '-1']], [['currency' => '']], [[], Format::GOOGLE, null],
         ];
         foreach ($cases as $case) {
             $reached[] = self::reason($case[0], $case[1] ?? Format::GOOGLE, array_key_exists(2, $case) ? $case[2] : 'Lead')?->value;

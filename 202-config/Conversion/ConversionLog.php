@@ -6,6 +6,7 @@ namespace Prosper202\Conversion;
 
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
+use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Database\Connection;
 use Tracking202\Report\ReportWindow;
 
@@ -235,7 +236,8 @@ final class ConversionLog
         $stmt = $this->conn->prepareRead(
             'SELECT cl.conv_id, cl.click_id, cl.campaign_id, cl.transaction_id, cl.click_payout,
                     cl.click_time, cl.conv_time, cl.ip, cl.pixel_type, cl.user_agent, cl.deleted,
-                    cl.source, cl.reverses_conv_id, ac.aff_campaign_name
+                    cl.source, cl.reverses_conv_id, cl.currency, cl.stated_amount, cl.stated_currency,
+                    ac.aff_campaign_name
              FROM 202_conversion_logs cl
              LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id AND ac.user_id = cl.user_id
              WHERE ' . $whereSql . '
@@ -257,6 +259,12 @@ final class ConversionLog
                 'campaign_name' => $r['aff_campaign_name'] !== null ? (string) $r['aff_campaign_name'] : null,
                 'transaction_id' => $txid,
                 'amount' => Amount::fromUnits(Amount::toUnits((string) $r['click_payout'])),
+                // The row's own currency ('' when none was recorded), and
+                // what was sent when the amount is that, converted.
+                'currency' => RowCurrency::read($r['currency'] ?? null),
+                'stated_amount' => ($r['stated_amount'] ?? null) !== null
+                    ? Amount::fromUnits(Amount::toUnits((string) $r['stated_amount'])) : null,
+                'stated_currency' => RowCurrency::read($r['stated_currency'] ?? null),
                 'click_time' => $clickTime,
                 'conv_time' => $convTime,
                 'elapsed' => self::elapsed($clickTime, $convTime),

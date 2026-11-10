@@ -204,6 +204,10 @@ final class AnalyzeReportController
         ];
         $analyze += $this->runReport($time, $page, $order);
         $analyze['flashes'] = $this->flashes;
+        // Revenue of the period that is not in the account's currency, said above the figures.
+        $analyze['currencyNotice'] = \Prosper202\Conversion\Ledger\RevenueCurrencies::notice(
+            \DB::getInstance()->getConnection(), $this->dataUserId() ?? 0, (int) $time['from'], (int) $time['to']
+        );
 
         require __DIR__ . '/templates/report.php';
     }

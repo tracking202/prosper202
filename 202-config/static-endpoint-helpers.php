@@ -538,7 +538,7 @@ if (!function_exists('p202RecordConversion')) {
      *        revenue ledger event (see p202ExtractItems); [] = none.
      * @param string|null $purLinkSubid verified again under the route transaction when supplied
      * @param string|null $purLinkKey installation signing key for that SubID
-     * @return array{conv_id:int, duplicate:bool, transaction_id:string, dedupe_key:string, payout:string, reverses_conv_id:int}
+     * @return array{conv_id:int, duplicate:bool, transaction_id:string, dedupe_key:string, payout:string, currency:string, reverses_conv_id:int}
      *         conv_id is 0 when the source click no longer exists (no orphan
      *         row is written) or an id-less hit found the click already
      *         converted (duplicate). dedupe_key is the row's ledger key, which
@@ -610,6 +610,11 @@ if (!function_exists('p202RecordConversion')) {
                 3 => \Prosper202\Conversion\Ledger\ConversionSource::UNIVERSAL_PIXEL->value,
                 default => \Prosper202\Conversion\Ledger\ConversionSource::API->value,
             };
+        if (isset($log['currency']) && (string) $log['currency'] !== '') {
+            // The currency a payment provider states its amount in, when it
+            // is not the account's: the row records the amount in it.
+            $data['currency'] = (string) $log['currency'];
+        }
         if (!empty($log['reversal'])) {
             $data['reversal'] = true;
         }
@@ -717,6 +722,8 @@ if (!function_exists('p202RecordConversion')) {
             'transaction_id' => trim($transactionId),
             'dedupe_key' => (string) ($result['dedupeKey'] ?? ''),
             'payout' => isset($result['payout']) ? (string) $result['payout'] : '',
+            // The currency the row recorded the payout in ('' when none was).
+            'currency' => (string) ($result['currency'] ?? ''),
             'reverses_conv_id' => (int) ($result['reversesConvId'] ?? 0),
         ];
     }
@@ -1221,6 +1228,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'reverses_carried_value' => !empty($opts['reverses_carried_value']),
                 'event_name'      => (string) ($opts['event_name'] ?? ''),
                 'notify_traffic_source' => !empty($opts['notify_traffic_source']),
+                'currency'        => (string) ($opts['currency'] ?? ''),
             ],
             $matchedBy,
             (string) ($click['click_cpa'] ?? ''),

@@ -6,6 +6,7 @@ namespace Prosper202\Destinations;
 
 use Prosper202\Click\FirstVisit;
 use Prosper202\Conversion\Ledger\MatchMethod;
+use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\DataEngine\IpAddressSql;
 use Prosper202\Database\Connection;
@@ -245,7 +246,7 @@ final class DestinationQueue
     {
         $userId = $destination['user_id'];
         // The primary, not a replica: a row a lagging replica lacks is not a deleted one.
-        $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, '
+        $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, cl.currency, '
             . IpAddressSql::address('ip', 'ip6') . ' AS ip_address
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
             . IpAddressSql::join('ip', 'ip6') . '
@@ -284,6 +285,12 @@ final class DestinationQueue
                 return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination does not state consent granted (ad_user_data and ad_personalization)')];
             }
         }
+        // The platform is told the currency the row recorded, never the
+        // account's now; an amount whose currency nothing recorded is not sent.
+        $currency = RowCurrency::read($conv['currency'] ?? null);
+        if ($currency === RowCurrency::UNKNOWN) {
+            return ['withheld', new SendResult(false, false, null, 'withheld: nothing recorded which currency this conversion\'s amount is in')];
+        }
         $clickId = (int) $conv['click_id'];
         $click = TrafficSourcePixels::clickTokens($this->conn, $userId, $clickId, true);
         if ($click === null) {
@@ -302,7 +309,7 @@ final class DestinationQueue
             (int) $conv['campaign_id'],
             (int) $conv['conv_time'],
             (string) $conv['click_payout'],
-            $this->currency($userId),
+            $currency,
             $transactionId !== '' ? $transactionId : 'P202-' . $convId,
             $tokens,
             $customerId,

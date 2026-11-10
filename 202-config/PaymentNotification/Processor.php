@@ -180,6 +180,10 @@ final class Processor
             'payout' => $amount,
             'conv_time' => $time,
         ];
+        if ($n->currency !== null && $this->otherCurrency($n, $owner) !== null) {
+            // Kept as stated (currency() let it through): the row says which currency that is.
+            $what['currency'] = strtoupper($n->currency);
+        }
         if ($purLinkKey !== null) {
             // A signed PurLink SubID records on its offer, as on pb.php and gpb.php.
             $what += ['purlink_subid' => $n->purLinkSubid, 'purlink_key' => $purLinkKey];

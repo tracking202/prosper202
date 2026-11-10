@@ -24,9 +24,9 @@ final class ExchangeRates
      * $amount in $from, converted into $to; null when the service gives no
      * positive number.
      */
-    public static function convert(string $from, string $to, string $amount): ?string
+    public static function convert(string $from, string $to, string $amount, int $timeout = 60): ?string
     {
-        $answer = self::foreignPayout($from, $to, $amount);
+        $answer = self::foreignPayout($from, $to, $amount, $timeout);
         $value = $answer['exchange_payout'] ?? null;
 
         return is_numeric($value) && (float) $value > 0 ? (string) $value : null;
@@ -48,9 +48,12 @@ final class ExchangeRates
      * `currency` INTO `payout_currency` (checked live 2026-11-03: GBP 10 =>
      * USD 13.41, EUR 10 => USD 11.18; ExchangeRatesLiveTest repeats it).
      *
+     * $timeout bounds the whole request, in seconds (the cron job's daily
+     * refresh of the kept rates asks for less than a page does).
+     *
      * @return array<string, mixed>|null
      */
-    public static function foreignPayout(string $from, string $to, string $amount): ?array
+    public static function foreignPayout(string $from, string $to, string $amount, int $timeout = 60): ?array
     {
         $ch = curl_init(self::ENDPOINT);
         if ($ch === false) {
@@ -62,8 +65,8 @@ final class ExchangeRates
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_TIMEOUT => 60,
+            CURLOPT_CONNECTTIMEOUT => min(10, max(1, $timeout)),
+            CURLOPT_TIMEOUT => max(1, $timeout),
         ]);
         $body = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);

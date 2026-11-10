@@ -26,6 +26,7 @@ enum LeftOut: string
     case NOT_ACCOUNTS_CLICK = 'not_accounts_click';
     case CLICK_TOO_RECENT = 'click_too_recent';
     case NEGATIVE_VALUE = 'negative_value';
+    case NO_CURRENCY = 'no_currency';
     case NO_CONVERSION_NAME = 'no_conversion_name';
     case OVER_ROW_LIMIT = 'over_row_limit';
 
@@ -63,6 +64,7 @@ enum LeftOut: string
             self::CLICK_TOO_RECENT => 'Its click is less than 6 hours old, which the platforms may not have processed'
                 . ' yet. A later fetch whose window still covers it sends it.',
             self::NEGATIVE_VALUE => 'Its value is below zero, which the platforms refuse.',
+            self::NO_CURRENCY => 'Nothing recorded which currency its amount is in, and the file must name one.',
             self::NO_CONVERSION_NAME => 'Its campaign has no conversion name for this platform, and the account has'
                 . ' no default.',
             self::OVER_ROW_LIMIT => 'Past Microsoft\'s 100,000 rows an upload; the oldest conversions are the ones'

@@ -52,10 +52,15 @@ if ($breakdown === null) {
 
 $click = $breakdown['click'];
 $masked = \Prosper202\Report\CampaignDataMask::hidden();
-$money = static fn (?string $v): string => $masked ? '?' : ($v === null ? '—' : (string) dollar_format((float) $v));
+// The click's value in the currency its counted rows share; when they do not
+// share one it is their numbers added, shown as a bare number and said below.
+$valueCurrency = $click['value_currency'];
+$money = static fn (?string $v, ?string $currency = null): string => $masked ? '?' : ($v === null ? '—'
+	: ($currency !== null ? (string) dollar_format((float) $v, $currency) : number_format((float) $v, 2)));
+$valueMoney = static fn (?string $v): string => $money($v, $valueCurrency);
 
 $tiles = [
-	['label' => 'Click value', 'value' => $click['lead'] ? $money($click['click_payout']) : 'Not converted', 'sub' => 'what the reports show'],
+	['label' => 'Click value', 'value' => $click['lead'] ? $valueMoney($click['click_payout']) : 'Not converted', 'sub' => 'what the reports show'],
 	['label' => 'Counted', 'value' => $click['counted_rows'] . ' of ' . $click['rows'], 'sub' => 'conversions in the value'],
 	['label' => 'Payout mode', 'value' => $click['payout_mode'] === 'accumulate' ? 'Accumulate' : 'Replace', 'sub' => $click['payout_mode'] === 'accumulate' ? 'conversions add up' : 'the latest one counts'],
 ];
@@ -68,8 +73,11 @@ echo '</div>';
 if ($click['ledger_state'] === 'pre_ledger') {
 	echo $flash('info', 'bi-info-circle', 'This click converted before the conversion ledger, so its value is the click\'s own figure. Its next conversion carries that value in as a row of its own.');
 } elseif (!$click['matches_click']) {
-	echo $flash('warning', 'bi-exclamation-triangle', 'The counted conversions add up to <strong>' . $e($money($click['ledger_value'])) . '</strong>, but the click shows <strong>'
-		. $e($click['lead'] ? $money($click['click_payout']) : 'not converted') . '</strong>. The next conversion on this click recomputes its value from these rows.');
+	echo $flash('warning', 'bi-exclamation-triangle', 'The counted conversions add up to <strong>' . $e($valueMoney($click['ledger_value'])) . '</strong>, but the click shows <strong>'
+		. $e($click['lead'] ? $valueMoney($click['click_payout']) : 'not converted') . '</strong>. The next conversion on this click recomputes its value from these rows.');
+}
+if ($click['mixed_currencies']) {
+	echo $flash('warning', 'bi-exclamation-triangle', 'The counted conversions are in more than one currency, and nothing converted them: the click\'s value adds their numbers as they stand. Each row below shows its own currency.');
 }
 
 $columns = [
@@ -103,7 +111,11 @@ foreach ($breakdown['rows'] as $row) {
 	$rows[] = [
 		'conv' => ['text' => '#' . $row['conv_id'], 'sort' => $row['conv_id']],
 		'time' => ['text' => date('m/d/y g:ia', $row['conv_time']), 'sort' => $row['conv_time']],
-		'amount' => ['text' => $money($row['amount']), 'sort' => $masked ? null : (float) $row['amount']],
+		'amount' => ['text' => $money($row['amount'], $row['currency'])
+			. ($masked ? '' : ($row['currency'] === null ? ' (currency not recorded)' : '')
+				. ($row['stated_amount'] !== null && $row['stated_currency'] !== null
+					? ' (sent as ' . dollar_format((float) $row['stated_amount'], $row['stated_currency']) . ')' : '')),
+			'sort' => $masked ? null : (float) $row['amount']],
 		'counts' => ['html' => $counts],
 		'source' => $row['source_label'],
 		'matched' => $row['match_method_label'],
@@ -117,7 +129,7 @@ echo p202_data_table($columns, $rows, [
 	'caption' => 'Conversions recorded on click ' . $clickId . ', oldest first',
 	'totals' => $rows === [] ? null : [
 		'conv' => 'Counted toward the click',
-		'amount' => $click['ledger_state'] === 'pre_ledger' ? $money($click['click_payout']) : $money(\Prosper202\Conversion\Ledger\Amount::fromUnits($countedUnits)),
+		'amount' => $click['ledger_state'] === 'pre_ledger' ? $valueMoney($click['click_payout']) : $valueMoney(\Prosper202\Conversion\Ledger\Amount::fromUnits($countedUnits)),
 	],
 	'empty' => ['icon' => 'bi-receipt', 'title' => 'No conversions on this click', 'body' => $click['ledger_state'] === 'pre_ledger'
 		? 'It converted before the ledger kept rows, so only its value is known.'

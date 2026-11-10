@@ -26,8 +26,10 @@ the offset in force at that conversion's own instant, so a file that spans a
 daylight-saving change is right on both sides of it.
 
 Each line's value is the amount the conversion counts for in Prosper202,
-net of a partial refund, in the account's currency (which is what the
-conversion ledger records every amount in). Microsoft takes three decimals,
+net of a partial refund, in the currency that conversion recorded
+([Currencies](conversion-currency.md)): your account's, unless the account's
+currency was changed since or the amount was recorded in another. A
+conversion with no currency recorded is left out and counted (`no_currency`). Microsoft takes three decimals,
 so its values are rounded to three. A conversion with no value is sent as 0.
 
 `Order ID` is `P202-` and the conversion's own id. It is the same every time

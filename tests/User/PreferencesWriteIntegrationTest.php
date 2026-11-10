@@ -8,6 +8,7 @@ use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\ValidationException;
 use Api\V3\HttpException;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Conversion\Ledger\ExchangeRateCache;
 use Prosper202\Database\SchemaInstaller;
 
 /**
@@ -71,7 +72,8 @@ final class PreferencesWriteIntegrationTest extends TestCase
         }
         $u = self::USER;
         foreach (["DELETE FROM 202_users WHERE user_id = $u", "DELETE FROM 202_users_pref WHERE user_id = $u",
-            "DELETE FROM 202_aff_campaigns WHERE user_id = $u", "DELETE FROM 202_charts WHERE user_id = $u"] as $sql) {
+            "DELETE FROM 202_aff_campaigns WHERE user_id = $u", "DELETE FROM 202_charts WHERE user_id = $u",
+            'DELETE FROM 202_exchange_rates'] as $sql) {
             self::$db->query($sql);
         }
         self::$db->query("INSERT INTO 202_users SET user_id = $u, user_name = 'prefs$u', user_pass = 'x', user_email = 'p$u@example.com',"
@@ -109,17 +111,27 @@ final class PreferencesWriteIntegrationTest extends TestCase
             $asked[] = "$from>$to:$payout";
             return ['exchange_payout' => number_format((float) $payout * 2, 2, '.', '')];
         };
-        (new UsersController(self::$db))->updatePreferences(self::USER, ['user_account_currency' => 'EUR', 'user_pref_limit' => 100], $rate);
+        $answer = (new UsersController(self::$db))->updatePreferences(self::USER, ['user_account_currency' => 'EUR', 'user_pref_limit' => 100], $rate);
 
+        // The answer says what the change does to what is already recorded.
+        self::assertSame(['USD', 'EUR'], [$answer['currency_change']['from'], $answer['currency_change']['to']]);
+        self::assertStringContainsString('stay in USD, unconverted', $answer['currency_change']['earlier_conversions']);
         $prefs = $this->prefs();
         self::assertSame('EUR', $prefs['user_account_currency']);
         self::assertSame(100, (int) $prefs['user_pref_limit']);
         self::assertSame([9101 => ['25.00', '12.50'], 9102 => ['8.00', '4.00']], $this->payouts(), 'converted, the original kept as the foreign payout');
-        self::assertSame(['USD>EUR:12.50', 'USD>EUR:4.00'], $asked);
+        // Each payout, then the rate the campaigns' postback amounts are
+        // converted with from now on, which is kept (ExchangeRateCache).
+        self::assertSame(['USD>EUR:12.50', 'USD>EUR:4.00', 'USD>EUR:' . ExchangeRateCache::REFERENCE], $asked);
+        self::assertSame(
+            [['USD', 'EUR', '2.0000000000']],
+            self::$db->query('SELECT from_currency, to_currency, rate FROM 202_exchange_rates')->fetch_all()
+        );
 
         // Back to the campaigns' own currency: the originals return, no rate asked.
         $asked = [];
-        (new UsersController(self::$db))->updatePreferences(self::USER, ['user_account_currency' => 'USD'], $rate);
+        $back = (new UsersController(self::$db))->updatePreferences(self::USER, ['user_account_currency' => 'USD'], $rate);
+        self::assertSame('EUR', $back['currency_change']['from']);
         self::assertSame([9101 => ['12.50', '0.00'], 9102 => ['4.00', '0.00']], $this->payouts());
         self::assertSame([], $asked);
     }
@@ -135,7 +147,7 @@ final class PreferencesWriteIntegrationTest extends TestCase
             return ['exchange_payout' => number_format((float) $payout * 2, 2, '.', '')];
         };
         (new UsersController(self::$db))->updatePreferences(self::USER, ['user_account_currency' => 'GBP'], $rate);
-        self::assertSame(['EUR>GBP:12.50', 'EUR>GBP:4.00'], $asked);
+        self::assertSame(['EUR>GBP:12.50', 'EUR>GBP:4.00', 'EUR>GBP:' . ExchangeRateCache::REFERENCE], $asked);
         self::assertSame([9101 => ['25.00', '12.50'], 9102 => ['8.00', '4.00']], $this->payouts());
         $currencies = self::$db->query('SELECT aff_campaign_currency FROM 202_aff_campaigns WHERE user_id = ' . self::USER . ' ORDER BY aff_campaign_id')->fetch_all();
         self::assertSame([['EUR'], ['EUR']], $currencies, 'the old account currency becomes the campaign\'s');

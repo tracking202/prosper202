@@ -185,7 +185,7 @@ but unchanged keys is `422` (`No valid fields to update`).
 | `user_pref_same_ip_fallback` | `1` (a pixel that names no click credits your latest click from the visitor's IP address), `0` (it credits none); see [Same-IP fallback](#same-ip-fallback-user_pref_same_ip_fallback) below | Personal settings |
 | `user_pref_cloak_referer` | `origin`, `never` | Personal settings |
 | `user_pref_ad_settings` | `show_all`, `hide_login`, `hide_all` | Personal settings |
-| `user_account_currency` | a supported 3-letter code | Personal settings: **re-prices every campaign's payout** into it through the exchange-rate service, in the same transaction as the rest of the request; `502` and nothing written when the service gives no rate |
+| `user_account_currency` | a supported 3-letter code | Personal settings: **re-prices every campaign's payout** into it through the exchange-rate service, in the same transaction as the rest of the request; `502` and nothing written when the service gives no rate. Conversions already recorded keep the currency they were recorded in and are not converted; the answer says so under `currency_change` ([Currencies](../features/conversion-currency.md)) |
 | `user_pref_time_predefined` | `today`, `yesterday`, `last7`, `last14`, `last30`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` | report pages |
 | `user_pref_limit` | `10`, `25`, `50`, `75`, `100`, `150`, `200` | report pages |
 | `user_cpc_or_cpv` | `cpc`, `cpv` | report pages |

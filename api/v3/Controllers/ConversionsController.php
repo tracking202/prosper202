@@ -20,6 +20,7 @@ use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\LedgerReportSql;
 use Prosper202\Conversion\Ledger\MatchMethod;
+use Prosper202\Conversion\Ledger\RowCurrency;
 
 class ConversionsController
 {
@@ -51,6 +52,7 @@ class ConversionsController
                 cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
                 cl.source, cl.source_ref, cl.match_method, cl.event_name, cl.payable, cl.reverses_conv_id,
                 cl.superseded_by, cl.superseded_reason,
+                cl.currency, cl.stated_amount, cl.stated_currency,
                 ac.aff_campaign_name';
 
     public function list(array $params): array
@@ -261,6 +263,29 @@ class ConversionsController
         $groups = $result->fetch_all(MYSQLI_ASSOC);
         $stmt->close();
 
+        // Income adds each row's number. The rows not in the account's
+        // currency are counted apart, by the currency they recorded, so a
+        // caller can tell how much of a total is another currency's.
+        $accountCurrency = RowCurrency::ofAccount(new \Prosper202\Database\Connection($this->db), $this->userId);
+        $otherSql = 'SELECT cl.currency,
+                SUM(cl.reverses_conv_id IS NULL) AS conversions,
+                SUM(IF(' . $counted . ', cl.click_payout, 0)) AS income
+            FROM 202_conversion_logs cl
+            WHERE ' . implode(' AND ', $where) . ' AND cl.currency <> ?
+            GROUP BY cl.currency ORDER BY cl.currency';
+        $stmt = $this->prepare($otherSql);
+        $this->bind($stmt, $types . 's', ...array_merge($binds, [$accountCurrency]));
+        $this->execute($stmt, 'Match method breakdown failed');
+        $otherCurrencies = [];
+        foreach ($this->result($stmt)->fetch_all(MYSQLI_ASSOC) as $other) {
+            $otherCurrencies[] = [
+                'currency' => RowCurrency::forAnswer($other['currency']),
+                'conversions' => (int) $other['conversions'],
+                'amount' => (float) Amount::fromUnits(Amount::toUnits((string) ($other['income'] ?? '0'))),
+            ];
+        }
+        $stmt->close();
+
         $order = array_flip(MatchMethod::values());
         $totals = [];
         foreach (MatchMethod::cases() as $method) {
@@ -303,7 +328,10 @@ class ConversionsController
             ];
         }
 
-        return ['data' => $rows, 'totals' => $byMethod, 'match_methods' => MatchMethod::values()];
+        return [
+            'data' => $rows, 'totals' => $byMethod, 'match_methods' => MatchMethod::values(),
+            'currency' => $accountCurrency, 'other_currencies' => $otherCurrencies,
+        ];
     }
 
     /**
@@ -320,6 +348,14 @@ class ConversionsController
         // DECIMAL, which mysqli hands back as a string ("1.50000").
         if (isset($row['click_payout']) && is_string($row['click_payout']) && is_numeric($row['click_payout'])) {
             $row['click_payout'] = (float) $row['click_payout'];
+        }
+        // The currency click_payout is in, as the row recorded it (null:
+        // none was recorded), and what a postback or pixel sent when
+        // click_payout is that amount converted.
+        if (array_key_exists('currency', $row)) {
+            $row['currency'] = RowCurrency::forAnswer($row['currency']);
+            $row['stated_amount'] = isset($row['stated_amount']) && is_numeric($row['stated_amount']) ? (float) $row['stated_amount'] : null;
+            $row['stated_currency'] = RowCurrency::forAnswer($row['stated_currency'] ?? null);
         }
         $ref = \Prosper202\Conversion\Ledger\SourceRef::parse(isset($row['source_ref']) ? (string) $row['source_ref'] : null);
         $isGoal = $ref !== null && $ref['kind'] === \Prosper202\Conversion\Ledger\SourceRef::GOAL;

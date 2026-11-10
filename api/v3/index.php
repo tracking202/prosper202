@@ -538,8 +538,9 @@ try {
             return \Api\V3\Support\CampaignFigures::mask($response, $keys);
         };
         $recordMoney = \Api\V3\Support\CampaignFigures::RECORD;
-        $reportFigures = \Api\V3\Support\CampaignFigures::REPORT;
-        $matchFigures = \Api\V3\Support\CampaignFigures::MATCH_METHODS;
+        $otherCurrencies = \Api\V3\Support\CampaignFigures::OTHER_CURRENCIES;
+        $reportFigures = [...\Api\V3\Support\CampaignFigures::REPORT, ...$otherCurrencies];
+        $matchFigures = [...\Api\V3\Support\CampaignFigures::MATCH_METHODS, ...$otherCurrencies];
 
         // ── Clicks (read-only) ───────────────────────────────────────────
         $router->get('/clicks', fn() => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams), $recordMoney));

@@ -60,7 +60,9 @@ final class MoneyLossAlertsUpgradeIntegrationTest extends TestCase
         $installed = self::shapes();
         self::q('DROP TABLE 202_alert_settings');
         self::q('DROP TABLE 202_alert_state');
-        self::q('ALTER TABLE 202_conversion_logs DROP INDEX user_conv_time');
+        // As 1.9.79 left it: neither of the keys nor the columns the 1.9.80 step adds.
+        self::q('ALTER TABLE 202_conversion_logs DROP INDEX user_conv_time, DROP INDEX user_currency_click_time,'
+            . ' DROP COLUMN currency, DROP COLUMN stated_amount, DROP COLUMN stated_currency');
         self::q('DELETE FROM 202_conversion_logs WHERE user_id = 7899');
         self::q('INSERT INTO 202_conversion_logs SET click_id = 978990001, campaign_id = 1, click_payout = 1,'
             . " user_id = 7899, click_time = 1, conv_time = 2, time_difference = '', pixel_type = 0,"

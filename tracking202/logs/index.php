@@ -126,6 +126,10 @@ echo '<span class="p202-panel__sub">' . $e(number_format($total)) . ' conversion
     . '</div><div class="p202-panel__body">';
 
 $masked = \Prosper202\Report\CampaignDataMask::hidden();
+// Each amount is shown in the currency its row recorded. One that is not the
+// account's now (the account's currency changed since, or the amount was
+// recorded as sent in another) says so: the reports add its number as it stands.
+$accountCurrency = \Prosper202\Conversion\Ledger\RowCurrency::ofAccount(new \Prosper202\Database\Connection($db), $userId);
 $rows = [];
 foreach ($result['rows'] as $row) {
     $type = $e($row['type']);
@@ -142,7 +146,12 @@ foreach ($result['rows'] as $row) {
         'ip' => $row['ip'] !== '' ? $row['ip'] : '—',
         'type' => ['html' => $type],
         'transaction' => $row['transaction_id'] ?? '—',
-        'amount' => $masked ? '?' : (string) dollar_format((float) $row['amount']),
+        'amount' => ['html' => $masked ? '?' : $e($row['currency'] !== '' ? (string) dollar_format((float) $row['amount'], $row['currency']) : number_format((float) $row['amount'], 2))
+            . ($row['stated_amount'] !== null && $row['stated_currency'] !== ''
+                ? '<div class="form-text">' . $e('sent as ' . dollar_format((float) $row['stated_amount'], $row['stated_currency'])) . '</div>' : '')
+            . ($row['currency'] === '' ? '<div class="form-text">currency not recorded</div>'
+                : ($row['currency'] !== $accountCurrency
+                    ? '<div class="form-text">' . $e('in ' . $row['currency'] . ', not converted to ' . $accountCurrency) . '</div>' : ''))],
         'deleted' => ['html' => $row['deleted'] ? '<span class="p202-pill p202-pill--bad">deleted</span>' : 'no'],
         'user_agent' => ['html' => $agent],
     ];

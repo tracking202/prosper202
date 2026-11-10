@@ -11,6 +11,8 @@ use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\ReportFilter;
 use Api\V3\Support\ResponseSanitizer;
 use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\TimeBound;
+use Prosper202\Conversion\Ledger\RevenueCurrencies;
 use Prosper202\Report\LocalTime;
 use Prosper202\Rotator\RuleOrder;
 
@@ -304,7 +306,10 @@ class ReportsController
         $row = $result->fetch_assoc();
         $stmt->close();
 
-        return ['data' => self::typedMetrics($row ?? []) + ['currency' => $this->accountCurrency()]];
+        // Beside data, not in it: data is what a client adds across servers.
+        $data = self::typedMetrics($row ?? []) + ['currency' => $this->accountCurrency()];
+
+        return ['data' => $data, 'other_currencies' => $this->money($params, $data['currency'])['other_currencies']];
     }
 
     /**
@@ -323,6 +328,43 @@ class ReportsController
         $stmt->close();
 
         return UsersController::normalizeCurrency($row['user_account_currency'] ?? null);
+    }
+
+    /**
+     * What a report's money is in: `currency`, the account's, and
+     * `other_currencies`, the revenue of the report's period that the ledger
+     * recorded in another currency (or none), each with its conversions and
+     * amount. The report's figures add those amounts as recorded, so a list
+     * that is not empty says the totals are not all in `currency`. The list
+     * is the account's for the period, whatever else the report filters by:
+     * the report's rows hold no currency to filter with
+     * (Ledger\RevenueCurrencies).
+     *
+     * @param array<string, mixed> $params
+     * @param string|null $currency the account's, when the caller has read it
+     * @return array{currency: string, other_currencies: list<array{currency: ?string, conversions: int, amount: float}>}
+     */
+    private function money(array $params, ?string $currency = null): array
+    {
+        $currency ??= $this->accountCurrency();
+        $timezone = fn (): string => $this->accountTimezone();
+        [$from, $to] = TimeBound::window($params, $timezone);
+        if (($params['period'] ?? '') !== '') {
+            [$periodFrom, $periodTo] = TimeBound::period($params['period'], $timezone);
+            $from = $from === null ? $periodFrom : ($periodFrom === null ? $from : max($from, $periodFrom));
+            $to = $to === null ? $periodTo : ($periodTo === null ? $to : min($to, $periodTo));
+        }
+
+        return [
+            'currency' => $currency,
+            'other_currencies' => RevenueCurrencies::forAnswer(RevenueCurrencies::others(
+                new \Prosper202\Database\Connection($this->db),
+                $this->userId,
+                $currency,
+                $from,
+                $to
+            )),
+        ];
     }
 
     public function breakdown(array $params): array
@@ -422,7 +464,7 @@ class ReportsController
             'truncated' => $truncated,
             'limit' => $limit,
             'offset' => $offset,
-        ];
+        ] + $this->money($params);
     }
 
     /**
@@ -575,7 +617,7 @@ class ReportsController
             'totals' => $total,
             'by' => $levels,
             'available_breakdowns' => array_keys(self::BREAKDOWNS),
-        ];
+        ] + $this->money($params);
     }
 
     /**
@@ -737,7 +779,7 @@ class ReportsController
             'timezone' => $timezone,
             'truncated' => $truncated,
             'limit' => self::TIMESERIES_MAX_ROWS,
-        ];
+        ] + $this->money($params);
     }
 
     public function daypart(array $params): array
@@ -800,7 +842,7 @@ class ReportsController
         return [
             'data' => $rows,
             'timezone' => $timezone,
-        ];
+        ] + $this->money($params);
     }
 
     public function weekpart(array $params): array
@@ -864,7 +906,7 @@ class ReportsController
         return [
             'data' => $rows,
             'timezone' => $timezone,
-        ];
+        ] + $this->money($params);
     }
 
     /**
@@ -953,7 +995,7 @@ class ReportsController
             'totals' => $totals,
             'rules' => $ruleRows,
             'default' => $default,
-        ]];
+        ]] + $this->money($params);
     }
 
     /**

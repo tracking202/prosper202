@@ -1040,11 +1040,38 @@ class UsersController
             }
         });
 
+        if ($currencyUpdates !== [] && $rate !== null) {
+            // The campaigns are now paid in another currency than the
+            // account's: keep the rates their postbacks' amounts are
+            // converted with (ExchangeRateCache), from the same service.
+            \Prosper202\Conversion\Ledger\ExchangeRateCache::refreshQuietly(
+                $conn,
+                static function (string $from, string $to, string $amount) use ($rate): ?string {
+                    $answer = $rate($from, $to, $amount);
+                    $value = is_array($answer) ? ($answer['exchange_payout'] ?? null) : null;
+
+                    return is_numeric($value) ? (string) $value : null;
+                }
+            );
+        }
+
         try {
-            return $this->getPreferences($userId);
+            $answer = $this->getPreferences($userId);
         } catch (\Throwable $e) {
             throw new WriteCommittedException('preferences', $e);
         }
+        $previous = self::normalizeCurrency($current['user_account_currency'] ?? null);
+        if (isset($clean['user_account_currency']) && $clean['user_account_currency'] !== $previous) {
+            // What the change does to what is already recorded, said with the answer.
+            $answer['currency_change'] = [
+                'from' => $previous,
+                'to' => (string) $clean['user_account_currency'],
+                'earlier_conversions' => 'Conversions already recorded stay in ' . $previous . ', unconverted; new ones are recorded in '
+                    . $clean['user_account_currency'] . '. Report answers list a period\'s revenue in other currencies under other_currencies.',
+            ];
+        }
+
+        return $answer;
     }
 
     /**

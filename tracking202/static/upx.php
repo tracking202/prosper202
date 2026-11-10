@@ -246,6 +246,7 @@ if (is_numeric($mysql['click_id'])) {
 			? $conversionResult['transaction_id']
 			: $conversionResult['dedupe_key'];
 		$tokens['payout'] = $conversionResult['payout'];
+		$tokens['row_currency'] = $conversionResult['currency'];
         // Markup only: the type-4 postbacks were queued with the conversion.
         echo p202FireTrafficSourcePixels(
             $db,

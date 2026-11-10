@@ -279,12 +279,43 @@ function RunHourlyCronJob()
         // have the next run take the whole hourly tier again beside it.
         RefreshGeoIpDatabase();
 
+        // The exchange rates a postback's amount is converted with, for the
+        // campaigns paid in another currency than their account's: each pair
+        // once a day, a failed one again next hour. After the hour is
+        // recorded, as the download above is, since it asks another host.
+        RefreshExchangeRates();
+
         echo 'Done<br>';
         ob_flush();
         flush();
         return true;
     } else {
         return false;
+    }
+}
+
+/**
+ * Refresh the kept exchange rates (Prosper202\Conversion\Ledger\ExchangeRateCache)
+ * that are a day old or missing, at most ten pairs a run, each given 10
+ * seconds. A failure is logged and the tier goes on: a pair without a rate
+ * has its postback amounts recorded as sent, in their own currency.
+ */
+function RefreshExchangeRates(): void
+{
+    try {
+        $result = \Prosper202\Conversion\Ledger\ExchangeRateCache::refresh(
+            new \Prosper202\Database\Connection(getDatabaseConnection()),
+            static fn (string $from, string $to, string $amount): ?string => \Prosper202\User\ExchangeRates::convert($from, $to, $amount, 10),
+            time()
+        );
+        if ($result['fetched'] > 0) {
+            echo 'Exchange rates: ' . $result['fetched'] . ' refreshed<br>';
+        }
+        if ($result['failed'] !== []) {
+            error_log('Exchange rates: no rate could be had for ' . implode(', ', $result['failed']) . '; asked again next hour');
+        }
+    } catch (\Throwable $e) {
+        error_log('Exchange rate refresh failed: ' . $e->getMessage());
     }
 }
 

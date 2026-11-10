@@ -32,6 +32,19 @@ use Prosper202\Database\Schema\TableRegistry;
  * already had them (_upgrade_conversion_ledger_columns()); its default,
  * 'unknown', is what every row from before then holds.
  *
+ * `currency` is the currency `click_payout` is in (Ledger\RowCurrency), from
+ * 1.9.80: the account's when the row was written, or another when an amount
+ * was recorded as stated. '' is unknown: a row written while the upgrade had
+ * not added the column, or whose account had no preferences to read at the
+ * upgrade. `stated_amount` and `stated_currency` hold what a postback or
+ * pixel sent when `click_payout` is that amount converted into the account's
+ * currency; NULL on every other row. Only codes this code wrote are stored
+ * and no key is over them, so they keep the table's collation.
+ *
+ * `user_currency_click_time` is the reports' read of a period's revenue that
+ * is not in the account's currency (Ledger\RevenueCurrencies): it reads only
+ * those rows, which for nearly every account is none.
+ *
  * `user_conv_time` is the money-loss alerts' read of an account's last week
  * of conversions (Prosper202\Alerts\AccountActivity), from 1.9.80.
  *
@@ -66,6 +79,7 @@ final class ConversionTables
             self::inboundLog(),
             self::shopifyPendingRefunds(),
             self::shopifyRefundTransactions(),
+            self::exchangeRates(),
         ];
     }
 
@@ -97,6 +111,9 @@ final class ConversionTables
                 `superseded_reason` varchar(16) DEFAULT NULL,
                 `dedupe_key` varchar(320) COLLATE utf8mb4_bin NOT NULL,
                 `match_method` varchar(16) NOT NULL DEFAULT 'unknown',
+                `currency` char(3) NOT NULL DEFAULT '',
+                `stated_amount` decimal(11,5) DEFAULT NULL,
+                `stated_currency` char(3) DEFAULT NULL,
                 PRIMARY KEY (`conv_id`),
                 UNIQUE KEY `uniq_click_dedupe` (`click_id`,`dedupe_key`),
                 KEY `click_transaction` (`click_id`,`transaction_id`),
@@ -104,7 +121,8 @@ final class ConversionTables
                 KEY `campaign_id` (`campaign_id`),
                 KEY `customer_id` (`customer_id`),
                 KEY `reverses_conv_id` (`reverses_conv_id`),
-                KEY `user_conv_time` (`user_id`,`conv_time`)
+                KEY `user_conv_time` (`user_id`,`conv_time`),
+                KEY `user_currency_click_time` (`user_id`,`currency`,`click_time`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
@@ -541,6 +559,27 @@ final class ConversionTables
                 PRIMARY KEY (`inbound_id`),
                 KEY `user_recent` (`user_id`,`inbound_id`),
                 KEY `user_kind_recent` (`user_id`,`accepted`,`inbound_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The exchange rates a postback's or pixel's amount is converted with
+     * (Prosper202\Conversion\Ledger\ExchangeRateCache): one row per pair of
+     * currencies some campaign needs, refreshed by the cron job once a day.
+     * The conversion path reads it and never asks the rate service. Of the
+     * install, not of an account: a rate is the same for every account.
+     */
+    public static function exchangeRates(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::EXCHANGE_RATES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::EXCHANGE_RATES . "` (
+                `from_currency` char(3) COLLATE utf8mb4_bin NOT NULL,
+                `to_currency` char(3) COLLATE utf8mb4_bin NOT NULL,
+                `rate` decimal(20,10) NOT NULL,
+                `fetched_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`from_currency`,`to_currency`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

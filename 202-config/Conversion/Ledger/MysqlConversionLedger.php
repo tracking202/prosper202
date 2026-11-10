@@ -146,17 +146,23 @@ final class MysqlConversionLedger
      * account's payout or payout mode. A campaign row whose payout_mode is
      * neither value throws, naming it.
      *
-     * @return array{mode: PayoutMode, default_payout: string}
+     * paid_in is the currency the campaign's network pays in when that is
+     * not the account's (CampaignCurrency keeps the payout typed in it as
+     * aff_campaign_foreign_payout, and none for a campaign in the account's
+     * currency): RowCurrency::UNKNOWN for every other campaign.
+     *
+     * @return array{mode: PayoutMode, default_payout: string, paid_in: string}
      */
     public function campaignTerms(int $campaignId, int $userId): array
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT payout_mode, aff_campaign_payout FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? LIMIT 1'
+            'SELECT payout_mode, aff_campaign_payout, aff_campaign_currency, aff_campaign_foreign_payout'
+            . ' FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'ii', [$campaignId, $userId]);
         $row = $this->conn->fetchOne($stmt);
         if ($row === null) {
-            return ['mode' => PayoutMode::REPLACE, 'default_payout' => '0'];
+            return ['mode' => PayoutMode::REPLACE, 'default_payout' => '0', 'paid_in' => RowCurrency::UNKNOWN];
         }
 
         try {
@@ -165,7 +171,12 @@ final class MysqlConversionLedger
             throw new LedgerIntegrityException('campaign ' . $campaignId . ': ' . $e->getMessage(), 0, $e);
         }
 
-        return ['mode' => $mode, 'default_payout' => (string) ($row['aff_campaign_payout'] ?? '0')];
+        $foreign = $row['aff_campaign_foreign_payout'] ?? null;
+        $paidIn = is_numeric($foreign) && (float) $foreign != 0.0
+            ? RowCurrency::read($row['aff_campaign_currency'] ?? null)
+            : RowCurrency::UNKNOWN;
+
+        return ['mode' => $mode, 'default_payout' => (string) ($row['aff_campaign_payout'] ?? '0'), 'paid_in' => $paidIn];
     }
 
     /**
@@ -248,6 +259,13 @@ final class MysqlConversionLedger
         if ($baselineId <= 0) {
             throw new LedgerIntegrityException('click ' . $clickId . ': the legacy baseline row was not inserted');
         }
+        // The row's currency, in this transaction; without the column (the
+        // upgrade has not run) the upgrade stamps it.
+        if (RowCurrency::columnsPresent($this->conn)) {
+            $stamp = $this->conn->prepareWrite('UPDATE 202_conversion_logs SET currency = ? WHERE conv_id = ?');
+            $this->conn->bind($stamp, 'si', [$this->carriedCurrency($clickId, $userId, $baselineId), $baselineId]);
+            $this->conn->executeUpdate($stamp);
+        }
 
         // Point the pre-ledger rows at the value that now stands for them,
         // so the breakdown can say what replaced them.
@@ -259,6 +277,31 @@ final class MysqlConversionLedger
         $this->conn->executeUpdate($link);
 
         return $baselineId;
+    }
+
+    /**
+     * The currency of the value a pre-ledger click carries: its newest
+     * pre-ledger row's, as the upgrade recorded it (none for an account
+     * whose currency it could not tell). A click whose value was set by
+     * writes that left no row takes the account's, unless the account holds
+     * rows with no currency recorded: then this value's is not known either.
+     */
+    private function carriedCurrency(int $clickId, int $userId, int $baselineId): string
+    {
+        $stmt = $this->conn->prepareWrite(
+            "SELECT currency FROM 202_conversion_logs
+             WHERE click_id = ? AND superseded_reason = 'pre_ledger' ORDER BY conv_id DESC LIMIT 1"
+        );
+        $this->conn->bind($stmt, 'i', [$clickId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row !== null) {
+            return RowCurrency::read($row['currency'] ?? null);
+        }
+        // The baseline itself is just inserted, and not stamped yet.
+        $unrecorded = $this->conn->prepareWrite("SELECT 1 FROM 202_conversion_logs WHERE user_id = ? AND currency = '' AND conv_id <> ? LIMIT 1");
+        $this->conn->bind($unrecorded, 'ii', [$userId, $baselineId]);
+
+        return $this->conn->fetchOne($unrecorded) !== null ? RowCurrency::UNKNOWN : RowCurrency::ofAccount($this->conn, $userId);
     }
 
     /**

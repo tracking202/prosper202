@@ -70,6 +70,11 @@ final class MatchMethodUpgradeIntegrationTest extends TestCase
                 self::q("ALTER TABLE $table DROP COLUMN match_method");
             }
         }
+        // A 1.9.78 ledger has no row currency either (1.9.80 adds it after match_method).
+        if (in_array('currency', array_column(self::columns('202_conversion_logs'), 'COLUMN_NAME'), true)) {
+            self::q('ALTER TABLE 202_conversion_logs DROP INDEX user_currency_click_time, DROP COLUMN currency,'
+                . ' DROP COLUMN stated_amount, DROP COLUMN stated_currency');
+        }
         self::q('DELETE FROM 202_version');
         self::row('202_version', ['version' => '1.9.78']);
     }

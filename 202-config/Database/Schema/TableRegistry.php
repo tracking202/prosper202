@@ -124,6 +124,7 @@ final class TableRegistry
     public const string INBOUND_LOG = '202_inbound_log';
     public const string SHOPIFY_PENDING_REFUNDS = '202_shopify_pending_refunds';
     public const string SHOPIFY_REFUND_TRANSACTIONS = '202_shopify_refund_transactions';
+    public const string EXCHANGE_RATES = '202_exchange_rates';
 
     // Deployment-wide secrets (SecretTables): owned by the installation, not
     // by any user

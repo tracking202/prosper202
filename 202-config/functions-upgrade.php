@@ -275,6 +275,122 @@ if (!function_exists('_upgrade_conversion_ledger_columns')) {
     }
 }
 
+if (!function_exists('_upgrade_ledger_currency_backfill')) {
+    /**
+     * Add 202_conversion_logs' currency columns where they are missing, and
+     * give the ledger rows that have no currency their account's, for the
+     * 1.9.80 rung. It runs before the reconcile, which then adds the key
+     * over the column: with the key there first, every row the backfill
+     * writes moves an index entry too, and a range of 50,000 rows took 1.2 s
+     * rather than 0.17 (measured on MySQL 8.0, where a million rows are then
+     * about 4 s and the key 2). The columns are added as
+     * ConversionTables declares them, after match_method, so the reconcile
+     * finds nothing to add but the key.
+     *
+     * Nothing recorded which currency an amount was written in; every reader
+     * labelled it with the account's at the time of reading. For an account
+     * whose currency shows no sign of having changed, that is the currency
+     * its rows were written in, and they take it. A change of currency left
+     * a sign: it kept each campaign's payout as it was in
+     * aff_campaign_foreign_payout (CurrencyChange). An account with such a
+     * campaign counted in more than one currency over its history, and
+     * which rows were written under which cannot be known, so its rows keep
+     * '' (not recorded, RowCurrency): they are shown without a currency, and
+     * Personal settings lets the owner say which one they were. So does a
+     * row whose account has no preferences row.
+     *
+     * Only rows with no currency are touched, so a re-run changes nothing
+     * (0.05 s a range), and rows the new code wrote are left alone. In
+     * primary-key ranges, as the ledger's own backfill is, so no write to an
+     * old conversion waits for the whole table.
+     */
+    function _upgrade_ledger_currency_backfill(): bool
+    {
+        $columns = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_conversion_logs`', 'Field', 'Null');
+        if ($columns === null) {
+            error_log('Prosper202 upgrade: could not read the columns of 202_conversion_logs; the ledger currency step will retry.');
+            return false;
+        }
+        foreach ([
+            ['currency', "`currency` char(3) NOT NULL DEFAULT '' AFTER `match_method`"],
+            ['stated_amount', '`stated_amount` decimal(11,5) DEFAULT NULL AFTER `currency`'],
+            ['stated_currency', '`stated_currency` char(3) DEFAULT NULL AFTER `stated_amount`'],
+        ] as [$column, $ddl]) {
+            if (array_key_exists($column, $columns)) {
+                continue;
+            }
+            if (_upgrade_query('ALTER TABLE `202_conversion_logs` ADD COLUMN ' . $ddl) === false) {
+                error_log('Prosper202 upgrade: failed to add 202_conversion_logs.' . $column . '; the ledger currency step will retry.');
+                return false;
+            }
+        }
+
+        $changed = _upgrade_query('SELECT DISTINCT `user_id` FROM `202_aff_campaigns` WHERE `aff_campaign_foreign_payout` <> 0');
+        if (!$changed instanceof \mysqli_result) {
+            error_log('Prosper202 upgrade: could not read which accounts changed their currency;'
+                . ' the ledger currency step will retry.');
+            return false;
+        }
+        $skip = [];
+        while (($row = $changed->fetch_row()) !== null && $row !== false) {
+            $skip[(int) $row[0]] = true;
+        }
+        $changed->free();
+
+        // Each account's currency as every page read it
+        // (UsersController::normalizeCurrency()), and the accounts of each.
+        $prefs = _upgrade_query('SELECT `user_id`, `user_account_currency` FROM `202_users_pref`');
+        if (!$prefs instanceof \mysqli_result) {
+            error_log('Prosper202 upgrade: could not read the accounts\' currencies; the ledger currency step will retry.');
+            return false;
+        }
+        $accounts = [];
+        while (($row = $prefs->fetch_row()) !== null && $row !== false) {
+            if (!isset($skip[(int) $row[0]])) {
+                $accounts[\Api\V3\Controllers\UsersController::normalizeCurrency($row[1])][] = (int) $row[0];
+            }
+        }
+        $prefs->free();
+        if ($accounts === []) {
+            return true;
+        }
+
+        $bounds = _upgrade_query('SELECT MIN(`conv_id`) AS lo, MAX(`conv_id`) AS hi FROM `202_conversion_logs`');
+        $range = $bounds instanceof \mysqli_result ? $bounds->fetch_assoc() : null;
+        if (!is_array($range)) {
+            error_log('Prosper202 upgrade: could not read the conv_id range of 202_conversion_logs;'
+                . ' the ledger currency step will retry.');
+            return false;
+        }
+        $bounds->free();
+        if ($range['lo'] === null) {
+            return true;
+        }
+        $hi = (int) $range['hi'];
+        $chunk = 50000;
+        $ranges = [];
+        for ($from = (int) $range['lo']; $from <= $hi; $from += $chunk) {
+            $ranges[] = ' AND `conv_id` BETWEEN ' . $from . ' AND ' . min($hi, $from + $chunk - 1);
+        }
+        // Rows written past the range read, by code that did not stamp them.
+        $ranges[] = ' AND `conv_id` > ' . $hi;
+        foreach ($ranges as $where) {
+            foreach ($accounts as $currency => $users) {
+                // A constant per statement, by primary-key range: a join to
+                // the preferences took three times as long (0.58 s a range).
+                $sql = "UPDATE `202_conversion_logs` SET `currency` = '" . $currency . "' WHERE `currency` = ''"
+                    . ' AND `user_id` IN (' . implode(',', $users) . ')' . $where;
+                if (_upgrade_query($sql) === false) {
+                    error_log('Prosper202 upgrade: failed to give the ledger rows their currency; the step will retry.');
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_conversion_ledger_backfill_sql')) {
     /**
      * The one statement that gives every pre-ledger conversion row its
@@ -907,6 +1023,12 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 if (!_upgrade_conversion_ledger()) {
                     return false;
                 }
+                // Each row's currency: the columns, then the rows already
+                // there, before the reconcile adds the key over them
+                // (_upgrade_ledger_currency_backfill() says why in that order).
+                if (!_upgrade_ledger_currency_backfill()) {
+                    return false;
+                }
                 break;
             }
         }
@@ -965,6 +1087,7 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 && !_upgrade_hash_api_keys()) {
                 $ok = false;
             }
+
         }
 
         // The sign-ins and new accounts it kept are essential.
@@ -4992,8 +5115,15 @@ class UPGRADE
                 // sent for (Prosper202\Alerts).
                 \Prosper202\Database\Tables\UserTables::alertSettings(),
                 \Prosper202\Database\Tables\UserTables::alertState(),
+                // The rates a postback's amount on a campaign paid in another
+                // currency is converted with (Ledger\ExchangeRateCache). Before
+                // the ledger's columns: a writer that finds those reads this.
+                \Prosper202\Database\Tables\ConversionTables::exchangeRates(),
                 // 202_conversion_logs gains user_conv_time, the alerts' read of
-                // an account's last week of conversions.
+                // an account's last week of conversions, and the currency each
+                // row's amount is in with what a postback stated (RowCurrency);
+                // the rows already there take the currency that can be known
+                // (_upgrade_ledger_currency_backfill(), run by the reconcile).
                 \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
                 // PurLinks: click-out ordering, deferred pixels fired, per-offer goal subjects.
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),

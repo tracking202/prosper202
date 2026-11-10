@@ -8,6 +8,7 @@ use Prosper202\Attribution\CountedAmount;
 use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\MatchMethod;
+use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Database\Connection;
 use Prosper202\Report\AccountZone;
 
@@ -22,7 +23,9 @@ use Prosper202\Report\AccountZone;
  *  - each conversion in the window that counts now, at the amount it counts
  *    for (CountedAmount: net of partial refunds; a conversion refunded in
  *    full, deleted, replaced on its click or not payable is left out), in
- *    the account's currency, which is what the ledger records amounts in;
+ *    the currency its ledger row recorded (RowCurrency), which a later
+ *    change of the account's currency does not alter; a conversion with no
+ *    currency recorded is left out, never sent under the account's;
  *  - only when the conversion named its click (MatchMethod CLICK_ID: the
  *    postback, pixel, API call or upload named it; COOKIE: a tracking
  *    cookie in the converting browser did). A click found by a visitor id or
@@ -137,6 +140,9 @@ final class OfflineExport
         if (Amount::toUnits($counted) < 0) {
             return LeftOut::NEGATIVE_VALUE;
         }
+        if (RowCurrency::read(StoredRow::text($row, 'currency')) === RowCurrency::UNKNOWN) {
+            return LeftOut::NO_CURRENCY;
+        }
         if ($name === null) {
             return LeftOut::NO_CONVERSION_NAME;
         }
@@ -189,7 +195,7 @@ final class OfflineExport
         // file's range, where the visit the conversion names is, so it is
         // bounded by that range and reads only those days' partitions.
         $oldest = $options->now - self::CLICK_MAX_AGE;
-        $sql = 'SELECT cl.conv_id, cl.click_time, cl.conv_time, cl.match_method, '
+        $sql = 'SELECT cl.conv_id, cl.click_time, cl.conv_time, cl.match_method, cl.currency, '
             . CountedAmount::sqlOrNull('cl') . ' AS counted_amount,' . $ids
             . ' COALESCE(cn.conversion_name, dn.conversion_name) AS conversion_name,'
             . " CASE WHEN cl.match_method IN ($named) AND cl.click_time BETWEEN ? AND ?"
@@ -220,7 +226,7 @@ final class OfflineExport
         return [$sql, $types, $values];
     }
 
-    /** The account's currency, which the ledger records every amount in. */
+    /** The account's currency now: the summary's, and each line carries its own row's. */
     private function currency(int $userId): string
     {
         $stmt = $this->conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');

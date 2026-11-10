@@ -8,11 +8,13 @@ use Prosper202\Bridge\EventBridge;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Conversion\Ledger\ExchangeRateCache;
 use Prosper202\Conversion\Ledger\LedgerIntegrityException;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\PayoutMode;
 use Prosper202\Conversion\Ledger\ReversalException;
+use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Conversion\Ledger\SourceRef;
 use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Database\Connection;
@@ -25,6 +27,15 @@ use Throwable;
 
 final class MysqlConversionRepository implements ConversionRepositoryInterface
 {
+    /**
+     * The sources whose stated amount is in the campaign's currency: the
+     * campaign's network sends it. Every other source states its amount in
+     * the account's, or names the currency itself.
+     */
+    private const CONVERTED_SOURCES = [
+        ConversionSource::PIXEL, ConversionSource::POSTBACK, ConversionSource::UNIVERSAL_PIXEL, ConversionSource::LEGACY_PIXEL,
+    ];
+
     private MysqlCustomerRepository $customers;
 
     private ?NotificationOutbox $outbox = null;
@@ -371,6 +382,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             throw new PurLinkCampaignChanged('The click no longer belongs to the PurLink campaign');
         }
         $terms = $ledger->campaignTerms($clickCampaignId, $userId);
+        // The currency the row's amount is in is stamped on it (RowCurrency);
+        // without the columns (the upgrade has not run) the row is written
+        // as before them and the upgrade stamps it.
+        $stamped = RowCurrency::columnsPresent($this->conn);
+        $accountCurrency = $stamped ? RowCurrency::ofAccount($this->conn, $userId) : RowCurrency::UNKNOWN;
 
         // A reversal names the row it reverses by that row's transaction
         // id. It is its own row with its own key (never tx:<id>, which the
@@ -496,6 +512,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // cache; carry it into the ledger before this row changes it.
         $ledger->ensureManaged($clickId, $userId);
 
+        $money = [];
         if ($reverses !== null && $reversesCarried) {
             // Capped under the lock, so concurrent refunds cannot take back more than is left.
             $left = $this->carriedLeft($reverses, $userId);
@@ -507,6 +524,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 );
             }
             $amountUnits = -min(abs($explicitPayout ?? $left), $left);
+            $money = ['currency' => $stamped ? $this->rowMoney((int) $reverses['conv_id'])['currency'] : RowCurrency::UNKNOWN];
         } elseif ($shopifyPartial) {
             // The click transaction serializes refunds. Sum all live reversals,
             // including those made by another source, before limiting this one.
@@ -522,10 +540,21 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 throw new ReversalException('Nothing remains of this sale to refund.', ReversalException::CONFLICT);
             }
             $amountUnits = -min(abs($explicitPayout ?? $left), $left);
+            // A refund is in its sale's currency, as every reversal is.
+            $money = ['currency' => $stamped ? $this->rowMoney((int) $reverses['conv_id'])['currency'] : RowCurrency::UNKNOWN];
         } elseif ($reverses !== null) {
-            $amountUnits = -abs($explicitPayout ?? Amount::toUnits((string) $reverses['click_payout']));
+            $money = $this->reversalMoney(
+                $explicitPayout,
+                Amount::toUnits((string) $reverses['click_payout']),
+                $stamped ? $this->rowMoney((int) $reverses['conv_id']) : null,
+                in_array($source, self::CONVERTED_SOURCES, true)
+            );
+            $amountUnits = $money['units'];
         } elseif ($explicitPayout !== null) {
-            $amountUnits = $explicitPayout;
+            $money = $stamped
+                ? $this->statedMoney($explicitPayout, $data['currency'] ?? null, $source, $terms['paid_in'], $accountCurrency, $clickId)
+                : ['units' => $explicitPayout, 'currency' => RowCurrency::UNKNOWN];
+            $amountUnits = $money['units'];
         } elseif ($terms['mode'] === PayoutMode::ACCUMULATE) {
             $amountUnits = Amount::toUnits($terms['default_payout']);
         } else {
@@ -534,6 +563,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // The campaign's default, or the click's cached total for a repeat
         // conversion, can be out of range too: refused, never clamped (Y5N2).
         Amount::checkedForColumn($amountUnits, $explicitPayout !== null ? 'payout' : 'default payout');
+        // A campaign's default and a click's own value are in the account's currency.
+        $rowCurrency = $money['currency'] ?? $accountCurrency;
+        $statedUnits = $money['stated_units'] ?? null;
+        $statedCurrency = $statedUnits !== null ? ($money['stated_currency'] ?? null) : null;
         $payout = (float) Amount::fromUnits($amountUnits);
         $campaignId = isset($data['campaign_id']) ? (int) $data['campaign_id'] : $clickCampaignId;
         $clickTime = isset($data['click_time']) ? (int) $data['click_time'] : (int) ($click['click_time'] ?? 0);
@@ -599,8 +632,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $sourceRef = SourceRef::conversion((int) $reverses['conv_id']);
         }
         $eventName = isset($data['event_name']) && $data['event_name'] !== '' ? (string) $data['event_name'] : null;
-        array_push($columns, 'source', 'source_ref', 'event_name', 'payable', 'reverses_conv_id', 'dedupe_key', 'match_method');
-        $types .= 'sssiiss';
+        array_push($columns, 'source', 'source_ref', 'event_name', 'payable', 'reverses_conv_id', 'dedupe_key');
+        $types .= 'sssiis';
         array_push(
             $values,
             $source->value,
@@ -608,9 +641,17 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $eventName,
             $payable ? 1 : 0,
             $reverses !== null ? (int) $reverses['conv_id'] : null,
-            $dedupeKey,
-            $matchedBy->value
+            $dedupeKey
         );
+        if ($stamped) {
+            array_push($columns, 'currency', 'stated_amount', 'stated_currency');
+            $types .= 'sss';
+            array_push($values, $rowCurrency, $statedUnits !== null ? Amount::fromUnits($statedUnits) : null, $statedCurrency);
+        }
+        // Last: prepareInsert() drops it while the 1.9.79 upgrade has not added it.
+        $columns[] = 'match_method';
+        $types .= 's';
+        $values[] = $matchedBy->value;
 
         $insert = static fn (array $columns): string => 'INSERT INTO 202_conversion_logs (' . implode(', ', $columns)
             . ', deleted) VALUES (' . rtrim(str_repeat('?, ', count($columns)), ', ') . ', 0)';
@@ -640,7 +681,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // bump the customer's cached rollups, attach product line items, and
         // cache the customer on the click. All inside this transaction.
         if ($customerId !== null) {
-            $currency = $this->customers->accountCurrency($userId);
+            // The revenue event is in the row's currency, as the row is.
+            $currency = $rowCurrency !== RowCurrency::UNKNOWN ? $rowCurrency : $this->customers->accountCurrency($userId);
             // A negative payout is a correction. Ledger it as an
             // adjustment: recording it as a "purchase" would bump
             // order_count while draining revenue, corrupting LTV/AOV.
@@ -715,8 +757,109 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             'reversesConvId' => $reverses !== null ? (int) $reverses['conv_id'] : null,
             // threaded out for the post-commit bridge emit (closure locals)
             'campaignId' => $campaignId, 'clickTime' => $clickTime, 'payout' => $payout,
+            // The currency the amount is in (RowCurrency), and whether it is
+            // an amount sent in another currency that no kept rate converted.
+            'currency' => $rowCurrency,
+            'unconverted' => $stamped && $statedUnits === null && $rowCurrency !== $accountCurrency,
             // LTV fields recorded nowhere, as no customer resolved
             'ltvDropped' => $ltvDropped,
+        ];
+    }
+
+    /**
+     * A row's currency columns, read under its click's lock.
+     *
+     * @return array{currency: string, stated_units: ?int, stated_currency: ?string}
+     */
+    private function rowMoney(int $convId): array
+    {
+        $stmt = $this->conn->prepareWrite('SELECT ' . RowCurrency::COLUMNS . ' FROM 202_conversion_logs WHERE conv_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'i', [$convId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new RuntimeException('conversion ' . $convId . ' was not found to read its currency');
+        }
+        $stated = $row['stated_amount'] ?? null;
+        $statedCurrency = RowCurrency::read($row['stated_currency'] ?? null);
+
+        return [
+            'currency' => RowCurrency::read($row['currency'] ?? null),
+            'stated_units' => $stated !== null && $statedCurrency !== RowCurrency::UNKNOWN ? Amount::toUnits((string) $stated) : null,
+            'stated_currency' => $statedCurrency !== RowCurrency::UNKNOWN ? $statedCurrency : null,
+        ];
+    }
+
+    /**
+     * A reversal's amount and currency: its sale's currency, always, so the
+     * two net. A sale that was converted is taken back at the rate it was
+     * converted with (ExchangeRateCache::convertAs()), whatever today's is:
+     * a refund of all that was sent takes back all that was recorded.
+     *
+     * @param array{currency: string, stated_units: ?int, stated_currency: ?string}|null $sale null before the upgrade
+     * @return array{units: int, currency: string, stated_units?: int, stated_currency?: ?string}
+     */
+    private function reversalMoney(?int $explicitUnits, int $saleUnits, ?array $sale, bool $sentInCampaignCurrency): array
+    {
+        if ($sale === null) {
+            return ['units' => -abs($explicitUnits ?? $saleUnits), 'currency' => RowCurrency::UNKNOWN];
+        }
+        if ($sale['stated_units'] === null || ($explicitUnits !== null && !$sentInCampaignCurrency)) {
+            return ['units' => -abs($explicitUnits ?? $saleUnits), 'currency' => $sale['currency']];
+        }
+        if ($explicitUnits === null) {
+            return [
+                'units' => -abs($saleUnits), 'currency' => $sale['currency'],
+                'stated_units' => -abs($sale['stated_units']), 'stated_currency' => $sale['stated_currency'],
+            ];
+        }
+
+        return [
+            'units' => -ExchangeRateCache::convertAs(abs($explicitUnits), $sale['stated_units'], $saleUnits),
+            'currency' => $sale['currency'],
+            'stated_units' => -abs($explicitUnits), 'stated_currency' => $sale['stated_currency'],
+        ];
+    }
+
+    /**
+     * An amount a request stated, as the row records it.
+     *
+     * - A caller that names the amount's currency ($named: a payment
+     *   provider that states every account's amounts in one) has it recorded
+     *   as stated, in that currency.
+     * - A postback or pixel on a campaign paid in another currency than the
+     *   account's ($paidIn) sends the amount in the campaign's: it is
+     *   converted at the kept rate, and the row keeps what was sent. With no
+     *   kept rate it is recorded as sent, in the campaign's currency, which
+     *   every reader shows beside it. The rate service is never asked here.
+     * - Anything else is in the account's currency, as it always was.
+     *
+     * @return array{units: int, currency: string, stated_units?: int, stated_currency?: string}
+     */
+    private function statedMoney(int $units, mixed $named, ConversionSource $source, string $paidIn, string $accountCurrency, int $clickId): array
+    {
+        if ($named !== null && $named !== '') {
+            $currency = RowCurrency::read($named);
+            if ($currency === RowCurrency::UNKNOWN) {
+                throw new RuntimeException('currency must be a three-letter code');
+            }
+
+            return ['units' => $units, 'currency' => $currency];
+        }
+        if ($units === 0 || $paidIn === RowCurrency::UNKNOWN || $paidIn === $accountCurrency
+            || !in_array($source, self::CONVERTED_SOURCES, true)) {
+            return ['units' => $units, 'currency' => $accountCurrency];
+        }
+        $rate = ExchangeRateCache::rate($this->conn, $paidIn, $accountCurrency, time());
+        if ($rate === null) {
+            error_log('p202 conversion on click ' . $clickId . ': no exchange rate from ' . $paidIn . ' to ' . $accountCurrency
+                . ' is kept (the cron job refreshes them daily), so the amount is recorded as sent, in ' . $paidIn . '.');
+
+            return ['units' => $units, 'currency' => $paidIn];
+        }
+
+        return [
+            'units' => ExchangeRateCache::convert($units, $rate), 'currency' => $accountCurrency,
+            'stated_units' => $units, 'stated_currency' => $paidIn,
         ];
     }
 
