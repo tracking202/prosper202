@@ -66,6 +66,13 @@ Account › Personal settings › Account currency. The change:
 After a change, a report over a period that spans it holds amounts in both
 currencies, and says how much of each.
 
+Your campaigns stay paid in the currency they were set up in: the change
+keeps each payout as you entered it and shows it converted. So a postback or
+pixel that sends its own amount on one of them is read in that earlier
+currency and converted into your new one, as for any campaign paid in
+another currency. If a network now reports amounts in your new currency,
+set the campaign's currency to it under Setup › Campaigns.
+
 ## Conversions from before 1.9.80
 
 Before 1.9.80 no conversion kept its currency, and every page showed it in
