@@ -261,6 +261,27 @@ final class LedgerCurrencyIntegrationTest extends TestCase
         );
     }
 
+    public function testBeforeTheUpgradeMakesTheRatesTableThePostbackIsStillRecordedAsSent(): void
+    {
+        $this->campaign(7, 'accumulate', 'EUR');
+        $this->click(100, 7);
+        $definition = (string) self::$db->query('SHOW CREATE TABLE 202_exchange_rates')->fetch_row()[1];
+        self::$db->query('DROP TABLE 202_exchange_rates');
+        $log = (string) ini_get('error_log');
+        $capture = (string) tempnam(sys_get_temp_dir(), 'p202-rates-log');
+        ini_set('error_log', $capture);
+        try {
+            $result = $this->record(100, ['transaction_id' => 'A', 'payout' => '20.00']);
+        } finally {
+            ini_set('error_log', $log);
+            self::$db->query($definition);
+        }
+
+        self::assertSame(['20.00000', 'EUR', null], array_values(array_slice($this->row((int) $result['convId']), 0, 3)));
+        self::assertStringContainsString('Run the upgrade', (string) file_get_contents($capture));
+        unlink($capture);
+    }
+
     public function testOnlyAPostbackOrPixelAmountIsReadInTheCampaignsCurrency(): void
     {
         $this->campaign(7, 'accumulate', 'EUR');

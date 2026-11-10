@@ -47,9 +47,21 @@ final class ExchangeRateCache
      */
     public static function rate(Connection $conn, string $from, string $to, int $now): ?string
     {
-        $stmt = $conn->prepareWrite(
-            'SELECT rate, fetched_at FROM 202_exchange_rates WHERE from_currency = ? AND to_currency = ? LIMIT 1'
-        );
+        try {
+            $stmt = $conn->prepareWrite(
+                'SELECT rate, fetched_at FROM 202_exchange_rates WHERE from_currency = ? AND to_currency = ? LIMIT 1'
+            );
+        } catch (\RuntimeException $e) {
+            // The upgrade adds the ledger's columns a step before it makes
+            // this table, and a postback does not wait for it: no table is
+            // no kept rate, and the amount is recorded as sent.
+            if (!self::tableMissing($e)) {
+                throw $e;
+            }
+            error_log('p202 exchange rates: the 1.9.80 upgrade has not made 202_exchange_rates yet, so no rate is kept. Run the upgrade.');
+
+            return null;
+        }
         $conn->bind($stmt, 'ss', [$from, $to]);
         $row = $conn->fetchOne($stmt);
         if ($row === null) {
@@ -61,6 +73,18 @@ final class ExchangeRateCache
         }
 
         return (int) $row['fetched_at'] >= $now - self::MAX_AGE ? $rate : null;
+    }
+
+    /** Whether $e, or one it wraps, is the server's 1146 for the rates table. */
+    private static function tableMissing(\Throwable $e): bool
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if (Connection::isMysqlError($current, 1146, '') && str_contains($current->getMessage(), '202_exchange_rates')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
