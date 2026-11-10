@@ -6,8 +6,8 @@ namespace Prosper202\PaymentNotification\Shopify;
 
 use InvalidArgumentException;
 use Prosper202\Conversion\Ledger\Amount;
+use JsonException;
 use Prosper202\Database\Connection;
-use RuntimeException;
 
 /** Persists only Shopify transaction identifiers and amounts, never webhook bodies. */
 final class RefundSettlementStore
@@ -40,7 +40,9 @@ final class RefundSettlementStore
         $row = $this->conn->fetchOne($stmt);
         if ($row === null || $row['order_id'] !== $orderId
             || (int) $row['occurred_at'] !== $occurredAt || $row['transactions'] !== $json) {
-            throw new RuntimeException('A Shopify refund id was repeated with different details.');
+            throw new SettlementConflict(
+                'Shopify refund ' . $refundId . ' was sent again with different details; the first is kept.'
+            );
         }
     }
 
@@ -66,11 +68,19 @@ final class RefundSettlementStore
         $row = $this->conn->fetchOne($stmt);
         if ($row === null || $row['order_id'] !== $orderId || $row['status'] !== $status
             || Amount::toUnits((string) $row['amount']) !== Amount::toUnits($amount) || $row['currency'] !== $currency) {
-            throw new RuntimeException('A Shopify transaction id was repeated with different details.');
+            throw new SettlementConflict(
+                'Shopify transaction ' . $transactionId . ' was sent again with different details; the first is kept.'
+            );
         }
     }
 
-    /** @return list<array{refund_id: string, order_id: string, occurred_at: int, pending: bool, amount: string, currency: ?string}> */
+    /**
+     * A refund whose own rows disagree is answered with `refused` set, so it
+     * fails alone and the order's other refunds are still settled.
+     *
+     * @return list<array{refund_id: string, order_id: string, occurred_at: int, refused: ?string,
+     *     pending: bool, amount: string, currency: ?string}>
+     */
     public function forOrder(int $userId, string $orderId): array
     {
         self::id($orderId);
@@ -89,11 +99,21 @@ final class RefundSettlementStore
         $this->conn->bind($stmt, 'is', [$userId, $orderId]);
         $result = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
-            $transactions = json_decode($row['transactions'], true, 64, JSON_THROW_ON_ERROR);
+            $refused = null;
+            try {
+                $transactions = json_decode($row['transactions'], true, 64, JSON_THROW_ON_ERROR);
+                if (!is_array($transactions)) {
+                    throw new InvalidArgumentException('The stored refund transactions are not a list.');
+                }
+                $resolved = RefundSettlement::resolve($transactions, $updates);
+            } catch (InvalidArgumentException | JsonException $e) {
+                $refused = $e->getMessage();
+                $resolved = ['pending' => false, 'amount' => Amount::fromUnits(0), 'currency' => null];
+            }
             $result[] = [
                 'refund_id' => $row['refund_id'], 'order_id' => $row['order_id'],
-                'occurred_at' => (int) $row['occurred_at'],
-            ] + RefundSettlement::resolve($transactions, $updates);
+                'occurred_at' => (int) $row['occurred_at'], 'refused' => $refused,
+            ] + $resolved;
         }
 
         return $result;

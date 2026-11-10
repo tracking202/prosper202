@@ -31,40 +31,29 @@ final class SettlementCoordinator
     public function accept(array $event, Verification $verification, InboundRequest $request): Outcome
     {
         $active = [];
+        $refusal = null;
         foreach ($verification->accounts() as $account) {
-            // The purge locks this same row before deleting settlement data.
-            // Verify and write while holding it so an in-flight webhook cannot
-            // recreate the deleted account's rows after the purge commits.
-            $saved = $this->conn->transaction(function () use ($account, $event): bool {
-                $stmt = $this->conn->prepareWrite('SELECT user_deleted FROM 202_users WHERE user_id = ? FOR UPDATE');
-                $this->conn->bind($stmt, 'i', [$account]);
-                $user = $this->conn->fetchOne($stmt);
-                if ($user === null || (int) $user['user_deleted'] !== 0) {
-                    return false;
-                }
-                if ($event['type'] === 'refund') {
-                    $this->store->register($account, $event['id'], $event['order_id'],
-                        $event['occurred_at'], $event['transactions']);
-                } else {
-                    $this->store->update($account, $event['order_id'], $event['id'], $event['status'],
-                        $event['amount'], $event['currency'], time());
-                }
-                return true;
-            });
+            // Data that disagrees with what is stored is refused, not retried.
+            try {
+                $saved = $this->save($account, $event);
+            } catch (SettlementConflict $e) {
+                $refusal ??= new Outcome(OutcomeKind::CONFLICT, $e->getMessage(), null, $account);
+                continue;
+            } catch (\InvalidArgumentException $e) {
+                $refusal ??= new Outcome(OutcomeKind::MALFORMED, $e->getMessage(), null, $account);
+                continue;
+            }
             if ($saved) {
                 $active[] = $account;
             }
         }
-        $refusal = null;
+        $settled = null;
         foreach ($active as $account) {
-            $outcome = $this->reconcile($account, $event['order_id'], $request);
-            if ($outcome !== null) {
-                $refusal ??= $outcome;
-            }
+            $settled = self::worse($settled, $this->reconcile($account, $event['order_id'], $request));
         }
-
-        if ($refusal !== null) {
-            return $refusal;
+        $outcome = self::worse($refusal, $settled);
+        if ($outcome !== null) {
+            return $outcome;
         }
 
         return new Outcome(OutcomeKind::IGNORED,
@@ -73,10 +62,68 @@ final class SettlementCoordinator
             null, count($active) === 1 ? $active[0] : null);
     }
 
-    /** Returns an operator-visible refusal or failure, otherwise null. */
+    /**
+     * A sale's answer with what became of the order's pending refunds. The
+     * sale has landed, so it keeps its conversion; only a failure a retry can
+     * mend changes the status, and Shopify sends the order again.
+     */
+    public function afterSale(Outcome $sale, string $orderId, InboundRequest $request): Outcome
+    {
+        $settled = $this->reconcile((int) $sale->accountId, $orderId, $request);
+        if ($settled === null) {
+            return $sale;
+        }
+        $kind = self::rank($settled->kind) === 2 ? $settled->kind : $sale->kind;
+        $message = $sale->message . ' A pending refund of this order: ' . $settled->message;
+
+        return new Outcome($kind, $message, $sale->conversionId, $sale->accountId);
+    }
+
+    /**
+     * The purge locks this same row before deleting settlement data. Verify
+     * and write while holding it so an in-flight webhook cannot recreate the
+     * deleted account's rows after the purge commits.
+     *
+     * @param array<string, mixed> $event
+     */
+    private function save(int $account, array $event): bool
+    {
+        return $this->conn->transaction(function () use ($account, $event): bool {
+            $stmt = $this->conn->prepareWrite('SELECT user_deleted FROM 202_users WHERE user_id = ? FOR UPDATE');
+            $this->conn->bind($stmt, 'i', [$account]);
+            $user = $this->conn->fetchOne($stmt);
+            if ($user === null || (int) $user['user_deleted'] !== 0) {
+                return false;
+            }
+            if ($event['type'] === 'refund') {
+                $this->store->register($account, $event['id'], $event['order_id'],
+                    $event['occurred_at'], $event['transactions']);
+            } else {
+                $this->store->update($account, $event['order_id'], $event['id'], $event['status'],
+                    $event['amount'], $event['currency'], time());
+            }
+
+            return true;
+        });
+    }
+
+    /**
+     * Settles every refund of the order that is ready and answers the one
+     * outcome most worth showing: a failure a retry can mend, else a refusal,
+     * else a recorded reversal, else null (nothing was ready). A refund that
+     * is refused for good is closed, so it fails once and alone.
+     */
     public function reconcile(int $account, string $orderId, InboundRequest $request): ?Outcome
     {
+        $shown = null;
         foreach ($this->store->forOrder($account, $orderId) as $refund) {
+            if ($refund['refused'] !== null) {
+                $this->store->complete($account, $refund['refund_id'], time());
+                $message = 'Pending Shopify refund ' . $refund['refund_id'] . ' of order ' . $orderId
+                    . ' was not recorded and will not be tried again: ' . $refund['refused'] . self::BY_HAND;
+                $shown = self::worse($shown, new Outcome(OutcomeKind::CONFLICT, $message, null, $account));
+                continue;
+            }
             if ($refund['pending']) {
                 continue;
             }
@@ -94,21 +141,50 @@ final class SettlementCoordinator
                 continue;
             }
             if (count($clicks) !== 1) {
-                return new Outcome(OutcomeKind::CONFLICT,
-                    'Pending Shopify refund ' . $refund['refund_id'] . ' matches more than one order click; reconcile it manually.',
-                    null, $account);
+                $this->store->complete($account, $refund['refund_id'], time());
+                $message = 'Pending Shopify refund ' . $refund['refund_id'] . ' of order ' . $orderId
+                    . ' was not recorded and will not be tried again: the order is on more than one click.'
+                    . self::BY_HAND;
+                $shown = self::worse($shown, new Outcome(OutcomeKind::CONFLICT, $message, null, $account));
+                continue;
             }
             $notification = new Notification(NotificationKind::REFUND, 'refunds/create', $refund['refund_id'],
                 $orderId, $refund['amount'], $refund['currency'], (int) $clicks[0]['click_id'],
                 $refund['occurred_at'] ?: null);
             $outcome = (new Processor($this->db))->process($notification, new Verification([$account => 0]),
                 $this->provider, $request);
-            if (!in_array($outcome->kind, [OutcomeKind::REVERSED, OutcomeKind::DUPLICATE], true)) {
-                return $outcome;
+            // A failure a retry can mend leaves the refund open for the retry.
+            if (self::rank($outcome->kind) !== 2) {
+                $this->store->complete($account, $refund['refund_id'], time());
             }
-            $this->store->complete($account, $refund['refund_id'], time());
+            if ($outcome->kind !== OutcomeKind::DUPLICATE) {
+                $shown = self::worse($shown, $outcome);
+            }
         }
 
-        return null;
+        return $shown;
+    }
+
+    /** The sale stays counted in full until the operator records the refund. */
+    private const BY_HAND = ' If the refund is real, record it by hand as a reversal of the order\'s conversion'
+        . ' (p202 conversion create --status reversed, with the order id as --transaction-id).';
+
+    /** 2: a retry can mend it. 1: refused for good. 0: recorded. */
+    private static function rank(OutcomeKind $kind): int
+    {
+        return match ($kind) {
+            OutcomeKind::REVERSED, OutcomeKind::DUPLICATE => 0,
+            OutcomeKind::CONFLICT, OutcomeKind::CURRENCY_MISMATCH, OutcomeKind::MALFORMED => 1,
+            default => 2,
+        };
+    }
+
+    private static function worse(?Outcome $a, ?Outcome $b): ?Outcome
+    {
+        if ($a === null || $b === null) {
+            return $a ?? $b;
+        }
+
+        return self::rank($b->kind) > self::rank($a->kind) ? $b : $a;
     }
 }

@@ -123,6 +123,7 @@ final class Receiver
             ), null];
         }
 
+        $sale = null;
         try {
             if ($this->provider instanceof ShopifyAdapter && $this->provider->settlement() !== null) {
                 $outcome = (new SettlementCoordinator($this->db, $this->provider))
@@ -133,23 +134,25 @@ final class Receiver
                     && $notification->transactionId !== null && $outcome->accountId !== null
                     && $outcome->conversionId !== null
                     && in_array($outcome->kind, [OutcomeKind::RECORDED, OutcomeKind::DUPLICATE, OutcomeKind::CONFLICT], true)) {
-                    $settlement = (new SettlementCoordinator($this->db, $this->provider))
-                        ->reconcile($outcome->accountId, $notification->transactionId, $request);
-                    if ($settlement !== null) {
-                        $outcome = $settlement;
-                    }
+                    $sale = $outcome;
+                    $outcome = (new SettlementCoordinator($this->db, $this->provider))
+                        ->afterSale($sale, $notification->transactionId, $request);
                 }
             }
         } catch (\Throwable $e) {
             error_log($name . ' settlement: ' . $e->getMessage());
-            $missingSettlementTable = str_contains($e->getMessage(), '1146')
+            $only = count($verification->accounts()) === 1 ? $verification->accounts()[0] : null;
+            $missingSettlementTable = Connection::isMysqlError($e, 1146, "doesn't exist")
                 && (str_contains($e->getMessage(), '202_shopify_pending_refunds')
                     || str_contains($e->getMessage(), '202_shopify_refund_transactions'));
             $outcome = new Outcome($missingSettlementTable ? OutcomeKind::UPGRADE_PENDING : OutcomeKind::FAILED,
                 $missingSettlementTable
                     ? 'Shopify refund tables are missing. Open 202-config/upgrade.php to repair the database, then send the webhook again.'
-                    : 'The Shopify refund settlement could not be reconciled. Send the webhook again.',
-                null, count($verification->accounts()) === 1 ? $verification->accounts()[0] : null);
+                    : ($sale !== null
+                        ? $sale->message
+                            . ' Its pending refunds could not be reconciled just now. Send the webhook again.'
+                        : 'The notification could not be processed just now. Send it again.'),
+                $sale?->conversionId, $sale?->accountId ?? $only);
         }
 
         return [$outcome, $notification];

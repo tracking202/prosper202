@@ -311,7 +311,10 @@ records nothing. Multiple partial refunds are recorded once each, capped at
 the remaining sale amount. A refund with pending transactions is saved until
 all of them settle and its order is recorded. Transaction creation reports the
 terminal transaction statuses; without that subscription, pending refunds
-require manual reconciliation. Check Setup › Inbound Log for refusals.
+require manual reconciliation. Check Setup › Inbound Log for refusals. A pending
+refund whose transaction details disagree with what Shopify sent before is
+refused once, on its own, with the reason in the Inbound Log; the order's other
+refunds are still recorded.
 Early development installations already marked 1.9.80 may need the new refund
 tables: open `202-config/upgrade.php` and run the repair before enabling the
 Transaction creation webhook.

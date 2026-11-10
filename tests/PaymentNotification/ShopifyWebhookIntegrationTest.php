@@ -360,6 +360,134 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         self::assertSame(['59.00000'], array_column(self::conversions(), 'click_payout'));
     }
 
+    /** @return array<string, mixed> */
+    private static function pendingRefund(int $refund, int $transaction, string $amount): array
+    {
+        return ShopifyAdapterTest::refund(['id' => $refund, 'refund_line_items' => [], 'transactions' => [
+            ['id' => $transaction, 'kind' => 'refund', 'status' => 'pending', 'amount' => $amount, 'currency' => 'USD'],
+        ]]);
+    }
+
+    /** @return array<string, mixed> */
+    private static function settled(int $transaction, string $amount, string $status = 'success'): array
+    {
+        return ['id' => $transaction, 'order_id' => 5550001234567, 'kind' => 'refund',
+            'status' => $status, 'amount' => $amount, 'currency' => 'USD'];
+    }
+
+    /** @return array{0: Outcome, 1: int} */
+    private function settle(int $transaction, string $amount, string $status = 'success'): array
+    {
+        $body = self::settled($transaction, $amount, $status);
+
+        return $this->answer(ShopifyAdapterTest::webhook('order_transactions/create', $body));
+    }
+
+    private function pending(int $refund, int $transaction, string $amount): Outcome
+    {
+        return $this->deliver('refunds/create', self::pendingRefund($refund, $transaction, $amount));
+    }
+
+    /** @return list<string> */
+    private static function openRefunds(): array
+    {
+        $result = self::requireScratch()->query('SELECT refund_id FROM 202_shopify_pending_refunds WHERE user_id = '
+            . self::ACCOUNT . ' AND completed_at IS NULL ORDER BY refund_id');
+        self::assertInstanceOf(\mysqli_result::class, $result);
+
+        return array_column($result->fetch_all(MYSQLI_ASSOC), 'refund_id');
+    }
+
+    public function testASettledPendingRefundIsAnsweredAsTheReversalItRecorded(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $this->pending(9100001, 71002, '10.00');
+
+        [$outcome, $status] = $this->settle(71002, '10.00');
+
+        self::assertSame(OutcomeKind::REVERSED, $outcome->kind, $outcome->message);
+        self::assertSame(200, $status);
+        self::assertNotNull($outcome->conversionId);
+        self::assertSame(self::ACCOUNT, $outcome->accountId);
+        self::assertSame(['59.00000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
+        self::assertSame([], self::openRefunds());
+    }
+
+    public function testAnOrderArrivingAfterItsSettledRefundKeepsItsSaleAndNamesTheRefund(): void
+    {
+        $this->settle(71002, '10.00');
+        $this->pending(9100001, 71002, '10.00');
+
+        [$outcome, $status] = $this->answer(ShopifyAdapterTest::webhook('orders/paid', self::order()));
+
+        self::assertSame(OutcomeKind::RECORDED, $outcome->kind, $outcome->message);
+        self::assertSame(200, $status);
+        self::assertNotNull($outcome->conversionId);
+        self::assertStringContainsString('pending refund', $outcome->message);
+        self::assertSame(['59.00000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testASettlementThatDisagreesWithItsRefundIsRefusedAloneAndTheOrderCarriesOn(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $this->pending(9100001, 71002, '10.00');
+
+        [$outcome, $status] = $this->settle(71002, '9.00');
+        self::assertSame(OutcomeKind::CONFLICT, $outcome->kind, $outcome->message);
+        self::assertSame(200, $status);
+        self::assertStringContainsString('9100001', $outcome->message);
+        self::assertSame([], self::openRefunds());
+
+        // Nothing about the order is stuck behind the refused refund.
+        [$replay, $status] = $this->answer(ShopifyAdapterTest::webhook('orders/paid', self::order()));
+        self::assertSame(OutcomeKind::DUPLICATE, $replay->kind, $replay->message);
+        self::assertSame(200, $status);
+        self::assertOutcome(OutcomeKind::IGNORED, 200, $this->pending(9100005, 71005, '5.00'));
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->settle(71005, '5.00')[0]);
+        self::assertSame(['59.00000', '-5.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testARefundOrTransactionSentAgainWithOtherDetailsIsRefusedNotRetried(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $this->pending(9100001, 71002, '10.00');
+
+        $again = self::pendingRefund(9100001, 71002, '12.00');
+        [$refund, $status] = $this->answer(ShopifyAdapterTest::webhook('refunds/create', $again));
+        self::assertSame(OutcomeKind::CONFLICT, $refund->kind, $refund->message);
+        self::assertSame(200, $status);
+        self::assertStringContainsString('9100001', $refund->message);
+
+        $this->settle(71002, '10.00', 'failure');
+        [$transaction, $status] = $this->settle(71002, '10.00');
+        self::assertSame(OutcomeKind::CONFLICT, $transaction->kind, $transaction->message);
+        self::assertSame(200, $status);
+        self::assertStringContainsString('71002', $transaction->message);
+        self::assertSame(['59.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testAPendingRefundRefusedForGoodIsClosedAndLaterEventsAreNotAnsweredWithIt(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => [], 'transactions' => [
+            ['id' => 77001, 'kind' => 'refund', 'status' => 'success', 'amount' => '59.00', 'currency' => 'USD'],
+        ]]));
+        $this->pending(9100002, 71002, '10.00');
+
+        // Nothing remains of the sale: refused, and not asked again.
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $this->settle(71002, '10.00')[0]);
+        self::assertSame([], self::openRefunds());
+        // The replay is answered for the sale itself, with no word of the closed refund.
+        self::assertStringNotContainsString('9100002', $this->deliver('orders/paid', self::order())->message);
+        self::assertOutcome(OutcomeKind::IGNORED, 200, $this->pending(9100003, 71003, '5.00'));
+        self::assertSame(['59.00000', '-59.00000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    public function testATransactionStillPendingIsLeftToItsSettlement(): void
+    {
+        self::assertOutcome(OutcomeKind::IGNORED, 200, $this->settle(71002, '10.00', 'pending')[0]);
+    }
+
     public function testRetriedOrderReconcilesAfterAnEarlierPartialRefund(): void
     {
         $this->deliver('orders/paid', self::order());
@@ -626,7 +754,7 @@ final class ShopifyWebhookIntegrationTest extends TestCase
             $settled = ['id' => 71004, 'order_id' => 5550001234567, 'kind' => 'refund',
                 'status' => 'success', 'amount' => '5.00', 'currency' => 'USD'];
             self::assertSame([200, 'ignored'], $post('shopify.php', ShopifyAdapterTest::webhook('refunds/create', $pending)));
-            self::assertSame([200, 'ignored'], $post('shopify.php', ShopifyAdapterTest::webhook('order_transactions/create', $settled)));
+            self::assertSame([200, 'reversed'], $post('shopify.php', ShopifyAdapterTest::webhook('order_transactions/create', $settled)));
             self::assertSame(['59.00000', '-20.00000', '-5.00000'], array_column(self::conversions(), 'click_payout'));
 
             // A refund made just now of an order not on file is retried.

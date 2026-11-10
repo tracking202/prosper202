@@ -215,6 +215,10 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
             return new Notification(NotificationKind::IGNORED, $topic);
         }
         $status = $transaction['status'] ?? null;
+        // Not settled yet: the transaction is sent again when it is.
+        if ($status === 'pending' || $status === 'waiting') {
+            return new Notification(NotificationKind::IGNORED, $topic);
+        }
         if (!in_array($status, ['success', 'failure', 'error'], true)) {
             throw self::malformed('The refund transaction has no terminal status.');
         }
