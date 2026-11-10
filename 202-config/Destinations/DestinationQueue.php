@@ -44,6 +44,9 @@ final class DestinationQueue
     public const KIND_CONVERSION = 'conversion';
     public const KIND_TEST = 'test';
     public const STATUSES = ['pending', 'sent', 'failed', 'withheld', 'cancelled'];
+
+    /** Why a conversion with no currency recorded is held back; releaseHeldForCurrency() finds its rows by it. */
+    public const NO_CURRENCY = 'withheld: nothing recorded which currency this conversion\'s amount is in';
     /** The minutely cron's budget. */
     public const RUN_SECONDS = 15;
 
@@ -90,6 +93,23 @@ final class DestinationQueue
         }
 
         return $queued;
+    }
+
+    /**
+     * Queue again the account's conversions held back for having no
+     * currency recorded, once the owner has recorded one for them (Personal
+     * settings): each is sent at the worker's next run under every rule a
+     * new one is. One whose conversion still has none is held back again.
+     * Returns how many were released.
+     */
+    public function releaseHeldForCurrency(int $userId, int $now): int
+    {
+        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
+            . "` SET status = 'pending', attempts = 0, next_attempt_at = ?, last_error = NULL"
+            . " WHERE user_id = ? AND kind = 'conversion' AND status = 'withheld' AND last_error = ?");
+        $this->conn->bind($stmt, 'iis', [$now, $userId, self::NO_CURRENCY]);
+
+        return $this->conn->executeUpdate($stmt);
     }
 
     /**
@@ -289,7 +309,7 @@ final class DestinationQueue
         // account's now; an amount whose currency nothing recorded is not sent.
         $currency = RowCurrency::read($conv['currency'] ?? null);
         if ($currency === RowCurrency::UNKNOWN) {
-            return ['withheld', new SendResult(false, false, null, 'withheld: nothing recorded which currency this conversion\'s amount is in')];
+            return ['withheld', new SendResult(false, false, null, self::NO_CURRENCY)];
         }
         $clickId = (int) $conv['click_id'];
         $click = TrafficSourcePixels::clickTokens($this->conn, $userId, $clickId, true);

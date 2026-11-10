@@ -12,7 +12,7 @@ change of your account's currency does not relabel what you already earned.
 | A postback or pixel that sends its own amount (`amount=`), on a campaign in your account's currency | Your account's currency. |
 | A postback or pixel that sends its own amount, on a campaign **paid in another currency** | The amount is read as that campaign's currency and converted into yours at the kept exchange rate. The conversion keeps both: the converted amount, and the amount and currency that were sent. |
 | The API, an upload, a goal | Your account's currency. |
-| A payment provider that states every amount in one currency (ClickBank: USD) while your account counts in another | The provider's currency, as sent. |
+| A payment provider that states every amount in one currency (ClickBank: USD) while your account counts in another | The provider's currency, as sent: a ClickBank sale on an account that counts in euros is recorded, shown and exported as USD. |
 | A refund or chargeback | The currency of the sale it takes back. A refund of a converted sale is converted at the rate its sale was, so a full refund takes back exactly what was recorded. |
 
 ### The kept exchange rate
@@ -22,6 +22,13 @@ recorded. The cron job fetches the rate for each pair of currencies your
 campaigns need once a day (and at once when you save a campaign paid in
 another currency, or change your account's currency). A rate is used for up
 to seven days.
+
+The rate comes from Prosper202's own rate service, the one Setup › Campaigns
+already uses to convert a payout. The request holds the two currency codes
+and a reference amount and nothing else: no key, and nothing of your
+install or account. Each request is given 10 seconds and a run 30, so a
+service that does not answer cannot hold up the cron job; a pair it has no
+answer for keeps the rate it has and is asked for again the next hour.
 
 When no rate is kept for the pair (the cron job has not run, or the rate
 service has not answered for a week), the amount is **recorded as sent, in
@@ -42,6 +49,12 @@ the period is in it.
   and number of conversions in each other currency. The totals below add
   those amounts as recorded; nothing converts them. The figure is your
   account's for the period, whatever else the report is filtered by.
+- **Downloads and the chart** are read without the page around them, so
+  each says it in itself. Every row of a report download ends with two
+  columns, `Currency` (your account's) and `Other currencies in period`
+  (for example `USD 12.50 (1 conversion)`; empty when there are none). The
+  Group Overview download says the same in its heading, and the Overview
+  chart in its subtitle.
 - **The API** answers `currency`, `stated_amount` and `stated_currency` on
   each conversion (`GET /conversions`, `GET /clicks/{id}/conversions`), and
   every report answer lists `other_currencies` beside the account's
@@ -52,7 +65,14 @@ the period is in it.
 - **Offline conversion files** and **destinations** (GA4, Google Ads) send
   each conversion with the currency it recorded. A conversion with no
   currency recorded is left out of a file (`no_currency`) and not sent to a
-  destination, rather than sent under a currency it may not be in.
+  destination, rather than sent under a currency it may not be in. Once you
+  record the currency of those conversions (below), what was held back from
+  a destination is sent at the next run.
+- **Refunds from a payment platform** (Shopify, PayKickstart, JVZoo, Zaxaa)
+  are held to the currency of the sale they take back, not to your
+  account's currency of the day: a sale recorded in dollars is refunded in
+  dollars after your account moved to euros, and the two net. A refund
+  stated in any other currency than its sale's is refused.
 
 ## Changing your account's currency
 

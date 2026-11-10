@@ -595,6 +595,9 @@ if (!empty($_POST['record_unrecorded_currency']) && $_POST['record_unrecorded_cu
 			$recorded = \Prosper202\Conversion\Ledger\RowCurrency::recordForUnrecorded(
 				new \Prosper202\Database\Connection($db), (int) $_SESSION['user_id'], $earlierCurrency
 			);
+			// What was held back from the ad platforms for want of a currency goes out at the worker's next run.
+			(new \Prosper202\Destinations\DestinationQueue(new \Prosper202\Database\Connection($db)))
+				->releaseHeldForCurrency((int) $_SESSION['user_id'], time());
 			p202_account_flash($recorded['left'] === 0 ? 'ok' : 'warn', number_format($recorded['stamped']) . ' earlier conversion'
 				. ($recorded['stamped'] === 1 ? ' is' : 's are') . ' now recorded in ' . $earlierCurrency . '.'
 				. ($recorded['left'] > 0 ? ' ' . number_format($recorded['left']) . ' are still to do: save again to continue.' : ''));
@@ -1161,7 +1164,7 @@ echo p202_account_render_flashes($extraFlashes);
 			<section class="p202-panel mt-4" id="currency">
 				<div class="p202-panel__head">
 					<h2 class="p202-panel__title">Account currency</h2>
-					<span class="p202-panel__sub">the currency every amount is shown in</span>
+					<span class="p202-panel__sub">the currency new conversions are recorded in and totals are shown in</span>
 				</div>
 				<div class="p202-panel__body">
 					<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#currency'); ?>">
@@ -1209,14 +1212,16 @@ echo p202_account_render_flashes($extraFlashes);
 						<?php echo p202_account_token_field(); ?>
 						<label class="form-label" for="earlier_currency"><?php echo $e(number_format($unrecordedConversions)); ?> earlier conversion<?php echo $unrecordedConversions === 1 ? ' has' : 's have'; ?> no currency recorded</label>
 						<div class="input-group">
-							<select class="form-select<?php echo p202_account_invalid($keyErrors, 'earlier_currency'); ?>" name="earlier_currency" id="earlier_currency">
+							<select class="form-select<?php echo p202_account_invalid($keyErrors, 'earlier_currency'); ?>" name="earlier_currency" id="earlier_currency" required>
+								<?php // None is offered as the answer: only the owner knows which it was. ?>
+								<option value="" selected disabled>Choose a currency</option>
 								<?php foreach (\Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES as $code) {
-									echo '<option value="' . $e($code) . '"' . $sel($code) . '>' . $e($code) . '</option>';
+									echo '<option value="' . $e($code) . '">' . $e($code) . '</option>';
 								} ?>
 							</select>
 							<button class="btn btn-secondary" type="submit">Record this currency</button>
 						</div>
-						<div class="form-text">This account's currency was changed before Prosper202 kept each conversion's currency, so it cannot tell which one these were recorded in, and shows them without one. If they were all recorded in one currency, choose it.</div>
+						<div class="form-text">Prosper202 cannot tell which currency these were recorded in: the account's currency was changed, or a campaign was paid in another currency, before each conversion kept its own. It shows them without one. If they were all recorded in one currency, choose it.</div>
 						<?php echo p202_account_field_error($keyErrors, 'earlier_currency'); ?>
 					</form>
 					<?php } ?>

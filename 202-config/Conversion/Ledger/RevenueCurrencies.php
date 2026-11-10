@@ -66,7 +66,8 @@ final class RevenueCurrencies
             $types .= 'i';
             $values[] = $to;
         }
-        $stmt = $conn->prepareRead($sql . ' GROUP BY cl.currency ORDER BY cl.currency');
+        // In the order of the codes, the rows with none recorded last.
+        $stmt = $conn->prepareRead($sql . " GROUP BY cl.currency ORDER BY cl.currency = '', cl.currency");
         $conn->bind($stmt, $types, $values);
 
         $others = [];
@@ -111,6 +112,20 @@ final class RevenueCurrencies
         if ($others === []) {
             return '';
         }
+        return 'Not all revenue in this period is in ' . $accountCurrency . '. Your account also recorded '
+            . str_replace('; ', ', ', self::list($others)) . '. Totals add these amounts as they were recorded; nothing converts them to '
+            . $accountCurrency . '. The conversion log shows each conversion in its own currency.';
+    }
+
+    /**
+     * The same for a place with no room for a sentence beside each figure
+     * (a download's cell, a chart's subtitle): "USD 12.50 (1 conversion);
+     * 5.00 with no currency recorded (2 conversions)", or '' for none.
+     *
+     * @param list<array{currency: ?string, conversions: int, amount: string}> $others
+     */
+    public static function list(array $others): string
+    {
         $parts = [];
         foreach ($others as $o) {
             $count = number_format($o['conversions']) . ' conversion' . ($o['conversions'] === 1 ? '' : 's');
@@ -120,9 +135,49 @@ final class RevenueCurrencies
                 : $amount . ' with no currency recorded (' . $count . ')';
         }
 
-        return 'Not all revenue in this period is in ' . $accountCurrency . '. Your account also recorded '
-            . implode(', ', $parts) . '. Totals add these amounts as they were recorded; nothing converts them to '
-            . $accountCurrency . '. The conversion log shows each conversion in its own currency.';
+        return implode('; ', $parts);
+    }
+
+    /**
+     * What a report that is read without its page says of its money, for
+     * the account and period it reads: the account's currency, and list()
+     * of what the period holds in others ('' when it holds none, and for a
+     * user who is not shown money). A download writes them as two columns
+     * of every row and a chart as its subtitle, so neither adds amounts in
+     * two currencies without saying so where it is read.
+     *
+     * @return array{currency: string, others: string}
+     */
+    public static function forExport(\mysqli $db, int $userId, int $from, int $to): array
+    {
+        $conn = new Connection($db);
+        $currency = RowCurrency::ofAccount($conn, $userId);
+        if (\Prosper202\Report\CampaignDataMask::hidden()) {
+            return ['currency' => $currency, 'others' => ''];
+        }
+
+        return ['currency' => $currency, 'others' => self::list(self::others($conn, $userId, $currency, $from, $to))];
+    }
+
+    /**
+     * What a chart says of its money lines in its subtitle, or '' when every
+     * amount is in the account's currency (and for a user who is not shown
+     * money): short, since on a phone each line of it is taken from the plot.
+     */
+    public static function chartNote(\mysqli $db, int $userId, int $from, int $to): string
+    {
+        if (\Prosper202\Report\CampaignDataMask::hidden()) {
+            return '';
+        }
+        $conn = new Connection($db);
+        $currency = RowCurrency::ofAccount($conn, $userId);
+        $parts = [];
+        foreach (self::others($conn, $userId, $currency, $from, $to) as $o) {
+            $amount = number_format((float) $o['amount'], 2);
+            $parts[] = $o['currency'] !== null ? $o['currency'] . ' ' . $amount : $amount . ' unrecorded';
+        }
+
+        return $parts === [] ? '' : 'Money lines add ' . $currency . ' and, unconverted: ' . implode('; ', $parts);
     }
 
     /**

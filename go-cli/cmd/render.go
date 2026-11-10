@@ -43,7 +43,7 @@ func render(data []byte) {
 		return
 	}
 	output.RenderWith(data, renderOpts())
-	if note := otherCurrenciesNote(data); note != "" && !jsonOutput && !ndjsonOutput && !csvOutput && !quietOutput {
+	if note := otherCurrenciesNote(data); note != "" && !jsonOutput && !ndjsonOutput && !quietOutput {
 		fmt.Fprintln(os.Stderr, "Note: "+note)
 	}
 }

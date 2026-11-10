@@ -7,6 +7,7 @@ namespace Prosper202\PaymentNotification;
 use Prosper202\Click\ClickRef;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\AmountOutOfRange;
@@ -265,7 +266,7 @@ final class Processor
         if ($owner === null) {
             return self::unknownClick($n->clickId, $provider->clickField());
         }
-        $currency = $this->currency($n, $owner, $provider);
+        $currency = $this->currency($n, $owner, $provider, $this->saleCurrency($n->clickId, $original, $owner));
         if ($currency instanceof Outcome) {
             return $currency;
         }
@@ -629,10 +630,31 @@ final class Processor
      * nothing here converts it, or, from a provider that states every
      * account's amounts in one currency, kept as stated with the answer
      * saying so ('' when the currencies agree or none is stated).
+     *
+     * A refund is held to the currency its sale recorded ($saleCurrency,
+     * when the sale is on file and recorded one), not to the account's now:
+     * a sale recorded before the account's currency changed is refunded in
+     * the currency it was sold in, and the two net. One stated in any other
+     * currency than its sale's is refused.
      */
-    private function currency(Notification $n, int $owner, ProviderAdapter $provider): Outcome|string
+    private function currency(Notification $n, int $owner, ProviderAdapter $provider, ?string $saleCurrency = null): Outcome|string
     {
         $accountCurrency = $this->otherCurrency($n, $owner);
+        $stated = strtoupper((string) $n->currency);
+        if ($n->currency !== null && $saleCurrency !== null && !($provider instanceof RecordsAmountsAsStated)) {
+            if ($stated === $saleCurrency) {
+                return $accountCurrency === null ? '' : ' The amount is in ' . $stated . ', the currency the sale it takes back'
+                    . ' was recorded in; this account counts in ' . $accountCurrency . ' now.';
+            }
+
+            return new Outcome(
+                OutcomeKind::CURRENCY_MISMATCH,
+                'The amount is in ' . $stated . ' and the sale it takes back was recorded in ' . $saleCurrency
+                . '; Prosper202 does not convert it, so nothing was recorded.',
+                null,
+                $owner
+            );
+        }
         if ($accountCurrency === null) {
             return '';
         }
@@ -648,6 +670,29 @@ final class Processor
             null,
             $owner
         );
+    }
+
+    /**
+     * The currency recorded on the sale a transaction id names on a click,
+     * or null: no such sale, none recorded on it, or the upgrade has not
+     * added the column yet.
+     */
+    private function saleCurrency(int $clickId, string $transactionId, int $owner): ?string
+    {
+        $conn = new Connection($this->db);
+        if (!RowCurrency::columnsPresent($conn)) {
+            return null;
+        }
+        $stmt = $conn->prepareWrite(
+            'SELECT currency FROM 202_conversion_logs'
+            . ' WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL AND user_id = ?'
+            . ' ORDER BY conv_id LIMIT 1'
+        );
+        $conn->bind($stmt, 'isi', [$clickId, $transactionId, $owner]);
+        $row = $conn->fetchOne($stmt);
+        $currency = RowCurrency::read($row['currency'] ?? null);
+
+        return $currency === RowCurrency::UNKNOWN ? null : $currency;
     }
 
     /** The account's currency when the notification states another, or null. */

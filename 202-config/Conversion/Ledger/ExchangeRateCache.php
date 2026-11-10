@@ -35,6 +35,10 @@ final class ExchangeRateCache
      */
     public const REFERENCE = '100000.00';
 
+    /** The bounds an answer is believed within; the column holds either. */
+    public const LEAST_RATE = 0.000001;
+    public const GREATEST_RATE = 1000000.0;
+
     private function __construct()
     {
     }
@@ -130,7 +134,8 @@ final class ExchangeRateCache
             }
             $answer = $convert($from, $to, self::REFERENCE);
             $rate = is_string($answer) && is_numeric($answer) ? (float) $answer / (float) self::REFERENCE : 0.0;
-            if ($rate <= 0.0 || !is_finite($rate)) {
+            // No rate between two currencies is a millionth or a million: such an answer is not one.
+            if (!is_finite($rate) || $rate < self::LEAST_RATE || $rate > self::GREATEST_RATE) {
                 $failed[] = $from . '>' . $to;
                 continue;
             }

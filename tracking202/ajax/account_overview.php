@@ -91,6 +91,8 @@ if ($canSee) {
 		'credits' => ['enabled' => false],
 		'chart' => ['type' => 'line'],
 		'title' => ['text' => 'From ' . date('d/m/Y', (int) $from) . ' to ' . date('d/m/Y', (int) $to)],
+		// In the chart itself, which is read (and exported) without the page around it.
+		'subtitle' => ['text' => \Prosper202\Conversion\Ledger\RevenueCurrencies::chartNote($db, \Prosper202\DataEngine\DataScope::userId() ?? 0, (int) $from, (int) $to)],
 		'xAxis' => ['categories' => $categories],
 		'yAxis' => ['title' => ['text' => null]],
 		'series' => $chart['series'] ?? [],

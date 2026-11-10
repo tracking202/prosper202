@@ -102,7 +102,7 @@ final class LedgerCurrencyPagesIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        foreach (['202_user_role', '202_users_pref', '202_users', '202_conversion_logs', '202_clicks', '202_aff_campaigns'] as $table) {
+        foreach (['202_user_role', '202_users_pref', '202_users', '202_conversion_logs', '202_clicks', '202_aff_campaigns', '202_destination_deliveries'] as $table) {
             self::q("DELETE FROM $table WHERE user_id = " . self::USER);
         }
         self::q("DELETE FROM 202_licence_answers WHERE key_sha256 = SHA2('currency-pages-runner', 256)");
@@ -181,6 +181,63 @@ final class LedgerCurrencyPagesIntegrationTest extends TestCase
         self::assertStringNotContainsString('Not all revenue', self::text($page['output']));
     }
 
+    /**
+     * A download and a chart are read without the page around them, so each
+     * says in itself what its money adds: every row of a report download
+     * ends with the account's currency and what else the period holds, the
+     * Group Overview download says it in its heading, and the chart in its
+     * subtitle, on the Overview and when it is redrawn.
+     */
+    public function testADownloadAndAChartSayTheCurrenciesTheirMoneyAddsWithoutThePage(): void
+    {
+        $others = 'USD 12.50 (1 conversion); 5.00 with no currency recorded (1 conversion)';
+        $now = time();
+        self::q("INSERT INTO 202_keywords SET keyword_id = 99087, keyword = 'espresso beans'");
+        self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ', click_id = ' . self::CLICK . ", click_time = $now,"
+            . ' aff_campaign_id = ' . self::CAMPAIGN . ', keyword_id = 99087, clicks = 1, click_out = 1, leads = 1, income = 17.5, cost = 0, payout = 10');
+        try {
+            $download = self::request('tracking202/analyze/keywords_download.php');
+            self::assertNull($download['result']['error'] ?? null, $download['output']);
+            $lines = array_values(array_filter(explode("\n", $download['output']), static fn (string $l): bool => str_contains($l, "\t")));
+            self::assertStringEndsWith("\tROI\tCurrency\tOther currencies in period", $lines[0]);
+            self::assertGreaterThanOrEqual(2, count($lines), 'the keyword\'s row is in the file');
+            self::assertStringStartsWith('espresso beans' . "\t", $lines[1]);
+            self::assertStringEndsWith("\tEUR\t" . $others, $lines[1], 'each row says what its money is in');
+
+            $group = self::request('tracking202/overview/group_overview_download.php');
+            self::assertNull($group['result']['error'] ?? null, $group['output']);
+            self::assertStringContainsString(
+                'Currency: EUR. Other currencies in this period, added as recorded and not converted: ' . $others,
+                $group['output']
+            );
+
+            $note = 'Money lines add EUR and, unconverted: USD 12.50; 5.00 unrecorded';
+            $overview = self::request('tracking202/ajax/account_overview.php');
+            self::assertNull($overview['result']['error'] ?? null, $overview['output']);
+            self::assertSame(1, preg_match('/data-p202-chart="([^"]*)"/', $overview['output'], $m), 'the Overview draws its chart');
+            $config = json_decode(html_entity_decode($m[1], ENT_QUOTES | ENT_HTML5), true, 16, JSON_THROW_ON_ERROR);
+            self::assertSame($note, $config['subtitle']['text']);
+
+            $redrawn = self::request('tracking202/ajax/charts.php', ['P202_SU_POST' => '{"chart_time_range":"days","token":"SESSION"}', 'P202_SU_AJAX' => '1']);
+            $json = json_decode(trim($redrawn['output']), true);
+            self::assertIsArray($json, $redrawn['output']);
+            self::assertSame($note, $json['subtitle']);
+
+            // One currency: the columns are there, and say only the currency.
+            self::q("UPDATE 202_conversion_logs SET currency = 'EUR' WHERE user_id = " . self::USER);
+            $download = self::request('tracking202/analyze/keywords_download.php');
+            $lines = array_values(array_filter(explode("\n", $download['output']), static fn (string $l): bool => str_contains($l, "\t")));
+            self::assertStringEndsWith("\tEUR\t", $lines[1]);
+            $overview = self::request('tracking202/ajax/account_overview.php');
+            preg_match('/data-p202-chart="([^"]*)"/', $overview['output'], $m);
+            self::assertSame('', json_decode(html_entity_decode($m[1], ENT_QUOTES | ENT_HTML5), true)['subtitle']['text']);
+        } finally {
+            self::q('DELETE FROM 202_dataengine WHERE user_id = ' . self::USER);
+            self::q('DELETE FROM 202_keywords WHERE keyword_id = 99087');
+            self::q('DELETE FROM 202_charts WHERE user_id = ' . self::USER);
+        }
+    }
+
     public function testPersonalSettingsSaysWhatAChangeDoesBeforeItIsSavedAndRecordsACurrencyOnTheOwnersWord(): void
     {
         $page = self::request('202-account/account.php');
@@ -189,6 +246,11 @@ final class LedgerCurrencyPagesIntegrationTest extends TestCase
         self::assertStringContainsString('Conversions already recorded are not converted: each keeps the currency it was recorded in', $text);
         self::assertStringContainsString('1 earlier conversion has no currency recorded', $text);
 
+        // What an ad platform was not sent for want of a currency waits on the owner's word too.
+        self::q('INSERT INTO 202_destination_deliveries SET user_id = ' . self::USER . ", destination_id = 990871, conv_id = 1, kind = 'conversion',"
+            . " status = 'withheld', attempts = 1, next_attempt_at = 0, last_error = "
+            . self::str(\Prosper202\Destinations\DestinationQueue::NO_CURRENCY) . ', created_at = 1');
+
         $saved = self::request('202-account/account.php', [
             'P202_SU_POST' => '{"record_unrecorded_currency":"1","earlier_currency":"GBP","token":"SESSION"}',
         ]);
@@ -196,6 +258,9 @@ final class LedgerCurrencyPagesIntegrationTest extends TestCase
         $currencies = self::$db->query('SELECT transaction_id, currency FROM 202_conversion_logs WHERE user_id = ' . self::USER . ' ORDER BY transaction_id');
         self::assertInstanceOf(\mysqli_result::class, $currencies);
         self::assertSame([['A', 'USD'], ['B', 'GBP']], $currencies->fetch_all(), 'only the conversion that had none');
+        $delivery = self::$db->query('SELECT status, attempts, last_error FROM 202_destination_deliveries WHERE user_id = ' . self::USER);
+        self::assertInstanceOf(\mysqli_result::class, $delivery);
+        self::assertSame([['pending', '0', null]], $delivery->fetch_all(), 'and what was held back for it is queued again');
 
         // A request with no session token records nothing.
         self::q("UPDATE 202_conversion_logs SET currency = '' WHERE user_id = " . self::USER . " AND transaction_id = 'B'");
