@@ -15,6 +15,9 @@ name: Adversarial Review
 
 on:
   pull_request:
+    # Only a PR into master, which is a version's release PR (owner,
+    # 2026-11-10): a PR into a version branch is not reviewed here.
+    branches: [master]
     types: [opened, synchronize, ready_for_review, reopened]
     paths:
       - 'api/**'
