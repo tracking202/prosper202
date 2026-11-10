@@ -2,17 +2,22 @@ name: Claude Code Review
 
 on:
   pull_request:
-    # Once per PR, not per push. The code-review plugin stops on a PR it has
-    # already commented on, so a run on a later push would be a green check
-    # that reviewed nothing. Later pushes to the risky paths are covered by
-    # adversarial-review, which rewrites its verdict on every push.
-    types: [opened, ready_for_review, reopened]
+    # On every push too (synchronize). The code-review plugin stops on a PR
+    # that already carries a review, which on a later push would be a green
+    # check that reviewed nothing: the appended prompt below tells it to
+    # review this head regardless and to answer complete=false if it did not.
+    types: [opened, synchronize, ready_for_review, reopened]
     # Optional: Only run on specific file changes
     # paths:
     #   - "src/**/*.ts"
     #   - "src/**/*.tsx"
     #   - "src/**/*.js"
     #   - "src/**/*.jsx"
+
+# A newer push replaces the review of the one before it.
+concurrency:
+  group: claude-code-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   claude-review:
@@ -94,7 +99,7 @@ jobs:
           claude_args: >-
             --allowedTools "Read,Grep,Glob,Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
             --disallowedTools "mcp__github_comment__update_claude_comment,mcp__github_inline_comment__create_inline_comment,Bash(gh api:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh issue comment:*),Bash(git push:*)"
-            --append-system-prompt "This run ends when you stop. Launch every agent with run_in_background set to false and wait for its report before the next step: an agent still running when you answer is lost. The pull request's whole diff is in .p202-review/pr.diff and its files are checked out: read them with Read, Grep and Glob rather than paging command output. Set complete to true only if every step of the review ran: every agent you launched reported, every issue you found was validated, and you read the whole diff. Otherwise set complete to false and say in report what did not run."
+            --append-system-prompt "This run ends when you stop. Launch every agent with run_in_background set to false and wait for its report before the next step: an agent still running when you answer is lost. The pull request's whole diff is in .p202-review/pr.diff and its files are checked out: read them with Read, Grep and Glob rather than paging command output. Set complete to true only if every step of the review ran: every agent you launched reported, every issue you found was validated, and you read the whole diff. Otherwise set complete to false and say in report what did not run. This run reviews the pull request's current head: a review or verdict comment already on the pull request is of an earlier push and is no reason to skip or shorten this one. If you stop without reviewing for that or any other reason, set complete to false."
             --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["FINDINGS","CLEAN"],"description":"FINDINGS when the review found any issue"},"findings":{"type":"integer","minimum":0,"description":"How many issues the review lists"},"complete":{"type":"boolean","description":"true only when every step of the review ran to its end; false when any agent did not report, any issue went unvalidated or the diff was not read in full"},"report":{"type":"string","minLength":1,"description":"The whole review in Markdown, every issue with its file and line"}},"required":["verdict","findings","complete","report"],"additionalProperties":false}'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
@@ -183,8 +188,8 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # Once per PR (the workflow runs when a PR opens): the verdict and the
-      # count, never the review.
+      # One comment per PR, rewritten for each head reviewed: the verdict and
+      # the count, never the review.
       - name: Publish the verdict
         env:
           GH_TOKEN: ${{ github.token }}
