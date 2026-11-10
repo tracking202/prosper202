@@ -109,6 +109,7 @@ jobs:
 
       - name: Adversarial review
         id: review
+        continue-on-error: true
         uses: anthropics/claude-code-action@61a9c274fa7110a66dfafc1bbbced03833eb25fe # v1.0.269
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -223,7 +224,7 @@ jobs:
       # Keep failed Claude output private: it may contain review details.
       - name: Encrypt failed Claude execution
         id: failed_execution
-        if: failure() && steps.review.outcome == 'failure'
+        if: steps.review.outcome == 'failure'
         env:
           EXECUTION_FILE: ${{ runner.temp }}/claude-execution-output.json
           REVIEW_KEY_FPR: BAB7BE5D3B34F59E9BD75C719878332A6782CC78
@@ -241,7 +242,7 @@ jobs:
           echo "captured=true" >> "$GITHUB_OUTPUT"
 
       - name: Keep encrypted failed execution
-        if: failure() && steps.failed_execution.outputs.captured == 'true'
+        if: steps.review.outcome == 'failure' && steps.failed_execution.outputs.captured == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: failed-claude-execution
@@ -249,8 +250,60 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # Examine only the provider's error result, never the review text, and
+      # publish no part of the execution file. Unknown failures stay red.
+      - name: Classify failed review
+        id: review_failure
+        if: steps.review.outcome == 'failure'
+        env:
+          EXECUTION_FILE: ${{ runner.temp }}/claude-execution-output.json
+        run: |
+          set -euo pipefail
+          if [ -s "$EXECUTION_FILE" ] && jq -e -s '
+            flatten | map(select(type == "object" and .type == "result")) | last |
+            .is_error == true and (.result | type == "string" and
+              test("^(You.ve hit your (weekly|daily|monthly|usage) limit|.*(rate_limit_error|rate limit (exceeded|reached)|insufficient_quota|credit balance is too low|usage limit (exceeded|reached)|subscription limit))"; "i"))
+          ' "$EXECUTION_FILE" > /dev/null 2>&1; then
+            echo 'limited=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report unavailable review
+        if: steps.review.outcome == 'failure' && steps.review_failure.outputs.limited == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          marker='<!-- adversarial-review -->'
+          body=$(mktemp)
+          {
+            echo "$marker"
+            echo '## Adversarial review: UNAVAILABLE'
+            echo
+            echo "For ${HEAD_SHA}: the review did not complete because a provider usage or subscription limit was reached. This push has not been reviewed. Retry [this run](${RUN_URL}) when capacity is available."
+          } > "$body"
+          cat "$body" >> "$GITHUB_STEP_SUMMARY"
+          echo '::warning::Adversarial review unavailable due to a provider limit; this push has not been reviewed.'
+          existing=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" | head -n 1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${existing}" -F body=@"$body" > /dev/null
+          else
+            gh pr comment "$PR" -R "$REPO" --body-file "$body"
+          fi
+
+      - name: Fail on other review errors
+        if: steps.review.outcome == 'failure' && steps.review_failure.outputs.limited != 'true'
+        run: |
+          echo '::error::The adversarial review failed; this push has not been reviewed. See the encrypted failed execution artifact if available.'
+          exit 1
+
       - name: Encrypt the findings
         id: findings
+        if: steps.review.outcome == 'success'
         env:
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
           # Set only when Claude actually ran: empty when the action skipped,
@@ -289,6 +342,7 @@ jobs:
           echo "findings=${findings}" >> "$GITHUB_OUTPUT"
 
       - name: Keep the encrypted findings with the run
+        if: steps.review.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: review-findings
@@ -302,6 +356,7 @@ jobs:
       # required on master, so a red one flags the PR without stopping a
       # merge.
       - name: Publish the verdict
+        if: steps.review.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           VERDICT: ${{ steps.findings.outputs.verdict }}
