@@ -472,6 +472,7 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
         $open = self::settings(self::ADMIN, self::REVIEW)['out'];
         self::assertStringContainsString('split automatically within the hour', self::rowOf($open, self::SHARED));
         self::assertStringNotContainsString('Not split automatically', self::rowOf($open, self::SHARED));
+        self::assertStringNotContainsString('you choose', self::rowOf($open, self::SHARED));
         self::assertStringContainsString('Not split automatically', self::rowOf($open, self::TAKEN));
 
         $done = (new \Prosper202\Setup\TrafficSourceOwners(new \Prosper202\Database\Connection(self::$db)))

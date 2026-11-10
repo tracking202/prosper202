@@ -37,12 +37,14 @@ final class UnrecordedSourceVariablesServedIntegrationTest extends TestCase
     private const STRAY_ACCOUNT = 4622;
     private const BARE_ACCOUNT = 4623;
     private const PUT_ON_ACCOUNT = 4624;
+    /** A second account of the owner's on the other user's source, saved before it as the first. */
+    private const SECOND_STRAY_ACCOUNT = 4625;
     private const CAMPAIGN = 4631;
     private const ROTATOR = 4641;
     private const SIMPLE_PAGE = 4651;
     private const ADVANCED_PAGE = 4652;
     /** Trackers: direct links, then redirector links, by the account each names. */
-    private const DIRECT = ['own' => 4661, 'stray' => 4662, 'bare' => 4663, 'put_on' => 4664];
+    private const DIRECT = ['own' => 4661, 'stray' => 4662, 'bare' => 4663, 'put_on' => 4664, 'stray2' => 4665];
     private const REDIRECTOR = ['own' => 4671, 'stray' => 4672];
     private const SECRET = 'sidebar-secret-value';
     private const SAID = 'p202 click: a click on traffic source account';
@@ -106,7 +108,7 @@ final class UnrecordedSourceVariablesServedIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $users = self::OWNER . ', ' . self::OTHER;
-        self::q("DELETE FROM 202_change_log WHERE entity = 'traffic_source_split'");
+        self::q("DELETE FROM 202_change_log WHERE entity IN ('traffic_source_split', 'unrecorded_variables_said')");
         self::q("DELETE FROM 202_dirty_hours WHERE user_id IN ($users)");
         // A split's copy has an id of its own.
         self::q('DELETE v FROM 202_ppc_network_variables AS v JOIN 202_ppc_networks AS n'
@@ -151,13 +153,13 @@ final class UnrecordedSourceVariablesServedIntegrationTest extends TestCase
             'parameter' => 'retired', 'placeholder' => '{retired}', 'deleted' => 1]);
         // The stray account was saved before its source was: the source may
         // have been the owner's, so the cron job leaves it (may_be_theirs).
-        foreach (
-            [self::OWN_ACCOUNT => self::OWN_SOURCE, self::STRAY_ACCOUNT => self::OTHER_SOURCE,
-            self::BARE_ACCOUNT => self::BARE_SOURCE, self::PUT_ON_ACCOUNT => self::PUT_ON_SOURCE] as $account => $source
-        ) {
+        $sourceOf = [self::OWN_ACCOUNT => self::OWN_SOURCE, self::STRAY_ACCOUNT => self::OTHER_SOURCE,
+            self::BARE_ACCOUNT => self::BARE_SOURCE, self::PUT_ON_ACCOUNT => self::PUT_ON_SOURCE,
+            self::SECOND_STRAY_ACCOUNT => self::OTHER_SOURCE];
+        foreach ($sourceOf as $account => $source) {
             self::row('202_ppc_accounts', ['ppc_account_id' => $account, 'user_id' => self::OWNER,
                 'ppc_network_id' => $source, 'ppc_account_name' => "account $account",
-                'ppc_account_time' => $account === self::STRAY_ACCOUNT ? $now - 100 : $now]);
+                'ppc_account_time' => $source === self::OTHER_SOURCE ? $now - 100 : $now]);
         }
         self::row('202_aff_campaigns', [
             'aff_campaign_id' => self::CAMPAIGN, 'aff_campaign_id_public' => self::CAMPAIGN + 100000,
@@ -175,7 +177,7 @@ final class UnrecordedSourceVariablesServedIntegrationTest extends TestCase
                 'landing_page_type' => $type, 'landing_page_time' => time()]);
         }
         $accounts = ['own' => self::OWN_ACCOUNT, 'stray' => self::STRAY_ACCOUNT, 'bare' => self::BARE_ACCOUNT,
-            'put_on' => self::PUT_ON_ACCOUNT];
+            'put_on' => self::PUT_ON_ACCOUNT, 'stray2' => self::SECOND_STRAY_ACCOUNT];
         foreach ([[self::DIRECT, 0], [self::REDIRECTOR, self::ROTATOR]] as [$trackers, $rotator]) {
             foreach ($trackers as $which => $tracker) {
                 self::row('202_trackers', [
@@ -194,6 +196,8 @@ final class UnrecordedSourceVariablesServedIntegrationTest extends TestCase
         if (self::$base === '') {
             self::fail('the click scripts could not be served');
         }
+        // Each test starts with nothing said for any account this hour.
+        self::q("DELETE FROM 202_change_log WHERE entity = 'unrecorded_variables_said'");
     }
 
     /**
@@ -336,45 +340,104 @@ final class UnrecordedSourceVariablesServedIntegrationTest extends TestCase
         self::assertSame([], $owners->splitAutomatically(), 'a second run finds nothing to do');
     }
 
-    /** With a cache the line is written once for each traffic source account until its entry expires. */
-    public function testWithACacheTheLineIsWrittenOnceForEachAccount(): void
+    /**
+     * The bound, with no cache at all (the served tree has no memcache
+     * here): however many clicks, one line an hour for each traffic source
+     * account, and a line again once the hour is over.
+     */
+    public function testWithoutACacheManyClicksInTheHourWriteOneLine(): void
     {
-        $reads = ClickPathReads::uncached(new Connection(self::requireScratch()));
+        $db = self::requireScratch();
+        $paths = array_column(iterator_to_array(self::strayClicks(), false), 0);
+        $log = '';
+        for ($n = 0; $n < 12; $n++) {
+            $log .= $this->click($paths[$n % 4] . '&placement=' . self::SECRET . '&adgroup=winter')['log'];
+        }
+        self::assertSame(1, substr_count($log, self::SAID), $log);
+        self::assertStringContainsString('Said once an hour for each traffic source account', $log);
+        self::assertSame(
+            [[(string) self::STRAY_ACCOUNT, (string) self::OWNER]],
+            $db->query("SELECT entity_id, actor_user_id FROM 202_change_log WHERE entity = 'unrecorded_variables_said'")
+                ->fetch_all(MYSQLI_NUM)
+        );
+
+        // Another account is another line; the hour over, the first is said again.
+        $other = $this->click('/tracking202/redirect/dl.php?t202id=' . (self::DIRECT['stray2'] + 100000)
+            . '&placement=' . self::SECRET);
+        self::assertSame(1, substr_count($other['log'], self::SAID . ' ' . self::SECOND_STRAY_ACCOUNT), $other['log']);
+        self::q("UPDATE 202_change_log SET changed_at = changed_at - 3601 WHERE entity = 'unrecorded_variables_said'");
+        $again = $this->click($paths[0] . '&placement=' . self::SECRET)['log']
+            . $this->click($paths[1] . '&placement=' . self::SECRET)['log'];
+        self::assertSame(1, substr_count($again, self::SAID . ' ' . self::STRAY_ACCOUNT), $again);
+    }
+
+    /**
+     * In one process: memcache, where there is one, spares the database's
+     * read; an account on its own source is never asked; and when what was
+     * said can be neither read nor kept, the line is still one an hour for
+     * the process, never one for each click.
+     */
+    public function testTheCacheSparesTheReadAndAFailureIsStillBounded(): void
+    {
+        $db = self::requireScratch();
+        $conn = new Connection($db);
+        $reads = ClickPathReads::uncached($conn);
         $said = new RecordingRowCache();
-        $note = new UnrecordedSourceVariables($reads, $said, 'test');
+        $note = new UnrecordedSourceVariables($reads, $conn, $said, 'test');
         $request = ['placement' => self::SECRET];
+        $rows = static fn (): int => (int) $db->query(
+            "SELECT COUNT(*) FROM 202_change_log WHERE entity = 'unrecorded_variables_said'"
+        )->fetch_row()[0];
         $log = (string) tempnam(sys_get_temp_dir(), 'p202note');
         $previous = ini_set('error_log', $log);
+        UnrecordedSourceVariables::forget();
         try {
-            $note->note(self::OWNER, self::STRAY_ACCOUNT, [], $request);
-            $note->note(self::OWNER, self::STRAY_ACCOUNT, [], $request);
+            for ($n = 0; $n < 5; $n++) {
+                $note->note(self::OWNER, self::STRAY_ACCOUNT, $request);
+            }
             $first = (string) file_get_contents($log);
-            // Another user's id with this account: not that user's account.
-            $note->note(self::OTHER, self::STRAY_ACCOUNT, [], $request);
-            $note->note(self::OWNER, self::OWN_ACCOUNT, [], $request);
-            // A click that read variables of its own lost none: nothing is asked.
             $asked = count($said->calls);
-            $fresh = new RecordingRowCache();
-            (new UnrecordedSourceVariables($reads, $fresh, 'test'))
-                ->note(self::OWNER, self::STRAY_ACCOUNT, [['placement', 1]], $request);
+            // An account on its own source, and one that came with no value: nothing said, nothing kept.
+            $note->note(self::OWNER, self::OWN_ACCOUNT, $request);
+            $note->note(self::OWNER, self::SECOND_STRAY_ACCOUNT, ['retired' => 'old']);
+            $kept = $rows();
+            // Told the source is the account's own, nothing is asked: no line, no row.
+            \Prosper202\Repository\LookupRepositoryFactory::noteUnrecordedVariables(
+                $db,
+                self::OWNER,
+                self::SECOND_STRAY_ACCOUNT,
+                true,
+                $request
+            );
             $all = (string) file_get_contents($log);
-            (new UnrecordedSourceVariables($reads))->note(self::OWNER, self::STRAY_ACCOUNT, [], $request);
-            (new UnrecordedSourceVariables($reads))->note(self::OWNER, self::STRAY_ACCOUNT, [], $request);
-            $unbounded = substr((string) file_get_contents($log), strlen($all));
+            $keptAfter = $rows();
+
+            // What was said can be neither read nor kept.
+            self::q('RENAME TABLE 202_change_log TO 202_change_log_away');
+            try {
+                $bare = new UnrecordedSourceVariables($reads, $conn);
+                for ($n = 0; $n < 5; $n++) {
+                    $bare->note(self::OWNER, self::STRAY_ACCOUNT, $request);
+                }
+            } finally {
+                self::q('RENAME TABLE 202_change_log_away TO 202_change_log');
+            }
+            $failed = substr((string) file_get_contents($log), strlen($all));
         } finally {
             ini_set('error_log', (string) $previous);
             @unlink($log);
+            UnrecordedSourceVariables::forget();
         }
 
         self::assertSame(1, substr_count($first, self::SAID), $first);
         self::assertStringContainsString('came with 1 custom variable value and is stored without it:', $first);
-        self::assertStringContainsString('Said once an hour for each traffic source account', $first);
         self::assertSame($first, $all, 'nothing more is said');
-        self::assertSame([], $fresh->calls, 'a click that read its variables asks nothing');
-        self::assertSame(3, $asked, 'two reads of what was said and one write: an account on its own source asks none');
-        self::assertSame(2, substr_count($unbounded, self::SAID), 'without a cache, every such click');
-        self::assertStringNotContainsString('Said once an hour', $unbounded);
-        self::assertStringNotContainsString(self::SECRET, $all . $unbounded);
+        self::assertSame(1, $kept, 'one row for the account, written once');
+        self::assertSame(1, $keptAfter, 'an account said to be on its own source is not looked at');
+        self::assertSame(6, $asked, 'five reads of the cache and one write: the database is read once');
+        self::assertSame(1, substr_count($failed, 'whether that was already said this hour could not be read or kept'));
+        self::assertSame(1, substr_count($failed, "\n"), $failed);
+        self::assertStringNotContainsString(self::SECRET, $all . $failed);
         self::assertSame(3600, UnrecordedSourceVariables::SAID_FOR_SECONDS);
     }
 }

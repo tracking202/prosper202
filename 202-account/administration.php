@@ -596,6 +596,8 @@ if ($tsReview && $tsOwners['controller'] !== null && $tsOwners['report'] !== nul
 // The notice: sources that wait for a decision, or splits of the last 30 days.
 $tsReport = $tsOwners['report'];
 $tsSaid = $tsReport !== null && ($tsReport['sources'] !== [] || $tsReport['splits'] !== []);
+// The splits of the last 30 days, a panel in a column of its own under the open panel.
+$tsSplitsColumn = ($tsPanel['splits'] ?? '') === '' ? '' : '<div class="col-12">' . $tsPanel['splits'] . '</div>';
 
 template_top('Administration');
 ?>
@@ -879,6 +881,7 @@ if ($tsOwners['error'] !== null) {
     <div class="col-12">
         <?php echo $tsPanel['panel']; ?>
     </div>
+        <?php echo $tsSplitsColumn; ?>
     <?php } ?>
 
 	<div class="col-12">

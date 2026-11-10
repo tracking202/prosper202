@@ -342,8 +342,9 @@ function p202_ts_owners_automatic(array $entry): string
 {
     $h = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
     if (($entry['auto_split'] ?? false) === true) {
-        return '<div class="mt-2"><span class="p202-pill p202-pill--good">split automatically within the hour</span>'
-            . '<div class="text-secondary">Each other user gets a copy of their own. You need do nothing.</div></div>';
+        return '<div><span class="p202-pill p202-pill--good">split automatically within the hour</span>'
+            . '<div class="text-secondary">Each other user gets a copy of their own, and nothing is moved. You need'
+            . ' do nothing; to move it instead, choose the user below before then.</div></div>';
     }
     $reasons = array_map(
         static fn (string $reason): string => '<li>' . $h(P202_TS_OWNERS_NOT_AUTOMATIC[$reason] ?? $reason) . '</li>',
@@ -393,11 +394,17 @@ function p202_ts_owners_splits(array $report): string
             . '</div></td></tr>';
     }
 
-    return '<h3 class="mt-4">Split in the last 30 days</h3>'
+    // A panel of its own, with the panel's own title: a bare heading in
+    // another panel's body renders at the browser's size (CLAUDE.md #19).
+    return '<section class="p202-panel" id="traffic-source-splits">'
+        . '<div class="p202-panel__head"><h2 class="p202-panel__title">Traffic sources split in the last 30 days</h2>'
+        . '<span class="p202-pill">' . count($splits) . '</span></div>'
+        . '<div class="p202-panel__body">'
         . '<p class="text-secondary">' . $h((string) ($report['splits_note'] ?? '')) . '</p>'
         . '<div class="p202-table-wrap"><table class="table p202-table" id="traffic-source-splits-table">'
         . '<thead><tr><th>Traffic source</th><th>Stays with</th><th>Given a copy</th><th>When</th></tr></thead>'
-        . '<tbody>' . $rows . '</tbody></table></div>';
+        . '<tbody>' . $rows . '</tbody></table></div>'
+        . '</div></section>';
 }
 
 /**
@@ -405,7 +412,8 @@ function p202_ts_owners_splits(array $report): string
  * of the page, outside the table's scrolling frame).
  *
  * @param array<string, mixed> $report the controller's report data, with counts
- * @return array{panel: string, modals: string}
+ * @return array{panel: string, splits: string, modals: string} splits: the panel of the last 30 days' splits,
+ *     '' when there is none; the page gives it a column of its own
  */
 function p202_ts_owners_panel(array $report, TrafficSourceOwnersController $controller, string $self): array
 {
@@ -459,14 +467,14 @@ function p202_ts_owners_panel(array $report, TrafficSourceOwnersController $cont
                         . '<div class="text-secondary">' . p202_ts_owners_holdings($party) . '</div></div>',
                     $entry['named_by']
                 )) . '</td>'
-                . '<td>' . p202_ts_owners_goes_to($entry) . p202_ts_owners_automatic($entry)
+                . '<td>' . (($entry['auto_split'] ?? false) === true ? '' : p202_ts_owners_goes_to($entry))
+                . p202_ts_owners_automatic($entry)
                 . '<div class="mt-2">' . $cell . '</div></td>'
                 . '</tr>';
             $modals .= $modal;
         }
         $panel .= '</tbody></table></div>';
     }
-    $panel .= p202_ts_owners_splits($report);
 
     $panel .= '<details class="p202-disclosure mt-3" data-p202-remember="settings-traffic-source-owners">'
         . '<summary>Advanced <span class="p202-disclosure__hint">why a source is listed, and the API</span></summary>'
@@ -502,7 +510,7 @@ function p202_ts_owners_panel(array $report, TrafficSourceOwnersController $cont
         . '</div></details>';
     $panel .= '</div></section>';
 
-    return ['panel' => $panel, 'modals' => $modals];
+    return ['panel' => $panel, 'splits' => p202_ts_owners_splits($report), 'modals' => $modals];
 }
 
 /**

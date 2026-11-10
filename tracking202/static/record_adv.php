@@ -183,7 +183,7 @@ foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $pp
     $db,
     (int) ($tracker_row['user_id'] ?? 0),
     (int) ($tracker_row['ppc_account_id'] ?? 0),
-    \Prosper202\Click\TrackerVariables::pairs($tracker_row),
+    (int) ($tracker_row['own_ppc_network_id'] ?? 0) > 0,
     $_GET
 );
 

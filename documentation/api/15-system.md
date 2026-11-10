@@ -494,10 +494,13 @@ put on another user's source) until the source is moved back or split.
   p202 click: a click on traffic source account 12 of user 2 came with 2 custom variable values and is stored without them: the account names traffic source 7, which is in user 3's account, …
   ```
 
-  Where memcache is in use the line is written once an hour for each traffic
-  source account, not for each click; without it, for each such click. A
-  click that came with no value for those variables, a source with no
-  variables and an account on its own user's source write nothing.
+  The line is written once an hour for each traffic source account, not for
+  each click, on every install: what was said is kept in the database (a row
+  a day old is removed by the cron job), with memcache in front of it where
+  it is in use. If that cannot be read or kept, each PHP process still says
+  it at most once an hour. A click that came with no value for those
+  variables, a source with no variables and an account on its own user's
+  source write nothing; an account on its own source is not looked at.
 - A landing page's script captures the variables it is given the names of,
   and it is given none for another user's source. Its clicks lose the values
   the same way, but the recorder never receives them, so the log has no line

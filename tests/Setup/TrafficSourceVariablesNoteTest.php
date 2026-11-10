@@ -77,6 +77,50 @@ final class TrafficSourceVariablesNoteTest extends TestCase
         self::assertStringNotContainsString('lost it. .', $all);
     }
 
+    /**
+     * 202_change_log holds two kinds of row, each under an entity of its
+     * own, and every statement on it names one: a reader added later (the
+     * table was made for a change feed) has to be listed here, and to say
+     * which entities it reads.
+     */
+    public function testEveryStatementOnTheChangeLogNamesItsEntity(): void
+    {
+        $users = [];
+        foreach (\Tests\Support\SourceScan::phpFiles() as $path => $source) {
+            if (str_contains($source, '202_change_log') || str_contains($source, 'TableRegistry::CHANGE_LOG')) {
+                $users[strtolower($path)] = preg_match_all('/(?:FROM|INTO) 202_change_log\b/', $source);
+            }
+        }
+        ksort($users);
+        self::assertSame([
+            '202-config/click/unrecordedsourcevariables.php' => 3,
+            '202-config/database/schema/tableregistry.php' => 0,
+            '202-config/database/tables/synctables.php' => 0,
+            '202-config/functions-upgrade.php' => 0,
+            '202-config/setup/trafficsourceowners.php' => 2,
+        ], $users);
+        $entities = ['202-config/Click/UnrecordedSourceVariables.php' => 'SAID_ENTITY',
+            '202-config/Setup/TrafficSourceOwners.php' => 'SPLIT_ENTITY'];
+        foreach ($entities as $path => $entity) {
+            $source = self::file($path);
+            $statements = preg_match_all('/(?:FROM|INTO) 202_change_log\b/', $source);
+            self::assertSame(
+                $statements,
+                preg_match_all('/(?:FROM|INTO) 202_change_log\b[^;]*?\bentity\b/s', $source),
+                $path . ': every statement names the entity column'
+            );
+            self::assertGreaterThanOrEqual(
+                $statements,
+                preg_match_all('/^\s+self::' . $entity . ',$|\[self::' . $entity . ',/m', $source),
+                $path . ': and binds ' . $entity . ' to it'
+            );
+        }
+        self::assertNotSame(
+            TrafficSourceOwners::SPLIT_ENTITY,
+            \Prosper202\Click\UnrecordedSourceVariables::SAID_ENTITY
+        );
+    }
+
     public function testEverySurfaceCarriesTheStatement(): void
     {
         $note = TrafficSourceOwners::VARIABLES_NOTE;
@@ -101,7 +145,10 @@ final class TrafficSourceVariablesNoteTest extends TestCase
             "'splits_note' => \$splits === [] ? null : TrafficSourceOwners::SPLITS_NOTE",
             $controller
         );
-        self::assertStringContainsString('p202_ts_owners_splits($report)', $ui, 'the panel lists what was split');
+        self::assertStringContainsString("'splits' => p202_ts_owners_splits(\$report)", $ui, 'splits are listed');
+        $page = self::file('202-account/administration.php');
+        self::assertStringContainsString("'<div class=\"col-12\">' . \$tsPanel['splits'] . '</div>'", $page);
+        self::assertStringContainsString('<?php echo $tsSplitsColumn; ?>', $page);
         foreach (
             ['Nothing was taken from the other user', 'record their custom variable values again',
             'values recorded earlier'] as $said
@@ -150,9 +197,10 @@ final class TrafficSourceVariablesNoteTest extends TestCase
                 $path . ' stores a traffic source\'s variables and must note a click that loses them'
             );
             self::assertMatchesRegularExpression(
-                '/noteUnrecordedVariables\\(\\s*\\$db,[^;]*,\\s*\\$_GET\\s*\\);/',
+                '/noteUnrecordedVariables\\(\\s*\\$db,[^;]*\\[\'own_ppc_network_id\'\\] \\?\\? 0\\) > 0,'
+                    . '\\s*\\$_GET\\s*\\);/',
                 $source,
-                $path . ' hands the note its own query'
+                $path . ' says whether the source is the account\'s own, and hands the note its own query'
             );
         }
         sort($storing);

@@ -90,7 +90,8 @@ if ($rsTrackerId !== null) {
 
     if ($tracker_row2 !== null) {
         $tracker_row = array_merge($tracker_row, array_intersect_key($tracker_row2, array_flip([
-            'text_ad_id', 'ppc_account_id', 'click_cpc', 'click_cloaking', 'ppc_variable_ids', 'parameters',
+            'text_ad_id', 'ppc_account_id', 'own_ppc_network_id', 'click_cpc', 'click_cloaking', 'ppc_variable_ids',
+            'parameters',
         ])));
 	}
 }
@@ -171,7 +172,7 @@ foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $pp
     $db,
     (int) ($tracker_row['user_id'] ?? 0),
     (int) ($tracker_row['ppc_account_id'] ?? 0),
-    \Prosper202\Click\TrackerVariables::pairs($tracker_row),
+    (int) ($tracker_row['own_ppc_network_id'] ?? 0) > 0,
     $_GET
 );
 

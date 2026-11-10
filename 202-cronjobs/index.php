@@ -452,6 +452,8 @@ function SplitTrafficSourcesOfOtherUsers(): void
             echo 'Traffic source ' . (int) $split['ppc_network_id'] . ': ' . count($split['copies'])
                 . ' user(s) given a copy of their own<br>';
         }
+        // What the click path noted saying for the sources still listed, kept a day.
+        \Prosper202\Click\UnrecordedSourceVariables::prune($conn);
     } catch (\Throwable $e) {
         error_log('The automatic traffic source split failed: ' . $e->getMessage());
     }

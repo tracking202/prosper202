@@ -478,9 +478,10 @@ if ($rtrCampaignRows) {
 		          WHERE v.ppc_network_id = pn.ppc_network_id AND v.deleted = 0) AS ppc_variable_ids,
 		        (SELECT GROUP_CONCAT(v.parameter ORDER BY v.ppc_variable_id)
 		           FROM 202_ppc_network_variables AS v
-		          WHERE v.ppc_network_id = pn.ppc_network_id AND v.deleted = 0) AS parameters
+		          WHERE v.ppc_network_id = pn.ppc_network_id AND v.deleted = 0) AS parameters,
+		        IFNULL(pn.ppc_network_id, 0) AS own_ppc_network_id
 		   FROM 202_ppc_accounts AS ppc
-		   JOIN 202_ppc_networks AS pn ON pn.ppc_network_id = ppc.ppc_network_id AND pn.user_id = ppc.user_id
+		   LEFT JOIN 202_ppc_networks AS pn ON pn.ppc_network_id = ppc.ppc_network_id AND pn.user_id = ppc.user_id
 		  WHERE ppc.ppc_account_id = '" . $mysql['ppc_account_id'] . "'
 		    AND ppc.user_id = '" . $db->real_escape_string((string) $user_id) . "'"
 	);
@@ -494,7 +495,7 @@ if ($rtrCampaignRows) {
                 $db,
                 (int) $user_id,
                 (int) $mysql['ppc_account_id'],
-                $rtrVariablePairs,
+                (int) ($rtrVariables['own_ppc_network_id'] ?? 0) > 0,
                 $_GET
             );
 	foreach ($rtrVariablePairs as [$rtrParameter, $rtrVariableId]) {
