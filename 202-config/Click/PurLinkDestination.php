@@ -4,19 +4,20 @@ declare(strict_types=1);
 
 namespace Prosper202\Click;
 
+use Prosper202\Conversion\TrafficSourcePixels;
+
 /**
  * The URL a redirect standing in for a PurLink goes to: the link's own
  * template when it is one of the campaign's URLs with another query (a deep
  * link), else the URL the campaign chose. Scheme, host, port and path must
- * be the campaign's: only the query may differ.
+ * be those of a URL the campaign's redirect uses (CampaignUrls): only the
+ * query may differ, and the [[tokens]] it holds are among the ones those
+ * URLs hold, so a link fills no value the campaign's own URL does not send.
  */
 final class PurLinkDestination
 {
     public const PARAM = 'p202_to';
     private const MAX_BYTES = 2048;
-    private const COLUMNS = [
-        'aff_campaign_url', 'aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4', 'aff_campaign_url_5',
-    ];
 
     private function __construct()
     {
@@ -25,7 +26,7 @@ final class PurLinkDestination
     /**
      * @param string $chosen the campaign URL the redirect would use (rotation applied)
      * @param mixed $requested the request's p202_to
-     * @param array<string, mixed> $campaign a row with aff_campaign_url and aff_campaign_url_2..5
+     * @param array<string, mixed> $campaign a row with aff_campaign_rotate, aff_campaign_url and aff_campaign_url_2..5
      */
     public static function choose(string $chosen, mixed $requested, array $campaign): string
     {
@@ -38,8 +39,8 @@ final class PurLinkDestination
         }
         $plain = self::withoutOfferMarker($requested);
         $samePlace = false;
-        foreach (self::COLUMNS as $column) {
-            $url = $campaign[$column] ?? null;
+        $tokens = [];
+        foreach (CampaignUrls::inRotation($campaign) as $url) {
             if (!is_string($url) || $url === '') {
                 continue;
             }
@@ -49,10 +50,24 @@ final class PurLinkDestination
             }
             if (self::place($url) === $place) {
                 $samePlace = true;
+                $tokens = array_merge($tokens, TrafficSourcePixels::tokensNamedIn($url));
             }
         }
+        if (!$samePlace) {
+            return $chosen;
+        }
+        // Less the tokens those URLs hold, no bracket pair may remain: one
+        // could be, or become once a token beside it is filled, a token the
+        // campaign's URL does not hold.
+        try {
+            $rest = TrafficSourcePixels::withoutTokens($requested, $tokens);
+        } catch (\RuntimeException $e) {
+            error_log('Prosper202 PurLink destination: ' . $e->getMessage() . '; the campaign\'s URL is used');
 
-        return $samePlace ? $requested : $chosen;
+            return $chosen;
+        }
+
+        return str_contains($rest, '[[') || str_contains($rest, ']]') ? $chosen : $requested;
     }
 
     /** scheme://host:port/path in one spelling, or null for a URL a redirect may not take. */

@@ -151,10 +151,11 @@ if ($cloaking_on == true) {
 }
 
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
-// A redirect standing in for a PurLink keeps the link's own deep link.
+// A redirect standing in for a PurLink keeps the link's own deep link: the
+// request's ($vars), as $_GET is the landing page's query by now.
 $redirect_site_url = \Prosper202\Click\PurLinkDestination::choose(
     (string) $redirect_site_url,
-    $_GET[\Prosper202\Click\PurLinkDestination::PARAM] ?? null,
+    $vars[\Prosper202\Click\PurLinkDestination::PARAM] ?? null,
     $tracker_row
 );
 

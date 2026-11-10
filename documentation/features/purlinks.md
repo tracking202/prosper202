@@ -35,9 +35,12 @@ return the same PurLinks as `purlink`.
   campaign that differ in a query parameter, such as a deep link
   (`…&acip=491&u=<product page>`), each still reach their own product while
   the SubID is being prepared, and when it could not be prepared. The redirect
-  takes a link's URL only when its scheme, host and path are the campaign
-  URL's; anything else goes to the campaign URL. A cloaked simple-page
-  campaign goes to the campaign URL.
+  takes a link's URL only when its scheme, host and path are those of a URL
+  the campaign's redirect uses (its first URL, and the rotation URLs when
+  rotation is on), and only when every `[[token]]` in it is one that URL
+  holds: a link may add or change plain parameters, and a token is filled
+  only where the campaign's own URL has it. Anything else goes to the
+  campaign URL. A cloaked simple-page campaign goes to the campaign URL.
 - Clicking, a middle-click, and open-in-new-tab all record the click-out. A
   right-click that only opens the menu does not.
 - The click-out is sent in the background (`fetch` with `keepalive`, or
@@ -168,9 +171,9 @@ The account's privacy setting (Settings › Privacy) does not stop PurLinks: a
 PurLink stores nothing in the visitor's browser, unless the page turns on
 [keeping the first click's SubID](#keeping-the-first-clicks-subid), and
 records what the tracker's redirect would. The setting does stop that kept
-SubID, as it stops the deferred pixel. It does stop the deferred pixel, which fires third-party
-pixels: a visitor the setting holds back (under `eu`, anyone who may be in
-Europe) gets no deferred pixel. The page's proofs travel in request bodies, never in a
+SubID, and it stops the deferred pixel, which fires third-party pixels: a
+visitor the setting holds back (under `eu`, anyone who may be in Europe) gets
+no deferred pixel. The page's proofs travel in request bodies, never in a
 URL, a cookie or a referrer, and the requests send no cookies.
 
 ## Limits
