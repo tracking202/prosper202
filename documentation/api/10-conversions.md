@@ -35,7 +35,7 @@ uploading a revenue report — the UI's Update section — are in the
 | `time_to` | string | — | End, inclusive: the same forms; a date runs through its last second |
 | `click_id` | integer | — | Only this click's conversions |
 | `source` | string | — | Only conversions this source produced (`pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `shopify`, `app_install`, `goal`, `legacy_baseline`) |
-| `match_method` | string | — | Only conversions whose click was found this way (`click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown`; [below](#how-each-conversions-click-was-found)) |
+| `match_method` | string | — | Only conversions whose click was found this way (`click_id`, `ad_click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown`; [below](#how-each-conversions-click-was-found)) |
 | `goal` | integer | — | Only this goal's outcomes, under every version of it |
 
 A filter value that cannot be read — `click_id=7x`, an unknown `source` or `match_method`, a
@@ -62,6 +62,7 @@ conversion stores one:
 | `match_method` | The click was found by | Paths |
 | -------------- | ---------------------- | ----- |
 | `click_id` | the request naming it | a `subid`/`sid` on `gpx.php`, `upx.php`, `gpb.php` and `pb.php`; ClickBank's tracking code (`cb202.php`); `POST /conversions` and `POST /events`; a line of Update Subids or of a revenue upload; an app install's signed token, and the goals its events reach |
+| `ad_click_id` | an ad platform's click id the postback sent back (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid` or `fbclid`), carried by exactly one click with a visit in the last 30 days | `gpb.php` when its `subid` is empty or arrives as the network's unfilled macro |
 | `cookie` | a tracking cookie in the visitor's browser | `gpx.php` and `upx.php` with no subid (the campaign's `tracking202subid_a_<cid>` cookie, then `tracking202subid`); `px.php` |
 | `visitor_id` | the landing-page script's own visitor id (`p202lpid`), on the click it was last seen on | `p202.track()` events (`event.php`) |
 | `same_ip` | nothing naming a click: the account's latest click from the visitor's address in the last 30 days, a guess, made only for an account with the [same-IP fallback](14-users.md#same-ip-fallback-user_pref_same_ip_fallback) on and a visitor the privacy setting does not hold back | `gpx.php`, `upx.php` and `px.php` with neither a subid nor a cookie |
@@ -96,7 +97,7 @@ label. `GET /conversions/match-methods` counts them per campaign:
     {"match_method": "click_id", "match_method_label": "Click id", "conversions": 40, "counted": 38, "income": 190.0},
     {"match_method": "cookie", "match_method_label": "Cookie", "conversions": 0, "counted": 0, "income": 0.0}
   ],
-  "match_methods": ["click_id", "cookie", "visitor_id", "same_ip", "unknown"]
+  "match_methods": ["click_id", "ad_click_id", "cookie", "visitor_id", "same_ip", "unknown"]
 }
 ```
 

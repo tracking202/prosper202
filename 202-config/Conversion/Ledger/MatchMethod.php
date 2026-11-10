@@ -17,6 +17,10 @@ use Prosper202\Database\Connection;
  *  - click_id: the request named the click — a subid or sid parameter,
  *    ClickBank's tracking code, the click id of an API call or of an upload
  *    line, or an app install's signed token;
+ *  - ad_click_id: a server postback whose SubID was not filled in sent
+ *    back an ad platform's click id (gclid, gbraid, wbraid, ttclid,
+ *    msclkid, fbclid) that exactly one click carries
+ *    (Prosper202\Click\ClickByAdClickId);
  *  - cookie: a tracking cookie in the visitor's browser named it (the
  *    campaign's tracking202subid_a_<id>, or tracking202subid);
  *  - visitor_id: the landing-page script's own visitor id (p202lpid), on
@@ -31,6 +35,7 @@ use Prosper202\Database\Connection;
 enum MatchMethod: string
 {
     case CLICK_ID = 'click_id';
+    case AD_CLICK_ID = 'ad_click_id';
     case COOKIE = 'cookie';
     case VISITOR_ID = 'visitor_id';
     case SAME_IP = 'same_ip';
@@ -41,6 +46,7 @@ enum MatchMethod: string
     {
         return match ($this) {
             self::CLICK_ID => 'Click id',
+            self::AD_CLICK_ID => 'Ad click id',
             self::COOKIE => 'Cookie',
             self::VISITOR_ID => 'Visitor id',
             self::SAME_IP => 'Same IP',

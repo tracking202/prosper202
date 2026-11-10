@@ -793,6 +793,87 @@ if (!function_exists('p202ParseClickId')) {
     }
 }
 
+if (!function_exists('p202ClickByAdClickId')) {
+    /**
+     * The click a server postback means when it names none: the one click
+     * carrying an ad click id it sends back (Prosper202\Click\ClickByAdClickId),
+     * under the id's own name (gclid, ...) or in a parameter an account
+     * lists (ClickIdParameters). Asked only where the SubID is missing:
+     * subid and sid each absent, blank or the network's unfilled macro
+     * (UnfilledPlaceholder). A SubID that is present and names no click is
+     * refused by the caller as before, and never reaches this.
+     *
+     * Null when the SubID is not missing or the request sends no ad click
+     * id: the caller answers as it always has. Otherwise the click, or the
+     * request ends here: no click carries the id (404), more than one could
+     * be meant (409), or the lookup failed (500, so a sender that retries
+     * failures does). The ids' values go to no log.
+     *
+     * An id under its own name may find any account's click; one in a listed
+     * parameter only a click of the account listing it (`owners`, which the
+     * caller holds the click's owner to). Either way the caller holds the
+     * request to the owner's postback authentication before anything is
+     * written, as it does for a click a SubID names.
+     *
+     * @param array<array-key, mixed> $request p202PostbackRequest()'s
+     * @return array{click_id: int, owners: list<int>|null}|null
+     */
+    function p202ClickByAdClickId(mysqli $db, array $request, string $endpoint): ?array
+    {
+        foreach (['subid', 'sid'] as $name) {
+            if (!\Prosper202\Conversion\UnfilledPlaceholder::isMissing($request[$name] ?? null)) {
+                return null;
+            }
+        }
+        $conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
+        $sent = \Prosper202\Click\ClickByAdClickId::sent($request);
+        $unreadable = $sent['unreadable'];
+        $names = array_keys($sent['ids']);
+        $ownIds = [];
+        $found = null;
+        try {
+            foreach (\Prosper202\Conversion\ClickIdParameters::ofEveryAccount($conn) as $userId => $listed) {
+                $own = \Prosper202\Click\ClickByAdClickId::sent($request, $listed);
+                $unreadable ??= $own['unreadable'];
+                if ($own['ids'] !== []) {
+                    $ownIds[$userId] = $own['ids'];
+                    $names = [...$names, ...array_keys($own['ids'])];
+                }
+            }
+            if ($unreadable === null && $names !== []) {
+                $found = \Prosper202\Click\ClickByAdClickId::find(
+                    $conn,
+                    $sent['ids'],
+                    $ownIds,
+                    time() - \Prosper202\Click\ClickByAdClickId::LOOKBACK
+                );
+            }
+        } catch (\Throwable $lookupError) {
+            error_log($endpoint . ': the click could not be looked up by the ad click id sent: '
+                . $lookupError->getMessage());
+            p202RespondJsonError(500, 'Failed to look the click up by the ad click id sent');
+        }
+        if ($unreadable !== null) {
+            p202RespondJsonError(404, 'SubID not found, and ' . $unreadable . ' is not a click id');
+        }
+        if ($found === null) {
+            return null;
+        }
+        if ($found['status'] === \Prosper202\Click\ClickByAdClickId::AMBIGUOUS) {
+            p202RespondJsonError(409, 'SubID not found. ' . $found['why'] . ' No conversion was recorded.');
+        }
+        if ($found['status'] !== \Prosper202\Click\ClickByAdClickId::ONE || $found['click_id'] === null) {
+            p202RespondJsonError(404, 'SubID not found, and no click of the last 30 days carries the '
+                . implode(', ', array_unique($names)) . ' sent');
+        }
+        \Prosper202\InboundLog\RequestLog::current()?->clickFoundBy(
+            'The SubID was not filled in; the click was found by the ' . implode(', ', $found['matched']) . ' sent.'
+        );
+
+        return ['click_id' => $found['click_id'], 'owners' => $found['owners']];
+    }
+}
+
 if (!function_exists('p202LinkConversionIdentity')) {
     /**
      * Link the converting click to the signed customer id the conversion

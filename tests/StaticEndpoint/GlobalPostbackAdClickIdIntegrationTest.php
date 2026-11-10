@@ -1,0 +1,415 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\StaticEndpoint;
+
+use PHPUnit\Framework\TestCase;
+use Prosper202\Click\ClickByAdClickId;
+use Prosper202\Click\LatestVisit;
+use Prosper202\Database\Connection;
+
+/**
+ * A global postback (gpb.php) whose SubID was not filled in (empty, or the
+ * network's macro as pasted) records its conversion on the one click that
+ * carries an ad click id it sends back, as `ad_click_id`; and records nothing
+ * when no click, or more than one, could be meant. A SubID that is there is
+ * read exactly as before. gpb.php runs in a process of its own
+ * (fixtures/gpb-runner.php), as the web server runs it.
+ *
+ * Needs a 202-config.php (connect2.php's DB class lives there) and P202_TEST_DB_*.
+ *
+ * @group integration
+ */
+final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
+{
+    use \Tests\Report\ScratchReportDatabase;
+
+    private const USER = 990725;
+    /** An account whose postbacks need its token, and are sent none here. */
+    private const OTHER_USER = 990726;
+
+    private const CLICK = 99072501;
+    private const OLD_CLICK = 99072502;
+    private const TWIN_A = 99072503;
+    private const TWIN_B = 99072504;
+    private const OTHER_USERS_CLICK = 99072505;
+    private const RE_CLICKED = 99072506;
+    private const MICROSOFT_CLICK = 99072507;
+
+    private const GCLID = 'Cj0KCQiA-demo_Shop-CLICK';
+    private const OLD_GCLID = 'Cj0KCQiA-demo_Shop-OLD';
+    private const TWIN_GCLID = 'Cj0KCQiA-demo_Shop-TWIN';
+    private const OTHER_GCLID = 'Cj0KCQiA-demo_Shop-OTHER';
+    private const RE_GCLID = 'Cj0KCQiA-demo_Shop-RE';
+    private const MSCLKID = '0123456789abcdef0123456789abcdef';
+
+    /** click => [owner, ad click ids, seconds since its visits] */
+    private const CLICKS = [
+        self::CLICK => [self::USER, ['gclid' => self::GCLID], [600]],
+        self::OLD_CLICK => [self::USER, ['gclid' => self::OLD_GCLID], [ClickByAdClickId::LOOKBACK + 3600]],
+        self::TWIN_A => [self::USER, ['gclid' => self::TWIN_GCLID], [600]],
+        self::TWIN_B => [self::USER, ['gclid' => self::TWIN_GCLID], [500]],
+        self::OTHER_USERS_CLICK => [self::OTHER_USER, ['gclid' => self::OTHER_GCLID], [600]],
+        self::RE_CLICKED => [self::USER, ['gclid' => self::RE_GCLID], [ClickByAdClickId::LOOKBACK + 3600, 600]],
+        self::MICROSOFT_CLICK => [self::USER, ['msclkid' => self::MSCLKID], [600]],
+    ];
+    private const CLICK_TABLES = ['202_clicks', '202_clicks_spy', '202_clicks_tracking', '202_click_latest_visits',
+        '202_conversion_logs', '202_dataengine', '202_google', '202_inbound_log'];
+
+    /** @var array<int, int> */
+    private static array $campaigns = [];
+
+    public static function setUpBeforeClass(): void
+    {
+        if (!is_file(dirname(__DIR__, 2) . '/202-config.php')) {
+            self::markTestSkipped('No 202-config.php: connect2.php has no DB class without one.'
+                . ' tests/run-integration-suites.sh writes one.');
+        }
+        if (!self::connectScratch()) {
+            return;
+        }
+        self::cleanUp();
+        foreach ([self::USER, self::OTHER_USER] as $user) {
+            self::user($user);
+            self::$campaigns[$user] = self::insert("INSERT INTO 202_aff_campaigns SET user_id = $user,"
+                . " aff_network_id = 0, aff_campaign_name = 'Store checkout $user',"
+                . " aff_campaign_url = 'https://shop.example',"
+                . ' aff_campaign_payout = 3.00, aff_campaign_foreign_payout = 3.00, aff_campaign_time = 0,'
+                . " payout_mode = 'replace'");
+        }
+        self::postbackAuthOff(self::USER);
+        foreach ([self::USER, self::OTHER_USER] as $user) {
+            self::row('202_users_pref', ['user_id' => $user]);
+        }
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        if (self::$db !== null) {
+            self::cleanUp();
+        }
+    }
+
+    protected function setUp(): void
+    {
+        self::requireScratch();
+        self::deleteClicks();
+        self::lists(self::USER, '');
+        self::lists(self::OTHER_USER, '');
+        foreach (self::CLICKS as $click => [$user, $ids, $ages]) {
+            foreach ($ages as $age) {
+                $columns = "click_id = $click, user_id = $user, aff_campaign_id = " . self::$campaigns[$user]
+                    . ', landing_page_id = 0, ppc_account_id = 0, click_cpc = 0.25, click_payout = 3.00,'
+                    . ' click_lead = 0, click_time = ' . (time() - $age);
+                self::q("INSERT INTO 202_clicks SET $columns");
+            }
+            self::q("INSERT INTO 202_clicks_spy SET $columns");
+            self::q("INSERT INTO 202_clicks_tracking SET click_id = $click, c1_id = 0, c2_id = 0, c3_id = 0,"
+                . ' c4_id = 0');
+            self::row('202_google', $ids + ['click_id' => $click, 'gclid' => '', 'utm_source_id' => 0,
+                'utm_medium_id' => 0, 'utm_campaign_id' => 0, 'utm_term_id' => 0, 'utm_content_id' => 0]);
+            LatestVisit::refresh(new Connection(self::$db), $click);
+        }
+    }
+
+    /** $user's Match conversions by ad click id setting. */
+    private static function lists(int $user, string $parameters): void
+    {
+        self::q('UPDATE 202_users_pref SET user_pref_click_id_params = ' . self::str($parameters)
+            . " WHERE user_id = $user");
+    }
+
+    private static function deleteClicks(): void
+    {
+        foreach (array_keys(self::CLICKS) as $click) {
+            self::q('DELETE FROM 202_attribution_pending WHERE conv_id IN'
+                . " (SELECT conv_id FROM 202_conversion_logs WHERE click_id = $click)");
+            foreach (self::CLICK_TABLES as $table) {
+                self::q("DELETE FROM $table WHERE click_id = $click");
+            }
+        }
+        self::q('DELETE FROM 202_inbound_log WHERE user_id IN (0, ' . self::USER . ', ' . self::OTHER_USER . ')');
+    }
+
+    private static function cleanUp(): void
+    {
+        self::deleteClicks();
+        $tables = ['202_aff_campaigns', '202_revenue_events', '202_dirty_hours', '202_postback_auth', '202_users_pref',
+            '202_users'];
+        foreach ($tables as $table) {
+            self::q("DELETE FROM $table WHERE user_id IN (" . self::USER . ', ' . self::OTHER_USER . ')');
+        }
+    }
+
+    /**
+     * @param array<string, string> $get
+     * @param array<string, string> $post
+     * @return array{int, string} status and body
+     */
+    private static function gpb(array $get, array $post = []): array
+    {
+        $env = getenv();
+        $env['P202_TEST_GET'] = json_encode((object) $get, JSON_THROW_ON_ERROR);
+        $env['P202_TEST_POST'] = json_encode((object) $post, JSON_THROW_ON_ERROR);
+        $proc = proc_open(
+            [PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_log=', __DIR__ . '/fixtures/gpb-runner.php'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            null,
+            $env
+        );
+        self::assertIsResource($proc);
+        $out = (string) stream_get_contents($pipes[1]);
+        $err = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exit = proc_close($proc);
+        self::assertSame(0, $exit, "gpb-runner exited $exit: $err\n$out");
+        foreach ([self::GCLID, self::TWIN_GCLID, self::OTHER_GCLID, self::OLD_GCLID, self::MSCLKID] as $id) {
+            self::assertStringNotContainsString($id, $err . $out, 'no answer or log line carries an id\'s value');
+        }
+        [$status, $body] = explode("\n", $out, 2) + [1 => ''];
+
+        return [(int) $status, $body];
+    }
+
+    /** @return list<array{string, string, string}> click, payout and match method of each conversion */
+    private static function conversions(): array
+    {
+        return self::all('SELECT click_id, click_payout, match_method FROM 202_conversion_logs WHERE click_id IN ('
+            . implode(',', array_keys(self::CLICKS)) . ') ORDER BY conv_id');
+    }
+
+    /** @return list<array<int, string>> */
+    private static function all(string $sql): array
+    {
+        $result = self::$db->query($sql);
+        if (!$result instanceof \mysqli_result) {
+            throw new \RuntimeException(self::$db->error . ' in ' . $sql);
+        }
+
+        return $result->fetch_all(MYSQLI_NUM);
+    }
+
+    public function testAnUnfilledSubidIsMatchedByTheGclidSentBack(): void
+    {
+        [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '12.50', 'gclid' => self::GCLID]);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame([[(string) self::CLICK, '12.50000', 'ad_click_id']], self::conversions());
+        $logged = self::all(
+            'SELECT outcome, reason, click_id, fields FROM 202_inbound_log WHERE user_id = ' . self::USER
+        );
+        self::assertCount(1, $logged);
+        self::assertSame('recorded', $logged[0][0]);
+        self::assertStringContainsString('the click was found by the gclid sent', $logged[0][1]);
+        self::assertSame((string) self::CLICK, $logged[0][2]);
+        self::assertStringNotContainsString(self::GCLID, $logged[0][3], 'the log keeps no id');
+    }
+
+    public function testAnEmptySubidAndANetworksOwnMacroAreUnfilledToo(): void
+    {
+        [$status, $body] = self::gpb(['amount' => '', 'subid' => ''], ['amount' => '4', 'msclkid' => self::MSCLKID]);
+        self::assertSame(200, $status, $body);
+        [$status, $body] = self::gpb(['subid' => '{aff_sub}', 'sid' => '', 'gclid' => self::RE_GCLID, 'amount' => '6']);
+        self::assertSame(200, $status, $body);
+
+        self::assertSame([
+            [(string) self::MICROSOFT_CLICK, '4.00000', 'ad_click_id'],
+            // Visited twice, once before the 30 days: one click, with a visit inside them.
+            [(string) self::RE_CLICKED, '6.00000', 'ad_click_id'],
+        ], self::conversions());
+    }
+
+    public function testASubidThatIsThereIsReadAsBefore(): void
+    {
+        // The ids sent beside it would name no click, or two: they are not asked.
+        [$status, $body] = self::gpb(['subid' => (string) self::CLICK, 'amount' => '5', 'gclid' => self::TWIN_GCLID]);
+        self::assertSame(200, $status, $body);
+        self::assertSame([[(string) self::CLICK, '5.00000', 'click_id']], self::conversions());
+    }
+
+    public function testASubidThatNamesNoClickIsNotReplacedByAnId(): void
+    {
+        foreach (['12abc', self::CLICK . '.0', '999999999999'] as $subid) {
+            [$status, $body] = self::gpb(['subid' => $subid, 'amount' => '5', 'gclid' => self::GCLID]);
+            self::assertSame(404, $status, $subid);
+            self::assertStringNotContainsString('carries', $body, $subid);
+        }
+        self::assertSame([], self::conversions());
+    }
+
+    public function testAnUnfilledSubidWithNoIdIsAnsweredAsBefore(): void
+    {
+        [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => '{aff_sub3}']);
+
+        self::assertSame(404, $status);
+        self::assertSame('SubID not found', json_decode($body, true)['msg'] ?? null);
+        self::assertSame([], self::conversions());
+    }
+
+    public function testAnotherAccountsClickNeedsThatAccountsAuthentication(): void
+    {
+        // One click carries the id, inside the 30 days: only its account's token requirement stands in the way.
+        [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => self::OTHER_GCLID]);
+
+        self::assertSame(403, $status, $body);
+        self::assertSame([], self::conversions());
+        self::assertSame([['unauthenticated', (string) self::OTHER_USER]], self::all(
+            'SELECT outcome, user_id FROM 202_inbound_log WHERE user_id IN (' . self::USER . ', ' . self::OTHER_USER
+                . ')'
+        ));
+    }
+
+    public function testTwoClicksCarryingTheIdRecordNothing(): void
+    {
+        [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => self::TWIN_GCLID]);
+
+        self::assertSame(409, $status, $body);
+        self::assertStringContainsString('More than one click carries the gclid', $body);
+        self::assertSame([], self::conversions());
+        self::assertSame([['refused']], self::all('SELECT outcome FROM 202_inbound_log WHERE user_id = 0'));
+    }
+
+    public function testIdsNamingDifferentClicksRecordNothing(): void
+    {
+        [$status, $body] = self::gpb(
+            ['subid' => '', 'amount' => '5', 'gclid' => self::GCLID, 'msclkid' => self::MSCLKID]
+        );
+
+        self::assertSame(409, $status, $body);
+        self::assertStringContainsString('name different clicks', $body);
+        self::assertSame([], self::conversions());
+    }
+
+    public function testAClickOlderThanThirtyDaysIsNotMatched(): void
+    {
+        [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => self::OLD_GCLID]);
+
+        self::assertSame(404, $status, $body);
+        self::assertStringContainsString('no click of the last 30 days carries the gclid sent', $body);
+        self::assertSame([], self::conversions());
+    }
+
+    public function testAnIdIsComparedExactly(): void
+    {
+        $nearly = [strtoupper(self::GCLID), strtolower(self::GCLID), substr(self::GCLID, 0, -1), self::GCLID . 'x',
+            strtoupper(self::MSCLKID)];
+        foreach ($nearly as $i => $id) {
+            $name = $i < 4 ? 'gclid' : 'msclkid';
+            [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', $name => $id]);
+            self::assertSame(404, $status, "$id: $body");
+        }
+        // The right id under the wrong name is another id.
+        [$status] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gbraid' => self::GCLID]);
+        self::assertSame(404, $status);
+        self::assertSame([], self::conversions());
+    }
+
+    public function testAnIdThatFillsItsColumnNamesNoClick(): void
+    {
+        // The column may have cut it: it then stands for every id that starts so.
+        $filled = str_repeat('w', \Prosper202\Click\ClickRecord::AD_CLICK_IDS['gbraid']);
+        self::q('UPDATE 202_google SET gbraid = ' . self::str($filled) . ' WHERE click_id = ' . self::CLICK);
+        [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gbraid' => $filled]);
+        self::assertSame(404, $status, $body);
+
+        // One character shorter is an id the column holds whole.
+        $whole = substr($filled, 1);
+        self::q('UPDATE 202_google SET gbraid = ' . self::str($whole) . ' WHERE click_id = ' . self::CLICK);
+        [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gbraid' => $whole]);
+        self::assertSame(200, $status, $body);
+        self::assertSame([[(string) self::CLICK, '5.00000', 'ad_click_id']], self::conversions());
+    }
+
+    public function testAnIdNoClickCarriesBesideOneThatDoesIsLeftOut(): void
+    {
+        [$status, $body] = self::gpb(
+            ['subid' => '[[subid]]', 'amount' => '5', 'gclid' => self::GCLID, 'fbclid' => 'IwAR0-demo-unknown']
+        );
+
+        self::assertSame(200, $status, $body);
+        self::assertSame([[(string) self::CLICK, '5.00000', 'ad_click_id']], self::conversions());
+    }
+
+    public function testAParameterTheAccountListsCarriesAnIdOfAnyKind(): void
+    {
+        self::lists(self::USER, 'aff_sub3,sub5');
+
+        [$status, $body] = self::gpb(['subid' => '{aff_sub}', 'amount' => '8', 'aff_sub3' => self::GCLID]);
+        self::assertSame(200, $status, $body);
+        // Sent as the network spells it; names are read without case.
+        [$status, $body] = self::gpb(['subid' => '', 'amount' => '9'], ['SUB5' => self::MSCLKID]);
+        self::assertSame(200, $status, $body);
+
+        self::assertSame([
+            [(string) self::CLICK, '8.00000', 'ad_click_id'],
+            [(string) self::MICROSOFT_CLICK, '9.00000', 'ad_click_id'],
+        ], self::conversions());
+        self::assertStringContainsString('the click was found by the aff_sub3 sent', self::all(
+            'SELECT reason FROM 202_inbound_log WHERE click_id = ' . self::CLICK
+        )[0][0]);
+    }
+
+    public function testAParameterNoAccountListsIsNotRead(): void
+    {
+        [$status, $body] = self::gpb(['subid' => '{aff_sub}', 'amount' => '8', 'aff_sub3' => self::GCLID]);
+
+        self::assertSame(404, $status);
+        self::assertSame('SubID not found', json_decode($body, true)['msg'] ?? null);
+        self::assertSame([], self::conversions());
+    }
+
+    public function testAListedParameterFindsOnlyItsOwnAccountsClicks(): void
+    {
+        // The other account's click: one click, inside the 30 days, carrying the id.
+        self::lists(self::USER, 'aff_sub3');
+        [$status, $body] = self::gpb(['subid' => '{aff_sub}', 'amount' => '8', 'aff_sub3' => self::OTHER_GCLID]);
+        self::assertSame(404, $status, $body);
+        self::assertStringContainsString('no click of the last 30 days carries the aff_sub3 sent', $body);
+
+        // And the other way round: only the other account lists it, and the click is this account's.
+        self::lists(self::USER, '');
+        self::lists(self::OTHER_USER, 'aff_sub3');
+        [$status, $body] = self::gpb(['subid' => '{aff_sub}', 'amount' => '8', 'aff_sub3' => self::GCLID]);
+        self::assertSame(404, $status, $body);
+
+        self::assertSame([], self::conversions());
+    }
+
+    public function testAListedParametersValueCarriedByTwoClicksUnderDifferentKindsRecordsNothing(): void
+    {
+        // One click holds it as its msclkid, another as its gbraid: each kind has one click.
+        self::q('UPDATE 202_google SET gbraid = ' . self::str(self::MSCLKID) . ' WHERE click_id = ' . self::CLICK);
+        self::lists(self::USER, 'aff_sub3');
+
+        [$status, $body] = self::gpb(['subid' => '{aff_sub}', 'amount' => '8', 'aff_sub3' => self::MSCLKID]);
+
+        self::assertSame(409, $status, $body);
+        self::assertStringContainsString('More than one click carries the aff_sub3', $body);
+        self::assertSame([], self::conversions());
+    }
+
+    public function testAStoredSettingThatIsNotAListOfNamesIsNotRead(): void
+    {
+        // Not as the settings write it (lower case): it is not guessed at.
+        self::lists(self::USER, 'Aff_Sub3');
+        [$status, $body] = self::gpb(['subid' => '{aff_sub}', 'amount' => '8', 'aff_sub3' => self::GCLID]);
+
+        self::assertSame(404, $status, $body);
+        self::assertSame([], self::conversions());
+    }
+
+    public function testTheLookupReadsEachIdsOwnKey(): void
+    {
+        $keys = array_column(self::all('SHOW INDEX FROM 202_google'), 2);
+        foreach (['by_gclid', 'by_gbraid', 'by_wbraid', 'by_ttclid', 'by_msclkid', 'by_fbclid'] as $key) {
+            self::assertContains($key, $keys);
+        }
+        $plan = self::$db->query('EXPLAIN SELECT g.click_id, g.gclid FROM 202_google AS g'
+            . " WHERE g.gclid = 'x' ORDER BY g.click_id DESC LIMIT 21");
+        self::assertInstanceOf(\mysqli_result::class, $plan);
+        self::assertSame('by_gclid', $plan->fetch_assoc()['key'] ?? null);
+    }
+}

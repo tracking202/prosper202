@@ -4963,7 +4963,9 @@ class UPGRADE
                 // 202_users_pref gains shopify_webhook_secret, which Shopify's
                 // order webhooks are verified with (ShopifyWebhookSecret),
                 // jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole),
-                // and the consent columns (ConsentPolicy); the messaging tables carry them.
+                // the consent columns (ConsentPolicy; the messaging tables carry them),
+                // and user_pref_click_id_params, the postback parameters an
+                // account's networks send an ad click id back in (ClickIdParameters).
                 \Prosper202\Database\Tables\UserTables::usersPref(),
                 \Prosper202\Database\Tables\CoreTables::messagingEvents(),
                 \Prosper202\Database\Tables\CoreTables::messagingAttributes(),
@@ -5009,6 +5011,10 @@ class UPGRADE
                 // attribution worker's run carries on (AttributionWorker::
                 // fanOutModelRecomputes()). Every model already there is at 0.
                 \Prosper202\Database\Tables\AttributionTables::attributionModels(),
+                // 202_google gains a key on each ad click id, which a global
+                // postback with no SubID finds its click by
+                // (Prosper202\Click\ClickByAdClickId).
+                \Prosper202\Database\Tables\TrackingTables::google(),
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();

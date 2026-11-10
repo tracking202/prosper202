@@ -33,7 +33,7 @@ enum LeftOut: string
     public static function forMatch(MatchMethod $method): ?self
     {
         return match ($method) {
-            MatchMethod::CLICK_ID, MatchMethod::COOKIE => null,
+            MatchMethod::CLICK_ID, MatchMethod::AD_CLICK_ID, MatchMethod::COOKIE => null,
             MatchMethod::VISITOR_ID => self::MATCHED_BY_VISITOR_ID,
             MatchMethod::SAME_IP => self::MATCHED_BY_SAME_IP,
             MatchMethod::UNKNOWN => self::MATCH_UNKNOWN,

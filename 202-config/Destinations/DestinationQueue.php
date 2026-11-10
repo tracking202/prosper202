@@ -269,7 +269,7 @@ final class DestinationQueue
         $ip = (string) ($conv['ip_address'] ?? '');
         // Only a click the conversion named: a guess would teach the platform the wrong clicks.
         $method = MatchMethod::tryFrom((string) ($conv['match_method'] ?? '')) ?? MatchMethod::UNKNOWN;
-        if ($method !== MatchMethod::CLICK_ID && $method !== MatchMethod::COOKIE) {
+        if (!in_array($method, [MatchMethod::CLICK_ID, MatchMethod::AD_CLICK_ID, MatchMethod::COOKIE], true)) {
             return ['withheld', new SendResult(false, false, null, 'withheld: the click was found by ' . $method->label() . ', not named by the conversion')];
         }
         $setting = PrivacySetting::forAccount($this->conn, $userId);
