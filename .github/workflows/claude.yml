@@ -36,8 +36,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-          # Lets Claude read CI results on a pull request; the job's
-          # `actions: read` alone does not reach the token the action uses.
+          # The action's setting for reading CI results on a pull request.
           additional_permissions: |
             actions: read
 
