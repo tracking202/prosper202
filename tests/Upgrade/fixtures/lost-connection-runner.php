@@ -94,6 +94,26 @@ $other = mysqli_connect(
 $other->query('KILL ' . (int) $lost->thread_id);
 $other->close();
 
+// P202_DRAW=one-click: what a 1-click page does after its database step
+// failed, on the real standalone shell; only the install's address and the
+// remote wallpaper are stood in for.
+if (getenv('P202_DRAW') === 'one-click') {
+    require __DIR__ . '/standalone-shell-stand-ins.php';
+    require $root . '/202-config/functions-standalone-ui.php';
+    try {
+        echo 'RETURNED ' . json_encode(UPGRADE::upgrade_databases(time())) . "\n";
+        $log = p202_upgrade_failure_log(UPGRADE::failures(), _upgrade_stored_version_or_null(), '1.9.81');
+        register_shutdown_function(static function (): void {
+            echo "\nENDED";
+        });
+        p202_one_click_after_failed_database_step($log);
+        echo "\nCARRIED ON";
+    } catch (Throwable $e) {
+        echo 'THREW ' . get_class($e) . ': ' . $e->getMessage();
+    }
+    exit;
+}
+
 try {
     echo 'RETURNED ' . json_encode(UPGRADE::upgrade_databases(time())) . "\n";
     echo p202_upgrade_failure_report(UPGRADE::failures(), _upgrade_stored_version_or_null(), '1.9.80') . "\n";

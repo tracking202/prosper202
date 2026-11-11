@@ -75,6 +75,9 @@ class ServerStateStore implements QuotaStore
 
     /** How long a restored-* directory is kept before it is removed. */
     public const int SET_ASIDE_KEPT_SECONDS = 30 * 86400;
+
+    /** How long a restored-* directory that could not be removed waits before it is tried again. */
+    private const int SET_ASIDE_RETRY_SECONDS = 86400;
     private const string SET_ASIDE_NAME = '/\Arestored-(\d{8}T\d{6}Z)-[0-9a-f]{6}\z/';
 
     private readonly string $baseDir;
@@ -295,8 +298,9 @@ class ServerStateStore implements QuotaStore
             ['dismissed' => []],
             static function (array $state) use ($names): array {
                 $had = is_array($state['dismissed'] ?? null) ? $state['dismissed'] : [];
+                $state['dismissed'] = array_values(array_unique([...$had, ...$names]));
 
-                return ['dismissed' => array_values(array_unique([...$had, ...$names]))];
+                return $state;
             }
         );
     }
@@ -314,39 +318,68 @@ class ServerStateStore implements QuotaStore
 
     /**
      * Remove the restored-* directories made more than $olderThanSeconds
-     * ago, by the time in their name. One that cannot be removed is logged
-     * and does not hold back the others.
+     * ago, by the time in their name. One that cannot be removed is logged,
+     * does not hold back the others, and is tried again a day later, not on
+     * every request.
      *
      * @return int how many directories were removed
      */
     public function pruneSetAside(int $olderThanSeconds = self::SET_ASIDE_KEPT_SECONDS, ?int $now = null): int
     {
-        $cutoff = ($now ?? time()) - $olderThanSeconds;
-        $removed = [];
+        $now ??= time();
+        $cutoff = $now - $olderThanSeconds;
+        $due = [];
         foreach (glob($this->baseDir . '/restored-*', GLOB_ONLYDIR) ?: [] as $dir) {
             $made = self::setAsideTime(basename($dir));
             // A link is never followed: only a directory this store made is emptied.
-            if ($made === null || $made > $cutoff || is_link($dir)) {
+            if ($made !== null && $made <= $cutoff && !is_link($dir)) {
+                $due[] = $dir;
+            }
+        }
+        if ($due === []) {
+            return 0;
+        }
+        $notesFile = $this->baseDir . '/' . self::RESTORE_NOTICES_FILE;
+        $retryAt = $this->readJsonFile($notesFile, [])['retry_at'] ?? [];
+        $retryAt = is_array($retryAt) ? $retryAt : [];
+        $removed = [];
+        $failed = [];
+        foreach ($due as $dir) {
+            $name = basename($dir);
+            if ((int) ($retryAt[$name] ?? 0) > $now) {
                 continue;
             }
             try {
                 self::removeTree($dir);
-                $removed[] = basename($dir);
+                $removed[] = $name;
             } catch (\Throwable $e) {
-                error_log('p202: what a database restore set aside in ' . $dir . ' could not be removed: '
-                    . $e->getMessage());
+                $failed[$name] = $now + self::SET_ASIDE_RETRY_SECONDS;
+                error_log('p202: what a database restore set aside in ' . $dir . ' could not be removed ('
+                    . $e->getMessage() . '); it is tried again in a day.');
             }
         }
-        if ($removed !== []) {
+        if ($removed !== [] || $failed !== []) {
+            $baseDir = $this->baseDir;
+            // What is no longer there is forgotten, a directory removed by hand included.
             $this->mutateJsonFile(
-                $this->baseDir . '/' . self::RESTORE_NOTICES_FILE,
-                ['dismissed' => []],
-                static function (array $state) use ($removed): array {
+                $notesFile,
+                [],
+                static function (array $state) use ($failed, $baseDir): array {
+                    $there = static fn (string $name): bool => is_dir($baseDir . '/' . $name);
                     $had = is_array($state['dismissed'] ?? null) ? $state['dismissed'] : [];
+                    $state['dismissed'] = array_values(array_filter(array_filter($had, 'is_string'), $there));
+                    $waits = (is_array($state['retry_at'] ?? null) ? $state['retry_at'] : []) + [];
+                    $state['retry_at'] = array_filter(
+                        $failed + $waits,
+                        static fn ($name): bool => is_string($name) && $there($name),
+                        ARRAY_FILTER_USE_KEY
+                    );
 
-                    return ['dismissed' => array_values(array_diff($had, $removed))];
+                    return $state;
                 }
             );
+        }
+        if ($removed !== []) {
             error_log('p202: removed what a database restore set aside more than '
                 . (int) round($olderThanSeconds / 86400) . ' days ago in ' . $this->baseDir . ': '
                 . implode(', ', $removed));

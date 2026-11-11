@@ -294,16 +294,55 @@ final class ServerStateStoreRestoreTest extends TestCase
         }
         chmod($stuck . '/jobs', 0500);
         $log = (string) ini_get('error_log');
-        ini_set('error_log', '/dev/null');
+        $logged = (string) tempnam(sys_get_temp_dir(), 'p202-prune-log-');
+        ini_set('error_log', $logged);
+        $now = time();
         try {
-            self::assertSame(1, $store->pruneSetAside());
+            self::assertSame(1, $store->pruneSetAside(ServerStateStore::SET_ASIDE_KEPT_SECONDS, $now));
+            self::assertDirectoryDoesNotExist($free);
+            self::assertDirectoryExists($stuck);
+            self::assertSame(1, substr_count((string) file_get_contents($logged), 'could not be removed'));
+
+            // Not tried, and not logged, on the requests that follow; a day later it is.
+            chmod($stuck . '/jobs', 0700);
+            $kept = ServerStateStore::SET_ASIDE_KEPT_SECONDS;
+            self::assertSame(0, $this->store($epoch)->pruneSetAside($kept, $now + 60));
+            self::assertDirectoryExists($stuck);
+            self::assertSame(1, substr_count((string) file_get_contents($logged), 'could not be removed'));
+            self::assertSame(
+                1,
+                $this->store($epoch)->pruneSetAside(ServerStateStore::SET_ASIDE_KEPT_SECONDS, $now + 86401)
+            );
+            self::assertDirectoryDoesNotExist($stuck);
         } finally {
             ini_set('error_log', $log);
-            chmod($stuck . '/jobs', 0700);
+            unlink($logged);
+            if (is_dir($stuck . '/jobs')) {
+                chmod($stuck . '/jobs', 0700);
+            }
         }
+    }
 
-        self::assertDirectoryDoesNotExist($free);
-        self::assertDirectoryExists($stuck);
+    public function testADismissedDirectoryRemovedByHandIsForgotten(): void
+    {
+        $epoch = new FakeStateEpoch(10);
+        $store = $this->store($epoch);
+        $old = time() - ServerStateStore::SET_ASIDE_KEPT_SECONDS - 3600;
+        $byHand = 'restored-' . gmdate('Ymd\THis\Z', time() - 60) . '-cccccc';
+        $aged = 'restored-' . gmdate('Ymd\THis\Z', $old) . '-dddddd';
+        foreach ([$byHand, $aged] as $name) {
+            mkdir($this->dir . '/' . $name . '/jobs', 0700, true);
+            file_put_contents($this->dir . '/' . $name . '/jobs/j.json', '{}');
+        }
+        $store->dismissRestoreNotices([$byHand, $aged]);
+        unlink($this->dir . '/' . $byHand . '/jobs/j.json');
+        rmdir($this->dir . '/' . $byHand . '/jobs');
+        rmdir($this->dir . '/' . $byHand);
+
+        self::assertSame(1, $store->pruneSetAside());
+
+        $state = json_decode((string) file_get_contents($this->dir . '/restore-notices.json'), true);
+        self::assertSame([], $state['dismissed']);
     }
 
     public function testWhatWasSetAsideIsRemovedAfterThirtyDaysAndNotBefore(): void

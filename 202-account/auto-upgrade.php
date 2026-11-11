@@ -25,6 +25,11 @@ ini_set('memory_limit', '-1');
 // Asked before the button is shown, and again before anything is downloaded.
 $blockers = \Prosper202\Update\OneClickReadiness::blockers(dirname(__DIR__));
 
+// Read once, before anything is replaced: what is drawn after a failed
+// database step may have no database to ask.
+$stored_version = (string) PROSPER202::prosper202_version();
+$database_step_failed = false;
+
 // Initialize state used by the upgrade flow and rendering below.
 $log = '';
 $error = false;
@@ -83,7 +88,7 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
         $error = true;
     }
 
-	if (!$error && version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
+	if (!$error && version_compare($stored_version, '1.9.3', '<')) {
 
 		// A native date input posts YYYY-MM-DD; the classic datepicker posted
 		// DD-MM-YYYY, which is still read.
@@ -102,7 +107,7 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 	//Do check for landing page upgrade to ssl 
 	$ssl_upgrade = '1'; //default to upgrade ssl
 
-	if (version_compare(PROSPER202::prosper202_version(), PROSPER202_VERSION, '<')) {
+	if (version_compare($stored_version, PROSPER202_VERSION, '<')) {
 		if (isset($_POST['lp_ssl']) && $_POST['lp_ssl'] == 0) {
 			$ssl_upgrade = '0';  //set to no upgrade if users doesn't want it
 		}
@@ -245,9 +250,16 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
                         (string) $latest_version
                     );
 				$upgrade_done = false;
+                $database_step_failed = !UPGRADE::$lastRunBusy;
 			}
 		}
 	}
+}
+
+// The database step failed: the database may no longer answer, and the shell
+// and the form below read it (p202_one_click_after_failed_database_step()).
+if ($database_step_failed) {
+    $stored_version = p202_one_click_after_failed_database_step($log);
 }
 
 $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
@@ -304,13 +316,13 @@ template_top('1-Click Upgrade');
 						<form method="post" action="">
 							<input type="hidden" name="start_upgrade" value="1">
 							<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-							<?php if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) { ?>
+							<?php if (version_compare($stored_version, '1.9.3', '<')) { ?>
 								<div class="mb-3">
 									<label class="form-label" for="date_from">Process clicks for the new Data Engine from</label>
 									<input type="date" class="form-control" id="date_from" name="date_from" required max="<?php echo $e(date('Y-m-d')); ?>">
 								</div>
 							<?php } ?>
-							<?php if (version_compare(PROSPER202::prosper202_version(), PROSPER202_VERSION, '<')) { ?>
+							<?php if (version_compare($stored_version, PROSPER202_VERSION, '<')) { ?>
 								<div class="mb-3">
 									<span class="form-label d-block" id="lp_ssl_label">Upgrade old landing page URLs to HTTPS?</span>
 									<div class="d-flex gap-3" role="radiogroup" aria-labelledby="lp_ssl_label">
@@ -321,7 +333,7 @@ template_top('1-Click Upgrade');
 								</div>
 							<?php } ?>
                             <?php echo p202_came_from_paid_1956($db) ? p202_paid_1956_notes_link() : ''; ?>
-                            <?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>
+                            <?php echo p202_upgrade_backup_warning($stored_version); ?>
 							<div class="p202-form-actions">
 								<button class="btn btn-primary" id="upgrade-submit" type="submit">Upgrade Prosper202</button>
 							</div>

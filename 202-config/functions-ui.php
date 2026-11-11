@@ -367,6 +367,47 @@ function p202_upgrade_failure_log(array $failures, ?string $storedVersion, strin
 }
 
 /**
+ * What a 1-click page shows when its database step failed and the database
+ * no longer answers: the log, and the way on. The page draws it on the
+ * standalone shell and ends there, since the signed-in shell and the retry
+ * form read the database.
+ */
+function p202_one_click_database_lost(string $log): string
+{
+    $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+
+    return '<div class="alert alert-danger p202-flash" role="alert" id="one-click-database-lost">'
+        . '<i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>The files were replaced, and the'
+        . ' database upgrade did not finish.</strong> The database stopped answering, so this page cannot show'
+        . ' more than what happened. Running the database upgrade again is safe.</div></div>'
+        . '<label class="form-label" for="upgrade-log">What happened</label>'
+        . '<textarea id="upgrade-log" rows="10" class="form-control font-monospace mb-3" readonly>' . $h($log)
+        . '</textarea>'
+        . '<a class="btn btn-primary w-100" href="' . $h(get_absolute_url() . '202-config/upgrade.php')
+        . '">Run the database upgrade again</a>';
+}
+
+/**
+ * A 1-click page after its database step failed. When the database no
+ * longer answers, the log is drawn on the standalone shell and the request
+ * ends here: the signed-in shell and the retry form read the database.
+ * Otherwise answers the version the database now stands at.
+ */
+function p202_one_click_after_failed_database_step(string $log): string
+{
+    $stored = _upgrade_stored_version_or_null();
+    if ($stored !== null) {
+        return $stored;
+    }
+    info_top(['title' => '1-Click Upgrade - Prosper202 ClickServer', 'wide' => true]);
+    echo p202_standalone_card('1-click upgrade', 'The database upgrade did not finish.');
+    echo p202_one_click_database_lost($log);
+    echo p202_standalone_card_end();
+    info_bottom();
+    exit;
+}
+
+/**
  * The same, for a page: that running it again is safe, what to do, and the
  * report in a box with a Copy button.
  *

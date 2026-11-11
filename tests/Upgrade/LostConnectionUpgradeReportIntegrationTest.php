@@ -34,14 +34,14 @@ final class LostConnectionUpgradeReportIntegrationTest extends TestCase
     }
 
     /** @return array{string, string} what the runner printed, and what was logged */
-    private static function runner(string $lose): array
+    private static function runner(string $lose, string $draw = ''): array
     {
         $proc = proc_open(
             [PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_log=', self::RUNNER],
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             null,
-            ['P202_LOSE' => $lose] + getenv()
+            ['P202_LOSE' => $lose, 'P202_DRAW' => $draw] + getenv()
         );
         self::assertIsResource($proc);
         $out = (string) stream_get_contents($pipes[1]);
@@ -67,6 +67,38 @@ final class LostConnectionUpgradeReportIntegrationTest extends TestCase
         $lock = "CONCAT('prosper202_upgrade:', SHA1(DATABASE()))";
         $held = self::$db->query('SELECT IS_FREE_LOCK(' . $lock . ')')->fetch_row();
         self::assertSame('1', (string) $held[0], 'the upgrade lock is not left held');
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function losses(): iterable
+    {
+        yield 'lost before the upgrade' => [''];
+        yield 'lost part way' => ['version-read'];
+    }
+
+    /**
+     * What a 1-click page does after its database step failed, on the real
+     * standalone shell: the signed-in shell and the retry form read the
+     * database, so the log is drawn here and the request ends.
+     *
+     * @dataProvider losses
+     */
+    public function testAOneClickPageShowsItsLogAndEndsWhenTheDatabaseIsLost(string $lose): void
+    {
+        self::requireScratch();
+
+        [$out, $err] = self::runner($lose, 'one-click');
+
+        self::assertStringStartsWith("RETURNED false\n", $out, $err);
+        self::assertStringNotContainsString('THREW', $out);
+        self::assertStringNotContainsString('Fatal error', $out . $err);
+        self::assertStringNotContainsString('CARRIED ON', $out, 'it ends before the shell that reads the database');
+        self::assertStringEndsWith("</html>\n\nENDED", $out, 'the whole standalone page is drawn');
+        self::assertStringContainsString('id="one-click-database-lost"', $out);
+        self::assertStringContainsString('<textarea id="upgrade-log"', $out);
+        self::assertStringContainsString('(the files are version 1.9.81)', $out);
+        self::assertStringContainsString('The connection to the database server was lost', $out);
+        self::assertStringContainsString('href="/202-config/upgrade.php">Run the database upgrade again</a>', $out);
     }
 
     public function testTheReportIsDrawnWithoutADatabaseToAsk(): void

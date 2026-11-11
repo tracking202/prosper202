@@ -229,6 +229,19 @@ final class UpgradeFailureReportTest extends TestCase
             ), "$page: the stored version read may fail, and the files are the version just unpacked");
         }
 
+        // After its one read at the top, a 1-click page asks the database for the
+        // stored version only through the reader that may fail, and ends on the
+        // standalone page before the signed-in shell when it does.
+        foreach (['202-account/auto-upgrade.php', '202-account/auto-upgrade-premium.php'] as $page) {
+            $source = (string) file_get_contents($root . $page);
+            self::assertSame(1, substr_count($source, 'PROSPER202::prosper202_version()'), $page);
+            $read = (int) strpos($source, 'PROSPER202::prosper202_version()');
+            $post = (int) strpos($source, "\$_POST['start_upgrade']");
+            $ending = (int) strpos($source, 'p202_one_click_after_failed_database_step(');
+            $shell = (int) strpos($source, 'template_top(');
+            self::assertTrue(0 < $read && $read < $post && $post < $ending && $ending < $shell, $page);
+        }
+
         $source = (string) file_get_contents($root . '202-config/upgrade.php');
         $drawn = substr($source, (int) strpos($source, "info_top(['title' => 'Upgrade - Prosper202 ClickServer']);"));
         $prompt = (int) strpos($drawn, "echo p202_standalone_card(\$task_202 . ' to Prosper202 '");

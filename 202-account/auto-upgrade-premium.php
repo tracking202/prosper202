@@ -53,6 +53,11 @@ $release_signature = is_array($array) && is_string($array['signature'] ?? null)
 	: null;
 $signature_problem = null;
 
+// Read once, before anything is replaced: what is drawn after a failed
+// database step may have no database to ask.
+$stored_version = (string) PROSPER202::prosper202_version();
+$database_step_failed = false;
+
 $installlog = '';
 $upgrade_done = false;
 $FilesUpdated = null;
@@ -205,8 +210,15 @@ if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token() && $bloc
                     (string) $latest_version
                 );
 			$upgrade_done = false;
+            $database_step_failed = !UPGRADE::$lastRunBusy;
 		}
 	}
+}
+
+// The database step failed: the database may no longer answer, and the shell
+// and the form below read it (p202_one_click_after_failed_database_step()).
+if ($database_step_failed) {
+    $stored_version = p202_one_click_after_failed_database_step($installlog);
 }
 
 $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
@@ -286,7 +298,7 @@ template_top('1-Click Upgrade');
 								<input type="hidden" name="start_upgrade" value="1">
 								<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
                                 <?php echo p202_came_from_paid_1956($db) ? p202_paid_1956_notes_link() : ''; ?>
-                                <?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>
+                                <?php echo p202_upgrade_backup_warning($stored_version); ?>
 								<div class="p202-form-actions">
 									<button class="btn btn-primary" id="upgrade-submit" type="submit"><?php echo $e($detail('order-button-text') !== '' ? $detail('order-button-text') : 'Upgrade Prosper202'); ?></button>
 								</div>
