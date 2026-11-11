@@ -329,6 +329,10 @@ try {
     } elseif (str_contains($path, '/bulk-upsert')) {
         $limit = 60;
         $bucketKey .= ':bulk-upsert';
+    } elseif (str_contains($path, '/google-ads/')) {
+        // Each of these reads Google with the account's own grant and quota.
+        $limit = 10;
+        $bucketKey .= ':google-ads';
     }
     if ($limit !== null) {
         $rate = $stateStore->consumeRateLimit($bucketKey, $limit, $windowSeconds);
@@ -778,6 +782,8 @@ try {
             $r->post('/{id}/test',  fn($ctx) => $crud($cls)->test(PathId::of($ctx)));
             $r->post('/{id}/oauth/start', fn($ctx) => $crud($cls)->oauthStart(PathId::of($ctx), $_SERVER));
             $r->post('/{id}/google-ads/pick', fn($ctx) => $crud($cls)->googleAdsPick(PathId::of($ctx), $payload));
+            $r->post('/{id}/deliveries/resend', fn($ctx) => $crud($cls)->resend(PathId::of($ctx), $payload));
+            $r->post('/{id}/backfill', fn($ctx) => $crud($cls)->backfill(PathId::of($ctx), $payload));
         }, [$setupSection]);
 
         // ── API capabilities ────────────────────────────────────────────
@@ -863,7 +869,7 @@ try {
         $rotators = \Api\V3\Controllers\RotatorsController::class;
         $router->group('/rotators', function (Router $r) use ($crud, $queryParams, $rotators) {
             $r->get('',                        fn() => $crud($rotators)->list($queryParams));
-            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get(PathId::of($ctx)));
+            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->read(PathId::of($ctx)));
             $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules(PathId::of($ctx)));
         }, [$setupSection]);
         // A rule set that leaves out a rule removes it: the page's save asks
@@ -1386,7 +1392,7 @@ try {
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
-                'destinations'  => '/destinations[/{id}][/test|/deliveries|/oauth/start|/google-ads/accounts|/google-ads/conversion-actions|/google-ads/pick]',
+                'destinations'  => '/destinations[/{id}][/test|/deliveries[/resend]|/backfill|/oauth/start|/google-ads/accounts|/google-ads/conversion-actions|/google-ads/pick]',
                 'events'        => '/events',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',

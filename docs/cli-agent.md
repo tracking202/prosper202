@@ -287,7 +287,7 @@ Response fields: `total_clicks`, `total_leads`, `total_income`, `total_cost`, `t
 p202 report breakdown --breakdown country --period last7 --sort total_net --sort-dir DESC --limit 10 --json
 ```
 
-Available breakdowns: `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad`, `ip`, `referer` (referring domain), `referer_url`, `device_type` (Desktop/Mobile/Tablet/Bot), `c1`–`c4`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `rotator`, `rotator_rule` (aliases `lp`, `source`, `network`, `offer`, `geo`, `referrer`, `referrer_url`, `rule`). The server lists its own dimensions in `/capabilities` as `features.report_breakdowns`. When a value is not on the CLI's built-in list, the CLI asks the server: a dimension the server lists is sent, and anything else fails with the server's list in the message.
+Available breakdowns: `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad`, `ip`, `referer` (referring domain), `referer_url`, `device_type` (Desktop/Mobile/Tablet/Bot), `c1`–`c4`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `rotator`, `rotator_rule`, `publisher` (the publisher a publisher link credited the click to; Analyze › Publishers is `report groups --by publisher,publisher_link,campaign`), `publisher_link` (the link such a click came on, by its `t202id`; stored since 1.9.80) (aliases `lp`, `source`, `network`, `offer`, `geo`, `referrer`, `referrer_url`, `rule`). The server lists its own dimensions in `/capabilities` as `features.report_breakdowns`. When a value is not on the CLI's built-in list, the CLI asks the server: a dimension the server lists is sent, and anything else fails with the server's list in the message.
 
 A row is one stored value: clicks with no value for the dimension (no referer, no `c1`, not matched by a rotator rule) are in `report summary` and in no row, so rows can add up to less than the summary. `rotator_rule` rows carry `rotator_id`; a rotator's default is in `p202 rotator stats <id>`, not here.
 
@@ -598,7 +598,7 @@ p202 rotator rule-create "$ROTATOR_ID" \
 ```
 
 JSON fields (`--criteria-json`, `--redirects-json`, `--weighting-config`) are validated locally before the API call. Malformed JSON produces an immediate error (exit 1).
-A rotator's default is one destination (`--default-url`, `--default-campaign` or `--default-lp`); setting one on `update` replaces the default whatever its kind. Each redirect names exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`; criteria types are country, region, eu, city, isp, fraud, ip, iprange, browser, platform, device, visitor, c1-c4, t202kw, referer and utm_source/medium/campaign/term/content, and countries are written `United States(US)` (`p202 rotator criteria-values`) — a bare `US` is refused, because it never matches. An `ip` criterion lists single IPv4 or IPv6 addresses (stored canonical, so `2001:DB8::1` is `2001:db8::1`); a range or a typo is refused by name for the same reason.
+A rotator's default is one destination (`--default-url`, `--default-campaign` or `--default-lp`); setting one on `update` replaces the default whatever its kind. Each redirect names exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`; criteria types are country, region, eu, city, isp, fraud, ip, iprange, browser, platform, device, visitor, c1-c4, t202kw, referer and utm_source/medium/campaign/term/content, and countries are stored as `United States(US)` (`p202 rotator criteria-values`) — a bare `US` or a name is taken and stored that way, as a device is stored in lower case; the answer's `meta.normalized` says what was changed, and `meta.warnings` names a rule that matches no visitor. An `ip` criterion lists single IPv4 or IPv6 addresses (stored canonical, so `2001:DB8::1` is `2001:db8::1`); a range or a typo is refused by name for the same reason.
 A rule needs at least one criterion and one redirect: the redirects read a rule with no criterion as every visitor, so `rule-create` refuses one without `--criteria-json` or `--country`, and an empty list, before any request. To match every visitor, say so with the value `ALL`.
 
 ### Forecast next week and flag today as normal or anomalous
@@ -949,13 +949,17 @@ p202 destination update <id> [--enable|--disable] [--name S] [any create flag]  
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
 p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]
                        [--conv-id N] [--limit 50] [--offset 0] [--json]    # the log; meta.summary counts by status
+p202 destination resend <id> (--delivery-id N | --status failed|withheld) [--json]   # sent again with all their tries; `more` true: run again
+p202 destination backfill <id> --days N [--json]        # queue the last N days' conversions it has no delivery for (GA4 1-3, Google Ads 1-90)
 p202 destination delete <id> [--force] [--dry-run] [--json]                # unsent rows cancelled; the log stays
 ```
 
 The API secret is read from a file or piped stdin (`-`), never a flag value. `--staged` is refused: the
-routes are not stageable. A `withheld` delivery is never retried: a guessed click, the privacy setting, or an
-EEA/UK visitor without both consent signals stated `granted` (`last_error` says which);
-`failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called).
+routes are not stageable. A `withheld` delivery is never retried by itself: a guessed click, the privacy setting (`eu`, the default, holds
+back every EEA/UK visitor whatever consent is stated), or, with the setting `disabled`, an EEA/UK visitor without
+both consent signals stated `granted` (`last_error` says which); `destination resend` has it checked again.
+`failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called); it stays
+failed until `destination resend` after the cause is fixed.
 A Google Ads destination with `status` `needs_authorisation` holds its conversions `pending` (no tries used)
 until a person opens `connect`'s `authorisation_url`; an agent cannot complete that step. `needs_account` is one
 connected with no account picked yet: `destination pick <id>` sets it by name from Google's lists (`--customer-id`/`--conversion-action` on `update` still work).
@@ -1018,7 +1022,7 @@ Output rows carry the point forecast, `lower_bound`/`upper_bound` (the band `--c
 
 Anomaly check for alerting: an observed value below `lower_bound` (or above `upper_bound`) of the band forecast for that date is outside the band's nominal coverage (90% at the default confidence). Full guide with worked examples: `documentation/cli/11-forecasting.md`.
 
-Report filter flags (all optional, all combine): `--aff-campaign-id`, `--ppc-account-id`, `--aff-network-id`, `--ppc-network-id`, `--landing-page-id`, `--country-id`, `--text-ad-id`, `--region-id`, `--isp-id`, `--browser-id`, `--platform-id`, `--device-type` (1 Desktop, 2 Mobile, 3 Tablet, 4 Bot), `--method-of-promotion directlink|landingpage`, `--show all|real|filtered|filtered_bot|leads`, `--keyword TEXT` (contains), `--ip ADDRESS` (exact, IPv4 or IPv6), `--referer TEXT` (contains). An id of 0 is no filter. `report losers`/`winners` turn their attribution check off when any filter other than the breakdown's own is set.
+Report filter flags (all optional, all combine): `--aff-campaign-id`, `--ppc-account-id`, `--aff-network-id`, `--ppc-network-id`, `--landing-page-id`, `--country-id`, `--text-ad-id`, `--region-id`, `--isp-id`, `--browser-id`, `--platform-id`, `--device-type` (1 Desktop, 2 Mobile, 3 Tablet, 4 Bot), `--method-of-promotion directlink|landingpage`, `--show all|real|filtered|filtered_bot|leads`, `--keyword TEXT` (contains), `--ip ADDRESS` (exact, IPv4 or IPv6), `--referer TEXT` (contains), `--publisher-id ID|none` (clicks a publisher link credited to that publisher; `none` is clicks on no publisher link). An id of 0 is no filter. `report losers`/`winners` turn their attribution check off when any filter other than the breakdown's own is set.
 
 `dashboard` defaults `period=today` if omitted.
 

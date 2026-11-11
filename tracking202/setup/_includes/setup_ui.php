@@ -354,7 +354,7 @@ function p202_setup_query_flashes(array $messages, array $query): string
 /** The Setup family's page script, loaded after p202-ui.js. */
 function p202_setup_script_tag(string $base): string
 {
-    return '<script src="' . p202_setup_e(rtrim($base, '/') . '/202-js/p202-setup.js?v=1') . '" defer></script>';
+    return '<script src="' . p202_setup_e(rtrim($base, '/') . '/202-js/p202-setup.js?v=2') . '" defer></script>';
 }
 
 /**

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -189,6 +190,62 @@ func TestDestinationConnectPostsOAuthStartAndPrintsTheLink(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Errorf("a bad id reached the server: %v", calls)
+	}
+}
+
+// resend and backfill send exactly the body the route reads, and refuse a
+// call that names nothing (or both) before it reaches the server.
+func TestDestinationResendAndBackfillPostWhatWasAsked(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+string(body))
+		w.Write([]byte(`{"data":{"queued":2,"more":false}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	for _, args := range [][]string{
+		{"destination", "resend", "7", "--status", "failed", "--json"},
+		{"destination", "resend", "7", "--delivery-id", "4812", "--json"},
+		{"destination", "backfill", "7", "--days", "30", "--json"},
+	} {
+		out, _, err := executeCommand(args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if !strings.Contains(out, `"queued"`) {
+			t.Errorf("%v should print the answer, got %s", args, out)
+		}
+	}
+	want := []string{
+		`POST /api/v3/destinations/7/deliveries/resend {"status":"failed"}`,
+		`POST /api/v3/destinations/7/deliveries/resend {"delivery_id":4812}`,
+		`POST /api/v3/destinations/7/backfill {"days":30}`,
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("requests = %v, want %v", calls, want)
+	}
+
+	calls = nil
+	for _, args := range [][]string{
+		{"destination", "resend", "7"},
+		{"destination", "resend", "7", "--status", "failed", "--delivery-id", "3"},
+		{"destination", "resend", "7", "--status", "sent"},
+		{"destination", "resend", "7", "--delivery-id", "0"},
+		{"destination", "backfill", "7"},
+		{"destination", "backfill", "7", "--days", "91"},
+		{"destination", "backfill", "seven", "--days", "3"},
+	} {
+		_, _, err := executeCommand(args...)
+		if err == nil || exitCodeForError(err) != 1 || hintFor(err) == "" {
+			t.Errorf("%v: err %v, exit %d, hint %q", args, err, exitCodeForError(err), hintFor(err))
+		}
+	}
+	if len(calls) != 0 {
+		t.Errorf("a refused call reached the server: %v", calls)
 	}
 }
 

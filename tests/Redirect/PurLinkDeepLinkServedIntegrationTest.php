@@ -230,16 +230,12 @@ final class PurLinkDeepLinkServedIntegrationTest extends TestCase
         );
     }
 
-    /** @return iterable<string, array{string, string, int, string}> */
-    public static function waysInAndTokensTheUrlLacks(): iterable
+    /**
+     * @param array<string, string> $tokens
+     * @return iterable<string, array{string, string, int, string}>
+     */
+    private static function waysInWith(array $tokens): iterable
     {
-        $tokens = [
-            'a value of the click' => '[[c1]]',
-            'in capitals' => '[[GCLID]]',
-            'its cost' => '[[cpc2]]',
-            'a name around an empty token' => '[[c[[c2]]pc]]',
-            'brackets joined by an empty token' => '[[[c2]][gclid]]',
-        ];
         foreach (self::waysIn() as $way => [$query, $cookie, $click]) {
             foreach ($tokens as $name => $token) {
                 yield "$way, $name" => [$query, $cookie, $click, $token];
@@ -247,8 +243,42 @@ final class PurLinkDeepLinkServedIntegrationTest extends TestCase
         }
     }
 
+    /** @return iterable<string, array{string, string, int, string}> */
+    public static function waysInAndTokensTheUrlLacks(): iterable
+    {
+        return self::waysInWith([
+            'a value of the click' => '[[c1]]',
+            'in capitals' => '[[GCLID]]',
+            'its cost' => '[[cpc2]]',
+        ]);
+    }
+
     /** @dataProvider waysInAndTokensTheUrlLacks */
-    public function testALinkWithATokenTheCampaignsUrlLacksGoesToTheCampaignsUrl(
+    public function testATokenTheCampaignsUrlLacksIsLeftEmptyInADeepLinkThatIsKept(
+        string $query,
+        string $cookie,
+        int $click,
+        string $token
+    ): void {
+        $deep = self::PLACE . '?sid=[[subid]]&kw=[[t202kw]]&u=deep&x=' . $token;
+
+        self::assertSame(
+            self::campaignUrlFor($click) . '&u=deep&x=',
+            $this->location($query . '&p202_to=' . rawurlencode($deep), $cookie)
+        );
+    }
+
+    /** @return iterable<string, array{string, string, int, string}> */
+    public static function waysInAndBracketsThatAreNoWholeToken(): iterable
+    {
+        return self::waysInWith([
+            'a name around an empty token' => '[[c[[c2]]pc]]',
+            'brackets joined by an empty token' => '[[[c2]][gclid]]',
+        ]);
+    }
+
+    /** @dataProvider waysInAndBracketsThatAreNoWholeToken */
+    public function testALinkWithBracketsThatAreNotAWholeTokenGoesToTheCampaignsUrl(
         string $query,
         string $cookie,
         int $click,

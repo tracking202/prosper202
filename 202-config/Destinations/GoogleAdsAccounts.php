@@ -271,12 +271,15 @@ final class GoogleAdsAccounts
             return $failed('not sent: the connection went to ' . $sent['strayed'] . ' instead of the checked address ' . $sent['pinned']);
         }
         if ($sent['status'] === 0) {
-            return $failed('no answer from Google Ads: ' . ($sent['error'] ?? 'the request failed'));
+            return $failed('no answer from Google Ads: ' . ($sent['error'] ?? 'the request failed') . '. Try again in a minute');
         }
         if ($sent['status'] < 200 || $sent['status'] >= 300) {
             $text = GoogleAdsDestination::failureText($sent['body']);
 
-            return $failed('Google Ads answered ' . $sent['status'] . ($text !== '' ? ': ' . $text : ''));
+            // Google's own failure or its rate limit is not the operator's to mend.
+            $later = $sent['status'] >= 500 || $sent['status'] === 429 ? '. Try again in a minute' : '';
+
+            return $failed('Google Ads answered ' . $sent['status'] . ($text !== '' ? ': ' . $text : '') . $later);
         }
         if ($sent['error'] !== null) {
             return $failed('Google Ads\' answer was cut off (' . $sent['error'] . ')');

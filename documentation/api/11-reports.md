@@ -40,6 +40,7 @@ All report endpoints accept the window and the filters the Analyze pages offer:
 | `keyword` | string | Clicks whose keyword **contains** this text, case-insensitive; `%` and `_` are those characters, not wildcards. At most 255 characters |
 | `ip` | string | Clicks from this one address, IPv4 or IPv6; an IPv6 address matches however it is written (`2001:DB8::1` is `2001:db8::1`) |
 | `referer` | string | Clicks whose referring URL **contains** this text, case-insensitive; at most 255 characters |
+| `publisher_id` | integer or `none` | Clicks a publisher link credited to this publisher (a user id, the `id` of a `breakdown=publisher` row); `none` is the clicks credited to no publisher |
 
 An id filter of `0` or an empty value is no filter, as the pages' menus send
 it; so is an empty `keyword`, `referer`, `ip`, `show` or
@@ -102,7 +103,7 @@ Next to `data`, `breakdown` and `available_breakdowns` the response carries `lim
 {"data": [...50 rows...], "breakdown": "keyword", "available_breakdowns": [...], "truncated": true, "limit": 50, "offset": 0}
 ```
 
-**Breakdown dimensions:** `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad`, `ip`, `referer`, `referer_url`, `device_type`, `c1`, `c2`, `c3`, `c4`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `rotator`, `rotator_rule`.
+**Breakdown dimensions:** `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad`, `ip`, `referer`, `referer_url`, `device_type`, `c1`, `c2`, `c3`, `c4`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `rotator`, `rotator_rule`, `publisher`, `publisher_link`.
 
 | Dimension | `name` is | Page it mirrors |
 | --------- | --------- | --------------- |
@@ -114,6 +115,8 @@ Next to `data`, `breakdown` and `available_breakdowns` the response carries `lim
 | `utm_source` … `utm_content` | The UTM value | Group overview › UTM levels |
 | `rotator` | The rotator's name | Group overview › Rotator |
 | `rotator_rule` | The rule's name; the row also carries `rotator_id` | Group overview › Rotator Rule |
+| `publisher` | The publisher a publisher link (`t202pubid`) credited the click to: the user's name, `id` their user id | Analyze › Publishers |
+| `publisher_link` | The tracking link a publisher's click came on: its public id, the `t202id` in the link. Stored with new clicks since 1.9.80; an older credited click is in no row | Analyze › Publishers |
 
 Each row is one stored value (its `id`); a click that has no value for the
 dimension — no referer, no `c1`, not matched by a rotator rule — is in

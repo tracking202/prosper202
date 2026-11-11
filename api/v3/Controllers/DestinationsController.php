@@ -109,6 +109,53 @@ final class DestinationsController
     }
 
     /**
+     * Put failed or withheld conversions back in the queue with all their
+     * tries: the one `delivery_id` names, or every one of `status`.
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function resend(int $id, array $payload): array
+    {
+        PayloadKeys::refuseUnknown($payload, ['delivery_id', 'status'], 'a resend');
+        $hasDelivery = array_key_exists('delivery_id', $payload);
+        if ($hasDelivery === array_key_exists('status', $payload)) {
+            throw new ValidationException('Validation failed', ['body' => 'Send delivery_id (one delivery) or status (every delivery of it: ' . implode(' or ', DestinationQueue::RESENDABLE) . '), not both.']);
+        }
+        $deliveryId = null;
+        if ($hasDelivery) {
+            $deliveryId = $payload['delivery_id'];
+            if (!is_int($deliveryId) || $deliveryId <= 0) {
+                throw new ValidationException('Validation failed', ['delivery_id' => 'Must be a delivery id, a whole number greater than 0 (p202 destination deliveries).']);
+            }
+        } elseif (!is_string($payload['status']) || !in_array($payload['status'], DestinationQueue::RESENDABLE, true)) {
+            throw new ValidationException('Validation failed', ['status' => 'Must be one of: ' . implode(', ', DestinationQueue::RESENDABLE)]);
+        }
+        $queue = new DestinationQueue($this->conn, $this->store);
+        $result = $queue->resend($this->userId, $id, $deliveryId, $hasDelivery ? '' : (string) $payload['status'], time()) ?? throw self::notFound($id);
+        if ($hasDelivery && $result['queued'] === 0) {
+            throw new ValidationException('Nothing to send again', ['delivery_id' => 'Delivery ' . $deliveryId . ' is not a failed or withheld conversion of destination ' . $id . '.']);
+        }
+
+        return ['data' => $result];
+    }
+
+    /**
+     * Queue the paid conversions of the last `days` this destination has no
+     * delivery for (recorded before it existed, or while it was off).
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function backfill(int $id, array $payload): array
+    {
+        PayloadKeys::refuseUnknown($payload, ['days'], 'a backfill');
+        if (!is_int($payload['days'] ?? null)) {
+            throw new ValidationException('Validation failed', ['days' => 'Required: how many days back, a whole number.']);
+        }
+
+        return ['data' => $this->refusing(fn (): ?array => (new DestinationQueue($this->conn, $this->store))->backfill($this->userId, $id, $payload['days'], time())) ?? throw self::notFound($id)];
+    }
+
+    /**
      * Where to send a browser to connect a Google Ads destination to the
      * operator's Google account. The callback is the Setup page on this
      * install, signed in as the same user.

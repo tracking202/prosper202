@@ -495,7 +495,8 @@ final class ConversionTables
                 PRIMARY KEY (`delivery_id`),
                 UNIQUE KEY `destination_conv_kind` (`destination_id`,`conv_id`,`kind`),
                 KEY `status_next` (`status`,`next_attempt_at`),
-                KEY `user_destination` (`user_id`,`destination_id`,`delivery_id`)
+                KEY `user_destination` (`user_id`,`destination_id`,`delivery_id`),
+                KEY `user_destination_status` (`user_id`,`destination_id`,`kind`,`status`,`created_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Conversions queued for and sent to destinations'"
         );
     }

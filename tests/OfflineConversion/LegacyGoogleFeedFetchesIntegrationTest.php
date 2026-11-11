@@ -121,21 +121,87 @@ final class LegacyGoogleFeedFetchesIntegrationTest extends TestCase
         self::assertSame('0', self::$db->query('SELECT COUNT(*) FROM 202_legacy_google_feed_fetches')->fetch_row()[0]);
     }
 
-    public function testTheTableIsBoundedAndAStaleScheduleMakesRoom(): void
+    public function testTheTableIsBoundedPerCampaignAndAScheduleNobodyFetchesAgainGivesItsPlaceUp(): void
     {
         $fetches = self::fetches();
-        for ($i = 1; $i <= LegacyGoogleFeedFetches::MAX_ROWS; $i++) {
-            self::assertTrue($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Name ' . $i], self::NOW));
-        }
-        self::assertFalse($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'One more'], self::NOW));
-        // One already noted is still counted when the table is full.
-        self::assertTrue($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Name 1'], self::NOW + 1));
-        self::assertSame((string) LegacyGoogleFeedFetches::MAX_ROWS, self::$db->query('SELECT COUNT(*) FROM 202_legacy_google_feed_fetches')->fetch_row()[0]);
+        // A campaign this install does not have is a schedule nobody would be shown: not noted.
+        self::assertFalse($fetches->noteFetch(['campaign_id' => 999999999, 'conversion_name' => 'Nobody'], self::NOW));
 
-        self::q('UPDATE 202_legacy_google_feed_fetches SET last_fetched_at = ' . (self::NOW - LegacyGoogleFeedFetches::SHOWN_FOR - 1)
-            . " WHERE conversion_name = 'Name 2'");
-        self::assertTrue($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'One more'], self::NOW));
-        self::assertSame('0', self::$db->query("SELECT COUNT(*) FROM 202_legacy_google_feed_fetches WHERE conversion_name = 'Name 2'")->fetch_row()[0]);
+        for ($i = 1; $i <= LegacyGoogleFeedFetches::PER_CAMPAIGN; $i++) {
+            self::assertTrue($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Name ' . $i], self::NOW + $i));
+        }
+        self::assertFalse($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'One more'], self::NOW + 60), 'ac=-- has its own bound');
+        // Filling one campaign's places leaves another campaign's free.
+        self::assertTrue($fetches->noteFetch(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW + 60));
+        // One already noted is still counted when its places are full.
+        self::assertTrue($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Name 3'], self::NOW + 61));
+        $count = static fn (string $where): string => self::$db->query('SELECT COUNT(*) FROM 202_legacy_google_feed_fetches ' . $where)->fetch_row()[0];
+        self::assertSame((string) LegacyGoogleFeedFetches::PER_CAMPAIGN, $count('WHERE aff_campaign_id = 0'));
+
+        // Fetched again within the idle time, every row keeps its place.
+        $soon = self::NOW + LegacyGoogleFeedFetches::IDLE_FOR - 60;
+        self::assertFalse($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'One more'], $soon));
+        // Past it, the one fetched longest ago gives its place up, and only that one.
+        $later = self::NOW + 1 + LegacyGoogleFeedFetches::IDLE_FOR + 1;
+        self::assertTrue($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'One more'], $later));
+        self::assertSame('0', $count("WHERE conversion_name = 'Name 1'"));
+        self::assertSame((string) LegacyGoogleFeedFetches::PER_CAMPAIGN, $count('WHERE aff_campaign_id = 0'));
+        self::assertSame('1', $count('WHERE aff_campaign_id = ' . self::STORE));
+
+        // The bound on the whole table holds the same way.
+        self::q('DELETE FROM 202_legacy_google_feed_fetches');
+        $values = [];
+        for ($i = 1; $i <= LegacyGoogleFeedFetches::MAX_ROWS; $i++) {
+            $values[] = '(' . (self::DELETED + 1000 + $i) . ", 'Filler', " . self::NOW . ', ' . (self::NOW + $i) . ', 1)';
+        }
+        self::q('INSERT INTO 202_legacy_google_feed_fetches (aff_campaign_id, conversion_name, first_fetched_at, last_fetched_at, fetches) VALUES ' . implode(', ', $values));
+        self::assertFalse($fetches->noteFetch(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW + 100));
+        self::assertTrue($fetches->noteFetch(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW + 1 + LegacyGoogleFeedFetches::IDLE_FOR + 1));
+        self::assertSame((string) LegacyGoogleFeedFetches::MAX_ROWS, $count(''));
+    }
+
+    public function testTwoMovesOfOneScheduleMakeOneFetchUrl(): void
+    {
+        $fetches = self::fetches();
+        $fetches->noteFetch(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW - 300);
+        $settings = ['format' => Format::GOOGLE_UPLOADS, 'days' => 90, 'conversion_name' => 'Purchase', 'ad_user_data' => null, 'ad_personalization' => null];
+        $store = new FeedStore(self::$conn);
+        // The create a second request makes after the first committed, as the move asks it: the first's feed, no key.
+        [$first, $key] = $store->create(self::OWNER, $settings, self::NOW, true);
+        [$second, $none] = $store->create(self::OWNER, $settings, self::NOW, true);
+        self::assertTrue(FeedStore::isKey((string) $key));
+        self::assertNull($none);
+        self::assertSame($first->feedId, $second->feedId);
+        // Another name, another format or another account is another feed; without $once a feed is always made.
+        self::assertNotNull($store->create(self::OWNER, ['conversion_name' => 'Lead'] + $settings, self::NOW, true)[1]);
+        self::assertNotNull($store->create(self::OWNER, ['format' => Format::GOOGLE] + $settings, self::NOW, true)[1]);
+        self::assertNotNull($store->create(self::OTHER, $settings, self::NOW, true)[1]);
+        self::assertNotNull($store->create(self::OWNER, $settings, self::NOW)[1]);
+    }
+
+    public function testHomeCountsAScheduleNamingEveryCampaignOnlyForAnAccountThatSendsToGoogle(): void
+    {
+        $fetches = self::fetches();
+        // What anyone can make the old address say: every campaign, any name.
+        $fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Lead'], self::NOW - 300);
+        self::assertCount(1, $fetches->forAccount(self::OWNER, self::NOW), 'listed on Setup › Offline Conversions, as the address\'s words');
+        self::assertSame(0, $fetches->waiting(self::OWNER, self::NOW), 'not news on Home for an account with no Google name or feed');
+        self::assertSame(0, $fetches->waiting(self::OTHER, self::NOW));
+
+        // A schedule naming the account's own campaign counts, for that account alone.
+        $fetches->noteFetch(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW - 200);
+        self::assertSame(1, $fetches->waiting(self::OWNER, self::NOW));
+        self::assertSame(0, $fetches->waiting(self::OTHER, self::NOW));
+
+        // An account that sends conversions to Google is told of the every-campaign one too.
+        (new ConversionNames(self::$conn))->save(self::OTHER, [ConversionNames::GOOGLE => [self::OTHERS_CAMPAIGN => 'Demo']], self::NOW);
+        self::assertSame(1, $fetches->waiting(self::OTHER, self::NOW));
+        (new ConversionNames(self::$conn))->save(self::OWNER, [ConversionNames::MICROSOFT => [0 => 'Sale']], self::NOW);
+        self::assertSame(1, $fetches->waiting(self::OWNER, self::NOW), 'a Microsoft name is no sign of Google');
+        // Moved, it no longer waits.
+        $store = array_column($fetches->forAccount(self::OWNER, self::NOW), 'fetch_id', 'conversion_name')['Purchase'];
+        self::assertNotNull($fetches->move(self::OWNER, $store, self::NOW));
+        self::assertSame(1, $fetches->waiting(self::OWNER, self::NOW), 'the every-campaign one now counts: the account sends to Google');
     }
 
     public function testAnAccountIsShownItsOwnCampaignsSchedulesAndTheOnesNamingEveryCampaign(): void

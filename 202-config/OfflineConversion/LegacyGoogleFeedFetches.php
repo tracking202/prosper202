@@ -15,7 +15,7 @@ use Prosper202\Database\Schema\TableRegistry;
  *
  * The feed's address takes no credential this version reads, so a row is
  * what a request said, not what an account did (CLAUDE.md #16): it names no
- * account, the table holds at most MAX_ROWS, and a row is shown to the
+ * account, the table is bounded (noteFetch()), and a row is shown to the
  * account whose campaign it names (ac=-- to every account that may export)
  * as the old address's words. Nothing is changed until that account says so.
  *
@@ -26,8 +26,12 @@ use Prosper202\Database\Schema\TableRegistry;
  */
 final class LegacyGoogleFeedFetches
 {
-    /** Schedules kept; a new one past this is dropped until a stale one makes room. */
+    /** Schedules kept in all. */
     public const MAX_ROWS = 50;
+    /** Schedules kept for one campaign, and for ac=--. */
+    public const PER_CAMPAIGN = 5;
+    /** A schedule not fetched for this long gives its place to a new one when there is no room. */
+    public const IDLE_FOR = 2 * 86400;
     /** A schedule not fetched for this long is no longer shown: Google Ads' longest schedule is monthly. */
     public const SHOWN_FOR = 35 * 86400;
     /** What the old schedule was: Google's Uploads template, every conversion Google still imports. */
@@ -71,8 +75,12 @@ final class LegacyGoogleFeedFetches
     }
 
     /**
-     * Note a fetch of the retired feed. False when the table is full of
-     * schedules fetched lately, and this one is not among them.
+     * Note a fetch of the retired feed. False when it was not noted: its
+     * campaign is not one of this install's, or the table holds as many
+     * schedules as it keeps (MAX_ROWS in all, PER_CAMPAIGN for one campaign
+     * or for ac=--) and none of them has gone IDLE_FOR without a fetch. A
+     * real schedule is fetched again and again, so it keeps its place; a
+     * row nobody fetches again gives its place up.
      *
      * @param Schedule $schedule
      */
@@ -87,15 +95,19 @@ final class LegacyGoogleFeedFetches
         if ($this->conn->executeUpdate($again) > 0) {
             return true;
         }
-        $rows = $this->count();
-        if ($rows >= self::MAX_ROWS) {
-            $stale = $this->conn->prepareWrite(
-                'DELETE FROM ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES . ' WHERE last_fetched_at < ?'
-            );
-            $this->conn->bind($stale, 'i', [$now - self::SHOWN_FOR]);
-            if ($rows - $this->conn->executeUpdate($stale) >= self::MAX_ROWS) {
+        if ($schedule['campaign_id'] > 0) {
+            // A campaign nobody has is a schedule nobody would be shown.
+            $known = $this->conn->prepareWrite('SELECT 1 AS known FROM 202_aff_campaigns WHERE aff_campaign_id = ? LIMIT 1');
+            $this->conn->bind($known, 'i', [$schedule['campaign_id']]);
+            if ($this->conn->fetchOne($known) === null) {
                 return false;
             }
+        }
+        if (
+            !$this->makeRoom(' WHERE aff_campaign_id = ?', 'i', [$schedule['campaign_id']], self::PER_CAMPAIGN, $now)
+            || !$this->makeRoom('', '', [], self::MAX_ROWS, $now)
+        ) {
+            return false;
         }
         $first = $this->conn->prepareWrite(
             'INSERT INTO ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES
@@ -107,6 +119,31 @@ final class LegacyGoogleFeedFetches
         $this->conn->executeUpdate($first);
 
         return true;
+    }
+
+    /**
+     * Whether the rows $where selects leave room for one more under $cap,
+     * after the one fetched longest ago is removed if it has gone IDLE_FOR
+     * without a fetch.
+     *
+     * @param list<int> $values
+     */
+    private function makeRoom(string $where, string $types, array $values, int $cap, int $now): bool
+    {
+        $count = $this->conn->prepareWrite('SELECT COUNT(*) AS n FROM ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES . $where);
+        if ($values !== []) {
+            $this->conn->bind($count, $types, $values);
+        }
+        if (StoredRow::int($this->conn->fetchOne($count) ?? [], 'n') < $cap) {
+            return true;
+        }
+        $idle = $this->conn->prepareWrite(
+            'DELETE FROM ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES . ($where === '' ? ' WHERE' : $where . ' AND')
+            . ' last_fetched_at < ? ORDER BY last_fetched_at, fetch_id LIMIT 1'
+        );
+        $this->conn->bind($idle, $types . 'i', [...$values, $now - self::IDLE_FOR]);
+
+        return $this->conn->executeUpdate($idle) === 1;
     }
 
     /**
@@ -167,13 +204,27 @@ final class LegacyGoogleFeedFetches
 
     /**
      * How many of the account's schedules still wait to be moved over: what
-     * Home and Account Overview say, until each is moved or hidden.
+     * Home and Account Overview say, until each is moved or hidden. One
+     * naming every campaign counts only for an account that already sends
+     * conversions to Google.
      */
     public function waiting(int $userId, int $now): int
     {
+        $fetches = $this->forAccount($userId, $now);
+        if ($fetches === []) {
+            return 0;
+        }
+        // Anyone can request the old address, and one naming every campaign is shown to every account. It
+        // is news on Home only for an account that sends Google conversions: it has a Google name or feed.
+        $names = (new ConversionNames($this->conn))->read($userId)[ConversionNames::GOOGLE];
+        $sendsToGoogle = $names['default'] !== null || $names['campaigns'] !== [];
+        foreach ((new FeedStore($this->conn))->list($userId) as $feed) {
+            $sendsToGoogle = $sendsToGoogle || $feed->format->platform() === ConversionNames::GOOGLE;
+        }
+
         return count(array_filter(
-            $this->forAccount($userId, $now),
-            static fn (array $fetch): bool => $fetch['state'] === self::READY
+            $fetches,
+            static fn (array $fetch): bool => $fetch['state'] === self::READY && ($fetch['campaign_id'] > 0 || $sendsToGoogle)
         ));
     }
 
@@ -203,13 +254,14 @@ final class LegacyGoogleFeedFetches
         if ($fetch['feed'] !== null) {
             return ['fetch' => $fetch, 'feed' => $fetch['feed'], 'key' => null];
         }
+        // Made once: a second click that raced the first finds the first's feed.
         [$feed, $key] = (new FeedStore($this->conn))->create($userId, [
             'format' => self::FORMAT,
             'days' => self::DAYS,
             'conversion_name' => $fetch['conversion_name'],
             'ad_user_data' => null,
             'ad_personalization' => null,
-        ], $now);
+        ], $now, true);
 
         return ['fetch' => $fetch, 'feed' => $feed, 'key' => $key];
     }
@@ -241,12 +293,5 @@ final class LegacyGoogleFeedFetches
         }
 
         return null;
-    }
-
-    private function count(): int
-    {
-        $stmt = $this->conn->prepareWrite('SELECT COUNT(*) AS n FROM ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES);
-
-        return StoredRow::int($this->conn->fetchOne($stmt) ?? [], 'n');
     }
 }

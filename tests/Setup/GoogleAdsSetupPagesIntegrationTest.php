@@ -223,8 +223,12 @@ final class GoogleAdsSetupPagesIntegrationTest extends TestCase
         [$html] = self::page($pages[0]);
         self::assertStringNotContainsString('conversion uploads have stopped', $html);
 
-        $fetches->noteFetch(['campaign_id' => self::CAMPAIGN, 'conversion_name' => 'Purchase'], time() - 3600);
+        // One naming every campaign is anyone's to make the old address say: no news for an account with no Google name or feed.
         $fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Lead'], time() - 3600);
+        [$html] = self::page($pages[0]);
+        self::assertStringNotContainsString('conversion uploads have stopped', $html);
+        (new ConversionNames(self::conn()))->save(self::USER, [ConversionNames::GOOGLE => [0 => 'Sign-up']], time());
+        $fetches->noteFetch(['campaign_id' => self::CAMPAIGN, 'conversion_name' => 'Purchase'], time() - 3600);
         foreach ($pages as $page) {
             [$html] = self::page($page);
             self::assertStringContainsString('Your Google Ads conversion uploads have stopped.', $html, $page);
@@ -292,6 +296,30 @@ final class GoogleAdsSetupPagesIntegrationTest extends TestCase
         [$html] = self::page($page);
         self::assertStringContainsString('Google Ads Online &lt;Store&gt; (123-456-7890)', $html, 'the row names the account');
         self::assertStringContainsString('conversion action Purchase (987654)', $html);
+
+        // Edited on the page (its name, a per-campaign action), the picked names are still stored and shown.
+        $edit = ['action' => 'update', 'destination_id' => (string) $id, 'token' => 'SESSION', 'name' => 'Search, renamed', 'customer_id' => '123-456-7890',
+            'login_customer_id' => '1112223333', 'conversion_action' => '987654', 'cca_campaign' => [(string) self::CAMPAIGN, ''], 'cca_action' => ['555001', ''],
+            'all_campaigns' => '1', 'ad_user_data' => '', 'ad_personalization' => '', 'developer_token' => '', 'oauth_client_id' => '', 'oauth_client_secret' => ''];
+        [$out] = self::page($page, [], $edit);
+        self::assertSame('', trim($out), 'the edit was saved and the page redirected: ' . substr($out, 0, 300));
+        $edited = $store->get(self::USER, $id);
+        self::assertSame('Search, renamed', $edited['name']);
+        self::assertSame([self::CAMPAIGN => '555001'], ((array) $edited['settings'])['campaign_conversion_actions']);
+        self::assertSame(
+            ['customer' => ['id' => '1234567890', 'name' => 'Online <Store>'], 'conversion_action' => ['id' => '987654', 'name' => 'Purchase']],
+            ((array) $edited['settings'])['labels']
+        );
+        [$html] = self::page($page);
+        self::assertStringContainsString('Google Ads Online &lt;Store&gt; (123-456-7890)', $html);
+        // Another action typed into the edit form: its old name goes, the account's stays.
+        self::page($page, [], ['conversion_action' => '700700'] + $edit);
+        $retyped = (array) $store->get(self::USER, $id)['settings'];
+        self::assertSame(['700700', ['customer' => ['id' => '1234567890', 'name' => 'Online <Store>']]], [$retyped['conversion_action'], $retyped['labels']]);
+        [$html] = self::page($page);
+        self::assertStringContainsString('conversion action 700700', $html);
+        self::assertStringNotContainsString('Purchase (700700)', $html);
+        self::page($page, [], $edit);
 
         // Typed under Advanced, the IDs are taken as before.
         self::page($page, [], ['action' => 'create_google_ads', 'token' => 'SESSION', 'gads_name' => 'Typed',

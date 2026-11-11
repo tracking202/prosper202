@@ -76,9 +76,9 @@ final class LegacyGoogleFeed
                 throw new \RuntimeException('no database connection');
             }
             if (!(new LegacyGoogleFeedFetches(new \Prosper202\Database\Connection($db)))->noteFetch($schedule, $now)) {
-                error_log('Prosper202: the retired Google Ads feed was fetched for a schedule that was not noted: '
-                    . LegacyGoogleFeedFetches::MAX_ROWS . ' others were fetched in the last '
-                    . intdiv(LegacyGoogleFeedFetches::SHOWN_FOR, 86400) . ' days.');
+                error_log('Prosper202: the retired Google Ads feed was fetched for a schedule that was not noted:'
+                    . ' it names no campaign of this install, or as many schedules as are kept were fetched in the last '
+                    . intdiv(LegacyGoogleFeedFetches::IDLE_FOR, 86400) . ' days.');
             }
         } catch (\Throwable $e) {
             error_log('Prosper202: a fetch of the retired Google Ads feed could not be noted for'

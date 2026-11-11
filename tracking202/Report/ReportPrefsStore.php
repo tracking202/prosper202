@@ -255,6 +255,13 @@ final class ReportPrefsStore
             $lists['aff_network_id'][(string) $row['aff_network_id']] = (string) $row['aff_network_name'];
         }
 
+        // The publishers the account may put on a link (Get Links' list).
+        $lists['publisher_id'] = array_column(
+            (new \Prosper202\Click\PublisherCredit($this->conn))->grantable($userId),
+            'name',
+            'user_id'
+        );
+
         // One <optgroup>ed menu in place of the classic category-then-campaign
         // pair (UI standard, "One replacement per legacy job").
         $lists['aff_campaign_id'] = [];

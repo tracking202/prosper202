@@ -2286,6 +2286,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
         - name: click_lead
           in: query
           description: "0 = clicks only, 1 = conversions only"
@@ -3148,6 +3149,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Summary metrics
@@ -3220,6 +3222,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: The groups as a tree (`data`, each with `children` but the innermost), `totals`, and `by`
@@ -3266,7 +3269,11 @@ paths:
         summary and in no row. `ip` is the visitor's address (IPv6 decoded),
         `referer` the referring domain, `referer_url` the whole URL,
         `device_type` Desktop/Mobile/Tablet/Bot, `rotator_rule` the rule that
-        matched (its rows also carry `rotator_id`). Names of visitor-authored
+        matched (its rows also carry `rotator_id`), `publisher` the publisher
+        a publisher link credited the click to (its user id and name; a click
+        on no publisher link is in no row), `publisher_link` the tracking
+        link such a click came on (its `t202id`; clicks credited before
+        1.9.80 stored it are in no row). Names of visitor-authored
         dimensions (keyword, city, region, isp, browser, platform, device,
         ip, referer, referer_url, c1-c4, utm_*) are sanitized on the way out.
       operationId: reportBreakdown
@@ -3307,6 +3314,8 @@ paths:
               - utm_content
               - rotator
               - rotator_rule
+              - publisher
+              - publisher_link
         - name: sort
           in: query
           description: Any metric a row carries; anything else is a 422 naming them.
@@ -3354,6 +3363,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Breakdown results
@@ -3440,6 +3450,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Timeseries data
@@ -3550,6 +3561,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Day-parting rows
@@ -3718,6 +3730,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: The rotator's figures
@@ -3842,7 +3855,10 @@ paths:
         whatever its `splittest` says. Every campaign and
         landing page a redirect names must be one of your live ones. Each
         criterion's value is stored as the page stores it: split on commas
-        and trimmed (`all`, in any case, as `ALL`); a device is lower case. Every key is
+        and trimmed (`all`, in any case, as `ALL`), a country as Name(CC) and a
+        device in lower case, however they are sent (`meta.normalized` lists
+        what was stored in another form; `meta.warnings` names a rule or
+        criterion that matches no visitor). Every key is
         checked, at every level; a problem is a `422` naming its place
         (`rules.1.redirects.0.redirect_campaign`), with every problem in the
         set reported at once and nothing written. A set has at least one
@@ -4674,6 +4690,95 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /destinations/{id}/deliveries/resend:
+    post:
+      tags: [Destinations]
+      summary: Send failed or withheld conversions again
+      description: >-
+        Puts conversions that ended `failed` or `withheld` back in the queue
+        as `pending` with all their tries, for after the cause is fixed (a
+        token, an account, a conversion action, the privacy setting). Send
+        `delivery_id` for one delivery, or `status` for every delivery of
+        that status made in the last 90 days, 5,000 a call (`more` is true
+        when others remain; call again). The send's checks run again, so a
+        conversion still held back is withheld again. A conversion already
+        sent is never sent twice. 422 when `delivery_id` is not a failed or
+        withheld conversion of this destination.
+      operationId: resendDestinationDeliveries
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                delivery_id: {type: integer, description: One delivery; not with status}
+                status: {type: string, enum: [failed, withheld], description: Every delivery of this status; not with delivery_id}
+      responses:
+        "200":
+          description: How many were queued again
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      queued: {type: integer}
+                      more: {type: boolean}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /destinations/{id}/backfill:
+    post:
+      tags: [Destinations]
+      summary: Queue earlier conversions for a destination
+      description: >-
+        Queues each paid conversion of the last `days` that the destination's
+        campaigns take and its log has no delivery for (recorded before the
+        destination existed, or while it was off), oldest first, 5,000 a call
+        (`more` is true when others remain; call again). `days` is 1 to 3
+        for GA4, which refuses an event more than 72 hours old, and 1 to 90
+        for Google Ads. They are sent by the cron job like any other.
+      operationId: backfillDestination
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [days]
+              properties:
+                days: {type: integer, minimum: 1, maximum: 90}
+      responses:
+        "200":
+          description: How many were queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      queued: {type: integer}
+                      more: {type: boolean}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /destinations/{id}/google-ads/accounts:
     get:
       tags: [Destinations]
@@ -4822,8 +4927,10 @@ paths:
         apart), `sent`, `failed` (attempts ran out, the platform refused it,
         or the request was refused before it was sent), `withheld` (nothing
         was sent - the click was guessed rather than named, the privacy
-        setting holds the visitor back, or the visitor may be in the EEA or
-        UK and the destination does not state both consent signals granted) or
+        setting holds the visitor back (`eu`, the default, holds back every
+        visitor who may be in the EEA or UK whatever consent is stated), or,
+        with the setting `disabled`, the visitor may be in the EEA or UK and
+        the destination does not state both consent signals granted) or
         `cancelled` (the conversion or the destination was deleted first).
         `summary` is what was sent, without identifiers' values.
         `meta.summary` counts every status under the same filters except
@@ -7765,6 +7872,7 @@ paths:
       - $ref: '#/components/parameters/filterKeyword'
       - $ref: '#/components/parameters/filterIp'
       - $ref: '#/components/parameters/filterReferer'
+      - $ref: '#/components/parameters/filterPublisherId'
       responses:
         '200':
           description: One row per weekday (`day_of_week` 0 = Monday … 6 = Sunday, `day_name`) with the same metrics
@@ -11991,6 +12099,15 @@ components:
       schema:
         type: string
         maxLength: 255
+    filterPublisherId:
+      name: publisher_id
+      in: query
+      description: >-
+        Clicks a publisher link credited to this publisher (a user id, the `id` of a
+        `breakdown=publisher` row), or `none` for the clicks credited to no publisher. 0 is no filter.
+      schema:
+        type: string
+        pattern: '^([0-9]+|none)$'
 
     # App postback filters (list + report)
     postbackRegistrationId:
@@ -15236,8 +15353,9 @@ components:
                   every visitor whatever the statement, from every entry point
                   (stored as `ALL`; a value stored before as `all`, `All` or
                   with a space beside it is read the same way);
-                  countries as Name(CC), e.g. "United States(US)"; devices in
-                  lower case (a capital never matches, so it is a 422).
+                  a country is stored as Name(CC), e.g. "United States(US)", and
+                  may be sent as its two-letter code or its name; a device is
+                  stored in lower case however it is sent.
                   For type ip, single IPv4 or IPv6 addresses, stored in canonical
                   form; a value that is not an address (a range included) is a 422.
                   A value holding ALL is taken for any type, ip included, without
@@ -15910,6 +16028,13 @@ components:
           type: integer
         user_time_register:
           type: integer
+        user_public_publisher_id:
+          type: string
+          nullable: true
+          readOnly: true
+          description: >-
+            The id a publisher link carries as `t202pubid` to credit its clicks to this user. It counts only
+            for a user holding the Publisher role, on a link of an account that may manage users.
 
     UserCreate:
       type: object

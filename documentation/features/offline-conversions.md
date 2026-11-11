@@ -159,8 +159,15 @@ it.
 The old address takes no sign-in, so the list repeats what a request to it
 said: a schedule naming one of your campaigns is shown to you, one naming
 every campaign to each user who may export, and nothing changes until you
-press the button. At most 50 schedules are noted, each for 35 days after its
-last fetch.
+press the button. Home and Account Overview mention a schedule naming every
+campaign only to an account that already sends conversions to Google (it has
+a Google conversion name or a Google fetch URL). At most 50 schedules are
+noted, 5 for one campaign, each shown for 35 days after its last fetch; when
+there is no room, one not fetched for 2 days gives its place up, and an
+address naming a campaign this install does not have is not noted. **hide**
+on a schedule naming every campaign hides it for every user. A campaign has
+one Google name, so moving a second schedule of the same campaign replaces
+the first one's name (the button asks first).
 
 By hand it is the same two steps: under *Conversion names*, enter the
 schedule's `cn` value on the row of the campaign its `ac` named, or on
