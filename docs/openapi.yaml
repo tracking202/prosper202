@@ -2340,6 +2340,56 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /clicks/{id}/not-fraud:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Clicks]
+      summary: Count a click IPQualityScore filtered again
+      description: |
+        Visitors' Not fraud button. For a click filtered for its fraud score
+        (`filter_reason: fraud_score`): the click, and the caller's other
+        clicks from the same address that were filtered for their score (at
+        most 200 a call; `more_clicks_filtered` says when some remain), count
+        again, each one's report row is rolled up again, and the address is
+        put on the click filter list as always count
+        (`GET /users/{id}/click-filter`), so it is not scored again. Remove
+        the entry there to have the address scored again.
+
+        `address_always_counted` is false, with the reason in `note`, when
+        the address could not be listed (the list is full); the clicks count
+        again all the same.
+
+        404 for a click that is not the caller's, or was not filtered for its
+        fraud score: a click one of the account's own rules filtered is
+        changed through the click filter. Takes no body; one is a 422. Needs
+        `access_to_personal_settings` and `clicks:write`. Not stageable, and
+        it has no dry run. Sending it again is safe.
+      operationId: markClickNotFraud
+      responses:
+        "200":
+          description: What was counted again
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      click_id: {type: integer}
+                      ip_address: {type: string, example: "203.0.113.50"}
+                      clicks_counted: {type: integer, description: "Clicks that count again, this one included."}
+                      more_clicks_filtered: {type: boolean, description: "True when more than 200 clicks from the address were filtered; send the request again."}
+                      address_always_counted: {type: boolean}
+                      note: {type: string}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /clicks/{id}/conversions:
     parameters:
       - $ref: "#/components/parameters/resourceId"
@@ -2934,8 +2984,13 @@ paths:
         the same list twice is safe. A converting click is no longer
         filtered.
 
-        A line whose payout, transaction id or time cannot be read (a
-        currency sign, a thousands separator or decimal comma, a negative
+        A payout may carry the sign or code of the account's currency before
+        or after the number (`$12.50`, `12.50 USD`), as a network's report
+        writes it: it is read as the number, and the line's answer keeps
+        what was sent as `payout_written`. `payout` is read the same way.
+
+        A line whose payout, transaction id or time cannot be read (another
+        currency's sign, a thousands separator or decimal comma, a negative
         amount, a date that does not exist, is in the future or is before its
         click, more than four fields) is a 422
         naming it (`subids.3`), and nothing in the request is written; a dry
@@ -5724,6 +5779,32 @@ paths:
                             <app> via mcp.tracking202.com".
                         created_at:
                           type: integer
+                        last_used_at:
+                          type: integer
+                          nullable: true
+                          description: >-
+                            When the key last authenticated a request, to
+                            within five minutes; null when no use is recorded.
+                            Recorded from 1.9.80 on, and absent until that
+                            upgrade has run.
+                        last_used_api:
+                          type: string
+                          nullable: true
+                          description: The API version of that request (`v1`, `v2` or `v3`)
+                        last_used_client:
+                          type: string
+                          nullable: true
+                          description: >-
+                            The User-Agent that request sent, as the client
+                            named itself; null when it sent none.
+                        ends_at:
+                          type: integer
+                          nullable: true
+                          description: >-
+                            Set on a key that was replaced. The key is refused
+                            with 401 from this time on, stays in this list for
+                            seven days more and is then removed; null for a key
+                            that does not end.
         "403":
           $ref: "#/components/responses/Forbidden"
     post:
@@ -5756,6 +5837,15 @@ paths:
                     - type: array
                       items:
                         type: string
+                label:
+                  type: string
+                  nullable: true
+                  maxLength: 100
+                  description: >-
+                    What will use the key, shown in the key lists. Up to 100
+                    characters on one line, not starting with "AI:" (422
+                    otherwise). Omit, or send null or an empty string, for a
+                    key with no name.
       responses:
         "201":
           description: API key created
@@ -5775,10 +5865,86 @@ paths:
                       scope:
                         type: string
                         description: The stored scope; `*` for full access
+                      label:
+                        type: string
+                        nullable: true
+                        description: The name the key was given, or null
                       created_at:
                         type: integer
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /users/{id}/api-keys/replace:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Users]
+      summary: Replace an API key
+      description: >-
+        Your own with the `access_to_personal_settings` permission, or a user
+        you may manage. What Replace does in My Account. A new key is made
+        with the old key's scope and label and returned once. The old key
+        keeps working for 24 hours and is then refused with 401 and a message
+        saying it was replaced. To end the old key at once, delete it. A
+        scoped caller cannot replace a key broader than its own (403). The
+        old key is sent in the body, never in the path.
+      operationId: replaceApiKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key]
+              properties:
+                api_key:
+                  type: string
+                  description: The full key to replace
+      responses:
+        "201":
+          description: Replacement key created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user_id:
+                        type: integer
+                      api_key:
+                        type: string
+                        description: The new key, in full (shown once)
+                      scope:
+                        type: string
+                        description: The old key's scope, carried over; `*` for full access
+                      label:
+                        type: string
+                        nullable: true
+                        description: The old key's label, carried over
+                      created_at:
+                        type: integer
+                      replaced:
+                        type: object
+                        properties:
+                          api_key:
+                            type: string
+                            description: The old key, masked
+                          ends_at:
+                            type: integer
+                            description: When the old key stops working
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The user has no such key
+        "409":
+          description: >-
+            The key was already replaced, belongs to an AI app's connection
+            (connect the app again instead), or the 1.9.80 database upgrade
+            has not run.
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /users/{id}/api-keys/{keyId}:
     parameters:
@@ -11380,6 +11546,56 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /landing-pages/{id}/check:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Setup]
+      summary: Check that a landing page carries its tracking code
+      description: |
+        "Check my page" on Setup > Get LP Code. Prosper202 fetches the landing
+        page's saved URL and reads its HTML for the code of this landing page
+        (the loader `GET /landing-pages/{id}/code` returns, or the older
+        `landing.js` one). The answer is kept, and Setup > Landing Pages shows
+        it beside the page.
+
+        `status` is `present` (the current code), `legacy` (the older code,
+        which still works), `mixed` (this page's code and another landing
+        page's), `other_tracker` (this page's id, loaded from a host that is
+        not this install's tracking domain), `wrong_id` (only another landing
+        page's code), `commented` (only inside an HTML comment), `absent`, or
+        `error` when the page could not be fetched; `message` says what was
+        found and what to do. `found` is true for `present` and `legacy`. A
+        page that cannot be fetched is an answer (200, `status: error`), not
+        a failed request.
+
+        The fetch is held to the rules postbacks are: public addresses only,
+        each redirect checked, at most 10 seconds and 2 MB. It reads the HTML
+        as served, so code a tag manager adds after the page loads is not
+        seen, and finding the code does not prove a visit is recorded.
+
+        The landing page must be the caller's and not removed (404
+        otherwise). Takes no body and no parameters; either is a 422. Not
+        stageable, and it has no dry run. Needs `access_to_setup_section`
+        and `landing-pages:read`: it changes no setup.
+      operationId: checkLandingPageCode
+      responses:
+        "200":
+          description: What the check found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/LandingPageCheck"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /conversions/postback-code:
     get:
       tags: [Setup]
@@ -13500,6 +13716,22 @@ components:
           type: integer
           readOnly: true
 
+    LandingPageCheck:
+      type: object
+      properties:
+        landing_page_id: {type: integer}
+        landing_page_id_public: {type: integer, description: "The id the page's code carries (lpip=)."}
+        landing_page_url: {type: string, description: "The saved URL that was fetched (its [[placeholders]] left out)."}
+        status:
+          type: string
+          enum: [present, legacy, mixed, other_tracker, wrong_id, commented, absent, error]
+        found: {type: boolean, description: "True when the page carries this landing page's code (present or legacy)."}
+        message: {type: string, description: "What was found, and what to do about it."}
+        other_landing_page_ids_public:
+          type: array
+          items: {type: string}
+          description: "The other landing pages' public ids the page carries code for (mixed, wrong_id)."
+
     LandingPageCreate:
       type: object
       required: [landing_page_url, aff_campaign_id]
@@ -13507,6 +13739,12 @@ components:
         landing_page_url:
           type: string
           maxLength: 255
+          description: >-
+            Starts with http:// or https://. A host sent without its scheme
+            (lp.example.com/x, //lp.example.com/x) is stored with https://,
+            as Setup > Landing Pages stores it, and the answer says so in
+            meta.normalized; any other value is a 422. Sync compares landing
+            pages on the stored form.
         aff_campaign_id:
           type: integer
         landing_page_nickname:
@@ -13540,6 +13778,21 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/LandingPage"
+        meta:
+          type: object
+          description: Present on a create or update that completed a URL.
+          properties:
+            normalized:
+              type: object
+              description: >-
+                Each URL field (landing_page_url, leave_behind_page_url) that
+                was sent as a host without its scheme, with what was sent and
+                what is stored for it.
+              additionalProperties:
+                type: object
+                properties:
+                  sent: {type: string, example: "lp.example.com/x"}
+                  stored: {type: string, example: "https://lp.example.com/x"}
 
     LandingPageListResponse:
       type: object
@@ -14381,6 +14634,7 @@ components:
           enum: [marked, would_mark, cleared, would_clear, already_converted, not_found, not_a_subid, duplicate_in_list]
         first_line: {type: integer, description: "For duplicate_in_list: the earlier item with the same click (and the same transaction id)."}
         payout: {type: string, description: "Update Subids: the line's own payout, when it gives one."}
+        payout_written: {type: string, description: "Update Subids: the payout as the line wrote it, when it carried the account currency's sign or code (`$12.50`) and `payout` is the number read from it."}
         transaction_id: {type: string, description: "Update Subids: the line's transaction id, when it gives one."}
         conv_time: {type: integer, description: "Update Subids: the line's time as a Unix timestamp, when it gives one."}
         conversions: {type: integer, description: "In a delete dry run: the click's live conversions."}

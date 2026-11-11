@@ -495,9 +495,11 @@ try {
         // /conversions routes, whose GET /conversions/{id} would otherwise
         // answer GET /conversions/postback-code. SetupRoutesPermissionTest
         // holds all of this.
-        $router->group('', function (Router $r) use ($crud, $queryParams, $auth) {
+        $router->group('', function (Router $r) use ($crud, $queryParams, $payload, $auth) {
             $code = \Api\V3\Controllers\SetupCodeController::class;
             $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode(PathId::of($ctx), $queryParams));
+            // "Check my page": fetches the page and keeps the answer. Not stageable (it changes no setup), and no preview.
+            $r->post('/landing-pages/{id}/check', fn($ctx) => $crud($code)->landingPageCheck(PathId::of($ctx), $queryParams, $payload));
             // The postback token rides in the URLs only for a key that may write conversions.
             $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams, null, $auth->hasScope('conversions:write')));
         }, [$setupSection]);
@@ -554,6 +556,16 @@ try {
         $router->get('/clicks/{id}/conversions', function ($ctx) use ($crud, $auth, $campaignFigures, $recordMoney) {
             $auth->requireScope('conversions:read');
             return $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->conversions(PathId::of($ctx)), $recordMoney);
+        });
+
+        // "Not fraud" on a click IPQualityScore filtered (Visitors' button):
+        // the click and the account's other clicks from its address count
+        // again, and the address goes on the click filter list as always
+        // count. It writes that list, so it asks what Personal Settings'
+        // Click filter card asks. Not stageable, and no preview.
+        $router->post('/clicks/{id}/not-fraud', function ($ctx) use ($crud, $auth, $db, $payload) {
+            $auth->requirePermission($db, 'access_to_personal_settings');
+            return $crud(\Api\V3\Controllers\ClicksController::class)->notFraud(PathId::of($ctx), $payload);
         });
 
         // ── Conversions ──────────────────────────────────────────────────
@@ -1249,6 +1261,12 @@ try {
                 $make()->deleteApiKey(PathId::of($ctx), (string)$ctx['keyId']);
                 return null;
             });
+            // The key to replace is in the body: it works for a day more,
+            // and a path is logged.
+            $r->post('/{id}/api-keys/replace', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return ['_status' => 201] + $make()->replaceApiKey(PathId::of($ctx), $payload, $auth);
+            });
 
             // Identity linking key (self-or-admin): what the operator's
             // server signs customer ids with (cust_sig).
@@ -1728,6 +1746,13 @@ try {
             // events compute over the body and store nothing: reads that
             // arrive as POST because the definitions are their input. After
             // the staged override for the same reason as /apps/verify.
+            $scopeAction = 'read';
+        }
+        if ($method === 'POST' && preg_match('#^/landing-pages/[^/]+/check$#', $path) === 1) {
+            // "Check my page" fetches the landing page's own saved URL and
+            // keeps what it found beside the page: no setup changes, so a
+            // key that may read landing pages may ask. After the staged
+            // override, as /apps/verify is.
             $scopeAction = 'read';
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {

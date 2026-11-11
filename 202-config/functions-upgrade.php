@@ -151,6 +151,26 @@ if (!function_exists('_upgrade_seed_bot202_facebook_pixel_lookups')) {
     }
 }
 
+if (!function_exists('_upgrade_complete_landing_page_urls')) {
+    /**
+     * Landing page URLs stored without a scheme take https://
+     * (Prosper202\Setup\LandingPageUrlRepair), for the 1.9.80 rung. Best
+     * effort: a failure is logged and never stops the upgrade, and a URL
+     * left as it was is completed when its page is next saved.
+     */
+    function _upgrade_complete_landing_page_urls(): void
+    {
+        global $db;
+
+        try {
+            $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
+            \Prosper202\Setup\LandingPageUrlRepair::run(new \Prosper202\Database\Connection($conn));
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade: landing page URLs stored without a scheme could not be completed: ' . $e->getMessage());
+        }
+    }
+}
+
 if (!function_exists('_upgrade_seed_licence_answers')) {
     /**
      * Copy the licence answers cached on disk within the grace period into
@@ -4986,6 +5006,11 @@ class UPGRADE
                 // Each API key as its SHA-256 and prefix, and an AI connection's
                 // key with its watcher token (Prosper202\User\ApiKeyStore); the
                 // keys already there are hashed (the last argument, this step only).
+                // Also each key's last use (last_used_at, last_used_api,
+                // last_used_client) and a replaced key's ending (ends_at). The
+                // two text columns name utf8mb4: a table made before 1.9.55
+                // has the server's default charset, and a client's name is
+                // any text.
                 \Prosper202\Database\Tables\UserTables::apiKeys(),
                 // The money-loss alerts' settings per account (no row is on;
                 // a row with enabled 0 is off), and the incident each was last
@@ -5012,6 +5037,9 @@ class UPGRADE
                 // The schedules still fetching paid 1.9.56's retired Google Ads
                 // feed (Prosper202\OfflineConversion\LegacyGoogleFeedFetches).
                 \Prosper202\Database\Tables\ConversionTables::legacyGoogleFeedFetches(),
+                // What each landing page's last code check found
+                // (Prosper202\Setup\LandingPageCheckStore).
+                \Prosper202\Database\Tables\CampaignTables::landingPageChecks(),
                 // 202_ppc_network_variables gains copied_from_ppc_variable_id:
                 // the variable a traffic source's copy took each of its own
                 // from (TrafficSourceOwners::split()), which names the values
@@ -5020,6 +5048,7 @@ class UPGRADE
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();
+                _upgrade_complete_landing_page_urls();
             }
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {

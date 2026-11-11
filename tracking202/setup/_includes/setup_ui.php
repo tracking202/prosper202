@@ -136,18 +136,48 @@ function p202_setup_token_field(string $token): string
 }
 
 /**
- * "Check my page" under a landing page's code: posts the page's id to
- * ajax/check_landing_code.php and shows the answer below the button.
+ * A landing page's code check in a list of landing pages: what the last
+ * check found, as a pill whose title is the check's sentence. A page with
+ * no result for its present URL is checked when the list is shown
+ * (p202-setup.js posts its id to ajax/check_landing_code.php and puts the
+ * answer in the pill's place), unless $ask is false.
+ *
+ * @param array{status: string, message: string, checked_at: int}|null $stored LandingPageCheckStore::forAccount()'s
  */
-function p202_setup_lp_check(string $base, string $token, int $landingPageId): string
+function p202_setup_lp_check_pill(int $landingPageId, ?array $stored, bool $ask = true): string
 {
+    [$classes, $label] = \Prosper202\Setup\LandingPageCheckStore::pill($stored['status'] ?? null);
+    $title = $stored === null
+        ? ($ask ? 'Checking whether the page carries its code…' : 'This page has not been checked for its code.')
+        : str_replace('the code above', 'the code from Get LP Code', $stored['message']) . ' Checked ' . date('M j, H:i', $stored['checked_at']) . '.';
+
+    return '<span class="' . $classes . '" data-p202-lp-check-pill="' . $landingPageId . '"'
+        . ($stored === null && $ask ? ' data-p202-lp-check-due' : '') . ' title="' . p202_setup_e($title) . '">' . p202_setup_e($label) . '</span>';
+}
+
+/**
+ * "Check my page" under a landing page's code: posts the page's id to
+ * ajax/check_landing_code.php and shows the answer below the button, where
+ * the last check's answer ($stored, LandingPageCheckStore::forPage()) stands
+ * until then.
+ *
+ * @param array{status: string, message: string, checked_at: int}|null $stored
+ */
+function p202_setup_lp_check(string $base, string $token, int $landingPageId, ?array $stored = null): string
+{
+    // What the last check found, until this one answers.
+    $last = $stored === null ? '' : p202_flash(
+        (new \Prosper202\Setup\LandingPageCheckResult($stored['status'], ''))->flashKind(),
+        'Last checked ' . date('M j, H:i', $stored['checked_at']) . '. ' . $stored['message']
+    );
+
     return '<form method="post" class="mb-2" action="' . p202_setup_e($base . 'tracking202/ajax/check_landing_code.php') . '" data-p202-ajax-target="#lp-check-result">'
         . p202_setup_token_field($token)
         . '<input type="hidden" name="landing_page_id" value="' . $landingPageId . '">'
         . '<button type="submit" class="btn btn-secondary btn-sm"><i class="bi bi-search"></i> Check my page</button>'
         . ' <span class="form-text">Once the code is on your page, this fetches the page and looks for it.</span>'
         . '</form>'
-        . '<div id="lp-check-result" class="mb-3" aria-live="polite"></div>';
+        . '<div id="lp-check-result" class="mb-3" aria-live="polite">' . $last . '</div>';
 }
 
 /**

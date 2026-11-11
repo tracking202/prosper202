@@ -17,7 +17,9 @@ use Prosper202\Setup\LandingPageCode;
  */
 final class LandingPageCheckTest extends TestCase
 {
-    private const PUBLIC = '93.184.216.34';
+    /** Documentation addresses, which the guard takes only because checker() allows their networks. Never connected to. */
+    private const PUBLIC = '203.0.113.34';
+    private const ALLOW = '203.0.113.0/24,2001:db8::/32';
     private const ID = '4242';
 
     /** @var list<array<int, mixed>> the options of each transfer made */
@@ -40,7 +42,7 @@ final class LandingPageCheckTest extends TestCase
      */
     private function checker(array $dns, array $answers): LandingPageCheck
     {
-        $guard = new WebhookGuard(static fn (string $host): array => $dns[$host] ?? [], '');
+        $guard = new WebhookGuard(static fn (string $host): array => $dns[$host] ?? [], self::ALLOW);
         $transport = function (array $options) use (&$answers): array {
             $this->sent[] = $options;
             $next = array_shift($answers);
@@ -205,14 +207,14 @@ final class LandingPageCheckTest extends TestCase
     {
         $html = self::page(LandingPageCode::loader('//t.example/', self::ID));
         $result = $this->checker(
-            ['shop.example.com' => [self::PUBLIC], 'www.shop.example.com' => ['2606:2800:220:1::248:1893']],
+            ['shop.example.com' => [self::PUBLIC], 'www.shop.example.com' => ['2001:db8:220:1::248:1893']],
             [['status' => 301, 'redirect_url' => 'https://www.shop.example.com/spring'], ['body' => $html]]
         )->check('http://shop.example.com/spring', self::ID);
 
         self::assertSame(Result::PRESENT, $result->status, $result->message);
         self::assertCount(2, $this->sent);
         self::assertSame(['shop.example.com:80:' . self::PUBLIC], $this->sent[0][CURLOPT_RESOLVE]);
-        self::assertSame(['www.shop.example.com:443:[2606:2800:220:1::248:1893]'], $this->sent[1][CURLOPT_RESOLVE]);
+        self::assertSame(['www.shop.example.com:443:[2001:db8:220:1::248:1893]'], $this->sent[1][CURLOPT_RESOLVE]);
         self::assertStringContainsString('https://www.shop.example.com', $result->message, 'the page named is the one read');
     }
 

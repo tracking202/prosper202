@@ -76,6 +76,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"registered apps"}},
 	{Run: "p202 landing-page code", Pages: []string{"Setup › Get LP Code"},
 		Phrases: []string{"landing page code", "landing page tracking script", "lp code"}},
+	{Run: "p202 landing-page check",
+		Phrases: []string{"check my page", "is the tracking code installed", "verify the code is on the page"}},
 	{Run: "p202 tracker create-with-url", Pages: []string{"Setup › Get Links"},
 		Phrases: []string{"tracking link", "generate a tracking link", "campaign link"}},
 	{Run: "p202 conversion postback-url", Pages: []string{"Setup › Postback/Pixel"},

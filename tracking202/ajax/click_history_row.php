@@ -101,7 +101,11 @@ $geoTip = $html['country_name'] . ' (' . $html['country_code'] . '), ' . $html['
 						<td><?php echo $html['isp_name'] !== '' ? $html['isp_name'] : '-'; ?></td>
 						<td>
 							<?php if ($click_row['click_filtered'] == '1') { ?>
-								<span class="p202-pill" title="This click was filtered out (bot / rules)">Filtered</span>
+								<?php [$filterLabel, $filterWhy] = p202_click_filter_reason(is_string($click_row['filter_reason'] ?? null) ? $click_row['filter_reason'] : null); ?>
+								<span class="p202-pill" title="<?php echo htmlspecialchars($filterWhy, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($filterLabel, ENT_QUOTES, 'UTF-8'); ?></span>
+								<?php if (($click_row['filter_reason'] ?? null) === \Prosper202\Click\Filter\ClickFilterVerdict::FRAUD_SCORE && $userObj->hasPermission('access_to_personal_settings')) { ?>
+									<button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline text-nowrap" data-p202-not-fraud="<?php echo (int) $click_row['click_id']; ?>" data-p202-not-fraud-url="<?php echo htmlspecialchars(get_absolute_url() . 'tracking202/ajax/click_not_fraud.php', ENT_QUOTES, 'UTF-8'); ?>" title="Count this click, and the others from its address, again, and always count that address from now on">Not fraud</button>
+								<?php } ?>
 							<?php } elseif ($click_row['click_lead'] == '1') { ?>
 								<span class="p202-pill p202-pill--good" title="This click converted into a lead / sale">Lead</span>
 							<?php } else { ?>

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Prosper202\Fraud;
 
+use Prosper202\Click\Filter\AddressRange;
+use Prosper202\Click\Filter\ClickFilterEntry;
+use Prosper202\Click\Filter\MysqlClickFilterStore;
 use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
@@ -26,7 +29,8 @@ use Prosper202\Http\StoredVisitorIp;
  * one lookup (IpqsClient), at most MAX_LOOKUPS a run across accounts. A
  * score of FRAUD_THRESHOLD or more filters the click
  * (MysqlClickRepository::filterAsFraud(), reason fraud_score) and rolls its
- * report row up again. Every other click is passed over, and no held click
+ * report row up again; a click whose address the account's click filter
+ * list says always counts is passed over without a lookup. Every other click is passed over, and no held click
  * is sent or recorded anywhere. An account whose privacy setting
  * (PrivacySetting) is 'all' is not scored at all, and a click stored masked
  * (StoredVisitorIp::mask()) is held: that address is no visitor's.
@@ -59,6 +63,9 @@ final class IpqsScoring
 
     private int $lookups = 0;
 
+    /** @var array<string, bool> "user:ip_id" => the account's list says the address always counts; one run's memory */
+    private array $alwaysCounted = [];
+
     /** @param (callable(): int)|null $clock */
     public function __construct(
         private readonly Connection $conn,
@@ -79,6 +86,7 @@ final class IpqsScoring
         $report = ['accounts' => 0, 'clicks' => 0, 'lookups' => 0, 'filtered' => 0, 'held' => 0, 'failed' => 0,
             'pruned' => $this->pruneCache($now)];
         $this->lookups = 0;
+        $this->alwaysCounted = [];
         foreach ($this->accounts($now) as [$userId, $key]) {
             if (($this->clock)() >= $deadline || $this->lookups >= self::MAX_LOOKUPS) {
                 break;
@@ -246,6 +254,13 @@ final class IpqsScoring
         }
         $public = filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
         if ($ipId <= 0 || $public === false) {
+            return 'skipped';
+        }
+        // An address the account lists as "always count" is not scored: "Not fraud" puts it there (FraudVerdictUndo).
+        $packed = AddressRange::packedForMatch($address);
+        $this->alwaysCounted[$userId . ':' . $ipId] ??= $packed !== null
+            && (new MysqlClickFilterStore($this->conn))->match($userId, $packed)?->action === ClickFilterEntry::COUNT;
+        if ($this->alwaysCounted[$userId . ':' . $ipId]) {
             return 'skipped';
         }
         $score = $this->cachedScore($userId, $ipId);

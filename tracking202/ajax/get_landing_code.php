@@ -89,7 +89,12 @@ $error = [];
 		. '<p>Use this version of the code instead when your traffic source\'s pixel must fire on your own page, for example a pixel that reads a cookie of this site. After a visitor follows a PurLink, the offer opens in a new tab and this page fires the pixels once the network\'s postback reports the conversion.</p>'
 		. p202_setup_code_box(\Prosper202\Setup\LandingPageCode::loader($codeBase, $publicId, true), ['long' => true])
 		. '</div></details>';
-	echo p202_setup_lp_check(get_absolute_url(), (string) ($_SESSION['token'] ?? ''), (int) $landing_page_row['landing_page_id']);
+	echo p202_setup_lp_check(
+		get_absolute_url(),
+		(string) ($_SESSION['token'] ?? ''),
+		(int) $landing_page_row['landing_page_id'],
+		(new \Prosper202\Setup\LandingPageCheckStore(new \Prosper202\Database\Connection($db)))->forPage((int) $_SESSION['user_id'], (int) $landing_page_row['landing_page_id'])
+	);
 
 	echo '<h3 class="p202-section__title">2. Link out to the offer</h3>'
 		. '<p>Choose one. A PurLink is the fastest for your visitor; the outbound redirect link is the simplest. Use either as the link to the offer on your page.</p>';
