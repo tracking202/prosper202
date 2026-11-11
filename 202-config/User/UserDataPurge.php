@@ -152,6 +152,7 @@ final class UserDataPurge
         'DELETE FROM 202_offline_conversion_names WHERE user_id = ?',
         // The requests the inbound log kept for the account.
         'DELETE FROM 202_inbound_log WHERE user_id = ?',
+        'DELETE FROM 202_held_payment_notifications WHERE user_id = ?',
         'DELETE FROM 202_shopify_pending_refunds WHERE user_id = ?',
         'DELETE FROM 202_shopify_refund_transactions WHERE user_id = ?',
     ];

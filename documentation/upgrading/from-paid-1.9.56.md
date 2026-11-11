@@ -62,7 +62,9 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   (`tracking202/static/jvzoo.php`, no `?role=`) still records an affiliate's
   sales on the click in `caffitid`, verified with the stored JVZIPN secret
   key. A vendor's product JVZIPN URL needs the URL ending `?role=vendor` from
-  Account › API integrations › JVZoo.
+  Account › API integrations › JVZoo; until it is pasted, a vendor's sale that
+  names no affiliate is recorded at the old URL too, and the JVZoo card there
+  says when the old URL is still in use and offers to read it as a vendor's.
 - **Passwords.** Stored 1.9.56 passwords still sign in.
 - **Privacy.** Accounts that existed before the upgrade keep tracking as they
   did. Only accounts created on 1.9.79 or later start with privacy set to

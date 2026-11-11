@@ -64,6 +64,7 @@ final class ConversionTables
             self::destinations(),
             self::destinationDeliveries(),
             self::inboundLog(),
+            self::heldPaymentNotifications(),
             self::shopifyPendingRefunds(),
             self::shopifyRefundTransactions(),
         ];
@@ -546,6 +547,45 @@ final class ConversionTables
                 PRIMARY KEY (`inbound_id`),
                 KEY `user_recent` (`user_id`,`inbound_id`),
                 KEY `user_kind_recent` (`user_id`,`accepted`,`inbound_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Payment notifications refused because they state another currency
+     * than the account counts in (Prosper202\PaymentNotification\HeldNotifications):
+     * what the processor read of each, kept so it can be recorded once the
+     * account counts in that currency. No secret and nothing of the buyer.
+     * A row goes when it is recorded; dedupe makes a provider's retry the
+     * same row. From 1.9.80, added by its rung.
+     */
+    public static function heldPaymentNotifications(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::HELD_PAYMENT_NOTIFICATIONS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::HELD_PAYMENT_NOTIFICATIONS . "` (
+                `held_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `source` varchar(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `kind` varchar(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `event` varchar(64) NOT NULL DEFAULT '',
+                `transaction_id` varchar(255) COLLATE utf8mb4_bin DEFAULT NULL,
+                `original_transaction_id` varchar(255) COLLATE utf8mb4_bin DEFAULT NULL,
+                `amount` varchar(32) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `currency` char(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `click_id` bigint(20) unsigned NOT NULL,
+                `purlink_subid` varchar(512) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `occurred_at` int(10) unsigned DEFAULT NULL,
+                `received_at` int(10) unsigned NOT NULL,
+                `notification_key` char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `body_key` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `dedupe` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `claimed_at` int(10) unsigned DEFAULT NULL,
+                `tried_at` int(10) unsigned DEFAULT NULL,
+                `last_answer` varchar(500) NOT NULL DEFAULT '',
+                PRIMARY KEY (`held_id`),
+                UNIQUE KEY `user_dedupe` (`user_id`,`dedupe`),
+                KEY `user_source` (`user_id`,`source`,`held_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

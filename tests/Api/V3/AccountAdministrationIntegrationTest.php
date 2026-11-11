@@ -10,6 +10,14 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
+use Prosper202\InboundLog\Entry;
+use Prosper202\InboundLog\InboundLog;
+use Prosper202\PaymentNotification\HeldNotifications;
+use Prosper202\PaymentNotification\InboundRequest;
+use Prosper202\PaymentNotification\JVZoo\JVZooAdapter;
+use Prosper202\PaymentNotification\Notification;
+use Prosper202\PaymentNotification\NotificationKind;
+use Prosper202\PaymentNotification\Shopify\ShopifyAdapter;
 use Prosper202\Database\SchemaInstaller;
 
 /**
@@ -468,6 +476,7 @@ final class AccountAdministrationIntegrationTest extends TestCase
         self::assertFalse($byKey['jvzoo_vendor']['secret_stored']);
         self::assertFalse($byKey['zaxaa']['secret_stored']);
         self::assertFalse($byKey['paykickstart']['secret_stored']);
+        $this->assertTheCardCountsAreServed($byKey);
         self::assertSame(0, $byKey['paykickstart']['keys_stored']);
         self::assertSame('https://track.example.com/tracking202/static/shopify.php', $byKey['shopify']['url']);
         self::assertFalse($byKey['shopify']['secret_stored']);
@@ -636,5 +645,109 @@ final class AccountAdministrationIntegrationTest extends TestCase
             self::refused(ValidationException::class, fn () => $this->ltv()->webhookDeliveries($hook, $bad), (string) array_key_first($bad));
         }
         self::refused(NotFoundException::class, fn () => $this->ltv()->webhookDeliveries($theirs, []));
+    }
+
+    /**
+     * What the page's payment cards count, for the caller's account.
+     *
+     * @param array<string, array<string, mixed>> $byKey
+     */
+    private function assertTheCardCountsAreServed(array $byKey): void
+    {
+        $none = ['recordable' => 0, 'waiting' => 0, 'waiting_currencies' => []];
+        foreach (['zaxaa', 'paykickstart', 'shopify'] as $holds) {
+            self::assertSame($none, $byKey[$holds]['held_notifications'], $holds);
+        }
+        foreach (['clickbank', 'jvzoo', 'jvzoo_vendor'] as $holdsNone) {
+            self::assertArrayNotHasKey('held_notifications', $byKey[$holdsNone]);
+        }
+        $noTraffic = ['vendor_no_affiliate' => 0, 'refused' => 0, 'as_affiliate' => 0, 'as_vendor' => 0, 'conflict' => 0,
+            'more' => false];
+        self::assertSame(['read_as' => 'affiliate'] + $noTraffic, $byKey['jvzoo']['no_role_url']);
+        self::assertArrayNotHasKey('no_role_url', $byKey['jvzoo_vendor']);
+
+        $order = new Notification(NotificationKind::SALE, 'orders/paid', 'SH-API-1', null, '25.00', 'EUR', 99);
+        $request = new InboundRequest('POST', 'application/json', []);
+        $entry = new Entry('jvzoo', 'POST', 200, 'recorded', 'Recorded.', self::ADMIN, fields: [
+            JVZooAdapter::ROLELESS_LOG_FIELD => JVZooAdapter::READ_VENDOR_NO_AFFILIATE,
+        ]);
+        try {
+            self::assertTrue(
+                (new HeldNotifications(self::$db))->hold(self::ADMIN, new ShopifyAdapter(self::$db), $order, $request, time())
+            );
+            self::assertTrue((new InboundLog(self::$db))->append($entry));
+            self::q("UPDATE 202_users_pref SET jvzoo_roleless_role = 'vendor', user_account_currency = 'USD'"
+                . ' WHERE user_id = ' . self::ADMIN);
+            $after = array_column($this->admin()->integrations([])['data']['integrations'], null, 'integration');
+            self::assertSame(
+                ['recordable' => 0, 'waiting' => 1, 'waiting_currencies' => ['EUR']],
+                $after['shopify']['held_notifications']
+            );
+            self::assertSame($none, $after['paykickstart']['held_notifications']);
+            self::assertSame('vendor', $after['jvzoo']['no_role_url']['read_as']);
+            self::assertSame(1, $after['jvzoo']['no_role_url']['vendor_no_affiliate']);
+
+            // Counting in EUR, the held order is one the page can record.
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ADMIN);
+            $after = array_column($this->admin()->integrations([])['data']['integrations'], null, 'integration');
+            self::assertSame(
+                ['recordable' => 1, 'waiting' => 0, 'waiting_currencies' => []],
+                $after['shopify']['held_notifications']
+            );
+
+            // POST /system/integrations/record-held: the held order names a click that is not there, so the
+            // processor refuses it as it would arriving now, and it is held no longer; sent again, nothing.
+            $done = $this->admin()->recordHeld(['integration' => 'shopify'])['data'];
+            self::assertSame('shopify', $done['integration']);
+            self::assertNotSame('', $done['first_refusal']);
+            $zero = ['recorded' => 0, 'on_file' => 0, 'refused' => 0, 'failed' => 0, 'left' => 0];
+            unset($done['integration'], $done['first_refusal']);
+            self::assertSame(['refused' => 1] + $zero, ['refused' => $done['refused']] + $done);
+            $again = $this->admin()->recordHeld(['integration' => 'shopify'])['data'];
+            unset($again['integration'], $again['first_refusal']);
+            self::assertSame($zero, $again);
+            self::assertSame($none, $this->heldOf('shopify'));
+            $holdNothing = [[], ['integration' => 'jvzoo'], ['integration' => ['shopify']]];
+            $holdNothing[] = ['integration' => 'Shopify'];
+            foreach ($holdNothing as $bad) {
+                try {
+                    $this->admin()->recordHeld($bad);
+                    self::fail('an integration that holds nothing is refused: ' . json_encode($bad));
+                } catch (ValidationException $refused) {
+                    self::assertArrayHasKey('integration', $refused->getFieldErrors());
+                }
+            }
+            try {
+                $this->admin()->recordHeld(['integration' => 'shopify', 'dry_run' => true]);
+                self::fail('a key the route does not take is refused');
+            } catch (ValidationException $refused) {
+                self::assertArrayHasKey('dry_run', $refused->getFieldErrors());
+            }
+
+            // Held notifications that cannot be read (the table is not there before the upgrade) are
+            // left out, never served as none, and the URLs are still served.
+            self::q('RENAME TABLE 202_held_payment_notifications TO 202_held_payment_notifications_away');
+            try {
+                $unread = array_column($this->admin()->integrations([])['data']['integrations'], null, 'integration');
+            } finally {
+                self::q('RENAME TABLE 202_held_payment_notifications_away TO 202_held_payment_notifications');
+            }
+            self::assertArrayNotHasKey('held_notifications', $unread['shopify']);
+            self::assertStringEndsWith('tracking202/static/shopify.php', $unread['shopify']['url']);
+            self::assertArrayHasKey('no_role_url', $unread['jvzoo']);
+        } finally {
+            self::q('DELETE FROM 202_held_payment_notifications WHERE user_id = ' . self::ADMIN);
+            self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::ADMIN . " AND endpoint = 'jvzoo'");
+            self::q("UPDATE 202_users_pref SET jvzoo_roleless_role = 'affiliate', user_account_currency = 'USD'"
+                . ' WHERE user_id = ' . self::ADMIN);
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function heldOf(string $integration): array
+    {
+        $byKey = array_column($this->admin()->integrations([])['data']['integrations'], null, 'integration');
+
+        return $byKey[$integration]['held_notifications'];
     }
 }

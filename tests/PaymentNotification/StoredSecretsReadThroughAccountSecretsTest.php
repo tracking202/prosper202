@@ -40,6 +40,10 @@ final class StoredSecretsReadThroughAccountSecretsTest extends TestCase
             'SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1' => 'the currency of the'
                 . ' account the click and the verified secret already decided (Processor::otherCurrency())',
         ],
+        '202-config/PaymentNotification/HeldReplay.php' => [
+            'SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1' => 'the currency of the'
+                . ' signed-in account whose held notifications are recorded (HeldReplay::accountCurrency())',
+        ],
     ];
 
     private static function root(): string

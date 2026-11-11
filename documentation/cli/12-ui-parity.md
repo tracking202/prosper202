@@ -102,6 +102,7 @@ Every Update write previews with `?dry_run=1` (`--dry-run`).
 | Settings: AutoCron, "update available" | — | — | — hosted service |
 | 3rd Party API Integrations: secrets (IPQS, ClickBank, JVZoo, Zaxaa, Slack, PayKickstart's IPN keys) | `/users/{id}/preferences` | `p202 user prefs update` | ✅ |
 | 3rd Party API Integrations: the URLs to paste into each network | `/system/integrations` | `p202 system integrations` | ✅ |
+| 3rd Party API Integrations: record the notifications held for their currency | `/system/integrations/record-held` | `p202 system integrations record-held <integration>` | ✅ |
 | 3rd Party API Integrations: Postback authentication | `GET`/`PUT /conversions/postback-auth`, `GET /conversions/postback-auth/readiness`, `POST /conversions/postback-auth/rotate` | `p202 conversion postback-auth get`, `readiness`, `set --mode`, `rotate --credential --grace-hours` | ✅ |
 | 3rd Party API Integrations: DNI networks | — | — | — hosted service |
 | Attribution: models, reports, journeys, exports | `/attribution/…` | `p202 attribution …` | ✅ |

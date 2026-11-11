@@ -130,6 +130,7 @@ final class ClickRetention
         '202_customers' => 'first_click_id: the customer\'s first click, kept as the customer\'s acquisition record',
         '202_users_pref' => 'user_delete_data_clickid is the scheduled deletion\'s marker (an earlier version\'s form)',
         '202_inbound_log' => 'the inbound log names the click a request asked for, which may never have existed; it is pruned to its own bound',
+        '202_held_payment_notifications' => 'held for its currency; recorded later, a click that is gone is refused',
         '202_shopify_pending_refunds' => 'click_id is always zero; the order click is resolved only when the refund settles',
     ];
 

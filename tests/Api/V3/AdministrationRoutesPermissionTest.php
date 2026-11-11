@@ -39,6 +39,7 @@ final class AdministrationRoutesPermissionTest extends TestCase
         'GET /system/isp-lookup' => ['ispLookup', '$settingsPage'],
         'PUT /system/isp-lookup' => ['setIspLookup', '$settingsPage'],
         'GET /system/integrations' => ['integrations', '$integrationsPage'],
+        'POST /system/integrations/record-held' => ['recordHeld', '$integrationsPage'],
     ];
 
     public function testEveryAdministrationRouteAnswersBehindAdminAndItsPagesPermission(): void

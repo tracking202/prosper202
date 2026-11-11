@@ -9,6 +9,8 @@ use Prosper202\Click\ClickRecord;
 use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Tables\ConversionTables;
+use Prosper202\PaymentNotification\HeldNotifications;
+use Prosper202\PaymentNotification\HeldReplay;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Outcome;
 use Prosper202\PaymentNotification\OutcomeKind;
@@ -547,6 +549,60 @@ final class ShopifyWebhookIntegrationTest extends TestCase
 
         self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $outcome);
         self::assertSame([], self::conversions());
+    }
+
+    /**
+     * An order and its refund, both in a currency the account does not count
+     * in, are held; once it does, they are recorded in the order they
+     * arrived (the sale, then its reversal under the refund's own id), once
+     * however often Record is pressed, and Shopify's retry of either is a
+     * duplicate.
+     */
+    public function testAHeldOrderAndItsHeldRefundAreRecordedOnceTheAccountCountsInTheirCurrency(): void
+    {
+        $db = self::requireScratch();
+        $heldRows = '202_held_payment_notifications WHERE user_id = ' . self::ACCOUNT;
+        self::q('DELETE FROM ' . $heldRows);
+        $order = self::order(['currency' => 'EUR']);
+        $refund = ShopifyAdapterTest::refund([
+            'transactions' => [
+                ['id' => 77001, 'kind' => 'refund', 'status' => 'success', 'amount' => '20.00', 'currency' => 'EUR'],
+            ],
+            'refund_line_items' => [['id' => 1, 'line_item' => self::order()['line_items'][0]]],
+        ]);
+        $held = new HeldNotifications($db);
+        try {
+            self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $this->deliver('orders/paid', $order));
+            self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $this->deliver('refunds/create', $refund));
+            // Shopify's retries are the rows already held.
+            $this->deliver('orders/paid', $order);
+            $this->deliver('refunds/create', $refund);
+            self::assertSame([], self::conversions());
+            self::assertSame(2, $held->counts(self::ACCOUNT)['shopify']['EUR']['count']);
+
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
+            $done = (new HeldReplay($db))->replay(self::ACCOUNT, 'shopify');
+            self::assertSame(2, $done['recorded'], $done['first_refusal']);
+            self::assertSame([0, 0, 0, 0], [$done['on_file'], $done['refused'], $done['failed'], $done['left']]);
+            $rows = self::conversions();
+            self::assertSame(['59.00000', '-20.00000'], array_column($rows, 'click_payout'));
+            self::assertSame(['shopify', 'shopify'], array_column($rows, 'source'));
+            self::assertNull($rows[0]['reverses_conv_id']);
+            self::assertNotNull($rows[1]['reverses_conv_id']);
+            self::assertSame([], $held->counts(self::ACCOUNT));
+
+            // Pressed again, and sent again by Shopify: nothing more.
+            $again = (new HeldReplay($db))->replay(self::ACCOUNT, 'shopify');
+            self::assertSame([0, 0, 0], [$again['recorded'], $again['on_file'], $again['refused']]);
+            self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->deliver('refunds/create', $refund));
+            // The order sent again is answered as any order is after its refund, and adds nothing.
+            $this->deliver('orders/paid', $order);
+            self::assertCount(2, self::conversions());
+            self::assertSame([], $held->counts(self::ACCOUNT));
+        } finally {
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'USD' WHERE user_id = " . self::ACCOUNT);
+            self::q('DELETE FROM ' . $heldRows);
+        }
     }
 
     public function testAnOrderPaidAtAnotherTotalIsRefusedButAcceptedByShopify(): void

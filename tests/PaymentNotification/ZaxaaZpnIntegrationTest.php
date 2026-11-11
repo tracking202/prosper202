@@ -9,6 +9,8 @@ use Prosper202\Click\ClickRecord;
 use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\HeldNotifications;
+use Prosper202\PaymentNotification\HeldReplay;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Outcome;
 use Prosper202\PaymentNotification\OutcomeKind;
@@ -299,6 +301,51 @@ final class ZaxaaZpnIntegrationTest extends TestCase
         $never = $this->post(self::fields(['trans_type' => 'REFUND', 'trans_receipt' => 'NEVER1']), self::KEY);
         self::assertOutcome(OutcomeKind::NOTHING_TO_REVERSE, 404, $never);
         self::assertCount(2, self::conversions());
+    }
+
+    /**
+     * A sale and its refund in a currency the account does not count in are
+     * held; once it does, they are recorded in the order they arrived, the
+     * refund under the key its own body gave it, once however often Record
+     * is pressed, and Zaxaa sending either again is a duplicate.
+     */
+    public function testAHeldSaleAndItsHeldRefundAreRecordedOnceTheAccountCountsInTheirCurrency(): void
+    {
+        $db = self::requireScratch();
+        $heldRows = '202_held_payment_notifications WHERE user_id = ' . self::ACCOUNT;
+        self::q('DELETE FROM ' . $heldRows);
+        $sale = self::fields(['trans_currency' => 'EUR']);
+        $refund = ['trans_type' => 'REFUND'] + $sale;
+        $held = new HeldNotifications($db);
+        try {
+            self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $this->post($sale, self::KEY));
+            self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $this->post($refund, self::KEY));
+            // Zaxaa's retries are the rows already held.
+            $this->post($sale, self::KEY);
+            $this->post($refund, self::KEY);
+            self::assertSame([], self::conversions());
+            self::assertSame(2, $held->counts(self::ACCOUNT)['zaxaa']['EUR']['count']);
+
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
+            $done = (new HeldReplay($db))->replay(self::ACCOUNT, 'zaxaa');
+            self::assertSame(2, $done['recorded'], $done['first_refusal']);
+            self::assertSame([0, 0, 0, 0], [$done['on_file'], $done['refused'], $done['failed'], $done['left']]);
+            $rows = self::conversions();
+            self::assertSame(['47.00000', '-47.00000'], array_column($rows, 'click_payout'));
+            self::assertSame([self::RECEIPT, self::RECEIPT], array_column($rows, 'transaction_id'));
+            self::assertSame(['zaxaa', 'zaxaa'], array_column($rows, 'source'));
+            self::assertSame($rows[0]['conv_id'], $rows[1]['reverses_conv_id']);
+            self::assertSame([], $held->counts(self::ACCOUNT));
+
+            // Pressed again, and sent again by Zaxaa: nothing more.
+            $again = (new HeldReplay($db))->replay(self::ACCOUNT, 'zaxaa');
+            self::assertSame([0, 0, 0], [$again['recorded'], $again['on_file'], $again['refused']]);
+            self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($refund, self::KEY));
+            self::assertCount(2, self::conversions());
+        } finally {
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'USD' WHERE user_id = " . self::ACCOUNT);
+            self::q('DELETE FROM ' . $heldRows);
+        }
     }
 
     public function testNothingIsWrittenForAnUnsignedOrForgedNotification(): void
