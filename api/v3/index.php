@@ -1239,6 +1239,12 @@ try {
                 $make()->deleteApiKey(PathId::of($ctx), (string)$ctx['keyId']);
                 return null;
             });
+            // The key to replace is in the body: it works for a day more,
+            // and a path is logged.
+            $r->post('/{id}/api-keys/replace', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return ['_status' => 201] + $make()->replaceApiKey(PathId::of($ctx), $payload, $auth);
+            });
 
             // Identity linking key (self-or-admin): what the operator's
             // server signs customer ids with (cust_sig).

@@ -5586,6 +5586,32 @@ paths:
                             <app> via mcp.tracking202.com".
                         created_at:
                           type: integer
+                        last_used_at:
+                          type: integer
+                          nullable: true
+                          description: >-
+                            When the key last authenticated a request, to
+                            within five minutes; null when no use is recorded.
+                            Recorded from 1.9.80 on, and absent until that
+                            upgrade has run.
+                        last_used_api:
+                          type: string
+                          nullable: true
+                          description: The API version of that request (`v1`, `v2` or `v3`)
+                        last_used_client:
+                          type: string
+                          nullable: true
+                          description: >-
+                            The User-Agent that request sent, as the client
+                            named itself; null when it sent none.
+                        ends_at:
+                          type: integer
+                          nullable: true
+                          description: >-
+                            Set on a key that was replaced. The key is refused
+                            with 401 from this time on, stays in this list for
+                            seven days more and is then removed; null for a key
+                            that does not end.
         "403":
           $ref: "#/components/responses/Forbidden"
     post:
@@ -5618,6 +5644,15 @@ paths:
                     - type: array
                       items:
                         type: string
+                label:
+                  type: string
+                  nullable: true
+                  maxLength: 100
+                  description: >-
+                    What will use the key, shown in the key lists. Up to 100
+                    characters on one line, not starting with "AI:" (422
+                    otherwise). Omit, or send null or an empty string, for a
+                    key with no name.
       responses:
         "201":
           description: API key created
@@ -5637,10 +5672,86 @@ paths:
                       scope:
                         type: string
                         description: The stored scope; `*` for full access
+                      label:
+                        type: string
+                        nullable: true
+                        description: The name the key was given, or null
                       created_at:
                         type: integer
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /users/{id}/api-keys/replace:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Users]
+      summary: Replace an API key
+      description: >-
+        Your own with the `access_to_personal_settings` permission, or a user
+        you may manage. What Replace does in My Account. A new key is made
+        with the old key's scope and label and returned once. The old key
+        keeps working for 24 hours and is then refused with 401 and a message
+        saying it was replaced. To end the old key at once, delete it. A
+        scoped caller cannot replace a key broader than its own (403). The
+        old key is sent in the body, never in the path.
+      operationId: replaceApiKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key]
+              properties:
+                api_key:
+                  type: string
+                  description: The full key to replace
+      responses:
+        "201":
+          description: Replacement key created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user_id:
+                        type: integer
+                      api_key:
+                        type: string
+                        description: The new key, in full (shown once)
+                      scope:
+                        type: string
+                        description: The old key's scope, carried over; `*` for full access
+                      label:
+                        type: string
+                        nullable: true
+                        description: The old key's label, carried over
+                      created_at:
+                        type: integer
+                      replaced:
+                        type: object
+                        properties:
+                          api_key:
+                            type: string
+                            description: The old key, masked
+                          ends_at:
+                            type: integer
+                            description: When the old key stops working
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The user has no such key
+        "409":
+          description: >-
+            The key was already replaced, belongs to an AI app's connection
+            (connect the app again instead), or the 1.9.80 database upgrade
+            has not run.
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /users/{id}/api-keys/{keyId}:
     parameters:

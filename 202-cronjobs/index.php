@@ -256,6 +256,9 @@ function RunHourlyCronJob()
         // The inbound log keeps each account's newest requests (InboundLog::KEEP_PER_ACCOUNT).
         PruneInboundLog();
 
+        // Replaced API keys that ended over a week ago (ApiKeyStore::ENDED_KEY_KEPT).
+        PruneEndedApiKeys();
+
         // Traffic source accounts on another user's traffic source record no
         // custom variable values. Where every such account was put on the
         // source after it was last saved, each of those users is given a copy
@@ -434,6 +437,18 @@ function PruneInboundLog(): void
         }
     } catch (\Throwable $e) {
         error_log('Inbound log prune failed: ' . $e->getMessage());
+    }
+}
+
+function PruneEndedApiKeys(): void
+{
+    try {
+        $removed = \Prosper202\User\ApiKeyStore::removeEnded(getDatabaseConnection(), time());
+        if ($removed > 0) {
+            echo 'API keys: ' . $removed . ' replaced key(s) that ended over a week ago removed<br>';
+        }
+    } catch (\Throwable $e) {
+        error_log('Ended API key removal failed: ' . $e->getMessage());
     }
 }
 

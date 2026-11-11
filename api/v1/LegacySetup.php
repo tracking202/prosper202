@@ -65,7 +65,7 @@ final class LegacySetup
         }
 
         try {
-            $auth = Auth::fromRequest(['authorization' => 'Bearer ' . $key], $db);
+            $auth = Auth::fromRequest(['authorization' => 'Bearer ' . $key], $db, 'v1');
             if ($resource === 'version') {
                 require_once dirname(__DIR__, 2) . '/202-config/version.php';
                 return [200, ['version' => \PROSPER202_VERSION]];
