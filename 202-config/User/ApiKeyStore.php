@@ -39,6 +39,12 @@ final class ApiKeyStore
     /** How long a replaced key keeps working, in seconds. */
     public const REPLACED_KEY_GRACE = 86400;
 
+    /** How long a key that has ended stays listed before it is removed, in seconds. */
+    public const ENDED_KEY_KEPT = 604800;
+
+    /** label's width, in characters. */
+    public const LABEL_LENGTH = 100;
+
     /** last_used_client's width, in characters. */
     public const CLIENT_LENGTH = 190;
 
@@ -280,12 +286,67 @@ final class ApiKeyStore
         return (int) $endsAt <= $now ? (int) $endsAt : null;
     }
 
+    /**
+     * The condition a key list adds, so a key that ended more than
+     * ENDED_KEY_KEPT ago is not listed while it waits for removeEnded(); ''
+     * before the upgrade adds the column.
+     */
+    public static function listedCondition(\mysqli $db, int $now): string
+    {
+        return Auth::apiKeyUseColumnsExist($db)
+            ? ' AND (ends_at IS NULL OR ends_at > ' . ($now - self::ENDED_KEY_KEPT) . ')'
+            : '';
+    }
+
+    /**
+     * Removes, for every account, the replaced keys that ended more than
+     * ENDED_KEY_KEPT before $now: the rows listedCondition() no longer
+     * lists. A key that works has no ending or a later one, so none is
+     * touched. The number removed.
+     *
+     * @throws QueryException when the rows could not be removed
+     */
+    public static function removeEnded(\mysqli $db, int $now): int
+    {
+        if (!Auth::apiKeyUseColumnsExist($db)) {
+            return 0;
+        }
+        $conn = new Connection($db);
+        $stmt = $conn->prepareWrite('DELETE FROM 202_api_keys WHERE ends_at IS NOT NULL AND ends_at <= ?');
+        $conn->bind($stmt, 'i', [$now - self::ENDED_KEY_KEPT]);
+        return $conn->executeUpdate($stmt);
+    }
+
     /** What a refused request is told about a key that has ended. */
     public static function endedMessage(int $endedAt): string
     {
         return 'This API key was replaced and stopped working'
             . ($endedAt > 0 ? ' on ' . gmdate('Y-m-d H:i', $endedAt) . ' UTC' : '')
             . '. Use the key that replaced it, or make a new one in My Account.';
+    }
+
+    /**
+     * The name a person gave a new key: null for none, false for one that
+     * cannot be stored (too long, more than a line, not text) or that reads
+     * as an AI connection's label, which decides what a key is.
+     */
+    public static function labelFrom(mixed $posted): string|false|null
+    {
+        if (!is_string($posted) || !mb_check_encoding($posted, 'UTF-8')) {
+            return false;
+        }
+        $label = trim($posted);
+        if ($label === '') {
+            return null;
+        }
+        if (
+            mb_strlen($label, 'UTF-8') > self::LABEL_LENGTH
+            || preg_match('/[\x00-\x1F\x7F]/', $label) === 1
+            || stripos($label, rtrim(AiConnect::LABEL_PREFIX)) === 0
+        ) {
+            return false;
+        }
+        return $label;
     }
 
     /** The client a request names itself as, cut to what last_used_client holds. */
@@ -348,7 +409,7 @@ final class ApiKeyStore
      * one transaction. Null when $userId has no such key; a
      * key already ending, or an AI connection's, is refused.
      *
-     * @return array{ends_at: int}|null
+     * @return array{ends_at: int, scope: ?string, label: ?string}|null
      * @throws \DomainException naming why the key cannot be replaced
      * @throws QueryException when nothing was changed
      */
@@ -385,7 +446,7 @@ final class ApiKeyStore
             if ($conn->executeUpdate($end) !== 1) {
                 throw new QueryException('The replaced API key could not be set to end');
             }
-            return ['ends_at' => $endsAt];
+            return ['ends_at' => $endsAt, 'scope' => $scope, 'label' => $label];
         };
         return $conn->transaction($replace);
     }

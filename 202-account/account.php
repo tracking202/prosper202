@@ -94,11 +94,17 @@ if (isset($_POST['add_rest_api_key'])) {
 		p202_account_flash('bad', 'An API key is 32 to 128 letters and digits. Leave it out and one is generated for you.');
 		p202_account_redirect('202-account/account.php#api-keys');
 	}
+	$newKeyLabel = \Prosper202\User\ApiKeyStore::labelFrom($_POST['rest_api_key_label'] ?? '');
+	if ($newKeyLabel === false) {
+		p202_account_flash('bad', 'A key\'s name is up to ' . \Prosper202\User\ApiKeyStore::LABEL_LENGTH
+			. ' characters on one line, and does not start with "AI:". Nothing was created.');
+		p202_account_redirect('202-account/account.php#api-keys');
+	}
 	$newKey = $postedKey !== '' ? $postedKey : bin2hex(random_bytes(32));
 	$keyUserId = (int)$_SESSION['user_id'];
 	$keyCreated = time();
     try {
-        \Prosper202\User\ApiKeyStore::insert($db, $keyUserId, $newKey, null, null, $keyCreated);
+        \Prosper202\User\ApiKeyStore::insert($db, $keyUserId, $newKey, null, $newKeyLabel, $keyCreated);
     } catch (\Prosper202\Database\Exceptions\QueryException | \Api\V3\AuthException | \mysqli_sql_exception) {
         p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
         p202_account_redirect('202-account/account.php#api-keys');
@@ -1218,15 +1224,6 @@ echo p202_account_render_flashes($extraFlashes);
 				<div class="p202-panel__head">
 					<h2 class="p202-panel__title">API keys</h2>
 					<span class="p202-pill"><?php echo count($apiKeys) === 1 ? '1 key' : count($apiKeys) . ' keys'; ?></span>
-					<?php if ($apiKeys) { ?>
-						<div class="p202-panel__aside">
-							<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#api-keys'); ?>">
-								<input type="hidden" name="add_rest_api_key" value="1">
-								<?php echo p202_account_token_field(); ?>
-								<button class="btn btn-secondary btn-sm" type="submit"><i class="bi bi-plus-lg"></i> Generate key</button>
-							</form>
-						</div>
-					<?php } ?>
 				</div>
 				<div class="p202-panel__body">
                     <p class="form-text mt-0">For the REST API, the p202 command line and agents. Make one key per integration, so revoking one stops only that one.<?php echo $e($keyUseNote); ?></p>
@@ -1239,18 +1236,20 @@ echo p202_account_render_flashes($extraFlashes);
 							</div>
 						</div>
 					<?php } ?>
+					<form method="post" action="<?php echo $e($keysAt); ?>" class="mb-3">
+						<input type="hidden" name="add_rest_api_key" value="1">
+						<?php echo p202_account_token_field(); ?>
+						<label class="form-label" for="rest_api_key_label">New key</label>
+						<div class="input-group">
+							<input type="text" class="form-control" id="rest_api_key_label" name="rest_api_key_label" maxlength="100" autocomplete="off" placeholder="Name it for what will use it, e.g. Nightly store sync (optional)">
+							<button class="btn btn-secondary" type="submit"><i class="bi bi-plus-lg"></i> Generate key</button>
+						</div>
+					</form>
 					<?php if (!$apiKeys) { ?>
 						<div class="p202-empty">
 							<i class="bi bi-key p202-empty__icon"></i>
 							<strong class="p202-empty__title">No API keys yet</strong>
-							<div>Generate one to connect the command line, an agent or your own scripts.</div>
-							<div class="p202-empty__action">
-								<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#api-keys'); ?>">
-									<input type="hidden" name="add_rest_api_key" value="1">
-									<?php echo p202_account_token_field(); ?>
-									<button class="btn btn-secondary btn-sm" type="submit">Generate an API key</button>
-								</form>
-							</div>
+							<div>Generate one above to connect the command line, an agent or your own scripts.</div>
 						</div>
 					<?php } else { ?>
 						<?php foreach ($apiKeys as $index => $apiKey) {

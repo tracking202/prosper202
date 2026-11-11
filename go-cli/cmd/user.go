@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"p202/internal/api"
 	configpkg "p202/internal/config"
@@ -410,14 +411,30 @@ var userAPIKeyDeleteCmd = &cobra.Command{
 
 var userAPIKeyRotateCmd = &cobra.Command{
 	Use:   "rotate <user_id> <old_api_key>",
-	Short: "Rotate an API key by creating a new one and optionally deleting the old one",
-	Args:  cobra.ExactArgs(2),
+	Short: "Replace an API key: a new key with the same scope and label, while the old one works for 24 hours more",
+	Long: "Replace an API key, as Replace does in My Account > Personal Settings > API keys.\n" +
+		"The new key has the old key's scope and label and is shown once. The old key keeps\n" +
+		"working for 24 hours, so whatever holds it can be switched without an outage, and is\n" +
+		"then refused with a message saying it was replaced.\n\n" +
+		"To end the old key at once, delete it: `p202 user apikey delete <user_id> <old_api_key>`.\n" +
+		"To make a key with another scope, use `p202 user apikey create <user_id> --scope <scope>`.\n" +
+		"An AI app's key is replaced by connecting the app again.",
+	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// As in create: the flag is checked before the client, so the error
-		// names the bad flag rather than an unrelated missing configuration.
-		if scopeFlag, _ := cmd.Flags().GetString("scope"); cmd.Flags().Changed("scope") && strings.TrimSpace(scopeFlag) == "" {
-			return validationError("--scope was given an empty value").
-				WithHint("Name the new key's scope, or omit --scope to carry the old key's scope forward.")
+		// Flags are checked before the client is built, so the error names
+		// the flag rather than an unrelated missing configuration.
+		userID := args[0]
+		if cmd.Flags().Changed("scope") {
+			if scopeFlag, _ := cmd.Flags().GetString("scope"); strings.TrimSpace(scopeFlag) == "" {
+				return validationError("--scope was given an empty value").
+					WithHint("Omit --scope: the replacement carries the old key's scope.")
+			}
+			return validationError("rotate does not take --scope: the replacement carries the old key's scope").
+				WithHint("%s", "For a key with another scope run `p202 user apikey create "+userID+" --scope <scope>`, then end the old one with `p202 user apikey delete "+userID+" <old_api_key>`.")
+		}
+		if keepOld, _ := cmd.Flags().GetBool("keep-old"); keepOld {
+			return validationError("rotate does not take --keep-old: the old key works for 24 hours more and then ends").
+				WithHint("%s", "To add a key and keep the old one for good, run `p202 user apikey create "+userID+"`.")
 		}
 
 		c, err := api.NewFromConfig()
@@ -425,106 +442,44 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			return err
 		}
 
-		userID := args[0]
 		oldAPIKey := args[1]
-		keepOld, _ := cmd.Flags().GetBool("keep-old")
-		force, _ := cmd.Flags().GetBool("force")
 		updateConfig, _ := cmd.Flags().GetBool("update-config")
 		forceConfigUpdate, _ := cmd.Flags().GetBool("force-config-update")
 
-		// Rotation must never widen access: without an explicit --scope the
-		// old key's scope is looked up (by its unique 8-char prefix in the
-		// masked listing) and carried onto the new key. A failed lookup
-		// fails the rotation rather than silently minting a full-access key.
-		scope, _ := cmd.Flags().GetString("scope")
-		scope = strings.TrimSpace(scope)
-		if scope == "" {
-			if len(oldAPIKey) < 8 {
-				// Too short to match a masked prefix, so the old scope
-				// cannot be established — and an unknown scope must never
-				// become full access.
-				return validationError("old API key %q is too short to identify a key", oldAPIKey).
-					WithHint("Pass the full old key, or set --scope explicitly to state the new key's scope.")
-			}
-			listData, lerr := c.Get("users/"+userID+"/api-keys", nil)
-			if lerr != nil {
-				return fmt.Errorf("looking up the old key's scope before rotating: %w", lerr)
-			}
-			rows, perr := parseDataArray(listData)
-			if perr != nil {
-				return fmt.Errorf("parsing api-key list while rotating: %w", perr)
-			}
-			prefix := oldAPIKey[:8]
-			matches := 0
-			carried := ""
-			for _, row := range rows {
-				masked, _ := row["api_key"].(string)
-				if strings.HasPrefix(masked, prefix) {
-					matches++
-					if s, ok := row["scope"].(string); ok {
-						carried = s
-					}
+		// The old key goes in the body: it works for a day more, and a path is logged.
+		replacedData, err := c.Post("users/"+userID+"/api-keys/replace", map[string]string{"api_key": oldAPIKey})
+		if err != nil {
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) {
+				switch apiErr.Status {
+				case 404:
+					return withHint(err, "%s", "Check the old key against `p202 user apikey list "+userID+"` (each key shows its first 8 characters). A server older than 1.9.80 has no replace: there, run `p202 user apikey create "+userID+"` and then `p202 user apikey delete "+userID+" <old_api_key>`.")
+				case 409:
+					return withHint(err, "%s", "A key already replaced ends by itself: `p202 user apikey list "+userID+"` shows its ends_at, and `p202 user apikey delete "+userID+" <old_api_key>` ends it now. An AI app's key is replaced by connecting the app again.")
 				}
 			}
-			if matches > 1 {
-				return validationError("multiple keys share the prefix %s; cannot infer the old key's scope", prefix).
-					WithHint("%s", "Pass --scope explicitly; `p202 user apikey list "+userID+"` shows each key's scope.")
-			}
-			if matches == 0 {
-				// Falling through here would mint an unscoped key: the old
-				// key's scope is unknown, and "unknown" must never resolve
-				// to full access.
-				return validationError("no key for user %s starts with %s; cannot infer the old key's scope", userID, prefix).
-					WithHint("%s", "Check the old key value, or pass --scope explicitly; `p202 user apikey list "+userID+"` shows each key's prefix and scope.")
-			}
-			if carried != "" && carried != "*" {
-				scope = carried
-			}
+			return err
 		}
-
-		var createBody interface{}
-		if scope != "" && scope != "*" {
-			createBody = map[string]string{"scope": scope}
+		replacedObj, err := parseDataObject(replacedData)
+		if err != nil {
+			return fmt.Errorf("failed to parse the replace api-key response: %w", err)
 		}
-		createdData, err := c.Post("users/"+userID+"/api-keys", createBody)
+		newAPIKey, err := extractAPIKey(replacedObj)
 		if err != nil {
 			return err
 		}
-		createdObj, err := parseDataObject(createdData)
-		if err != nil {
-			return fmt.Errorf("failed to parse create api-key response: %w", err)
-		}
-		newAPIKey, err := extractAPIKey(createdObj)
-		if err != nil {
-			return err
-		}
-
-		deletedOld := false
-		if !keepOld {
-			if !force {
-				// Prompt via the shared helper so the question and the outcome go
-				// to stderr; this command renders a JSON result on stdout, which
-				// the prompt text used to corrupt. The new key exists by now, so
-				// an unanswerable question keeps the old one instead of failing
-				// a rotate that already happened; the result reports it.
-				ok, err := confirmAction(cmd, "Delete old API key for user %s?", userID)
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "Kept the old key: no answer could be read. Delete it with `p202 user apikey delete`, or pass --force (delete) or --keep-old (keep) next time.")
-				} else if !ok {
-					fmt.Fprintln(os.Stderr, "Skipping old key deletion.")
-				} else {
-					if err := c.Delete("users/" + userID + "/api-keys/" + oldAPIKey); err != nil {
-						return err
-					}
-					deletedOld = true
-				}
-			} else {
-				if err := c.Delete("users/" + userID + "/api-keys/" + oldAPIKey); err != nil {
-					return err
-				}
-				deletedOld = true
+		var endsAt int64
+		if old, ok := replacedObj["replaced"].(map[string]interface{}); ok {
+			if n, ok := old["ends_at"].(json.Number); ok {
+				endsAt, _ = n.Int64()
+			} else if f, ok := old["ends_at"].(float64); ok {
+				endsAt = int64(f)
 			}
 		}
+		if endsAt <= 0 {
+			return fmt.Errorf("the replace api-key response did not say when the old key ends")
+		}
+		oldKeyEnds := time.Unix(endsAt, 0).UTC().Format(time.RFC3339)
 
 		configUpdated := false
 		configUpdateSkipped := false
@@ -534,10 +489,8 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			// Compare and write through the resolved profile. This used to read
-			// the legacy top-level cfg.APIKey, which is empty for every
-			// profile-based config, so the match never fired and --update-config
-			// was a no-op unless --force-config-update was also passed.
+			// Compare and write through the resolved profile, never the
+			// legacy top-level key, which is empty for a profile-based config.
 			p, resolvedName, err := cfg.EnsureProfile(profileName)
 			if err != nil {
 				return err
@@ -554,7 +507,7 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			}
 		}
 
-		newScope := scope
+		newScope, _ := replacedObj["scope"].(string)
 		if newScope == "" {
 			newScope = "*"
 		}
@@ -562,8 +515,10 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			"user_id":               userID,
 			"new_api_key":           newAPIKey,
 			"scope":                 newScope,
-			"old_key_deleted":       deletedOld,
-			"old_key_kept":          keepOld || !deletedOld,
+			"label":                 replacedObj["label"],
+			"old_key_deleted":       false,
+			"old_key_ends_at":       endsAt,
+			"old_key_ends":          oldKeyEnds,
 			"config_updated":        configUpdated,
 			"config_update_skipped": configUpdateSkipped,
 			"config_profile":        configProfile,
@@ -572,6 +527,8 @@ var userAPIKeyRotateCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding output: %w", err)
 		}
+		// stderr: stdout carries data only.
+		fmt.Fprintf(os.Stderr, "The old key keeps working until %s. To end it now: p202 user apikey delete %s <old_api_key>\n", oldKeyEnds, userID)
 		render(encoded)
 		return nil
 	},
@@ -725,12 +682,17 @@ func init() {
 	// API key flags
 	registerSingleDeleteFlags(userAPIKeyDeleteCmd)
 	userAPIKeyCreateCmd.Flags().String("scope", "", "Scope for the new key: *, read, write, stage, or comma-separated <area>:read/<area>:write/<area>:stage tokens (`read,stage` is the propose-only agent shape; default: full access)")
-	userAPIKeyRotateCmd.Flags().String("scope", "", "Scope for the replacement key (default: the old key's scope, carried over)")
 	emptyHint(userAPIKeyCreateCmd, "scope", "Name the scope (`read`, `write`, `stage`, or `<area>:read`/`<area>:write`/`<area>:stage`, comma-separated), "+
 		"or omit --scope entirely to mint a full-access key on purpose.")
-	emptyHint(userAPIKeyRotateCmd, "scope", "Name the new key's scope, or omit --scope to carry the old key's scope forward.")
-	userAPIKeyRotateCmd.Flags().Bool("keep-old", false, "Do not delete the old API key")
-	userAPIKeyRotateCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt when deleting old key")
+	// Taken until 1.9.80, when rotate made a key and deleted the old one;
+	// kept so a script that passes one is told what to run, not "unknown flag".
+	userAPIKeyRotateCmd.Flags().String("scope", "", "No longer taken: the replacement carries the old key's scope")
+	userAPIKeyRotateCmd.Flags().Bool("keep-old", false, "No longer taken: the old key works for 24 hours more, then ends")
+	userAPIKeyRotateCmd.Flags().BoolP("force", "f", false, "No longer needed: nothing is deleted, so nothing is confirmed")
+	emptyHint(userAPIKeyRotateCmd, "scope", "Omit --scope: the replacement carries the old key's scope.")
+	for _, retired := range []string{"scope", "keep-old", "force"} {
+		_ = userAPIKeyRotateCmd.Flags().MarkHidden(retired)
+	}
 	userAPIKeyRotateCmd.Flags().Bool("update-config", false, "Update local ~/.p202/config.json with the new API key")
 	userAPIKeyRotateCmd.Flags().Bool("force-config-update", false, "Update local config even if current key does not match old key")
 

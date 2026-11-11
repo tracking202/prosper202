@@ -552,7 +552,8 @@ neither). `read,stage` is the propose-only agent shape: it reads everything
 and stages writes for a person to apply, but can perform none itself. A
 scoped key is attenuated even for admins, cannot mint a key broader than
 itself, and is refused by the legacy v1/v2 APIs. `p202 user apikey rotate`
-carries the old key's scope onto the replacement unless you pass `--scope`.
+carries the old key's scope and label onto the replacement; the old key
+works for 24 hours more, and `p202 user apikey delete` ends it at once.
 A 403 whose message names a required scope means the key, not the command,
 is wrong -- switch keys or mint one with the scope the message names.
 
@@ -1248,9 +1249,9 @@ p202 user role remove <user_id> <role_id> [--force] [--dry-run] [--json]
 p202 user apikey list   <user_id> [--json]                # includes each key's scope
 p202 user apikey create <user_id> [--scope S] [--json]    # S: *, read, write, or <area>:read/<area>:write tokens
 p202 user apikey delete <user_id> <api_key> [--force] [--dry-run] [--json]
-p202 user apikey rotate <user_id> <old_api_key> [--scope S] [--keep-old] [--force]
-                       [--update-config] [--force-config-update] [--json]
-                       # without --scope, the old key's scope carries onto the new key
+p202 user apikey rotate <user_id> <old_api_key> [--update-config] [--force-config-update] [--json]
+                       # new key with the old key's scope and label; the old key works 24 hours more
+                       # (end it now with `user apikey delete`)
 
 p202 user identity-key get    <user_id> [--json]          # the key your server signs customer ids with
 p202 user identity-key rotate <user_id> [--force] [--json]

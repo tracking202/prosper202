@@ -453,7 +453,8 @@ function p202_account_api_keys(mysqli $db, int $userId): array
         . \Prosper202\User\ApiKeyStore::useColumns($db);
     $hasUse = \Api\V3\Auth::apiKeyUseColumnsExist($db);
     $stmt = $conn->prepareRead('SELECT ' . $columns
-        . ' FROM 202_api_keys WHERE user_id = ? ORDER BY created_at DESC');
+        . ' FROM 202_api_keys WHERE user_id = ?' . \Prosper202\User\ApiKeyStore::listedCondition($db, time())
+        . ' ORDER BY created_at DESC');
     $conn->bind($stmt, 'i', [$userId]);
     $keys = [];
     foreach ($conn->fetchAll($stmt) as $row) {

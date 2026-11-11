@@ -56,11 +56,12 @@ each refusal against a running instance.
 | ------ | ---- | ---- | ----------- |
 | `GET` | `/users/{id}/api-keys` | Self with `access_to_personal_settings`, or a user you may manage | List API keys (masked) |
 | `POST` | `/users/{id}/api-keys` | Self with `access_to_personal_settings`, or a user you may manage | Generate a new API key |
+| `POST` | `/users/{id}/api-keys/replace` | Self with `access_to_personal_settings`, or a user you may manage | Replace a key: a new one with the same scope and label, the old one works 24 hours more |
 | `DELETE` | `/users/{id}/api-keys/{keyId}` | Self with `access_to_personal_settings`, or a user you may manage | Delete an API key |
 
 API keys are masked after the first 8 characters in list responses. The full key is only returned once, at creation time.
 
-From 1.9.80 each key in the list also carries `last_used_at` (when it last authenticated a request, to within five minutes; `null` when no use is recorded), `last_used_api` (`v1`, `v2` or `v3`), `last_used_client` (the `User-Agent` that request sent, as the client named itself) and `ends_at`. `ends_at` is set on a key replaced in My Account › Personal Settings › API keys: the replaced key keeps working for 24 hours and is refused with `401` from then on, with a message saying it was replaced.
+From 1.9.80 each key in the list also carries `last_used_at` (when it last authenticated a request, to within five minutes; `null` when no use is recorded), `last_used_api` (`v1`, `v2` or `v3`), `last_used_client` (the `User-Agent` that request sent, as the client named itself) and `ends_at`. `ends_at` is set on a key that was replaced, in My Account › Personal Settings › API keys, with `POST /users/{id}/api-keys/replace` (body `{"api_key": "<the old key>"}`) or with `p202 user apikey rotate`: the replaced key keeps working for 24 hours and is refused with `401` from then on, with a message saying it was replaced. It stays in the list for seven days after it ends and is then removed. To end a key at once, delete it. Replace answers `409` for a key already replaced and for an AI app's key (connect the app again), and `403` to a scoped caller for a key broader than its own.
 
 ## Preference Endpoints
 

@@ -179,7 +179,10 @@ final class ApiKeyUseIntegrationTest extends TestCase
         self::assertNull($this->useRow(self::KEY)['ends_at']);
 
         $replaced = ApiKeyStore::replace(self::$db, self::USER, $ref, $new, $now);
-        self::assertSame(['ends_at' => $now + ApiKeyStore::REPLACED_KEY_GRACE], $replaced);
+        self::assertSame(
+            ['ends_at' => $now + 86400, 'scope' => 'reports:read', 'label' => 'Nightly store sync'],
+            $replaced
+        );
         self::assertSame($now + 86400, (int) $this->useRow(self::KEY)['ends_at']);
         self::assertNull($this->useRow($new)['ends_at']);
 
@@ -219,6 +222,110 @@ final class ApiKeyUseIntegrationTest extends TestCase
         self::assertStringContainsString('was replaced and stopped working', $legacy['msg']);
         self::assertNull($this->useRow(self::KEY)['last_used_at'], 'a refused key is not a use');
         self::assertSame(202, getAuth(self::$db, ['apikey' => $new])['status']);
+    }
+
+    public function testTheApiReplacesAKeyAsThePageDoes(): void
+    {
+        ApiKeyStore::insert(self::$db, self::USER, self::KEY, 'reports:read', 'Nightly store sync', 100);
+        $users = new UsersController(self::$db);
+        $before = time();
+
+        $made = $users->replaceApiKey(self::USER, ['api_key' => self::KEY])['data'];
+        $new = (string) $made['api_key'];
+        self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/D', $new);
+        self::assertSame(
+            [self::USER, 'reports:read', 'Nightly store sync', ApiKeyStore::masked(ApiKeyStore::prefix(self::KEY))],
+            [$made['user_id'], $made['scope'], $made['label'], $made['replaced']['api_key']]
+        );
+        self::assertGreaterThanOrEqual($before + ApiKeyStore::REPLACED_KEY_GRACE, $made['replaced']['ends_at']);
+        self::assertSame($made['replaced']['ends_at'], (int) $this->useRow(self::KEY)['ends_at']);
+        $bearer = static fn (string $key): Auth => Auth::fromRequest(['Authorization' => 'Bearer ' . $key], self::$db);
+        self::assertSame(['reports:read'], $bearer($new)->scopes());
+        self::assertSame(self::USER, $bearer(self::KEY)->userId());
+
+        // The page's refusals, as statuses.
+        $refused = function (int $user, array $body, ?Auth $auth = null) use ($users): array {
+            try {
+                $users->replaceApiKey($user, $body, $auth);
+            } catch (\Throwable $e) {
+                return [$e::class, $e->getMessage()];
+            }
+            self::fail('refused');
+        };
+        self::assertSame(
+            [\Api\V3\Exception\ConflictException::class, 'That key was already replaced.'],
+            $refused(self::USER, ['api_key' => self::KEY])
+        );
+        $notFound = \Api\V3\Exception\NotFoundException::class;
+        self::assertSame($notFound, $refused(self::OTHER, ['api_key' => $new])[0]);
+        self::assertSame($notFound, $refused(self::USER, ['api_key' => strtoupper($new)])[0]);
+        foreach ([[], ['api_key' => ''], ['api_key' => ['x']], ['api_key' => $new, 'scope' => '*']] as $body) {
+            $class = $refused(self::USER, $body)[0];
+            self::assertSame(\Api\V3\Exception\ValidationException::class, $class, json_encode($body));
+        }
+        $aiLabel = AiConnect::LABEL_PREFIX . 'Claude';
+        ApiKeyStore::insert(self::$db, self::USER, str_repeat('a', 64), 'reports:read', $aiLabel, 101);
+        self::assertSame(
+            [\Api\V3\Exception\ConflictException::class, 'An AI app\'s key is replaced by connecting the app again.'],
+            $refused(self::USER, ['api_key' => str_repeat('a', 64)])
+        );
+
+        // A scoped caller replaces a key no broader than its own.
+        ApiKeyStore::insert(self::$db, self::USER, str_repeat('9', 64), null, null, 102);
+        $scoped = Auth::fromRequest(['Authorization' => 'Bearer ' . $new], self::$db);
+        [$class, $said] = $refused(self::USER, ['api_key' => str_repeat('9', 64)], $scoped);
+        self::assertSame(AuthException::class, $class);
+        self::assertStringContainsString("Cannot replace a key with scope '*'", $said);
+        self::assertNull($this->useRow(str_repeat('9', 64))['ends_at']);
+        self::assertSame(4, $this->keyCount(self::USER), 'no refusal made a key');
+        $again = $users->replaceApiKey(self::USER, ['api_key' => $new], $scoped)['data'];
+        self::assertSame('reports:read', $again['scope']);
+    }
+
+    public function testAnEndedKeyIsListedForAWeekThenLeftOutAndRemoved(): void
+    {
+        $now = time();
+        $kept = ApiKeyStore::ENDED_KEY_KEPT;
+        $keys = ['works' => str_repeat('1', 64), 'grace' => str_repeat('2', 64), 'ended' => str_repeat('3', 64),
+            'old' => str_repeat('4', 64), 'theirs' => str_repeat('5', 64)];
+        foreach ($keys as $name => $key) {
+            ApiKeyStore::insert(self::$db, $name === 'theirs' ? self::OTHER : self::USER, $key, null, $name, 100);
+        }
+        $ends = ['grace' => $now + 3600, 'ended' => $now - $kept + 60, 'old' => $now - $kept,
+            'theirs' => $now - $kept - 5];
+        foreach ($ends as $name => $at) {
+            $hash = ApiKeyStore::hash($keys[$name]);
+            self::q('UPDATE 202_api_keys SET ends_at = ' . $at . " WHERE key_hash = '" . $hash . "'");
+        }
+
+        require_once dirname(__DIR__, 2) . '/202-config/functions-account-ui.php';
+        $page = array_column(p202_account_api_keys(self::$db, self::USER), 'label');
+        $api = array_column((new UsersController(self::$db))->listApiKeys(self::USER)['data'], 'label');
+        sort($page);
+        sort($api);
+        self::assertSame(['ended', 'grace', 'works'], $page);
+        self::assertSame($page, $api, 'the page and the API list the same keys');
+
+        // Left out of the list, it is still refused as replaced until it is removed.
+        try {
+            Auth::fromRequest(['Authorization' => 'Bearer ' . $keys['old']], self::$db);
+            self::fail('an ended key is refused');
+        } catch (AuthException $e) {
+            self::assertStringContainsString('was replaced', $e->getMessage());
+        }
+
+        self::assertSame(2, ApiKeyStore::removeEnded(self::$db, $now), 'every account\'s past the week, no other');
+        self::assertSame(3, $this->keyCount(self::USER));
+        self::assertSame(0, $this->keyCount(self::OTHER));
+        self::assertSame(0, ApiKeyStore::removeEnded(self::$db, $now));
+        foreach (['works', 'grace'] as $name) {
+            self::assertSame(
+                self::USER,
+                Auth::fromRequest(['Authorization' => 'Bearer ' . $keys[$name]], self::$db)->userId(),
+                $name
+            );
+        }
+        $this->useRow($keys['ended']);
     }
 
     public function testAnAiAppsKeyIsNotReplacedHere(): void

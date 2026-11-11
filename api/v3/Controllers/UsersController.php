@@ -570,7 +570,8 @@ class UsersController
         $hasLabelColumn = \Api\V3\Auth::apiKeyLabelColumnExists($this->db);
         $columns = 'user_id, ' . ApiKeyStore::columns($this->db) . ($hasScopeColumn ? ', scope' : '')
             . ($hasLabelColumn ? ', label' : '') . ', created_at' . ApiKeyStore::useColumns($this->db);
-        $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?");
+        $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?"
+            . ApiKeyStore::listedCondition($this->db, time()));
         $this->bind($stmt, 'i', $userId);
         $this->execute($stmt, 'Query failed');
         $result = $this->resultOf($stmt, 'Query failed');
@@ -768,6 +769,73 @@ class UsersController
             ]);
         }
         return $tokens;
+    }
+
+    /**
+     * Replaces the key the body names as My Account's Replace does
+     * (ApiKeyStore::replace()): a new key with its scope and label, returned
+     * once, and the old key ending after the grace. A scoped caller cannot
+     * replace a key broader than its own, as it cannot create one.
+     */
+    public function replaceApiKey(int $userId, array $payload, ?\Api\V3\Auth $auth = null): array
+    {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['api_key'], 'an API key replacement');
+        $apiKey = $payload['api_key'] ?? null;
+        if (!is_string($apiKey) || $apiKey === '') {
+            throw new ValidationException('Invalid API key', [
+                'api_key' => 'Required: the full key to replace, as a string.',
+            ]);
+        }
+        [$keyMatch, $keyTypes, $keyValues] = ApiKeyStore::matchKey($this->db, $apiKey);
+        $stmt = $this->prepare('SELECT ' . ApiKeyStore::columns($this->db)
+            . (\Api\V3\Auth::apiKeyScopeColumnExists($this->db) ? ', scope' : '')
+            . ' FROM 202_api_keys WHERE user_id = ? AND ' . $keyMatch . ' LIMIT 1');
+        $this->bind($stmt, 'i' . $keyTypes, $userId, ...$keyValues);
+        $this->execute($stmt, 'Query failed');
+        $old = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
+        $stmt->close();
+        if (!$old) {
+            throw new NotFoundException('API key not found');
+        }
+        if ($auth !== null && !$auth->hasFullScope()) {
+            foreach (\Api\V3\Auth::parseScopes((string) ($old['scope'] ?? '')) as $token) {
+                if (!$auth->coversScopeToken($token)) {
+                    throw new \Api\V3\AuthException(
+                        sprintf(
+                            "Cannot replace a key with scope '%s': your key only has %s.",
+                            $token,
+                            implode(',', $auth->scopes())
+                        ),
+                        403
+                    );
+                }
+            }
+        }
+
+        $key = bin2hex(random_bytes(32));
+        $now = time();
+        try {
+            $replaced = ApiKeyStore::replace($this->db, $userId, ApiKeyStore::ref($old), $key, $now);
+        } catch (\DomainException $refused) {
+            throw new ConflictException($refused->getMessage());
+        } catch (QueryException $e) {
+            throw new DatabaseException('Failed to replace API key', $e);
+        }
+        if ($replaced === null) {
+            throw new NotFoundException('API key not found');
+        }
+
+        return ['data' => [
+            'user_id' => $userId,
+            'api_key' => $key,
+            'scope' => implode(',', \Api\V3\Auth::parseScopes((string) ($replaced['scope'] ?? ''))),
+            'label' => $replaced['label'],
+            'created_at' => $now,
+            'replaced' => [
+                'api_key' => ApiKeyStore::masked(ApiKeyStore::prefixOf($old)),
+                'ends_at' => $replaced['ends_at'],
+            ],
+        ]];
     }
 
     public function deleteApiKey(int $userId, string $apiKey): void

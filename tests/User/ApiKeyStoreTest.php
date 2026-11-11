@@ -209,4 +209,18 @@ final class ApiKeyStoreTest extends TestCase
             p202_account_key_use(['use_recorded' => false] + $key, 5000)
         );
     }
+
+    public function testAKeysNameIsOneShortLineThatIsNotAnAiConnections(): void
+    {
+        self::assertSame('Nightly store sync', ApiKeyStore::labelFrom('  Nightly store sync '));
+        self::assertNull(ApiKeyStore::labelFrom(''));
+        self::assertNull(ApiKeyStore::labelFrom("  \t"));
+        self::assertSame(str_repeat('é', 100), ApiKeyStore::labelFrom(str_repeat('é', 100)));
+        $refused = [str_repeat('é', 101), "two\nlines", ['list'], null, "bad\xC3(bytes", 'ai:claude',
+            'AI: Claude via mcp.tracking202.com'];
+        foreach ($refused as $posted) {
+            self::assertFalse(ApiKeyStore::labelFrom($posted), var_export($posted, true));
+        }
+        self::assertFalse(AiConnect::isConnectionLabel(ApiKeyStore::labelFrom('Aircraft parts store')));
+    }
 }
