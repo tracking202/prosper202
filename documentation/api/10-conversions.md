@@ -163,11 +163,13 @@ most what is left of it, and closes the refund. When the order is recorded
 on more than one click (`click_ids`), send `click_id` too; without it the
 answer is a `422` naming the clicks. It answers `200` with `outcome`
 (`reversed`, or `duplicate` when the refund was on file already) and the
-reversal's `conversion_id`. Nothing converts money: when Shopify states the
-refund in another currency than the account's (`other_currency` is true;
-`currency` is Shopify's, `account_currency` the account's), the list's
-`amount` is not what to record. Send what the refund returned in the
-account's currency, with `"currency"` naming that currency; without it, or
+reversal's `conversion_id`. Nothing converts money. A refund is recorded in
+its sale's currency, `amount_currency` in the list: the account's
+(`account_currency`) unless the sale was recorded before the account's
+currency changed. When Shopify states the refund in another currency
+(`other_currency` is true; `currency` is Shopify's), the list's `amount` is
+not what to record. Send what the refund returned in `amount_currency`,
+with `"currency"` naming that currency; without it, or
 with any other currency, the answer is a `422` on `currency` and nothing is
 recorded. The refund is recorded once under its id, so
 Shopify settling it later records nothing more. `POST

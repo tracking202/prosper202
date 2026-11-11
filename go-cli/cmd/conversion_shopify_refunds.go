@@ -56,8 +56,9 @@ var conversionShopifyRefundsRecordCmd = &cobra.Command{
 	Use:   "record <refund-id>",
 	Short: "Record a listed Shopify refund as a reversal of its order's sale",
 	Long: "Takes --amount back from the sale of the refund's order, at most what is left of it, and closes\n" +
-		"the refund. The amount is in the account's currency; for a refund Shopify states in another\n" +
-		"currency (other_currency in the list), convert it yourself and pass --currency with the account's.\n" +
+		"the refund. The amount is in its sale's currency (amount_currency in the list: the account's unless\n" +
+		"the sale was recorded before a currency change); for a refund Shopify states in another currency\n" +
+		"(other_currency), convert it yourself and pass --currency with amount_currency.\n" +
 		"An order recorded on more than one click\n" +
 		"needs --click-id (the list shows the clicks). Recorded once under the refund's id: running it\n" +
 		"again, or Shopify settling the refund later, records nothing more.\n\n" +
@@ -85,7 +86,7 @@ var conversionShopifyRefundsRecordCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("currency"); v != "" {
 			if !currencyCodePattern.MatchString(v) {
 				return validationError("--currency must be a three-letter currency code such as USD, got %q", v).
-					WithHint("`p202 conversion shopify-refunds list --json` shows account_currency, the currency --amount is stated in.")
+					WithHint("`p202 conversion shopify-refunds list --json` shows each refund's amount_currency, the currency --amount is stated in.")
 			}
 			body["currency"] = strings.ToUpper(v)
 		}
@@ -171,7 +172,7 @@ func shopifyRefundError(err error) error {
 		return withHint(err, "The refund is not one waiting to be recorded (recorded or closed already, or another account's). `p202 conversion shopify-refunds list` shows the ones that are.")
 	case 422:
 		if _, named := apiErr.FieldErrors["currency"]; named {
-			return withHint(err, "Prosper202 does not convert money. Pass --amount as what the refund returned in the account's currency, with --currency set to that currency (account_currency in `p202 conversion shopify-refunds list --json`).")
+			return withHint(err, "Prosper202 does not convert money. Pass --amount as what the refund returned in its sale's currency, with --currency set to that currency (amount_currency in `p202 conversion shopify-refunds list --json`).")
 		}
 		return err
 	case 409:
@@ -225,7 +226,7 @@ func renderShopifyRefunds(data []byte) error {
 }
 
 func init() {
-	conversionShopifyRefundsRecordCmd.Flags().String("amount", "", "What the refund returned, in the account's currency (required)")
+	conversionShopifyRefundsRecordCmd.Flags().String("amount", "", "What the refund returned, in its sale's currency, amount_currency in the list (required)")
 	conversionShopifyRefundsRecordCmd.Flags().String("currency", "", "The currency --amount is stated in: the account's; needed for a refund Shopify states in another")
 	conversionShopifyRefundsRecordCmd.Flags().String("click-id", "", "The click the refund takes back from, when the order is on more than one")
 	conversionShopifyRefundsCloseCmd.Flags().Bool("force", false, "Close without asking")

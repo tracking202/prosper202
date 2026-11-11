@@ -2942,8 +2942,14 @@ paths:
                         other_currency:
                           type: boolean
                           description: >-
-                            The refund is stated in another currency than the
-                            account's, so amount is not what to record.
+                            The refund is stated in another currency than
+                            amount_currency, so amount is not what to record.
+                        amount_currency:
+                          type: string
+                          description: >-
+                            The currency a recorded amount is stated in: its
+                            sale's, which is the account's unless the sale was
+                            recorded before the account's currency changed.
                         click_ids:
                           type: array
                           description: >-
@@ -2962,7 +2968,7 @@ paths:
                       never settled by itself.
                   account_currency:
                     type: string
-                    description: The currency the account counts in, which a recorded amount is stated in
+                    description: The currency the account counts in (each refund's amount_currency says what a recorded amount is stated in)
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -2977,10 +2983,11 @@ paths:
         what is left of it, and closes the refund, as Record refund does
         under Setup › Inbound Log. It is recorded once under the refund's
         id, so Shopify settling the refund later records nothing more.
-        Nothing converts money: for a refund Shopify states in another
-        currency than the account's (`other_currency`), send the amount
-        converted with `currency` naming the account's, or the answer is a
-        422 on `currency`. Asks for the role's access to the Setup and
+        Nothing converts money: a refund is recorded in its sale's
+        currency (`amount_currency` in the list). For a refund Shopify
+        states in another currency (`other_currency`), send the amount
+        converted with `currency` naming that one, or the answer is a 422
+        on `currency`. Asks for the role's access to the Setup and
         Update sections.
       operationId: recordShopifyRefund
       parameters:
@@ -3002,14 +3009,14 @@ paths:
                 amount:
                   type: number
                   description: >-
-                    What the refund returned, in the account's currency. More
-                    than 0; a decimal string is read too.
+                    What the refund returned, in its sale's currency
+                    (amount_currency). More than 0; a decimal string is read too.
                 currency:
                   type: string
                   description: >-
                     The currency amount is stated in, which must be the
-                    account's (account_currency). Required for a refund
-                    Shopify states in another currency.
+                    refund's amount_currency. Required for a refund Shopify
+                    states in another currency.
                 click_id:
                   type: integer
                   description: >-
