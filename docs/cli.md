@@ -2021,6 +2021,12 @@ p202 system traffic-source-owners repair --all          # every source the repor
 p202 system traffic-source-owners split 9               # a copy of its own for each user whose accounts name it
 ```
 
+A source with custom variables shows `not recorded` under `variables`, and a
+note under the table says why: a click records only the variables of a source
+in its own user's account, so clicks on the other users' accounts store no
+value of them until the source is moved back or split (`variables_unrecorded`
+and `variables_note` in `--json`).
+
 Nothing is moved by itself, the upgrade included, because the same rows have
 other origins: before 1.9.77 the API put a traffic source account under
 whatever source it was sent, and an admin may have moved a source on purpose.
@@ -2053,6 +2059,18 @@ and the users it showed (a source that changed since is refused), refuses a
 source a deleted user's accounts name, and needs a key whose user may act on
 the user the source is in and on each who gets a copy. To have the source end
 up with another user, `repair --to-user-id` it there first, then split it.
+
+From 1.9.80 the server's cron job makes that split by itself, once an hour,
+for a source every other user's accounts were put on after it was last saved:
+a copy is right for those whatever made the mismatch, and nothing is taken
+from the source's user. `show` says so under `automatic` (`split within the
+hour`, or `no:` and why: `may_be_theirs`, `same_name`, `no_such_user`,
+`deleted_user`), and lists under its table every split of the last 30 days:
+which source, who kept it, who got a copy for which accounts, when, and
+whether the cron job or a user made it (`auto_split`, `auto_split_blocked_by`
+and `splits` in `--json`). New clicks on the moved accounts record their
+custom variable values again, and the values recorded earlier read under the
+copy in Analyze › Variables.
 Account › Settings shows the same list to the same admins, as a notice whose
 Review link opens a panel that moves or splits each source through the same
 code and the same checks.
