@@ -345,6 +345,7 @@ func TestSystemWritesRefuseStagedBeforeAnyRequest(t *testing.T) {
 		{"--staged", "system", "retention", "delete-before", "--date", "2026-01-01", "--dry-run"},
 		{"--staged", "system", "isp-lookup", "enable"},
 		{"--staged", "system", "isp-lookup", "disable"},
+		{"--staged", "system", "integrations", "record-held", "shopify"},
 	} {
 		t.Run(strings.Join(args[2:], " "), func(t *testing.T) {
 			seen := updateServer(t, func(updateRequest) (int, string) { return 200, `{"data":{}}` })
@@ -542,5 +543,57 @@ func TestLtvWebhookDeliveriesReadsTheLog(t *testing.T) {
 	_, _, err := executeCommand("ltv", "webhooks", "deliveries", "9")
 	if !strings.Contains(hintFor(err), "`p202 ltv webhooks list`") {
 		t.Errorf("404 hint = %q", hintFor(err))
+	}
+}
+
+func TestRecordHeldSendsTheIntegrationAndRefusesAnythingElseBeforeAnyRequest(t *testing.T) {
+	seen := updateServer(t, func(updateRequest) (int, string) {
+		return 200, `{"data":{"integration":"shopify","recorded":2,"on_file":0,"refused":0,"failed":0,"left":0,"first_refusal":""}}`
+	})
+	out, _, err := executeCommand("system", "integrations", "record-held", "shopify", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*seen) != 1 || (*seen)[0].Method != "POST" || (*seen)[0].Path != "/system/integrations/record-held" ||
+		(*seen)[0].Body["integration"] != "shopify" || len((*seen)[0].Body) != 1 {
+		t.Errorf("requests = %+v, want POST /system/integrations/record-held {integration: shopify}", *seen)
+	}
+	if !strings.Contains(out, `"recorded"`) {
+		t.Errorf("output %q does not carry the answer", out)
+	}
+
+	for _, args := range [][]string{
+		{"system", "integrations", "record-held"},
+		{"system", "integrations", "record-held", "jvzoo"},
+		{"system", "integrations", "record-held", "shopify", "zaxaa"},
+	} {
+		t.Run(strings.Join(args[2:], " "), func(t *testing.T) {
+			sent := updateServer(t, func(updateRequest) (int, string) { return 200, `{"data":{}}` })
+			_, _, err := executeCommand(args...)
+			assertValidationError(t, err)
+			if !strings.Contains(err.Error(), "paykickstart, shopify, zaxaa") || !strings.Contains(hintFor(err), "p202 system integrations") {
+				t.Errorf("error %q / hint %q", err, hintFor(err))
+			}
+			if len(*sent) != 0 {
+				t.Errorf("sent %+v for a refused integration", *sent)
+			}
+		})
+	}
+}
+
+func TestRecordHeldKeepsTheServersRefusalAndItsExitCode(t *testing.T) {
+	updateServer(t, func(updateRequest) (int, string) {
+		return 403, `{"error":true,"status":403,"message":"This account's role does not have the 'access_to_api_integrations' permission."}`
+	})
+	_, _, err := executeCommand("system", "integrations", "record-held", "zaxaa")
+	if code := exitCodeForError(err); code != ExitAuth {
+		t.Errorf("exit %d, want %d (auth)", code, ExitAuth)
+	}
+	updateServer(t, func(updateRequest) (int, string) {
+		return 404, `{"error":true,"status":404,"message":"Not found"}`
+	})
+	_, _, err = executeCommand("system", "integrations", "record-held", "zaxaa")
+	if !strings.Contains(hintFor(err), "upgrade Prosper202") {
+		t.Errorf("hint %q does not say the server is older", hintFor(err))
 	}
 }

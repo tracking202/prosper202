@@ -698,6 +698,16 @@ var readOnlyPost = map[string]bool{
 	"goals/evaluate": true, // definitions against events
 }
 
+// A landing page's code check fetches the page's saved URL and keeps what
+// it found: it changes no setup, and the server asks only a read scope.
+var landingPageCheckPath = regexp.MustCompile(`^landing-pages/[0-9]+/check$`)
+
+// isReadOnlyPost reports whether a POST to path is a read (readOnlyPost).
+func isReadOnlyPost(path string) bool {
+	path = strings.TrimLeft(path, "/")
+	return readOnlyPost[path] || landingPageCheckPath.MatchString(path)
+}
+
 func (c *Client) do(method, path string, params map[string]string, body interface{}) ([]byte, error) {
 	return c.doWithHeaders(method, path, params, body, nil)
 }
@@ -727,7 +737,7 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 	if err := checkAPIPath(path); err != nil {
 		return nil, err
 	}
-	readsAsPost := method == http.MethodPost && readOnlyPost[strings.TrimLeft(path, "/")]
+	readsAsPost := method == http.MethodPost && isReadOnlyPost(path)
 	// A preview is dry_run=1, the only value this client sends; anything
 	// else is taken to change data.
 	changes := method != http.MethodGet && method != http.MethodHead && !readsAsPost && params["dry_run"] != "1"
@@ -749,7 +759,7 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 		// Reads that arrive as POST (readOnlyPost) record no proposal;
 		// stamping staged=1 would only earn the server's "staged is not
 		// supported" rejection.
-		!readOnlyPost[strings.TrimLeft(path, "/")] &&
+		!isReadOnlyPost(path) &&
 		params["dry_run"] == "" {
 		// A dry-run preview is a read; staging it would be rejected by the
 		// server's mutual-exclusion check, so an explicit --dry-run wins

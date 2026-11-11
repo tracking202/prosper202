@@ -14,8 +14,13 @@ use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Database\Connection;
 use Prosper202\GeoIp\CityDatabase;
 use Prosper202\GeoIp\RefreshStore;
+use Prosper202\InboundLog\InboundLog;
+use Prosper202\PaymentNotification\CurrencyMismatch;
+use Prosper202\PaymentNotification\HeldNotifications;
+use Prosper202\PaymentNotification\HeldReplay;
 use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\JVZoo\JVZooRole;
+use Prosper202\PaymentNotification\JVZoo\RolelessTraffic;
 use Prosper202\PaymentNotification\Zaxaa\ZaxaaSignature;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
@@ -38,6 +43,8 @@ use Prosper202\User\SignInOutcome;
  * - GET  /system/integrations             the IPN / postback URLs to paste
  *                                         into ClickBank, JVZoo, Zaxaa,
  *                                         PayKickstart and Shopify
+ * - POST /system/integrations/record-held record the caller's notifications
+ *                                         held for their currency
  *
  * The role permissions are the pages' (access_to_settings, and
  * access_to_api_integrations for the integrations), checked by the routes on
@@ -683,11 +690,34 @@ final class AdministrationController
             $base = TrackingBaseUrl::buildForResponse((string) ($domain['user_tracking_domain'] ?? ''), $server ?? $_SERVER, dirname(__DIR__, 3));
             $prefs = $this->one(
                 'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_incoming_webhook,
-                        paykickstart_ipn_secret_keys, shopify_webhook_secret
+                        paykickstart_ipn_secret_keys, shopify_webhook_secret, user_account_currency,
+                        jvzoo_roleless_role
                  FROM 202_users_pref WHERE user_id = ? LIMIT 1',
                 'i',
                 [$this->userId]
             ) ?? [];
+
+            // What the page's payment cards say: the notifications held for their currency, and what
+            // JVZoo's 1.9.56 URL received lately. Each is left out when it cannot be read (the table is
+            // not there before the upgrade), never served as zero; the URLs are served either way.
+            $held = null;
+            $noRole = null;
+            try {
+                $held = (new HeldNotifications($this->db))->counts($this->userId);
+            } catch (\Throwable $e) {
+                error_log('GET /system/integrations: the held payment notifications could not be read: '
+                    . $e->getMessage());
+            }
+            try {
+                $noRole = RolelessTraffic::recent(
+                    new InboundLog($this->db),
+                    $this->userId,
+                    time() - RolelessTraffic::WINDOW
+                );
+            } catch (\Throwable $e) {
+                error_log('GET /system/integrations: the inbound log could not be read: ' . $e->getMessage());
+            }
+            $readAs = JVZooRole::fromQuery($prefs['jvzoo_roleless_role'] ?? null) ?? JVZooRole::AFFILIATE;
 
             $list = [];
             foreach (self::INTEGRATIONS as $key => $integration) {
@@ -723,11 +753,55 @@ final class AdministrationController
                     $entry['keys_stored'] = count(PayKickstartKeys::stored(is_string($keys) ? $keys : null)['keys']);
                     $entry['secret_stored'] = $entry['keys_stored'] > 0;
                 }
+                if ($held !== null && in_array($key, HeldReplay::SOURCES, true)) {
+                    $entry['held_notifications'] = CurrencyMismatch::held(
+                        $held,
+                        $key,
+                        (string) ($prefs['user_account_currency'] ?? '')
+                    );
+                }
+                if ($key === 'jvzoo' && $noRole !== null) {
+                    $entry['no_role_url'] = [
+                        'read_as' => $readAs->value,
+                        'vendor_no_affiliate' => $noRole->vendorNoAffiliate,
+                        'refused' => $noRole->refused,
+                        'as_affiliate' => $noRole->asAffiliate,
+                        'as_vendor' => $noRole->asVendor,
+                        'conflict' => $noRole->conflict,
+                        'more' => $noRole->more,
+                    ];
+                }
                 $list[] = $entry;
             }
 
             return ['base_url' => $base, 'integrations' => $list];
         })];
+    }
+
+    // ─── POST /system/integrations/record-held ──────────────────────────
+
+    /**
+     * The page's Record button: the caller's held notifications of one
+     * integration, stated in the currency the account counts in now, go
+     * through the processor (HeldReplay), at most HeldReplay::BATCH a
+     * request. Sent twice, each is recorded once.
+     *
+     * @param array<string, mixed> $payload {integration: paykickstart|shopify|zaxaa}
+     * @return array{data: array<string, mixed>}
+     */
+    public function recordHeld(array $payload): array
+    {
+        PayloadKeys::refuseUnknown($payload, ['integration'], 'recording held notifications', self::NO_PREVIEW);
+        $integration = $payload['integration'] ?? null;
+        if (!is_string($integration) || !in_array($integration, HeldReplay::SOURCES, true)) {
+            throw new ValidationException('integration is required', [
+                'integration' => 'must be one of ' . implode(', ', HeldReplay::SOURCES)
+                    . ': the integrations that hold a notification stated in another currency',
+            ]);
+        }
+
+        return ['data' => $this->guard(fn (): array => ['integration' => $integration]
+            + (new HeldReplay($this->db))->replay($this->userId, $integration))];
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────

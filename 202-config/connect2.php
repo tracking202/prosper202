@@ -433,8 +433,14 @@ function p202ClickCookieJs(array $cookies): string
  *
  * @param array<string, mixed> $get
  */
-function p202DcsClickJs(array $get, int $clickId, int $landingPageId, int $userId, \mysqli $db): string
-{
+function p202DcsClickJs(
+    array $get,
+    int $clickId,
+    int $landingPageId,
+    int $userId,
+    \mysqli $db,
+    int $sourceId = 0
+): string {
     return \Prosper202\Click\PageUpdate::clickScript(
         $get,
         trackingEnabled(),
@@ -442,7 +448,8 @@ function p202DcsClickJs(array $get, int $clickId, int $landingPageId, int $userI
         $landingPageId,
         $userId,
         time(),
-        static fn (): ?string => \Api\V3\Apps\Android\InstallTokenKey::load($db)
+        static fn (): ?string => \Api\V3\Apps\Android\InstallTokenKey::load($db),
+        $sourceId
     );
 }
 

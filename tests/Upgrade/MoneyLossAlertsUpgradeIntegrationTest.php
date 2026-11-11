@@ -22,7 +22,7 @@ final class MoneyLossAlertsUpgradeIntegrationTest extends TestCase
 {
     use \Tests\Report\ScratchReportDatabase;
 
-    private const TABLES = ['202_alert_settings', '202_alert_state', '202_conversion_logs'];
+    private const TABLES = ['202_alert_settings', '202_alert_state', '202_alert_log', '202_conversion_logs'];
 
     /** @var list<string>|null 202_version as this class found it, put back after */
     private static ?array $versions = null;
@@ -60,6 +60,7 @@ final class MoneyLossAlertsUpgradeIntegrationTest extends TestCase
         $installed = self::shapes();
         self::q('DROP TABLE 202_alert_settings');
         self::q('DROP TABLE 202_alert_state');
+        self::q('DROP TABLE 202_alert_log');
         self::q('ALTER TABLE 202_conversion_logs DROP INDEX user_conv_time');
         self::q('DELETE FROM 202_conversion_logs WHERE user_id = 7899');
         self::q('INSERT INTO 202_conversion_logs SET click_id = 978990001, campaign_id = 1, click_payout = 1,'

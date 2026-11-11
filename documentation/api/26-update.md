@@ -144,7 +144,12 @@ Each item is a line `SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP`, as the page
 and paid 1.9.56 take it. Every field after the subid is optional; leave one
 empty to skip it (`"940003,,order-10"`).
 
-- **Payout**: the line's, else the body's `payout`, else the campaign's.
+- **Payout**: the line's, else the body's `payout`, else the campaign's. It
+  may carry the sign or code of the account's currency before or after the
+  number (`$12.50`, `12.50 USD`), as a network's report writes it: it is
+  read as the number, and the line's answer keeps what was sent as
+  `payout_written`. Another currency's sign is refused, since the amount is
+  recorded in the account's currency.
 - **Transaction id**: a line without one marks its click once (a click that
   is already a lead is `already_converted`). A line with one records that
   sale once: the same id on the same click again is `already_converted`,
@@ -159,7 +164,7 @@ empty to skip it (`"940003,,order-10"`).
 
 A line whose payout, transaction id or time cannot be read is a `422` naming
 it, and nothing in the request is written (a dry run refuses it the same
-way): a currency sign, thousands separator or decimal comma in the payout
+way): another currency's sign, a thousands separator or decimal comma in the payout
 (`1,250` and `12,50` split into two fields; write `1250` or `12.50`; a
 whole-number payout followed by a transaction id of up to three digits is
 refused for the same reason, so write that payout as `12.00`), a payout
@@ -188,7 +193,7 @@ curl -X POST "$P202/api/v3/conversions/subids" -H "Authorization: Bearer $KEY" \
 
 ```json
 {"error": true, "status": 422, "message": "Invalid subid lines: nothing was recorded",
- "field_errors": {"subids.1": "payout \"$12.50\" is not a number: write it as digits with a decimal point, such as 12.50, with no currency sign or thousands separator"}}
+ "field_errors": {"subids.1": "payout \"€12.50\" carries \"€\", which is not how this account's currency (USD) is written: write the amount in USD as digits, such as 12.50"}}
 ```
 
 `subids` is a list of strings or integers, at most 5,000; items are trimmed

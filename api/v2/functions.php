@@ -48,6 +48,15 @@ function getAuth($db, $variables): mixed {
 			return ['msg' => 'This API key is scoped and only valid for the v3 API', 'error' => true, 'status' => 403];
 		}
 
+        $legacy_now = time();
+        $legacy_ended = \Prosper202\User\ApiKeyStore::endedAt($key_row, $legacy_now);
+        if ($legacy_ended !== null) {
+            $legacy_msg = \Prosper202\User\ApiKeyStore::endedMessage($legacy_ended);
+            return ['msg' => $legacy_msg, 'error' => true, 'status' => 401];
+        }
+        $legacy_client = $_SERVER['HTTP_USER_AGENT'] ?? null;
+        \Prosper202\User\ApiKeyStore::stampUse($db, $key_row, $legacyKey, 'v2', $legacy_client, $legacy_now);
+
 		$mysql['user_id'] = $db->real_escape_string($key_row['user_id']);
 		$user_sql = "SELECT 	`user_timezone`
 					FROM   	`202_users`

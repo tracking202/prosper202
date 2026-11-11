@@ -143,6 +143,33 @@ final class PurLinkDestinationTest extends TestCase
         self::assertSame($second, PurLinkDestination::choose($chosen, $second, self::CAMPAIGN));
     }
 
+    public function testAHopThatChoosesIsHandedOnlyWhatChooseCouldTake(): void
+    {
+        $link = 'https://shop.example/go?aff=7&sid=[[subid]]&u=https%3A%2F%2Fshop.example%2Fp%2F9';
+        $query = PurLinkDestination::query($link);
+        self::assertSame('&p202_to=' . rawurlencode($link), $query);
+        parse_str('lpip=77' . $query, $read);
+        self::assertSame($link, $read[PurLinkDestination::PARAM], 'the next hop reads the link back whole');
+        foreach ([null, '', ['x'], 5, 'https://shop.example/go?u=' . str_repeat('a', 2048)] as $refused) {
+            self::assertSame('', PurLinkDestination::query($refused));
+        }
+    }
+
+    /**
+     * lp.php's cloaked hop: lpc.php is handed the link and asks choose(), as
+     * lp.php and off.php do before they redirect.
+     */
+    public function testEveryRedirectThatStandsInForAPurLinkAsksForItsDestination(): void
+    {
+        $root = dirname(__DIR__, 2) . '/tracking202/redirect/';
+        foreach (['lp.php' => 1, 'lpc.php' => 1, 'off.php' => 2] as $file => $calls) {
+            $source = (string) file_get_contents($root . $file);
+            self::assertSame($calls, substr_count($source, 'PurLinkDestination::choose('), $file);
+        }
+        $lp = (string) file_get_contents($root . 'lp.php');
+        self::assertStringContainsString('PurLinkDestination::query(', $lp, 'the cloaked hop is handed the link');
+    }
+
     public function testACampaignWithNoUrlTakesNothing(): void
     {
         self::assertSame('', PurLinkDestination::choose('', 'https://shop.example/go?u=1', []));

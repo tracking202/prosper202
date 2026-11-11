@@ -160,7 +160,8 @@ class CapabilitiesController
                     // access_to_api_integrations): GET /system/info,
                     // /system/login-log, /system/retention (+ PUT, and
                     // POST /system/retention/delete-before with ?dry_run=1),
-                    // /system/isp-lookup (+ PUT), /system/integrations.
+                    // /system/isp-lookup (+ PUT), /system/integrations
+                    // (+ POST /system/integrations/record-held).
                     // Not stageable.
                     'administration' => true,
                     // GET /system/traffic-source-owners, and POST

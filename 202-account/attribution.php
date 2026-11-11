@@ -25,7 +25,8 @@ declare(strict_types=1);
  * API does not or skip one it does (CLAUDE.md error pattern #5): a model
  * name, type, lookback or weighting the API would refuse is refused here in
  * its sentence, the default model cannot be deactivated or deleted, and a
- * webhook is checked by the same guard.
+ * webhook is checked by the same guard. "Try again now" is the API's
+ * POST /attribution/queue/retry (QueueRetry), said in the page's words.
  *
  * Permissions are the API's too: view_attribution_reports to open the page
  * and to create, retry, delete and download exports; manage_attribution_models
@@ -166,6 +167,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 	$id = preg_match('/^[1-9][0-9]{0,18}$/D', (string) ($_POST['id'] ?? '')) === 1 ? (int) $_POST['id'] : 0;
 	$modelActions = ['create_model', 'update_model', 'set_default', 'set_status', 'delete_model'];
 	$exportActions = ['create_export', 'retry_export', 'delete_export'];
+
+    if ($action === 'retry_failed') {
+        [$kind, $text] = p202_attr_retry_failed($db, $userId);
+        p202_account_flash($kind, $text);
+        p202_account_redirect($back($view === 'journey' ? 'report' : $view));
+    }
 
 	if (in_array($action, $modelActions, true) && !$canManage) {
 		p202_account_flash('bad', 'Your role cannot change attribution models, so nothing was saved. An admin can grant "manage attribution models".');
@@ -349,7 +356,7 @@ $models = [];
 $queue = null;
 try {
 	$models = $api->listModels([])['data'];
-	$queue = $api->queue(['limit' => '5'])['data'];
+	$queue = $api->queue(['limit' => '20'])['data'];
 } catch (\Throwable $e) {
 	error_log('attribution page: ' . $e->getMessage());
 	$loadError = 'The attribution tables could not be read. Check that the upgrade finished, then reload.';
@@ -360,8 +367,7 @@ if ($queue !== null && (int) $queue['merges_failing'] > 0) {
     $failingMerges = (int) $queue['merges_failing'];
     $mergeNote = $failingMerges
         . ($failingMerges === 1 ? ' merge failed to credit its' : ' merges failed to credit their')
-        . ' conversions again; each is tried again, less often the longer it fails'
-        . ' (p202 attribution queue shows why).';
+        . ' conversions again; the reasons are below.';
 }
 // The models whose recompute the worker could not queue: each is tried again.
 $modelNote = null;
@@ -369,8 +375,7 @@ if ($queue !== null && (int) $queue['models_failing'] > 0) {
     $failingModels = (int) $queue['models_failing'];
     $modelNote = $failingModels
         . ($failingModels === 1 ? ' model failed to queue its' : ' models failed to queue their')
-        . ' conversions for a recompute; each is tried again, less often the longer it fails,'
-        . ' while the rest of attribution carries on (p202 attribution queue shows why).';
+        . ' conversions for a recompute, while the rest of attribution carries on; the reasons are below.';
 }
 $activeModels = array_values(array_filter($models, static fn (array $m): bool => $m['status'] === 'active'));
 $defaultModel = null;
@@ -604,7 +609,7 @@ $modelSettings = static function (array $m): string {
 		<div class="p202-strip__row">
 			<span class="p202-pill<?php echo (int) $queue['failing'] > 0 ? ' p202-pill--bad' : ' p202-pill--warn'; ?>"><?php echo (int) $queue['failing'] > 0 ? 'Failing' : 'Waiting'; ?></span>
 			<span class="p202-strip__label">Attribution worker</span>
-			<span class="p202-strip__value"><?php echo $h((int) $queue['pending'] . ' conversion' . ((int) $queue['pending'] === 1 ? '' : 's') . ' waiting' . ((int) $queue['failing'] > 0 ? ', ' . (int) $queue['failing'] . ' failing (p202 attribution queue shows why)' : '; the figures below fill in when the worker runs, every minute')); ?></span>
+			<span class="p202-strip__value"><?php echo $h((int) $queue['pending'] . ' conversion' . ((int) $queue['pending'] === 1 ? '' : 's') . ' waiting' . ((int) $queue['failing'] > 0 ? ', ' . (int) $queue['failing'] . ' failing; the reasons are below' : '; the figures below fill in when the worker runs, every minute')); ?></span>
 		</div>
 	</div>
 <?php } ?>
@@ -628,6 +633,11 @@ $modelSettings = static function (array $m): string {
         </div>
     </div>
     <?php } ?>
+
+    <?php if ($queue !== null) {
+        $failuresView = $view === 'journey' ? 'report' : $view;
+        echo p202_attr_failures($queue, $pageUrl, $failuresView, time());
+    } ?>
 
 <?php if ($view === 'report') { ?>
 	<?php
@@ -1311,5 +1321,5 @@ $modelSettings = static function (array $m): string {
 
 <?php } ?>
 
-<script src="<?php echo $h($base . '202-js/p202-setup.js?v=1'); ?>" defer></script>
+<script src="<?php echo $h($base . '202-js/p202-setup.js?v=2'); ?>" defer></script>
 <?php template_bottom();
