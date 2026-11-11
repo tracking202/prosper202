@@ -107,6 +107,7 @@ class ClicksController
         'keyword_id'                => 'ca.keyword_id',
         'ip_id'                     => 'ca.ip_id',
         'click_referer_site_url_id' => 'cs.click_referer_site_url_id',
+        'click_id'                  => 'c.click_id',
     ];
 
     /** What the count needs for the filters' columns (DETAIL_JOINS has them too). */

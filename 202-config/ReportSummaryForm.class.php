@@ -1062,6 +1062,17 @@ class ReportSummaryForm extends ReportBasicForm
 			";
 		}
 
+        // The Publisher filter, over the clicks themselves: the grouped source
+        // below applies it before it groups (UserPrefFilters), and drops this copy.
+        $publisherFilter = '';
+        if (!empty($user_row['user_pref_publisher_id'])) {
+            $publisherFilter = ' AND ' . \Prosper202\Click\PublisherCredit::creditedClicksCondition(
+                '2c.click_id',
+                (int) $user_row['user_pref_publisher_id']
+            ) . ' ';
+            $info_sql .= $publisherFilter;
+        }
+
 		if ($user_row['user_pref_isp_id']) {
 			$mysql['user_pref_isp_id'] = $db->real_escape_string($user_row['user_pref_isp_id']);
 			$info_sql .= "
@@ -1142,6 +1153,10 @@ class ReportSummaryForm extends ReportBasicForm
                 $where .= " AND 2st.click_id='" . $db->real_escape_string($user_row['user_pref_subid']) . "'";
             }
             $metrics = ['clicks', 'click_out', 'leads', 'income', 'cost'];
+            if ($publisherFilter !== '') {
+                // Grouping by click id would be no grouping at all.
+                $info_sql = str_replace($publisherFilter, '', $info_sql);
+            }
             preg_match_all('/\b2c\.([a-z_][a-z0-9_]*)\b/', $info_sql, $references);
             $dimensions = array_values(array_diff(array_unique($references[1]), [...$metrics, 'click_time']));
             $source = \Prosper202\DataEngine\ReportAggregation::byDimensions(

@@ -1,0 +1,73 @@
+{
+  "cases": [
+    {
+      "id": "publishers-001-which-publisher-sent-the-most-clicks",
+      "priority": "high",
+      "state": "seeded fixture; setup makes (or reuses) user eval-publisher (Dana Reyes) with the Publisher role and sends three clicks through campaign B's direct link carrying her t202pubid (a rerun adds three more)",
+      "setup": [
+        "uid=$(p202 user list --json | jq -r '.data[] | select(.user_name==\"eval-publisher\") | .user_id' | head -1); [ -n \"$uid\" ] || uid=$(p202 user create --user-name eval-publisher --user-email eval-publisher@example.com --user-pass eval-publisher-pass-1 --user-fname Dana --user-lname Reyes -q); p202 user role assign \"$uid\" 6 --json >/dev/null 2>&1; pub=$(p202 user get \"$uid\" --json | jq -r '.data.user_public_publisher_id') && c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign B\") | .aff_campaign_id' | head -1) && t=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c and (.rotator_id|tostring)==\"0\" and (.landing_page_id|tostring)==\"0\")][0].tracker_id') && url=$(p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url') && for i in 1 2 3; do curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$url&t202kw=partner%20newsletter&t202pubid=$pub\"; done && origin=$(printf '%s' \"$url\" | sed 's#^\\(https\\{0,1\\}://[^/]*\\).*#\\1#') && curl -sS -o /dev/null \"$origin/202-cronjobs/dej.php\""
+      ],
+      "ask": "Which publisher's links sent the most clicks, all time, and how many clicks was that?",
+      "expected": {
+        "runs_one_of": [
+          "report breakdown --breakdown publisher",
+          "report breakdown -b publisher",
+          "analytics --group-by publisher",
+          "report groups --by publisher"
+        ],
+        "never_runs": [
+          "campaign delete",
+          "user delete",
+          "conversion create",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "p202 report breakdown --breakdown publisher --period alltime --json | jq '[.data[] | select(.name == \"Dana Reyes\" and (.total_clicks | tonumber) >= 3)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "Dana Reyes"
+        ],
+        "rubric": "PASS if the reply names Dana Reyes with the click count a breakdown by publisher over all time reads for her. FAIL if it reports the account's total clicks or a campaign's as hers, counts by traffic source or user list instead of the publisher breakdown, or invents a number without reading."
+      },
+      "notes": "Analyze › Publishers on the CLI: clicks are credited to the publisher whose link (t202pubid) they came on, and `publisher` is a report dimension. Before it an agent could list users with the Publisher role and had no way to say what their links did."
+    },
+    {
+      "id": "publishers-002-which-link-a-publishers-clicks-came-on",
+      "priority": "medium",
+      "state": "as publishers-001: Dana Reyes's clicks all came on campaign B's direct link",
+      "setup": [
+        "uid=$(p202 user list --json | jq -r '.data[] | select(.user_name==\"eval-publisher\") | .user_id' | head -1); [ -n \"$uid\" ] || uid=$(p202 user create --user-name eval-publisher --user-email eval-publisher@example.com --user-pass eval-publisher-pass-1 --user-fname Dana --user-lname Reyes -q); p202 user role assign \"$uid\" 6 --json >/dev/null 2>&1; pub=$(p202 user get \"$uid\" --json | jq -r '.data.user_public_publisher_id') && c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign B\") | .aff_campaign_id' | head -1) && t=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c and (.rotator_id|tostring)==\"0\" and (.landing_page_id|tostring)==\"0\")][0].tracker_id') && url=$(p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url') && for i in 1 2 3; do curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$url&t202kw=partner%20newsletter&t202pubid=$pub\"; done && origin=$(printf '%s' \"$url\" | sed 's#^\\(https\\{0,1\\}://[^/]*\\).*#\\1#') && curl -sS -o /dev/null \"$origin/202-cronjobs/dej.php\""
+      ],
+      "ask": "How many clicks did each of Dana Reyes's publisher links get, all time? Name each link by its t202id.",
+      "expected": {
+        "runs_one_of": [
+          "report breakdown --breakdown publisher_link",
+          "report breakdown -b publisher_link",
+          "analytics --group-by publisher_link",
+          "report groups --by publisher,publisher_link"
+        ],
+        "never_runs": [
+          "campaign delete",
+          "user delete",
+          "conversion create",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "uid=$(p202 user list --json | jq -r '.data[] | select(.user_name==\"eval-publisher\") | .user_id' | head -1); c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign B\") | .aff_campaign_id' | head -1); pubid=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c and (.rotator_id|tostring)==\"0\" and (.landing_page_id|tostring)==\"0\")][0].tracker_id_public'); p202 report breakdown --breakdown publisher_link --publisher-id \"$uid\" --period alltime --json | jq --arg t \"$pubid\" '[.data[] | select(.name == $t and (.total_clicks | tonumber) >= 3)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the reply gives the t202id of campaign B's direct link with the click count a breakdown by publisher_link narrowed to Dana Reyes (--publisher-id, her user id from the publisher breakdown or the user list) reads. FAIL if it gives a tracker's internal id as the t202id, lists every publisher's links as hers, or invents a number without reading."
+      },
+      "notes": "The link a credited click came on is stored with it (its public id, the t202id in the link) and is the publisher_link dimension; --publisher-id narrows any report to one publisher."
+    }
+  ]
+}

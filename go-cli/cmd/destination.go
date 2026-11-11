@@ -40,7 +40,8 @@ var destinationCmd = &cobra.Command{
 		"      --conversion-action 987654 --credentials-file google-ads.json\n" +
 		"  p202 destination connect 2   # open the link it prints, signed in to Prosper202\n" +
 		"  p202 destination test 1\n" +
-		"  p202 destination deliveries 1 --status failed",
+		"  p202 destination deliveries 1 --status failed\n" +
+		"  p202 destination resend 1 --status failed",
 }
 
 func destinationArg(raw string) error {
@@ -555,6 +556,81 @@ var destinationDeliveriesCmd = &cobra.Command{
 	},
 }
 
+var destinationResendStatuses = newEnum([]string{"failed", "withheld"})
+
+var destinationResendCmd = &cobra.Command{
+	Use:   "resend <id> (--delivery-id <n> | --status failed|withheld)",
+	Short: "Send failed or withheld conversions again, with all their tries: one delivery, or every one of a status",
+	Long: "After you fix what the platform refused (a token, an account, a conversion action), the conversions\n" +
+		"that ran out of tries stay failed until they are sent again. --status takes the deliveries of the last\n" +
+		"90 days, 5,000 a call (the answer's `more` says to run it again); a withheld one is checked again and\n" +
+		"withheld again if it is still held back. A conversion already sent is never sent twice.\n\n" +
+		"  p202 destination deliveries 1 --status failed\n" +
+		"  p202 destination resend 1 --status failed\n" +
+		"  p202 destination resend 1 --delivery-id 4812",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := destinationArg(args[0]); err != nil {
+			return err
+		}
+		status := enumValue(cmd, "status")
+		byID := cmd.Flags().Changed("delivery-id")
+		if byID == (status != "") {
+			return validationError("pass --delivery-id for one delivery or --status for every delivery of it, not both").
+				WithHint("`p202 destination deliveries %s --status failed` lists the failed ones with their delivery_id.", args[0])
+		}
+		body := map[string]interface{}{"status": status}
+		if byID {
+			id, _ := cmd.Flags().GetInt("delivery-id")
+			if id <= 0 {
+				return validationError("--delivery-id must be a whole number greater than 0").
+					WithHint("`p202 destination deliveries %s` shows each row's delivery_id.", args[0])
+			}
+			body = map[string]interface{}{"delivery_id": id}
+		}
+		c, err := destinationClient("resend")
+		if err != nil {
+			return err
+		}
+		data, err := c.Post("destinations/"+args[0]+"/deliveries/resend", body)
+		if err != nil {
+			return withHint(err, "`p202 destination deliveries %s` shows its deliveries; %s", args[0], destinationListHint)
+		}
+		render(data)
+		return nil
+	},
+}
+
+var destinationBackfillCmd = &cobra.Command{
+	Use:   "backfill <id> --days <n>",
+	Short: "Queue the conversions of the last days a destination has no delivery for (recorded before it existed)",
+	Long: "Queues each paid conversion of the last --days that this destination's campaigns take and its log has no\n" +
+		"row for, oldest first, 5,000 a call (the answer's `more` says to run it again). GA4 takes 1 to 3 days\n" +
+		"(it refuses an event more than 72 hours old); Google Ads 1 to 90. They go out with the cron job's runs.\n\n" +
+		"  p202 destination backfill 2 --days 30",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := destinationArg(args[0]); err != nil {
+			return err
+		}
+		days, _ := cmd.Flags().GetInt("days")
+		if days < 1 || days > 90 {
+			return validationError("--days must be 1 to 90 (1 to 3 for a GA4 destination)").
+				WithHint("Pass how many days back to send, for example --days 3.")
+		}
+		c, err := destinationClient("backfill")
+		if err != nil {
+			return err
+		}
+		data, err := c.Post("destinations/"+args[0]+"/backfill", map[string]interface{}{"days": days})
+		if err != nil {
+			return withHint(err, "%s", destinationListHint)
+		}
+		render(data)
+		return nil
+	},
+}
+
 func destinationSettingFlags(cmd *cobra.Command) {
 	cmd.Flags().String("name", "", "A name for it")
 	cmd.Flags().String("measurement-id", "", "GA4 web stream Measurement ID (G-…)")
@@ -594,7 +670,12 @@ func init() {
 	destinationDeliveriesCmd.Flags().Int("offset", 0, "Rows to skip")
 	enumFlag(destinationDeliveriesCmd, "status", newEnum([]string{"pending", "sent", "failed", "withheld", "cancelled"}))
 	enumFlag(destinationDeliveriesCmd, "kind", newEnum([]string{"conversion", "test"}))
+	destinationResendCmd.Flags().Int("delivery-id", 0, "The one delivery to send again (from `destination deliveries`)")
+	destinationResendCmd.Flags().String("status", "", "Send every delivery of this status again, one of {values}")
+	enumFlag(destinationResendCmd, "status", destinationResendStatuses)
+	destinationBackfillCmd.Flags().Int("days", 0, "How many days back (1-3 for GA4, 1-90 for Google Ads)")
 	destinationCmd.AddCommand(destinationListCmd, destinationGetCmd, destinationCreateCmd, destinationUpdateCmd,
-		destinationDeleteCmd, destinationTestCmd, destinationDeliveriesCmd, destinationConnectCmd)
+		destinationDeleteCmd, destinationTestCmd, destinationDeliveriesCmd, destinationConnectCmd,
+		destinationResendCmd, destinationBackfillCmd)
 	rootCmd.AddCommand(destinationCmd)
 }

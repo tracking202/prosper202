@@ -349,6 +349,29 @@ case "$ask" in
             "$(printf '%s' "$status" | jq -r '.data.credential.client_email')" \
             "$(printf '%s' "$status" | jq -r '.data.credential.private_key_id')"
         ;;
+    # Analyze › Publishers (publishers.json): the publisher breakdown, most clicks first.
+    *"Which publisher's links sent the most clicks"*)
+        top=$(p202 report breakdown --breakdown publisher --period alltime --sort total_clicks --json | jq -c '.data[0] // empty')
+        if [ -z "$top" ]; then
+            printf 'No click has come on a publisher link (`p202 report breakdown --breakdown publisher --period alltime` has no rows).\n'
+        else
+            printf '%s sent the most clicks on their publisher links, all time: %s clicks (`p202 report breakdown --breakdown publisher --period alltime`).\n' \
+                "$(printf '%s' "$top" | jq -r '.name')" "$(printf '%s' "$top" | jq -r '.total_clicks')"
+        fi
+        ;;
+    # The links of one publisher: the publisher's id from the breakdown, then
+    # the link breakdown narrowed to it.
+    *"How many clicks did each of "*"'s publisher links get"*)
+        who=$(printf '%s' "$ask" | sed "s/.*How many clicks did each of \(.*\)'s publisher links get.*/\1/")
+        pid=$(p202 report breakdown --breakdown publisher --period alltime --json | jq -r --arg n "$who" '[.data[] | select(.name == $n)][0].id // empty')
+        if [ -z "$pid" ]; then
+            printf 'No click is credited to a publisher named %s (`p202 report breakdown --breakdown publisher --period alltime`).\n' "$who"
+        else
+            printf 'Links of %s (publisher %s), by t202id, all time (`p202 report breakdown --breakdown publisher_link --publisher-id %s --period alltime`):\n' "$who" "$pid" "$pid"
+            p202 report breakdown --breakdown publisher_link --publisher-id "$pid" --period alltime --json |
+                jq -r '.data[] | "t202id \(.name): \(.total_clicks) clicks"'
+        fi
+        ;;
     *"Which IP addresses clicked on my keyword"*)
         # The ip breakdown narrowed to the keyword; every click, so no --show.
         kw=$(printf '%s' "$ask" | grep -oE "keyword '[^']+'" | sed "s/keyword '//; s/'\$//")
