@@ -33,6 +33,23 @@ if (!function_exists('_upgrade_note')) {
     }
 
     /**
+     * The stored version for a page drawn after the upgrade answered false:
+     * null when the database cannot say (the connection was lost), which the
+     * page then says, instead of failing on the read.
+     */
+    function _upgrade_stored_version_or_null(): ?string
+    {
+        try {
+            return (string) PROSPER202::prosper202_version();
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade page: the stored version could not be read after the upgrade stopped: '
+                . p202FailedQueryMessage((int) $e->getCode(), $e->getMessage()));
+
+            return null;
+        }
+    }
+
+    /**
      * A failed statement for the upgrade page: redacted as its log line is,
      * without the database's name, and the statement cut to what names it.
      */
@@ -1268,6 +1285,23 @@ class UPGRADE
             return false;
         }
 
+        try {
+            return self::underTheLock($time_from, $lockName);
+        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+            // A read the upgrade cannot do without failed (the connection
+            // was lost): the caller gets false and the note, not the throw.
+            $tagged = preg_match('/\[errno (\d+)\]/', $e->getMessage(), $m) === 1;
+            $errno = $tagged ? (int) $m[1] : (int) $e->getCode();
+            _upgrade_note('the upgrade stopped on a failed read of the database [errno ' . $errno . ']: '
+                . p202FailedQueryMessage($errno, $e->getMessage()));
+
+            return false;
+        }
+    }
+
+    /** The ladder and what follows it, with the upgrade lock held; it releases the lock. */
+    private static function underTheLock($time_from, string $lockName): bool
+    {
         try {
             $laddered = self::ladder($time_from);
             if ($laddered === true && PROSPER202::prosper202_version() === '1.9.80'

@@ -39,6 +39,8 @@ if (upgrade_needed() == false && !(
 
 // Asked now: the upgrade moves the stored version on.
 $paid_1956 = p202_came_from_paid_1956($db);
+// Read before the upgrade too: a page drawn after it failed may have no database to ask.
+$stored_version = (string) PROSPER202::prosper202_version();
 
 // Initialize version error tracking array
 $version_error = [];
@@ -142,7 +144,7 @@ if (!empty($version_error)) {
     $success = $success ?? false;
     $csrf_error = $csrf_error ?? false;
 
-    if (version_compare(PROSPER202::prosper202_version(), $version) > 0) {
+    if (version_compare($stored_version, $version) > 0) {
         $task_202 = "Downgrade";
         $task_202_2 = "Downgrading";
     } else {
@@ -175,7 +177,7 @@ if (!empty($version_error)) {
             );
             echo p202_upgrade_failure_report(
                 $upgrade_failures ?? [],
-                (string) PROSPER202::prosper202_version(),
+                _upgrade_stored_version_or_null(),
                 (string) $version
             );
             echo '<a class="btn btn-primary w-100" href="' . get_absolute_url() . '202-config/upgrade.php">Run the '

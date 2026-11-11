@@ -21,7 +21,7 @@ const P202_RESTORE_NOTICE_KINDS = [
  * The notices to show; none when the API state cannot be read, which the
  * log says and the API answers for itself.
  *
- * @return list<array{at: int, dir: string, kept_until: int, counts: array<string, int>}>
+ * @return list<array{at: int, name: string, dir: string, kept_until: int, counts: array<string, int>}>
  */
 function p202_restore_notices(\mysqli $db): array
 {
@@ -34,11 +34,16 @@ function p202_restore_notices(\mysqli $db): array
     }
 }
 
-/** The Dismiss button's POST: the notices are not shown again; nothing set aside is touched. */
-function p202_restore_notice_dismiss_posted(\mysqli $db): never
+/**
+ * The Dismiss button's POST: the notices the form named are not shown
+ * again; one made since still is, and nothing set aside is touched.
+ */
+function p202_restore_notice_dismiss_posted(\mysqli $db, mixed $posted): never
 {
     try {
-        ServerStateStore::forInstall($db)->dismissRestoreNotices();
+        ServerStateStore::forInstall($db)->dismissRestoreNotices(
+            is_array($posted) ? array_values(array_filter($posted, 'is_string')) : []
+        );
     } catch (\Throwable $e) {
         error_log('Settings: the database-restore notice could not be dismissed: ' . $e->getMessage());
         p202_account_flash('bad', 'The notice could not be dismissed just now. Try again.');
@@ -65,7 +70,7 @@ function p202_restore_notice_counts(array $counts): string
 }
 
 /**
- * @param list<array{at: int, dir: string, kept_until: int, counts: array<string, int>}> $notices
+ * @param list<array{at: int, name: string, dir: string, kept_until: int, counts: array<string, int>}> $notices
  */
 function p202_restore_notice(array $notices, string $self, string $token): string
 {
@@ -75,7 +80,9 @@ function p202_restore_notice(array $notices, string $self, string $token): strin
     $h = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
     $staged = 0;
     $lines = '';
+    $shown = '';
     foreach ($notices as $notice) {
+        $shown .= '<input type="hidden" name="restore_notice_dismiss[]" value="' . $h($notice['name']) . '">';
         $staged += $notice['counts']['staged_changes'] ?? 0;
         $lines .= '<li>' . $h(date('M j, Y H:i', $notice['at'])) . ': '
             . $h(p202_restore_notice_counts($notice['counts'])) . '. Kept in <code>' . $h($notice['dir'])
@@ -95,8 +102,7 @@ function p202_restore_notice(array $notices, string $self, string $token): strin
         . '<p class="mb-2">A create sent again under an Idempotency-Key from after the backup is made again,'
         . ' and a client that reads the change feed should sync again from the start.</p>'
         . '<form method="post" action="' . $h($self) . '">'
-        . '<input type="hidden" name="token" value="' . $h($token) . '">'
-        . '<button class="btn btn-secondary btn-sm" type="submit" name="restore_notice_dismiss" value="1">'
-        . 'Dismiss</button></form>'
+        . '<input type="hidden" name="token" value="' . $h($token) . '">' . $shown
+        . '<button class="btn btn-secondary btn-sm" type="submit">Dismiss</button></form>'
         . '</div></div>';
 }

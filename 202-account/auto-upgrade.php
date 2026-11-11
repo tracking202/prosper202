@@ -241,8 +241,8 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
                     ? "Another upgrade of this database is running (its page may have timed out; it carries on). Nothing was changed; reload in a few minutes.\n"
                     : p202_upgrade_failure_log(
                         UPGRADE::failures(),
-                        (string) PROSPER202::prosper202_version(),
-                        (string) PROSPER202::php_version()
+                        _upgrade_stored_version_or_null(),
+                        (string) $latest_version
                     );
 				$upgrade_done = false;
 			}

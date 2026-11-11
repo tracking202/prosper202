@@ -211,4 +211,47 @@ final class UpgradeFailureReportTest extends TestCase
             self::assertStringNotContainsString('http://support.tracking202.com', $source, $page);
         }
     }
+
+    /**
+     * The connection may be the thing that failed, so what a page draws
+     * after the upgrade answered false asks the database for nothing it
+     * cannot do without (LostConnectionUpgradeReportIntegrationTest runs it).
+     */
+    public function testAFailedUpgradesPageReadsTheStoredVersionWithoutFailingOnIt(): void
+    {
+        $root = __DIR__ . '/../../';
+        foreach (['202-account/auto-upgrade.php', '202-account/auto-upgrade-premium.php'] as $page) {
+            $source = (string) file_get_contents($root . $page);
+            self::assertSame(1, preg_match(
+                '/p202_upgrade_failure_log\(\s*UPGRADE::failures\(\),\s*_upgrade_stored_version_or_null\(\),'
+                . '\s*\(string\) \$latest_version\s*\)/',
+                $source
+            ), "$page: the stored version read may fail, and the files are the version just unpacked");
+        }
+
+        $source = (string) file_get_contents($root . '202-config/upgrade.php');
+        $drawn = substr($source, (int) strpos($source, "info_top(['title' => 'Upgrade - Prosper202 ClickServer']);"));
+        $prompt = (int) strpos($drawn, "echo p202_standalone_card(\$task_202 . ' to Prosper202 '");
+        self::assertGreaterThan(0, $prompt);
+        self::assertStringNotContainsString(
+            'PROSPER202::prosper202_version()',
+            substr($drawn, 0, $prompt),
+            'above the prompt (the branches a POST draws) the stored version is the one read before the upgrade,'
+            . ' or _upgrade_stored_version_or_null()'
+        );
+        self::assertStringContainsString('_upgrade_stored_version_or_null(),', substr($drawn, 0, $prompt));
+    }
+
+    public function testWithNoVersionToNameTheReportSaysSo(): void
+    {
+        $html = p202_upgrade_failure_report(['a statement failed [errno 2013]: x | SELECT 1'], null, '1.9.80');
+
+        self::assertStringContainsString(
+            'The database did not reach 1.9.80, and could not be read to say which version it is at.',
+            $html
+        );
+        self::assertStringContainsString('it carries on from the version the database is at', $html);
+        self::assertStringContainsString('connection to the database server was lost', $html);
+        self::assertStringNotContainsString('version  ', $html);
+    }
 }

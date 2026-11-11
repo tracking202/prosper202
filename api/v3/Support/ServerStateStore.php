@@ -70,9 +70,8 @@ class ServerStateStore implements QuotaStore
     /** The file beside the records that holds the highest database epoch (StateEpoch) they were written at. */
     private const string EPOCH_FILE = 'epoch.json';
 
-    /** What each restore set aside, for Settings to tell the owner (restoreNotices()). */
+    /** The restored-* directories whose notice the owner dismissed (restoreNotices()). */
     private const string RESTORE_NOTICES_FILE = 'restore-notices.json';
-    private const int RESTORE_NOTICES_KEPT = 20;
 
     /** How long a restored-* directory is kept before it is removed. */
     public const int SET_ASIDE_KEPT_SECONDS = 30 * 86400;
@@ -228,34 +227,45 @@ class ServerStateStore implements QuotaStore
     }
 
     /**
-     * What each database restore set aside and where, newest last, until the
-     * owner dismisses it. Checks against a restore first, so Settings says
-     * so on the first visit after one. Empty for a store without an epoch.
+     * What each database restore set aside and where, oldest first, until
+     * the owner dismisses it: counted from the restored-* directories
+     * themselves, so a restore interrupted half way is told whole. Checks
+     * against a restore first, so Settings says so on the first visit after
+     * one. Empty for a store without an epoch.
      *
-     * @return list<array{at: int, dir: string, kept_until: int, counts: array<string, int>}>
+     * @return list<array{at: int, name: string, dir: string, kept_until: int, counts: array<string, int>}>
      */
     public function restoreNotices(): array
     {
         $this->checkAgainstARestore();
-        $items = $this->readJsonFile($this->baseDir . '/' . self::RESTORE_NOTICES_FILE, ['items' => []])['items'] ?? [];
+        $dismissed = $this->dismissedSetAside();
         $notices = [];
-        foreach (is_array($items) ? $items : [] as $item) {
-            if (!is_array($item) || !is_string($item['dir'] ?? null) || !is_array($item['counts'] ?? null)) {
+        foreach (glob($this->baseDir . '/restored-*', GLOB_ONLYDIR) ?: [] as $dir) {
+            $name = basename($dir);
+            $made = self::setAsideTime($name);
+            if ($made === null || is_link($dir) || in_array($name, $dismissed, true)) {
                 continue;
             }
-            $made = self::setAsideTime($item['dir']);
             $counts = [];
-            foreach ($item['counts'] as $kind => $count) {
-                if (is_string($kind) && is_int($count) && $count > 0) {
-                    $counts[$kind] = $count;
+            foreach (self::RESTORE_SENSITIVE_ITEM_DIRS as $kind) {
+                foreach (glob($dir . '/' . $kind . '/*.json') ?: [] as $file) {
+                    $items = $this->readJsonFile($file, ['items' => []])['items'] ?? [];
+                    $counts[$kind] = ($counts[$kind] ?? 0) + (is_array($items) ? count($items) : 0);
                 }
             }
-            if ($made === null || $counts === []) {
+            foreach (self::RESTORE_SENSITIVE_RECORD_DIRS as $kind) {
+                foreach (glob($dir . '/' . $kind . '/*.json') ?: [] as $file) {
+                    $counts[$kind] = ($counts[$kind] ?? 0) + (str_ends_with($file, '.events.json') ? 0 : 1);
+                }
+            }
+            $counts = array_filter($counts);
+            if ($counts === []) {
                 continue;
             }
             $notices[] = [
                 'at' => $made,
-                'dir' => $this->baseDir . '/' . $item['dir'],
+                'name' => $name,
+                'dir' => $dir,
                 'kept_until' => $made + self::SET_ASIDE_KEPT_SECONDS,
                 'counts' => $counts,
             ];
@@ -264,19 +274,48 @@ class ServerStateStore implements QuotaStore
         return $notices;
     }
 
-    /** The owner has read the restore notices: none is shown again. Nothing set aside is touched. */
-    public function dismissRestoreNotices(): void
+    /**
+     * The owner has read the notices of $names (restoreNotices()'s 'name'):
+     * they are not shown again. One made since is still shown, and nothing
+     * set aside is touched.
+     *
+     * @param list<string> $names
+     */
+    public function dismissRestoreNotices(array $names): void
     {
+        $names = array_values(array_filter(
+            $names,
+            static fn ($name): bool => is_string($name) && self::setAsideTime($name) !== null
+        ));
+        if ($names === []) {
+            return;
+        }
         $this->mutateJsonFile(
             $this->baseDir . '/' . self::RESTORE_NOTICES_FILE,
-            ['items' => []],
-            static fn (array $state): array => ['items' => []]
+            ['dismissed' => []],
+            static function (array $state) use ($names): array {
+                $had = is_array($state['dismissed'] ?? null) ? $state['dismissed'] : [];
+
+                return ['dismissed' => array_values(array_unique([...$had, ...$names]))];
+            }
         );
+    }
+
+    /** @return list<string> */
+    private function dismissedSetAside(): array
+    {
+        $dismissed = $this->readJsonFile(
+            $this->baseDir . '/' . self::RESTORE_NOTICES_FILE,
+            ['dismissed' => []]
+        )['dismissed'] ?? [];
+
+        return is_array($dismissed) ? array_values(array_filter($dismissed, 'is_string')) : [];
     }
 
     /**
      * Remove the restored-* directories made more than $olderThanSeconds
-     * ago, by the time in their name, and their notices.
+     * ago, by the time in their name. One that cannot be removed is logged
+     * and does not hold back the others.
      *
      * @return int how many directories were removed
      */
@@ -290,21 +329,22 @@ class ServerStateStore implements QuotaStore
             if ($made === null || $made > $cutoff || is_link($dir)) {
                 continue;
             }
-            self::removeTree($dir);
-            $removed[] = basename($dir);
+            try {
+                self::removeTree($dir);
+                $removed[] = basename($dir);
+            } catch (\Throwable $e) {
+                error_log('p202: what a database restore set aside in ' . $dir . ' could not be removed: '
+                    . $e->getMessage());
+            }
         }
         if ($removed !== []) {
             $this->mutateJsonFile(
                 $this->baseDir . '/' . self::RESTORE_NOTICES_FILE,
-                ['items' => []],
+                ['dismissed' => []],
                 static function (array $state) use ($removed): array {
-                    $items = is_array($state['items'] ?? null) ? $state['items'] : [];
-                    $state['items'] = array_values(array_filter(
-                        $items,
-                        static fn ($item): bool => is_array($item) && !in_array($item['dir'] ?? null, $removed, true)
-                    ));
+                    $had = is_array($state['dismissed'] ?? null) ? $state['dismissed'] : [];
 
-                    return $state;
+                    return ['dismissed' => array_values(array_diff($had, $removed))];
                 }
             );
             error_log('p202: removed what a database restore set aside more than '
@@ -363,7 +403,6 @@ class ServerStateStore implements QuotaStore
             }
             $aside = $this->baseDir . '/restored-' . gmdate('Ymd\THis\Z') . '-' . bin2hex(random_bytes(3));
             $moved = 0;
-            $counts = [];
             foreach (self::RESTORE_SENSITIVE_ITEM_DIRS as $name) {
                 foreach (glob($this->baseDir . '/' . $name . '/*.json') ?: [] as $file) {
                     $state = $this->readJsonFile($file, ['items' => []]);
@@ -379,7 +418,6 @@ class ServerStateStore implements QuotaStore
                     $state['items'] = array_is_list($items) ? array_values($kept) : $kept;
                     $this->writeJsonFileAtomic($file, $state);
                     $moved += count($later);
-                    $counts[$name] = ($counts[$name] ?? 0) + count($later);
                 }
             }
             foreach (self::RESTORE_SENSITIVE_RECORD_DIRS as $name) {
@@ -400,23 +438,7 @@ class ServerStateStore implements QuotaStore
                         }
                     }
                     $moved++;
-                    $counts[$name] = ($counts[$name] ?? 0) + 1;
                 }
-            }
-            // Before the epoch is put back: a failure here runs the set-aside again.
-            if ($moved > 0) {
-                $notice = ['dir' => basename($aside), 'counts' => $counts];
-                $this->mutateJsonFile(
-                    $this->baseDir . '/' . self::RESTORE_NOTICES_FILE,
-                    ['items' => []],
-                    static function (array $state) use ($notice): array {
-                        $items = is_array($state['items'] ?? null) ? array_values($state['items']) : [];
-                        $items[] = $notice;
-                        $state['items'] = array_slice($items, -self::RESTORE_NOTICES_KEPT);
-
-                        return $state;
-                    }
-                );
             }
             $this->writeJsonFileAtomic($this->baseDir . '/' . self::EPOCH_FILE, ['epoch' => $database]);
             error_log(sprintf(

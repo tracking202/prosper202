@@ -71,7 +71,7 @@ if (isset($_POST['traffic_source_split'])) {
 }
 
 if (isset($_POST['restore_notice_dismiss'])) {
-    p202_restore_notice_dismiss_posted($db);
+    p202_restore_notice_dismiss_posted($db, $_POST['restore_notice_dismiss']);
 }
 
 if (isset($_POST['autocron'])) {

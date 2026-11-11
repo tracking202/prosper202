@@ -337,10 +337,11 @@ function p202_upgrade_failure_advice(array $failures): array
  *
  * @param list<string> $failures
  */
-function p202_upgrade_failure_text(array $failures, string $storedVersion, string $codeVersion): string
+function p202_upgrade_failure_text(array $failures, ?string $storedVersion, string $codeVersion): string
 {
-    $lines = ['Prosper202 database upgrade stopped at version ' . $storedVersion . ' (the files are version '
-        . $codeVersion . ').'];
+    $lines = ['Prosper202 database upgrade stopped at '
+        . ($storedVersion === null ? 'a version the database could not be read for' : 'version ' . $storedVersion)
+        . ' (the files are version ' . $codeVersion . ').'];
     foreach ($failures as $line) {
         $lines[] = '- ' . $line;
     }
@@ -356,12 +357,13 @@ function p202_upgrade_failure_text(array $failures, string $storedVersion, strin
  *
  * @param list<string> $failures
  */
-function p202_upgrade_failure_log(array $failures, string $storedVersion, string $codeVersion): string
+function p202_upgrade_failure_log(array $failures, ?string $storedVersion, string $codeVersion): string
 {
     return "The files were replaced, and the database upgrade did not finish.\n"
         . p202_upgrade_failure_text($failures, $storedVersion, $codeVersion) . "\n"
-        . 'Running the upgrade again is safe: reload any page and press the upgrade button. It carries on from version '
-        . $storedVersion . ".\n" . implode("\n", p202_upgrade_failure_advice($failures)) . "\n";
+        . 'Running the upgrade again is safe: reload any page and press the upgrade button. It carries on from '
+        . ($storedVersion === null ? 'the version the database is at' : 'version ' . $storedVersion)
+        . ".\n" . implode("\n", p202_upgrade_failure_advice($failures)) . "\n";
 }
 
 /**
@@ -370,7 +372,7 @@ function p202_upgrade_failure_log(array $failures, string $storedVersion, string
  *
  * @param list<string> $failures
  */
-function p202_upgrade_failure_report(array $failures, string $storedVersion, string $codeVersion): string
+function p202_upgrade_failure_report(array $failures, ?string $storedVersion, string $codeVersion): string
 {
     $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
     $text = p202_upgrade_failure_text($failures, $storedVersion, $codeVersion);
@@ -380,9 +382,13 @@ function p202_upgrade_failure_report(array $failures, string $storedVersion, str
     }
 
     return '<div class="alert alert-danger p202-flash" role="alert" id="upgrade-failure"><i class="bi bi-x-circle"></i>'
-        . '<div class="p202-flash__body"><strong>The database is at version ' . $h($storedVersion)
-        . ' and did not reach ' . $h($codeVersion) . '.</strong>'
-        . ' Running the upgrade again is safe: it carries on from version ' . $h($storedVersion)
+        . '<div class="p202-flash__body"><strong>'
+        . ($storedVersion === null
+            ? 'The database did not reach ' . $h($codeVersion) . ', and could not be read to say which version it'
+                . ' is at.'
+            : 'The database is at version ' . $h($storedVersion) . ' and did not reach ' . $h($codeVersion) . '.')
+        . '</strong> Running the upgrade again is safe: it carries on from '
+        . ($storedVersion === null ? 'the version the database is at' : 'version ' . $h($storedVersion))
         . ' and skips what is already done.</div></div>'
         . '<p class="mb-1"><strong>What to do</strong></p><ul>' . $advice . '</ul>'
         . '<label class="form-label" for="upgrade-failure-report">What the upgrade reported</label>'

@@ -24,6 +24,7 @@ final class RestoreNoticeUiTest extends TestCase
         $at = 1_790_000_000;
         $html = p202_restore_notice([[
             'at' => $at,
+            'name' => 'restored-20260922T000000Z-0a1b2c',
             'dir' => '/var/state/restored-20260922T000000Z-0a1b2c',
             'kept_until' => $at + 30 * 86400,
             'counts' => ['staged_changes' => 3, 'idempotency' => 1, 'jobs' => 2, 'traces' => 4],
@@ -37,13 +38,18 @@ final class RestoreNoticeUiTest extends TestCase
         self::assertStringContainsString('until ' . date('M j, Y', $at + 30 * 86400) . ', then removed', $html);
         self::assertStringContainsString('Propose them again', $html);
         self::assertStringContainsString('name="token" value="tok&quot;en"', $html);
-        self::assertStringContainsString('name="restore_notice_dismiss"', $html);
+        self::assertStringContainsString(
+            '<input type="hidden" name="restore_notice_dismiss[]" value="restored-20260922T000000Z-0a1b2c">',
+            $html,
+            'Dismiss names what was shown, so a notice made since is not dismissed with it'
+        );
     }
 
     public function testWithNoStagedChangeSetAsideItDoesNotSayToProposeAgain(): void
     {
         $html = p202_restore_notice([[
-            'at' => 1, 'dir' => '/s/restored-x', 'kept_until' => 2, 'counts' => ['changes' => 1],
+            'at' => 1, 'name' => 'restored-x', 'dir' => '/s/restored-x', 'kept_until' => 2,
+            'counts' => ['changes' => 1],
         ]], 'https://tracker.example/a', 't');
 
         self::assertStringContainsString('1 change-feed entry', $html);
