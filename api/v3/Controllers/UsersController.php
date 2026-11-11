@@ -733,6 +733,9 @@ class UsersController
         try {
             ApiKeyStore::insert($this->db, $userId, $key, $storedScope, $keyLabel, $now);
         } catch (QueryException $e) {
+            if ($keyLabel !== null && ApiKeyStore::isUnstorableText($e)) {
+                throw new ValidationException('Invalid label', ['label' => ApiKeyStore::UNSTORABLE_NAME]);
+            }
             throw new DatabaseException('Failed to create API key', $e);
         }
 

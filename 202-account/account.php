@@ -105,8 +105,10 @@ if (isset($_POST['add_rest_api_key'])) {
 	$keyCreated = time();
     try {
         \Prosper202\User\ApiKeyStore::insert($db, $keyUserId, $newKey, null, $newKeyLabel, $keyCreated);
-    } catch (\Prosper202\Database\Exceptions\QueryException | \Api\V3\AuthException | \mysqli_sql_exception) {
-        p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
+    } catch (\Prosper202\Database\Exceptions\QueryException | \Api\V3\AuthException | \mysqli_sql_exception $notSaved) {
+        p202_account_flash('bad', $newKeyLabel !== null && \Prosper202\User\ApiKeyStore::isUnstorableText($notSaved)
+            ? \Prosper202\User\ApiKeyStore::UNSTORABLE_NAME . ' Nothing was created.'
+            : 'The API key could not be saved. Nothing was created; try again.');
         p202_account_redirect('202-account/account.php#api-keys');
     }
 
