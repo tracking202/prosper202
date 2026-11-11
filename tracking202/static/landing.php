@@ -315,6 +315,7 @@ if (p202Refused || (window.p202 && window.p202.consent === false)) {
     var p202PurLinkInitialRefusal = true;
     p202Store('set', P202_CONSENT_KEY, '0');
     p202Store('del', P202_LPID_KEY);
+    p202SubidOrigForget();
 }
 
 window.p202 = (window.p202 && typeof window.p202 === 'object') ? window.p202 : {};
@@ -324,6 +325,7 @@ window.p202.consent = function(given) {
 		p202Store('del', P202_LPID_KEY);
         p202PurLinkRevoked = true;
         p202PurLinkPending = null;
+        p202SubidOrigForget();
         p202ConfigurePurLinks(null);
 	} else if (given === true) {
 		p202Store('del', P202_CONSENT_KEY);
@@ -346,9 +348,58 @@ var p202PurLinkDeferred = <?php echo $p202PurLinkDeferredJs; ?>;
 var p202PurLinkPoller = null;
 var p202PurLinkPollerProof = null;
 var p202PurLinkRevoked = !!p202PurLinkInitialRefusal || !p202ConsentGiven();
-function p202PurLinkFallback(offer) {
-    if (offer) { return p202PurLinkBase + 'tracking202/redirect/go.php?acip=' + t202Enc(offer); }
-    return p202PurLinkAdvanced ? null : p202PurLinkBase + 'tracking202/redirect/go.php?lpip=' + t202Enc(p202PurLinkPage);
+// The redirect that stands in for a PurLink carries the link's own URL, so
+// a link with a deep link of its own keeps it (PurLinkDestination).
+function p202PurLinkFallback(offer, template) {
+    var to = (typeof template === 'string' && /^https?:\/\//i.test(template) && template.length <= 1500)
+        ? '&p202_to=' + t202Enc(template) : '';
+    if (offer) { return p202PurLinkBase + 'tracking202/redirect/go.php?acip=' + t202Enc(offer) + to; }
+    if (p202PurLinkAdvanced) { return null; }
+    return p202PurLinkBase + 'tracking202/redirect/go.php?lpip=' + t202Enc(p202PurLinkPage) + to;
+}
+// 1.9.56's t202Settings.t202UseSubidOrig: PurLinks keep the subid of the
+// visitor's first click for t202ExpireSubidOrig days (7 when unset), so a
+// later visit's sale is credited to the click that first brought them.
+// Kept only with consent and where the account's privacy setting allows
+// full tracking (pageview.keepSubid), one cookie per offer or simple page.
+var P202_SUBID_ORIG = '_t202SubidOrig';
+function p202SubidOrigDays() {
+    var s = window.t202Settings;
+    if (!s || typeof s !== 'object') { return 0; }
+    var use = s.t202UseSubidOrig;
+    if (use !== true && use !== 1 && use !== '1' && use !== 'true') { return 0; }
+    var days = Number(s.t202ExpireSubidOrig);
+    return (isFinite(days) && days > 0) ? Math.min(days, 365) : 7;
+}
+function p202SubidOrigName(offer) {
+    return P202_SUBID_ORIG + (offer ? '_' + offer : '_p' + p202PurLinkPage);
+}
+function p202SubidOrigAllowed(pageview) {
+    if (!pageview || pageview.keepSubid !== true || p202PurLinkRevoked) { return false; }
+    return p202ConsentGiven() && p202SubidOrigDays() > 0;
+}
+function p202SubidOrigRead(offer, pageview) {
+    if (!p202SubidOrigAllowed(pageview)) { return null; }
+    var kept = readCookie(p202SubidOrigName(offer));
+    return p202SubidOrigNames(kept, offer) ? kept : null;
+}
+// A signed subid, and on an advanced page one of this offer.
+function p202SubidOrigNames(subid, offer) {
+    if (typeof subid !== 'string' || !/^[1-9][0-9]{0,18}-[1-9][0-9]{0,18}-[0-9a-f]{12}$/.test(subid)) { return false; }
+    return !offer || subid.split('-')[1] === String(offer);
+}
+function p202SubidOrigKeep(offer, pageview, subid) {
+    if (!p202SubidOrigNames(subid, offer)) { return; }
+    if (p202SubidOrigAllowed(pageview) && !p202SubidOrigRead(offer, pageview)) {
+        createCookie(p202SubidOrigName(offer), subid, p202SubidOrigDays());
+    }
+}
+function p202SubidOrigForget() {
+    var all = document.cookie ? document.cookie.split(';') : [];
+    for (var i = 0; i < all.length; i++) {
+        var name = all[i].replace(/^ +/, '').split('=')[0];
+        if (name.indexOf('_t202SubidOrig') === 0) { eraseCookie(name); }
+    }
 }
 function p202ConfigurePurLinks(pageview) {
     if (!p202PurLinkEnabled || !window.p202PurLink) { return; }
@@ -403,7 +454,12 @@ function p202ConfigurePurLinks(pageview) {
             }
             config.prepareOffer = function (offer) {
                 if (p202PurLinkAdvanced && !offer) { return Promise.reject(new Error('Offer required')); }
-                return prepare(offer);
+                var kept = p202SubidOrigRead(offer, pageview);
+                if (kept) { return Promise.resolve(kept); }
+                return prepare(offer).then(function (subid) {
+                    p202SubidOrigKeep(offer, pageview, subid);
+                    return subid;
+                });
             };
         } catch (e) { /* The normal redirect remains available. */ }
     }

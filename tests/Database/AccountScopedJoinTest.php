@@ -145,6 +145,15 @@ final class AccountScopedJoinTest extends TestCase
      * @var array<string, array<string, string>>
      */
     private const HARMLESS = [
+        '202-config/Click/ClickPathReads.php' => [
+            'no user_id tie | 202_ppc_networks | '
+                . 'other.ppc_network_id = ppc.ppc_network_id AND other.user_id <> ppc.user_id' =>
+                'finds, on purpose, that the account\'s own traffic source account (`ppc.user_id = ?`) names a'
+                . ' source in another user\'s account, for the server log\'s line about a click stored without'
+                . ' its custom variables (UnrecordedSourceVariables): it reads that source\'s id, its user\'s id'
+                . ' and its variables\' names to count the values a click came with, records none of them and'
+                . ' answers nothing to the visitor',
+        ],
         '202-config/DataEngine/ReportAggregation.php' => [
             'subquery without a WHERE | 202_dataengine | 202_dataengine' => self::REPORT_AGGREGATE_SCOPE,
             'subquery with runtime text before its WHERE | 202_dataengine | '
