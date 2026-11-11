@@ -223,13 +223,13 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         $this->deliver('orders/paid', self::order());
         $this->pending(9100001, 71001, '10.00');
 
-        $outcome = self::desk()->record(self::ACCOUNT, '9100001', '10.00', null, self::byHand());
+        $outcome = self::desk()->settle(self::ACCOUNT, '9100001', '10.00', null, self::byHand());
         self::assertSame(OutcomeKind::REVERSED, $outcome->kind, $outcome->message);
         self::assertSame(['59.00000', '-10.00000'], self::payouts());
         self::assertSame([], self::desk()->list(self::ACCOUNT)['refunds']);
 
         // The button pressed twice, and Shopify settling it later, add nothing.
-        $again = self::desk()->record(self::ACCOUNT, '9100001', '10.00', null, self::byHand());
+        $again = self::desk()->settle(self::ACCOUNT, '9100001', '10.00', null, self::byHand());
         self::assertSame(OutcomeKind::NOTHING_TO_REVERSE, $again->kind, $again->message);
         $this->settle(71001, '10.00');
         self::assertSame(['59.00000', '-10.00000'], self::payouts());
@@ -254,17 +254,17 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         self::assertStringContainsString('does not match', $listed[0]['reason']);
 
         foreach (['0', '12abc'] as $amount) {
-            $unread = self::desk()->record(self::ACCOUNT, '9100001', $amount, null, self::byHand());
+            $unread = self::desk()->settle(self::ACCOUNT, '9100001', $amount, null, self::byHand());
             self::assertSame(OutcomeKind::MALFORMED, $unread->kind, $amount);
         }
         self::assertSame(
             OutcomeKind::NOTHING_TO_REVERSE,
-            self::desk()->record(self::OTHER, '9100001', '9.00', null, self::byHand())->kind
+            self::desk()->settle(self::OTHER, '9100001', '9.00', null, self::byHand())->kind
         );
         self::assertSame(['59.00000', '-20.00000'], self::payouts());
 
         // 59 sold, 20 refunded: a refund stating 50 takes back the 39 that is left.
-        $outcome = self::desk()->record(self::ACCOUNT, '9100001', '50.00', null, self::byHand());
+        $outcome = self::desk()->settle(self::ACCOUNT, '9100001', '50.00', null, self::byHand());
         self::assertSame(OutcomeKind::REVERSED, $outcome->kind, $outcome->message);
         self::assertSame(['59.00000', '-20.00000', '-39.00000'], self::payouts());
         self::assertSame([], self::desk()->list(self::ACCOUNT)['refunds']);
@@ -285,10 +285,10 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         self::assertStringContainsString('more than one click', $listed[0]['reason']);
 
         foreach ([null, self::CLICK + 50] as $click) {
-            $unchosen = self::desk()->record(self::ACCOUNT, '9100001', '20.00', $click, self::byHand());
+            $unchosen = self::desk()->settle(self::ACCOUNT, '9100001', '20.00', $click, self::byHand());
             self::assertSame(OutcomeKind::MALFORMED, $unchosen->kind, $unchosen->message);
         }
-        $outcome = self::desk()->record(self::ACCOUNT, '9100001', '20.00', self::CLICK + 1, self::byHand());
+        $outcome = self::desk()->settle(self::ACCOUNT, '9100001', '20.00', self::CLICK + 1, self::byHand());
         self::assertSame(OutcomeKind::REVERSED, $outcome->kind, $outcome->message);
         self::assertSame(['59.00000', '59.00000', '-20.00000'], self::payouts());
         $result = self::requireScratch()->query('SELECT click_id FROM 202_conversion_logs WHERE click_payout < 0'
@@ -339,7 +339,7 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
 
         // A refund settled by hand is not a webhook arriving.
         $this->pending(9100001, 71001, '10.00');
-        self::desk()->record(self::ACCOUNT, '9100001', '10.00', null, self::byHand());
+        self::desk()->settle(self::ACCOUNT, '9100001', '10.00', null, self::byHand());
         self::assertSame('refunds/create', WebhookStatus::of($db, self::ACCOUNT)->last['topic'] ?? null);
     }
 

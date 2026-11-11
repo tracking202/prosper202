@@ -95,7 +95,7 @@ final class RefundsToSettle
      *
      * @param int|null $clickId the sale's click, needed only when the order is on more than one
      */
-    public function record(
+    public function settle(
         int $account,
         string $refundId,
         string $amount,

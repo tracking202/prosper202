@@ -28,10 +28,10 @@ final class ThemeSnippet
   try {
     if (found && found[1]) {
       id = decodeURIComponent(found[1]);
-      window.localStorage.setItem(KEY, JSON.stringify({ id: id, at: Date.now() }));
+      window.localStorage.setItem(KEY, JSON.stringify({ id: id, at: new Date().getTime() }));
     } else {
       var kept = JSON.parse(window.localStorage.getItem(KEY) || 'null');
-      if (kept && Date.now() - kept.at < DAYS * 864e5) { id = kept.id; }
+      if (kept && new Date().getTime() - kept.at < DAYS * 864e5) { id = kept.id; }
     }
   } catch (e) {}
   if (typeof id !== 'string' || !/^[0-9a-f-]{1,64}$/.test(id)) { return; }
