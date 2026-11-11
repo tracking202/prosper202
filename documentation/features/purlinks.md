@@ -35,12 +35,16 @@ return the same PurLinks as `purlink`.
   campaign that differ in a query parameter, such as a deep link
   (`…&acip=491&u=<product page>`), each still reach their own product while
   the SubID is being prepared, and when it could not be prepared. The redirect
-  takes a link's URL only when its scheme, host and path are those of a URL
-  the campaign's redirect uses (its first URL, and the rotation URLs when
-  rotation is on), and only when every `[[token]]` in it is one that URL
-  holds: a link may add or change plain parameters, and a token is filled
-  only where the campaign's own URL has it. Anything else goes to the
-  campaign URL. A cloaked simple-page campaign goes to the campaign URL.
+  takes a link's URL when its scheme, host and path are those of a URL the
+  campaign's redirect uses (its first URL, and the rotation URLs when
+  rotation is on); a link to anywhere else goes to the campaign URL. The
+  link keeps its own parameters. A tracking token the campaign's own URL
+  also has (`[[subid]]`, say) is filled in as usual; one it does not have is
+  left empty for that moment (`…&kw=[[t202kw]]&u=<product page>` arrives as
+  `…&kw=&u=<product page>`); once the SubID is ready the page fills it in.
+  To have a token filled by the redirect too, put it in the campaign's URL.
+  A link with `[[` or `]]` that is not one whole token goes to the campaign
+  URL. A cloaked simple-page campaign goes to the campaign URL.
 - Clicking, a middle-click, and open-in-new-tab all record the click-out. A
   right-click that only opens the menu does not.
 - The click-out is sent in the background (`fetch` with `keepalive`, or
