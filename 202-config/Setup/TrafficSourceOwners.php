@@ -27,8 +27,10 @@ use Prosper202\Lpo\DimensionSync;
  * leaves no sign: nothing else records whose it was (its variables have no
  * user_id, and 202_dataengine copies the source from the account).
  *
- * The same sign has other origins, so nothing here runs by itself, and the
- * upgrade neither looks nor moves. Before 1.9.77 the API put a
+ * The same sign has other origins, so no source is ever moved without an
+ * operator, and the upgrade neither looks nor moves. What the cron job does by
+ * itself is a split, and only of a source a copy is right for whichever
+ * origin made the sign (splitAutomatically(), MAY_BE_THEIRS). Before 1.9.77 the API put a
  * traffic source account under whatever source it was sent (229df10), so a
  * user's account can name a source that was never theirs, such as one an
  * admin made for them; and an admin may have used the rename on purpose.
@@ -68,6 +70,50 @@ final class TrafficSourceOwners
     public const DELETED_USER = 'deleted_user';
 
     /**
+     * Why the cron job does not split a listed source by itself
+     * (auto_split_blocked_by), beside NO_SUCH_USER and DELETED_USER, which no
+     * split copies for:
+     *
+     * - may_be_theirs: a user whose accounts name it saved one of them before
+     *   the source was last saved. That is what a source taken by a rename
+     *   looks like, and moving it back may be what the operator wants, which
+     *   a copy would put out of reach: the source would leave the report;
+     * - same_name: a user who would get a copy already has a live traffic
+     *   source of that name, and putting the accounts on that one may be
+     *   what the operator wants.
+     *
+     * What is left is a source every other user's accounts were put on
+     * after it was last saved: the source was where it is when each account
+     * came to name it (the shape the API made before 1.9.77), so no move is
+     * a move back, and a copy for each of those users gives them what a
+     * source of their own would have, and takes nothing from its user.
+     */
+    public const MAY_BE_THEIRS = 'may_be_theirs';
+    public const SAME_NAME = 'same_name';
+
+    /** 202_change_log's entity for a split, and how long the report lists one. */
+    public const SPLIT_ENTITY = 'traffic_source_split';
+    public const SPLITS_LISTED_SECONDS = 2592000;
+
+    /**
+     * What every surface that shows the report says of a listed source with
+     * custom variables: the page, the API's `variables_note` and the CLI,
+     * which prints the API's.
+     */
+    public const VARIABLES_NOTE = 'Custom variable values are not being recorded for clicks on the traffic source'
+        . ' accounts that name another user\'s traffic source: a click records only the variables of a source in'
+        . ' its own user\'s account. Until the source is moved back or split, the values those clicks arrive'
+        . ' with are not stored and cannot be recovered later.';
+
+    /** What a split did, in the words every surface that lists one uses. */
+    public const SPLITS_NOTE = 'A split gave each of these users a traffic source of their own: a copy of the'
+        . ' source, with its name and custom variables, which their traffic source accounts now use. Nothing'
+        . ' was taken from the other user, whose source and accounts are as they were. New clicks on those'
+        . ' accounts record their custom variable values again, and Analyze › Variables shows the values'
+        . ' recorded earlier under the same variables. Their reports list those clicks under the copy after'
+        . ' the cron job\'s next run.';
+
+    /**
      * 202_ppc_network_variables.ppc_network_id is a signed mediumint, while a
      * source's id is unsigned: a copy above this id has nowhere to keep its
      * variables, and a non-strict server would clip the id onto another source.
@@ -83,7 +129,9 @@ final class TrafficSourceOwners
      * and the counted conversions recorded on each user's accounts, and the
      * custom variables a split copies. Without $counts they are left out:
      * they scan each account's clicks, and Account › Settings asks on every
-     * load only whether anything is listed.
+     * load only whether anything is listed. variables_unrecorded is there
+     * either way: whether the source has custom variables, which the clicks
+     * on the other users' accounts do not record (VARIABLES_NOTE).
      *
      * @return list<array<string, mixed>>
      */
@@ -100,7 +148,7 @@ final class TrafficSourceOwners
         }
         $sources = $this->sources($ids);
         $accounts = $this->accounts($ids);
-        $variables = $counts ? $this->variableCounts($ids) : [];
+        $variables = $this->variableCounts($ids);
 
         $entries = [];
         foreach ($ids as $id) {
@@ -112,6 +160,8 @@ final class TrafficSourceOwners
             if ($entry === null) {
                 continue;
             }
+            $entry = $this->withSameName($entry);
+            $entry['variables_unrecorded'] = ($variables[$id] ?? 0) > 0;
             if ($counts) {
                 $entry['custom_variables'] = $variables[$id] ?? 0;
                 $entry['owner'] = $this->withCounts($entry['owner']);
@@ -288,18 +338,37 @@ final class TrafficSourceOwners
      * is logged.
      *
      * The clicks already recorded keep the custom variable values they were
-     * recorded with, which name the source's variables, not the copy's.
+     * recorded with, which name the source's variables: each of the copy's
+     * variables remembers the one it was copied from, and Analyze › Variables
+     * reads those values under it. The split is recorded in 202_change_log
+     * (recentSplits()). $automatic is the cron job's: no user ($actorUserId
+     * 0), and refused under the locks unless the source is still one to
+     * split without being asked.
      *
      * @param array<int, list<int>> $copies user => the ids of their accounts naming it
      * @return array<string, mixed>
      * @throws TrafficSourceRepairRefused when it no longer resolves so
      */
-    public function split(int $sourceId, int $ownerUserId, array $copies, int $actorUserId): array
-    {
+    public function split(
+        int $sourceId,
+        int $ownerUserId,
+        array $copies,
+        int $actorUserId,
+        bool $automatic = false
+    ): array {
         if ($copies === []) {
             throw new \LogicException('a split gives at least one user a copy');
         }
-        $split = $this->conn->transaction(function () use ($sourceId, $ownerUserId, $copies): array {
+        if ($automatic !== ($actorUserId === 0)) {
+            throw new \LogicException('an automatic split has no user, and a user\'s split is not automatic');
+        }
+        $split = $this->conn->transaction(function () use (
+            $sourceId,
+            $ownerUserId,
+            $copies,
+            $actorUserId,
+            $automatic
+        ): array {
             // Locked before any plain read, so every read after them is
             // current (CLAUDE.md #36): the users first, as repair() locks
             // them; then the accounts that move, by id; then the source. A
@@ -322,6 +391,16 @@ final class TrafficSourceOwners
                     . '. Nothing was copied. Read the report again.');
             }
             $source = $sources[$sourceId];
+            if ($automatic) {
+                // Asked again under the locks: what made it one to split
+                // without being asked may have changed since it was read.
+                $blocked = $this->withSameName($now['entry'])['auto_split_blocked_by'];
+                if ($blocked !== []) {
+                    throw new TrafficSourceRepairRefused('ppc_network_id', 'Traffic source ' . $sourceId
+                        . ' is not one to split without being asked (' . implode(', ', $blocked)
+                        . '). Nothing was copied.');
+                }
+            }
             $variables = $this->variables($sourceId);
             $at = time();
 
@@ -341,13 +420,19 @@ final class TrafficSourceOwners
                         . ' was given id ' . $copyId . ', where its custom variables cannot be kept');
                 }
                 foreach ($variables as $variable) {
+                    // copied_from_ppc_variable_id: the values the moved
+                    // accounts' clicks recorded before name the source's
+                    // variable, and Analyze › Variables reads them under
+                    // the copy's through it (DataEngine::doVariableReport()).
                     $copied = $this->conn->prepareWrite('INSERT INTO 202_ppc_network_variables'
-                        . ' (ppc_network_id, name, parameter, placeholder, deleted) VALUES (?, ?, ?, ?, 0)');
-                    $this->conn->bind($copied, 'isss', [
+                        . ' (ppc_network_id, name, parameter, placeholder, deleted, copied_from_ppc_variable_id)'
+                        . ' VALUES (?, ?, ?, ?, 0, ?)');
+                    $this->conn->bind($copied, 'isssi', [
                         $copyId,
                         (string) $variable['name'],
                         (string) $variable['parameter'],
                         (string) $variable['placeholder'],
+                        (int) $variable['ppc_variable_id'],
                     ]);
                     $this->conn->executeInsert($copied);
                 }
@@ -381,6 +466,32 @@ final class TrafficSourceOwners
                 ];
             }
 
+            // The record Account › Settings and the API list the split from
+            // (recentSplits()), in the split's own transaction.
+            try {
+                $stored = json_encode([
+                    'ppc_network_name' => (string) $now['entry']['ppc_network_name'],
+                    'removed' => $now['entry']['removed'],
+                    'owner_user_id' => $ownerUserId,
+                    'copies' => $made,
+                ], JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
+            } catch (\JsonException $e) {
+                throw new \LogicException('The record of the split of traffic source ' . $sourceId
+                    . ' could not be written: ' . $e->getMessage(), 0, $e);
+            }
+            $record = $this->conn->prepareWrite('INSERT INTO 202_change_log'
+                . ' (entity, entity_id, operation, natural_key_digest, actor_user_id, changed_at, payload)'
+                . " VALUES (?, ?, 'create', ?, ?, ?, ?)");
+            $this->conn->bind($record, 'sssiis', [
+                self::SPLIT_ENTITY,
+                (string) $sourceId,
+                sha1(self::SPLIT_ENTITY . ':' . $sourceId . ':' . implode(',', array_column($made, 'ppc_network_id'))),
+                $actorUserId,
+                $at,
+                $stored,
+            ]);
+            $this->conn->executeInsert($record);
+
             return [
                 'ppc_network_id' => $sourceId,
                 'ppc_network_name' => $now['entry']['ppc_network_name'],
@@ -392,8 +503,7 @@ final class TrafficSourceOwners
         });
 
         error_log(sprintf(
-            'Prosper202 traffic source split: traffic source %d ("%s") stays in user %d\'s account; %s;'
-            . ' at user %d\'s request',
+            'Prosper202 traffic source split: traffic source %d ("%s") stays in user %d\'s account; %s; %s',
             $sourceId,
             (string) preg_replace('/[\x00-\x1F\x7F]/', '?', (string) $split['ppc_network_name']),
             $ownerUserId,
@@ -406,7 +516,10 @@ final class TrafficSourceOwners
                 ),
                 $split['copies']
             )),
-            $actorUserId
+            $automatic
+                ? 'made by the cron job without being asked: every one of those accounts was put on the source'
+                    . ' after it was last saved'
+                : 'at user ' . $actorUserId . '\'s request'
         ));
         // After the commit, as repair() does: each user's Landing Page
         // Optimizer snapshot lists their sources.
@@ -433,10 +546,11 @@ final class TrafficSourceOwners
         $byUser = [];
         foreach ($accounts as $account) {
             $user = (int) $account['user_id'];
-            $byUser[$user] ??= ['ids' => [], 'live' => 0, 'removed' => 0, 'last' => 0];
+            $byUser[$user] ??= ['ids' => [], 'live' => 0, 'removed' => 0, 'last' => 0, 'first' => PHP_INT_MAX];
             $byUser[$user]['ids'][] = (int) $account['ppc_account_id'];
             $byUser[$user][(int) $account['ppc_account_deleted'] === 0 ? 'live' : 'removed']++;
             $byUser[$user]['last'] = max($byUser[$user]['last'], (int) $account['ppc_account_time']);
+            $byUser[$user]['first'] = min($byUser[$user]['first'], (int) $account['ppc_account_time']);
         }
         $others = array_values(array_diff(array_keys($byUser), [$ownerId]));
         if ($others === []) {
@@ -472,6 +586,22 @@ final class TrafficSourceOwners
             }
         }
 
+        // What keeps the cron job from splitting it by itself (MAY_BE_THEIRS
+        // says which sources it does split). Whole seconds, as above: an
+        // account saved in the source's own second was not saved before it.
+        $blocked = [];
+        foreach ($others as $user) {
+            if ($byUser[$user]['first'] < $sourceTime) {
+                $blocked[] = self::MAY_BE_THEIRS;
+                break;
+            }
+        }
+        foreach ([self::NO_SUCH_USER, self::DELETED_USER] as $mark) {
+            if (in_array($mark, $ambiguous, true)) {
+                $blocked[] = $mark;
+            }
+        }
+
         $party = static function (int $user) use ($byUser, $users): array {
             $mine = $byUser[$user] ?? ['ids' => [], 'live' => 0, 'removed' => 0, 'last' => 0];
             sort($mine['ids']);
@@ -497,7 +627,162 @@ final class TrafficSourceOwners
             'named_by' => array_map($party, $others),
             'repair_to_user_id' => $ambiguous === [] ? $others[0] : null,
             'ambiguous' => $ambiguous,
+            'auto_split' => $blocked === [],
+            'auto_split_blocked_by' => $blocked,
         ];
+    }
+
+    /**
+     * The entry with SAME_NAME added when a user who would get a copy has a
+     * live traffic source of the source's name already (compared as the
+     * column compares names).
+     *
+     * @param array<string, mixed> $entry
+     * @return array<string, mixed>
+     */
+    private function withSameName(array $entry): array
+    {
+        $users = array_map(static fn (array $party): int => (int) $party['user_id'], $entry['named_by']);
+        $stmt = $this->conn->prepareWrite(
+            'SELECT ppc_network_id FROM 202_ppc_networks WHERE user_id IN (' . self::marks($users) . ')'
+            . ' AND ppc_network_deleted = 0 AND ppc_network_name = ? LIMIT 1'
+        );
+        $name = (string) $entry['ppc_network_name'];
+        $this->conn->bind($stmt, str_repeat('i', count($users)) . 's', [...$users, $name]);
+        if ($this->conn->fetchOne($stmt) !== null) {
+            $entry['auto_split_blocked_by'][] = self::SAME_NAME;
+            $entry['auto_split'] = false;
+        }
+
+        return $entry;
+    }
+
+    /**
+     * Split every listed source the report marks auto_split, each in a
+     * transaction of its own, as split() does it for an operator: the cron
+     * job's hourly tier calls this. A source that changed after it was read
+     * (another run split it, an account was saved) is left for the next run,
+     * which reads it again; any other failure is logged and the rest go on.
+     * Run twice, the second finds nothing: a split source is no longer
+     * listed.
+     *
+     * @return list<array<string, mixed>> split()'s answer for each one split
+     */
+    public function splitAutomatically(): array
+    {
+        $done = [];
+        foreach ($this->report(false) as $entry) {
+            if ($entry['auto_split'] !== true) {
+                continue;
+            }
+            $sourceId = (int) $entry['ppc_network_id'];
+            try {
+                $plan = $this->planSplit($sourceId);
+                $done[] = $this->split($sourceId, $plan['owner'], $plan['copies'], 0, true);
+            } catch (TrafficSourceRepairRefused) {
+                continue;
+            } catch (\Throwable $e) {
+                error_log('Prosper202 traffic source split: traffic source ' . $sourceId . ' could not be split'
+                    . ' automatically, and stays listed on Account › Settings; the next hourly run tries again: '
+                    . $e->getMessage());
+            }
+        }
+
+        return $done;
+    }
+
+    /**
+     * The splits made since $since, newest first, as split() recorded them
+     * in 202_change_log: the source, the user it stayed with, each user's
+     * copy and the accounts moved onto it, when, and whether the cron job
+     * made it (automatic) or a user did (actor_user_id).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function recentSplits(int $since): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT change_id, entity_id, actor_user_id, changed_at, payload FROM 202_change_log'
+            . ' WHERE entity = ? AND changed_at >= ? ORDER BY changed_at DESC, change_id DESC LIMIT 200'
+        );
+        $this->conn->bind($stmt, 'si', [self::SPLIT_ENTITY, $since]);
+        $rows = $this->conn->fetchAll($stmt);
+        if ($rows === []) {
+            return [];
+        }
+        $splits = [];
+        $userIds = [];
+        foreach ($rows as $row) {
+            $unreadable = 'The record of traffic source split ' . (int) $row['change_id'] . ' (202_change_log)';
+            try {
+                $stored = json_decode((string) $row['payload'], true, 8, JSON_THROW_ON_ERROR);
+            } catch (\JsonException $e) {
+                throw new \Prosper202\Database\Exceptions\QueryException($unreadable . ' cannot be read: '
+                    . $e->getMessage());
+            }
+            $made = is_array($stored) ? ($stored['copies'] ?? null) : null;
+            if (!is_array($stored) || !is_int($stored['owner_user_id'] ?? null) || !is_array($made) || $made === []) {
+                throw new \Prosper202\Database\Exceptions\QueryException($unreadable . ' is not a split\'s');
+            }
+            $copies = [];
+            foreach ($made as $copy) {
+                if (
+                    !is_array($copy) || !is_int($copy['user_id'] ?? null) || !is_int($copy['ppc_network_id'] ?? null)
+                    || !is_array($copy['ppc_account_ids'] ?? null) || !is_int($copy['custom_variables'] ?? null)
+                ) {
+                    throw new \Prosper202\Database\Exceptions\QueryException($unreadable . ' names a copy that'
+                        . ' is not one');
+                }
+                $copies[] = [
+                    'user_id' => $copy['user_id'],
+                    'ppc_network_id' => $copy['ppc_network_id'],
+                    'ppc_account_ids' => array_map('intval', array_values($copy['ppc_account_ids'])),
+                    'custom_variables' => $copy['custom_variables'],
+                ];
+                $userIds[] = $copy['user_id'];
+            }
+            $userIds[] = $stored['owner_user_id'];
+            $splits[] = [
+                'ppc_network_id' => (int) $row['entity_id'],
+                'ppc_network_name' => (string) ($stored['ppc_network_name'] ?? ''),
+                'removed' => ($stored['removed'] ?? false) === true,
+                'owner_user_id' => $stored['owner_user_id'],
+                'automatic' => (int) $row['actor_user_id'] === 0,
+                'actor_user_id' => (int) $row['actor_user_id'],
+                'split_at' => (int) $row['changed_at'],
+                'copies' => $copies,
+            ];
+        }
+        $names = $this->userNames($userIds);
+        foreach ($splits as &$split) {
+            $split['owner_user_name'] = $names[$split['owner_user_id']] ?? null;
+            foreach ($split['copies'] as &$copy) {
+                $copy['user_name'] = $names[$copy['user_id']] ?? null;
+            }
+            unset($copy);
+        }
+        unset($split);
+
+        return $splits;
+    }
+
+    /**
+     * @param list<int> $ids
+     * @return array<int, string> user_name by user_id, for the users that exist
+     */
+    private function userNames(array $ids): array
+    {
+        $ids = array_values(array_unique($ids));
+        $stmt = $this->conn->prepareWrite(
+            'SELECT user_id, user_name FROM 202_users WHERE user_id IN (' . self::marks($ids) . ')'
+        );
+        $this->conn->bind($stmt, str_repeat('i', count($ids)), $ids);
+        $names = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $names[(int) $row['user_id']] = (string) $row['user_name'];
+        }
+
+        return $names;
     }
 
     /**
@@ -649,7 +934,7 @@ final class TrafficSourceOwners
     private function variables(int $sourceId): array
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT name, parameter, placeholder FROM 202_ppc_network_variables'
+            'SELECT ppc_variable_id, name, parameter, placeholder FROM 202_ppc_network_variables'
             . ' WHERE ppc_network_id = ? AND deleted = 0 ORDER BY ppc_variable_id'
         );
         $this->conn->bind($stmt, 'i', [$sourceId]);

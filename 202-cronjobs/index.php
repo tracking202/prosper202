@@ -256,6 +256,13 @@ function RunHourlyCronJob()
         // The inbound log keeps each account's newest requests (InboundLog::KEEP_PER_ACCOUNT).
         PruneInboundLog();
 
+        // Traffic source accounts on another user's traffic source record no
+        // custom variable values. Where every such account was put on the
+        // source after it was last saved, each of those users is given a copy
+        // of their own (TrafficSourceOwners::splitAutomatically()); the rest
+        // stay listed on Account › Settings.
+        SplitTrafficSourcesOfOtherUsers();
+
         // Product analytics a page recorded and could not deliver (held
         // back by the throttle, then the tab closed, or a backlog left by
         // a portal outage). Hourly, not every minute: each failed try
@@ -451,6 +458,28 @@ function RecheckLandingPageCode(): void
         }
     } catch (\Throwable $error) {
         error_log('Landing page code checks failed: ' . $error->getMessage());
+    }
+}
+
+/**
+ * The hourly automatic split of traffic sources. Hourly, not every minute:
+ * since 1.9.79 nothing puts an account on another user's source, so what
+ * there is to split is what an upgrade found, and a source that cannot be
+ * split says so once an hour. A failure is logged and the tier goes on.
+ */
+function SplitTrafficSourcesOfOtherUsers(): void
+{
+    try {
+        $conn = new \Prosper202\Database\Connection(getDatabaseConnection());
+        $owners = new \Prosper202\Setup\TrafficSourceOwners($conn);
+        foreach ($owners->splitAutomatically() as $split) {
+            echo 'Traffic source ' . (int) $split['ppc_network_id'] . ': ' . count($split['copies'])
+                . ' user(s) given a copy of their own<br>';
+        }
+        // What the click path noted saying for the sources still listed, kept a day.
+        \Prosper202\Click\UnrecordedSourceVariables::prune($conn);
+    } catch (\Throwable $e) {
+        error_log('The automatic traffic source split failed: ' . $e->getMessage());
     }
 }
 

@@ -14,13 +14,15 @@ const links = [new Link('https://offer.test/?sid=[[subid]]&acip=42'), new Link('
 const document = {baseURI:'https://page.test/', documentElement:{}, querySelectorAll: (s) => s==='a[href]' ? links : [], addEventListener() {}};
 const timers = new Map();
 let nextTimer=0;
-const window = {setTimeout: (f) => { const id=++nextTimer; timers.set(id,f); return id; }, clearTimeout: (id) => timers.delete(id)};
-const context={window,document,URL,WeakMap,Object,encodeURIComponent,Promise};
+const windowListeners={};
+const window = {addEventListener:(type,fn)=>{windowListeners[type]=fn;}, setTimeout: (f) => { const id=++nextTimer; timers.set(id,f); return id; }, clearTimeout: (id) => timers.delete(id)};
+const context={window,document,URL,WeakMap,Object,encodeURIComponent,Promise,Date};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context);
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const subid='1-42-'+'a'.repeat(12);
-const fallback=()=>'https://tracker.test/go?acip=42';
+const fallbackArgs=[];
+const fallback=(offer,template)=>{ if(offer!==undefined){fallbackArgs.push([offer,template]);} return 'https://tracker.test/go?acip=42'; };
 
 (async () => {
     let resolveFirst;
@@ -30,6 +32,8 @@ const fallback=()=>'https://tracker.test/go?acip=42';
     window.p202PurLink.refresh();
     assert.equal(calls,1,'same offer and repeated refresh share one request');
     assert.equal(links[0].getAttribute('href'),fallback());
+    assert.deepEqual(fallbackArgs[0],['42','https://offer.test/?sid=[[subid]]&acip=42'],'the fallback is given the link\'s own template');
+    assert.deepEqual(fallbackArgs[1],['42','https://offer.test/second?sid=[[subid]]&acip=42']);
     resolveFirst(subid);
     await tick();
     assert.equal(config.offerSubids['42'],subid);
@@ -57,6 +61,29 @@ const fallback=()=>'https://tracker.test/go?acip=42';
     window.p202PurLink.refresh();
     assert.equal(failed,3,'exhausted requests keep the fallback');
     assert.equal(links[0].getAttribute('href'),fallback());
+
+    // updatePurLink() asks again only after 30 seconds; a back/forward
+    // restore asks at once. Neither is more than one new set of attempts.
+    const realNow=Date.now;
+    window.updatePurLink();
+    assert.equal(failed,3,'updatePurLink() right after a failure asks nothing');
+    Date.now=()=>realNow()+31000;
+    window.updatePurLink();
+    await tick();
+    assert.equal(failed,4,'updatePurLink() after 30 seconds asks again');
+    Date.now=realNow;
+    for(let i=0;i<2;i++) { const [id,fn]=timers.entries().next().value; timers.delete(id); fn(); await tick(); }
+    assert.equal(failed,6);
+    windowListeners.pageshow({persisted:false});
+    assert.equal(failed,6,'an ordinary pageshow asks nothing');
+    current.prepareOffer=()=>{failed++;return Promise.resolve(subid);};
+    current.directEnabled=true;
+    windowListeners.pageshow({persisted:true});
+    await tick();
+    assert.equal(failed,7,'a restored page asks again');
+    assert.equal(links[0].getAttribute('href'),'https://offer.test/?sid='+subid+'&acip=42','and the link is the offer again');
+    current.directEnabled=false;
+    window.p202PurLink.refresh();
 
     let seen;
     window.fetch=(url,opts)=>{seen={url,opts}; return Promise.resolve({ok:true,json:()=>Promise.resolve({subid})});};

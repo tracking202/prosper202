@@ -1001,6 +1001,25 @@ paths:
         `several_users`: whichever account it is in, another user's accounts
         still name it. `POST /system/traffic-source-owners/split` does.
 
+        A click records only the custom variables of a source in its own
+        user's account. Until a listed source with custom variables is moved
+        back or split, clicks on the accounts of its `named_by` users store no
+        value of them (`variables_unrecorded`, `variables_note`), and the
+        server's error log says so while such clicks arrive with values.
+
+        The cron job splits a source by itself, once an hour, when every
+        traffic source account of another user that names it was saved at or
+        after the source's last save (`auto_split: true`): the source was
+        where it is when each account came to name it, so no move is a move
+        back, and each of those users is given a copy while nothing is taken
+        from its user. It leaves the rest listed, and `auto_split_blocked_by`
+        says why: `may_be_theirs` (an account was saved before the source
+        was, so the source may have been that user's and a move back may be
+        wanted), `same_name` (a user who would get a copy already has a live
+        source of that name), `no_such_user`, `deleted_user`. `splits` lists
+        the splits of the last 30 days, the cron job's (`automatic: true`)
+        and users'.
+
         Admin (or Super user) with `access_to_settings`, and `system:read`:
         the report names every user's sources.
       operationId: systemTrafficSourceOwners
@@ -1025,6 +1044,74 @@ paths:
                       ambiguous:
                         type: integer
                         description: Sources a repair moves only to a user named for it
+                      variables_unrecorded:
+                        type: integer
+                        description: >-
+                          Sources with live custom variables. Clicks on the traffic source
+                          accounts of their `named_by` users store no value of those variables
+                          until the source is moved back or split.
+                      variables_note:
+                        type: string
+                        nullable: true
+                        description: >-
+                          The sentence that says so, as Account › Settings shows it; null
+                          when `variables_unrecorded` is 0.
+                      auto_split:
+                        type: integer
+                        description: Listed sources the cron job's next hourly run splits without being asked
+                      splits:
+                        type: array
+                        description: The splits of the last 30 days, newest first
+                        items:
+                          type: object
+                          properties:
+                            ppc_network_id:
+                              type: integer
+                              description: The source that was split, which stayed where it was
+                            ppc_network_name:
+                              type: string
+                            removed:
+                              type: boolean
+                            owner_user_id:
+                              type: integer
+                              description: The user the source stayed with
+                            owner_user_name:
+                              type: string
+                              nullable: true
+                            automatic:
+                              type: boolean
+                              description: True for the cron job's split, false for a user's
+                            actor_user_id:
+                              type: integer
+                              description: The user who split it; 0 for the cron job
+                            split_at:
+                              type: integer
+                              description: Unix time
+                            copies:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  user_id:
+                                    type: integer
+                                  user_name:
+                                    type: string
+                                    nullable: true
+                                  ppc_network_id:
+                                    type: integer
+                                    description: The copy, in that user's account
+                                  ppc_account_ids:
+                                    type: array
+                                    items:
+                                      type: integer
+                                  custom_variables:
+                                    type: integer
+                      splits_note:
+                        type: string
+                        nullable: true
+                        description: >-
+                          What a split did, as Account › Settings says it; null when `splits`
+                          is empty.
         "403":
           $ref: "#/components/responses/Forbidden"
 
@@ -1174,8 +1261,9 @@ paths:
         set to the source is set to the copy, and those accounts are queued
         for the cron job's report rollup, so the clicks already on them are
         reported under the copy after its next run. The custom variable
-        values recorded on those clicks before the split stay recorded
-        against the source's own variables. The report no longer lists the
+        values recorded on those clicks before the split read under the
+        copy's own variables in Analyze › Variables: each of the copy's
+        variables remembers the one it was copied from. The report no longer lists the
         source. To have it end up in another user's account, move it there
         first (`repair` with `to_user_id`), then split it.
 
@@ -12607,6 +12695,25 @@ components:
           items:
             type: string
             enum: [owner_has_accounts, several_users, saved_after_rename, no_such_user, deleted_user]
+        variables_unrecorded:
+          type: boolean
+          description: >-
+            Whether the source has live custom variables. A click records only the
+            variables of a source in its own user's account, so clicks on the accounts
+            of the `named_by` users store no value of them until the source is moved
+            back or split.
+        auto_split:
+          type: boolean
+          description: >-
+            Whether the cron job splits it within the hour without being asked. Every
+            traffic source account of another user that names it was saved at or after
+            the source's last save.
+        auto_split_blocked_by:
+          type: array
+          description: Why it is left to an operator; empty when `auto_split` is true
+          items:
+            type: string
+            enum: [may_be_theirs, same_name, no_such_user, deleted_user]
         custom_variables:
           type: integer
           description: The source's live custom variables, which a split copies

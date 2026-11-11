@@ -219,6 +219,7 @@ final class TrafficSourceSplitIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
+        self::q("DELETE FROM 202_change_log WHERE entity = 'traffic_source_split'");
         $users = implode(',', [...array_keys(self::ROLES), self::GHOST]);
         $tables = ['202_user_role', '202_api_keys', '202_users_pref', '202_users', '202_clicks', '202_dataengine',
             '202_dirty_hours'];

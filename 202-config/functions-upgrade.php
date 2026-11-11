@@ -5032,6 +5032,11 @@ class UPGRADE
                 // What each landing page's last code check found
                 // (Prosper202\Setup\LandingPageCheckStore).
                 \Prosper202\Database\Tables\CampaignTables::landingPageChecks(),
+                // 202_ppc_network_variables gains copied_from_ppc_variable_id:
+                // the variable a traffic source's copy took each of its own
+                // from (TrafficSourceOwners::split()), which names the values
+                // recorded before the copy. Null on every variable already there.
+                \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();
