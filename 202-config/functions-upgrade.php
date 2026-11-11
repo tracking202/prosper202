@@ -214,7 +214,10 @@ if (!function_exists('_upgrade_complete_landing_page_urls')) {
             $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
             \Prosper202\Setup\LandingPageUrlRepair::run(new \Prosper202\Database\Connection($conn));
         } catch (\Throwable $e) {
-            error_log('Prosper202 upgrade: landing page URLs stored without a scheme could not be completed: ' . $e->getMessage());
+            _upgrade_note(
+                'landing page URLs stored without a scheme could not be completed',
+                ': ' . $e->getMessage()
+            );
         }
     }
 }
