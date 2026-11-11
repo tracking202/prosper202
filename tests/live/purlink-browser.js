@@ -314,7 +314,7 @@ const accepted = (status) => status === 200 || status === 202;
     check((await location(go + '?acip=' + OFFER_B.pub + to('http://evil.example/b?s=[[subid]]&u=x'))) === '302 ' + plainB, 'another host goes to the campaign URL');
     check((await location(go + '?acip=' + OFFER_B.pub + to('http://offer.example/other?s=[[subid]]&u=x'))) === '302 ' + plainB, 'another path goes to the campaign URL');
     check((await location(go + '?acip=' + OFFER_B.pub + to('http://offer.example@evil.example/b?s=[[subid]]'))) === '302 ' + plainB, 'user info naming the host goes to the campaign URL');
-    check((await location(go + '?acip=' + OFFER_B.pub + to('http://offer.example/b?s=[[subid]]&u=x&k=[[t202kw]]'))) === '302 ' + plainB, 'a token the campaign URL lacks goes to the campaign URL');
+    check((await location(go + '?acip=' + OFFER_B.pub + to('http://offer.example/b?s=[[subid]]&u=x&k=[[t202kw]]'))) === '302 ' + plainB + '&u=x&k=', 'a token the campaign URL lacks is left empty and the link kept');
     const deepSimpleTo = 'http://offer.example/a?sub=&kw=&c1=&u=deep2';
     check((await location(go + '?lpip=' + LP_SIMPLE + to(DEEP_SIMPLE))) === '302 ' + deepSimpleTo,
       'go.php?lpip= keeps a simple page link\'s deep link: ' + await location(go + '?lpip=' + LP_SIMPLE + to(DEEP_SIMPLE)));
