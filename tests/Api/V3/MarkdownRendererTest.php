@@ -133,6 +133,15 @@ final class MarkdownRendererTest extends TestCase
         $path = \Prosper202\Update\PaidOrigin::NOTES_FILE;
         self::assertFileExists($root . '/' . $path);
         self::assertFileExists($root . '/' . \Prosper202\Update\PaidOrigin::NOTES_PAGE);
+        $pages = ['202-config/upgrade.php', '202-account/help.php', '202-account/auto-upgrade.php',
+            '202-account/auto-upgrade-premium.php'];
+        foreach ($pages as $page) {
+            self::assertStringContainsString(
+                'p202_came_from_paid_1956($db)',
+                (string) file_get_contents($root . '/' . $page),
+                "$page links the notes for an install that came from paid 1.9.56"
+            );
+        }
         $html = markdownDocLinks(markdownToHtml((string) file_get_contents($root . '/' . $path)), $path);
 
         self::assertSame(0, preg_match_all('~<p>\s*[-*+]\s~', $html), 'a bullet reached the reader as text');

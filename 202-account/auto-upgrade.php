@@ -320,7 +320,8 @@ template_top('1-Click Upgrade');
 									<div class="form-text">Yes is the default: modern browsers require landing pages over HTTPS, or tracking stops working.</div>
 								</div>
 							<?php } ?>
-							<?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>
+                            <?php echo p202_came_from_paid_1956($db) ? p202_paid_1956_notes_link() : ''; ?>
+                            <?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>
 							<div class="p202-form-actions">
 								<button class="btn btn-primary" id="upgrade-submit" type="submit">Upgrade Prosper202</button>
 							</div>

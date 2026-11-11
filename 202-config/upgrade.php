@@ -38,12 +38,7 @@ if (upgrade_needed() == false && !(
 }
 
 // Asked now: the upgrade moves the stored version on.
-try {
-    $paid_1956 = \Prosper202\Update\PaidOrigin::isPaid1956($db, (string) PROSPER202::prosper202_version());
-} catch (\Throwable $e) {
-    error_log('Prosper202 upgrade page: ' . $e->getMessage() . '; the paid 1.9.56 notes are not linked.');
-    $paid_1956 = false;
-}
+$paid_1956 = p202_came_from_paid_1956($db);
 
 // Initialize version error tracking array
 $version_error = [];

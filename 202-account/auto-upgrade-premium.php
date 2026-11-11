@@ -285,7 +285,8 @@ template_top('1-Click Upgrade');
 							<form method="post" action="">
 								<input type="hidden" name="start_upgrade" value="1">
 								<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-								<?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>
+                                <?php echo p202_came_from_paid_1956($db) ? p202_paid_1956_notes_link() : ''; ?>
+                                <?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>
 								<div class="p202-form-actions">
 									<button class="btn btn-primary" id="upgrade-submit" type="submit"><?php echo $e($detail('order-button-text') !== '' ? $detail('order-button-text') : 'Upgrade Prosper202'); ?></button>
 								</div>

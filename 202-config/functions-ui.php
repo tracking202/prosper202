@@ -238,6 +238,22 @@ function p202_upgrade_backup_warning(string $fromVersion): string
         . '</div></div>';
 }
 
+/**
+ * Whether a signed-in page links the paid 1.9.56 upgrade notes: the install
+ * looks to have come from that release (PaidOrigin). A read that fails is
+ * logged and links nothing.
+ */
+function p202_came_from_paid_1956(\mysqli $db): bool
+{
+    try {
+        return \Prosper202\Update\PaidOrigin::isPaid1956($db, (string) PROSPER202::prosper202_version());
+    } catch (\Throwable $e) {
+        error_log('Prosper202: ' . $e->getMessage() . '; the paid 1.9.56 notes are not linked.');
+
+        return false;
+    }
+}
+
 /** The link to the paid 1.9.56 upgrade notes, for the pages an install that came from it meets. */
 function p202_paid_1956_notes_link(): string
 {
