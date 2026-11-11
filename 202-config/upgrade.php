@@ -37,6 +37,14 @@ if (upgrade_needed() == false && !(
 			   <small>Your Prosper202 version $version is already upgraded. <a href='" . get_absolute_url() . "202-login.php'>log in</a></small>");
 }
 
+// Asked now: the upgrade moves the stored version on.
+try {
+    $paid_1956 = \Prosper202\Update\PaidOrigin::isPaid1956($db, (string) PROSPER202::prosper202_version());
+} catch (\Throwable $e) {
+    error_log('Prosper202 upgrade page: ' . $e->getMessage() . '; the paid 1.9.56 notes are not linked.');
+    $paid_1956 = false;
+}
+
 // Initialize version error tracking array
 $version_error = [];
 
@@ -106,6 +114,7 @@ if (!empty($version_error)) {
             $date = DateTime::createFromFormat('d-m-Y', (string) ($_POST['date_from'] ?? ''));
             if (!$date) {
                 $error = true;
+                $date_error = true;
             } else {
                 $time_from = strtotime($date->format("d-m-Y"));
             }
@@ -125,6 +134,7 @@ if (!empty($version_error)) {
             } else {
                 $error = true;
                 $upgrade_busy = UPGRADE::$lastRunBusy;
+                $upgrade_failures = UPGRADE::failures();
             }
         }
     }
@@ -157,22 +167,38 @@ if (!empty($version_error)) {
             <div class="alert alert-warning p202-flash" role="alert"><i class="bi bi-hourglass-split"></i><div class="p202-flash__body">Another request is upgrading this database right now. It keeps running even if its page timed out. Wait a few minutes, then reload this page: once the upgrade has finished it takes you to the login page.</div></div>
             <a class="btn btn-primary w-100" href="<?php echo get_absolute_url(); ?>202-config/upgrade.php">Check again</a>
         <?php echo p202_standalone_card_end();
+        } elseif (!empty($date_error)) {
+            echo p202_standalone_card('That date was not read', 'Nothing was changed.');
+            echo p202_flash('bad', 'Enter the day to process clicks from as day-month-year, for example 31-01-2024.');
+            echo '<a class="btn btn-primary w-100" href="' . get_absolute_url() . '202-config/upgrade.php">Back to the '
+                . strtolower($task_202) . '</a>';
+            echo p202_standalone_card_end();
         } elseif ($error == true) {
-            echo p202_standalone_card('An error occured', 'The ' . strtolower($task_202) . ' did not finish.'); ?>
-            <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body">An unexpected error occured while you were trying to <?php echo strtolower($task_202); ?>. Please try again, or if you keep encountering problems review our <a href="http://support.tracking202.com">support docs</a>.</div></div>
-            <a class="btn btn-primary w-100" href="<?php echo get_absolute_url(); ?>202-config/upgrade.php">Try again</a>
-        <?php echo p202_standalone_card_end();
+            echo p202_standalone_card(
+                'The ' . strtolower($task_202) . ' did not finish',
+                'This page says what stopped it and what to do.'
+            );
+            echo p202_upgrade_failure_report(
+                $upgrade_failures ?? [],
+                (string) PROSPER202::prosper202_version(),
+                (string) $version
+            );
+            echo '<a class="btn btn-primary w-100" href="' . get_absolute_url() . '202-config/upgrade.php">Run the '
+                . strtolower($task_202) . ' again</a>';
+            echo p202_standalone_card_end();
         } elseif ($success == true) {
             unset($_SESSION['user_id']);
             //('location: '.get_absolute_url().'202-account/signout.php');
             echo p202_standalone_card('Success!', 'Prosper202 ' . strtolower($task_202) . ' completed.'); ?>
             <p>Your database is at version <span class="p202-pill p202-pill--good"><?php echo htmlspecialchars((string) $version, ENT_QUOTES, 'UTF-8'); ?></span>. Sign in again to carry on.</p>
+            <?php echo $paid_1956 ? p202_paid_1956_notes_link() : ''; ?>
             <a class="btn btn-primary w-100" href="<?php echo get_absolute_url(); ?>202-account/signout.php">Sign in</a>
         <?php echo p202_standalone_card_end();
         } else {
             echo p202_standalone_card($task_202 . ' to Prosper202 ' . $version, 'This could take a while, depending on the last time you updated.'); ?>
             <p><?php echo $task_202_2; ?> from <span class="p202-pill"><?php echo htmlspecialchars((string) PROSPER202::prosper202_version(), ENT_QUOTES, 'UTF-8'); ?></span> to <span class="p202-pill p202-pill--accent"><?php echo htmlspecialchars((string) $version, ENT_QUOTES, 'UTF-8'); ?></span>. Press the button below to begin.</p>
             <p class="small text-body-secondary">On a large install (a million conversions takes one to two minutes) this page can outlast your proxy or host's time limit and show a timeout error. The upgrade keeps running on the server regardless: wait a few minutes and reload this page. It takes you to the login page once the upgrade has finished. There is nothing to redo.</p>
+            <?php echo $paid_1956 ? p202_paid_1956_notes_link() : ''; ?>
             <?php $change_logs = changelog();
             $pending_logs = [];
             if (!empty($change_logs)) {

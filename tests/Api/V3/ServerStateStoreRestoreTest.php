@@ -207,4 +207,75 @@ final class ServerStateStoreRestoreTest extends TestCase
         self::assertFileDoesNotExist($this->dir . '/epoch.json');
         self::assertNotNull((new ServerStateStore($this->dir))->getStagedChangeForUser(1, 'chg-plain'));
     }
+
+    public function testARestoreLeavesANoticeOfWhatWasSetAsideAndWhere(): void
+    {
+        $epoch = new FakeStateEpoch(10);
+        self::writeEachKind($this->store($epoch));
+        self::assertSame([], $this->store($epoch)->restoreNotices(), 'no restore, no notice');
+
+        $epoch->value = 10; // the restore
+        $notices = $this->store($epoch)->restoreNotices();
+
+        self::assertCount(1, $notices, 'reading the notices is itself the check, so Settings says so first');
+        $aside = glob($this->dir . '/restored-*') ?: [];
+        self::assertSame($aside[0] ?? null, $notices[0]['dir']);
+        self::assertSame(
+            ['changes' => 1, 'idempotency' => 1, 'jobs' => 1, 'staged_changes' => 1],
+            (static function (array $c): array {
+                ksort($c);
+
+                return $c;
+            })($notices[0]['counts'])
+        );
+        self::assertEqualsWithDelta(time(), $notices[0]['at'], 5);
+        self::assertSame($notices[0]['at'] + ServerStateStore::SET_ASIDE_KEPT_SECONDS, $notices[0]['kept_until']);
+        self::assertCount(1, $this->store($epoch)->restoreNotices(), 'it stays until it is dismissed');
+
+        $this->store($epoch)->dismissRestoreNotices();
+        self::assertSame([], $this->store($epoch)->restoreNotices());
+        self::assertDirectoryExists($aside[0], 'dismissing removes nothing');
+    }
+
+    public function testWhatWasSetAsideIsRemovedAfterThirtyDaysAndNotBefore(): void
+    {
+        $epoch = new FakeStateEpoch(10);
+        self::writeEachKind($this->store($epoch));
+        $epoch->value = 10;
+        $store = $this->store($epoch);
+        $notice = $store->restoreNotices()[0];
+
+        $kept = ServerStateStore::SET_ASIDE_KEPT_SECONDS;
+        self::assertSame(0, $store->pruneSetAside($kept, $notice['at'] + $kept - 1));
+        self::assertDirectoryExists($notice['dir']);
+        // Not this store's: another name, and a link under a name it would take.
+        mkdir($this->dir . '/restored-by-hand');
+        mkdir($this->dir . '/elsewhere');
+        touch($this->dir . '/elsewhere/keep.json');
+        symlink($this->dir . '/elsewhere', $this->dir . '/restored-20200101T000000Z-abcdef');
+
+        self::assertSame(1, $store->pruneSetAside($kept, $notice['at'] + $kept));
+        self::assertDirectoryDoesNotExist($notice['dir']);
+        self::assertSame([], $store->restoreNotices(), 'a notice goes with its directory');
+        self::assertDirectoryExists($this->dir . '/restored-by-hand');
+        self::assertFileExists($this->dir . '/elsewhere/keep.json', 'a link is not followed');
+        unlink($this->dir . '/restored-20200101T000000Z-abcdef');
+    }
+
+    public function testAnOldSetAsideDirectoryIsRemovedOnTheNextUseOfTheStore(): void
+    {
+        $epoch = new FakeStateEpoch(10);
+        $this->store($epoch);
+        $old = $this->dir . '/restored-' . gmdate('Ymd\THis\Z', time() - ServerStateStore::SET_ASIDE_KEPT_SECONDS - 60)
+            . '-0a1b2c';
+        mkdir($old . '/staged_changes', 0700, true);
+        file_put_contents($old . '/staged_changes/1.json', '{"items":{}}');
+        $recent = $this->dir . '/restored-' . gmdate('Ymd\THis\Z', time() - 3600) . '-0a1b2c';
+        mkdir($recent);
+
+        $this->store($epoch)->lookupIdempotent('user:1', 'any');
+
+        self::assertDirectoryDoesNotExist($old);
+        self::assertDirectoryExists($recent);
+    }
 }

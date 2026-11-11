@@ -7,6 +7,7 @@ include_once(str_repeat("../", 1) . '202-config/functions-utils.php');
 include_once(str_repeat("../", 1) . '202-config/functions-empty.php');
 require_once __DIR__ . '/../202-config/functions-account-ui.php';
 require_once __DIR__ . '/../202-config/functions-traffic-source-owners-ui.php';
+require_once __DIR__ . '/../202-config/functions-restore-notice-ui.php';
 
 AUTH::require_user();
 
@@ -67,6 +68,10 @@ if (isset($_POST['traffic_source_repair'])) {
 }
 if (isset($_POST['traffic_source_split'])) {
     p202_ts_owners_split_posted($db, (int) $_SESSION['user_own_id'], $_POST);
+}
+
+if (isset($_POST['restore_notice_dismiss'])) {
+    p202_restore_notice_dismiss_posted($db);
 }
 
 if (isset($_POST['autocron'])) {
@@ -615,6 +620,7 @@ if ($tsOwners['error'] !== null) {
 } elseif ($tsOwners['report'] !== null && $tsOwners['report']['sources'] !== []) {
     echo p202_ts_owners_notice($tsOwners['report'], $self);
 }
+echo p202_restore_notice(p202_restore_notices($db), $self, (string) ($_SESSION['token'] ?? ''));
 ?>
 
 <div class="p202-tiles">

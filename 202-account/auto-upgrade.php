@@ -22,6 +22,9 @@ die_if_auto_upgrade_disabled();
 
 ini_set('memory_limit', '-1');
 
+// Asked before the button is shown, and again before anything is downloaded.
+$blockers = \Prosper202\Update\OneClickReadiness::blockers(dirname(__DIR__));
+
 // Initialize state used by the upgrade flow and rendering below.
 $log = '';
 $error = false;
@@ -72,6 +75,14 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 		$error = true;
 	}
 
+    if (!$error && $blockers !== []) {
+        foreach ($blockers as $blocker) {
+            $log .= $blocker['what'] . ' ' . $blocker['fix'] . "\n";
+        }
+        $log .= "Nothing was changed.\n";
+        $error = true;
+    }
+
 	if (!$error && version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
 
 		// A native date input posts YYYY-MM-DD; the classic datepicker posted
@@ -120,7 +131,8 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 			}
 
 			if ($problem !== null) {
-				$log .= $problem . "\nOperation aborted.";
+                $signature_advice = \Prosper202\Update\OneClickReadiness::afterProblem($problem);
+                $log .= $problem . "\n" . $signature_advice . "\nOperation aborted.";
 				$FilesUpdated = false;
 			} elseif ($GetUpdate !== null) {
 
@@ -133,7 +145,8 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 						// A signed release that is not the version offered, or not newer, is never extracted.
 						$signature_problem = \Prosper202\Update\ReleaseSignature::versionProblem($zipFile, $latest_version, (string) $version);
 						if ($signature_problem !== null) {
-							$log .= $signature_problem . "\nOperation aborted.";
+                            $signature_advice = \Prosper202\Update\OneClickReadiness::afterProblem($signature_problem);
+                            $log .= $signature_problem . "\n" . $signature_advice . "\nOperation aborted.";
 							$FilesUpdated = false;
 						}
 
@@ -226,7 +239,11 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 			} else {
                 $log .= UPGRADE::$lastRunBusy
                     ? "Another upgrade of this database is running (its page may have timed out; it carries on). Nothing was changed; reload in a few minutes.\n"
-                    : "Database upgrade failed! Please try again!\n";
+                    : p202_upgrade_failure_log(
+                        UPGRADE::failures(),
+                        (string) PROSPER202::prosper202_version(),
+                        (string) PROSPER202::php_version()
+                    );
 				$upgrade_done = false;
 			}
 		}
@@ -254,8 +271,14 @@ template_top('1-Click Upgrade');
 		<div>Your Prosper202 version <?php echo $e($version); ?> is the latest.</div>
 		<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="<?php echo $e(get_absolute_url() . '202-account/'); ?>">Back to Home</a></div>
 	</div>
-<?php } elseif (!function_exists('zip_open')) { ?>
-	<?php echo p202_flash('bad', 'PHP zip module missing. The 1-click upgrade needs PHP compiled with zip support (the --enable-zip configure option); upgrade manually until it is.'); ?>
+<?php } elseif ($blockers !== []) { ?>
+    <section class="p202-panel">
+        <div class="p202-panel__head">
+            <h2 class="p202-panel__title">Prosper202 <?php echo $e($latest_version); ?> is available</h2>
+            <span class="p202-pill">you have <?php echo $e($version); ?></span>
+        </div>
+        <div class="p202-panel__body"><?php echo p202_one_click_blocked($blockers); ?></div>
+    </section>
 <?php } else { ?>
 	<div class="row g-4">
 		<div class="col-12 col-lg-7">
@@ -266,7 +289,10 @@ template_top('1-Click Upgrade');
 				</div>
 				<div class="p202-panel__body">
 					<?php if ($signature_problem !== null) { ?>
-						<?php echo p202_flash('bad', $signature_problem . ' Nothing on this install was changed.'); ?>
+                        <?php echo p202_flash(
+                            'bad',
+                            $signature_problem . ' Nothing on this install was changed. ' . ($signature_advice ?? '')
+                        ); ?>
 					<?php } ?>
 					<?php if ($submitted) { ?>
 						<label class="form-label" for="upgrade-log">What happened</label>
