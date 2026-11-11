@@ -303,7 +303,10 @@ held no longer, and the page says why.
 `GET /system/integrations` reports the same counts as `held_notifications`,
 and `POST /system/integrations/record-held` (`p202 system integrations
 record-held shopify`) is the same button.
-ClickBank is different: its amounts are always USD and are recorded as stated.
+A notification is held for 90 days, and only in a currency an account can
+count in; a refund is recorded after the sale it takes back, and waits while
+that sale is still held. ClickBank is different: its amounts are always USD
+and are recorded as stated.
 
 ## Shopify
 

@@ -329,7 +329,6 @@ final class JVZooIpnIntegrationTest extends TestCase
         self::assertCount(1, self::conversions());
     }
 
-    /** Two accounts holding one key that read the 1.9.56 URL differently: refused, nothing recorded. */
     /**
      * A vendor still on the 1.9.56 URL who has chosen nothing: a sale no
      * affiliate referred is recorded on the buy link's subid, the answer
@@ -373,6 +372,47 @@ final class JVZooIpnIntegrationTest extends TestCase
         self::assertFalse(RolelessTraffic::recent($log, self::OTHER, 0)->inUse());
     }
 
+    /**
+     * The card reads the newest RolelessTraffic::READ JVZoo requests: when
+     * they do not reach back to the window's start, the counts say they are
+     * at least these, and the 1.9.56 URL reads as in use.
+     */
+    public function testCountsThatDoNotReachBackTheWholeWindowSayTheyAreAtLeast(): void
+    {
+        self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::ACCOUNT);
+        $log = new \Prosper202\InboundLog\InboundLog(self::requireScratch());
+        $now = time();
+        try {
+            $noRole = [JVZooAdapter::ROLELESS_LOG_FIELD => JVZooAdapter::READ_VENDOR_NO_AFFILIATE];
+            $entry = static fn (array $fields): \Prosper202\InboundLog\Entry => new \Prosper202\InboundLog\Entry(
+                'jvzoo',
+                'POST',
+                200,
+                'recorded',
+                'Recorded.',
+                self::ACCOUNT,
+                fields: $fields
+            );
+            self::assertTrue($log->append($entry($noRole), $now - 500));
+            for ($i = 1; $i < RolelessTraffic::READ; $i++) {
+                self::assertTrue($log->append($entry([]), $now - 400));
+            }
+            $all = RolelessTraffic::recent($log, self::ACCOUNT, $now - 3600);
+            self::assertSame([1, false], [$all->vendorNoAffiliate, $all->more], 'the read reached every request');
+
+            // One more request with a role pushes the 1.9.56 one out of the read.
+            self::assertTrue($log->append($entry([]), $now - 300));
+            $cut = RolelessTraffic::recent($log, self::ACCOUNT, $now - 3600);
+            self::assertSame([0, true], [$cut->vendorNoAffiliate, $cut->more]);
+            self::assertTrue($cut->inUse());
+            // A window the read does reach the start of is whole.
+            self::assertFalse(RolelessTraffic::recent($log, self::ACCOUNT, $now - 350)->more);
+        } finally {
+            self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::ACCOUNT);
+        }
+    }
+
+    /** Two accounts holding one key that read the 1.9.56 URL differently: refused, nothing recorded. */
     public function testAccountsSharingAKeyThatReadTheUrlWithNoRoleDifferentlyAreRefused(): void
     {
         self::key(self::SHARING, self::KEY);

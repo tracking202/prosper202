@@ -372,7 +372,7 @@ minutes.
     "integrations": [
       { "integration": "clickbank", "name": "ClickBank", "label": "INS URL", "url": "https://track.example.com/tracking202/static/cb202.php", "secret_stored": true, "verified": false },
       { "integration": "jvzoo", "name": "JVZoo", "label": "Affiliate IPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=affiliate", "secret_stored": true,
-        "no_role_url": { "read_as": "affiliate", "vendor_no_affiliate": 0, "refused": 0, "as_affiliate": 0, "as_vendor": 0, "conflict": 0 } },
+        "no_role_url": { "read_as": "affiliate", "vendor_no_affiliate": 0, "refused": 0, "as_affiliate": 0, "as_vendor": 0, "conflict": 0, "more": false } },
       { "integration": "jvzoo_vendor", "name": "JVZoo", "label": "Vendor JVZIPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=vendor", "secret_stored": true },
       { "integration": "zaxaa", "name": "Zaxaa", "label": "ZPN URL", "url": "https://track.example.com/tracking202/static/zpn.php", "secret_stored": false,
         "held_notifications": { "recordable": 0, "waiting": 0, "waiting_currencies": [] } },
@@ -400,7 +400,11 @@ does not count in (`waiting_currencies`); `recordable` are held in the one
 it counts in now, and Account › API integrations records them with one
 button. `no_role_url`, on the `jvzoo` entry, is the JVZoo card's count of
 what the URL Prosper202 1.9.56 showed (no `?role=`) received in the last 30
-days, and how the account reads that URL (`read_as`).
+days, and how the account reads that URL (`read_as`); `more` is true when
+the newest 499 JVZoo requests do not reach back that far, so the counts are
+at least these. Either key is left out when it cannot be read (before the
+upgrade has run), never served as zero. A notification is held for 90 days,
+and only in a currency an account can count in.
 
 `POST /system/integrations/record-held` with `{"integration": "shopify"}`
 (or `paykickstart`, `zaxaa`) is the card's Record button: the caller's held
@@ -410,7 +414,8 @@ they arrived, at most 200 a request. It answers
 `{"data": {"integration": "shopify", "recorded": 3, "on_file": 0, "refused": 0, "failed": 0, "left": 0, "first_refusal": ""}}`;
 send it again while `left` is above 0. Sent twice, each is recorded once.
 `refused` ones would be refused arriving now too and are held no longer
-(`first_refusal` says why); `failed` ones stay held. Any other `integration`
+(`first_refusal` says why); `failed` ones stay held: they could not be
+recorded just now, or are refunds whose sale is itself still held. Any other `integration`
 is a `422`. Not stageable, and it has no preview.
 
 PayKickstart's URL takes its **product (vendor) IPN**, which a vendor sets

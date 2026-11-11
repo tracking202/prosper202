@@ -698,13 +698,25 @@ final class AdministrationController
             ) ?? [];
 
             // What the page's payment cards say: the notifications held for their currency, and what
-            // JVZoo's 1.9.56 URL received lately.
-            $held = (new HeldNotifications($this->db))->counts($this->userId);
-            $noRole = RolelessTraffic::recent(
-                new InboundLog($this->db),
-                $this->userId,
-                time() - RolelessTraffic::WINDOW
-            );
+            // JVZoo's 1.9.56 URL received lately. Each is left out when it cannot be read (the table is
+            // not there before the upgrade), never served as zero; the URLs are served either way.
+            $held = null;
+            $noRole = null;
+            try {
+                $held = (new HeldNotifications($this->db))->counts($this->userId);
+            } catch (\Throwable $e) {
+                error_log('GET /system/integrations: the held payment notifications could not be read: '
+                    . $e->getMessage());
+            }
+            try {
+                $noRole = RolelessTraffic::recent(
+                    new InboundLog($this->db),
+                    $this->userId,
+                    time() - RolelessTraffic::WINDOW
+                );
+            } catch (\Throwable $e) {
+                error_log('GET /system/integrations: the inbound log could not be read: ' . $e->getMessage());
+            }
             $readAs = JVZooRole::fromQuery($prefs['jvzoo_roleless_role'] ?? null) ?? JVZooRole::AFFILIATE;
 
             $list = [];
@@ -741,14 +753,14 @@ final class AdministrationController
                     $entry['keys_stored'] = count(PayKickstartKeys::stored(is_string($keys) ? $keys : null)['keys']);
                     $entry['secret_stored'] = $entry['keys_stored'] > 0;
                 }
-                if (HeldReplay::provider($key, $this->db) !== null) {
+                if ($held !== null && in_array($key, HeldReplay::SOURCES, true)) {
                     $entry['held_notifications'] = CurrencyMismatch::held(
                         $held,
                         $key,
                         (string) ($prefs['user_account_currency'] ?? '')
                     );
                 }
-                if ($key === 'jvzoo') {
+                if ($key === 'jvzoo' && $noRole !== null) {
                     $entry['no_role_url'] = [
                         'read_as' => $readAs->value,
                         'vendor_no_affiliate' => $noRole->vendorNoAffiliate,
@@ -756,6 +768,7 @@ final class AdministrationController
                         'as_affiliate' => $noRole->asAffiliate,
                         'as_vendor' => $noRole->asVendor,
                         'conflict' => $noRole->conflict,
+                        'more' => $noRole->more,
                     ];
                 }
                 $list[] = $entry;

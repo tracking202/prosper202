@@ -129,7 +129,8 @@ function p202_jvzoo_roleless_notice(
     $html = '<div class="alert alert-warning p202-flash" role="status" data-jvzoo-roleless-notice>'
         . '<i class="bi bi-exclamation-triangle"></i><div class="p202-flash__body">'
         . '<strong>JVZoo is still sending to the URL Prosper202 1.9.56 showed</strong>'
-        . ' (<code>jvzoo.php</code> with no <code>?role=</code>). In the last 30 days: '
+        . ' (<code>jvzoo.php</code> with no <code>?role=</code>). In the last 30 days'
+        . ($traffic->more ? ', at least' : '') . ': '
         . htmlspecialchars(implode('; ', $lines), ENT_QUOTES, 'UTF-8') . '.';
     if ($asAffiliate && $traffic->looksLikeAVendor()) {
         $html .= ' If you sell your own product on JVZoo, read that URL as a vendor’s, so the sales your affiliates'

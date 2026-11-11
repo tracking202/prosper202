@@ -25,6 +25,8 @@ final class HeldNotifications
     public const KEEP_PER_ACCOUNT = 5000;
     /** How long a row taken for recording stays taken when its request died. */
     public const CLAIM_SECONDS = 300;
+    /** How long a notification is held; one older is dropped by the hourly prune. */
+    public const KEEP_SECONDS = 90 * 86400;
 
     private const TABLE = TableRegistry::HELD_PAYMENT_NOTIFICATIONS;
 
@@ -49,9 +51,15 @@ final class HeldNotifications
         $conn = new Connection($this->db);
         $source = $provider->source()->value;
         $currency = strtoupper($n->currency);
+        $key = $provider instanceof FingerprintsNotifications ? $provider->fingerprint($request) : null;
+        $bodyKey = Processor::bodyFingerprint($request->fields);
+        // A refund with no id of its own is told from another refund of the sale by the key its
+        // provider gives it, or by its body, as the processor tells them apart.
+        $ownId = $n->transactionId !== null && $n->transactionId !== $n->originalTransactionId;
+        $which = $n->kind->reverses() && !$ownId ? ($key ?? $bodyKey) : null;
         $dedupe = self::dedupe([
             $source, $n->kind->value, $n->transactionId, $n->originalTransactionId, $n->amount, $currency,
-            (string) $n->clickId,
+            (string) $n->clickId, $which,
         ]);
         $held = $conn->prepareWrite('SELECT held_id FROM ' . self::TABLE . ' WHERE user_id = ? AND dedupe = ? LIMIT 1');
         $conn->bind($held, 'is', [$userId, $dedupe]);
@@ -63,7 +71,6 @@ final class HeldNotifications
         if ((int) ($conn->fetchOne($count)['n'] ?? 0) >= self::KEEP_PER_ACCOUNT) {
             return false;
         }
-        $key = $provider instanceof FingerprintsNotifications ? $provider->fingerprint($request) : null;
         $stmt = $conn->prepareWrite(
             'INSERT INTO ' . self::TABLE . ' (user_id, source, kind, event, transaction_id, original_transaction_id,'
             . ' amount, currency, click_id, purlink_subid, occurred_at, received_at, notification_key, body_key,'
@@ -74,7 +81,7 @@ final class HeldNotifications
         $conn->bind($stmt, 'isssssssisiisss', [
             $userId, $source, $n->kind->value, mb_substr($n->event, 0, 64, 'UTF-8'), $n->transactionId,
             $n->originalTransactionId, $n->amount, $currency, $n->clickId, $n->purLinkSubid, $n->occurredAt, $now,
-            $key, Processor::bodyFingerprint($request->fields), $dedupe,
+            $key, $bodyKey, $dedupe,
         ]);
         $conn->executeInsert($stmt);
 
@@ -105,24 +112,53 @@ final class HeldNotifications
 
     /**
      * The account's next rows of one source in one currency that nobody is
-     * recording: those never tried first, in the order they arrived, then
-     * the ones refused longest ago, so a row that stays refused does not
-     * keep the rows behind it waiting (CLAUDE.md #37).
+     * recording, in the order they arrived, after $afterId: a sale is
+     * always reached before its refund.
      *
      * @return list<array<string, mixed>>
      */
-    public function next(int $userId, string $source, string $currency, int $limit, int $now): array
+    public function next(int $userId, string $source, string $currency, int $afterId, int $limit, int $now): array
     {
         $conn = new Connection($this->db);
         $stmt = $conn->prepareRead(
             'SELECT held_id, kind, event, transaction_id, original_transaction_id, amount, currency, click_id,'
             . ' purlink_subid, occurred_at, notification_key, body_key FROM ' . self::TABLE
-            . ' WHERE user_id = ? AND source = ? AND currency = ?'
-            . ' AND (claimed_at IS NULL OR claimed_at < ?) ORDER BY COALESCE(tried_at, 0), held_id LIMIT ?'
+            . ' WHERE user_id = ? AND source = ? AND currency = ? AND held_id > ?'
+            . ' AND (claimed_at IS NULL OR claimed_at < ?) ORDER BY held_id LIMIT ?'
         );
-        $conn->bind($stmt, 'issii', [$userId, $source, strtoupper($currency), $now - self::CLAIM_SECONDS, $limit]);
+        $conn->bind(
+            $stmt,
+            'issiii',
+            [$userId, $source, strtoupper($currency), $afterId, $now - self::CLAIM_SECONDS, $limit]
+        );
 
         return $conn->fetchAll($stmt);
+    }
+
+    /**
+     * Whether the sale a refund takes back is itself still held for the
+     * account, in any currency: the refund waits for it.
+     */
+    public function holdsSale(int $userId, string $source, string $transactionId): bool
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareWrite(
+            'SELECT held_id FROM ' . self::TABLE . ' WHERE user_id = ? AND source = ? AND transaction_id = ?'
+            . " AND kind IN ('sale', 'rebill') LIMIT 1"
+        );
+        $conn->bind($stmt, 'iss', [$userId, $source, $transactionId]);
+
+        return $conn->fetchOne($stmt) !== null;
+    }
+
+    /** Drops what has been held longer than KEEP_SECONDS; answers how many rows went. */
+    public function prune(int $now): int
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareWrite('DELETE FROM ' . self::TABLE . ' WHERE received_at < ? LIMIT 5000');
+        $conn->bind($stmt, 'i', [$now - self::KEEP_SECONDS]);
+
+        return $conn->executeUpdate($stmt);
     }
 
     /** Takes the row for recording; false when another request has it, or it is gone. */

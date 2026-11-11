@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification;
 
+use Api\V3\Controllers\UsersController;
 use Prosper202\Click\ClickRef;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\Amount;
@@ -644,9 +645,11 @@ final class Processor
                 . $accountCurrency . '; Prosper202 does not convert it, so it stands as stated.';
         }
 
+        // Held only when the account could count in it: otherwise nothing would ever record it.
+        $settable = in_array(strtoupper((string) $n->currency), UsersController::SUPPORTED_CURRENCIES, true);
         $held = false;
         try {
-            $held = (new HeldNotifications($this->db))->hold($owner, $provider, $n, $request, time());
+            $held = $settable && (new HeldNotifications($this->db))->hold($owner, $provider, $n, $request, time());
         } catch (\Throwable $e) {
             error_log(sprintf(
                 '%s notification: the %s refused for its currency could not be held for account %d: %s',
@@ -659,7 +662,7 @@ final class Processor
 
         return new Outcome(
             OutcomeKind::CURRENCY_MISMATCH,
-            CurrencyMismatch::message((string) $n->currency, $accountCurrency, $provider->name(), $held),
+            CurrencyMismatch::message((string) $n->currency, $accountCurrency, $provider->name(), $held, $settable),
             null,
             $owner
         );

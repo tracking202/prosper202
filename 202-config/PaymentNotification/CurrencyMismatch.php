@@ -17,12 +17,20 @@ final class CurrencyMismatch
     }
 
     /** What the provider's delivery log and the inbound log say of the refused notification. */
-    public static function message(string $stated, string $accountCurrency, string $provider, bool $held): string
-    {
+    public static function message(
+        string $stated,
+        string $accountCurrency,
+        string $provider,
+        bool $held,
+        bool $settable = true
+    ): string {
         $stated = strtoupper($stated);
         $refused = 'The amount is in ' . $stated . ' and this account counts in ' . $accountCurrency
             . '; Prosper202 does not convert it, so nothing was recorded.';
         $setting = 'Account > Personal Settings > Account currency';
+        if (!$settable) {
+            return $refused . ' ' . $stated . ' is not a currency an account can count in, so it is not held.';
+        }
 
         return $held
             ? $refused . ' It is held: if this account sells in ' . $stated . ', set ' . $setting . ' to ' . $stated

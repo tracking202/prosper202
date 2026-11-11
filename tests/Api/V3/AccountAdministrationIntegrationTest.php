@@ -661,7 +661,8 @@ final class AccountAdministrationIntegrationTest extends TestCase
         foreach (['clickbank', 'jvzoo', 'jvzoo_vendor'] as $holdsNone) {
             self::assertArrayNotHasKey('held_notifications', $byKey[$holdsNone]);
         }
-        $noTraffic = ['vendor_no_affiliate' => 0, 'refused' => 0, 'as_affiliate' => 0, 'as_vendor' => 0, 'conflict' => 0];
+        $noTraffic = ['vendor_no_affiliate' => 0, 'refused' => 0, 'as_affiliate' => 0, 'as_vendor' => 0, 'conflict' => 0,
+            'more' => false];
         self::assertSame(['read_as' => 'affiliate'] + $noTraffic, $byKey['jvzoo']['no_role_url']);
         self::assertArrayNotHasKey('no_role_url', $byKey['jvzoo_vendor']);
 
@@ -722,6 +723,18 @@ final class AccountAdministrationIntegrationTest extends TestCase
             } catch (ValidationException $refused) {
                 self::assertArrayHasKey('dry_run', $refused->getFieldErrors());
             }
+
+            // Held notifications that cannot be read (the table is not there before the upgrade) are
+            // left out, never served as none, and the URLs are still served.
+            self::q('RENAME TABLE 202_held_payment_notifications TO 202_held_payment_notifications_away');
+            try {
+                $unread = array_column($this->admin()->integrations([])['data']['integrations'], null, 'integration');
+            } finally {
+                self::q('RENAME TABLE 202_held_payment_notifications_away TO 202_held_payment_notifications');
+            }
+            self::assertArrayNotHasKey('held_notifications', $unread['shopify']);
+            self::assertStringEndsWith('tracking202/static/shopify.php', $unread['shopify']['url']);
+            self::assertArrayHasKey('no_role_url', $unread['jvzoo']);
         } finally {
             self::q('DELETE FROM 202_held_payment_notifications WHERE user_id = ' . self::ADMIN);
             self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::ADMIN . " AND endpoint = 'jvzoo'");
