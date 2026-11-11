@@ -163,8 +163,8 @@ final class GoogleAdsSetupPagesIntegrationTest extends TestCase
         self::assertStringContainsString('Conversion names', $html, 'the page rendered');
         self::assertStringNotContainsString('id="old-feed"', $html);
 
-        $fetches->record(['campaign_id' => self::CAMPAIGN, 'conversion_name' => 'Purchase <b>'], time() - 7200);
-        $fetches->record(['campaign_id' => self::OTHERS_CAMPAIGN, 'conversion_name' => 'Theirs'], time() - 60);
+        $fetches->noteFetch(['campaign_id' => self::CAMPAIGN, 'conversion_name' => 'Purchase <b>'], time() - 7200);
+        $fetches->noteFetch(['campaign_id' => self::OTHERS_CAMPAIGN, 'conversion_name' => 'Theirs'], time() - 60);
         $id = $fetches->forAccount(self::USER, time())[0]['fetch_id'];
         $theirs = $fetches->forAccount(self::OTHER, time())[0]['fetch_id'];
 

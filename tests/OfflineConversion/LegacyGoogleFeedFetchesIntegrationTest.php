@@ -125,28 +125,28 @@ final class LegacyGoogleFeedFetchesIntegrationTest extends TestCase
     {
         $fetches = self::fetches();
         for ($i = 1; $i <= LegacyGoogleFeedFetches::MAX_ROWS; $i++) {
-            self::assertTrue($fetches->record(['campaign_id' => 0, 'conversion_name' => 'Name ' . $i], self::NOW));
+            self::assertTrue($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Name ' . $i], self::NOW));
         }
-        self::assertFalse($fetches->record(['campaign_id' => 0, 'conversion_name' => 'One more'], self::NOW));
+        self::assertFalse($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'One more'], self::NOW));
         // One already noted is still counted when the table is full.
-        self::assertTrue($fetches->record(['campaign_id' => 0, 'conversion_name' => 'Name 1'], self::NOW + 1));
+        self::assertTrue($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Name 1'], self::NOW + 1));
         self::assertSame((string) LegacyGoogleFeedFetches::MAX_ROWS, self::$db->query('SELECT COUNT(*) FROM 202_legacy_google_feed_fetches')->fetch_row()[0]);
 
         self::q('UPDATE 202_legacy_google_feed_fetches SET last_fetched_at = ' . (self::NOW - LegacyGoogleFeedFetches::SHOWN_FOR - 1)
             . " WHERE conversion_name = 'Name 2'");
-        self::assertTrue($fetches->record(['campaign_id' => 0, 'conversion_name' => 'One more'], self::NOW));
+        self::assertTrue($fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'One more'], self::NOW));
         self::assertSame('0', self::$db->query("SELECT COUNT(*) FROM 202_legacy_google_feed_fetches WHERE conversion_name = 'Name 2'")->fetch_row()[0]);
     }
 
     public function testAnAccountIsShownItsOwnCampaignsSchedulesAndTheOnesNamingEveryCampaign(): void
     {
         $fetches = self::fetches();
-        $fetches->record(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW - 300);
-        $fetches->record(['campaign_id' => 0, 'conversion_name' => 'Lead'], self::NOW - 200);
-        $fetches->record(['campaign_id' => self::OTHERS_CAMPAIGN, 'conversion_name' => 'Demo'], self::NOW - 100);
-        $fetches->record(['campaign_id' => self::DELETED, 'conversion_name' => 'Sale'], self::NOW - 50);
-        $fetches->record(['campaign_id' => 999999999, 'conversion_name' => 'Nobody'], self::NOW - 40);
-        $fetches->record(['campaign_id' => self::TRIAL, 'conversion_name' => 'Old'], self::NOW - LegacyGoogleFeedFetches::SHOWN_FOR - 1);
+        $fetches->noteFetch(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW - 300);
+        $fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Lead'], self::NOW - 200);
+        $fetches->noteFetch(['campaign_id' => self::OTHERS_CAMPAIGN, 'conversion_name' => 'Demo'], self::NOW - 100);
+        $fetches->noteFetch(['campaign_id' => self::DELETED, 'conversion_name' => 'Sale'], self::NOW - 50);
+        $fetches->noteFetch(['campaign_id' => 999999999, 'conversion_name' => 'Nobody'], self::NOW - 40);
+        $fetches->noteFetch(['campaign_id' => self::TRIAL, 'conversion_name' => 'Old'], self::NOW - LegacyGoogleFeedFetches::SHOWN_FOR - 1);
 
         $mine = $fetches->forAccount(self::OWNER, self::NOW);
         self::assertSame(
@@ -162,7 +162,7 @@ final class LegacyGoogleFeedFetchesIntegrationTest extends TestCase
     public function testMovingAScheduleSavesItsNameAndMakesItsFetchUrl(): void
     {
         $fetches = self::fetches();
-        $fetches->record(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW - 300);
+        $fetches->noteFetch(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW - 300);
         $id = $fetches->forAccount(self::OWNER, self::NOW)[0]['fetch_id'];
 
         // Another account's campaign is not this account's to move, nor a schedule that is not listed.
@@ -198,7 +198,7 @@ final class LegacyGoogleFeedFetchesIntegrationTest extends TestCase
     {
         $fetches = self::fetches();
         (new ConversionNames(self::$conn))->save(self::OWNER, [ConversionNames::GOOGLE => [0 => 'Sign-up']], self::NOW);
-        $fetches->record(['campaign_id' => 0, 'conversion_name' => 'Lead'], self::NOW - 300);
+        $fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Lead'], self::NOW - 300);
 
         $listed = $fetches->forAccount(self::OWNER, self::NOW)[0];
         self::assertSame(['ready', 'Sign-up'], [$listed['state'], $listed['stored_name']]);
@@ -214,8 +214,8 @@ final class LegacyGoogleFeedFetchesIntegrationTest extends TestCase
     public function testADeletedCampaignsScheduleIsNotMovedAndHidingIsTheAccountsOwn(): void
     {
         $fetches = self::fetches();
-        $fetches->record(['campaign_id' => self::DELETED, 'conversion_name' => 'Sale'], self::NOW - 300);
-        $fetches->record(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW - 200);
+        $fetches->noteFetch(['campaign_id' => self::DELETED, 'conversion_name' => 'Sale'], self::NOW - 300);
+        $fetches->noteFetch(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW - 200);
         [$store, $deleted] = array_column($fetches->forAccount(self::OWNER, self::NOW), 'fetch_id');
 
         self::assertNull($fetches->move(self::OWNER, $deleted, self::NOW));
@@ -227,7 +227,7 @@ final class LegacyGoogleFeedFetchesIntegrationTest extends TestCase
         self::assertFalse($fetches->dismiss(self::OWNER, $store, self::NOW));
         self::assertSame(['Sale'], array_column($fetches->forAccount(self::OWNER, self::NOW), 'conversion_name'));
         // Fetched again, it is listed again.
-        $fetches->record(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW);
+        $fetches->noteFetch(['campaign_id' => self::STORE, 'conversion_name' => 'Purchase'], self::NOW);
         self::assertCount(2, $fetches->forAccount(self::OWNER, self::NOW));
     }
 }

@@ -76,7 +76,7 @@ final class LegacyGoogleFeedFetches
      *
      * @param Schedule $schedule
      */
-    public function record(array $schedule, int $now): bool
+    public function noteFetch(array $schedule, int $now): bool
     {
         $again = $this->conn->prepareWrite(
             'UPDATE ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES

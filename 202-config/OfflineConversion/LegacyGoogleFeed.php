@@ -75,7 +75,7 @@ final class LegacyGoogleFeed
             if (!$db instanceof \mysqli) {
                 throw new \RuntimeException('no database connection');
             }
-            if (!(new LegacyGoogleFeedFetches(new \Prosper202\Database\Connection($db)))->record($schedule, $now)) {
+            if (!(new LegacyGoogleFeedFetches(new \Prosper202\Database\Connection($db)))->noteFetch($schedule, $now)) {
                 error_log('Prosper202: the retired Google Ads feed was fetched for a schedule that was not noted: '
                     . LegacyGoogleFeedFetches::MAX_ROWS . ' others were fetched in the last '
                     . intdiv(LegacyGoogleFeedFetches::SHOWN_FOR, 86400) . ' days.');
