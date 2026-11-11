@@ -32,7 +32,8 @@ use Prosper202\Report\AccountZone;
  * (not named by click id or cookie) is withheld; so is every visitor under
  * privacy 'all', and a visitor who may be in the EEA or UK (EuropeanVisitor)
  * unless the setting is 'disabled' and the destination states both consent
- * signals granted. Withheld rows are never retried.
+ * signals granted. Withheld rows are never retried by the worker; the
+ * operator can send one again (resend()), and it is checked again.
  *
  * A send that says to wait (SendResult::$waitUntil: a click too recent for
  * the platform, a destination not yet authorised) is not a try: the row

@@ -74,7 +74,7 @@ function p202_destination_health(array $d, array $health, string $self, string $
     $log = p202_setup_e($self) . '?log=' . $id;
     ob_start(); ?>
     <div class="form-text mb-2">Last 7 days:
-        <?php if (array_sum($health['counts']) === 0) { ?>no conversions queued for it.<?php } ?>
+        <?php echo array_sum($health['counts']) === 0 ? 'no conversions queued for it.' : ''; ?>
         <?php foreach ($labels as $status => [$label, $class]) {
             $n = $health['counts'][$status] ?? 0;
             if ($n === 0) {
@@ -83,7 +83,7 @@ function p202_destination_health(array $d, array $health, string $self, string $
             $pill = '<span class="p202-pill' . $class . '">' . number_format($n) . ' ' . $label . '</span>';
             echo $canSeeLog ? '<a href="' . $log . '&amp;status=' . $status . '">' . $pill . '</a> ' : $pill . ' ';
         } ?>
-        <?php if ($canSeeLog) { ?>· <a href="<?php echo $log; ?>">full log</a><?php } ?>
+        <?php echo $canSeeLog ? '· <a href="' . $log . '">full log</a>' : ''; ?>
     </div>
     <?php foreach ($health['reasons'] as $reason) { ?>
     <div class="form-text"><?php echo number_format($reason['n']) . ' ' . p202_setup_e($reason['status']); ?>: <?php echo p202_setup_e($reason['reason'] !== '' ? (string) preg_replace('/\A(withheld|not sent): /', '', $reason['reason']) : 'no reason recorded'); ?></div>
@@ -315,26 +315,28 @@ function p202_destination_log(array $d, array $rows, ?string $status, int $page,
                 <table class="table p202-table">
                     <thead><tr><th>When</th><th>Conversion</th><th>Status</th><th class="num">Tries</th><th>Last answer</th><th></th></tr></thead>
                     <tbody>
-                        <?php foreach ($rows as $row) { ?>
+                        <?php foreach ($rows as $row) {
+                            $conversion = match (true) {
+                                $row['conv_id'] === null => 'test',
+                                $row['click_id'] !== null => '<a href="' . p202_setup_e($base) . 'tracking202/logs/?click_id=' . (int) $row['click_id']
+                                    . '" title="This click\'s conversions in Conversion Logs">' . (int) $row['conv_id'] . '</a>',
+                                default => (string) (int) $row['conv_id'],
+                            }; ?>
                         <tr>
                             <td><?php echo p202_setup_e($when((int) $row['created_at'])); ?></td>
-                            <td><?php if ($row['conv_id'] === null) {
-                                echo 'test';
-                            } elseif ($row['click_id'] !== null) {
-                                echo '<a href="' . p202_setup_e($base) . 'tracking202/logs/?click_id=' . (int) $row['click_id'] . '" title="This click\'s conversions in Conversion Logs">' . (int) $row['conv_id'] . '</a>';
-                            } else {
-                                echo (int) $row['conv_id'];
-                            } ?></td>
+                            <td><?php echo $conversion; ?></td>
                             <td><span class="p202-pill<?php echo $pill[(string) $row['status']] ?? ''; ?>"><?php echo p202_setup_e($row['status'] === 'pending' ? 'waiting' : (string) $row['status']); ?></span></td>
                             <td class="num"><?php echo (int) $row['attempts']; ?></td>
                             <td><?php echo p202_setup_e(trim(($row['last_status_code'] !== null ? $row['last_status_code'] . ' ' : '') . (string) ($row['last_error'] ?? ''))); ?></td>
-                            <td><?php if ($row['kind'] === DestinationQueue::KIND_CONVERSION && in_array($row['status'], DestinationQueue::RESENDABLE, true)) { ?>
+                            <td>
+                                <?php if ($row['kind'] === DestinationQueue::KIND_CONVERSION && in_array($row['status'], DestinationQueue::RESENDABLE, true)) { ?>
                                 <form method="post" action="<?php echo $link($status, $page); ?>">
                                     <?php echo p202_setup_token_field($token); ?>
                                     <input type="hidden" name="action" value="resend"><input type="hidden" name="destination_id" value="<?php echo $id; ?>"><input type="hidden" name="delivery_id" value="<?php echo (int) $row['delivery_id']; ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-secondary">send again</button>
                                 </form>
-                            <?php } ?></td>
+                                <?php } ?>
+                            </td>
                         </tr>
                         <?php } ?>
                     </tbody>
