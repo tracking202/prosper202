@@ -124,6 +124,7 @@ final class UserTables
                 `user_pref_platform_id` tinyint(3) unsigned DEFAULT NULL,
                 `user_pref_isp_id` tinyint(3) unsigned DEFAULT NULL,
                 `user_pref_subid` bigint(20) unsigned DEFAULT NULL,
+                `user_pref_publisher_id` mediumint(8) unsigned DEFAULT NULL,
                 `user_pref_ip` varchar(100) DEFAULT NULL,
                 `user_pref_dynamic_bid` tinyint(1) NOT NULL DEFAULT '0',
                 `user_pref_same_ip_fallback` tinyint(1) NOT NULL DEFAULT '0',

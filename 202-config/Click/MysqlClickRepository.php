@@ -656,10 +656,10 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             // A granted publisher (PublisherCredit) is credited once; an earlier credit stands.
             if ($template->publisherUserId !== 0) {
                 $this->write(
-                    'INSERT INTO 202_clicks_publisher (click_id, publisher_user_id) VALUES (?, ?)'
+                    'INSERT INTO 202_clicks_publisher (click_id, publisher_user_id, tracker_id_public) VALUES (?, ?, ?)'
                         . ' ON DUPLICATE KEY UPDATE publisher_user_id = publisher_user_id',
-                    'ii',
-                    [$clickId, $template->publisherUserId]
+                    'iii',
+                    [$clickId, $template->publisherUserId, $template->publisherTrackerPublicId]
                 );
             }
             RollupDirty::click($this->conn, $userId, $clickId);
@@ -1103,9 +1103,9 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         }
         try {
             $this->write(
-                'INSERT INTO 202_clicks_publisher (click_id, publisher_user_id) VALUES (?, ?)',
-                'ii',
-                [$click->clickId, $click->publisherUserId]
+                'INSERT INTO 202_clicks_publisher (click_id, publisher_user_id, tracker_id_public) VALUES (?, ?, ?)',
+                'iii',
+                [$click->clickId, $click->publisherUserId, $click->publisherTrackerPublicId]
             );
         } catch (\Throwable $e) {
             error_log('Prosper202 publisher credit: click ' . $click->clickId . '\'s publisher (user '

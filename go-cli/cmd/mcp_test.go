@@ -79,7 +79,7 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// refusals, the optimizer's and the reports' notes) it is about 93,600; the
 	// click filter's five tools (user_id and ids left out, no entry update) and
 	// settings_get add about 5,100; the publisher dimension and its filter
-	// (on report_summary, report_breakdown and click_list) about 700;
+	// (on report_summary, report_breakdown and click_list) about 800;
 	// landing_page_check about 700.
 	const budget = 100500
 	if len(body) > budget {
