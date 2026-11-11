@@ -109,15 +109,26 @@ final class InboundLog
 
     /**
      * The newest rows first. An admin's list includes the requests no account
-     * could be found for (user_id 0), which only an admin sees.
+     * could be found for (user_id 0), which only an admin sees. With
+     * $withUnverifiedShopify the list also has the Shopify webhooks no stored
+     * secret verified, for an account that stores one: nothing proves whose
+     * they are, so they come without their fields.
      *
      * @param array{outcome?: string, endpoint?: string, before?: int} $filters
      *        outcome: 'refused' (anything not in ACCEPTED_OUTCOMES), 'accepted', or one outcome name
      * @return list<array<string, mixed>>
      */
-    public function list(int $userId, bool $withUnattributed, array $filters = [], int $limit = self::DEFAULT_LIMIT): array
-    {
+    public function list(
+        int $userId,
+        bool $withUnattributed,
+        array $filters = [],
+        int $limit = self::DEFAULT_LIMIT,
+        bool $withUnverifiedShopify = false
+    ): array {
         $where = $withUnattributed ? '(user_id = ? OR user_id = 0)' : 'user_id = ?';
+        if (!$withUnattributed && $withUnverifiedShopify) {
+            $where = "(user_id = ? OR (user_id = 0 AND endpoint = 'shopify' AND outcome = 'unverified'))";
+        }
         $types = 'i';
         $values = [$userId];
         $outcome = $filters['outcome'] ?? null;
@@ -152,7 +163,17 @@ final class InboundLog
         );
         $conn->bind($stmt, $types, $values);
 
-        return array_map(self::row(...), $conn->fetchAll($stmt));
+        $rows = array_map(self::row(...), $conn->fetchAll($stmt));
+        if (!$withUnattributed) {
+            foreach ($rows as $i => $row) {
+                if ($row['user_id'] === null) {
+                    $rows[$i]['fields'] = null;
+                    $rows[$i]['transaction_id'] = null;
+                }
+            }
+        }
+
+        return $rows;
     }
 
     /**

@@ -279,9 +279,10 @@ the build. `tests/Api/V3/ShellIsolationTest.php` closes the other half: the shel
 may name a bare path only for a first-party file it lists, so a new third-party
 file cannot be added without a manifest entry, and it sweeps every PHP, JS and
 HTML file in the tree for a `<script src>`, a stylesheet `<link>` or a quoted
-`.js`/`.css` URL on an external host. Two hosted-service loaders (ProfitWell,
-and the Google ad tags on the standalone and mobile pages) are listed there with
-their reason; everything else must be served from the install. Highcharts is the
+`.js`/`.css` URL on an external host. The hosted-service loaders (the Google ad
+tags on the standalone and mobile pages, and the Meta Pixel base code the Bot202
+Facebook Pixel Assistant places on an advertiser's landing page) are listed there
+with their reason; everything else must be served from the install. Highcharts is the
 one library on a CDN, because its licence does not allow redistribution here;
 its URL pins the version instead of following the CDN's rolling build.
 

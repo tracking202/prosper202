@@ -29,8 +29,6 @@ final class InlineScriptValuesAreEncodedTest extends TestCase
         '202-config/template.php' => [
             '$readsDatabase ? p202CronBeaconStatement() : \'/* no cron ping */\'' => 'p202CronBeaconStatement()'
                 . ' json_encode()s its URL with the JSON_HEX_* flags; the other branch is a fixed comment',
-            '$readsDatabase ? p202DashEmailJson() : \'""\'' => 'p202DashEmailJson() json_encode()s the address with'
-                . ' the JSON_HEX_* flags; the other branch is an empty string',
         ],
         'tracking202/ajax/ltv_companies.php' => ['$offset' => self::OFFSET, '$selfUrl' => self::SELF_URL],
         'tracking202/ajax/ltv_customer.php' => ['$selfUrl' => self::SELF_URL],

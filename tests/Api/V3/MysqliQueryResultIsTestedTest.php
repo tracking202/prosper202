@@ -151,11 +151,6 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             'Run by the installer and by the 1.9.47 upgrade rung, which is frozen (CLAUDE.md #33): users left'
             . ' without a publisher id are filled by the next run.',
         ],
-        '202-config/functions-tracking202.php::getDashEmail' => [
-            1,
-            'Every signed-in page\'s footer reads it: an address that cannot be read is unknown (false), and the'
-            . ' page is still drawn.',
-        ],
         '202-lost-pass.php::' => [
             2,
             'The reset key\'s write is reached only for a matching account, so its failure answers as every request'

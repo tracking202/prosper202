@@ -1,0 +1,2 @@
+-- Changed: Signed-in pages no longer load a third-party script in the page footer, and the footer makes no request to my.tracking202.com.
+app: Changed: Signed-in pages no longer load a third-party script.

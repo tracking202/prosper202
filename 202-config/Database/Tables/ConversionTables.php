@@ -525,7 +525,11 @@ final class ConversionTables
         );
     }
 
-    /** Refunds awaiting terminal Shopify transaction statuses. */
+    /**
+     * Refunds awaiting terminal Shopify transaction statuses, and the ones
+     * closed without a reversal (refused_reason), which Setup › Inbound Log
+     * lists while a sale of their order is on file (order_on_file).
+     */
     public static function shopifyPendingRefunds(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -538,6 +542,8 @@ final class ConversionTables
                 `occurred_at` int(10) unsigned NOT NULL,
                 `transactions` text NOT NULL,
                 `completed_at` int(10) unsigned DEFAULT NULL,
+                `refused_reason` varchar(500) DEFAULT NULL,
+                `order_on_file` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`user_id`,`refund_id`),
                 KEY `pending_order` (`user_id`,`order_id`,`completed_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"

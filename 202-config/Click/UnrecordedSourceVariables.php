@@ -81,7 +81,16 @@ final class UnrecordedSourceVariables
 
                 return;
             }
-            $line = $this->line($userId, $ppcAccountId, $request);
+            $source = $this->reads->sourceOfAnotherUser($userId, $ppcAccountId);
+            if ($source === null || $source['source_user_id'] === null) {
+                // Its own source, or one that does not exist: nothing to say
+                // whatever a click brings, so kept as a line said is, and the
+                // account's next clicks this hour read nothing.
+                $this->said?->set($key, ['said' => '0']);
+
+                return;
+            }
+            $line = self::line($source, $userId, $ppcAccountId, $request);
             if ($line === null) {
                 return;
             }
@@ -134,13 +143,12 @@ final class UnrecordedSourceVariables
         self::$saidHere = [];
     }
 
-    /** @param array<array-key, mixed> $request */
-    private function line(int $userId, int $ppcAccountId, array $request): ?string
+    /**
+     * @param array<string, string|null> $source sourceOfAnotherUser()'s row, of another user's source
+     * @param array<array-key, mixed> $request
+     */
+    private static function line(array $source, int $userId, int $ppcAccountId, array $request): ?string
     {
-        $source = $this->reads->sourceOfAnotherUser($userId, $ppcAccountId);
-        if ($source === null || $source['source_user_id'] === null) {
-            return null;
-        }
         $came = 0;
         foreach (TrackerVariables::pairs($source) as [$parameter]) {
             if (ClickRequest::text($request, $parameter) !== '') {

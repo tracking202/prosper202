@@ -51,6 +51,22 @@ final class ShopifyWebhookSecret
     }
 
     /** Whether a secret is stored that is not one (written by hand, cut short): it verifies nothing. */
+    /**
+     * Whether the account stores a secret a webhook can verify with. Such an
+     * account is shown the Shopify webhooks no secret verified, in the page
+     * and the API alike: one may be its own.
+     */
+    public static function accountStores(\Prosper202\Database\Connection $conn, int $account): bool
+    {
+        $stmt = $conn->prepareRead(
+            'SELECT ' . self::COLUMN . ' AS secret FROM 202_users_pref WHERE user_id = ? LIMIT 1'
+        );
+        $conn->bind($stmt, 'i', [$account]);
+        $secret = $conn->fetchOne($stmt)['secret'] ?? null;
+
+        return self::stored(is_string($secret) ? $secret : null) !== null;
+    }
+
     public static function unreadable(?string $column): bool
     {
         return trim((string) $column) !== '' && self::stored($column) === null;

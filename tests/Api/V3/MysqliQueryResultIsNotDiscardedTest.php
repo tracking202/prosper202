@@ -43,11 +43,6 @@ final class MysqliQueryResultIsNotDiscardedTest extends TestCase
             1,
             'Housekeeping: the remember-me read refuses an expired key whether or not it was deleted.',
         ],
-        '202-config/functions-tracking202.php::getDashEmail' => [
-            1,
-            'Keeps the address the service answered so the next page need not ask for it: a failure leaves it to'
-            . ' be asked for again, and this page has the address either way.',
-        ],
         '202-config/functions-tracking202.php::createPublisherIds' => [
             1,
             'Run by the installer and by the 1.9.47 upgrade rung, which is frozen (CLAUDE.md #33): a user left'
