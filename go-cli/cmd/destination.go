@@ -36,9 +36,9 @@ var destinationCmd = &cobra.Command{
 		"sent by the minutely cron job from this server, retried with backoff. Raw personal data never\n" +
 		"leaves it: with --send-user-data, only SHA-256 hashes of the customer's normalised email and phone.\n\n" +
 		"  p202 destination create --name \"Store GA4\" --measurement-id G-ABC123 --api-secret-file secret.txt\n" +
-		"  p202 destination create --type google_ads --name Search --customer-id 123-456-7890 \\\n" +
-		"      --conversion-action 987654 --credentials-file google-ads.json\n" +
+		"  p202 destination create --type google_ads --name Search --credentials-file google-ads.json\n" +
 		"  p202 destination connect 2   # open the link it prints, signed in to Prosper202\n" +
+		"  p202 destination pick 2 --account \"Online Store\" --action Purchase   # from your Google Ads account\n" +
 		"  p202 destination test 1\n" +
 		"  p202 destination deliveries 1 --status failed",
 }
@@ -346,9 +346,13 @@ func createGoogleAdsDestination(cmd *cobra.Command) error {
 	}
 	name, _ := cmd.Flags().GetString("name")
 	file, _ := cmd.Flags().GetString("credentials-file")
-	if name == "" || file == "" || !cmd.Flags().Changed("customer-id") || !cmd.Flags().Changed("conversion-action") {
-		return validationError("--name, --customer-id, --conversion-action and --credentials-file are required for google_ads").
-			WithHint("The customer ID is at the top of Google Ads; the conversion action ID is the ctId in its address (Goals › Conversions).")
+	if name == "" || file == "" {
+		return validationError("--name and --credentials-file are required for google_ads").
+			WithHint("The credentials file is JSON with developer_token, oauth_client_id and oauth_client_secret. Leave --customer-id and --conversion-action out to choose them after `p202 destination connect`, with `p202 destination pick`.")
+	}
+	if cmd.Flags().Changed("conversion-action") && !cmd.Flags().Changed("customer-id") {
+		return validationError("--conversion-action needs --customer-id: a conversion action belongs to an account").
+			WithHint("Give both, or neither: after `p202 destination connect <id>`, `p202 destination pick <id>` chooses them from your Google Ads account by name.")
 	}
 	settings, err := destinationSettings(cmd, nil)
 	if err != nil {
@@ -390,6 +394,109 @@ var destinationConnectCmd = &cobra.Command{
 		data, err := c.Post("destinations/"+args[0]+"/oauth/start", map[string]interface{}{})
 		if err != nil {
 			return withHint(err, "%s", destinationListHint)
+		}
+		render(data)
+		return nil
+	},
+}
+
+const destinationPickHint = "`p202 destination accounts <id>` lists the accounts, `p202 destination conversion-actions <id>` the actions; a destination must be connected first (`p202 destination connect <id>`)."
+
+var destinationAccountsCmd = &cobra.Command{
+	Use:   "accounts <id>",
+	Short: "List the Google Ads accounts a connected destination can send conversions to",
+	Long: "Reads, from Google, the accounts the Google user you connected can open: each with its customer ID,\n" +
+		"its name and, when it is reached through a manager account, that manager (its login customer ID).\n" +
+		"`p202 destination pick <id> --account <name or ID>` sets one.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := destinationArg(args[0]); err != nil {
+			return err
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("destinations/"+args[0]+"/google-ads/accounts", nil)
+		if err != nil {
+			return withHint(err, "The destination must be a connected Google Ads one: `p202 destination get %s` shows its status, `p202 destination connect %s` connects it.", args[0], args[0])
+		}
+		render(data)
+		return nil
+	},
+}
+
+var destinationConversionActionsCmd = &cobra.Command{
+	Use:   "conversion-actions <id>",
+	Short: "List the conversion actions of a Google Ads account that take uploaded clicks",
+	Long: "Reads, from Google, the enabled conversion actions that take uploaded click conversions (source Import):\n" +
+		"of the destination's own account, or of --customer-id (with --login-customer-id when it is reached\n" +
+		"through a manager). `p202 destination pick <id> --action <name or ID>` sets one.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := destinationArg(args[0]); err != nil {
+			return err
+		}
+		params := map[string]string{}
+		for flag, key := range map[string]string{"customer-id": "customer_id", "login-customer-id": "login_customer_id"} {
+			if cmd.Flags().Changed(flag) {
+				v, _ := cmd.Flags().GetString(flag)
+				if v == "" {
+					return validationError("--%s cannot be empty", flag).WithHint("Give the 10-digit customer ID (123-456-7890), or leave the flag out for the destination's own account.")
+				}
+				params[key] = v
+			}
+		}
+		if _, login := params["login_customer_id"]; login && params["customer_id"] == "" {
+			return validationError("--login-customer-id needs --customer-id: it is the manager that account is reached through").
+				WithHint("`p202 destination accounts %s` shows each account with its manager.", args[0])
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("destinations/"+args[0]+"/google-ads/conversion-actions", params)
+		if err != nil {
+			return withHint(err, "%s", destinationPickHint)
+		}
+		render(data)
+		return nil
+	},
+}
+
+var destinationPickCmd = &cobra.Command{
+	Use:   "pick <id> [--account <name or ID>] [--action <name or ID>]",
+	Short: "Set a Google Ads destination's account and conversion action by name, from your Google Ads account",
+	Long: "Chooses from what Google lists for the connected Google user, so no ID has to be looked up:\n\n" +
+		"  p202 destination pick 2 --account \"Online Store\" --action \"Store purchase\"\n" +
+		"  p202 destination pick 2                      (one account and one action: both are taken)\n" +
+		"  p202 destination pick 2 --action \"Sign-up\"   (keeps the account, changes the action)\n\n" +
+		"A name is matched whole, ignoring case; an ID works too. Without --account the destination keeps its\n" +
+		"account, or takes the only one there is; without --action it keeps its action or takes the account's\n" +
+		"only one. When there are several, the error lists them. The manager an account is reached through is\n" +
+		"set as its login customer ID. Another account takes none of the old one's conversion actions with it.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := destinationArg(args[0]); err != nil {
+			return err
+		}
+		body := map[string]interface{}{}
+		for flag, key := range map[string]string{"account": "account", "action": "conversion_action"} {
+			if cmd.Flags().Changed(flag) {
+				v, _ := cmd.Flags().GetString(flag)
+				if strings.TrimSpace(v) == "" {
+					return validationError("--%s cannot be empty", flag).WithHint("Give a name or an ID, or leave the flag out. %s", destinationPickHint)
+				}
+				body[key] = v
+			}
+		}
+		c, err := destinationClient("pick")
+		if err != nil {
+			return err
+		}
+		data, err := c.Post("destinations/"+args[0]+"/google-ads/pick", body)
+		if err != nil {
+			return withHint(err, "%s", destinationPickHint)
 		}
 		render(data)
 		return nil
@@ -594,7 +701,12 @@ func init() {
 	destinationDeliveriesCmd.Flags().Int("offset", 0, "Rows to skip")
 	enumFlag(destinationDeliveriesCmd, "status", newEnum([]string{"pending", "sent", "failed", "withheld", "cancelled"}))
 	enumFlag(destinationDeliveriesCmd, "kind", newEnum([]string{"conversion", "test"}))
+	destinationConversionActionsCmd.Flags().String("customer-id", "", "The account whose actions to list (123-456-7890); default the destination's own")
+	destinationConversionActionsCmd.Flags().String("login-customer-id", "", "The manager account --customer-id is reached through, if any")
+	destinationPickCmd.Flags().String("account", "", "The Google Ads account, by its name or customer ID")
+	destinationPickCmd.Flags().String("action", "", "The conversion action, by its name or ID")
 	destinationCmd.AddCommand(destinationListCmd, destinationGetCmd, destinationCreateCmd, destinationUpdateCmd,
-		destinationDeleteCmd, destinationTestCmd, destinationDeliveriesCmd, destinationConnectCmd)
+		destinationDeleteCmd, destinationTestCmd, destinationDeliveriesCmd, destinationConnectCmd,
+		destinationAccountsCmd, destinationConversionActionsCmd, destinationPickCmd)
 	rootCmd.AddCommand(destinationCmd)
 }

@@ -257,7 +257,7 @@ echo p202_setup_error_flashes($errors, $formFields);
                     <div class="p202-list__item">
                         <span class="p202-list__name"><?php echo p202_setup_e($d['name']); ?></span>
                         <?php $isAds = $d['type'] === GoogleAdsDestination::TYPE; ?>
-                        <span class="p202-pill"><?php echo $isAds ? 'Google Ads ' . p202_setup_e((string) ($settings['customer_id'] ?? '')) : p202_setup_e(strtoupper($d['type'])) . ' ' . p202_setup_e((string) ($settings['measurement_id'] ?? '')); ?></span>
+                        <span class="p202-pill"><?php echo $isAds ? 'Google Ads ' . p202_setup_e(p202_gads_named($settings, 'customer', 'customer_id')) : p202_setup_e(strtoupper($d['type'])) . ' ' . p202_setup_e((string) ($settings['measurement_id'] ?? '')); ?></span>
                         <span class="p202-pill<?php echo $d['enabled'] ? ' p202-pill--accent' : ''; ?>"><?php echo $d['enabled'] ? 'on' : 'off'; ?></span>
                         <?php if (($d['status'] ?? 'ready') !== 'ready') { ?>
                         <span class="p202-pill"><?php echo ['needs_authorisation' => 'not connected', 'needs_account' => 'pick its account'][$d['status']] ?? 'credentials unreadable'; ?></span>
@@ -276,7 +276,7 @@ echo p202_setup_error_flashes($errors, $formFields);
                             <?php } ?>
                         </span>
                         <?php $typeMeta = $isAds
-                            ? 'conversion action ' . p202_setup_e((string) ($settings['conversion_action'] ?? 'not picked yet'))
+                            ? 'conversion action ' . p202_setup_e(isset($settings['conversion_action']) ? p202_gads_named($settings, 'conversion_action', 'conversion_action') : 'not picked yet')
                                 . (empty($settings['campaign_conversion_actions']) ? '' : ' (+' . count((array) $settings['campaign_conversion_actions']) . ' per campaign)')
                             : 'event ' . p202_setup_e((string) ($settings['event_name'] ?? '')) . ' · client id from ' . p202_setup_e((string) ($settings['client_id_source'] ?? '')); ?>
                         <span class="p202-list__meta"><?php echo $typeMeta; ?> · <?php echo empty($settings['campaign_ids']) ? 'every campaign' : count($settings['campaign_ids']) . ' campaign(s)'; ?> · hashed user data <?php echo !empty($settings['send_user_data']) ? 'on' : 'off'; ?></span>
@@ -409,7 +409,7 @@ echo p202_setup_error_flashes($errors, $formFields);
                             <div class="form-text"><?php echo p202_setup_e($help); ?></div>
                         </div>
                         <?php } ?>
-                        <div class="form-text">Left empty, they are picked after you connect. Per-campaign actions: <code>p202 destination update --campaign-conversion-action</code>.</div>
+                        <div class="form-text">Left empty, they are picked after you connect. A conversion action for one campaign is set after adding, by editing the destination or with <code>p202 destination update --campaign-conversion-action</code>.</div>
                     </div>
                 </details>
                 <div class="p202-form-actions">

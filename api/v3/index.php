@@ -761,6 +761,11 @@ try {
         }, [$setupSection]);
         $router->group('/destinations', function (Router $r) use ($crud, $queryParams) {
             $cls = \Api\V3\Controllers\DestinationsController::class;
+            $r->get('/{id}/google-ads/accounts', fn($ctx) => $crud($cls)->googleAdsAccounts(PathId::of($ctx)));
+            $r->get('/{id}/google-ads/conversion-actions', fn($ctx) => $crud($cls)->googleAdsConversionActions(PathId::of($ctx), $queryParams));
+        }, [$setupSection]);
+        $router->group('/destinations', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\DestinationsController::class;
             $r->get('/{id}/deliveries', fn($ctx) => $crud($cls)->deliveries(PathId::of($ctx), $queryParams));
         }, [$setupSection, static function () use ($auth, $db): void {
             $auth->requirePermission($db, 'access_to_campaign_data');
@@ -772,6 +777,7 @@ try {
             $r->delete('/{id}',     fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
             $r->post('/{id}/test',  fn($ctx) => $crud($cls)->test(PathId::of($ctx)));
             $r->post('/{id}/oauth/start', fn($ctx) => $crud($cls)->oauthStart(PathId::of($ctx), $_SERVER));
+            $r->post('/{id}/google-ads/pick', fn($ctx) => $crud($cls)->googleAdsPick(PathId::of($ctx), $payload));
         }, [$setupSection]);
 
         // ── API capabilities ────────────────────────────────────────────
@@ -1380,7 +1386,7 @@ try {
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
-                'destinations'  => '/destinations[/{id}][/test|/deliveries|/oauth/start]',
+                'destinations'  => '/destinations[/{id}][/test|/deliveries|/oauth/start|/google-ads/accounts|/google-ads/conversion-actions|/google-ads/pick]',
                 'events'        => '/events',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',

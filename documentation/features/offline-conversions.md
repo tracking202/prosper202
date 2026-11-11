@@ -142,7 +142,9 @@ Paid 1.9.56's Google Ads schedule URL,
 as failed in Google Ads. Its user name and password are not carried over.
 
 Prosper202 notes each fetch of the old address. While Google Ads keeps
-fetching it, Setup › Offline Conversions opens with **Your old Google Ads
+fetching it and a schedule is not moved yet, Home and Account Overview say
+that your Google Ads conversion uploads have stopped, with a link to where
+it is moved. Setup › Offline Conversions opens with **Your old Google Ads
 feed**: each schedule by the conversion action (`cn`) and campaign (`ac`) its
 address carries, and when Google Ads last tried it. **Move it over** saves
 that conversion action as the Google name of the campaign (of *Every other

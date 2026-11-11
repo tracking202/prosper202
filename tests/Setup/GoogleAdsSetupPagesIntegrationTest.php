@@ -120,7 +120,7 @@ final class GoogleAdsSetupPagesIntegrationTest extends TestCase
      * What a page printed and the session it left, run as USER.
      *
      * @param array<string, string> $get
-     * @param array<string, string> $post a POST when not empty; token SESSION is the session's own
+     * @param array<string, mixed> $post a POST when not empty; token SESSION is the session's own
      * @return array{0: string, 1: string}
      */
     private static function page(string $page, array $get = [], array $post = []): array
@@ -205,6 +205,48 @@ final class GoogleAdsSetupPagesIntegrationTest extends TestCase
         self::assertSame('1', self::$db->query('SELECT COUNT(*) FROM 202_legacy_google_feed_fetches')->fetch_row()[0], 'the other account\'s schedule is still noted');
     }
 
+    public function testHomeAndAccountOverviewSayTheOldFeedIsStillFetchedUntilItIsMovedOrHidden(): void
+    {
+        $pages = ['202-account/index.php', 'tracking202/overview/index.php'];
+        $fetches = new LegacyGoogleFeedFetches(self::conn());
+        self::q('DELETE FROM 202_legacy_google_feed_fetches');
+        self::q('DELETE FROM 202_offline_conversion_feeds WHERE user_id = ' . self::USER);
+        self::q('DELETE FROM 202_offline_conversion_names WHERE user_id = ' . self::USER);
+        foreach ($pages as $page) {
+            [$html] = self::page($page);
+            self::assertStringContainsString('</html>', $html, $page . ' rendered');
+            self::assertStringNotContainsString('conversion uploads have stopped', $html, $page);
+        }
+
+        // Another account's schedule is not this account's news.
+        $fetches->noteFetch(['campaign_id' => self::OTHERS_CAMPAIGN, 'conversion_name' => 'Theirs'], time() - 60);
+        [$html] = self::page($pages[0]);
+        self::assertStringNotContainsString('conversion uploads have stopped', $html);
+
+        $fetches->noteFetch(['campaign_id' => self::CAMPAIGN, 'conversion_name' => 'Purchase'], time() - 3600);
+        $fetches->noteFetch(['campaign_id' => 0, 'conversion_name' => 'Lead'], time() - 3600);
+        foreach ($pages as $page) {
+            [$html] = self::page($page);
+            self::assertStringContainsString('Your Google Ads conversion uploads have stopped.', $html, $page);
+            self::assertStringContainsString('2 scheduled feeds', $html, $page);
+            self::assertStringContainsString('tracking202/setup/offline_conversions.php#old-feed">Move them over</a>', $html, $page);
+        }
+
+        // One moved, one hidden: nothing is left to say.
+        $ids = array_column($fetches->forAccount(self::USER, time()), 'fetch_id', 'conversion_name');
+        [$lead, $purchase] = [$ids['Lead'], $ids['Purchase']];
+        self::assertNotNull($fetches->move(self::USER, $purchase, time()));
+        [$html] = self::page($pages[0]);
+        self::assertStringContainsString('a scheduled feed', $html);
+        self::assertStringContainsString('">Move it over</a>', $html);
+        self::assertTrue($fetches->dismiss(self::USER, $lead, time()));
+        foreach ($pages as $page) {
+            [$html] = self::page($page);
+            self::assertStringNotContainsString('conversion uploads have stopped', $html, $page);
+        }
+        self::q('DELETE FROM 202_legacy_google_feed_fetches');
+    }
+
     public function testAGoogleAdsDestinationIsAddedWithThreeValuesAndItsAccountIsPickedByAForm(): void
     {
         $page = 'tracking202/setup/destinations.php';
@@ -237,13 +279,19 @@ final class GoogleAdsSetupPagesIntegrationTest extends TestCase
         self::assertArrayNotHasKey('customer_id', (array) $store->get(self::USER, $id)['settings'], 'refused without the session\'s token');
         [$html] = self::page($page, [], ['action' => 'pick_google_ads', 'destination_id' => (string) $id, 'gads_account' => 'customers/1234567890', 'token' => 'SESSION']);
         self::assertStringContainsString('Choose the Google Ads account from the list.', $html);
+        // The names Google gave, posted beside the choices, are kept for the list.
         [$out] = self::page($page, [], ['action' => 'pick_google_ads', 'destination_id' => (string) $id, 'gads_account' => '1234567890:1112223333',
-            'gads_conversion_action' => '987654', 'token' => 'SESSION']);
+            'gads_conversion_action' => '987654', 'token' => 'SESSION',
+            'gads_names' => ['account' => ['1234567890:1112223333' => 'Online <Store>', '5556667777' => 'Demo Store'], 'action' => ['987654' => 'Purchase', '55' => 'Sign-up']]]);
         self::assertSame('', trim($out), 'the page redirected: ' . substr($out, 0, 300));
         self::assertSame(
-            ['customer_id' => '1234567890', 'login_customer_id' => '1112223333', 'conversion_action' => '987654'],
-            array_intersect_key((array) $store->get(self::USER, $id)['settings'], array_flip(['customer_id', 'login_customer_id', 'conversion_action']))
+            ['customer_id' => '1234567890', 'login_customer_id' => '1112223333', 'conversion_action' => '987654',
+                'labels' => ['customer' => ['id' => '1234567890', 'name' => 'Online <Store>'], 'conversion_action' => ['id' => '987654', 'name' => 'Purchase']]],
+            array_intersect_key((array) $store->get(self::USER, $id)['settings'], array_flip(['customer_id', 'login_customer_id', 'conversion_action', 'labels']))
         );
+        [$html] = self::page($page);
+        self::assertStringContainsString('Google Ads Online &lt;Store&gt; (123-456-7890)', $html, 'the row names the account');
+        self::assertStringContainsString('conversion action Purchase (987654)', $html);
 
         // Typed under Advanced, the IDs are taken as before.
         self::page($page, [], ['action' => 'create_google_ads', 'token' => 'SESSION', 'gads_name' => 'Typed',

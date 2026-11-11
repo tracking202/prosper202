@@ -187,10 +187,19 @@ not stored; if Google refuses, the page says what it answered, and the IDs
 can be typed under *Advanced* when adding, or set with `p202 destination
 update`.
 
-With `p202 destination create --type google_ads` the IDs are flags; then
-press **Connect Google Ads** (or run `p202 destination connect <id>` and
-open the address it prints, in a browser signed in to Prosper202 as the same
-user, within 10 minutes). Google asks you to allow access to your Google Ads
+A destination whose account and action were picked shows their names in
+the list, with the IDs beside them.
+
+From the CLI: `p202 destination create --type google_ads --name Search
+--credentials-file google-ads.json`, then `p202 destination connect <id>`
+(open the address it prints, in a browser signed in to Prosper202 as the
+same user, within 10 minutes), then `p202 destination pick <id> --account
+"Online Store" --action "Purchase"`. `p202 destination accounts <id>` and
+`p202 destination conversion-actions <id>` list what there is to pick; with
+one account and one action, `pick <id>` alone takes both. `--customer-id`,
+`--login-customer-id` and `--conversion-action` still set the IDs directly.
+The API has the same three as `GET /destinations/{id}/google-ads/accounts`,
+`GET …/google-ads/conversion-actions` and `POST …/google-ads/pick`. Google asks you to allow access to your Google Ads
 account and sends you back to the callback, which stores the refresh token.
 Until then
 the destination's status is `needs_authorisation` and its conversions wait

@@ -68,7 +68,7 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
 
     public function settingKeys(): array
     {
-        return ['customer_id', 'login_customer_id', 'conversion_action', 'campaign_conversion_actions'];
+        return ['customer_id', 'login_customer_id', 'conversion_action', 'campaign_conversion_actions', 'labels'];
     }
 
     /** The grant (refresh_token) is not one: only the consent screen fills it. */
@@ -119,6 +119,7 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
             $out['conversion_action'] = self::action($action, 'settings.conversion_action');
         }
         // Everything else belongs to an account: none of it is kept without one.
+        // (A label for a setting that is not there is dropped by labels().)
         $needsCustomer = array_filter([
             'login_customer_id' => $login !== null,
             'conversion_action' => isset($out['conversion_action']),
@@ -141,6 +142,10 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         }
         if ($map !== []) {
             $out['campaign_conversion_actions'] = $map;
+        }
+        $labels = self::labels($settings['labels'] ?? [], $out);
+        if ($labels !== []) {
+            $out['labels'] = $labels;
         }
         if ($credentials === null) {
             return [$out, null];
@@ -586,6 +591,42 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         }
 
         return $digits;
+    }
+
+    /**
+     * The names Google gives the picked account and conversion action, for
+     * display only: labels.customer and labels.conversion_action, each
+     * {id, name}. A label is kept while its id is the setting it names, so
+     * a customer_id or conversion_action changed without its label loses
+     * the old name rather than showing it beside the new id.
+     *
+     * @param array<string, mixed> $out the settings validated so far
+     * @return array<string, array{id: string, name: string}>
+     */
+    private static function labels(mixed $given, array $out): array
+    {
+        $field = 'settings.labels';
+        if (!is_array($given) || array_diff(array_keys($given), ['customer', 'conversion_action']) !== []) {
+            throw new DestinationInputException($field, 'labels may hold customer and conversion_action, each {"id", "name"}.');
+        }
+        $kept = [];
+        foreach ($given as $what => $label) {
+            $id = is_array($label) ? ($label['id'] ?? null) : null;
+            $name = is_array($label) ? ($label['name'] ?? null) : null;
+            if (
+                !is_array($label) || array_diff(array_keys($label), ['id', 'name']) !== [] || !is_string($id) || !is_string($name)
+                || trim($name) === '' || mb_strlen($name) > 200 || preg_match('/[\x00-\x1F\x7F]/', $name) === 1
+            ) {
+                throw new DestinationInputException($field . '.' . $what, 'labels.' . $what . ' must be {"id", "name"}: the ID it names and a name of at most 200 characters.');
+            }
+            $names = $what === 'customer' ? 'customer_id' : 'conversion_action';
+            $stripped = $what === 'customer' ? (string) preg_replace('/[\s\-]/', '', $id) : trim($id);
+            if (($out[$names] ?? null) === $stripped) {
+                $kept[$what] = ['id' => $stripped, 'name' => trim($name)];
+            }
+        }
+
+        return $kept;
     }
 
     /** A conversion action's id, or its resource name when another account (a manager) owns it. */

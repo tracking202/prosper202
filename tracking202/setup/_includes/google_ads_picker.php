@@ -6,6 +6,7 @@ use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\GoogleAdsAccounts;
 use Prosper202\Destinations\GoogleAdsDestination;
+use Prosper202\Destinations\GoogleAdsPicker;
 
 /*
  * Setup › Destinations: a connected Google Ads destination's account and
@@ -46,7 +47,7 @@ function p202_gads_picker(DestinationStore $store, GoogleAdsAccounts $google, in
         $state['account'] = [
             'customer_id' => $stored,
             'login_customer_id' => is_string($settings['login_customer_id'] ?? null) ? $settings['login_customer_id'] : null,
-            'name' => '',
+            'name' => is_string($settings['labels']['customer']['name'] ?? null) ? $settings['labels']['customer']['name'] : '',
             'currency' => '',
             'via' => null,
         ];
@@ -119,11 +120,15 @@ function p202_gads_picker_html(string $self, string $token, int $destinationId, 
         . '<input type="hidden" name="action" value="pick_google_ads"><input type="hidden" name="destination_id" value="' . $destinationId . '">';
     if ($state['step'] === 'account') {
         $options = [];
+        $names = '';
         foreach ($state['accounts'] as $account) {
             $options[p202_gads_account_value($account)] = p202_gads_account_label($account);
+            if ($account['name'] !== '') {
+                $names .= '<input type="hidden" name="gads_names[account][' . $e(p202_gads_account_value($account)) . ']" value="' . $e($account['name']) . '">';
+            }
         }
 
-        return $out . $open
+        return $out . $open . $names
             . '<label class="form-label" for="gads_account_' . $destinationId . '">Google Ads account the conversions go to</label>'
             . '<select class="form-select mb-2" id="gads_account_' . $destinationId . '" name="gads_account" required>'
             . p202_setup_options($options, '', 'Choose an account') . '</select>'
@@ -141,9 +146,15 @@ function p202_gads_picker_html(string $self, string $token, int $destinationId, 
             . '. In Google Ads, Goals › Conversions › New conversion action › Import › Other data sources or CRMs › Track conversions from clicks; then reload this page.');
     }
     $options = [];
+    $names = $account['name'] !== ''
+        ? '<input type="hidden" name="gads_names[account][' . $e(p202_gads_account_value($account)) . ']" value="' . $e($account['name']) . '">'
+        : '';
     foreach ($state['actions'] as $action) {
         $options[$action['value']] = ($action['name'] !== '' ? $action['name'] : 'Action ' . $action['id'])
             . ($action['owner'] !== null ? ' · owned by manager ' . GoogleAdsAccounts::dashed($action['owner']) : '');
+        if ($action['name'] !== '') {
+            $names .= '<input type="hidden" name="gads_names[action][' . $e($action['value']) . ']" value="' . $e($action['name']) . '">';
+        }
     }
     $current = $state['current'];
     $only = count($options) === 1 ? (string) array_key_first($options) : '';
@@ -152,7 +163,7 @@ function p202_gads_picker_html(string $self, string $token, int $destinationId, 
         $options = [$current => 'Action ' . $current . ' (set now; Google Ads no longer lists it as an enabled import action)'] + $options;
     }
 
-    return $out . $open . '<input type="hidden" name="gads_account" value="' . $e(p202_gads_account_value($account)) . '">'
+    return $out . $open . $names . '<input type="hidden" name="gads_account" value="' . $e(p202_gads_account_value($account)) . '">'
         . '<label class="form-label" for="gads_action_' . $destinationId . '">Conversion action</label>'
         . '<select class="form-select mb-2" id="gads_action_' . $destinationId . '" name="gads_conversion_action" required>'
         . p202_setup_options($options, $current !== '' ? $current : $only, $current !== '' || $only !== '' ? null : 'Choose a conversion action') . '</select>'
@@ -164,23 +175,13 @@ function p202_gads_picker_html(string $self, string $token, int $destinationId, 
 /**
  * Save what the picker posted. Null when the account has no such
  * destination; else whether it now has both an account and an action.
+ * The names posted beside the choices become the destination's labels.
  *
  * @param array<array-key, mixed> $post
  * @throws DestinationInputException
  */
 function p202_gads_pick(DestinationStore $store, int $userId, int $destinationId, array $post, int $now): ?bool
 {
-    $destination = $store->get($userId, $destinationId);
-    if ($destination === null) {
-        return null;
-    }
-    if ($destination['type'] !== GoogleAdsDestination::TYPE) {
-        throw new DestinationInputException('type', 'Only a Google Ads destination has an account to pick.');
-    }
-    $settings = (array) $destination['settings'];
-    if (isset($settings['settings_invalid'])) {
-        throw new DestinationInputException('settings', 'This destination\'s stored settings cannot be read. Delete it and add it again.');
-    }
     $account = $post['gads_account'] ?? null;
     if (!is_string($account) || preg_match('/\A([0-9]{10})(?::([0-9]{10}))?\z/D', $account, $m) !== 1) {
         throw new DestinationInputException('settings.customer_id', 'Choose the Google Ads account from the list.');
@@ -189,19 +190,37 @@ function p202_gads_pick(DestinationStore $store, int $userId, int $destinationId
     if (!is_string($action)) {
         throw new DestinationInputException('settings.conversion_action', 'Choose one conversion action from the list.');
     }
-    if (($settings['customer_id'] ?? null) !== $m[1]) {
-        // Conversion actions belong to an account: another account's are not carried over.
-        unset($settings['conversion_action'], $settings['campaign_conversion_actions']);
-    }
-    $settings['customer_id'] = $m[1];
-    unset($settings['login_customer_id']);
-    if (isset($m[2])) {
-        $settings['login_customer_id'] = $m[2];
-    }
-    if ($action !== '') {
-        $settings['conversion_action'] = $action;
-    }
-    $saved = $store->update($userId, $destinationId, ['settings' => $settings], $now);
+    $names = is_array($post['gads_names'] ?? null) ? $post['gads_names'] : [];
+    $name = static function (string $list, string $value) use ($names): ?string {
+        $found = is_array($names[$list] ?? null) ? ($names[$list][$value] ?? null) : null;
+
+        return is_string($found) && trim($found) !== '' ? $found : null;
+    };
+    $saved = (new GoogleAdsPicker($store, new GoogleAdsAccounts()))->save(
+        $userId,
+        $destinationId,
+        $m[1],
+        $m[2] ?? null,
+        $action === '' ? null : $action,
+        $name('account', $account),
+        $action === '' ? null : $name('action', $action),
+        $now
+    );
 
     return $saved === null ? null : isset(((array) $saved['settings'])['conversion_action']);
+}
+
+/**
+ * A setting as the list shows it: the name Google gave it with its ID, or
+ * the ID alone when no name was stored (typed IDs, the CLI).
+ *
+ * @param array<string, mixed> $settings
+ */
+function p202_gads_named(array $settings, string $label, string $key): string
+{
+    $id = is_string($settings[$key] ?? null) ? $settings[$key] : '';
+    $shown = $key === 'customer_id' ? GoogleAdsAccounts::dashed($id) : $id;
+    $name = $settings['labels'][$label]['name'] ?? null;
+
+    return is_string($name) && $name !== '' ? $name . ' (' . $shown . ')' : $shown;
 }

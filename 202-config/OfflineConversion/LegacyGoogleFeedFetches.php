@@ -166,6 +166,18 @@ final class LegacyGoogleFeedFetches
     }
 
     /**
+     * How many of the account's schedules still wait to be moved over: what
+     * Home and Account Overview say, until each is moved or hidden.
+     */
+    public function waiting(int $userId, int $now): int
+    {
+        return count(array_filter(
+            $this->forAccount($userId, $now),
+            static fn (array $fetch): bool => $fetch['state'] === self::READY
+        ));
+    }
+
+    /**
      * Move one of the account's schedules over: its conversion action
      * becomes the Google name of the campaign it named (the account's name
      * for every other campaign, for ac=--), and a fetch URL is made in the

@@ -170,6 +170,40 @@ final class GoogleAdsDestinationTest extends TestCase
         self::assertStringContainsString('not connected', $ads->send([], self::credentials(false), self::facts(), false, self::NOW)->reason);
     }
 
+    public function testANameIsKeptOnlyWhileItNamesTheSettingItWasPickedFor(): void
+    {
+        $ads = $this->ads();
+        $labels = ['customer' => ['id' => '123-456-7890', 'name' => ' Online Store '], 'conversion_action' => ['id' => '987654', 'name' => 'Purchase']];
+        $kept = ['customer' => ['id' => '1234567890', 'name' => 'Online Store'], 'conversion_action' => ['id' => '987654', 'name' => 'Purchase']];
+        self::assertSame($kept, $ads->validate(['customer_id' => '1234567890', 'conversion_action' => '987654', 'labels' => $labels], null)[0]['labels']);
+        // Another action typed over the picked one: its name goes, the account's stays.
+        self::assertSame(
+            ['customer' => $kept['customer']],
+            $ads->validate(['customer_id' => '1234567890', 'conversion_action' => '55', 'labels' => $labels], null)[0]['labels']
+        );
+        // Another account: neither name is its.
+        self::assertArrayNotHasKey('labels', $ads->validate(['customer_id' => '5556667777', 'conversion_action' => '55', 'labels' => $labels], null)[0]);
+        self::assertArrayNotHasKey('labels', $ads->validate(['labels' => $labels], null)[0]);
+        self::assertArrayNotHasKey('labels', $ads->validate(['customer_id' => '1234567890', 'labels' => []], null)[0]);
+        self::assertContains('labels', $ads->settingKeys());
+
+        $base = ['customer_id' => '1234567890', 'conversion_action' => '987654'];
+        $refused = [
+            ['settings.labels', 'Online Store'],
+            ['settings.labels', ['account' => ['id' => '1234567890', 'name' => 'Online Store']]],
+            ['settings.labels.customer', ['customer' => 'Online Store']],
+            ['settings.labels.customer', ['customer' => ['id' => '1234567890']]],
+            ['settings.labels.customer', ['customer' => ['id' => 1234567890, 'name' => 'Online Store']]],
+            ['settings.labels.customer', ['customer' => ['id' => '1234567890', 'name' => '  ']]],
+            ['settings.labels.customer', ['customer' => ['id' => '1234567890', 'name' => "Online\nStore"]]],
+            ['settings.labels.customer', ['customer' => ['id' => '1234567890', 'name' => str_repeat('a', 201)]]],
+            ['settings.labels.conversion_action', ['conversion_action' => ['id' => '987654', 'name' => 'Purchase', 'type' => 'UPLOAD_CLICKS']]],
+        ];
+        foreach ($refused as [$field, $given]) {
+            self::refused(fn () => $ads->validate($base + ['labels' => $given], null), $field);
+        }
+    }
+
     public function testARefusedRequestsBodyIsSaidInASentence(): void
     {
         $failure = '{"error":{"code":403,"message":"The caller does not have permission","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.ads.googleads.v26.errors.GoogleAdsFailure","errors":[{"errorCode":{"authorizationError":"DEVELOPER_TOKEN_NOT_APPROVED"},"message":"The developer token is only approved for use with test accounts."}]}]}}';
