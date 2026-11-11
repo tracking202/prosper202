@@ -48,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($refundId !== null && $action === 'record_refund') {
                 $postedClick = $_POST['click_id'] ?? null;
                 $amount = is_string($_POST['amount'] ?? null) ? trim($_POST['amount']) : '';
-                $outcome = $desk->settle(
+                $outcome = $desk->takeBack(
                     $userId,
                     (string) $refundId,
                     $amount,
