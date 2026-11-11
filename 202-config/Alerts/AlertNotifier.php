@@ -22,6 +22,8 @@ final class AlertNotifier
     public const SLACK = 'slack';
     public const EMAIL = 'email';
     public const WEBHOOK = 'webhook';
+    /** The channels as a sentence names them. */
+    public const CHANNEL_NAMES = [self::SLACK => 'Slack', self::EMAIL => 'Email', self::WEBHOOK => 'Webhooks'];
 
     /** Where the alerts are turned off, as every message names it. */
     public const SETTINGS_PLACE = 'Account › Personal settings › Money-loss alerts';
@@ -66,6 +68,41 @@ final class AlertNotifier
         $base = PasswordResetLink::base((string) ($row['user_tracking_domain'] ?? ''), $server, $installRoot);
 
         return $base === null ? null : $base . self::SETTINGS_PAGE;
+    }
+
+    /** The install's address, when the settings card's is known. */
+    private function baseUrl(): ?string
+    {
+        return $this->settingsUrl !== null && str_ends_with($this->settingsUrl, self::SETTINGS_PAGE)
+            ? substr($this->settingsUrl, 0, -strlen(self::SETTINGS_PAGE))
+            : null;
+    }
+
+    /** The address of the page that shows the alert's problem, or null when the install's is not known. */
+    public function pageUrl(Alert $alert): ?string
+    {
+        $base = $this->baseUrl();
+
+        return $base === null ? null : $base . $alert->kind->page($alert->campaignId);
+    }
+
+    /**
+     * The settings card's test: an alert about nothing, sent the way a real
+     * one is, to the channels the settings turn on. Its webhook event goes
+     * to the webhooks subscribed to any alert.
+     */
+    public static function testAlert(int $userId, int $now): Alert
+    {
+        return new Alert(
+            AlertKind::Test,
+            $userId,
+            0,
+            'your alerts reach you',
+            $now,
+            'This is a test of your Prosper202 money-loss alerts, sent from ' . self::SETTINGS_PLACE
+            . '. Nothing is wrong: an alert about one of your campaigns arrives the way this did.',
+            ['test' => 1]
+        );
     }
 
     /** The line every message ends with: how to turn the alerts off. */
@@ -138,10 +175,20 @@ final class AlertNotifier
         }
         if ($settings->notifyWebhook) {
             try {
-                $queued = (new MysqlWebhookRepository($this->conn))
-                    ->enqueue($alert->userId, $alert->kind->value, $alert->payload());
+                // A test reaches the webhooks the alerts themselves would.
+                $subscribedTo = $alert->kind === AlertKind::Test
+                    ? array_map(static fn (AlertKind $kind): string => $kind->value, AlertKind::DETECTED)
+                    : [$alert->kind->value];
+                $queued = (new MysqlWebhookRepository($this->conn))->enqueueFor(
+                    $alert->userId,
+                    $alert->kind->value,
+                    $subscribedTo,
+                    $alert->payload() + ['url' => $this->pageUrl($alert)]
+                );
                 if ($queued === 0) {
-                    $result['skipped'][self::WEBHOOK] = 'no webhook subscribes to ' . $alert->kind->value;
+                    $result['skipped'][self::WEBHOOK] = $alert->kind === AlertKind::Test
+                        ? 'no webhook subscribes to the alerts'
+                        : 'no webhook subscribes to ' . $alert->kind->value;
                 } else {
                     $result['taken'][] = self::WEBHOOK;
                 }
@@ -170,8 +217,10 @@ final class AlertNotifier
         $optOut = $this->settingsUrl !== null
             ? 'To turn these alerts off: <' . $escape($this->settingsUrl) . '|' . self::SETTINGS_PLACE . '>.'
             : $escape($this->optOutLine());
+        $page = $this->pageUrl($alert);
+        $link = $page === null ? '' : '<' . $escape($page) . '|' . $escape($alert->kind->pageLabel()) . ">\n";
         $json = json_encode([
-            'text' => '*' . $alert->kind->title() . '*: ' . $escape($alert->message) . "\n" . $optOut,
+            'text' => '*' . $alert->kind->title() . '*: ' . $escape($alert->message) . "\n" . $link . $optOut,
             'username' => $domain !== '' ? $domain : 'Prosper202',
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
         if ($json === false) {
@@ -189,7 +238,9 @@ final class AlertNotifier
             ' ',
             '[Prosper202] ' . $alert->kind->title() . ': ' . $alert->campaignName
         );
+        $page = $this->pageUrl($alert);
         $body = $alert->message . "\n\n"
+            . ($page === null ? '' : $alert->kind->pageLabel() . ': ' . $page . "\n\n")
             . 'Money-loss alerts are on for your Prosper202 account. ' . $this->optOutLine() . "\n";
         $headers = 'MIME-Version: 1.0' . "\r\n"
             . 'Content-Type: text/plain; charset=UTF-8' . "\r\n"

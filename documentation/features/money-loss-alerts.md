@@ -75,7 +75,31 @@ and each sends only where it has somewhere to go:
   retried as every webhook event is; see [the payloads](../api/20-ltv.md).
 
 An account with no email address, no Slack webhook and no subscribed webhook
-gets nothing, and nothing is logged for it.
+is sent nothing; its alerts are still listed in the app.
+
+## In the app
+
+Every alert is also listed on **Home** (the last 7 days) and on the settings
+card (the last 30 days) from the moment it is raised, whatever became of its
+message: when it was first seen, whether the problem is still going on (the
+last hourly run still found it), a link to the page that shows the problem,
+and how it was sent, or why each channel did not take it. A server whose
+`mail()` accepts a message and never delivers it cannot hide an alert there.
+The list keeps an alert for 90 days after its problem was last seen.
+
+Each message carries the same link when the install's address is known: the
+Inbound Log for conversions that stopped and for refused postbacks, the
+campaign for spend with no conversions. Webhook payloads carry it as `url`.
+
+## Send a test alert
+
+**Send a test alert** on the settings card sends a harmless alert at once to
+every place your saved settings switch on, the way a real one is sent, and
+the page then says what each did: Slack took it or why it did not, whether
+the server's mail system accepted the email (and what to do when it does not
+arrive), and whether a webhook was queued. Webhooks receive it as the event
+`alert.test`, on every webhook subscribed to any of the alerts or to every
+event. A test is not listed as an alert.
 
 Every email and Slack message ends with a line saying how to turn the alerts
 off. The line links to the settings page when the install's address is known:
@@ -86,4 +110,4 @@ message names the page without a link.
 If every channel tried for an alert fails (Slack answered an error, `mail()`
 refused it, the webhook could not be queued), the alert is tried again the
 next hour, at most three times per incident. Failures are written to the PHP
-error log.
+error log, and the alert's row in the app says which channel failed and why.

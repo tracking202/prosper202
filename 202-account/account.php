@@ -55,7 +55,7 @@ $slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 // Account/key settings require the same permission that gates their UI; reject
 // forged requests from users who lack it (the password-change flow is excluded
 // because every user may change their own password).
-$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry', 'update_money_loss_alerts'];
+$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry', 'update_money_loss_alerts', 'send_test_money_loss_alert'];
 $personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key', 'test_click_filter'];
 $wantsPersonalSettingsAction = false;
 foreach ($personalSettingsPost as $personalSettingsAction) {
@@ -1112,7 +1112,8 @@ echo p202_account_render_flashes($extraFlashes);
                 $alertsView['settings'],
                 $alertsView['contact'],
                 $alertsPost['errors'],
-                $alertsPost['form']
+                $alertsPost['form'],
+                $alertsView['recent']
             );
         } ?>
 

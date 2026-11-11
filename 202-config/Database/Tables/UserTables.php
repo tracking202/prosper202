@@ -35,6 +35,7 @@ final class UserTables
             self::ipqsProgress(),
             self::alertSettings(),
             self::alertState(),
+            self::alertLog(),
         ];
     }
 
@@ -441,6 +442,39 @@ final class UserTables
                 `delivered` tinyint(1) unsigned NOT NULL DEFAULT '1',
                 `attempts` tinyint(3) unsigned NOT NULL DEFAULT '1',
                 PRIMARY KEY (`user_id`, `aff_campaign_id`, `alert_kind`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The alerts an account was raised, one row per incident, for Home and
+     * the settings card to show whatever a channel did with them
+     * (Prosper202\Alerts\MysqlAlertStore). last_seen_at is the last hourly
+     * run the problem still held at. delivery is 0 not tried yet, 1 a
+     * channel took it, 2 every channel tried failed, 3 the account has
+     * nowhere to send it; delivery_note says why for each channel that did
+     * not take it. Rows are kept AlertRun::LOG_DAYS days. From 1.9.80.
+     */
+    public static function alertLog(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ALERT_LOG,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ALERT_LOG . "` (
+                `alert_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `aff_campaign_id` mediumint(8) unsigned NOT NULL,
+                `alert_kind` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `incident_key` int(10) unsigned NOT NULL,
+                `message` text NOT NULL,
+                `first_seen_at` int(10) unsigned NOT NULL,
+                `last_seen_at` int(10) unsigned NOT NULL,
+                `delivery` tinyint(3) unsigned NOT NULL DEFAULT '0',
+                `attempts` tinyint(3) unsigned NOT NULL DEFAULT '0',
+                `sent_by` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+                `delivery_note` text DEFAULT NULL,
+                PRIMARY KEY (`alert_id`),
+                UNIQUE KEY `incident` (`user_id`, `aff_campaign_id`, `alert_kind`, `incident_key`),
+                KEY `user_seen` (`user_id`, `last_seen_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

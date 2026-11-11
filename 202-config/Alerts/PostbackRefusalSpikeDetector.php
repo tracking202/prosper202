@@ -86,7 +86,8 @@ final class PostbackRefusalSpikeDetector implements AlertDetector
             $reasons[(string) $row['outcome']] = (int) $row['n'];
         }
         $named = implode(', ', array_map(
-            static fn (string $outcome, int $n): string => $outcome . ' (' . number_format($n) . ')',
+            static fn (string $outcome, int $n): string
+                => str_replace('_', ' ', $outcome) . ' (' . number_format($n) . ')',
             array_keys($reasons),
             $reasons
         ));

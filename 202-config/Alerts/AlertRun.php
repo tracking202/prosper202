@@ -18,10 +18,18 @@ use Prosper202\Database\Connection;
  * per incident, so a server that cannot send mail logs a few lines per
  * incident rather than one an hour. One account's failure is logged and
  * the others go on.
+ *
+ * Every alert is also written to the account's log (202_alert_log) before
+ * any channel is tried, with what each channel then did, so Home and the
+ * settings card show it whether or not a message arrived.
  */
 final class AlertRun
 {
     public const MAX_ATTEMPTS = 3;
+    /** How long the account's log keeps an alert after its problem was last seen. */
+    public const LOG_DAYS = 90;
+    /** An alert is still going on when a run saw its problem this recently (the run is hourly). */
+    public const ACTIVE_SECONDS = 2 * 3600 + 600;
 
     /** @var list<AlertDetector> */
     private array $detectors;
@@ -118,9 +126,11 @@ final class AlertRun
     ): void {
         $activity = AccountActivity::read($this->conn, $userId, $now);
         $sent = $store->sentIncidents($userId);
+        $store->pruneLog($userId, $now - self::LOG_DAYS * 86400);
         $contact = null;
         foreach ($this->detectors as $detector) {
             foreach ($detector->detect($this->conn, $activity, $settings) as $alert) {
+                $store->logSeen($alert, $now);
                 [$key, $delivered, $attempts] = $sent[MysqlAlertStore::incidentId($alert)] ?? [null, false, 0];
                 $tries = $key === $alert->incidentKey ? $attempts : 0;
                 if ($key === $alert->incidentKey && ($delivered || $tries >= self::MAX_ATTEMPTS)) {
@@ -128,6 +138,7 @@ final class AlertRun
                 }
                 $contact ??= $this->notifier->contact($userId);
                 $result = $this->notifier->deliver($alert, $settings, $contact);
+                $store->logDelivery($alert, $result, $tries + 1);
                 foreach ($result['failed'] as $channel => $why) {
                     error_log('Money-loss alerts: the ' . $alert->kind->stateKey() . ' alert for campaign '
                         . $alert->campaignId . ' of account ' . $userId . ' was not sent by ' . $channel . ': ' . $why);

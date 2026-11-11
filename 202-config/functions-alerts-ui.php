@@ -2,14 +2,16 @@
 
 /**
  * Personal settings' Money-loss alerts card (202-account/account.php): its
- * form's handling, the read the card shows, and the card. Every value goes
- * through AlertSettings::fromInput(). Needs functions-account-ui.php.
+ * form's handling, its test alert, the read the card shows, and the card;
+ * and the account's alerts as Home and the card list them. Every value goes
+ * through AlertSettings::fromInput(). The card needs functions-account-ui.php.
  */
 
 declare(strict_types=1);
 
 use Prosper202\Alerts\AlertKind;
 use Prosper202\Alerts\AlertNotifier;
+use Prosper202\Alerts\AlertRun;
 use Prosper202\Alerts\AlertSettings;
 use Prosper202\Alerts\MysqlAlertStore;
 use Prosper202\Database\Connection;
@@ -28,11 +30,16 @@ const P202_ALERTS_RETURN = '202-account/account.php#money-loss-alerts';
 function p202_alerts_post(\mysqli $db, int $userId, array $post): array
 {
     $answer = ['errors' => [], 'form' => [], 'flashes' => []];
-    if (!isset($post['update_money_loss_alerts'])) {
+    if (!isset($post['update_money_loss_alerts']) && !isset($post['send_test_money_loss_alert'])) {
         return $answer;
     }
     if (!AUTH::check_csrf_token()) {
         p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+        p202_account_redirect(P202_ALERTS_RETURN);
+    }
+    if (isset($post['send_test_money_loss_alert'])) {
+        [$kind, $text] = p202_alerts_send_test($db, $userId, $_SERVER, dirname(__DIR__), time());
+        p202_account_flash($kind, $text);
         p202_account_redirect(P202_ALERTS_RETURN);
     }
     $posted = [
@@ -80,16 +87,163 @@ function p202_alerts_post(\mysqli $db, int $userId, array $post): array
 }
 
 /**
+ * Sends a test alert on the channels the account's saved settings turn on,
+ * as the hourly run sends a real one: the flash's kind and its sentence,
+ * which says what each channel did.
+ *
+ * @param array<string, mixed> $server normally $_SERVER
+ * @param ?AlertNotifier $notifier the install's when null
+ * @return array{0: 'ok'|'warn'|'bad', 1: string}
+ */
+function p202_alerts_send_test(
+    \mysqli $db,
+    int $userId,
+    array $server,
+    string $installRoot,
+    int $now,
+    ?AlertNotifier $notifier = null
+): array {
+    $conn = new Connection($db);
+    try {
+        $settings = (new MysqlAlertStore($conn))->settings($userId);
+        if (!$settings->enabled) {
+            return ['warn', 'No test alert was sent: money-loss alerts are off for your account. Turn them on and'
+                . ' save, then send the test.'];
+        }
+        $notifier ??= new AlertNotifier(
+            $conn,
+            new \Prosper202\Notifications\SlackWebhook(),
+            null,
+            AlertNotifier::settingsUrl($conn, $server, $installRoot)
+        );
+        $contact = $notifier->contact($userId);
+        $result = $notifier->deliver(AlertNotifier::testAlert($userId, $now), $settings, $contact);
+    } catch (\Throwable $e) {
+        error_log('account.php: the test alert could not be sent: ' . get_class($e) . ': ' . $e->getMessage());
+
+        return ['bad', 'The test alert could not be sent. Try again; if it keeps failing, the server error log'
+            . ' says why.'];
+    }
+    $took = [
+        AlertNotifier::SLACK => 'Slack took it: look for it in your channel.',
+        AlertNotifier::EMAIL => 'Email: this server\'s mail system accepted it for ' . $contact['email']
+            . '. If it has not arrived in a few minutes (look in spam too), this server is not delivering mail:'
+            . ' use Slack or a webhook as well. Every alert is listed on Home and on this card whatever happens to'
+            . ' its message.',
+        AlertNotifier::WEBHOOK => 'Webhooks: queued as alert.test for your webhooks that take the alerts; the cron'
+            . ' job sends it within a minute.',
+    ];
+    $lines = [];
+    foreach ($result['taken'] as $channel) {
+        $lines[] = $took[$channel];
+    }
+    foreach ($result['failed'] as $channel => $why) {
+        $lines[] = AlertNotifier::CHANNEL_NAMES[$channel] . ': failed, ' . $why . '.';
+    }
+    foreach ($result['skipped'] as $channel => $why) {
+        $lines[] = AlertNotifier::CHANNEL_NAMES[$channel] . ': not tried, ' . $why . '.';
+    }
+    if ($result['taken'] === []) {
+        return ['bad', 'The test alert reached no channel, so a real alert would be shown only on Home and on this'
+            . ' card. ' . implode(' ', $lines)];
+    }
+
+    return [
+        $result['failed'] === [] ? 'ok' : 'warn',
+        'Test alert sent with your saved settings. ' . implode(' ', $lines),
+    ];
+}
+
+/**
+ * The account's alerts as Home and the settings card list them: when, what,
+ * the page that shows the problem, and what each channel did with it. ''
+ * when there are none.
+ *
+ * @param list<array{kind: AlertKind, campaign_id: int, message: string, first_seen_at: int, last_seen_at: int,
+ *     delivery: int, attempts: int, sent_by: list<string>, delivery_note: string}> $alerts MysqlAlertStore::recent()
+ * @param string $base the install's address (get_absolute_url())
+ */
+function p202_alerts_list(array $alerts, string $base, int $now): string
+{
+    if ($alerts === []) {
+        return '';
+    }
+    $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+    $rows = '';
+    foreach ($alerts as $alert) {
+        $active = $alert['last_seen_at'] >= $now - AlertRun::ACTIVE_SECONDS;
+        $names = implode(', ', array_map(
+            static fn (string $channel): string => AlertNotifier::CHANNEL_NAMES[$channel] ?? $channel,
+            $alert['sent_by']
+        ));
+        $note = $alert['delivery_note'] !== '' ? ' ' . $alert['delivery_note'] . '.' : '';
+        $delivery = match ($alert['delivery']) {
+            MysqlAlertStore::SENT => 'Sent by ' . $names . '.' . $note,
+            MysqlAlertStore::FAILED => ($alert['attempts'] >= AlertRun::MAX_ATTEMPTS
+                ? 'Never sent, after ' . $alert['attempts'] . ' tries.'
+                : 'Not sent yet (try ' . $alert['attempts'] . ' of ' . AlertRun::MAX_ATTEMPTS . ').') . $note,
+            MysqlAlertStore::NOWHERE => 'Shown here only: no channel had anywhere to send it.' . $note,
+            default => 'Not sent yet.',
+        };
+        $rows .= '<tr><td class="text-nowrap">' . $e(date('Y-m-d H:i', $alert['first_seen_at'])) . '</td>'
+            . '<td><span class="p202-pill' . ($active ? ' p202-pill--bad">Going on' : '">Earlier') . '</span> '
+            . '<strong>' . $e($alert['kind']->title()) . '</strong><div>' . $e($alert['message']) . '</div>'
+            . '<div><a href="' . $e($base . $alert['kind']->page($alert['campaign_id'])) . '">'
+            . $e($alert['kind']->pageLabel()) . '</a></div></td>'
+            . '<td' . ($alert['delivery'] === MysqlAlertStore::FAILED ? ' class="text-danger"' : '') . '>'
+            . $e($delivery) . '</td></tr>';
+    }
+
+    return '<div class="p202-table-wrap"><table class="table p202-table">'
+        . '<thead><tr><th>First seen</th><th>Alert</th><th>How it was sent</th></tr></thead>'
+        . '<tbody>' . $rows . '</tbody></table></div>';
+}
+
+/**
+ * Home's panel: the account's alerts of the last 7 days, the ones still
+ * going on first in time. '' when there are none, or when they cannot be
+ * read (logged; Home has nothing else to say about it).
+ */
+function p202_alerts_home_panel(\mysqli $db, int $userId, string $base, int $now): string
+{
+    try {
+        $alerts = (new MysqlAlertStore(new Connection($db)))->recent($userId, $now - 7 * 86400, 10);
+    } catch (\Throwable $e) {
+        error_log('Home: the money-loss alerts could not be read: ' . get_class($e) . ': ' . $e->getMessage());
+
+        return '<section class="p202-panel mb-4" id="money-loss-alerts"><div class="p202-panel__head">'
+            . '<h2 class="p202-panel__title">Money-loss alerts</h2></div><div class="p202-panel__body">'
+            . 'Your alerts could not be read just now. Reload the page to see them.</div></section>';
+    }
+    if ($alerts === []) {
+        return '';
+    }
+    $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+
+    return '<section class="p202-panel mb-4" id="money-loss-alerts"><div class="p202-panel__head">'
+        . '<h2 class="p202-panel__title">Money-loss alerts</h2>'
+        . '<span class="p202-panel__sub">the last 7 days · <a href="' . $e($base . AlertNotifier::SETTINGS_PAGE)
+        . '">settings</a></span></div>'
+        . '<div class="p202-panel__body">' . p202_alerts_list($alerts, $base, $now) . '</div></section>';
+}
+
+/**
  * The card's read: the settings as stored and where alerts would go, or
  * null with a flash when they cannot be read (so no form of defaults is
- * shown to save over them).
+ * shown to save over them); and the alerts of the last 30 days, null when
+ * they cannot be read (the card says so rather than "none").
  *
  * @return array{settings: ?AlertSettings, contact: array{email: string, slack: string, domain: string},
- *     flashes: list<array{kind: string, text: string}>}
+ *     recent: ?list<array<string, mixed>>, flashes: list<array{kind: string, text: string}>}
  */
 function p202_alerts_view(\mysqli $db, int $userId): array
 {
-    $view = ['settings' => null, 'contact' => ['email' => '', 'slack' => '', 'domain' => ''], 'flashes' => []];
+    $view = [
+        'settings' => null,
+        'contact' => ['email' => '', 'slack' => '', 'domain' => ''],
+        'recent' => [],
+        'flashes' => [],
+    ];
     $conn = new Connection($db);
     try {
         $view['settings'] = (new MysqlAlertStore($conn))->settings($userId);
@@ -101,6 +255,14 @@ function p202_alerts_view(\mysqli $db, int $userId): array
             'kind' => 'bad',
             'text' => 'Your money-loss alert settings could not be read just now. Reload the page to see them.',
         ];
+
+        return $view;
+    }
+    try {
+        $view['recent'] = (new MysqlAlertStore($conn))->recent($userId, time() - 30 * 86400, 20);
+    } catch (\Throwable $e) {
+        error_log('Account page: the money-loss alerts could not be read: ' . get_class($e) . ': ' . $e->getMessage());
+        $view['recent'] = null;
     }
 
     return $view;
@@ -110,9 +272,16 @@ function p202_alerts_view(\mysqli $db, int $userId): array
  * @param array{email: string, slack: string, domain: string} $contact
  * @param array<string, string> $errors
  * @param array<string, mixed> $form what a refused save sent
+ * @param ?list<array<string, mixed>> $recent the account's alerts of the last 30 days (MysqlAlertStore::recent()),
+ *        null when they could not be read
  */
-function p202_alerts_card(AlertSettings $settings, array $contact, array $errors, array $form): string
-{
+function p202_alerts_card(
+    AlertSettings $settings,
+    array $contact,
+    array $errors,
+    array $form,
+    ?array $recent = []
+): string {
     $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
     $action = $e(get_absolute_url() . P202_ALERTS_RETURN);
     $values = $settings->toArray();
@@ -211,5 +380,20 @@ function p202_alerts_card(AlertSettings $settings, array $contact, array $errors
         . '</div>'
         . '<div class="p202-form-actions">'
         . '<button class="btn btn-primary" type="submit">Save money-loss alerts</button></div>'
-        . '</form></div></section>';
+        . '</form>'
+        . '<h3 class="p202-panel__title mb-2 mt-4">Check that they reach you</h3>'
+        . '<form method="post" action="' . $action . '" id="money-loss-alerts-test">'
+        . '<input type="hidden" name="send_test_money_loss_alert" value="1">' . p202_account_token_field()
+        . '<button class="btn btn-secondary" type="submit">Send a test alert</button>'
+        . '<div class="form-text">Sent now to each place switched on above, with your saved settings, the way a real'
+        . ' alert is. This page then says what each one did with it.</div></form>'
+        . '<h3 class="p202-panel__title mb-2 mt-4" id="money-loss-alerts-recent">Your alerts, the last 30 days</h3>'
+        . match (true) {
+            $recent === null => '<p class="form-text mt-0 mb-0">Your alerts could not be read just now. Reload the'
+                . ' page to see them.</p>',
+            $recent === [] => '<p class="form-text mt-0 mb-0">None. An alert is listed here and on Home when it is'
+                . ' raised, whether or not its message arrives.</p>',
+            default => p202_alerts_list($recent, get_absolute_url(), time()),
+        }
+        . '</div></section>';
 }

@@ -91,7 +91,7 @@ final class PostbackRefusalSpikeIntegrationTest extends TestCase
         self::assertSame(1.0, $alert->facts['usual_refused_per_hour']);
         self::assertSame('{"bad_signature":30,"unknown_click":12}', $alert->facts['top_refusals']);
         self::assertStringStartsWith('42 inbound postbacks and pixels were refused in the last hour, against about 1.0 an hour', $alert->message);
-        self::assertStringContainsString('Most were: bad_signature (30), unknown_click (12)', $alert->message);
+        self::assertStringContainsString('Most were: bad signature (30), unknown click (12)', $alert->message);
         self::assertSame(intdiv(self::NOW, 86400), $alert->incidentKey, 'once a day while it lasts');
         self::assertSame([], self::detect(self::OTHER), 'another account\'s log is not this one\'s');
     }

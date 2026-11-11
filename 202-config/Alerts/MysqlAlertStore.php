@@ -171,6 +171,113 @@ final class MysqlAlertStore
         $this->conn->executeUpdate($stmt);
     }
 
+    public const NOT_TRIED = 0;
+    public const SENT = 1;
+    public const FAILED = 2;
+    public const NOWHERE = 3;
+
+    /**
+     * Records that the alert's problem held at $now: the incident's row in
+     * the account's log is made, or its message and last-seen time brought
+     * up to date. The in-app record needs no channel.
+     */
+    public function logSeen(Alert $alert, int $now): void
+    {
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_alert_log'
+            . ' (user_id, aff_campaign_id, alert_kind, incident_key, message, first_seen_at, last_seen_at)'
+            . ' VALUES (?, ?, ?, ?, ?, ?, ?)'
+            . ' ON DUPLICATE KEY UPDATE message = VALUES(message), last_seen_at = VALUES(last_seen_at)'
+        );
+        $this->conn->bind($stmt, 'iisisii', [
+            $alert->userId,
+            $alert->campaignId,
+            $alert->kind->stateKey(),
+            $alert->incidentKey,
+            $alert->message,
+            $now,
+            $now,
+        ]);
+        $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * Records what the channels did with the incident on its attempts'th
+     * try (AlertNotifier::deliver()'s answer).
+     *
+     * @param array{taken: list<string>, failed: array<string, string>, skipped: array<string, string>} $result
+     */
+    public function logDelivery(Alert $alert, array $result, int $attempts): void
+    {
+        $notes = [];
+        foreach ($result['failed'] + $result['skipped'] as $channel => $why) {
+            $notes[] = AlertNotifier::CHANNEL_NAMES[$channel] . ': ' . $why;
+        }
+        $delivery = $result['taken'] !== [] ? self::SENT : ($result['failed'] !== [] ? self::FAILED : self::NOWHERE);
+        $stmt = $this->conn->prepareWrite(
+            'UPDATE 202_alert_log SET delivery = ?, attempts = ?, sent_by = ?, delivery_note = ?'
+            . ' WHERE user_id = ? AND aff_campaign_id = ? AND alert_kind = ? AND incident_key = ?'
+        );
+        $this->conn->bind($stmt, 'iissiisi', [
+            $delivery,
+            min($attempts, 255),
+            implode(',', $result['taken']),
+            $notes === [] ? null : implode('; ', $notes),
+            $alert->userId,
+            $alert->campaignId,
+            $alert->kind->stateKey(),
+            $alert->incidentKey,
+        ]);
+        $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * The account's alerts last seen at or after $since, the latest first.
+     *
+     * @return list<array{kind: AlertKind, campaign_id: int, message: string, first_seen_at: int,
+     *     last_seen_at: int, delivery: int, attempts: int, sent_by: list<string>, delivery_note: string}>
+     */
+    public function recent(int $userId, int $since, int $limit): array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT aff_campaign_id, alert_kind, message, first_seen_at, last_seen_at, delivery, attempts, sent_by,'
+            . ' delivery_note FROM 202_alert_log WHERE user_id = ? AND last_seen_at >= ?'
+            . ' ORDER BY last_seen_at DESC, alert_id DESC LIMIT ?'
+        );
+        $this->conn->bind($stmt, 'iii', [$userId, $since, $limit]);
+        $alerts = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $kind = AlertKind::tryFrom('alert.' . $row['alert_kind']);
+            if ($kind === null) {
+                throw new \UnexpectedValueException(
+                    "Account $userId's alert log holds an alert of no known kind: " . $row['alert_kind']
+                );
+            }
+            $alerts[] = [
+                'kind' => $kind,
+                'campaign_id' => (int) $row['aff_campaign_id'],
+                'message' => (string) $row['message'],
+                'first_seen_at' => (int) $row['first_seen_at'],
+                'last_seen_at' => (int) $row['last_seen_at'],
+                'delivery' => (int) $row['delivery'],
+                'attempts' => (int) $row['attempts'],
+                'sent_by' => $row['sent_by'] === '' ? [] : explode(',', (string) $row['sent_by']),
+                'delivery_note' => (string) ($row['delivery_note'] ?? ''),
+            ];
+        }
+
+        return $alerts;
+    }
+
+    /** Removes the account's alerts last seen before $before. */
+    public function pruneLog(int $userId, int $before): int
+    {
+        $stmt = $this->conn->prepareWrite('DELETE FROM 202_alert_log WHERE user_id = ? AND last_seen_at < ?');
+        $this->conn->bind($stmt, 'ii', [$userId, $before]);
+
+        return $this->conn->executeUpdate($stmt);
+    }
+
     /** @param array<string, mixed> $row */
     private static function settingsOf(array $row): AlertSettings
     {
