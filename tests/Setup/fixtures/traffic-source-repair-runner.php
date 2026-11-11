@@ -9,7 +9,9 @@
  * hold rows the way another writer does in another, and act once the server
  * shows this one waiting.
  *
- * argv: <ppc_network_id> <acting user id> [repair|split]
+ * argv: <ppc_network_id> <acting user id> [repair|split|auto]
+ * (auto reads no id: TrafficSourceOwners::splitAutomatically(), as the cron
+ * job's hourly tier calls it)
  * Prints this connection's id on the first line, then `ok`, `refused: …` or
  * the failure.
  *
@@ -44,6 +46,11 @@ echo $db->thread_id, "\n";
 
 try {
     $owners = new \Prosper202\Setup\TrafficSourceOwners(new \Prosper202\Database\Connection($db));
+    if ($action === 'auto') {
+        // The cron job's hourly call; prints how many sources it split.
+        echo 'ok ', count($owners->splitAutomatically()), "\n";
+        exit;
+    }
     if ($action === 'split') {
         $plan = $owners->planSplit((int) $sourceId);
         $owners->split((int) $sourceId, $plan['owner'], $plan['copies'], (int) $actor);

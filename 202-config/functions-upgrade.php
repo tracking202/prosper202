@@ -5084,6 +5084,11 @@ class UPGRADE
                 // filled for the clicks of the last 30 days
                 // (_upgrade_fill_click_ad_ids()).
                 \Prosper202\Database\Tables\ClickTables::clicksAdIds(),
+                // 202_ppc_network_variables gains copied_from_ppc_variable_id:
+                // the variable a traffic source's copy took each of its own
+                // from (TrafficSourceOwners::split()), which names the values
+                // recorded before the copy. Null on every variable already there.
+                \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();

@@ -307,8 +307,9 @@ final class TrackingTables
                 `parameter` varchar(255) NOT NULL DEFAULT '',
                 `placeholder` varchar(255) NOT NULL DEFAULT '',
                 `deleted` tinyint(1) NOT NULL DEFAULT '0',
+                `copied_from_ppc_variable_id` int(11) unsigned DEFAULT NULL,
                 PRIMARY KEY (`ppc_variable_id`),
-                KEY ppc_network_id (ppc_network_id,deleted)
+                KEY `ppc_network_id` (`ppc_network_id`,`deleted`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
