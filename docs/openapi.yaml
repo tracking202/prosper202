@@ -1134,8 +1134,8 @@ paths:
         back, and each of those users is given a copy while nothing is taken
         from its user. It leaves the rest listed, and `auto_split_blocked_by`
         says why: `may_be_theirs` (an account was saved before the source
-        was, so the source may have been that user's and a move back may be
-        wanted), `same_name` (a user who would get a copy already has a live
+        was, or was removed, which keeps no saved time, so the source may
+        have been that user's and a move back may be wanted), `same_name` (a user who would get a copy already has a live
         source of that name), `no_such_user`, `deleted_user`. `splits` lists
         the splits of the last 30 days, the cron job's (`automatic: true`)
         and users'.
