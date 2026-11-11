@@ -857,7 +857,7 @@ try {
         $rotators = \Api\V3\Controllers\RotatorsController::class;
         $router->group('/rotators', function (Router $r) use ($crud, $queryParams, $rotators) {
             $r->get('',                        fn() => $crud($rotators)->list($queryParams));
-            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get(PathId::of($ctx)));
+            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->read(PathId::of($ctx)));
             $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules(PathId::of($ctx)));
         }, [$setupSection]);
         // A rule set that leaves out a rule removes it: the page's save asks

@@ -212,7 +212,6 @@ final class RotatorDestinationsIntegrationTest extends TestCase
         yield 'a redirect that is not an object' => [['redirects' => ['https://a.example/']], 'redirects.0'];
         yield 'a weight over 100' => [['redirects' => [['redirect_url' => 'https://a.example/', 'weight' => '250']]], 'redirects.0.weight'];
         yield 'a criterion type the redirects ignore' => [['criteria' => [['type' => 'county', 'statement' => 'is', 'value' => 'x']]], 'criteria.0.type'];
-        yield 'a country as a bare code, which never matches' => [['criteria' => [['type' => 'country', 'statement' => 'is', 'value' => 'United States(US),CA']]], 'criteria.0.value'];
         yield 'a criterion statement they ignore' => [['criteria' => [['type' => 'country', 'statement' => 'isnt', 'value' => 'x']]], 'criteria.0.statement'];
         yield 'a criterion that is not an object' => [['criteria' => ['country']], 'criteria.0'];
         $ip = static fn (string $value): array => [

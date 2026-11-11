@@ -282,6 +282,10 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/ReportSummaryForm.class.php' => [
             'table built at runtime | \\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope) | LEFT OUTER JOIN {\\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope)} AS lcp ON ( `2c`.click_id = lcp.' => self::LEDGER_PARTS,
         ],
+        '202-config/Rotator/SeenValues.php' => [
+            'table built at runtime | $lookup | AS seen STRAIGHT_JOIN {$lookup}'
+                . ' ON ( {$idColumn} = seen.id ) WHERE {$value}' => self::RUNTIME_CHECKED,
+        ],
         '202-config/Setup/TrafficSourceOwners.php' => [
             'no user_id tie | 202_ppc_networks | pn.ppc_network_id = pa.ppc_network_id' => self::OWNERSHIP_REPORT,
         ],
@@ -579,6 +583,21 @@ final class AccountScopedJoinTest extends TestCase
             }
         }
         self::assertGreaterThanOrEqual(8, $lists, 'every seen list was read');
+
+        // Setup › Redirectors' suggestions, read the same way: the account's
+        // grouped report rows, then lookups no account owns.
+        $suggested = 0;
+        foreach (\Prosper202\Rotator\SeenValues::types() as $type) {
+            $sql = \Prosper202\Rotator\SeenValues::sql($type, 20);
+            self::assertStringContainsString('d.user_id = ?', $sql);
+            self::assertSame(
+                1,
+                $this->assertTied($sql, "SeenValues::sql('$type')"),
+                'only the scoped click subquery reads an account-owned table'
+            );
+            $suggested++;
+        }
+        self::assertGreaterThanOrEqual(11, $suggested, 'every suggested type was read');
     }
 
     public function testReportAggregationKeepsTheCallersScopeBeforeLabelJoins(): void

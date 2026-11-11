@@ -401,9 +401,11 @@ var rotatorRuleCreateCmd = &cobra.Command{
 		} else if code, _ := cmd.Flags().GetString("country"); code != "" {
 			// Sugar: build a country criterion from an ISO code so the caller
 			// never has to know the exact "Name(CC)" value string.
+			// A code this list lacks is sent as it is: the server stores a
+			// country's code or name as Name(CC), and says so in meta.normalized.
 			value := countryCriteriaValue(code)
 			if value == "" {
-				return validationError("unknown country code %q (see `rotator criteria-values --search ...`); or use --criteria-json", code)
+				value = strings.TrimSpace(code)
 			}
 			body["criteria"] = []map[string]string{{"type": "country", "statement": "is", "value": value}}
 		}
