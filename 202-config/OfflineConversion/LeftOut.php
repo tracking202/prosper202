@@ -32,11 +32,17 @@ enum LeftOut: string
     /** The reason a conversion whose click was found this way is left out, or null when it was named. */
     public static function forMatch(MatchMethod $method): ?self
     {
+        if ($method->namesTheClick()) {
+            return null;
+        }
+
         return match ($method) {
-            MatchMethod::CLICK_ID, MatchMethod::AD_CLICK_ID, MatchMethod::COOKIE => null,
             MatchMethod::VISITOR_ID => self::MATCHED_BY_VISITOR_ID,
             MatchMethod::SAME_IP => self::MATCHED_BY_SAME_IP,
             MatchMethod::UNKNOWN => self::MATCH_UNKNOWN,
+            default => throw new \LogicException(
+                'match method ' . $method->value . ' does not name its click and has no reason it is left out'
+            ),
         };
     }
 

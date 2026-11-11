@@ -805,10 +805,12 @@ if (!function_exists('p202ClickByAdClickId')) {
      *
      * Null when the SubID is not missing or the request sends no ad click
      * id: the caller answers as it always has. Otherwise the click, or the
-     * request ends here: no click carries the id (404), clicks of more than
-     * one account, campaign or traffic source account carry it (409), or the
-     * lookup failed (500, so a sender that retries
-     * failures does). The ids' values go to no log.
+     * request ends here: no click carries the id (404), the clicks carrying
+     * it do not say which one converted (409, the reason in the inbound log
+     * only: the request is not authenticated yet), the 1.9.80 upgrade has
+     * not run, so the lookup is missing or not yet filled (503), or the
+     * lookup failed (500, so a sender that retries failures does). The ids'
+     * values go to no log.
      *
      * An id under its own name may find any account's click; one in a listed
      * parameter only a click of the account listing it (`owners`, which the
@@ -841,7 +843,7 @@ if (!function_exists('p202ClickByAdClickId')) {
                     $names = [...$names, ...array_keys($own['ids'])];
                 }
             }
-            if ($unreadable === null && $names !== []) {
+            if ($names !== []) {
                 // What a retry of this sale is known by, so it lands where the sale already is.
                 $transactionId = p202ExtractTransactionId($request);
                 $eventId = null;
@@ -863,30 +865,57 @@ if (!function_exists('p202ClickByAdClickId')) {
                 );
             }
         } catch (\Throwable $lookupError) {
+            p202AdClickIdLookupPending($db, $endpoint, $lookupError->getMessage());
             error_log($endpoint . ': the click could not be looked up by the ad click id sent: '
                 . $lookupError->getMessage());
             p202RespondJsonError(500, 'Failed to look the click up by the ad click id sent');
         }
+        $status = $found['status'] ?? \Prosper202\Click\ClickByAdClickId::NONE;
+        if ($status === \Prosper202\Click\ClickByAdClickId::AMBIGUOUS) {
+            // Which clicks carry an id is not told to a request no account has authenticated.
+            \Prosper202\InboundLog\RequestLog::current()?->clickFoundBy($found['why'] ?? '');
+            p202RespondJsonError(409, 'SubID not found, and the ad click id sent does not name one click.'
+                . ' No conversion was recorded. Fill in the SubID in the postback URL.');
+        }
+        if ($status === \Prosper202\Click\ClickByAdClickId::ONE && $found !== null && $found['click_id'] !== null) {
+            // An unreadable value beside an id that found its click (another account may list its name) is not asked.
+            \Prosper202\InboundLog\RequestLog::current()?->clickFoundBy(
+                'The SubID was not filled in; the click was found by the ' . implode(', ', $found['matched']) . ' sent.'
+                . ($found['of'] > 1 ? ' ' . $found['of'] . ' clicks of one campaign carry it (one visitor, recorded'
+                    . ' more than once): this is the one the sale was already on, or else the latest.' : '')
+            );
+
+            return ['click_id' => $found['click_id'], 'owners' => $found['owners']];
+        }
+        if ($names === [] && $unreadable === null) {
+            return null;
+        }
+        // No click: until the upgrade has filled the lookup, that is not known yet.
+        p202AdClickIdLookupPending($db, $endpoint, 'no click was found');
         if ($unreadable !== null) {
             p202RespondJsonError(404, 'SubID not found, and ' . $unreadable . ' is not a click id');
         }
-        if ($found === null) {
-            return null;
-        }
-        if ($found['status'] === \Prosper202\Click\ClickByAdClickId::AMBIGUOUS) {
-            p202RespondJsonError(409, 'SubID not found. ' . $found['why'] . ' No conversion was recorded.');
-        }
-        if ($found['status'] !== \Prosper202\Click\ClickByAdClickId::ONE || $found['click_id'] === null) {
-            p202RespondJsonError(404, 'SubID not found, and no click of the last 30 days carries the '
-                . implode(', ', array_unique($names)) . ' sent');
-        }
-        \Prosper202\InboundLog\RequestLog::current()?->clickFoundBy(
-            'The SubID was not filled in; the click was found by the ' . implode(', ', $found['matched']) . ' sent.'
-            . ($found['of'] > 1 ? ' ' . $found['of'] . ' clicks of one campaign carry it (one visitor, recorded'
-                . ' more than once): this is the one the sale was already on, or else the latest.' : '')
-        );
+        p202RespondJsonError(404, 'SubID not found, and no click of the last 30 days carries the '
+            . implode(', ', array_unique($names)) . ' sent');
+    }
 
-        return ['click_id' => $found['click_id'], 'owners' => $found['owners']];
+    /**
+     * While the 1.9.80 upgrade has not run, the lookup by ad click id is
+     * missing or not yet filled: the request ends with a 503 naming the
+     * upgrade, which a sender retries, rather than an answer about the click.
+     * Returns when the upgrade has run.
+     */
+    function p202AdClickIdLookupPending(mysqli $db, string $endpoint, string $what): void
+    {
+        $pending = \Prosper202\Database\SchemaVersion::pendingUpgrade($db, \Prosper202\Click\AdClickIdIndex::SINCE);
+        if ($pending === null) {
+            return;
+        }
+        error_log($endpoint . ': a click cannot be found by its ad click id until the upgrade runs (' . $what
+            . '); ' . $pending);
+        header('Retry-After: 600');
+        p202RespondJsonError(503, 'SubID not found, and this Prosper202 cannot find a click by its ad click id'
+            . ' until its database upgrade has run. Retry later.');
     }
 }
 

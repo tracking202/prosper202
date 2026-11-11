@@ -200,11 +200,19 @@ What it will and will not match:
 - **Never a choice a report would show.** When the clicks carrying the ids
   sent are on more than one campaign, from more than one traffic source
   account, or of more than one account, nothing says which converted: the
-  postback is answered `409` and nothing is recorded. Send the SubID to
-  settle those.
+  postback is answered `409` and nothing is recorded; Setup › Inbound Log
+  says which of those it was. Send the SubID to settle those.
+- **An id, not a placeholder.** A value no platform issues, written where
+  the id was meant to go (`undefined`, `null`, `(not set)`, an unfilled
+  `__GCLID__`), is not looked up: every visitor whose page wrote it shares
+  it.
 - **Exactly.** An id's case is part of it: `Cj0KCQ...` and `cj0kcq...` are
   different ids.
 - **The last 30 days.** The click must have been visited in the last 30 days.
+- **After the upgrade.** Until the 1.9.80 database upgrade has run, a
+  postback that needs this lookup is answered `503` (with `Retry-After`),
+  which a network that retries sends again; the upgrade fills the lookup
+  for the clicks of the last 30 days.
 - **Your own clicks.** A parameter you name in Personal settings is looked up
   among your account's clicks only. Whichever way the click is found, the
   postback must still pass that click's account's

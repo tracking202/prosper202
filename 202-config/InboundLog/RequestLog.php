@@ -72,7 +72,7 @@ final class RequestLog
         }
     }
 
-    /** How the click was found when no SubID named it: a sentence added to the reason. */
+    /** How the click was found, or why none was, when no SubID named it: a sentence added to the reason. */
     public function clickFoundBy(string $how): void
     {
         $this->clickFoundBy = $how;

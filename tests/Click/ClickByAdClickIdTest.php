@@ -36,6 +36,27 @@ final class ClickByAdClickIdTest extends TestCase
         self::assertNull($sent['unreadable']);
     }
 
+    /**
+     * What a page or a template writes where the id was meant to go: shared by
+     * every visitor it was written for, so it would put one visitor's sale on
+     * another's click.
+     */
+    public function testAValueNoPlatformIssuesSendsNone(): void
+    {
+        $notIds = ['undefined', 'NULL', 'None', 'NaN', 'false', '0', '(not set)', '[object Object]', '__CLICKID__',
+            '__GCLID__', '-', '--', '.'];
+        foreach ($notIds as $value) {
+            self::assertTrue(ClickByAdClickId::notAnId($value), $value);
+            self::assertSame([], ClickByAdClickId::sent(['gclid' => $value])['ids'], $value);
+            self::assertSame([], ClickByAdClickId::sent(['aff_sub3' => " $value "], ['aff_sub3'])['ids'], $value);
+        }
+        $ids = ['Cj0KCQiA-demo_Shop', '0123456789abcdef0123456789abcdef', 'IwAR0-demo', 'E.1', 'nullable-1',
+            '__x', 'x__'];
+        foreach ($ids as $value) {
+            self::assertFalse(ClickByAdClickId::notAnId($value), $value);
+        }
+    }
+
     /** @return iterable<string, array{mixed}> */
     public static function unreadable(): iterable
     {

@@ -643,15 +643,19 @@ if (!function_exists('_upgrade_fill_click_ad_ids')) {
      * 202_clicks_ad_ids for the clicks already here (Prosper202\Click\
      * AdClickIdIndex): a row for each ad click id of each click visited in
      * the last 30 days, which is as far back as a postback is matched by one
-     * (ClickByAdClickId::LOOKBACK). From the lowest id among those visits
-     * up, since an old click visited again keeps its id.
+     * (ClickByAdClickId::LOOKBACK).
      *
-     * In statements of AdClickIdIndex::BACKFILL_BATCH click ids, so each
-     * holds the 202_google rows it reads for a moment and the click path
-     * keeps writing between them; clicks recorded once the table exists
-     * write their own rows. The range is read again at the end for a click
-     * whose transaction began before the table did. INSERT IGNORE: a re-run
-     * of the step writes nothing twice. False on any failure.
+     * The clicks are found by their visit times, in id order: each pass
+     * starts at the lowest id visited in the window above the last pass,
+     * so an old click visited again costs one pass, not a walk of every
+     * click after it. Statements of AdClickIdIndex::BACKFILL_BATCH click ids
+     * each hold the rows they read for a moment, and the click path keeps
+     * writing between them; clicks recorded once the table exists write
+     * their own rows. A click whose transaction began before the table did
+     * wrote none, and may have committed after its ids were read, so the
+     * ids from the last batch below the highest click at the start are read
+     * again at the end. INSERT IGNORE: a re-run writes nothing twice. False
+     * on any failure.
      */
     function _upgrade_fill_click_ad_ids(): bool
     {
@@ -666,30 +670,36 @@ if (!function_exists('_upgrade_fill_click_ad_ids')) {
             return is_array($row) && $row[0] !== null ? (string) $row[0] : null;
         };
         $since = time() - \Prosper202\Click\ClickByAdClickId::LOOKBACK;
-        $from = $scalar('SELECT MIN(click_id) FROM `202_clicks` WHERE click_time >= ' . $since);
-        if ($from === false) {
+        $batch = \Prosper202\Click\AdClickIdIndex::BACKFILL_BATCH;
+        $walk = static function (int $next) use ($scalar, $since, $batch): bool {
+            for ($pass = 0; $pass < 1000000; $pass++) {
+                $first = $scalar('SELECT MIN(click_id) FROM `202_clicks` WHERE click_time >= ' . $since
+                    . ' AND click_id >= ' . $next);
+                if ($first === false) {
+                    return false;
+                }
+                if ($first === null) {
+                    return true;
+                }
+                $to = (int) $first + $batch - 1;
+                $fill = \Prosper202\Click\AdClickIdIndex::backfillSql((int) $first, $to, $since);
+                if (_upgrade_query($fill) === false) {
+                    return false;
+                }
+                $next = $to + 1;
+            }
+
+            return false;
+        };
+        $top = $scalar('SELECT MAX(click_id) FROM `202_clicks`');
+        if ($top === false) {
             return false;
         }
-        if ($from === null) {
-            return true; // no click in the window
-        }
-        $next = (int) $from;
-        for ($pass = 0; $pass < 1000000; $pass++) {
-            $last = $scalar('SELECT MAX(click_id) FROM `202_google`');
-            if ($last === false) {
-                return false;
-            }
-            if ($last === null || (int) $last < $next) {
-                return true;
-            }
-            $to = min((int) $last, $next + \Prosper202\Click\AdClickIdIndex::BACKFILL_BATCH - 1);
-            if (_upgrade_query(\Prosper202\Click\AdClickIdIndex::backfillSql($next, $to)) === false) {
-                return false;
-            }
-            $next = $to + 1;
+        if ($top === null) {
+            return true; // no click at all
         }
 
-        return false;
+        return $walk(0) && $walk(max(0, (int) $top - $batch + 1));
     }
 }
 

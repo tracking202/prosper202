@@ -47,6 +47,8 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
     private const ACCOUNT_B = 99072513;
     /** Not there until a test has the visitor reload once more. */
     private const TWIN_C = 99072514;
+    /** Clicks a test adds: two visitors whose pages wrote no id, and clicks older than the 30 days. */
+    private const ADDED = [99072520, 99072550];
 
     private const GCLID = 'Cj0KCQiA-demo_Shop-CLICK';
     private const OLD_GCLID = 'Cj0KCQiA-demo_Shop-OLD';
@@ -81,6 +83,8 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
         // The other account's click, its row naming the same campaign id.
         self::ACCOUNT_B => [self::OTHER_USER, ['gclid' => self::ACCOUNTS_GCLID], [500], 0, 0],
     ];
+    private const AMBIGUOUS = 'SubID not found, and the ad click id sent does not name one click.'
+        . ' No conversion was recorded. Fill in the SubID in the postback URL.';
     private const CLICK_TABLES = ['202_clicks', '202_clicks_spy', '202_clicks_tracking', '202_click_latest_visits',
         '202_conversion_logs', '202_dataengine', '202_google', '202_clicks_ad_ids', '202_inbound_log'];
 
@@ -184,7 +188,7 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
 
     private static function deleteClicks(): void
     {
-        foreach ([...array_keys(self::CLICKS), self::TWIN_C] as $click) {
+        foreach ([...array_keys(self::CLICKS), self::TWIN_C, ...range(self::ADDED[0], self::ADDED[1])] as $click) {
             self::q('DELETE FROM 202_attribution_pending WHERE conv_id IN'
                 . " (SELECT conv_id FROM 202_conversion_logs WHERE click_id = $click)");
             foreach (self::CLICK_TABLES as $table) {
@@ -413,9 +417,11 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
         [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => $gclid]);
 
         self::assertSame(409, $status, $body);
-        self::assertStringContainsString('are on more than one ' . $what . ',', $body);
+        self::assertSame(self::AMBIGUOUS, json_decode($body, true)['msg'] ?? null, 'the answer names no account');
         self::assertSame([], self::conversions());
-        self::assertSame([['refused']], self::all('SELECT outcome FROM 202_inbound_log WHERE user_id = 0'));
+        $logged = self::all('SELECT outcome, reason FROM 202_inbound_log WHERE user_id = 0');
+        self::assertSame('refused', $logged[0][0] ?? null);
+        self::assertStringContainsString('are on more than one ' . $what . ',', $logged[0][1], 'the log says why');
     }
 
     public function testIdsNamingClicksOfDifferentCampaignsRecordNothing(): void
@@ -426,8 +432,10 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
         );
 
         self::assertSame(409, $status, $body);
+        self::assertSame(self::AMBIGUOUS, json_decode($body, true)['msg'] ?? null);
         $said = 'The clicks carrying the gclid, msclkid sent are on more than one campaign';
-        self::assertStringContainsString($said, $body);
+        $logged = self::all('SELECT reason FROM 202_inbound_log WHERE user_id = 0');
+        self::assertStringContainsString($said, $logged[0][0] ?? '');
         self::assertSame([], self::conversions());
     }
 
@@ -537,7 +545,11 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
         [$status, $body] = self::gpb(['subid' => '{aff_sub}', 'amount' => '8', 'aff_sub3' => self::MSCLKID]);
 
         self::assertSame(409, $status, $body);
-        self::assertStringContainsString('The clicks carrying the aff_sub3 sent are on more than one campaign', $body);
+        self::assertSame(self::AMBIGUOUS, json_decode($body, true)['msg'] ?? null);
+        self::assertStringContainsString(
+            'The clicks carrying the aff_sub3 sent are on more than one campaign',
+            self::all('SELECT reason FROM 202_inbound_log WHERE user_id = 0')[0][0]
+        );
         self::assertSame([], self::conversions());
     }
 
@@ -551,12 +563,116 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
         self::assertSame([], self::conversions());
     }
 
+    /** Pages that wrote a word where the id was meant to go: every visitor shares it, so it names no one. */
+    public function testAValueNoPlatformIssuesNamesNoClick(): void
+    {
+        $campaign = self::$campaigns[self::USER][0];
+        self::click(self::ADDED[0], self::USER, $campaign, 0, ['gclid' => 'undefined'], [600]);
+        self::click(self::ADDED[0] + 1, self::USER, $campaign, 0, ['gclid' => 'undefined'], [500]);
+
+        foreach (['undefined', '__GCLID__'] as $value) {
+            [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => $value]);
+            self::assertSame(404, $status, $body);
+            self::assertSame('SubID not found', json_decode($body, true)['msg'] ?? null, $value);
+        }
+        self::assertSame([], self::conversions());
+    }
+
+    /** Clicks older than the 30 days are not counted against the limit of clicks told apart. */
+    public function testOldClicksCarryingTheIdDoNotHideARecentOne(): void
+    {
+        $old = range(self::ADDED[0] + 2, self::ADDED[0] + 25);
+        $campaign = self::$campaigns[self::USER][0];
+        $age = ClickByAdClickId::LOOKBACK + 3600;
+        foreach ($old as $click) {
+            self::click($click, self::USER, $campaign, 0, ['gclid' => self::GCLID], [$age]);
+        }
+
+        [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => self::GCLID]);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame([[(string) self::CLICK, '5.00000', 'ad_click_id']], self::conversions());
+    }
+
+    /**
+     * A value that cannot be an id, in a parameter another account lists,
+     * does not stop an id that finds its click; alone, it is named.
+     */
+    public function testAnUnreadableValueBesideAnIdThatFindsItsClickIsNotAsked(): void
+    {
+        self::lists(self::OTHER_USER, 'aff_sub3');
+
+        [$status, $body] = self::gpb(['subid' => '', 'amount' => '5', 'gclid' => self::GCLID, 'aff_sub3' => ['x']]);
+        self::assertSame(200, $status, $body);
+        self::assertSame([[(string) self::CLICK, '5.00000', 'ad_click_id']], self::conversions());
+
+        [$status, $body] = self::gpb(['subid' => '', 'amount' => '5', 'aff_sub3' => ['x']]);
+        self::assertSame(404, $status, $body);
+        self::assertSame('SubID not found, and aff_sub3 is not a click id', json_decode($body, true)['msg'] ?? null);
+    }
+
+    /**
+     * Deployed and not yet upgraded: the lookup is missing, or made and not
+     * yet filled. Either way the answer is a 503 naming the upgrade, which a
+     * sender retries, not a 500 or a "no click carries it".
+     */
+    public function testBeforeTheUpgradeHasRunTheAnswerNamesIt(): void
+    {
+        $versions = array_column(self::all('SELECT version FROM 202_version'), 0);
+        self::q('DELETE FROM 202_version');
+        self::row('202_version', ['version' => '1.9.79']);
+        try {
+            // Made, and not filled yet: this click has no row.
+            self::q('DELETE FROM 202_clicks_ad_ids WHERE click_id = ' . self::CLICK);
+            [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => self::GCLID]);
+            self::assertSame(503, $status, $body);
+            self::assertStringContainsString('until its database upgrade has run', $body);
+
+            // A click the fill has reached is found.
+            [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => self::TWIN_GCLID]);
+            self::assertSame(200, $status, $body);
+
+            self::q('RENAME TABLE 202_clicks_ad_ids TO 202_clicks_ad_ids_away');
+            try {
+                [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => self::GCLID]);
+            } finally {
+                self::q('RENAME TABLE 202_clicks_ad_ids_away TO 202_clicks_ad_ids');
+            }
+            self::assertSame(503, $status, $body);
+            self::assertStringContainsString('until its database upgrade has run', $body);
+
+            // With no id at all, the answer is the one it always was.
+            [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5']);
+            self::assertSame(404, $status, $body);
+            self::assertSame('SubID not found', json_decode($body, true)['msg'] ?? null);
+        } finally {
+            self::q('DELETE FROM 202_version');
+            foreach ($versions as $version) {
+                self::row('202_version', ['version' => $version]);
+            }
+        }
+        self::assertSame([[(string) self::TWIN_B, '5.00000', 'ad_click_id']], self::conversions());
+
+        // Upgraded, a click no row names is not there.
+        [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => self::GCLID]);
+        self::assertSame(404, $status, $body);
+    }
+
     public function testTheLookupReadsTheIndexByItsKey(): void
     {
-        $plan = self::$db->query("EXPLAIN SELECT x.click_id FROM 202_clicks_ad_ids AS x WHERE x.id_hash = UNHEX('"
-            . bin2hex(AdClickIdIndex::hash(self::GCLID)) . "') ORDER BY x.click_id DESC LIMIT 21");
+        $sql = str_replace(
+            ['UNHEX(?)', '>= ?'],
+            [
+                "UNHEX('" . bin2hex(AdClickIdIndex::hash(self::GCLID)) . "')",
+                '>= ' . (time() - ClickByAdClickId::LOOKBACK),
+            ],
+            AdClickIdIndex::lookupSql(20)
+        );
+        $plan = self::$db->query('EXPLAIN ' . $sql);
         self::assertInstanceOf(\mysqli_result::class, $plan);
-        self::assertSame('id_hash', $plan->fetch_assoc()['key'] ?? null);
+        $rows = $plan->fetch_all(MYSQLI_ASSOC);
+        self::assertSame('id_hash', $rows[0]['key'] ?? null, $sql);
+        self::assertSame('x', $rows[0]['table'] ?? null);
         $keys = array_column(self::all('SHOW INDEX FROM 202_google'), 2);
         self::assertSame(['PRIMARY'], array_values(array_unique($keys)), '202_google has no key on an id');
     }

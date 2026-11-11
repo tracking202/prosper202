@@ -205,18 +205,29 @@ final class AdClickIdIndexUpgradeIntegrationTest extends TestCase
 
     public function testOnlyClicksAPostbackCanStillBeMatchedToAreFilled(): void
     {
-        // The fill starts at the lowest click visited in the 30 days: none another suite left may be below these.
+        // Every click visited in the 30 days is filled: none another suite left may be among them.
         self::q('DELETE FROM 202_clicks WHERE click_id < ' . self::FIRST_CLICK
             . ' AND click_time >= ' . (time() - ClickByAdClickId::LOOKBACK - 60));
         self::record(self::FIRST_CLICK, ['gclid' => 'old-' . self::GCLID], ClickByAdClickId::LOOKBACK + 7200);
+        // An old click visited again in the 30 days, and one after it that was not.
+        self::record(self::FIRST_CLICK + 1, ['gclid' => 're-' . self::GCLID], ClickByAdClickId::LOOKBACK + 7200);
+        self::q('INSERT INTO 202_clicks SELECT * FROM 202_clicks WHERE click_id = ' . (self::FIRST_CLICK + 1));
+        self::q('UPDATE 202_clicks SET click_time = ' . (time() - 600) . ' WHERE click_id = ' . (self::FIRST_CLICK + 1)
+            . ' LIMIT 1');
+        self::record(self::FIRST_CLICK + 2, ['gclid' => 'between-' . self::GCLID], ClickByAdClickId::LOOKBACK + 7200);
         self::record(self::FIRST_CLICK + 5, ['gclid' => self::GCLID]);
-        LatestVisit::refresh(new Connection(self::$db), self::FIRST_CLICK);
+        foreach ([0, 1, 2, 5] as $offset) {
+            LatestVisit::refresh(new Connection(self::$db), self::FIRST_CLICK + $offset);
+        }
         self::q('DELETE FROM 202_clicks_ad_ids');
 
         [$out, $err] = self::upgrade();
 
         self::assertSame('RETURNED true', $out, $err);
-        self::assertSame(self::rowsFor([self::FIRST_CLICK + 5 => [self::GCLID]]), self::rows());
+        self::assertSame(self::rowsFor([
+            self::FIRST_CLICK + 1 => ['re-' . self::GCLID],
+            self::FIRST_CLICK + 5 => [self::GCLID],
+        ]), self::rows(), 'the clicks visited in the 30 days, and not the ones between them');
     }
 
     public function testTheStepMakesTheTableAndTheSettingAndKeysNoIdOfAClick(): void

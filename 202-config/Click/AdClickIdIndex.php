@@ -29,6 +29,9 @@ final class AdClickIdIndex
 {
     public const TABLE = '202_clicks_ad_ids';
 
+    /** The version whose upgrade makes and fills the table: before it, a lookup knows nothing. */
+    public const SINCE = '1.9.80';
+
     /** Clicks read from 202_google per upgrade statement: each holds the rows it reads for well under a second. */
     public const BACKFILL_BATCH = 50000;
 
@@ -43,39 +46,53 @@ final class AdClickIdIndex
     }
 
     /**
-     * The clicks with a row for $id, newest id first, at most $limit + 1 of
-     * them (one more than the limit says there are more). On the write
-     * handle: a replica may not have the click yet.
+     * The clicks with a row for $id that have a visit since $since, newest id
+     * first, at most $limit + 1 of them (one more than the limit says there
+     * are more). The window is asked before the limit, so old clicks
+     * carrying the id never crowd out a recent one; the visit is read
+     * with its click_time bound, which keeps the probe to the window's
+     * partitions. On the write handle: a replica may not have the click yet.
      *
      * @return list<int>
      */
-    public static function clicksWith(Connection $conn, string $id, int $limit): array
+    public static function clicksWith(Connection $conn, string $id, int $since, int $limit): array
     {
-        $stmt = $conn->prepareWrite(
-            // As hexadecimal: the bytes are not text, and a server may refuse them as a string.
-            'SELECT x.click_id FROM ' . self::TABLE . ' AS x WHERE x.id_hash = UNHEX(?)'
-                . ' ORDER BY x.click_id DESC LIMIT ' . ($limit + 1)
-        );
-        $conn->bind($stmt, 's', [bin2hex(self::hash($id))]);
+        $stmt = $conn->prepareWrite(self::lookupSql($limit));
+        // As hexadecimal: the bytes are not text, and a server may refuse them as a string.
+        $conn->bind($stmt, 'si', [bin2hex(self::hash($id)), $since]);
 
         return array_map(static fn (array $row): int => (int) $row['click_id'], $conn->fetchAll($stmt));
     }
 
+    /** clicksWith()'s statement: the hash, then the earliest visit time, bound. */
+    public static function lookupSql(int $limit): string
+    {
+        return 'SELECT x.click_id FROM ' . self::TABLE . ' AS x WHERE x.id_hash = UNHEX(?)'
+            . ' AND EXISTS (SELECT 1 FROM 202_clicks AS v WHERE v.click_id = x.click_id AND v.click_time >= ?)'
+            . ' ORDER BY x.click_id DESC LIMIT ' . ($limit + 1);
+    }
+
     /**
-     * The upgrade's statement for the 202_google rows of clicks $from to
-     * $to: one pass over them, a row for each id that is not ''. The hash
-     * is hash()'s (UpgradeFillsTheAdClickIdIndex compares them).
+     * The upgrade's statement for the clicks with ids $from to $to that
+     * have a visit since $since: a row for each id of their 202_google rows
+     * that is not ''. The clicks are chosen by their visit times, not by
+     * the id range alone (ids are not in time order, CLAUDE.md #26). The
+     * hash is hash()'s (AdClickIdIndexUpgradeIntegrationTest compares the
+     * rows with the click path's).
      */
-    public static function backfillSql(int $from, int $to): string
+    public static function backfillSql(int $from, int $to, int $since): string
     {
         $id = 'CASE k.n WHEN 1 THEN g.gclid WHEN 2 THEN g.gbraid WHEN 3 THEN g.wbraid WHEN 4 THEN g.ttclid'
             . ' WHEN 5 THEN g.msclkid ELSE g.fbclid END';
 
         return 'INSERT IGNORE INTO ' . self::TABLE . ' (click_id, id_hash)'
-            . ' SELECT g.click_id, UNHEX(LEFT(SHA2(' . $id . ', 256), 16)) FROM 202_google AS g'
+            . ' SELECT g.click_id, UNHEX(LEFT(SHA2(' . $id . ', 256), 16))'
+            . ' FROM (SELECT DISTINCT c.click_id FROM 202_clicks AS c WHERE c.click_id BETWEEN ' . $from . ' AND ' . $to
+            . ' AND c.click_time >= ' . $since . ') AS w'
+            . ' JOIN 202_google AS g ON g.click_id = w.click_id'
             . ' JOIN (SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4'
             . ' UNION ALL SELECT 5 UNION ALL SELECT 6) AS k'
-            . ' WHERE g.click_id BETWEEN ' . $from . ' AND ' . $to . ' AND ' . $id . " <> ''";
+            . ' WHERE ' . $id . " <> ''";
     }
 
     /** Whether $e, or one it wraps, is the server's 1146 for the table. */

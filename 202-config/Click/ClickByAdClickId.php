@@ -35,7 +35,9 @@ use Prosper202\Goals\GoalSubject;
  *   are nobody's to choose between, whether one id finds them or several;
  * - an id as long as its column or longer may be one the column cut, which
  *   names every id sharing that start, so it names no click.
- * An id that no click carries is left out of the decision.
+ * An id that no click carries is left out of the decision, and a value no
+ * platform issues (`undefined`, an unfilled __GCLID__: notAnId()) is not
+ * looked up, since every visitor whose page wrote it shares it.
  *
  * An id may also arrive in a parameter of the network's own naming that an
  * account lists (Prosper202\Conversion\ClickIdParameters): its value is
@@ -54,8 +56,16 @@ final class ClickByAdClickId
     /** How far back a click's latest visit may be: 30 days, as the other fallbacks look. */
     public const LOOKBACK = 2592000;
 
-    /** More clicks than this for one id are not told apart. */
+    /** More clicks than this visited in the window for one id are not told apart. */
     private const ROW_LIMIT = 20;
+
+    /**
+     * Values a page or a template writes where an id was meant to go and
+     * none was there, compared without case: no ad platform issues them, and
+     * every visitor whose browser wrote one would share it.
+     */
+    private const NOT_AN_ID = ['undefined', 'null', 'nil', 'none', 'nan', 'false', 'true', '0', 'n/a', 'na',
+        '(none)', '(not set)', '(not provided)', '[object object]', 'unknown', 'empty'];
 
     public const NONE = 'none';
     public const ONE = 'one';
@@ -68,7 +78,8 @@ final class ClickByAdClickId
     /**
      * The ad click ids a request sends, by parameter, trimmed: under their
      * own names, or under $names (an account's ClickIdParameters). A
-     * parameter that is absent, blank or an unfilled macro sends none.
+     * parameter that is absent, blank or an unfilled macro sends none, and
+     * so does one that is no platform's id (notAnId()).
      * `unreadable` names the first parameter holding something that is not
      * text an id could be.
      *
@@ -92,10 +103,25 @@ final class ClickByAdClickId
                 $unreadable ??= $name;
                 continue;
             }
+            if (self::notAnId(trim($value))) {
+                continue;
+            }
             $ids[$name] = trim($value);
         }
 
         return ['ids' => $ids, 'unreadable' => $unreadable];
+    }
+
+    /**
+     * Whether $value is what was written where an id was meant to go and
+     * none was there: a word for nothing (NOT_AN_ID), a macro in the form
+     * __NAME__ that the network did not fill, or no letter or digit at all.
+     */
+    public static function notAnId(string $value): bool
+    {
+        return in_array(strtolower($value), self::NOT_AN_ID, true)
+            || preg_match('/\A__[A-Za-z][A-Za-z0-9_]*__\z/D', $value) === 1
+            || preg_match('/[A-Za-z0-9]/', $value) !== 1;
     }
 
     /**
@@ -290,7 +316,7 @@ final class ClickByAdClickId
      *
      * @param list<string> $columns ad click ids, by name
      * @return list<Click>|null
-     *         null: more clicks than ROW_LIMIT may carry it
+     *         null: more clicks visited since $since than ROW_LIMIT may carry it
      */
     private static function clicksCarrying(
         Connection $conn,
@@ -312,7 +338,7 @@ final class ClickByAdClickId
         if ($value === '' || $readable === []) {
             return [];
         }
-        $indexed = AdClickIdIndex::clicksWith($conn, $value, self::ROW_LIMIT);
+        $indexed = AdClickIdIndex::clicksWith($conn, $value, $since, self::ROW_LIMIT);
         if (count($indexed) > self::ROW_LIMIT) {
             return null;
         }

@@ -56,6 +56,26 @@ enum MatchMethod: string
     }
 
     /**
+     * Whether the conversion named its click rather than it being inferred:
+     * the only conversions sent to an ad platform (the offline files through
+     * LeftOut::forMatch(), the destinations), since a guess would teach the
+     * platform's bidding the wrong clicks. The one list of them.
+     */
+    public function namesTheClick(): bool
+    {
+        return match ($this) {
+            self::CLICK_ID, self::AD_CLICK_ID, self::COOKIE => true,
+            self::VISITOR_ID, self::SAME_IP, self::UNKNOWN => false,
+        };
+    }
+
+    /** @return list<self> the methods that name the click, in order */
+    public static function naming(): array
+    {
+        return array_values(array_filter(self::cases(), static fn (self $m): bool => $m->namesTheClick()));
+    }
+
+    /**
      * A stored match_method as the enum. A value that is not one of the
      * list is a row nothing should have written, and is refused naming
      * where it was read rather than read as some other method.
