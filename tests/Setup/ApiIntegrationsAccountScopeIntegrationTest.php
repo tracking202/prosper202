@@ -473,6 +473,91 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * The payment cards say what recorded nothing lately: a card whose
+     * notifications were refused for their currency names the currency and
+     * links the setting and the log, and the JVZoo card of an account whose
+     * 1.9.56 URL gets a vendor's notifications offers one button that reads
+     * it as a vendor's. With nothing in the log neither shows, and the
+     * 1.9.56 choice is closed.
+     */
+    public function testThePaymentCardsSayWhatRecordedNothingAndTheJvzooButtonReadsTheUrlAsAVendors(): void
+    {
+        $column = \Prosper202\PaymentNotification\JVZoo\JVZooRole::ROLELESS_COLUMN;
+        self::requireScratch();
+        $log = new \Prosper202\InboundLog\InboundLog(self::$db);
+        $append = static function (
+            string $endpoint,
+            int $status,
+            string $outcome,
+            string $reason,
+            array $fields = [],
+            int $user = self::USER
+        ) use ($log): void {
+            self::assertTrue($log->append(
+                new \Prosper202\InboundLog\Entry($endpoint, 'POST', $status, $outcome, $reason, $user, fields: $fields)
+            ));
+        };
+        $disclosure = static fn (string $open): string
+            => '~<details class="p202-disclosure mt-3"' . $open . ' data-jvzoo-roleless-disclosure>~';
+        $setting = '202-account/account.php#currency">change the account currency to EUR</a>';
+        $save = ['token' => 'SESSION', 'change_jvzoo_roleless_role' => '1', $column => 'vendor'];
+        $field = \Prosper202\PaymentNotification\JVZoo\JVZooAdapter::ROLELESS_LOG_FIELD;
+        self::q('DELETE FROM 202_inbound_log WHERE user_id IN (' . self::USER . ', ' . self::OTHER . ')');
+        try {
+            $out = self::page(self::PAGE);
+            self::assertStringNotContainsString('data-currency-mismatch', $out);
+            self::assertStringNotContainsString('data-jvzoo-roleless-notice', $out);
+            self::assertMatchesRegularExpression($disclosure(''), $out);
+
+            $eur = \Prosper202\PaymentNotification\CurrencyMismatch::message('EUR', 'USD');
+            $append('shopify', 200, 'currency_mismatch', $eur);
+            $append('shopify', 200, 'currency_mismatch', $eur);
+            // Another account's refusals and traffic are not this account's.
+            $append('paykickstart', 422, 'currency_mismatch', $eur, [], self::OTHER);
+            $append('jvzoo', 400, 'malformed', 'refused', [$field => 'affiliate'], self::OTHER);
+            $out = self::page(self::PAGE);
+            self::assertSame(1, substr_count($out, 'data-currency-mismatch'));
+            self::assertStringContainsString('data-currency-mismatch="shopify"', $out);
+            self::assertStringContainsString('<strong>2 Shopify notifications in EUR recorded nothing</strong>', $out);
+            self::assertStringContainsString('this account counts in USD', $out);
+            self::assertStringContainsString($setting, $out);
+            self::assertStringContainsString('inbound_log.php?outcome=currency_mismatch&amp;endpoint=shopify', $out);
+            self::assertStringNotContainsString('data-jvzoo-roleless-notice', $out);
+
+            $append('jvzoo', 200, 'recorded', 'Recorded.', [$field => 'vendor_no_affiliate']);
+            $append('jvzoo', 400, 'malformed', 'refused', [$field => 'affiliate']);
+            $append('jvzoo', 400, 'malformed', 'refused', [$field => 'affiliate']);
+            // A test moves no money, and a URL that names its role is not the 1.9.56 URL.
+            $append('jvzoo', 200, 'test', 'A test.', [$field => 'affiliate']);
+            $append('jvzoo', 400, 'malformed', 'refused');
+            $out = self::page(self::PAGE);
+            self::assertStringContainsString('data-jvzoo-roleless-notice', $out);
+            self::assertStringContainsString('1 named no affiliate and was read as a vendor’s; 2 named an affiliate,'
+                . ' were read as an affiliate’s and recorded nothing.', $out);
+            self::assertMatchesRegularExpression($disclosure(' open'), $out);
+            $button = '~<form method="post" action="[^"]*#jvzoo" class="mt-2" data-jvzoo-read-as-vendor>(.*?)</form>~s';
+            self::assertSame(1, preg_match($button, $out, $form));
+            self::assertStringContainsString('name="token"', $form[1]);
+            self::assertStringContainsString('name="change_jvzoo_roleless_role" value="1"', $form[1]);
+            self::assertStringContainsString('name="' . $column . '" value="vendor"', $form[1]);
+
+            // The button's post: saved, and the card stops asking.
+            self::assertRedirected(self::page(self::PAGE, [], $save), 'the button saves vendor');
+            $out = self::page(self::PAGE);
+            self::assertMatchesRegularExpression('~value="vendor" checked~', $out);
+            self::assertStringNotContainsString('data-jvzoo-roleless-notice', $out);
+
+            // The account now counts in EUR: the Shopify card stops warning.
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::USER);
+            self::assertStringNotContainsString('data-currency-mismatch', self::page(self::PAGE));
+        } finally {
+            self::q("UPDATE 202_users_pref SET $column = 'affiliate', user_account_currency = 'USD'"
+                . ' WHERE user_id = ' . self::USER);
+            self::q('DELETE FROM 202_inbound_log WHERE user_id IN (' . self::USER . ', ' . self::OTHER . ')');
+        }
+    }
+
     public function testTheProgressEndpointAsksAboutTheAccountsOwnNetworks(): void
     {
         $endpoint = '202-account/ajax/dni.php';

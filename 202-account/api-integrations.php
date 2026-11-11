@@ -851,6 +851,12 @@ try {
 	error_log('api-integrations.php: the postback token could not be read: ' . $pbReadError->getMessage());
 }
 $ipqsSaved = SavedSecret::isSaved($user_row['ipqs_api_key'] ?? null);
+// What the payment cards say of notifications that recorded nothing lately.
+require_once dirname(__DIR__) . '/202-config/functions-payment-notices.php';
+$accountCurrency = strtoupper(trim((string) ($user_row['user_account_currency'] ?? '')));
+$paymentCards = p202_payment_card_state($db, (int) $_SESSION['user_id'], $accountCurrency);
+$currencyNotice = static fn (string $endpoint, string $provider): string
+	=> p202_currency_mismatch_notice($paymentCards['currency'], $endpoint, $provider, $accountCurrency, $base);
 $ipqsNote = p202_ipqs_card_note($db, (int) $_SESSION['user_id'], $ipqsSaved);
 
 template_top('API Integrations');
@@ -1210,6 +1216,7 @@ template_top('API Integrations');
 				</div>
 				<div class="p202-panel__body">
 					<p class="text-secondary"><?php echo $e($integration['desc']); ?><?php echo $integration['extra'] !== '' ? ' ' . $integration['extra'] . '.' : ''; ?></p><?php echo $anchor === 'ipqs' ? $ipqsNote : ''; ?>
+					<?php echo $anchor === 'zaxaa' ? $currencyNotice('zaxaa', 'Zaxaa') : ''; ?>
 					<?php if ($isClickbank && !$cb_crypto_ok) { ?>
 						<?php echo p202_flash('bad', 'The OpenSSL PHP extension, which decrypts ClickBank’s notifications, is required for this integration. Install it, or ask your hosting provider for assistance.'); ?>
 					<?php } else { ?>
@@ -1270,6 +1277,11 @@ template_top('API Integrations');
 			<div class="p202-panel__body">
 				<p class="text-secondary">Record each JVZoo sale and rebill on the click that sent the buyer, and take
 					it back on a refund or chargeback, from JVZoo’s JVZIPN.</p>
+				<?php $jvzooRoleless = JVZooRole::fromQuery($user_row['jvzoo_roleless_role'] ?? null)
+					?? JVZooRole::AFFILIATE;
+				$jvzooTraffic = $paymentCards['jvzoo'];
+				echo p202_jvzoo_roleless_notice($jvzooTraffic, $jvzooRoleless, $self . '#jvzoo',
+					p202_account_token_field()); ?>
 				<p class="mb-1"><strong>Promoting a JVZoo product as an affiliate</strong></p>
 				<ol class="ps-3">
 					<li>Make the campaign’s offer URL your JVZoo affiliate link with
@@ -1319,18 +1331,23 @@ template_top('API Integrations');
 						</form>
 					</div>
 				</details>
-				<?php $jvzooRoleless = JVZooRole::fromQuery($user_row['jvzoo_roleless_role'] ?? null)
-					?? JVZooRole::AFFILIATE; ?>
-				<form method="post" action="<?php echo $e($self . '#jvzoo'); ?>" class="mt-3" data-jvzoo-roleless>
+				<?php // Closed for an account the 1.9.56 URL has sent nothing to: only an upgraded install uses it. ?>
+				<details class="p202-disclosure mt-3"<?php echo $jvzooTraffic === null || $jvzooTraffic->inUse()
+					|| $jvzooRoleless === JVZooRole::VENDOR ? ' open' : ''; ?> data-jvzoo-roleless-disclosure>
+					<summary>Upgraded from Prosper202 1.9.56?
+						<span class="p202-disclosure__hint">how its JVZIPN URL is read</span></summary>
+					<div class="p202-disclosure__body">
+				<form method="post" action="<?php echo $e($self . '#jvzoo'); ?>" data-jvzoo-roleless>
 					<input type="hidden" name="change_jvzoo_roleless_role" value="1">
 					<?php echo p202_account_token_field(); ?>
 					<fieldset>
 						<legend class="form-label fs-6 fw-semibold">How should the 1.9.56 JVZIPN URL (no
 							<code>?role=</code>) read your notifications?</legend>
-						<p class="small text-secondary mb-2">Upgraded from Prosper202 1.9.56? Its JVZIPN URL ends
+						<p class="small text-secondary mb-2">The JVZIPN URL 1.9.56 showed ends
 							<code>jvzoo.php</code> with no <code>?role=</code>. If you sell your own product, choose vendor
-							here or paste the Vendor JVZIPN URL above into your product: read as an affiliate’s, a
-							vendor’s sale is refused and JVZoo shows the error.</p>
+							here or paste the Vendor JVZIPN URL above into your product. Read as an affiliate’s, a
+							vendor’s sale that names no affiliate is still recorded as a vendor’s; one an affiliate
+							referred is not.</p>
 						<?php foreach ([
 							JVZooRole::AFFILIATE->value => 'I promote JVZoo products (affiliate)',
 							JVZooRole::VENDOR->value => 'I sell my own product on JVZoo (vendor)',
@@ -1346,6 +1363,8 @@ template_top('API Integrations');
 					</fieldset>
 					<button class="btn btn-secondary btn-sm mt-2" type="submit">Save</button>
 				</form>
+					</div>
+				</details>
 			</div>
 		</section>
 	</div>
@@ -1371,6 +1390,7 @@ template_top('API Integrations');
 			<div class="p202-panel__body">
 				<p class="text-secondary">Record each sale, rebill and refund of a product you sell through
 					PayKickstart on the click that sent the buyer, from PayKickstart’s product IPN.</p>
+				<?php echo $currencyNotice('paykickstart', 'PayKickstart'); ?>
 				<?php if (isset($error['paykickstart_remove'])) {
 					echo p202_flash('bad', (string) $error['paykickstart_remove']);
 				} ?>
@@ -1457,6 +1477,7 @@ template_top('API Integrations');
 				<p class="text-secondary">Record each Shopify order on the click that sent the buyer, at the order’s
 					total, and take it back on a refund, from Shopify’s webhooks.</p>
 				<p class="text-secondary">Check Setup › Inbound Log for Shopify refusals.</p>
+				<?php echo $currencyNotice('shopify', 'Shopify'); ?>
 				<ol class="ps-3">
 					<li>On your store, add the click id to the cart as the line item property
 						<code class="text-nowrap">t202subid</code> (or <code class="text-nowrap">_t202subid</code>, which

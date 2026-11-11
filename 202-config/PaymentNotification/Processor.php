@@ -639,8 +639,7 @@ final class Processor
 
         return new Outcome(
             OutcomeKind::CURRENCY_MISMATCH,
-            'The amount is in ' . strtoupper((string) $n->currency) . ' and this account counts in ' . $accountCurrency
-            . '; Prosper202 does not convert it, so nothing was recorded.',
+            CurrencyMismatch::message((string) $n->currency, $accountCurrency),
             null,
             $owner
         );

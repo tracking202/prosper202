@@ -213,6 +213,14 @@ For an **affiliate**:
    The URL 1.9.56 showed, with no `?role=`, is read the same way, so an
    Affiliate IPN set before the upgrade keeps recording.
 
+A **vendor** whose product still posts to the URL 1.9.56 showed: a
+notification there that names no affiliate (no `caffitid` and no
+`ctransaffiliate`) can only be the vendor's, so it is read as one and recorded
+on the `subid` in `cvendthru`, and the answer says so. A sale an affiliate
+referred is read there as the account chose (an affiliate's unless you choose
+vendor). The JVZoo card counts what that URL received in the last 30 days and,
+when it looks like a vendor's, offers one button that reads it as a vendor's.
+
 For a **vendor**:
 
 1. Make the campaign's offer URL your product's JVZoo buy link with
@@ -274,6 +282,17 @@ A few things JVZoo's documentation leaves to the receiver:
 Each notification is logged in the server's error log in one line: the
 outcome, the type, the click, the receipt and the account, never the key or
 the buyer's details.
+
+## A sale in another currency than the account's
+
+PayKickstart, Shopify and Zaxaa state each amount's currency, and Prosper202
+does not convert amounts: a notification in another currency than the
+account's records nothing. Its answer (and its line on Setup › Inbound Log)
+names both currencies and the setting to change, Account › Personal Settings ›
+Account currency, and the integration's card on Account › API integrations
+counts the ones refused in the last 30 days until the account counts in their
+currency. A notification refused before the change is not recorded by it; send
+it again from the platform if it can.
 
 ## Shopify
 

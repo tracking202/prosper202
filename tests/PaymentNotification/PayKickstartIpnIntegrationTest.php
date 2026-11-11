@@ -10,6 +10,7 @@ use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\CurrencyMismatch;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
@@ -896,8 +897,52 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         $verified = new Verification([self::ACCOUNT => 0]);
         $eur = $processor->process($sale('EUR'), $verified, new PayKickstartAdapter(), $request);
         self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $eur);
+        self::assertSame(
+            'The amount is in EUR and this account counts in USD; Prosper202 does not convert it, so nothing was'
+            . ' recorded. If this account sells in EUR, set Account > Personal Settings > Account currency to EUR,'
+            . ' then send this notification again. It is listed on Setup > Inbound Log.',
+            $eur->message
+        );
         self::assertSame([], self::conversions());
         $usd = $processor->process($sale('usd'), $verified, new PayKickstartAdapter(), $request);
         self::assertOutcome(OutcomeKind::RECORDED, 200, $usd);
+    }
+
+    /**
+     * What the integration's card counts (CurrencyMismatch::recent): the
+     * account's refusals for their currency in the window, by endpoint, and
+     * none once the account counts in the currency they state.
+     */
+    public function testRefusalsForTheirCurrencyAreCountedUntilTheAccountCountsInIt(): void
+    {
+        $db = self::requireScratch();
+        self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::ACCOUNT);
+        $log = new \Prosper202\InboundLog\InboundLog($db);
+        $now = time();
+        $entry = static fn (string $endpoint, string $outcome, string $reason): \Prosper202\InboundLog\Entry
+            => new \Prosper202\InboundLog\Entry($endpoint, 'POST', 422, $outcome, $reason, self::ACCOUNT);
+        $eur = CurrencyMismatch::message('eur', 'USD');
+        $gbp = CurrencyMismatch::message('GBP', 'USD');
+        self::assertTrue($log->append($entry('paykickstart', 'currency_mismatch', $eur), $now - 100));
+        self::assertTrue($log->append($entry('paykickstart', 'currency_mismatch', $eur), $now - 50));
+        self::assertTrue($log->append($entry('shopify', 'currency_mismatch', $gbp), $now - 40));
+        // Not counted: before the window, another outcome, and words this class did not write.
+        self::assertTrue($log->append($entry('paykickstart', 'currency_mismatch', $eur), $now - 9000));
+        self::assertTrue($log->append($entry('paykickstart', 'malformed', $eur), $now - 30));
+        $other = $entry('paykickstart', 'currency_mismatch', 'Another sentence about EUR.');
+        self::assertTrue($log->append($other, $now - 20));
+
+        $recent = CurrencyMismatch::recent($log, self::ACCOUNT, 'USD', $now - 3600);
+        self::assertSame(
+            [
+                'shopify' => ['count' => 1, 'currencies' => ['GBP'], 'latest' => $now - 40, 'more' => false],
+                'paykickstart' => ['count' => 2, 'currencies' => ['EUR'], 'latest' => $now - 50, 'more' => false],
+            ],
+            $recent
+        );
+        // The account now counts in EUR: its EUR refusals no longer warn, the GBP one still does.
+        $inEur = CurrencyMismatch::recent($log, self::ACCOUNT, ' eur ', $now - 3600);
+        self::assertSame(['shopify'], array_keys($inEur));
+        self::assertSame([], CurrencyMismatch::recent($log, self::ACCOUNT + 7, 'USD', 0));
     }
 }
