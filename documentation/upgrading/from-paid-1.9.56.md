@@ -21,8 +21,12 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   accepted on postbacks to `gpb.php` and `pb.php`, for a click on that
   campaign. A snippet's `defpixel=1` turns the deferred pixel on. PurLink
   clicks from the 90 days before the upgrade that had not converted yet still
-  convert when their postback arrives. See [PurLinks](../features/purlinks.md);
-  three behaviours are [not back yet](#not-working-yet-after-the-upgrade).
+  convert when their postback arrives. A page's `t202Settings`
+  (`t202UseSubidOrig`, `t202ExpireSubidOrig`) keeps a returning visitor's
+  original SubID in its PurLinks, with the visitor's consent. PurLinks are
+  refreshed when a visitor returns with the Back or Forward button. A PurLink
+  that names a deeper URL of its campaign keeps it while its SubID is
+  prepared. See [PurLinks](../features/purlinks.md).
 - **Dynamic landing-page content.** Elements and form fields that name a
   1.9.56 segment (`t202Kw`, `t202C1`, the visit's SubID and the others) are
   filled again, and `window.dcs` is back. See
@@ -113,19 +117,3 @@ These differ from 1.9.56 on purpose and stay that way.
 - **Paid-only tables are kept.** The upgrade doesn't drop them. It reads
   `202_clicks_purlink` once, to carry over PurLink clicks that have not
   converted; nothing reads it afterwards.
-
-## Not working yet after the upgrade
-
-These 1.9.56 PurLink behaviours don't work on 1.9.80 yet. Each one is being
-restored, and its line comes off this list when the fix ships.
-
-- **Keeping a visitor's original SubID.** A page's `t202Settings`
-  (`t202UseSubidOrig`, `t202ExpireSubidOrig`) is ignored, so a returning
-  visitor's PurLinks carry the new visit's SubID.
-- **Refreshing PurLinks after Back.** When a visitor returns to the landing
-  page with the browser's Back or Forward button, its PurLinks are not
-  updated again.
-- **A link's own deep link while the SubID is prepared.** For a moment after
-  the page loads a PurLink goes through the tracker's redirect. A visitor who
-  clicks in that moment lands on the campaign's URL, not the deeper URL the
-  link itself names.

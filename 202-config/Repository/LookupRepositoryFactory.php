@@ -6,6 +6,7 @@ namespace Prosper202\Repository;
 
 use mysqli;
 use Prosper202\Click\ClickPathReads;
+use Prosper202\Click\UnrecordedSourceVariables;
 use Prosper202\Database\Connection;
 use Prosper202\Repository\Cache\MemcacheIdCache;
 use Prosper202\Repository\Cache\MemcacheRowCache;
@@ -63,6 +64,57 @@ final class LookupRepositoryFactory
     public static function liveReads(mysqli $db): ClickPathReads
     {
         return ClickPathReads::uncached(new Connection($db));
+    }
+
+    /**
+     * The click scripts' note of a click stored without its source's
+     * variables: once an hour for each traffic source account, kept in the
+     * database, with memcache in front of it where it answers.
+     */
+    public static function unrecordedVariables(mysqli $db): UnrecordedSourceVariables
+    {
+        $bundle = self::bundle($db);
+        if (!self::bootstrapCacheWorks()) {
+            return new UnrecordedSourceVariables($bundle->reads, $bundle->connection);
+        }
+
+        return new UnrecordedSourceVariables(
+            $bundle->reads,
+            $bundle->connection,
+            new MemcacheRowCache(
+                static fn (string $key): mixed => \getCache($key),
+                static fn (string $key, string $entry, int $ttl): mixed
+                    => \setCache($key, $entry, $ttl),
+                UnrecordedSourceVariables::SAID_FOR_SECONDS,
+            ),
+            self::cacheNamespace()
+        );
+    }
+
+    /**
+     * The click scripts' one call, after each has read its tracker.
+     * $ownSource: the click's traffic source account names a source of its
+     * own user's (the tracker read's own_ppc_network_id), which asks nothing
+     * more. Never throws: the visitor goes on, whatever became of the note.
+     *
+     * @param array<array-key, mixed> $request the click's query
+     */
+    public static function noteUnrecordedVariables(
+        mysqli $db,
+        int $userId,
+        int $ppcAccountId,
+        bool $ownSource,
+        array $request
+    ): void {
+        if ($ownSource || $userId < 1 || $ppcAccountId < 1) {
+            return;
+        }
+        try {
+            self::unrecordedVariables($db)->note($userId, $ppcAccountId, $request);
+        } catch (\Throwable $e) {
+            UnrecordedSourceVariables::sayOnce('p202 click: the check for unrecorded custom variables failed: '
+                . $e->getMessage());
+        }
     }
 
     public static function reset(): void

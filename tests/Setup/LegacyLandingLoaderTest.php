@@ -66,6 +66,33 @@ final class LegacyLandingLoaderTest extends TestCase
         }
     }
 
+    /**
+     * 1.9.56 pages load the loader again on pageshow, after Back: the page is
+     * tracked once, and its PurLinks are refreshed.
+     */
+    public function testLoadedAgainItRefreshesPurLinksAndTracksNothing(): void
+    {
+        $node = trim((string) shell_exec('command -v node 2>/dev/null'));
+        if ($node === '') {
+            self::assertFalse(getenv('CI') === 'true', 'node is not on PATH, so the loader was not run');
+            self::markTestSkipped('node is not on PATH');
+        }
+        $loader = (string) file_get_contents(self::LOADER);
+        $program = 'var loader = new Function("document", "window", ' . json_encode($loader, JSON_THROW_ON_ERROR) . ');'
+            . 'var made = 0, refreshed = 0;'
+            . 'var doc = {currentScript: {src: "https://t.example/tracking202/static/landing.js?lpip=42"},'
+            . '  getElementById: function (id) { return id === "upxif" ? {} : null; },'
+            . '  createElement: function () { made++; return {}; },'
+            . '  getElementsByTagName: function () {'
+            . '    return [{parentNode: {insertBefore: function () { made++; }}}]; }};'
+            . 'loader(doc, {location: {search: ""}, updatePurLink: function () { refreshed++; }});'
+            . 'loader(doc, {location: {search: ""}});'
+            . 'process.stdout.write(made + " " + refreshed);';
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($program) . ' 2>&1', $lines, $status);
+        self::assertSame(0, $status, implode("\n", $lines));
+        self::assertSame('0 1', implode("\n", $lines));
+    }
+
     /** @param list<string> $snippets @return list<string> the landing.php URL each snippet loads */
     private function runLoader(array $snippets): array
     {
