@@ -26,6 +26,7 @@ final class PurLinkPageviewTest extends TestCase
         self::assertSame(22, PurLinkProof::verify($proofs['exitProof'], PurLinkProof::EXIT, 1_700_000_001, $key)['click_id']);
         self::assertSame(4, PurLinkProof::verify($proofs['pixelProof'], PurLinkProof::PIXELS, 1_700_000_001, $key)['landing_page_id']);
         self::assertNull(PurLinkProof::verify($proofs['exitProof'], PurLinkProof::PIXELS, 1_700_000_001, $key));
+        self::assertTrue($proofs['keepSubid'], 'full tracking lets the page keep the first subid');
         self::assertNull(PurLinkProof::verify($proofs['pixelProof'], PurLinkProof::PIXELS, 1_700_086_400, $key));
     }
 
@@ -54,6 +55,7 @@ final class PurLinkPageviewTest extends TestCase
         $proofs = json_decode($matches[1], true, flags: JSON_THROW_ON_ERROR);
         self::assertSame(22, PurLinkProof::verify($proofs['exitProof'], PurLinkProof::EXIT, 1_700_000_001, $key)['click_id']);
         self::assertArrayNotHasKey('pixelProof', $proofs, 'a held-back visitor fires no third-party pixel');
+        self::assertArrayNotHasKey('keepSubid', $proofs, 'a held-back visitor keeps no subid past the pageview');
     }
 
     public function testUnallocatedClicksAndUnavailableKeyDoNotEmitCapabilities(): void

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"p202/internal/api"
 	"p202/internal/output"
@@ -56,6 +57,33 @@ type tsoEntry struct {
 	// CustomVariables is what a split copies; a server before the split
 	// sends none.
 	CustomVariables int `json:"custom_variables"`
+	// VariablesUnrecorded: the source has custom variables, and clicks on the
+	// other users' accounts record none of them; a server before 1.9.80
+	// sends none.
+	VariablesUnrecorded bool `json:"variables_unrecorded"`
+	// AutoSplit: the server's cron job splits it within the hour without
+	// being asked; AutoSplitBlockedBy says why it does not. A server before
+	// 1.9.80 sends neither, and splits nothing by itself.
+	AutoSplit          bool     `json:"auto_split"`
+	AutoSplitBlockedBy []string `json:"auto_split_blocked_by"`
+}
+
+// tsoSplit is one split of the last 30 days, the cron job's (automatic) or a
+// user's.
+type tsoSplit struct {
+	PpcNetworkID   int     `json:"ppc_network_id"`
+	PpcNetworkName string  `json:"ppc_network_name"`
+	OwnerUserID    int     `json:"owner_user_id"`
+	OwnerUserName  *string `json:"owner_user_name"`
+	Automatic      bool    `json:"automatic"`
+	ActorUserID    int     `json:"actor_user_id"`
+	SplitAt        int64   `json:"split_at"`
+	Copies         []struct {
+		UserID       int     `json:"user_id"`
+		UserName     *string `json:"user_name"`
+		PpcNetworkID int     `json:"ppc_network_id"`
+		AccountIDs   []int   `json:"ppc_account_ids"`
+	} `json:"copies"`
 }
 
 // tsoReport is GET /system/traffic-source-owners, read strictly: a missing
@@ -63,6 +91,14 @@ type tsoEntry struct {
 type tsoReport struct {
 	Data struct {
 		Sources []tsoEntry `json:"sources"`
+		// VariablesNote is the server's sentence when a listed source has
+		// custom variables its other users' clicks do not record; null when
+		// none has, absent before 1.9.80.
+		VariablesNote *string `json:"variables_note"`
+		// Splits and SplitsNote: the splits of the last 30 days and the
+		// server's sentence on what a split did; absent before 1.9.80.
+		Splits     []tsoSplit `json:"splits"`
+		SplitsNote *string    `json:"splits_note"`
 	} `json:"data"`
 }
 
@@ -222,7 +258,14 @@ var systemTrafficSourceOwnersShowCmd = &cobra.Command{
 		"or in its second: the shape the API made before 1.9.77), no_such_user, deleted_user (a source\n" +
 		"never moves into a deleted user's account; a switched-off user's is shown and still repaired).\n" +
 		"No move clears a source marked owner_has_accounts or several_users: another user's accounts still\n" +
-		"name it wherever it is. `split` does. --json carries the account ids and custom variables too.\n\n" +
+		"name it wherever it is. `split` does. --json carries the account ids and custom variables too.\n" +
+		"variables says `not recorded` for a source with custom variables: clicks on the other users'\n" +
+		"accounts store none of their values until it is moved back or split, and a note under the table\n" +
+		"says so (variables_unrecorded and variables_note in --json).\n" +
+		"automatic says what the server's cron job does by itself: `split within the hour` where every other\n" +
+		"user's account was put on the source after it was last saved (each of those users gets a copy; nothing\n" +
+		"moves), or `no:` and why (may_be_theirs, same_name, no_such_user, deleted_user). Splits of the last\n" +
+		"30 days, the cron job's and users', are listed under the table (splits in --json).\n\n" +
 		tsoNeeds + ", and system:read.",
 	Example: "  p202 system traffic-source-owners show\n  p202 system traffic-source-owners show --json",
 	Args:    cobra.NoArgs,
@@ -256,10 +299,13 @@ var systemTrafficSourceOwnersShowCmd = &cobra.Command{
 				"named_by":  strings.Join(named, "; "),
 				"repair_to": repairTo,
 				"ambiguous": strings.Join(e.Ambiguous, ", "),
+				"variables": tsoVariables(e),
+				"automatic": tsoAutomatic(e),
 			})
 		}
 		if len(rows) == 0 {
 			output.Success("No traffic source is named by another user's traffic source accounts.")
+			tsoPrintSplits(report)
 			return nil
 		}
 		encoded, err := json.Marshal(map[string]interface{}{"data": rows})
@@ -267,8 +313,69 @@ var systemTrafficSourceOwnersShowCmd = &cobra.Command{
 			return fmt.Errorf("encoding the report: %w", err)
 		}
 		render(encoded)
+		if note := report.Data.VariablesNote; note != nil && *note != "" {
+			fmt.Fprintln(os.Stderr, "Note: "+*note)
+		}
+		tsoPrintSplits(report)
 		return nil
 	},
+}
+
+// tsoAutomatic is the table's word for what the server's cron job does with a
+// source by itself: split it within the hour, or leave it, and why.
+func tsoAutomatic(e tsoEntry) string {
+	if e.AutoSplit {
+		return "split within the hour"
+	}
+	if len(e.AutoSplitBlockedBy) == 0 {
+		return ""
+	}
+	return "no: " + strings.Join(e.AutoSplitBlockedBy, ", ")
+}
+
+// tsoPrintSplits says, under the table, which sources were split in the last
+// 30 days: who kept the source, who was given a copy for which accounts,
+// when, and whether the cron job did it.
+func tsoPrintSplits(report tsoReport) {
+	if len(report.Data.Splits) == 0 {
+		return
+	}
+	name := func(id int, n *string) string {
+		if n == nil {
+			return fmt.Sprintf("user %d", id)
+		}
+		return fmt.Sprintf("user %d (%s)", id, *n)
+	}
+	fmt.Fprintln(os.Stderr, "Split in the last 30 days:")
+	for _, sp := range report.Data.Splits {
+		by := fmt.Sprintf("by user %d", sp.ActorUserID)
+		if sp.Automatic {
+			by = "automatically"
+		}
+		copies := make([]string, 0, len(sp.Copies))
+		for _, c := range sp.Copies {
+			ids := make([]string, 0, len(c.AccountIDs))
+			for _, id := range c.AccountIDs {
+				ids = append(ids, strconv.Itoa(id))
+			}
+			copies = append(copies, fmt.Sprintf("%s got copy %d for traffic source account(s) %s", name(c.UserID, c.UserName), c.PpcNetworkID, strings.Join(ids, ", ")))
+		}
+		fmt.Fprintf(os.Stderr, "  %s %s: traffic source %d (%q) stays with %s; %s\n",
+			time.Unix(sp.SplitAt, 0).UTC().Format("2006-01-02 15:04 UTC"), by, sp.PpcNetworkID, sp.PpcNetworkName,
+			name(sp.OwnerUserID, sp.OwnerUserName), strings.Join(copies, "; "))
+	}
+	if note := report.Data.SplitsNote; note != nil && *note != "" {
+		fmt.Fprintln(os.Stderr, "Note: "+*note)
+	}
+}
+
+// tsoVariables is the table's word for a source whose custom variables the
+// other users' clicks do not record.
+func tsoVariables(e tsoEntry) string {
+	if e.VariablesUnrecorded {
+		return "not recorded"
+	}
+	return ""
 }
 
 func runTsoRepair(cmd *cobra.Command, args []string) error {

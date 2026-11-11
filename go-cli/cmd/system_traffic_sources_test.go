@@ -476,3 +476,85 @@ func TestTrafficSourceOwnersSplitRefusalsSayNothingWasCopied(t *testing.T) {
 		t.Errorf("a server without the split: hint %q", hintFor(err))
 	}
 }
+
+// A source with custom variables: the table marks it and the server's note
+// is printed under it; an answer from a server that sends neither says nothing.
+func TestTrafficSourceOwnersShowSaysVariablesAreNotRecorded(t *testing.T) {
+	const note = "Custom variable values are not being recorded for clicks on the traffic source accounts that name another user's traffic source."
+	body := strings.Replace(tsoReportBody, `"repair_to_user_id":2,"ambiguous":[]}`, `"repair_to_user_id":2,"ambiguous":[],"variables_unrecorded":true}`, 1)
+	body = strings.Replace(body, `"repairable":1,"ambiguous":1}}`, `"repairable":1,"ambiguous":1,"variables_unrecorded":1,"variables_note":"`+note+`"}}`, 1)
+	if body == tsoReportBody || !strings.Contains(body, `"variables_note"`) {
+		t.Fatal("the report body was not given its variables fields")
+	}
+	updateServer(t, func(updateRequest) (int, string) { return 200, body })
+	stdout, stderr, err := executeCommand("system", "traffic-source-owners", "show", "--table", "--wide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "Note: "+note) {
+		t.Errorf("the note is not printed:\n%s", stderr)
+	}
+	if strings.Count(stdout, "not recorded") != 1 {
+		t.Errorf("one source of two is marked not recorded:\n%s", stdout)
+	}
+
+	updateServer(t, func(updateRequest) (int, string) { return 200, body })
+	stdout, stderr, err = executeCommand("system", "traffic-source-owners", "show", "--json")
+	if err != nil || !strings.Contains(stdout, `"variables_note"`) || strings.Contains(stderr, "Note:") {
+		t.Errorf("--json carries the note in the answer alone: err %v\n%s\n%s", err, stdout, stderr)
+	}
+
+	updateServer(t, tsoResponder(nil))
+	stdout, stderr, err = executeCommand("system", "traffic-source-owners", "show", "--table", "--wide")
+	if err != nil || strings.Contains(stderr, "Note:") || strings.Contains(stdout, "not recorded") {
+		t.Errorf("an answer without the fields says nothing of variables: err %v\n%s\n%s", err, stdout, stderr)
+	}
+}
+
+// What the cron job does by itself, and what was split, is shown: the table's
+// automatic column, and the splits under it, also when no source is listed.
+func TestTrafficSourceOwnersShowSaysWhatIsSplitAutomatically(t *testing.T) {
+	const splits = `"auto_split":1,"splits":[{"ppc_network_id":12,"ppc_network_name":"Search Ads","removed":false,"owner_user_id":3,"owner_user_name":"keeper","automatic":true,"actor_user_id":0,"split_at":1100000000,"copies":[{"user_id":2,"user_name":"newcomer","ppc_network_id":21,"ppc_account_ids":[4,5],"custom_variables":2}]},{"ppc_network_id":13,"ppc_network_name":"Email List","removed":false,"owner_user_id":3,"owner_user_name":null,"automatic":false,"actor_user_id":1,"split_at":1100000600,"copies":[{"user_id":4,"user_name":"sub","ppc_network_id":22,"ppc_account_ids":[10],"custom_variables":0}]}],"splits_note":"A split gave each of these users a traffic source of their own."`
+	body := strings.Replace(tsoReportBody, `"repair_to_user_id":2,"ambiguous":[]}`, `"repair_to_user_id":2,"ambiguous":[],"auto_split":true,"auto_split_blocked_by":[]}`, 1)
+	body = strings.Replace(body, `"ambiguous":["owner_has_accounts","saved_after_rename"]}`, `"ambiguous":["owner_has_accounts","saved_after_rename"],"auto_split":false,"auto_split_blocked_by":["may_be_theirs","same_name"]}`, 1)
+	body = strings.Replace(body, `"repairable":1,"ambiguous":1}}`, `"repairable":1,"ambiguous":1,`+splits+`}}`, 1)
+	if !strings.Contains(body, `"splits_note"`) || strings.Count(body, `"auto_split_blocked_by"`) != 2 {
+		t.Fatal("the report body was not given its automatic fields")
+	}
+	updateServer(t, func(updateRequest) (int, string) { return 200, body })
+	stdout, stderr, err := executeCommand("system", "traffic-source-owners", "show", "--table", "--wide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"split within the hour", "no: may_be_theirs, same_name"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the table lacks %q:\n%s", want, stdout)
+		}
+	}
+	for _, want := range []string{
+		"Split in the last 30 days:",
+		`2004-11-09 11:33 UTC automatically: traffic source 12 ("Search Ads") stays with user 3 (keeper); user 2 (newcomer) got copy 21 for traffic source account(s) 4, 5`,
+		`2004-11-09 11:43 UTC by user 1: traffic source 13 ("Email List") stays with user 3; user 4 (sub) got copy 22 for traffic source account(s) 10`,
+		"Note: A split gave each of these users a traffic source of their own.",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+
+	// Nothing listed any more: the splits are still said.
+	updateServer(t, func(updateRequest) (int, string) {
+		return 200, `{"data":{"sources":[],"repairable":0,"ambiguous":0,` + splits + `}}`
+	})
+	_, stderr, err = executeCommand("system", "traffic-source-owners", "show")
+	if err != nil || !strings.Contains(stderr, "Split in the last 30 days:") {
+		t.Errorf("with no source listed the splits are still shown: err %v\n%s", err, stderr)
+	}
+
+	// A server before 1.9.80 sends none of this, and nothing is said of it.
+	updateServer(t, tsoResponder(nil))
+	stdout, stderr, err = executeCommand("system", "traffic-source-owners", "show", "--table", "--wide")
+	if err != nil || strings.Contains(stderr, "Split in the last") || strings.Contains(stdout, "split within the hour") {
+		t.Errorf("an answer without the fields says nothing of splits: err %v\n%s\n%s", err, stdout, stderr)
+	}
+}

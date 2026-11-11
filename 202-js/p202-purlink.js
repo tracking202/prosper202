@@ -159,6 +159,7 @@
         if (!state) { state = preparation[offer] = {pending: false, attempts: 0}; }
         state.pending = true;
         state.attempts++;
+        state.at = Date.now();
         var pageview = generation;
         var config = options;
         var result;
@@ -215,7 +216,7 @@
         var rendered;
         try {
             rendered = direct ? destination(template, subid) :
-                (typeof options.fallback === 'function' ? options.fallback(offer) : null);
+                (typeof options.fallback === 'function' ? options.fallback(offer, template) : null);
         } catch (e) { return; }
         if (typeof rendered !== 'string' || rendered === '') {
             // An advanced page's PurLink must name its offer (acip=); say so
@@ -261,6 +262,19 @@
         var forms = document.querySelectorAll('form[action]');
         for (var i = 0; i < links.length; i++) { refreshElement(links[i], 'href'); }
         for (var j = 0; j < forms.length; j++) { refreshElement(forms[j], 'action'); }
+    }
+
+    // A preparation that used up its attempts gets a new set: when the page
+    // comes back from the back/forward cache, and when the page asks through
+    // updatePurLink(), at most once in 30 seconds per offer. Neither records
+    // a pageview.
+    function retry(always) {
+        for (var offer in preparation) {
+            var state = preparation[offer];
+            if (!state.pending && !state.waiting && state.attempts >= 3 &&
+                (always === true || Date.now() - state.at >= 30000)) { delete preparation[offer]; }
+        }
+        refresh();
     }
 
     function report(event) {
@@ -443,6 +457,11 @@
             document.addEventListener('click', report);
             document.addEventListener('auxclick', report);
             document.addEventListener('submit', report);
+            if (typeof window.addEventListener === 'function') {
+                window.addEventListener('pageshow', function (event) {
+                    if (event && event.persisted) { retry(true); }
+                });
+            }
             if (window.MutationObserver && document.documentElement) {
                 observer = new window.MutationObserver(function (mutations) {
                     var changed = mutations.some(function (mutation) {
@@ -478,5 +497,5 @@
 
     window.p202PurLink = {init: init, refresh: refresh, createPreparer: createPreparer, createReporter: createReporter,
         createPixelPoller: createPixelPoller, renderPixels: renderPixels};
-    window.updatePurLink = refresh;
+    window.updatePurLink = function () { retry(false); };
 }(window, document));

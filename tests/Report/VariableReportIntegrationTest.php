@@ -184,6 +184,103 @@ final class VariableReportIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * The values an account's clicks recorded while its traffic source
+     * account named another user's source, before and after a split. Before:
+     * the account's report shows none of them, whether the click's report row
+     * holds no source (what the rollup writes for it) or still the other
+     * user's (a row rolled up before the rollup read only the account's own).
+     * After the split and the re-roll it queues (the row then holds the copy,
+     * set here; TrafficSourceSplitIntegrationTest runs the re-roll itself):
+     * they read under the copy's variable, by its name, beside the values
+     * recorded since. So a split takes nothing the account could read.
+     */
+    public function testValuesRecordedOnAnotherUsersSourceReadUnderTheCopyAfterASplit(): void
+    {
+        self::requireScratch();
+        $account = 990076;
+        $click = self::CLICK + 1;
+        $later = self::CLICK + 2;
+        self::user(self::OTHER_USER);
+        self::row('202_ppc_networks', [
+            'ppc_network_id' => self::OTHER_SOURCE, 'user_id' => self::OTHER_USER,
+            'ppc_network_name' => 'Their Source', 'ppc_network_time' => self::$now - 100,
+        ]);
+        self::row('202_ppc_network_variables', [
+            'ppc_variable_id' => self::THEIR_VAR, 'ppc_network_id' => self::OTHER_SOURCE, 'name' => 'Placement',
+            'parameter' => 'placement', 'placeholder' => '{placement}', 'deleted' => 0,
+        ]);
+        self::row('202_ppc_accounts', ['ppc_account_id' => $account, 'user_id' => self::USER,
+            'ppc_network_id' => self::OTHER_SOURCE, 'ppc_account_name' => 'On their source',
+            'ppc_account_time' => self::$now]);
+        // The click's value, recorded while the click path still read the
+        // source's variables whoever's it was.
+        self::row('202_custom_variables', [
+            'custom_variable_id' => self::THEIR_VAR, 'ppc_variable_id' => self::THEIR_VAR, 'variable' => 'sidebar',
+        ]);
+        self::row('202_variable_sets2', ['variable_set_id' => $click, 'variables' => (string) self::THEIR_VAR]);
+        $row = [
+            'user_id' => self::USER, 'click_id' => $click, 'click_time' => self::$now,
+            'ppc_account_id' => $account, 'landing_page_id' => 0, 'variable_set_id' => (string) $click,
+            'clicks' => 1, 'click_out' => 1, 'leads' => 0, 'payout' => 0, 'income' => 0, 'cost' => 0,
+        ];
+        $own = ['Gone (removed) = X: 1', 'Gone = X: 1', 'Keep = K: 1'];
+        $copyId = 0;
+        try {
+            foreach ([null, self::OTHER_SOURCE] as $source) {
+                self::q('DELETE FROM 202_dataengine WHERE click_id = ' . $click);
+                self::row('202_dataengine', $row + ['ppc_network_id' => $source]);
+                self::assertSame($own, self::groups(), 'before the split the value is not in the account\'s report');
+            }
+
+            $owners = new \Prosper202\Setup\TrafficSourceOwners(new \Prosper202\Database\Connection(self::$db));
+            self::assertSame([], $owners->report(false)[0]['auto_split_blocked_by']);
+            $done = $owners->splitAutomatically();
+            self::assertCount(1, $done);
+            $copyId = (int) $done[0]['copies'][0]['ppc_network_id'];
+            self::q("UPDATE 202_dataengine SET ppc_network_id = $copyId WHERE click_id = $click");
+            self::assertSame([...$own, 'Placement = sidebar: 1'], self::groups(), 'after: named by the copy');
+
+            // A click after the split records under the copy's own variable: one group, two clicks.
+            $copyVar = (int) self::$db->query("SELECT ppc_variable_id FROM 202_ppc_network_variables"
+                . " WHERE ppc_network_id = $copyId")->fetch_row()[0];
+            self::row('202_custom_variables', ['custom_variable_id' => $copyVar + 990000000,
+                'ppc_variable_id' => $copyVar, 'variable' => 'sidebar']);
+            self::row('202_variable_sets2', ['variable_set_id' => $later,
+                'variables' => (string) ($copyVar + 990000000)]);
+            self::row('202_dataengine', ['click_id' => $later, 'variable_set_id' => (string) $later,
+                'ppc_network_id' => $copyId] + $row);
+            self::assertSame([...$own, 'Placement = sidebar: 2'], self::groups());
+
+            // The other user's rename does not show; the account's own does.
+            self::q("UPDATE 202_ppc_network_variables SET name = 'Renamed there' WHERE ppc_variable_id = "
+                . self::THEIR_VAR);
+            self::assertSame([...$own, 'Placement = sidebar: 2'], self::groups());
+            self::q("UPDATE 202_ppc_network_variables SET name = 'Slot' WHERE ppc_variable_id = $copyVar");
+            self::assertSame([...$own, 'Slot = sidebar: 2'], self::groups());
+
+            // A copy made before copies remembered their originals: the earlier value shows, unnamed.
+            self::q("UPDATE 202_ppc_network_variables SET copied_from_ppc_variable_id = NULL"
+                . " WHERE ppc_variable_id = $copyVar");
+            self::assertSame(
+                [...$own, 'Slot = sidebar: 1', 'Unnamed variable ' . self::THEIR_VAR . ' = sidebar: 1'],
+                self::groups()
+            );
+        } finally {
+            self::q("DELETE FROM 202_change_log WHERE entity = 'traffic_source_split'");
+            self::q('DELETE FROM 202_dirty_hours WHERE user_id = ' . self::USER);
+            self::q("DELETE FROM 202_dataengine WHERE click_id IN ($click, $later)");
+            self::q("DELETE FROM 202_variable_sets2 WHERE variable_set_id IN ($click, $later)");
+            self::q('DELETE FROM 202_custom_variables WHERE ppc_variable_id = ' . self::THEIR_VAR
+                . ' OR custom_variable_id > 990000000');
+            $sources = $copyId . ', ' . self::OTHER_SOURCE;
+            self::q("DELETE FROM 202_ppc_network_variables WHERE ppc_network_id IN ($sources)");
+            self::q("DELETE FROM 202_ppc_accounts WHERE ppc_account_id = $account");
+            self::q("DELETE FROM 202_ppc_networks WHERE ppc_network_id IN ($copyId, " . self::OTHER_SOURCE . ')');
+            self::q('DELETE FROM 202_users WHERE user_id = ' . self::OTHER_USER);
+        }
+    }
+
     /** @return list<string> each variable group as "name = value: clicks", sorted */
     private static function groups(): array
     {
